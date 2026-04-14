@@ -12,7 +12,6 @@ import {
   IdCard,
   MapPin,
   CalendarDays,
-  Users,
   Clock3,
   Cake,
   VenusAndMars,
@@ -570,14 +569,14 @@ export default function Profile() {
       ? phoneDigits.slice(1, 11)
       : phoneDigits.slice(0, 10)
   const localPhoneDisplay = formatLocalPhoneDisplay(localPhoneDigits)
+  const isCompanyHead = user?.management_role === 'company_head'
   const profileInfoItems = [
     { label: 'Employee ID', value: user?.employee_code || `ID-${user?.id ?? '—'}`, icon: IdCard },
-    { label: 'Department', value: user?.department || 'No Department Assigned', icon: Building2 },
+    { label: 'Department', value: isCompanyHead ? 'Company-wide' : (user?.department || 'No Department Assigned'), icon: Building2 },
     { label: 'Position', value: user?.position || '—', icon: Briefcase },
-    { label: 'Branch / Office Location', value: user?.branch_office_location || 'Not assigned', icon: MapPin },
+    { label: 'Branch / Office Location', value: isCompanyHead ? 'All Branches' : (user?.branch_office_location || 'Not assigned'), icon: MapPin },
     { label: 'Employment Type', value: formatEmploymentType(user?.employment_type), icon: Briefcase },
     { label: 'Hire Date', value: user?.hire_date || '—', icon: CalendarDays },
-    { label: 'Supervisor', value: user?.supervisor_name || 'No supervisor assigned', icon: Users },
     {
       label: 'Current Shift',
       value:

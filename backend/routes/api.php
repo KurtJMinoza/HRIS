@@ -93,6 +93,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Employee Dashboard → Profile module (tabbed). Each tab has independent validation/saving.
     Route::get('/employee/profile', [EmployeeProfileController::class, 'show']);
+    Route::get('/employee/profile/export/csv', [EmployeeProfileController::class, 'exportMyCsv'])->middleware('permission:profile.view');
     Route::patch('/employee/profile/personal', [EmployeeProfileController::class, 'updatePersonal']);
     Route::post('/employee/profile/signature', [EmployeeProfileController::class, 'saveSignature']);
     Route::delete('/employee/profile/signature', [EmployeeProfileController::class, 'clearSignature']);

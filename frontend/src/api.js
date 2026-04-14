@@ -2284,6 +2284,26 @@ export async function exportAllEmployeesCsv() {
   return { blob, filename }
 }
 
+/**
+ * Download self-service employee profile CSV.
+ * @returns {Promise<{ blob: Blob, filename: string }>}
+ */
+export async function exportMyProfileCsv() {
+  const res = await authenticatedFetch('/employee/profile/export/csv', {
+    timeoutMs: 120000,
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to export profile CSV')
+  }
+  const blob = await res.blob()
+  const header = res.headers.get('content-disposition') || ''
+  const filenameMatch = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(header)
+  const filename = filenameMatch?.[1] ? decodeURIComponent(filenameMatch[1].replace(/"/g, '')) : 'my_profile_export.csv'
+
+  return { blob, filename }
+}
+
 // NOTE: getWorkingSchedules is defined above in the Working Schedules section and returns
 // the full schedules payload ({ schedules: [...] }). Do not redeclare it here.
 

@@ -68,6 +68,7 @@ import {
   updateMyPersonalInfo,
   saveMySignature,
   clearMySignature,
+  exportMyProfileCsv,
   replaceMyEmergencyContacts,
   uploadProfilePhoto,
   removeProfilePhoto,
@@ -655,6 +656,7 @@ export default function EmployeeProfile() {
   })
   const [personalErrors, setPersonalErrors] = useState({})
   const [personalSaving, setPersonalSaving] = useState(false)
+  const [exportingProfileCsv, setExportingProfileCsv] = useState(false)
   /** Optimistic "Saved" on Profile tab before PATCH completes; rolls back label on error. */
   const [personalSaveStatus, setPersonalSaveStatus] = useState('idle')
   const [signatureBusy, setSignatureBusy] = useState(false)
@@ -1459,6 +1461,24 @@ export default function EmployeeProfile() {
       if (savedOk) {
         window.setTimeout(() => setPersonalSaveStatus('idle'), 1800)
       }
+    }
+  }
+
+  async function handleExportMyProfileCsv() {
+    setExportingProfileCsv(true)
+    try {
+      const { blob, filename } = await exportMyProfileCsv()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename || `my_profile_export_${new Date().toISOString().slice(0, 10)}.csv`
+      anchor.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      toast.success('Profile CSV downloaded.')
+    } catch (e) {
+      toast.error(e?.message || 'Failed to export profile CSV.')
+    } finally {
+      setExportingProfileCsv(false)
     }
   }
 
@@ -2961,9 +2981,22 @@ export default function EmployeeProfile() {
 
       {activeTab === 'employment' && (
         <Card className="border border-border/60 shadow-sm dark:border-white/8 dark:bg-[#111827]">
-          <CardHeader>
-            <CardTitle>Employment Information</CardTitle>
-            <CardDescription>These fields are maintained by administrators.</CardDescription>
+          <CardHeader className="flex flex-col gap-3 @sm:flex-row @sm:items-start @sm:justify-between">
+            <div className="space-y-1">
+              <CardTitle>Employment Information</CardTitle>
+              <CardDescription>These fields are maintained by administrators.</CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 shrink-0"
+              onClick={handleExportMyProfileCsv}
+              disabled={exportingProfileCsv}
+              title="Export my profile to CSV"
+            >
+              {exportingProfileCsv ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <FileDown className="mr-1.5 size-4" />}
+              Export My Profile to CSV
+            </Button>
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
@@ -3006,7 +3039,7 @@ export default function EmployeeProfile() {
                 </p>
                 <p className="font-medium">
                   {displayUser?.management_role === 'company_head'
-                    ? (hasText(displayUser?.company_name) ? `${displayUser.company_name} · Company-wide` : 'Company-wide')
+                    ? 'All Branches'
                     : displayUser?.branch_name || displayUser?.branch_office_location || '—'}
                 </p>
               </div>
@@ -3015,7 +3048,11 @@ export default function EmployeeProfile() {
                   <ShieldCheck className="size-3.5 shrink-0" />
                   Department
                 </p>
-                <p className="font-medium">{displayUser?.department || 'No Department Assigned'}</p>
+                <p className="font-medium">
+                  {displayUser?.management_role === 'company_head'
+                    ? 'Company-wide'
+                    : (displayUser?.department || 'No Department Assigned')}
+                </p>
               </div>
               <div className="space-y-1">
                 <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -3051,13 +3088,6 @@ export default function EmployeeProfile() {
                   Hire date
                 </p>
                 <p className="font-medium">{displayUser?.hire_date || '—'}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <Users className="size-3.5 shrink-0" />
-                  Supervisor
-                </p>
-                <p className="font-medium">{displayUser?.supervisor_name || '—'}</p>
               </div>
               <div className="space-y-1">
                 <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
