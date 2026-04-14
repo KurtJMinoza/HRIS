@@ -113,9 +113,15 @@ The SPA uses **Bearer tokens** (no cookie CSRF coupling across origins). Login/r
 
 ---
 
-## Face recognition (SmartDTR)
+## Face verification (SmartDTR)
 
-Face enrollment and verification use **face-api.js** models placed under `frontend/public/models/`. See `frontend/public/models/README.md` for the exact model files. Verification logic is enforced server-side against stored face descriptors.
+Face enrollment and verification use:
+
+- **AWS Rekognition** for server-side face matching and descriptor handling
+- **AWS Amplify Face Liveness** for anti-spoofing and session liveness checks
+- **DeepFace** services for additional face-processing and verification workflows
+
+The `frontend/public/models/` folder is kept for legacy compatibility notes only and is not part of the primary production verification pipeline.
 
 ---
 
