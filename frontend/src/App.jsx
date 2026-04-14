@@ -1381,10 +1381,19 @@ function LoginPageWrapper() {
   const [previewOpen, setPreviewOpen] = useState(false)
 
   const resetSuccess = Boolean(location?.state?.resetSuccess)
+  const fromLocation = location?.state?.from
+  const targetPath = (() => {
+    const pathname = typeof fromLocation?.pathname === 'string' ? fromLocation.pathname : ''
+    const search = typeof fromLocation?.search === 'string' ? fromLocation.search : ''
+    const hash = typeof fromLocation?.hash === 'string' ? fromLocation.hash : ''
+    const full = `${pathname}${search}${hash}`
+    if (!full || full === '/' || full.startsWith('/login')) return null
+    return full
+  })()
 
   // Already logged in -> redirect to role dashboard
   if (!loading && user) {
-    const path = resolvePostLoginPath(user)
+    const path = targetPath || resolvePostLoginPath(user)
     return <Navigate to={path} replace />
   }
 
@@ -1395,7 +1404,7 @@ function LoginPageWrapper() {
       return
     }
     setUser(user)
-    const path = resolvePostLoginPath(user)
+    const path = targetPath || resolvePostLoginPath(user)
     navigate(path, { replace: true })
     setTimeout(() => {
       if (window.location.pathname === '/login') {

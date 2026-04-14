@@ -303,7 +303,7 @@ function logAuthDebug(event, detail = {}) {
 
 export function getToken() {
   try {
-    return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY)
+    return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY)
   } catch {
     return null
   }
@@ -330,43 +330,40 @@ function clearToken() {
 
 function getAuthStoragePreference() {
   try {
-    if (sessionStorage.getItem(TOKEN_KEY)) return { remember: false }
+    if (localStorage.getItem(TOKEN_KEY)) return { remember: true }
   } catch {
     // ignore
   }
   try {
-    if (localStorage.getItem(TOKEN_KEY)) return { remember: true }
+    if (sessionStorage.getItem(TOKEN_KEY)) return { remember: true }
   } catch {
     // ignore
   }
   return {}
 }
 
-function setToken(token, options = {}) {
-  const remember = options?.remember !== false
+function setToken(token) {
   if (!token) return
 
   // Ensure we don't keep stale auth in the other storage.
   clearToken()
 
   try {
-    const storage = remember ? localStorage : sessionStorage
-    storage.setItem(TOKEN_KEY, token)
+    // Keep auth token in localStorage so multiple tabs share one login session.
+    localStorage.setItem(TOKEN_KEY, token)
   } catch {
-    // If storage fails, there's nothing more we can do.
+    try {
+      // Fallback only when localStorage is unavailable.
+      sessionStorage.setItem(TOKEN_KEY, token)
+    } catch {
+      // If storage fails, there's nothing more we can do.
+    }
   }
 }
 
 /** Persist user (id, name, email, role) for role-based UI after reload. */
-export function setStoredUser(user, options = {}) {
-  const preference = Object.prototype.hasOwnProperty.call(options || {}, 'remember')
-    ? options
-    : getAuthStoragePreference()
-  const remember = preference?.remember !== false
+export function setStoredUser(user) {
   try {
-    // Keep user in the same storage as the token.
-    const storage = remember ? localStorage : sessionStorage
-
     // Clear existing copies to avoid mismatched token/user storage.
     try {
       localStorage.removeItem(USER_KEY)
@@ -379,10 +376,16 @@ export function setStoredUser(user, options = {}) {
       // ignore
     }
 
-    if (user) storage.setItem(USER_KEY, JSON.stringify(user))
-    else storage.removeItem(USER_KEY)
+    // Keep auth snapshot in localStorage so all tabs receive the same current user.
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user))
+    else localStorage.removeItem(USER_KEY)
   } catch {
-    // ignore when localStorage is unavailable (e.g. private mode)
+    try {
+      if (user) sessionStorage.setItem(USER_KEY, JSON.stringify(user))
+      else sessionStorage.removeItem(USER_KEY)
+    } catch {
+      // ignore when browser storage is unavailable
+    }
   }
 }
 
@@ -390,8 +393,8 @@ export function setStoredUser(user, options = {}) {
 export function getStoredUser() {
   try {
     const raw =
-      sessionStorage.getItem(USER_KEY) ||
-      localStorage.getItem(USER_KEY)
+      localStorage.getItem(USER_KEY) ||
+      sessionStorage.getItem(USER_KEY)
     return raw ? JSON.parse(raw) : null
   } catch {
     return null

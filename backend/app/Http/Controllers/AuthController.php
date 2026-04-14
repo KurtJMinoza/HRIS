@@ -137,16 +137,6 @@ class AuthController extends Controller
             ]);
         }
 
-        if (config('auth.single_session_sanctum')) {
-            $revokeStart = microtime(true);
-            $user->tokens()->delete();
-            Log::info('Auth login timing step', [
-                'endpoint' => 'Auth.login',
-                'step' => 'revoke_previous_tokens',
-                'time_ms' => round((microtime(true) - $revokeStart) * 1000),
-            ]);
-        }
-
         $lastLoginStart = microtime(true);
         $user->forceFill(['last_login_at' => now()])->save();
         Log::info('Auth login timing step', [
@@ -266,10 +256,6 @@ class AuthController extends Controller
         }
 
         $this->clearSessionAuthState($request);
-
-        if (config('auth.single_session_sanctum')) {
-            $user->tokens()->delete();
-        }
 
         $user->forceFill(['last_login_at' => now()])->save();
 
@@ -392,10 +378,6 @@ class AuthController extends Controller
         }
 
         $this->clearSessionAuthState($request);
-
-        if (config('auth.single_session_sanctum')) {
-            $user->tokens()->delete();
-        }
 
         $user->forceFill(['last_login_at' => now()])->save();
 

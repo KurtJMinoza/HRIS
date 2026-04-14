@@ -4,6 +4,8 @@ import { getAuthenticatedUser, getStoredUser, logout as apiLogout, setStoredUser
 const AuthContext = createContext(null)
 /** Min interval between GET /user calls (reduces backend cache + auth payload work on navigation). */
 const AUTH_USER_REFRESH_COOLDOWN_MS = 15 * 60 * 1000
+const AUTH_TOKEN_STORAGE_KEY = 'hris_token'
+const AUTH_USER_STORAGE_KEY = 'hris_user'
 
 function isSameAuthUser(a, b) {
   if (a === b) return true
@@ -76,6 +78,55 @@ export function AuthProvider({ children }) {
         }
       })
       .finally(() => setLoading(false))
+  }, [applyUserState, loadAuthenticatedUser])
+
+  /**
+   * Cross-tab auth sync: when one tab logs in/out or refreshes the stored user snapshot,
+   * mirror that state immediately in other open tabs.
+   */
+  useEffect(() => {
+    function onStorage(event) {
+      if (!event) return
+      if (event.key !== AUTH_TOKEN_STORAGE_KEY && event.key !== AUTH_USER_STORAGE_KEY) return
+      if (event.newValue === event.oldValue) return
+
+      if (event.key === AUTH_TOKEN_STORAGE_KEY && !event.newValue) {
+        applyUserState(null)
+        setLoading(false)
+        return
+      }
+
+      if (event.key === AUTH_USER_STORAGE_KEY) {
+        if (!event.newValue) {
+          applyUserState(null)
+          setLoading(false)
+          return
+        }
+        try {
+          const nextUser = JSON.parse(event.newValue)
+          if (nextUser && typeof nextUser === 'object') {
+            applyUserState(nextUser)
+            setLoading(false)
+            return
+          }
+        } catch {
+          // ignore malformed storage payloads
+        }
+      }
+
+      setLoading(true)
+      loadAuthenticatedUser({ force: true })
+        .then((u) => applyUserState(u ?? null))
+        .catch((err) => {
+          if (shouldClearAuthFromError(err)) {
+            applyUserState(null)
+          }
+        })
+        .finally(() => setLoading(false))
+    }
+
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
   }, [applyUserState, loadAuthenticatedUser])
 
   /**
