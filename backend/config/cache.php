@@ -19,6 +19,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Profile / auth payload cache (EmployeeProfileCache, Auth user payload)
+    |--------------------------------------------------------------------------
+    |
+    | Heavy nested Cache::remember() calls against the "file" driver are a common
+    | source of timeouts on Windows local stacks (slow filesystem + many small writes).
+    | Set CACHE_PROFILE_STORE=array (this file's `stores.array`) for zero disk I/O on
+    | Windows dev (e.g. Laragon). Use `database` or `redis` in production. TTL is capped at 5 minutes.
+    |
+    */
+    'profile_store' => env('CACHE_PROFILE_STORE', 'array'),
+
+    'profile_ttl_minutes' => min(5, max(1, (int) env('CACHE_PROFILE_TTL_MINUTES', 5))),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cache Stores
     |--------------------------------------------------------------------------
     |

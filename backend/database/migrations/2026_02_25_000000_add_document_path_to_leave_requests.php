@@ -4,9 +4,14 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
+        // Runs before create_leave_requests in some installs; skip until table exists.
+        if (! Schema::hasTable('leave_requests')) {
+            return;
+        }
         Schema::table('leave_requests', function (Blueprint $table) {
             if (! Schema::hasColumn('leave_requests', 'document_path')) {
                 $table->string('document_path')->nullable()->after('notes');
@@ -23,4 +28,3 @@ return new class extends Migration {
         });
     }
 };
-

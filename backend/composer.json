@@ -7,9 +7,17 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
+        "aws/aws-sdk-php": "^3.371",
+        "barryvdh/laravel-dompdf": "*",
         "laravel/framework": "^12.0",
+        "laravel/octane": "^2.17",
         "laravel/sanctum": "^4.3",
-        "laravel/tinker": "^2.10.1"
+        "laravel/tinker": "^2.10.1",
+        "mpdf/mpdf": "^8.3",
+        "mpdf/qrcode": "^1.2",
+        "setasign/fpdi": "*",
+        "tecnickcom/tcpdf": "*",
+        "twilio/sdk": "^8.11"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

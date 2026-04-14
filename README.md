@@ -1,101 +1,145 @@
-# HRIS Amalgated Company
+# HRIS (Human Resource Information System)
 
-HR Information System with React frontend and Laravel + MySQL backend.
+Full-stack **HRIS** for workforce, attendance, payroll, and employee self-service — built with a **React (Vite)** SPA and a **Laravel** REST API backed by **MySQL**.
 
-## Project structure
+**Repository:** [github.com/KurtJMinoza/HRIS](https://github.com/KurtJMinoza/HRIS)
 
-- `frontend/` — React + Vite + Tailwind
-- `backend/` — Laravel API with MySQL
+---
 
-## Setup
+## Overview
 
-### 1. Database (MySQL)
+This application supports **multi-company / multi-branch** HR operations: employee records, organizational structure, time and attendance (including **face-verified** clock in/out), leave and overtime workflows, compensation and deductions, **Philippine payroll** concepts (SSS, PhilHealth, Pag-IBIG, withholding), payslips, loans, benefits, documents, and **role-based access control (RBAC)** for HR admins vs employees.
 
-Create the database:
+### Main capabilities
 
-```sql
-CREATE DATABASE hris;
+| Area | Highlights |
+|------|------------|
+| **Identity & access** | Laravel Sanctum (Bearer tokens), SPA-friendly CORS, admin vs employee roles, granular HR permissions |
+| **Attendance** | Clock in/out, schedules, corrections, monitoring, SmartDTR / kiosk-style flows with face checks |
+| **Leave & overtime** | Requests, approvals, audits, attachments where applicable |
+| **Payroll** | Pay cycles, pay components, daily computation logs, batch runs, finalization jobs, payslip PDF generation |
+| **People data** | Profiles, government IDs, emergency contacts, skills, certifications, documents |
+| **Loans & deductions** | Employee loans, amortization, deduction schedules aligned with payroll runs |
+
+### Tech stack
+
+- **Frontend:** React, Vite, Tailwind CSS, TanStack Query, client-side routing  
+- **Backend:** PHP 8.x, Laravel, queues/jobs for heavy payroll and report work  
+- **Database:** MySQL (migrations under `backend/database/migrations`)  
+- **Auth:** Token-based API auth (see below)
+
+---
+
+## Repository layout
+
+```
+HR/
+├── frontend/     # React SPA (Vite)
+├── backend/      # Laravel API
+├── face_service/ # Optional / auxiliary face-related tooling (if present)
+├── package.json  # Root workspace helpers (if used)
+└── README.md
 ```
 
-Or via phpMyAdmin: create a new database named `hris`.
+---
+
+## Prerequisites
+
+- **PHP** ≥ 8.2 (with extensions typical for Laravel: `pdo_mysql`, `mbstring`, `openssl`, `curl`, etc.)
+- **Composer**
+- **Node.js** LTS + **npm**
+- **MySQL** 8.x (or compatible)
+
+---
+
+## Quick start
+
+### 1. Database
+
+Create a database (example name `hris`):
+
+```sql
+CREATE DATABASE hris CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
 
 ### 2. Backend (Laravel)
 
 ```bash
 cd backend
-cp .env.example .env   # if needed
+cp .env.example .env
 php artisan key:generate
+```
+
+Configure `.env` with `DB_*` credentials, `APP_URL`, mail/SMS keys as needed, then:
+
+```bash
+composer install
 php artisan migrate
+# Optional: seed admin / demo data (see seeders)
+php artisan db:seed --class=AdminUserSeeder   # if you use the bundled admin seeder
 php artisan serve
 ```
 
-Backend runs at `http://localhost:8000`.
+API default: `http://localhost:8000` — routes are typically under `/api`.
 
 ### 3. Frontend (React)
 
 ```bash
 cd frontend
 npm install
+cp .env.example .env   # if present; set VITE_API_URL
 npm run dev
 ```
 
-Frontend runs at `http://localhost:5173`.
+SPA default: `http://localhost:5173` (Vite).
 
-### 4. API URL
+Point `VITE_API_URL` at your API base (e.g. `http://localhost:8000/api`).
 
-The frontend uses `frontend/.env` and expects the backend at `http://localhost:8000/api` by default.
+### 4. Queue worker (recommended for payroll / PDF / mail)
 
-- **If you see "Failed to fetch" or "Cannot connect to the server"** on login/sign up: start the backend with `php artisan serve` in the `backend` folder so it runs at http://localhost:8000.
-- If the backend runs on a different host/port, edit `frontend/.env` and set `VITE_API_URL` (e.g. `VITE_API_URL=http://localhost:8000/api`).
+```bash
+cd backend
+php artisan queue:work
+```
 
-## Sanctum SPA authentication
+---
 
-The API uses **Laravel Sanctum** with **token-only** auth (no cookies) to avoid CSRF mismatch when the SPA runs on a different origin (e.g. frontend on `:5173`, backend on `:8000`).
+## Authentication (Sanctum, token-only)
 
-- **Token-based**: Login and register return a Bearer token; the frontend stores it and sends `Authorization: Bearer <token>` on protected requests.
-- **Protected routes** use the `auth:sanctum` middleware (`/api/logout`, `/api/user`, `/api/admin/*`).
-- **CORS** is configured for the frontend origin(s); set `CORS_ALLOWED_ORIGINS` in backend `.env` if your app URL differs.
-- **Token expiration** is set in backend `.env` via `SANCTUM_TOKEN_EXPIRATION` (minutes; default 7 days). Use `null` for no expiry.
+The SPA uses **Bearer tokens** (no cookie CSRF coupling across origins). Login/register return a token; the client sends `Authorization: Bearer <token>` on protected routes.
 
-Frontend helpers:
+- Configure token lifetime via `SANCTUM_TOKEN_EXPIRATION` in `backend/.env` if needed.
+- Set `CORS_ALLOWED_ORIGINS` (or equivalent) for your frontend origin in production.
 
-- `login()` / `register()` store the token and return `{ user, token }`; `user` includes `role` (`employee` or `admin`).
-- `logout()` calls the API to revoke the token and clears local storage.
-- `getAuthenticatedUser()` calls `GET /api/user` and returns the user (with `role`) or `null` (clears token on 401).
-- `authenticatedFetch(path, options)` sends the Bearer token and clears it on 401 for use with any protected endpoint.
-
-## Roles (employee vs admin)
-
-- **Register (Create account)**: New users are created with role **`employee`**. They can sign in and use employee-facing features.
-- **Admin**: Admins are not created via the public sign-up form. Create an admin by running:
-  ```bash
-  cd backend
-  php artisan db:seed --class=AdminUserSeeder
-  ```
-  This creates a user with email `admin@amalgated.co`, password `admin` (change in production). You can edit `database/seeders/AdminUserSeeder.php` to use a different email/password or run it multiple times with different env vars.
-- **Admin-only API routes** are protected with the `admin` middleware (e.g. `GET /api/admin/dashboard`). The frontend can use `user.role === 'admin'` to show or gate admin UI.
+---
 
 ## Face recognition (SmartDTR)
 
-The app uses **face-api.js** for:
+Face enrollment and verification use **face-api.js** models placed under `frontend/public/models/`. See `frontend/public/models/README.md` for the exact model files. Verification logic is enforced server-side against stored face descriptors.
 
-- **Login**: If an employee has a face enrolled, they must pass face verification after password.
-- **Admin → Employees**: "Capture face" stores a 128D descriptor (used for verification).
-- **Employee → My Attendance**: Clock in/out requires face verification before recording.
+---
 
-**Models required:** Place face-api.js model files in `frontend/public/models/` so the app can load them. See `frontend/public/models/README.md` for the exact files (from [face-api.js-models](https://github.com/justadudewhohacks/face-api.js-models)). Without these, face capture and verification will show a loading error.
+## Security & production checklist
 
-- Verification is done **server-side**: the frontend sends the 128D descriptor; the backend compares it to the stored one (Euclidean distance ≤ 0.6).
+- Never commit `.env` or production secrets; use `.env.example` as a template only.
+- Change default seeded admin passwords before go-live.
+- Use HTTPS, restrict CORS, and run `php artisan config:cache` / `route:cache` in production.
+- Back up the database and stored uploads (`storage`) according to your retention policy.
 
-## API endpoints
+---
 
-| Method | Endpoint               | Description           |
-|--------|------------------------|-----------------------|
-| POST   | /api/register          | Create account (role: employee) |
-| POST   | /api/login             | Sign in (returns `user.has_face` if face verification required) |
-| POST   | /api/logout            | Sign out (auth)      |
-| GET    | /api/user              | Current user (auth)  |
-| POST   | /api/auth/verify-face  | Face verification after login (auth, body: `face_descriptor` [128 floats]) |
-| POST   | /api/attendance        | Clock in/out with face (auth, body: `type`, `face_descriptor`) |
-| GET    | /api/attendance        | List my attendance logs (auth) |
-| GET    | /api/admin/dashboard   | Example admin-only (auth + admin) |
+## Scripts (root)
+
+If the repository root defines npm scripts (e.g. concurrently running API + UI), see root `package.json`. Otherwise run backend and frontend in separate terminals as above.
+
+---
+
+## License
+
+Specify your license here (e.g. MIT, proprietary). Default: **all rights reserved** until you add a `LICENSE` file.
+
+---
+
+## Author
+
+**KurtJMinoza** — [github.com/KurtJMinoza](https://github.com/KurtJMinoza)

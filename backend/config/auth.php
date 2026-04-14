@@ -112,4 +112,18 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Single Sanctum session per user
+    |--------------------------------------------------------------------------
+    |
+    | When true, each login (password, QR, face) revokes all prior API tokens for
+    | that user. That enforces one active bearer token at a time but breaks
+    | multi-tab use when the same account signs in again in another tab.
+    | Default false so multiple tabs/devices can stay signed in.
+    |
+    */
+
+    'single_session_sanctum' => env('AUTH_SINGLE_SESSION', false),
+
 ];

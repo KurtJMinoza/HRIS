@@ -8,4 +8,22 @@
 @theme {
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';
+
+    /* Stronger default foreground contrasts */
+    --color-foreground: 17 24 39; /* slate-900 */
+    --color-muted-foreground: 71 85 105; /* slate-600 */
+}
+
+@layer base {
+    /* Light mode: darker text on light backgrounds */
+    :root {
+        --color-foreground: 17 24 39; /* slate-900 */
+        --color-muted-foreground: 75 85 99; /* slate-600 */
+    }
+
+    /* Dark mode: lighter text on dark backgrounds */
+    .dark {
+        --color-foreground: 249 250 251; /* slate-50 */
+        --color-muted-foreground: 156 163 175; /* slate-400 */
+    }
 }

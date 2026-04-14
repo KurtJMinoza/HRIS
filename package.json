@@ -1,5 +1,9 @@
 {
   "dependencies": {
+    "@mediapipe/camera_utils": "^0.3.1675466862",
+    "@mediapipe/drawing_utils": "^0.3.1675466124",
+    "@mediapipe/face_mesh": "^0.4.1633559619",
+    "playwright": "^1.58.2",
     "react-qr-reader": "^3.0.0-beta-1"
   }
 }

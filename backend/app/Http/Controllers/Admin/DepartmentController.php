@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\User;
+use App\Services\DataScopeService;
+use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -12,19 +14,40 @@ use Illuminate\Validation\ValidationException;
 
 class DepartmentController extends Controller
 {
+    public function __construct(
+        private readonly DataScopeService $dataScopeService,
+    ) {}
+
     private const LOGO_DISK = 'public';
+
     private const LOGO_DIR = 'department-logos';
+
     private const LOGO_MAX_KB = 2048; // 2MB
+
     private const LOGO_MIMES = ['jpeg', 'jpg', 'png', 'webp'];
 
     /**
      * List all departments with total employees, department head, and logo URL.
+     * Optional filter: ?branch_id=
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $departments = Department::with('departmentHead:id,name')
-            ->withCount('employees')
-            ->orderBy('name')
+        $query = Department::with('departmentHead:id,name,profile_image')
+            ->with('branch:id,name,company_id')
+            ->with('branch.company:id,name,logo')
+            ->withCount('employees');
+
+        if ($request->filled('branch_id')) {
+            $query->where('branch_id', $request->input('branch_id'));
+        }
+
+        if ($request->filled('company_id')) {
+            $query->whereHas('branch', fn ($q) => $q->where('company_id', $request->input('company_id')));
+        }
+
+        $this->dataScopeService->restrictDepartmentQuery($request->user(), $query);
+
+        $departments = $query->orderBy('name')
             ->get()
             ->map(fn (Department $d) => $this->departmentResponse($d));
 
@@ -45,18 +68,24 @@ class DepartmentController extends Controller
                 'unique:departments,name',
                 "regex:/^[A-Za-z0-9\s\-']+$/",
             ],
-            'logo' => ['nullable', 'image', 'mimes:' . implode(',', self::LOGO_MIMES), 'max:' . self::LOGO_MAX_KB],
+            'branch_id' => ['required', 'integer', 'exists:branches,id'],
+            'office_location' => ['nullable', 'string', 'max:255'],
         ], [
             'name.regex' => 'Department name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
-            'logo.image' => 'The logo must be an image (JPG, PNG, or WebP).',
-            'logo.mimes' => 'The logo must be a JPG, PNG, or WebP file.',
-            'logo.max' => 'The logo must not exceed 2MB.',
         ]);
 
-        $path = $request->hasFile('logo') ? $request->file('logo')->store(self::LOGO_DIR, self::LOGO_DISK) : null;
+        $branch = \App\Models\Branch::with('company')->findOrFail($validated['branch_id']);
+        if (! $branch->company?->logo || trim((string) $branch->company->logo) === '') {
+            throw ValidationException::withMessages([
+                'branch_id' => ['Please upload a Company logo before creating Branches and Departments.'],
+            ]);
+        }
+
         $department = Department::create([
             'name' => $validated['name'],
-            'logo' => $path,
+            'branch_id' => $validated['branch_id'],
+            'office_location' => isset($validated['office_location']) && trim((string) $validated['office_location']) !== '' ? trim((string) $validated['office_location']) : null,
+            'logo' => null,
         ]);
 
         return response()->json([
@@ -68,9 +97,14 @@ class DepartmentController extends Controller
     /**
      * List employees in this department (for View Employees). Returns id, name, profile_image URL.
      */
-    public function employees(int $id): JsonResponse
+    public function employees(Request $request, int $id): JsonResponse
     {
-        $department = Department::findOrFail($id);
+        $deptScope = Department::query()->whereKey($id);
+        $this->dataScopeService->restrictDepartmentQuery($request->user(), $deptScope);
+        $department = $deptScope->firstOrFail();
+        // List everyone with users.department_id = this department. Do not apply
+        // restrictEmployeeQuery here — org-hat exclusions are for cross-department rosters;
+        // membership for this screen must match Assign Employees (department_id FK).
         $employees = $department->employees()
             ->where('role', User::ROLE_EMPLOYEE)
             ->orderBy('name')
@@ -78,7 +112,7 @@ class DepartmentController extends Controller
             ->map(fn (User $u) => [
                 'id' => $u->id,
                 'name' => $u->name,
-                'profile_image' => $u->profile_image ? asset('storage/' . $u->profile_image) : null,
+                'profile_image' => $u->profile_image_url,
             ]);
 
         return response()->json([
@@ -88,7 +122,8 @@ class DepartmentController extends Controller
     }
 
     /**
-     * Update department (name and/or department head).
+     * Update department (name, department head, and/or logo).
+     * Logo: JPG, PNG, WebP; max 2MB. Send as multipart form when updating logo.
      */
     public function update(Request $request, int $id): JsonResponse
     {
@@ -99,13 +134,36 @@ class DepartmentController extends Controller
                 'sometimes',
                 'string',
                 'max:255',
-                'unique:departments,name,' . $id,
+                'unique:departments,name,'.$id,
                 "regex:/^[A-Za-z0-9\s\-']+$/",
             ],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'department_head_id' => ['nullable', 'integer', 'exists:users,id'],
+            'office_location' => ['nullable', 'string', 'max:255'],
         ], [
             'name.regex' => 'Department name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
         ]);
+
+        if (array_key_exists('department_head_id', $validated) && $validated['department_head_id'] !== null) {
+            $this->validateDepartmentHeadExclusive($validated['department_head_id'], $id);
+
+            $headUser = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
+                ->where('id', $validated['department_head_id'])
+                ->where('role', User::ROLE_EMPLOYEE)
+                ->first();
+            if (! $headUser || (int) $headUser->department_id !== (int) $department->id) {
+                throw ValidationException::withMessages([
+                    'department_head_id' => ['The selected employee must belong to this department to be assigned as head.'],
+                ]);
+            }
+            $headCompanyId = $headUser->getEffectiveCompanyId();
+            $deptCompanyId = $department->branch?->company_id;
+            if ($headCompanyId !== null && (int) $headCompanyId !== (int) $deptCompanyId) {
+                throw ValidationException::withMessages([
+                    'department_head_id' => ['The selected employee is assigned to another company and cannot be department head here. An employee can only belong to one company.'],
+                ]);
+            }
+        }
 
         if (isset($validated['name'])) {
             $department->name = $validated['name'];
@@ -113,8 +171,33 @@ class DepartmentController extends Controller
             User::where('department_id', $department->id)->update(['department' => $department->name]);
         }
 
+        if (array_key_exists('branch_id', $validated)) {
+            $branch = \App\Models\Branch::with('company')->findOrFail($validated['branch_id']);
+            if (! $branch->company?->logo || trim((string) $branch->company->logo) === '') {
+                throw ValidationException::withMessages([
+                    'branch_id' => ['Please upload a Company logo before creating Branches and Departments.'],
+                ]);
+            }
+            $department->branch_id = $validated['branch_id'];
+            $department->save();
+        }
+
         if (array_key_exists('department_head_id', $validated)) {
+            $previousHeadId = $department->department_head_id;
             $department->department_head_id = $validated['department_head_id'];
+            $department->save();
+            foreach (array_unique(array_filter([
+                $previousHeadId ? (int) $previousHeadId : null,
+                $department->department_head_id ? (int) $department->department_head_id : null,
+            ])) as $uid) {
+                EmployeeProfileCache::invalidate($uid);
+            }
+        }
+
+        if (array_key_exists('office_location', $validated)) {
+            $department->office_location = is_string($validated['office_location']) && trim($validated['office_location']) !== ''
+                ? trim($validated['office_location'])
+                : null;
             $department->save();
         }
 
@@ -126,21 +209,79 @@ class DepartmentController extends Controller
 
     /**
      * Assign employees to this department.
+     * Validates: each employee can only belong to one company. Rejects if already assigned elsewhere.
      */
     public function assignEmployees(Request $request, int $id): JsonResponse
     {
         $department = Department::findOrFail($id);
+        $targetCompanyId = $department->branch?->company_id;
 
         $validated = $request->validate([
             'employee_ids' => ['required', 'array'],
             'employee_ids.*' => ['integer', 'exists:users,id'],
         ]);
 
+        $users = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
+            ->whereIn('id', $validated['employee_ids'])
+            ->where('role', User::ROLE_EMPLOYEE)
+            ->get();
+
+        // Block employees who are Company Heads from being assigned to a department
+        $companyHeadIds = \App\Models\Company::whereIn('company_head_id', $validated['employee_ids'])
+            ->pluck('company_head_id')
+            ->map(fn ($id) => (int) $id)
+            ->toArray();
+        if (count($companyHeadIds) > 0) {
+            $headNames = $users->whereIn('id', $companyHeadIds)->pluck('name')->toArray();
+            throw ValidationException::withMessages([
+                'employee_ids' => [
+                    'The following employees are assigned as Company Heads and cannot be assigned to a department: '.implode(', ', $headNames).'.',
+                ],
+            ]);
+        }
+
+        // Block employees who are Branch Managers from being assigned to a department
+        $branchManagerIds = \App\Models\Branch::whereIn('branch_manager_id', $validated['employee_ids'])
+            ->pluck('branch_manager_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->toArray();
+        if (count($branchManagerIds) > 0) {
+            $managerNames = $users->whereIn('id', $branchManagerIds)->pluck('name')->toArray();
+            throw ValidationException::withMessages([
+                'employee_ids' => [
+                    'The following employees are Branch Managers and cannot be assigned to a department: '.implode(', ', $managerNames).'. A Branch Manager holds a managerial role and cannot also serve as a department member.',
+                ],
+            ]);
+        }
+
+        $conflicts = [];
+        foreach ($users as $user) {
+            $effective = $user->getEffectiveCompanyId();
+            if ($effective !== null && (int) $effective !== (int) $targetCompanyId) {
+                $conflicts[] = $user->name;
+            }
+        }
+        if (count($conflicts) > 0) {
+            throw ValidationException::withMessages([
+                'employee_ids' => [
+                    'The following employees are already assigned to another company and cannot be assigned here: '.implode(', ', $conflicts).'. An employee can only belong to one company.',
+                ],
+            ]);
+        }
+
+        // Sync company_id + branch_id so Employee Profile → Employment Tab shows correct hierarchy
+        $branchId = $department->branch_id;
+        $companyId = $department->branch?->company_id;
+
         User::whereIn('id', $validated['employee_ids'])
             ->where('role', User::ROLE_EMPLOYEE)
             ->update([
                 'department_id' => $department->id,
                 'department' => $department->name,
+                'branch_id' => $branchId,
+                'company_id' => $companyId,
             ]);
 
         return response()->json([
@@ -161,9 +302,10 @@ class DepartmentController extends Controller
             'employee_ids.*' => ['integer', 'exists:users,id'],
         ]);
 
+        // Clear employment hierarchy so Employee Profile stays in sync (single source of truth)
         User::whereIn('id', $validated['employee_ids'])
             ->where('department_id', $id)
-            ->update(['department_id' => null, 'department' => null]);
+            ->update(['department_id' => null, 'department' => null, 'branch_id' => null, 'company_id' => null]);
 
         return response()->json([
             'message' => 'Employees unassigned successfully.',
@@ -172,15 +314,22 @@ class DepartmentController extends Controller
     }
 
     /**
-     * Delete a department. Unassigns employees and removes logo from storage.
+     * Delete a department. Blocked if it has teams. Unassigns employees and removes logo from storage.
      */
     public function destroy(int $id): JsonResponse
     {
         $department = Department::findOrFail($id);
+
+        if ($department->teams()->exists()) {
+            return response()->json([
+                'message' => 'Cannot delete department because it has teams. Remove or reassign teams first.',
+            ], 422);
+        }
+
         if ($department->logo && Storage::disk(self::LOGO_DISK)->exists($department->logo)) {
             Storage::disk(self::LOGO_DISK)->delete($department->logo);
         }
-        User::where('department_id', $id)->update(['department_id' => null, 'department' => null]);
+        User::where('department_id', $id)->update(['department_id' => null, 'department' => null, 'branch_id' => null, 'company_id' => null]);
         $department->delete();
 
         return response()->json(['message' => 'Department deleted successfully.']);
@@ -188,14 +337,104 @@ class DepartmentController extends Controller
 
     private function departmentResponse(Department $d): array
     {
+        // Logo always comes from Company (single source of truth). Department does not store its own logo.
+        $companyLogo = $d->branch?->company?->logo ?? null;
+        $logoUrl = $companyLogo ? $this->publicMediaUrl($companyLogo) : null;
+
         return [
             'id' => $d->id,
             'name' => $d->name,
-            'logo' => $d->logo,
-            'logo_url' => $d->logo ? asset('storage/' . $d->logo) : null,
+            'branch_id' => $d->branch_id,
+            'branch_name' => $d->branch?->name,
+            'company_id' => $d->branch?->company?->id,
+            'company_name' => $d->branch?->company?->name,
+            'office_location' => $d->office_location,
+            'logo' => $companyLogo,
+            'logo_url' => $logoUrl,
             'total_employees' => $d->employees_count ?? $d->employees()->count(),
             'department_head_id' => $d->department_head_id,
             'department_head_name' => $d->departmentHead?->name,
+            'department_head_profile_image' => $d->departmentHead?->profile_image_url ?? null,
+            'created_at' => $d->created_at?->toIso8601String(),
         ];
+    }
+
+    private function encodeStoragePath(string $path): string
+    {
+        $segments = explode('/', trim($path, '/'));
+        $encoded = array_map(static fn (string $segment) => rawurlencode($segment), $segments);
+
+        return implode('/', $encoded);
+    }
+
+    private function publicMediaUrl(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+
+        $normalized = trim($path);
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            return $normalized;
+        }
+
+        $normalized = ltrim($normalized, '/');
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+
+        // Skip Storage::exists() check on list endpoints — filesystem I/O per row is too costly.
+        // The frontend handles missing images gracefully with initials fallbacks.
+        return '/api/media/public/'.$this->encodeStoragePath($normalized);
+    }
+
+    /**
+     * Store company logo and guarantee a valid storage path is returned.
+     */
+    private function storeLogoOrFail(Request $request): string
+    {
+        $file = $request->file('logo');
+        if (! $file) {
+            throw ValidationException::withMessages([
+                'logo' => ['No logo file was uploaded.'],
+            ]);
+        }
+
+        Storage::disk(self::LOGO_DISK)->makeDirectory(self::LOGO_DIR);
+        $path = Storage::disk(self::LOGO_DISK)->putFile(self::LOGO_DIR, $file);
+        if (! is_string($path) || trim($path) === '') {
+            throw ValidationException::withMessages([
+                'logo' => ['Failed to store company logo. Please check storage permissions and try again.'],
+            ]);
+        }
+
+        return $path;
+    }
+
+    /**
+     * Ensure the employee is not Company Head, Branch Manager, or Department Head elsewhere.
+     * excludeDepartmentId: when editing, the current department is excluded so the existing head can stay.
+     */
+    private function validateDepartmentHeadExclusive(int $userId, ?int $excludeDepartmentId): void
+    {
+        if (\App\Models\Company::where('company_head_id', $userId)->exists()) {
+            throw ValidationException::withMessages([
+                'department_head_id' => ['This employee is already Company Head and cannot also serve as Department Head.'],
+            ]);
+        }
+        if (\App\Models\Branch::where('branch_manager_id', $userId)->exists()) {
+            throw ValidationException::withMessages([
+                'department_head_id' => ['This employee is already Branch Manager and cannot also serve as Department Head.'],
+            ]);
+        }
+        $query = Department::where('department_head_id', $userId);
+        if ($excludeDepartmentId !== null) {
+            $query->where('id', '!=', $excludeDepartmentId);
+        }
+        if ($query->exists()) {
+            throw ValidationException::withMessages([
+                'department_head_id' => ['This employee is already Department Head of another department. An employee can only lead one department at a time.'],
+            ]);
+        }
     }
 }

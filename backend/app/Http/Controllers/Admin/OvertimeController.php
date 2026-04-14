@@ -4,14 +4,60 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Overtime;
+use App\Models\OvertimeApprovalAudit;
 use App\Models\User;
+use App\Services\DataScopeService;
+use App\Services\HrRoleResolver;
+use App\Services\OvertimeApprovalService;
+use App\Services\PayrollPeriodMutationGuard;
+use App\Support\HrApprovalStages;
+use App\Support\OvertimeFilingRules;
+use App\Support\PhPayrollReference;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
 class OvertimeController extends Controller
 {
+    public function __construct(
+        private readonly DataScopeService $dataScopeService,
+        private readonly OvertimeApprovalService $overtimeApprovalService,
+        private readonly HrRoleResolver $hrRoleResolver,
+        private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
+    ) {}
+
+    /**
+     * Single row: measured OT only exists once attendance time-out is stored on the OT row
+     * (after clock-out sync). Until then, computed_* holds the employee's requested/planned OT.
+     *
+     * @return array{computed_hours: float|null, computed_minutes: int|null, requested_ot_hours: float|null, requested_ot_minutes: int|null}
+     */
+    private function overtimeDisplayFields(Overtime $o): array
+    {
+        $storedHours = (float) $o->computed_hours;
+        $storedMinutes = (int) $o->computed_minutes;
+        $hasMeasured = $o->time_out !== null;
+
+        if ($hasMeasured) {
+            return [
+                'computed_hours' => round($storedHours, 2),
+                'computed_minutes' => $storedMinutes,
+                'requested_ot_hours' => null,
+                'requested_ot_minutes' => null,
+            ];
+        }
+
+        return [
+            'computed_hours' => null,
+            'computed_minutes' => null,
+            'requested_ot_hours' => round($storedHours, 2),
+            'requested_ot_minutes' => $storedMinutes,
+        ];
+    }
+
     /**
      * List overtime records with filters and summary aggregates.
      *
@@ -46,7 +92,13 @@ class OvertimeController extends Controller
         }
 
         $query = Overtime::query()
-            ->with(['user:id,name,department,profile_image'])
+            ->with([
+                'user:id,name,department,department_id,branch_id,company_id,profile_image,position',
+                'filedBy:id,name,profile_image',
+                'firstApprover:id,name,profile_image',
+                'secondApprover:id,name,profile_image',
+                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+            ])
             ->orderByDesc('date')
             ->orderByDesc('id');
 
@@ -72,31 +124,65 @@ class OvertimeController extends Controller
             $query->where('ot_type', $validated['ot_type']);
         }
 
+        $scope = User::query()->where('role', User::ROLE_EMPLOYEE);
+        $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
+        $query->whereIn('user_id', $scope->select('users.id'));
+
         $perPage = (int) ($validated['per_page'] ?? 50);
         $perPage = $perPage > 0 ? $perPage : 50;
 
         $paginator = $query->paginate($perPage)->withQueryString();
 
-        $items = $paginator->getCollection()->map(function (Overtime $o) {
+        $actor = $request->user();
+        $items = $paginator->getCollection()->map(function (Overtime $o) use ($actor) {
             $user = $o->user;
-            return [
+            $path = $o->attachment_path;
+            $hasAttachment = is_string($path) && trim($path) !== '';
+            $disp = $this->overtimeDisplayFields($o);
+
+            return array_merge([
                 'id' => $o->id,
                 'employee_id' => $o->user_id,
                 'employee_name' => $user?->name,
-                'employee_profile_image' => $user?->profile_image ? asset('storage/' . $user->profile_image) : null,
+                'employee_profile_image' => $user?->profile_image_url,
                 'department' => $user?->department,
                 'date' => $o->date?->toDateString(),
                 'schedule_end' => $o->schedule_end?->format('H:i'),
                 'time_out' => $o->time_out?->format('H:i'),
                 'expected_end_time' => $o->expected_end_time?->format('H:i'),
-                'computed_hours' => $o->computed_hours,
-                'computed_minutes' => $o->computed_minutes,
+                'computed_hours' => $disp['computed_hours'],
+                'computed_minutes' => $disp['computed_minutes'],
+                'requested_ot_hours' => $disp['requested_ot_hours'],
+                'requested_ot_minutes' => $disp['requested_ot_minutes'],
                 'ot_type' => $o->ot_type,
                 'status' => $o->status,
+                'pending_approval' => (bool) $o->pending_approval,
+                'reason' => $o->reason,
                 'remarks' => $o->remarks,
+                'rejection_note' => $o->rejection_note,
+                'has_attachment' => $hasAttachment,
+                'attachment_url' => $this->publicMediaUrl($hasAttachment ? $path : null),
+                'attachment_filename' => $hasAttachment ? basename(str_replace('\\', '/', $path)) : null,
+                'approved_at' => $o->approved_at?->toIso8601String(),
                 'locked_at' => $o->locked_at?->toIso8601String(),
                 'created_at' => $o->created_at?->toIso8601String(),
-            ];
+                'filed_at' => $o->filed_at?->toIso8601String(),
+                'display_status' => $this->overtimeApprovalService->deriveDisplayStatusLabel($o),
+                'approval_stage' => $o->approval_stage,
+                'approval_progress' => $this->mergeOvertimeRemarksIntoProgress(
+                    $o,
+                    $this->overtimeApprovalService->buildApprovalProgress($o)
+                ),
+                'approval_history' => $o->approvalAudits->map(function (OvertimeApprovalAudit $a) {
+                    return [
+                        'action' => $a->action,
+                        'approver_role' => $a->approver_role,
+                        'details' => $a->details,
+                        'at' => $a->created_at?->toIso8601String(),
+                        'actor_name' => $a->actor?->name,
+                    ];
+                })->values()->all(),
+            ], $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule), $this->overtimeActorFlags($o, $actor));
         })->values();
 
         // Summary aggregates across the filtered set (ignores pagination).
@@ -196,16 +282,26 @@ class OvertimeController extends Controller
     /**
      * Detailed overtime view including adjustment history.
      */
-    public function show(int $id): JsonResponse
+    public function show(Request $request, int $id): JsonResponse
     {
         $overtime = Overtime::query()
             ->with([
-                'user:id,name,department,profile_image',
+                // `role` required: ensureEmployeeAccessible() rejects subjects whose role is not employee.
+                'user:id,name,role,department,department_id,branch_id,company_id,profile_image,position',
                 'adjustments.admin:id,name',
+                'approvedBy:id,name',
+                'filedBy:id,name,profile_image',
+                'firstApprover:id,name,profile_image',
+                'secondApprover:id,name,profile_image',
+                'rejectedBy:id,name',
+                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
             ])
             ->findOrFail($id);
 
         $user = $overtime->user;
+        if ($user) {
+            $this->dataScopeService->ensureEmployeeAccessible($request->user(), $user);
+        }
 
         $adjustments = $overtime->adjustments
             ->sortByDesc('created_at')
@@ -225,36 +321,66 @@ class OvertimeController extends Controller
             })
             ->values();
 
+        $attPath = $overtime->attachment_path;
+        $disp = $this->overtimeDisplayFields($overtime);
+
         return response()->json([
-            'overtime' => [
+            'overtime' => array_merge([
                 'id' => $overtime->id,
                 'employee_id' => $overtime->user_id,
                 'employee_name' => $user?->name,
-                'employee_profile_image' => $user?->profile_image ? asset('storage/' . $user->profile_image) : null,
+                'employee_profile_image' => $user?->profile_image_url,
                 'department' => $user?->department,
                 'date' => $overtime->date?->toDateString(),
                 'schedule_end' => $overtime->schedule_end?->format('H:i'),
                 'time_out' => $overtime->time_out?->format('H:i'),
                 'expected_end_time' => $overtime->expected_end_time?->format('H:i'),
-                'computed_hours' => (float) $overtime->computed_hours,
-                'computed_minutes' => $overtime->computed_minutes,
+                'computed_hours' => $disp['computed_hours'],
+                'computed_minutes' => $disp['computed_minutes'],
+                'requested_ot_hours' => $disp['requested_ot_hours'],
+                'requested_ot_minutes' => $disp['requested_ot_minutes'],
                 'ot_type' => $overtime->ot_type,
                 'status' => $overtime->status,
+                'pending_approval' => (bool) $overtime->pending_approval,
                 'reason' => $overtime->reason,
-                'attachment_url' => $overtime->attachment_path
-                    ? asset('storage/' . $overtime->attachment_path)
+                'has_attachment' => is_string($attPath) && trim($attPath) !== '',
+                'attachment_url' => $this->publicMediaUrl(is_string($attPath) ? $attPath : null),
+                'attachment_filename' => (is_string($attPath) && trim($attPath) !== '')
+                    ? basename(str_replace('\\', '/', $attPath))
                     : null,
                 'remarks' => $overtime->remarks,
+                'rejection_note' => $overtime->rejection_note,
+                'approved_by_id' => $overtime->approved_by,
+                'approved_by_name' => $overtime->approvedBy?->name,
+                'approved_at' => $overtime->approved_at?->toIso8601String(),
                 'locked_at' => $overtime->locked_at?->toIso8601String(),
                 'created_at' => $overtime->created_at?->toIso8601String(),
                 'updated_at' => $overtime->updated_at?->toIso8601String(),
+                'filed_at' => $overtime->filed_at?->toIso8601String(),
                 'adjustments' => $adjustments,
-            ],
+                'display_status' => $this->overtimeApprovalService->deriveDisplayStatusLabel($overtime),
+                'approval_stage' => $overtime->approval_stage,
+                'approval_progress' => $this->mergeOvertimeRemarksIntoProgress(
+                    $overtime,
+                    $this->overtimeApprovalService->buildApprovalProgress($overtime)
+                ),
+                'approval_history' => $overtime->relationLoaded('approvalAudits')
+                    ? $overtime->approvalAudits->map(function (OvertimeApprovalAudit $a) {
+                        return [
+                            'action' => $a->action,
+                            'approver_role' => $a->approver_role,
+                            'details' => $a->details,
+                            'at' => $a->created_at?->toIso8601String(),
+                            'actor_name' => $a->actor?->name,
+                        ];
+                    })->values()->all()
+                    : [],
+            ], $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($overtime->ph_ot_rule), $this->overtimeActorFlags($overtime, $request->user())),
         ]);
     }
 
     /**
-     * Approve or reject an overtime entry.
+     * Approve or reject an overtime entry (multi-level: line manager → HR final).
      */
     public function updateStatus(Request $request, int $id): JsonResponse
     {
@@ -263,27 +389,180 @@ class OvertimeController extends Controller
             'remarks' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $overtime = Overtime::findOrFail($id);
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $overtime = Overtime::query()->with(['user', 'filedBy', 'firstApprover', 'secondApprover'])->findOrFail($id);
+        if ($overtime->user) {
+            $this->dataScopeService->ensureEmployeeAccessible($actor, $overtime->user);
+        }
         if ($overtime->status !== Overtime::STATUS_PENDING) {
             return response()->json([
                 'message' => 'Only pending overtime records can be updated.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $status = $validated['status'];
         $remarks = $validated['remarks'] ?? null;
+        $roleLabel = $this->hrRoleResolver->resolve($actor)->badgeLabel();
 
-        $overtime->status = $status;
-        if ($remarks !== null && $remarks !== '') {
-            $overtime->remarks = $remarks;
+        if ($validated['status'] === Overtime::STATUS_REJECTED) {
+            if (! $this->overtimeApprovalService->canReject($actor, $overtime)) {
+                return response()->json(['message' => 'You are not authorized to reject at this stage.'], 403);
+            }
+
+            DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {
+                $overtime->status = Overtime::STATUS_REJECTED;
+                $overtime->pending_approval = false;
+                $overtime->approval_stage = HrApprovalStages::REJECTED;
+                $overtime->rejected_at = now();
+                $overtime->rejected_by = $actor->id;
+                $overtime->rejection_note = $remarks;
+                if ($remarks !== null && $remarks !== '') {
+                    $overtime->remarks = $remarks;
+                }
+                $overtime->locked_at = now();
+                $overtime->updated_by = $actor->id;
+                $overtime->save();
+
+                OvertimeApprovalAudit::create([
+                    'overtime_id' => $overtime->id,
+                    'actor_id' => $actor->id,
+                    'employee_id' => $overtime->user_id,
+                    'action' => 'reject',
+                    'details' => $remarks,
+                    'approver_role' => $roleLabel,
+                ]);
+            });
+
+            return response()->json([
+                'message' => 'Overtime request rejected.',
+                'overtime' => $this->mapOvertime($overtime->fresh([
+                    'user', 'filedBy', 'firstApprover', 'secondApprover', 'rejectedBy',
+                    'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+                ]), $actor),
+            ]);
         }
-        $overtime->locked_at = now();
-        $overtime->updated_by = $request->user()?->id;
-        $overtime->save();
+
+        if (! $this->overtimeApprovalService->canApprove($actor, $overtime)) {
+            return response()->json(['message' => 'You are not authorized to approve at this stage.'], 403);
+        }
+
+        $stage = $overtime->approval_stage ?? HrApprovalStages::PENDING_FIRST;
+
+        if ($stage === HrApprovalStages::PENDING_FIRST) {
+            try {
+                $d = Carbon::parse($overtime->date->toDateString())->startOfDay();
+                $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $overtime->user_id, $d, $d);
+            } catch (\RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+
+            DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {
+                $overtime->first_approver_id = $actor->id;
+                $overtime->first_approved_at = now();
+                $overtime->approval_stage = HrApprovalStages::PENDING_SECOND;
+                if ($remarks !== null && $remarks !== '') {
+                    $overtime->remarks = $remarks;
+                }
+                $overtime->updated_by = $actor->id;
+                $overtime->save();
+
+                OvertimeApprovalAudit::create([
+                    'overtime_id' => $overtime->id,
+                    'actor_id' => $actor->id,
+                    'employee_id' => $overtime->user_id,
+                    'action' => 'approve_first',
+                    'details' => $remarks,
+                    'approver_role' => $roleLabel,
+                ]);
+            });
+
+            return response()->json([
+                'message' => 'First approval recorded. Pending Admin (HR) final approval.',
+                'overtime' => $this->mapOvertime($overtime->fresh([
+                    'user', 'filedBy', 'firstApprover', 'secondApprover',
+                    'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+                ]), $actor),
+            ]);
+        }
+
+        if ($stage !== HrApprovalStages::PENDING_SECOND) {
+            return response()->json(['message' => 'This overtime request cannot be approved.'], 422);
+        }
+
+        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $otDate = $overtime->date->toDateString();
+        $today = Carbon::now($tz)->toDateString();
+
+        if ($otDate > $today) {
+            return response()->json([
+                'message' => 'Cannot approve overtime for a future date.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            OvertimeFilingRules::assertDateWithinFilingWindow($otDate, $tz);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'message' => $e->errors()['date'][0] ?? 'Date is outside the allowed overtime filing window.',
+                'errors' => $e->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if ($otDate < $today) {
+            $employee = User::query()->find($overtime->user_id);
+            if (! $employee instanceof User) {
+                return response()->json([
+                    'message' => 'Employee not found for this overtime record.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            if (! OvertimeFilingRules::pastDateHasCompletedAttendance($employee->id, $otDate, $tz)) {
+                return response()->json([
+                    'message' => 'Cannot approve: that date has no completed attendance (clock-in and clock-out) for this employee.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+
+        try {
+            $d = Carbon::parse($otDate)->startOfDay();
+            $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $overtime->user_id, $d, $d);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {
+            $overtime->status = Overtime::STATUS_APPROVED;
+            $overtime->pending_approval = false;
+            $overtime->approval_stage = HrApprovalStages::APPROVED;
+            $overtime->second_approver_id = $actor->id;
+            $overtime->second_approved_at = now();
+            $overtime->approved_by = $actor->id;
+            $overtime->approved_at = now();
+            if ($remarks !== null && $remarks !== '') {
+                $overtime->remarks = $remarks;
+            }
+            $overtime->locked_at = now();
+            $overtime->updated_by = $actor->id;
+            $overtime->save();
+
+            OvertimeApprovalAudit::create([
+                'overtime_id' => $overtime->id,
+                'actor_id' => $actor->id,
+                'employee_id' => $overtime->user_id,
+                'action' => 'approve_final',
+                'details' => $remarks,
+                'approver_role' => $roleLabel,
+            ]);
+        });
 
         return response()->json([
-            'message' => 'Overtime status updated.',
-            'overtime' => $this->mapOvertime($overtime->fresh('user')),
+            'message' => 'Overtime approved.',
+            'overtime' => $this->mapOvertime($overtime->fresh([
+                'user', 'filedBy', 'firstApprover', 'secondApprover',
+                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+            ]), $actor),
         ]);
     }
 
@@ -304,6 +583,13 @@ class OvertimeController extends Controller
             return response()->json([
                 'message' => 'Only pending overtime records can be adjusted.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $d = Carbon::parse($overtime->date->toDateString())->startOfDay();
+            $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $overtime->user_id, $d, $d);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
 
         $admin = $request->user();
@@ -368,7 +654,7 @@ class OvertimeController extends Controller
             [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->endOfDay()];
         }
 
-        $query = Overtime::query()->with(['user:id,name,department']);
+        $query = Overtime::query()->with(['user:id,name,department,department_id,branch_id,company_id']);
 
         if ($from) {
             $query->whereDate('date', '>=', $from->toDateString());
@@ -396,7 +682,7 @@ class OvertimeController extends Controller
 
         $headers = [
             'Content-Type' => 'text/csv',
-            'Content-Disposition' => 'attachment; filename="overtime-export-' . now()->format('Ymd_His') . '.csv"',
+            'Content-Disposition' => 'attachment; filename="overtime-export-'.now()->format('Ymd_His').'.csv"',
         ];
 
         $lines = [];
@@ -416,6 +702,7 @@ class OvertimeController extends Controller
 
         foreach ($rows as $o) {
             $user = $o->user;
+            $disp = $this->overtimeDisplayFields($o);
             $line = [
                 $user?->id,
                 $user?->name,
@@ -423,8 +710,8 @@ class OvertimeController extends Controller
                 $o->date?->toDateString(),
                 $o->schedule_end?->format('H:i'),
                 $o->time_out?->format('H:i'),
-                (float) $o->computed_hours,
-                (int) $o->computed_minutes,
+                $disp['computed_hours'] ?? $disp['requested_ot_hours'] ?? '',
+                $disp['computed_minutes'] ?? $disp['requested_ot_minutes'] ?? '',
                 $o->ot_type,
                 $o->status,
                 $o->remarks,
@@ -433,7 +720,7 @@ class OvertimeController extends Controller
             $lines[] = $this->toCsvLine($line);
         }
 
-        $content = implode("\n", $lines) . "\n";
+        $content = implode("\n", $lines)."\n";
 
         return response($content, 200, $headers);
     }
@@ -444,37 +731,189 @@ class OvertimeController extends Controller
             $str = (string) $value;
             $str = str_replace('"', '""', $str);
 
-            return '"' . $str . '"';
+            return '"'.$str.'"';
         }, $fields));
     }
 
-    private function mapOvertime(Overtime $overtime): array
+    /**
+     * @return array<string, mixed>
+     */
+    private function overtimeRequesterMeta(?User $user): array
     {
-        $user = $overtime->user;
+        if (! $user) {
+            return [
+                'requested_by_id' => null,
+                'requested_by_name' => null,
+                'requested_by_position' => null,
+                'requested_by_profile_image_url' => null,
+                'requested_by_hr_role' => null,
+                'requested_by_role_label' => null,
+            ];
+        }
+
+        $hr = $this->hrRoleResolver->resolveForApprovalSubject($user);
 
         return [
+            'requested_by_id' => $user->id,
+            'requested_by_name' => $user->name,
+            'requested_by_position' => $user->position,
+            'requested_by_profile_image_url' => $user->profile_image_url,
+            'requested_by_hr_role' => $hr->value,
+            'requested_by_role_label' => $hr->badgeLabel(),
+        ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $steps
+     * @return array<int, array<string, mixed>>
+     */
+    private function mergeOvertimeRemarksIntoProgress(Overtime $overtime, array $steps): array
+    {
+        if (! $overtime->relationLoaded('approvalAudits')) {
+            return $steps;
+        }
+
+        $audits = $overtime->approvalAudits;
+        foreach ($steps as $i => $step) {
+            $key = $step['key'] ?? '';
+            $remarks = null;
+            if ($key === 'submitted') {
+                $a = $audits->firstWhere('action', 'file');
+                $remarks = $a?->details;
+            } elseif ($key === 'line_approval') {
+                $a = $audits->firstWhere('action', 'approve_first');
+                $remarks = $a?->details;
+            } elseif ($key === 'hr_final') {
+                $a = $audits->firstWhere('action', 'approve_final');
+                if (! $a) {
+                    $a = $audits->firstWhere('action', 'reject');
+                }
+                $remarks = $a?->details;
+            }
+            $steps[$i]['remarks'] = $remarks;
+        }
+
+        return $steps;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function overtimeActorFlags(Overtime $overtime, ?User $actor): array
+    {
+        if ($actor === null) {
+            return [];
+        }
+
+        $chain = $overtime->user ? $this->overtimeApprovalService->getApprovalChain($overtime->user) : null;
+        $stage = $overtime->approval_stage ?? HrApprovalStages::PENDING_FIRST;
+        $hrWait = null;
+        $actorHr = $this->hrRoleResolver->resolve($actor) === \App\Enums\HrRole::AdminHr;
+        if ($actorHr && $chain !== null && count($chain) >= 2 && $stage === HrApprovalStages::PENDING_FIRST
+            && $overtime->pending_approval && $overtime->status === Overtime::STATUS_PENDING && ! $overtime->rejected_at) {
+            $hrWait = sprintf(
+                'Waiting for %s approval before HR can approve or reject.',
+                match ($chain[0]) {
+                    \App\Enums\HrRole::DepartmentHead => 'Department Head',
+                    \App\Enums\HrRole::BranchHead => 'Branch Head',
+                    \App\Enums\HrRole::CompanyHead => 'Company Head',
+                    default => $chain[0]->badgeLabel(),
+                }
+            );
+        }
+
+        return [
+            'actor_can_approve' => $this->overtimeApprovalService->canApprove($actor, $overtime),
+            'actor_can_reject' => $this->overtimeApprovalService->canReject($actor, $overtime),
+            'hr_wait_message' => $hrWait,
+        ];
+    }
+
+    private function mapOvertime(Overtime $overtime, ?User $actor = null): array
+    {
+        $overtime->loadMissing([
+            'user:id,name,department,department_id,branch_id,company_id,profile_image,position',
+            'approvedBy:id,name',
+            'filedBy:id,name,profile_image',
+            'firstApprover:id,name,profile_image',
+            'secondApprover:id,name,profile_image',
+            'rejectedBy:id,name',
+            'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+        ]);
+        $user = $overtime->user;
+        $path = $overtime->attachment_path;
+        $has = is_string($path) && trim($path) !== '';
+        $disp = $this->overtimeDisplayFields($overtime);
+
+        $base = [
             'id' => $overtime->id,
             'employee_id' => $overtime->user_id,
             'employee_name' => $user?->name,
-            'employee_profile_image' => $user?->profile_image ? asset('storage/' . $user->profile_image) : null,
+            'employee_profile_image' => $user?->profile_image_url,
             'department' => $user?->department,
             'date' => $overtime->date?->toDateString(),
             'schedule_end' => $overtime->schedule_end?->format('H:i'),
             'time_out' => $overtime->time_out?->format('H:i'),
             'expected_end_time' => $overtime->expected_end_time?->format('H:i'),
-            'computed_hours' => (float) $overtime->computed_hours,
-            'computed_minutes' => $overtime->computed_minutes,
+            'computed_hours' => $disp['computed_hours'],
+            'computed_minutes' => $disp['computed_minutes'],
+            'requested_ot_hours' => $disp['requested_ot_hours'],
+            'requested_ot_minutes' => $disp['requested_ot_minutes'],
             'ot_type' => $overtime->ot_type,
             'status' => $overtime->status,
+            'pending_approval' => (bool) $overtime->pending_approval,
             'reason' => $overtime->reason,
-            'attachment_url' => $overtime->attachment_path
-                ? asset('storage/' . $overtime->attachment_path)
-                : null,
+            'has_attachment' => $has,
+            'attachment_url' => $this->publicMediaUrl($has ? $path : null),
+            'attachment_filename' => $has ? basename(str_replace('\\', '/', $path)) : null,
             'remarks' => $overtime->remarks,
+            'rejection_note' => $overtime->rejection_note,
+            'approved_by_id' => $overtime->approved_by,
+            'approved_by_name' => $overtime->approvedBy?->name,
+            'approved_at' => $overtime->approved_at?->toIso8601String(),
             'locked_at' => $overtime->locked_at?->toIso8601String(),
             'created_at' => $overtime->created_at?->toIso8601String(),
             'updated_at' => $overtime->updated_at?->toIso8601String(),
+            'filed_at' => $overtime->filed_at?->toIso8601String(),
+            'display_status' => $this->overtimeApprovalService->deriveDisplayStatusLabel($overtime),
+            'approval_stage' => $overtime->approval_stage,
+            'approval_progress' => $this->mergeOvertimeRemarksIntoProgress(
+                $overtime,
+                $this->overtimeApprovalService->buildApprovalProgress($overtime)
+            ),
+            'approval_history' => $overtime->approvalAudits->map(function (OvertimeApprovalAudit $a) {
+                return [
+                    'action' => $a->action,
+                    'approver_role' => $a->approver_role,
+                    'details' => $a->details,
+                    'at' => $a->created_at?->toIso8601String(),
+                    'actor_name' => $a->actor?->name,
+                ];
+            })->values()->all(),
         ];
+
+        return array_merge($base, $this->overtimeRequesterMeta($user), $this->overtimeActorFlags($overtime, $actor), PhPayrollReference::ruleMetaForOvertime($overtime->ph_ot_rule));
+    }
+
+    private function publicMediaUrl(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+
+        $normalized = trim($path);
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            return $normalized;
+        }
+
+        $normalized = ltrim($normalized, '/');
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+
+        $segments = explode('/', $normalized);
+        $encoded = array_map(static fn (string $segment) => rawurlencode($segment), $segments);
+
+        return url('/api/media/public/'.implode('/', $encoded));
     }
 }
-

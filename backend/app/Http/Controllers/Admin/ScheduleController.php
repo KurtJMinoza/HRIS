@@ -160,20 +160,29 @@ class ScheduleController extends Controller
     }
 
     /**
-     * Delete a working schedule.
+     * Delete a working schedule. Unassigns all employees who had this schedule.
      */
     public function destroy(int $id): JsonResponse
     {
         $schedule = WorkingSchedule::findOrFail($id);
+
+        // Unassign all employees before deleting so they show as "Available".
+        User::where('working_schedule_id', $schedule->id)
+            ->where('role', User::ROLE_EMPLOYEE)
+            ->update([
+                'schedule' => null,
+                'working_schedule_id' => null,
+            ]);
+
         $schedule->delete();
 
         return response()->json([
-            'message' => 'Schedule deleted.',
+            'message' => 'Schedule deleted. All assigned employees have been unassigned.',
         ]);
     }
 
     /**
-     * Assign schedule to one or more employees by generating their per-day schedule JSON.
+     * Assign schedule to one or more employees using live template linkage.
      */
     public function assign(Request $request, int $id): JsonResponse
     {
@@ -184,41 +193,127 @@ class ScheduleController extends Controller
             'employee_ids.*' => ['integer', 'exists:users,id'],
         ]);
 
-        $restDays = $schedule->rest_days ?? [];
-        $baseDayConfig = [];
-        foreach (self::DAY_KEYS as $dayKey) {
-            if (in_array($dayKey, $restDays, true)) {
-                $baseDayConfig[$dayKey] = null;
-            } else {
-                $baseDayConfig[$dayKey] = [
-                    'in' => $schedule->time_in,
-                    'out' => $schedule->time_out,
-                    'break_start' => $schedule->break_start,
-                    'break_end' => $schedule->break_end,
-                    'grace_minutes' => (int) ($schedule->grace_period_minutes ?: config('attendance.grace_period_minutes', 5)),
-                    'early_timein_minutes' => $schedule->early_timein_minutes ?? 60,
-                    'late_allowance_minutes' => $schedule->late_allowance_minutes,
-                    'early_timeout_minutes' => $schedule->early_timeout_minutes,
-                    'overtime_buffer_minutes' => $schedule->overtime_buffer_minutes ?? 15,
+        // `employee_ids` = desired roster for THIS shift after the update (full list, not per-row toggle).
+        $desiredIds = array_values(array_unique(array_map('intval', $validated['employee_ids'])));
+        $scheduleId = (int) $schedule->id;
+
+        $currentlyOnShift = User::query()
+            ->where('role', User::ROLE_EMPLOYEE)
+            ->where('working_schedule_id', $scheduleId)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $toUnassign = array_values(array_diff($currentlyOnShift, $desiredIds));
+        $toAssignCandidates = array_values(array_diff($desiredIds, $currentlyOnShift));
+
+        $toAssign = [];
+        $otherSchedule = [];
+
+        $newAssignees = User::query()
+            ->whereIn('id', $toAssignCandidates)
+            ->where('role', User::ROLE_EMPLOYEE)
+            ->with('workingSchedule')
+            ->get();
+
+        foreach ($newAssignees as $emp) {
+            $onThisSchedule = (int) $emp->working_schedule_id === $scheduleId;
+            $hasOtherSchedule = $emp->working_schedule_id !== null && $emp->workingSchedule !== null
+                ? ! $onThisSchedule
+                : false;
+
+            if ($hasOtherSchedule) {
+                $currentName = $emp->workingSchedule?->name ?? 'Custom schedule';
+                $currentTime = $emp->workingSchedule
+                    ? "{$emp->workingSchedule->time_in}–{$emp->workingSchedule->time_out}"
+                    : self::formatCustomScheduleTime($emp->schedule);
+                $otherSchedule[] = [
+                    'employee_id' => $emp->id,
+                    'employee_name' => $emp->name,
+                    'current_schedule' => $currentName,
+                    'current_time' => $currentTime,
                 ];
+            } else {
+                $toAssign[] = $emp->id;
             }
         }
 
-        $employees = User::whereIn('id', $validated['employee_ids'])
-            ->where('role', User::ROLE_EMPLOYEE)
-            ->get();
+        if (! empty($otherSchedule)) {
+            return response()->json([
+                'message' => 'Employee already assigned to another shift. Please unassign first before reassigning.',
+                'conflicts' => $otherSchedule,
+            ], 422);
+        }
 
-        foreach ($employees as $employee) {
-            $employee->update([
-                'schedule' => $baseDayConfig,
-                'working_schedule_id' => $schedule->id,
-            ]);
+        $assignedCount = 0;
+        $unassignedCount = 0;
+
+        if (! empty($toAssign)) {
+            $assignedCount = User::whereIn('id', $toAssign)
+                ->where('role', User::ROLE_EMPLOYEE)
+                ->update([
+                    'schedule' => null,
+                    'working_schedule_id' => $schedule->id,
+                    'pending_working_schedule_id' => null,
+                    'pending_schedule_effective_from' => null,
+                ]);
+        }
+
+        if (! empty($toUnassign)) {
+            $unassignedCount = User::whereIn('id', $toUnassign)
+                ->where('role', User::ROLE_EMPLOYEE)
+                ->update([
+                    'schedule' => null,
+                    'working_schedule_id' => null,
+                    'pending_working_schedule_id' => null,
+                    'pending_schedule_effective_from' => null,
+                ]);
+        }
+
+        $message = [];
+        if ($assignedCount > 0) {
+            $message[] = "{$assignedCount} assigned.";
+        }
+        if ($unassignedCount > 0) {
+            $message[] = "{$unassignedCount} unassigned.";
         }
 
         return response()->json([
-            'message' => 'Schedule assigned to employees.',
-            'assigned_count' => $employees->count(),
+            'message' => implode(' ', $message) ?: 'No changes.',
+            'assigned_count' => $assignedCount,
+            'unassigned_count' => $unassignedCount,
+            'assigned_ids' => $toAssign,
+            'unassigned_ids' => $toUnassign,
         ]);
+    }
+
+    private function hasWorkingDays(?array $schedule): bool
+    {
+        if (! is_array($schedule) || empty($schedule)) {
+            return false;
+        }
+        foreach ($schedule as $dayConfig) {
+            if (is_array($dayConfig) && trim((string) ($dayConfig['in'] ?? '')) !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function formatCustomScheduleTime(?array $schedule): string
+    {
+        if (! is_array($schedule) || empty($schedule)) {
+            return '—';
+        }
+        foreach (self::DAY_KEYS as $day) {
+            $dayConfig = $schedule[$day] ?? null;
+            if (is_array($dayConfig) && ! empty($dayConfig['in']) && ! empty($dayConfig['out'])) {
+                return "{$dayConfig['in']}–{$dayConfig['out']}";
+            }
+        }
+
+        return '—';
     }
 
     private function scheduleResponse(WorkingSchedule $schedule): array
@@ -237,7 +332,7 @@ class ScheduleController extends Controller
             'overtime_buffer_minutes' => $schedule->overtime_buffer_minutes ?? 15,
             'rest_days' => $schedule->rest_days ?? [],
             'created_at' => $schedule->created_at?->toIso8601String(),
+            'updated_at' => $schedule->updated_at?->toIso8601String(),
         ];
     }
 }
-

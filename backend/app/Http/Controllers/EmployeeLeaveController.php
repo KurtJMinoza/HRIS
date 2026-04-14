@@ -2,22 +2,145 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AttendanceLog;
+use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
 use App\Models\User;
 use App\Services\AttendanceStatusService;
+use App\Services\HrApprovalChainResolver;
+use App\Services\HrRoleResolver;
+use App\Services\LeaveApprovalService;
+use App\Services\LeaveCreditService;
+use App\Services\PayrollPeriodMutationGuard;
+use App\Support\LeaveFilingRules;
+use App\Support\LeaveScheduleSupport;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class EmployeeLeaveController extends Controller
 {
+    public function __construct(
+        private readonly HrApprovalChainResolver $hrApprovalChainResolver,
+        private readonly LeaveApprovalService $leaveApprovalService,
+        private readonly HrRoleResolver $hrRoleResolver,
+        private readonly LeaveCreditService $leaveCreditService,
+        private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
+    ) {}
+
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
     private function attendanceTimezone(): string
     {
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+    }
+
+    private function mergeLeaveRemarksIntoProgress(LeaveRequest $leave, array $steps): array
+    {
+        if (! $leave->relationLoaded('approvalAudits')) {
+            return $steps;
+        }
+
+        $audits = $leave->approvalAudits;
+        foreach ($steps as $i => $step) {
+            $key = $step['key'] ?? '';
+            $remarks = null;
+            if ($key === 'submitted') {
+                $a = $audits->firstWhere('action', 'file');
+                $remarks = $a?->details;
+            } elseif ($key === 'line_approval') {
+                $a = $audits->firstWhere('action', 'approve_first');
+                $remarks = $a?->details;
+            } elseif ($key === 'hr_final') {
+                $a = $audits->firstWhere('action', 'approve_final') ?? $audits->firstWhere('action', 'reject');
+                $remarks = $a?->details;
+            }
+            $steps[$i]['remarks'] = $remarks;
+        }
+
+        return $steps;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function documentFieldsForLeave(LeaveRequest $l): array
+    {
+        $paths = $l->resolveDocumentPaths();
+        $urls = array_map(static fn (string $p) => Storage::url($p), $paths);
+
+        return [
+            'has_document' => count($paths) > 0,
+            'document_url' => $urls[0] ?? null,
+            'document_urls' => $urls,
+            'document_count' => count($paths),
+        ];
+    }
+
+    /**
+     * Merge legacy single path into `document_paths` and clear `document_path` so new uploads append consistently.
+     */
+    private function normalizeLeaveDocuments(LeaveRequest $leave): void
+    {
+        $paths = $leave->document_paths ?? [];
+        if (! is_array($paths)) {
+            $paths = [];
+        }
+        $paths = array_values(array_filter($paths, static fn ($p) => is_string($p) && $p !== ''));
+        if (! empty($leave->document_path) && is_string($leave->document_path)) {
+            if (! in_array($leave->document_path, $paths, true)) {
+                array_unshift($paths, $leave->document_path);
+            }
+            $leave->document_path = null;
+        }
+        $leave->document_paths = $paths;
+    }
+
+    private function mapEmployeeLeaveRow(LeaveRequest $l): array
+    {
+        $l->loadMissing([
+            'user:id,name,profile_image,department_id,department,branch_id,company_id',
+            'filedBy:id,name,profile_image',
+            'firstApprover:id,name,profile_image',
+            'secondApprover:id,name,profile_image',
+            'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+        ]);
+
+        return array_merge([
+            'id' => $l->id,
+            'type' => $l->type,
+            'start_date' => $l->start_date->toDateString(),
+            'end_date' => $l->end_date->toDateString(),
+            'undertime_time' => $l->undertime_time ? substr((string) $l->undertime_time, 0, 5) : null,
+            'half_type' => $l->half_type,
+            'notes' => $l->notes,
+            'rejection_note' => $l->rejection_note,
+            'leave_credits_charged' => $l->leave_credits_charged,
+            'leave_unpaid_credit_days' => $l->leave_unpaid_credit_days,
+            'rest_day_bypass' => (bool) $l->rest_day_bypass,
+            'rest_day_bypass_reason' => $l->rest_day_bypass_reason,
+            'status' => $l->status,
+            'created_at' => $l->created_at?->toIso8601String(),
+            'display_status' => $this->leaveApprovalService->deriveDisplayStatusLabel($l),
+            'approval_stage' => $l->approval_stage,
+            'approval_progress' => $this->mergeLeaveRemarksIntoProgress(
+                $l,
+                $this->leaveApprovalService->buildApprovalProgress($l)
+            ),
+            'approval_history' => $l->approvalAudits->map(function (LeaveApprovalAudit $a) {
+                return [
+                    'action' => $a->action,
+                    'approver_role' => $a->approver_role,
+                    'details' => $a->details,
+                    'at' => $a->created_at?->toIso8601String(),
+                    'actor_name' => $a->actor?->name,
+                ];
+            })->values()->all(),
+        ], $this->documentFieldsForLeave($l));
     }
 
     /**
@@ -86,19 +209,19 @@ class EmployeeLeaveController extends Controller
         $out = trim((string) ($daySchedule['out'] ?? ''));
         if ($in === '' || $out === '') {
             throw ValidationException::withMessages([
-                'schedule' => ['No schedule assigned. Please contact the administrator.'],
+                'schedule' => ['No schedule assigned yet. Please contact the administrator.'],
             ]);
         }
 
-        $scheduledStart = Carbon::parse($dateKey . ' ' . $in, $tz);
+        $scheduledStart = Carbon::parse($dateKey.' '.$in, $tz);
         $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
         if (! $scheduledEnd) {
             throw ValidationException::withMessages([
-                'schedule' => ['No schedule assigned. Please contact the administrator.'],
+                'schedule' => ['No schedule assigned yet. Please contact the administrator.'],
             ]);
         }
 
-        $earlyOut = Carbon::parse($dateKey . ' ' . $undertimeTime, $tz);
+        $earlyOut = Carbon::parse($dateKey.' '.$undertimeTime, $tz);
 
         // Night shift support: if schedule end is next day and earlyOut time is before schedule start (e.g. 02:00),
         // treat earlyOut as next-day time.
@@ -121,8 +244,8 @@ class EmployeeLeaveController extends Controller
         $breakStartStr = trim((string) ($daySchedule['break_start'] ?? ''));
         $breakEndStr = trim((string) ($daySchedule['break_end'] ?? ''));
         if ($breakStartStr !== '' && $breakEndStr !== '') {
-            $breakStart = Carbon::parse($dateKey . ' ' . substr($breakStartStr, 0, 5), $tz);
-            $breakEnd = Carbon::parse($dateKey . ' ' . substr($breakEndStr, 0, 5), $tz);
+            $breakStart = Carbon::parse($dateKey.' '.substr($breakStartStr, 0, 5), $tz);
+            $breakEnd = Carbon::parse($dateKey.' '.substr($breakEndStr, 0, 5), $tz);
             if ($scheduledEnd->toDateString() !== $scheduledStart->toDateString() && $breakStart->lessThan($scheduledStart)) {
                 $breakStart->addDay();
             }
@@ -153,6 +276,8 @@ class EmployeeLeaveController extends Controller
     public function my(Request $request): JsonResponse
     {
         $user = $request->user();
+        $tz = $this->attendanceTimezone();
+        $userForSchedule = $this->refreshUserForScheduleCheck($user);
 
         $validated = $request->validate([
             'from_date' => ['nullable', 'date'],
@@ -161,7 +286,13 @@ class EmployeeLeaveController extends Controller
         ]);
 
         $query = LeaveRequest::query()
-            ->where('user_id', $user->id);
+            ->where('user_id', $user->id)
+            ->with([
+                'filedBy:id,name,profile_image',
+                'firstApprover:id,name,profile_image',
+                'secondApprover:id,name,profile_image',
+                'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+            ]);
 
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
@@ -199,20 +330,30 @@ class EmployeeLeaveController extends Controller
             })
             ->count();
 
-        $payloadLeaves = $leaves->map(function (LeaveRequest $l) {
-            return [
-                'id' => $l->id,
-                'type' => $l->type,
-                'start_date' => $l->start_date->toDateString(),
-                'end_date' => $l->end_date->toDateString(),
-                'undertime_time' => $l->undertime_time ? substr((string) $l->undertime_time, 0, 5) : null,
-                'half_type' => $l->half_type,
-                'status' => $l->status,
-                'notes' => $l->notes,
-                'document_url' => $l->document_path ? Storage::url($l->document_path) : null,
-                'created_at' => $l->created_at?->toIso8601String(),
-            ];
+        $payloadLeaves = $leaves->map(function (LeaveRequest $l) use ($tz, $userForSchedule) {
+            $undertimeMinutes = null;
+            if ($l->type === 'undertime' && $l->undertime_time) {
+                $dateKey = $l->start_date->toDateString();
+                $date = Carbon::parse($dateKey, $tz);
+                $daySchedule = $this->getDayScheduleForDate($userForSchedule, $date);
+                if ($daySchedule) {
+                    $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+                    if ($scheduledEnd) {
+                        $earlyOut = Carbon::parse($dateKey.' '.substr((string) $l->undertime_time, 0, 5), $tz);
+                        $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $earlyOut, null);
+                    }
+                }
+            }
+
+            $base = $this->mapEmployeeLeaveRow($l);
+            $base['undertime_minutes'] = $undertimeMinutes;
+            $base['undertime_hours'] = $undertimeMinutes !== null ? round($undertimeMinutes / 60, 2) : null;
+
+            return $base;
         });
+
+        $user->refresh();
+        $leaveCreditsPayload = $this->leaveCreditService->buildLeaveCreditsApiPayload($user);
 
         return response()->json([
             'summary' => [
@@ -222,8 +363,187 @@ class EmployeeLeaveController extends Controller
                 'rejected' => $rejected,
                 'upcoming' => $upcoming,
             ],
+            'leave_credits' => $leaveCreditsPayload,
             'leave_requests' => $payloadLeaves,
         ]);
+    }
+
+    /**
+     * Return half-day availability flags (morning/afternoon clock-ins) for a given date.
+     *
+     * This is used by the frontend to enable/disable AM/PM half-day options in real time.
+     */
+    public function halfdayAvailability(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $tz = $this->attendanceTimezone();
+
+        $validated = $request->validate([
+            'date' => ['required', 'date'],
+        ]);
+
+        $date = Carbon::parse($validated['date'], $tz)->startOfDay();
+        $dayStart = $date->copy();
+        $noon = $dayStart->copy()->setTime(12, 0, 0);
+        $dayEnd = $dayStart->copy()->endOfDay();
+
+        $hasMorningIn = AttendanceLog::query()
+            ->where('user_id', $user->id)
+            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
+            ->whereBetween('created_at', [$dayStart->copy()->utc(), $noon->copy()->utc()->subSecond()])
+            ->exists();
+
+        $hasAfternoonIn = AttendanceLog::query()
+            ->where('user_id', $user->id)
+            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
+            ->whereBetween('created_at', [$noon->copy()->utc(), $dayEnd->copy()->utc()])
+            ->exists();
+
+        return response()->json([
+            'date' => $date->toDateString(),
+            'has_morning_in' => $hasMorningIn,
+            'has_afternoon_in' => $hasAfternoonIn,
+        ]);
+    }
+
+    /**
+     * Live preview for undertime: given a date and approved early-out time,
+     * return the scheduled shift end and computed undertime minutes/hours.
+     */
+    public function undertimePreview(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $tz = $this->attendanceTimezone();
+
+        $validated = $request->validate([
+            'date' => ['required', 'date'],
+            'undertime_time' => ['required', 'date_format:H:i'],
+        ]);
+
+        $date = Carbon::parse($validated['date'], $tz)->startOfDay();
+        $dateKey = $date->toDateString();
+
+        LeaveFilingRules::assertLeaveStartsAfterToday($dateKey);
+        LeaveFilingRules::assertRangeHasNoCompletedAttendance((int) $user->id, $dateKey, $dateKey);
+
+        $user = $this->refreshUserForScheduleCheck($user);
+        if ($user->working_schedule_id === null) {
+            throw ValidationException::withMessages([
+                'schedule' => ['No schedule assigned yet. Please contact the administrator.'],
+            ]);
+        }
+
+        $this->ensureNotHoliday($dateKey);
+        $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($dateKey, $tz));
+        $this->ensureNotRestDay($daySchedule);
+        if (! $daySchedule) {
+            throw ValidationException::withMessages([
+                'schedule' => ['No schedule assigned for the selected date.'],
+            ]);
+        }
+
+        $undertimeTime = trim((string) ($validated['undertime_time'] ?? ''));
+        if ($undertimeTime === '') {
+            throw ValidationException::withMessages([
+                'undertime_time' => ['Approved early-out time is required for undertime leave.'],
+            ]);
+        }
+
+        $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+        if (! $scheduledEnd) {
+            throw ValidationException::withMessages([
+                'schedule' => ['No schedule assigned yet. Please contact the administrator.'],
+            ]);
+        }
+
+        // Reuse strict time validation, including night shift / break window rules.
+        $earlyOut = $this->validateUndertimeTimeOrThrow($dateKey, $daySchedule, $undertimeTime, $tz);
+
+        $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $earlyOut, null);
+
+        return response()->json([
+            'date' => $dateKey,
+            'shift_end_time' => $scheduledEnd->copy()->timezone($tz)->format('H:i'),
+            'early_out_time' => substr($undertimeTime, 0, 5),
+            'undertime_minutes' => $undertimeMinutes,
+            'undertime_hours' => $undertimeMinutes !== null ? round($undertimeMinutes / 60, 2) : null,
+        ]);
+    }
+
+    /**
+     * Server-side paid vs unpaid preview (schedule-based billable days; matches approval deduction).
+     */
+    public function paidLeavePreview(Request $request): JsonResponse
+    {
+        $user = $this->refreshUserForScheduleCheck($request->user());
+
+        $validated = $request->validate([
+            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,undertime,half_day'],
+            'start_date' => ['required', 'date'],
+            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+            'except_leave_request_id' => ['nullable', 'integer'],
+        ]);
+
+        if (! empty($validated['except_leave_request_id'])) {
+            $owns = LeaveRequest::query()
+                ->whereKey((int) $validated['except_leave_request_id'])
+                ->where('user_id', $user->id)
+                ->exists();
+            if (! $owns) {
+                throw ValidationException::withMessages([
+                    'except_leave_request_id' => ['Invalid leave request for this user.'],
+                ]);
+            }
+        }
+
+        $end = $validated['end_date'] ?? $validated['start_date'];
+        $payload = $this->leaveCreditService->previewPaidLeaveForRequest(
+            $user,
+            (string) $validated['type'],
+            $validated['start_date'],
+            $end,
+            isset($validated['except_leave_request_id']) ? (int) $validated['except_leave_request_id'] : null
+        );
+
+        return response()->json($payload);
+    }
+
+    /**
+     * Check whether a date range includes scheduled rest days (for leave form validation).
+     */
+    public function validateLeaveDateRange(Request $request): JsonResponse
+    {
+        $user = $this->refreshUserForScheduleCheck($request->user());
+        $validated = $request->validate([
+            'start_date' => ['required', 'date'],
+            'end_date' => ['required', 'date', 'after_or_equal:start_date'],
+        ]);
+
+        $summary = LeaveScheduleSupport::summarizeRangeForUser(
+            $user,
+            $validated['start_date'],
+            $validated['end_date']
+        );
+
+        $message = null;
+        if (! $summary['valid']) {
+            $first = $summary['rest_day_hits'][0] ?? null;
+            $message = $first
+                ? LeaveScheduleSupport::formatRestDayViolationMessage(
+                    Carbon::parse($first['date'], LeaveScheduleSupport::attendanceTimezone())->startOfDay()
+                )
+                : 'Selected dates include scheduled rest days. Choose working days only.';
+            Log::info('leave.validate_range_blocked', [
+                'user_id' => $user->id,
+                'start_date' => $validated['start_date'],
+                'end_date' => $validated['end_date'],
+                'using_default_schedule' => $summary['using_default_schedule'] ?? false,
+            ]);
+        }
+
+        return response()->json(array_merge($summary, [
+            'message' => $message,
+        ]));
     }
 
     /**
@@ -232,20 +552,19 @@ class EmployeeLeaveController extends Controller
     public function apply(Request $request): JsonResponse
     {
         $user = $request->user();
-        $tz = $this->attendanceTimezone();
 
         $validated = $request->validate([
             'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,undertime,half_day'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'undertime_time' => ['nullable', 'date_format:H:i'],
+            // Reason is required only for undertime; for other types it is optional.
             'reason' => ['nullable', 'string', 'max:2000'],
             // For half-day leave we require which half of the day is worked.
             'half_type' => ['nullable', 'string', 'in:am,pm'],
         ]);
 
         $type = $validated['type'];
-        $startDateKey = Carbon::parse($validated['start_date'], $tz)->toDateString();
 
         if ($type === 'undertime') {
             // Undertime is time-based and must always be a single calendar date.
@@ -264,24 +583,9 @@ class EmployeeLeaveController extends Controller
                 ]);
             }
 
-            $user = $this->refreshUserForScheduleCheck($user);
-            if ($user->working_schedule_id === null) {
-                throw ValidationException::withMessages([
-                    'schedule' => ['No schedule assigned. Please contact the administrator.'],
-                ]);
-            }
-
-            $this->ensureNotHoliday($startDateKey);
-            $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($startDateKey, $tz));
-            $this->ensureNotRestDay($daySchedule);
-            if (! $daySchedule) {
-                // If rest day is allowed by policy, we still require a schedule entry for time validation.
-                throw ValidationException::withMessages([
-                    'schedule' => ['No schedule assigned for the selected date.'],
-                ]);
-            }
-
-            $this->validateUndertimeTimeOrThrow($startDateKey, $daySchedule, $undertimeTime, $tz);
+            // Previous schedule / attendance-based restrictions for undertime have
+            // been removed. We only ensure that a time value is provided; detailed
+            // schedule checks can be handled separately if needed.
         }
 
         if ($type === 'half_day') {
@@ -294,31 +598,101 @@ class EmployeeLeaveController extends Controller
                     'half_type' => ['Half day type (AM or PM) is required.'],
                 ]);
             }
+
+            // Previous attendance-based restrictions for half-day leave (e.g. only
+            // allowing AM/PM based on existing time-ins) have been removed so that
+            // employees can file half-day leave more freely.
         }
 
-        $leave = LeaveRequest::create([
-            'user_id' => $user->id,
-            'type' => $type,
-            'start_date' => $validated['start_date'],
-            'end_date' => $validated['end_date'],
-            'undertime_time' => $type === 'undertime' ? ($validated['undertime_time'] ?? null) : null,
-            'half_type' => $type === 'half_day' ? ($validated['half_type'] ?? null) : null,
-            'notes' => $type === 'undertime' ? trim((string) ($validated['reason'] ?? '')) : null,
-            'status' => LeaveRequest::STATUS_PENDING,
+        // Earliest start is tomorrow; no leave on dates that already have completed DTR.
+        LeaveFilingRules::assertLeaveStartsAfterToday($validated['start_date']);
+        LeaveFilingRules::assertRangeHasNoCompletedAttendance(
+            (int) $user->id,
+            $validated['start_date'],
+            $validated['end_date']
+        );
+        LeaveFilingRules::assertNoOverlappingPendingOrApprovedLeave(
+            (int) $user->id,
+            $validated['start_date'],
+            $validated['end_date']
+        );
+
+        try {
+            $this->payrollPeriodMutationGuard->assertMutableForUserWindow(
+                (int) $user->id,
+                Carbon::parse($validated['start_date'])->startOfDay(),
+                Carbon::parse($validated['end_date'])->startOfDay()
+            );
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $userForSchedule = $this->refreshUserForScheduleCheck($user);
+        LeaveScheduleSupport::assertRangeHasNoRestDays(
+            $userForSchedule,
+            $validated['start_date'],
+            $validated['end_date']
+        );
+
+        $this->leaveCreditService->assertSufficientForNewRequest(
+            $userForSchedule,
+            $type,
+            $validated['start_date'],
+            $validated['end_date'],
+            false
+        );
+
+        $chain = $this->hrApprovalChainResolver->getApprovalChain($user);
+        if ($chain === null) {
+            throw ValidationException::withMessages([
+                'user' => ['Your role cannot file leave requests.'],
+            ]);
+        }
+
+        $stage = $this->hrApprovalChainResolver->initialApprovalStage($user);
+        $reasonTrim = trim((string) ($validated['reason'] ?? ''));
+        $notes = $reasonTrim !== '' ? $reasonTrim : null;
+        $fileDetails = $type === 'undertime' ? $reasonTrim : ($notes ?? 'Leave request submitted.');
+
+        $leave = DB::transaction(function () use ($user, $type, $validated, $stage, $fileDetails, $notes) {
+            $leave = LeaveRequest::create([
+                'user_id' => $user->id,
+                'type' => $type,
+                'start_date' => $validated['start_date'],
+                'end_date' => $validated['end_date'],
+                'undertime_time' => $type === 'undertime' ? ($validated['undertime_time'] ?? null) : null,
+                'half_type' => $type === 'half_day' ? ($validated['half_type'] ?? null) : null,
+                'notes' => $notes,
+                'status' => LeaveRequest::STATUS_PENDING,
+                'approval_stage' => $stage,
+                'pending_approval' => true,
+                'filed_at' => now(),
+                'filed_by' => $user->id,
+            ]);
+
+            LeaveApprovalAudit::create([
+                'leave_request_id' => $leave->id,
+                'actor_id' => $user->id,
+                'employee_id' => $user->id,
+                'action' => 'file',
+                'details' => $fileDetails,
+                'approver_role' => $this->hrRoleResolver->resolve($user)->badgeLabel(),
+            ]);
+
+            return $leave;
+        });
+
+        $leave->load([
+            'user:id,name,profile_image,department_id,department,branch_id,company_id',
+            'filedBy:id,name,profile_image',
+            'firstApprover:id,name,profile_image',
+            'secondApprover:id,name,profile_image',
+            'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
         ]);
 
         return response()->json([
             'message' => 'Leave request submitted.',
-            'leave_request' => [
-                'id' => $leave->id,
-                'type' => $leave->type,
-                'start_date' => $leave->start_date->toDateString(),
-                'end_date' => $leave->end_date->toDateString(),
-                'undertime_time' => $leave->undertime_time ? substr((string) $leave->undertime_time, 0, 5) : null,
-                'notes' => $leave->notes,
-                'status' => $leave->status,
-                'created_at' => $leave->created_at?->toIso8601String(),
-            ],
+            'leave_request' => $this->mapEmployeeLeaveRow($leave),
         ], 201);
     }
 
@@ -333,24 +707,27 @@ class EmployeeLeaveController extends Controller
             ->firstOrFail();
 
         $validated = $request->validate([
-            'document' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:2048'],
+            'document' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png,doc,docx', 'max:10240'],
         ]);
 
-        $file = $validated['document'];
-
-        if ($leave->document_path) {
-            Storage::disk('public')->delete($leave->document_path);
+        $this->normalizeLeaveDocuments($leave);
+        $paths = $leave->document_paths ?? [];
+        if (count($paths) >= 5) {
+            throw ValidationException::withMessages([
+                'document' => ['You can attach up to 5 files.'],
+            ]);
         }
 
-        $path = $file->store('leave-documents', 'public');
-
-        $leave->document_path = $path;
+        $path = $validated['document']->store('leave-documents', 'public');
+        $paths[] = $path;
+        $leave->document_paths = $paths;
         $leave->save();
+
+        $leave->refresh();
 
         return response()->json([
             'message' => 'Document uploaded.',
-            'document_url' => Storage::url($path),
+            ...$this->documentFieldsForLeave($leave),
         ]);
     }
 }
-

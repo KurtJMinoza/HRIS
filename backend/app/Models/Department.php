@@ -13,9 +13,16 @@ class Department extends Model
 
     protected $fillable = [
         'name',
+        'branch_id',
+        'office_location',
         'logo',
         'department_head_id',
     ];
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
+    }
 
     public function departmentHead(): BelongsTo
     {
@@ -25,5 +32,15 @@ class Department extends Model
     public function employees(): HasMany
     {
         return $this->hasMany(User::class, 'department_id');
+    }
+
+    public function benefitCatalogs(): HasMany
+    {
+        return $this->hasMany(BenefitCatalog::class, 'department_id');
+    }
+
+    public function teams(): HasMany
+    {
+        return $this->hasMany(Team::class, 'department_id');
     }
 }

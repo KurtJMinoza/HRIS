@@ -6,6 +6,7 @@ use App\Models\AttendanceLog;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 
 class OvertimeService
@@ -13,15 +14,8 @@ class OvertimeService
     /**
      * Compute overtime for a given user and date based on attendance logs and schedule.
      *
-     * Rule:
-     * - No OT if:
-     *   - No schedule with an out time
-     *   - No clock-in
-     *   - No clock-out
-     *   - Employee is on approved leave covering this date
-     * - Otherwise:
-     *   - OT starts 1 hour after scheduled end.
-     *   - Only minutes after that 1-hour mark are counted as overtime.
+     * OT = any work minutes after the scheduled shift end. No buffer is applied;
+     * approved OT duration is the source of truth for payroll.
      *
      * @return array{
      *   date: string,
@@ -35,7 +29,6 @@ class OvertimeService
     {
         $dateKey = $date->toDateString();
 
-        // Block overtime when there is an approved leave covering this date.
         $hasApprovedLeave = LeaveRequest::query()
             ->where('user_id', $user->id)
             ->where('status', LeaveRequest::STATUS_APPROVED)
@@ -47,19 +40,19 @@ class OvertimeService
             return null;
         }
 
-        $schedule = $user->schedule;
+        $user->loadMissing('workingSchedule');
+        $schedule = EmployeeScheduleResolver::resolve($user);
         if (! is_array($schedule) || $schedule === []) {
             return null;
         }
 
-        $dayKey = AttendanceControllerDayKeys::forDate($date);
+        $dayKey = EmployeeScheduleResolver::dayKeyForDate($date);
         $daySchedule = $schedule[$dayKey] ?? null;
 
         if (! is_array($daySchedule) || empty($daySchedule['out'])) {
             return null;
         }
 
-        // Require at least one clock-in and one clock-out for the date.
         $logs = AttendanceLog::query()
             ->where('user_id', $user->id)
             ->whereDate('created_at', $dateKey)
@@ -85,19 +78,13 @@ class OvertimeService
             return null;
         }
 
-        // Scheduled end for the day (per schedule; supports night shift).
-        $scheduledEnd = Carbon::parse($dateKey . ' ' . $daySchedule['out']);
+        $scheduledEnd = Carbon::parse($dateKey.' '.$daySchedule['out']);
 
-        $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
-            ? (int) $daySchedule['overtime_buffer_minutes']
-            : (int) config('attendance.overtime_buffer_minutes', 15);
-        $overtimeStart = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
-
-        if ($lastClockOut->lessThanOrEqualTo($overtimeStart)) {
+        if ($lastClockOut->lessThanOrEqualTo($scheduledEnd)) {
             return null;
         }
 
-        $minutes = (int) $overtimeStart->diffInMinutes($lastClockOut);
+        $minutes = (int) $scheduledEnd->diffInMinutes($lastClockOut);
         if ($minutes <= 0) {
             return null;
         }
@@ -131,8 +118,7 @@ class OvertimeService
             ->whereDate('date', $dateKey)
             ->first();
 
-        // If there is no overtime for this date, we may need to clear a pending record,
-        // but we keep approved/rejected records untouched.
+        // If there is no computed overtime from actual logs, sync actuals on DB rows but keep status.
         if ($data === null) {
             if ($existing && $existing->status === Overtime::STATUS_PENDING) {
                 $existing->fill([
@@ -145,13 +131,38 @@ class OvertimeService
                     $existing->updated_by = $admin->id;
                 }
                 $existing->save();
+            } elseif ($existing && $existing->status === Overtime::STATUS_APPROVED) {
+                $lastOut = $clockOutLog->created_at->timezone(config('attendance.timezone', config('app.timezone', 'Asia/Manila')));
+                $existing->fill([
+                    'time_out' => $lastOut->format('H:i:s'),
+                ]);
+                if ($admin) {
+                    $existing->updated_by = $admin->id;
+                }
+                $existing->save();
             }
 
             return $existing;
         }
 
-        // Do not override a finalized (approved/rejected) overtime record.
-        if ($existing && $existing->status !== Overtime::STATUS_PENDING) {
+        // Approved: record actual clock-out time for audit but preserve the approved
+        // computed_minutes/computed_hours — those are the approved duration and must not
+        // be overwritten by the buffer-affected rendered calculation.
+        if ($existing && $existing->status === Overtime::STATUS_APPROVED) {
+            $payloadApproved = [
+                'schedule_end' => $data['schedule_end']->format('H:i:s'),
+                'time_out' => $data['time_out']->format('H:i:s'),
+            ];
+            if ($admin) {
+                $payloadApproved['updated_by'] = $admin->id;
+            }
+            $existing->fill($payloadApproved);
+            $existing->save();
+
+            return $existing;
+        }
+
+        if ($existing && $existing->status === Overtime::STATUS_REJECTED) {
             return $existing;
         }
 
@@ -179,17 +190,3 @@ class OvertimeService
         );
     }
 }
-
-/**
- * Small helper to avoid duplicating the DAY_KEYS constant in multiple services.
- */
-final class AttendanceControllerDayKeys
-{
-    private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-
-    public static function forDate(Carbon $date): string
-    {
-        return self::DAY_KEYS[(int) $date->format('w')];
-    }
-}
-
