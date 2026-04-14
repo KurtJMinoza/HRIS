@@ -1,0 +1,1070 @@
+import { useEffect, useState, useCallback, useMemo } from 'react'
+import { motion as Motion } from 'framer-motion'
+import {
+  Loader2,
+  RefreshCw,
+  Plus,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Circle,
+  Minus,
+  User,
+  CalendarDays,
+  LogIn,
+  LogOut,
+  Printer,
+  ChevronRight,
+  Inbox,
+  Sparkles,
+  Search,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+} from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/components/ui/use-toast'
+import { getMyPresenceFilings, submitPresenceFiling } from '@/api'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
+import { AnimatedSection } from '@/components/ui/AnimatedSection'
+import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
+import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  ADMIN_FORM_DIALOG_BODY_CLASS,
+  ADMIN_FORM_DIALOG_DESC_CLASS,
+  ADMIN_FORM_DIALOG_FOOTER_CLASS,
+  ADMIN_FORM_DIALOG_HEADER_INNER_CLASS,
+  ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS,
+  ADMIN_FORM_DIALOG_MAX_W_MD,
+  ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS,
+  ADMIN_FORM_DIALOG_TITLE_CLASS,
+  adminFormDialogContentClass,
+} from '@/lib/adminFormDialogStyles'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
+  issueLabel,
+  remarksUserText,
+  reviewStatusSortValue,
+  formatTimeOnly,
+} from '@/lib/presenceFilingTable'
+import {
+  EmployeeAvatarNameRoleCell,
+  ReviewStatusTableBadge,
+  RemarksPreviewCell,
+  IssueTypeCell,
+  TimeCell,
+} from '@/components/presenceFiling/CorrectionTableCells'
+
+const ISSUE_KIND_OPTIONS = [
+  { value: 'missing_in', label: 'Missing Clock In' },
+  { value: 'missing_out', label: 'Missing Clock Out' },
+  { value: 'both', label: 'Both (Clock In and Clock Out)' },
+]
+
+function getLocalDateStr() {
+  const n = new Date()
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
+}
+
+/** e.g. Wed, Mar 24, 2026 */
+function formatAttendanceDate(isoDate) {
+  if (!isoDate) return '—'
+  try {
+    const d = new Date(`${isoDate}T12:00:00`)
+    return d.toLocaleDateString('en-PH', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  } catch {
+    return isoDate
+  }
+}
+
+/** Short date for dense tables (list view). */
+function formatTableDateShort(isoDate) {
+  if (!isoDate) return '—'
+  try {
+    const d = new Date(`${isoDate}T12:00:00`)
+    return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+  } catch {
+    return isoDate
+  }
+}
+
+function formatDateTime(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function formatApproverLine(step) {
+  if (!step || typeof step !== 'object') return '—'
+  if (step.key === 'submitted') {
+    const n = step.submitter_name
+    return n ? `${n} · Requester` : '—'
+  }
+  const name = step.approver_name
+  const role = step.approver_role_label
+  if (name && role) return `${name} · ${role}`
+  if (role) return role
+  if (name) return name
+  return '—'
+}
+
+function humanStepStatus(status) {
+  switch (status) {
+    case 'completed':
+      return 'Completed'
+    case 'current':
+      return 'In progress'
+    case 'pending':
+      return 'Pending'
+    case 'rejected':
+      return 'Rejected'
+    case 'skipped':
+      return 'Skipped'
+    default:
+      return status ? String(status) : '—'
+  }
+}
+
+/** Large status pill with icon — employee-facing */
+function EmployeeStatusPill({ displayStatus, status }) {
+  const ds = displayStatus || ''
+  const isRejected = status === 'rejected' || ds === 'Rejected'
+  const isApproved = status === 'approved' || ds === 'HR Approved'
+
+  if (isRejected) {
+    return (
+      <span
+        className="inline-flex items-center gap-2 rounded-full border border-red-200/90 bg-gradient-to-br from-red-50 to-rose-50 px-3.5 py-1.5 text-sm font-semibold text-red-900 shadow-sm ring-1 ring-red-100 dark:border-red-900/50 dark:from-red-950/40 dark:to-rose-950/30 dark:text-red-100 dark:ring-red-900/40"
+      >
+        <XCircle className="size-4 shrink-0" aria-hidden />
+        Rejected
+      </span>
+    )
+  }
+  if (isApproved) {
+    return (
+      <span
+        className="inline-flex items-center gap-2 rounded-full border border-emerald-200/90 bg-gradient-to-br from-emerald-50 to-teal-50 px-3.5 py-1.5 text-sm font-semibold text-emerald-950 shadow-sm ring-1 ring-emerald-100 dark:border-emerald-900/40 dark:from-emerald-950/45 dark:to-teal-950/25 dark:text-emerald-50 dark:ring-emerald-900/30"
+      >
+        <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+        Approved
+      </span>
+    )
+  }
+  return (
+    <span
+      className="inline-flex max-w-[min(100%,14rem)] items-center gap-2 rounded-full border border-amber-200/90 bg-gradient-to-br from-amber-50 to-orange-50/80 px-3.5 py-1.5 text-sm font-semibold text-amber-950 shadow-sm ring-1 ring-amber-100 dark:border-amber-900/50 dark:from-amber-950/40 dark:to-orange-950/20 dark:text-amber-50 dark:ring-amber-900/40"
+    >
+      <Clock className="size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+      <span className="line-clamp-2 leading-tight">{ds || 'Pending'}</span>
+    </span>
+  )
+}
+
+function ApprovalTimeline({ steps }) {
+  if (!Array.isArray(steps) || steps.length === 0) return null
+  return (
+    <ol className="relative ml-0.5 space-y-0 border-l-2 border-emerald-200/70 pl-6 dark:border-emerald-900/50">
+      {steps.map((s, idx) => {
+        const isLast = idx === steps.length - 1
+        const icon =
+          s.status === 'completed' ? (
+            <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+          ) : s.status === 'rejected' ? (
+            <XCircle className="size-4 text-destructive" aria-hidden />
+          ) : s.status === 'current' ? (
+            <Clock className="size-4 text-amber-600 dark:text-amber-400" aria-hidden />
+          ) : s.status === 'skipped' ? (
+            <Minus className="size-4 text-muted-foreground" aria-hidden />
+          ) : (
+            <Circle className="size-3.5 text-muted-foreground" aria-hidden />
+          )
+        return (
+          <li key={s.key || `step-${idx}`} className={cn('relative pb-5', isLast && 'pb-0')}>
+            <span className="absolute -left-[1.4rem] top-0 flex size-8 items-center justify-center rounded-full border-2 border-white bg-white shadow-md ring-2 ring-emerald-500/15 dark:border-slate-800 dark:bg-slate-900">
+              {icon}
+            </span>
+            <div className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950/50">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{s.label}</p>
+              <p className="mt-1 flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
+                <User className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                {formatApproverLine(s)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{humanStepStatus(s.status)}</p>
+              {s.acted_at ? (
+                <time className="mt-1 block text-xs tabular-nums text-muted-foreground" dateTime={s.acted_at}>
+                  {formatDateTime(s.acted_at)}
+                </time>
+              ) : null}
+              {s.remarks && String(s.remarks).trim() ? (
+                <p className="mt-2 rounded-lg border border-border/50 bg-muted/40 px-3 py-2 text-xs leading-relaxed dark:bg-white/5">
+                  {s.remarks}
+                </p>
+              ) : null}
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+function AttendanceTimesBlock({ timeIn, timeOut }) {
+  const inLabel = timeIn
+    ? new Date(timeIn).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
+    : '—'
+  const outLabel = timeOut
+    ? new Date(timeOut).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
+    : '—'
+  return (
+    <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
+      <div className="rounded-2xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50/90 to-white p-4 dark:border-emerald-900/40 dark:from-emerald-950/30">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800/80">Time in</p>
+            <p className="mt-1 font-mono text-xl font-bold tabular-nums">{inLabel}</p>
+          </div>
+          <LogIn className="size-8 text-emerald-600/80" aria-hidden />
+        </div>
+      </div>
+      <div className="rounded-2xl border border-sky-200/60 bg-gradient-to-br from-sky-50/90 to-white p-4 dark:border-sky-900/40 dark:from-sky-950/30">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-sky-800/80">Time out</p>
+            <p className="mt-1 font-mono text-xl font-bold tabular-nums">{outLabel}</p>
+          </div>
+          <LogOut className="size-8 text-sky-600/80" aria-hidden />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function EmployeeCorrectionRequests() {
+  const { toast } = useToast()
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [selected, setSelected] = useState(null)
+
+  const [fileOpen, setFileOpen] = useState(false)
+  const [fileDate, setFileDate] = useState(() => getLocalDateStr())
+  const [fileIssueKind, setFileIssueKind] = useState('missing_in')
+  const [fileTimeIn, setFileTimeIn] = useState('')
+  const [fileTimeOut, setFileTimeOut] = useState('')
+  const [fileRemarks, setFileRemarks] = useState('')
+  const [fileSubmitting, setFileSubmitting] = useState(false)
+
+  const [listSearch, setListSearch] = useState('')
+  const [sortKey, setSortKey] = useState('filed_at')
+  const [sortDir, setSortDir] = useState('desc')
+
+  const showFileTimeIn = fileIssueKind === 'missing_in' || fileIssueKind === 'both'
+  const showFileTimeOut = fileIssueKind === 'missing_out' || fileIssueKind === 'both'
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await getMyPresenceFilings()
+      setItems(Array.isArray(res?.presence_filings) ? res.presence_filings : [])
+    } catch (e) {
+      toast({ title: 'Failed to load', description: e.message, variant: 'error' })
+      setItems([])
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const filteredSorted = useMemo(() => {
+    let list = [...items]
+    const q = listSearch.trim().toLowerCase()
+    if (q) {
+      list = list.filter(
+        (row) =>
+          String(row.id).includes(q) ||
+          (row.date || '').toLowerCase().includes(q) ||
+          remarksUserText(row.remarks || '').toLowerCase().includes(q) ||
+          (row.display_status || '').toLowerCase().includes(q) ||
+          issueLabel(row.issue_type).toLowerCase().includes(q) ||
+          (row.employee_name || '').toLowerCase().includes(q) ||
+          (row.employee_position || '').toLowerCase().includes(q) ||
+          (row.employee_role_label || '').toLowerCase().includes(q)
+      )
+    }
+    const dir = sortDir === 'asc' ? 1 : -1
+    const key = sortKey
+    list.sort((a, b) => {
+      let va
+      let vb
+      switch (key) {
+        case 'employee_name':
+          va = (a.employee_name || '').toLowerCase()
+          vb = (b.employee_name || '').toLowerCase()
+          break
+        case 'date':
+          va = a.date || ''
+          vb = b.date || ''
+          break
+        case 'issue_type':
+          va = a.issue_type || ''
+          vb = b.issue_type || ''
+          break
+        case 'review_status':
+          va = reviewStatusSortValue(a)
+          vb = reviewStatusSortValue(b)
+          break
+        case 'time_in': {
+          const ta = a.requested_time_in ?? a.time_in
+          const tb = b.requested_time_in ?? b.time_in
+          va = ta ? new Date(ta).getTime() : 0
+          vb = tb ? new Date(tb).getTime() : 0
+          break
+        }
+        case 'time_out': {
+          const ta = a.requested_time_out ?? a.time_out
+          const tb = b.requested_time_out ?? b.time_out
+          va = ta ? new Date(ta).getTime() : 0
+          vb = tb ? new Date(tb).getTime() : 0
+          break
+        }
+        case 'filed_at':
+          va = a.filed_at ? new Date(a.filed_at).getTime() : 0
+          vb = b.filed_at ? new Date(b.filed_at).getTime() : 0
+          break
+        case 'remarks':
+          va = (remarksUserText(a.remarks || '') || '').toLowerCase()
+          vb = (remarksUserText(b.remarks || '') || '').toLowerCase()
+          break
+        default:
+          va = 0
+          vb = 0
+      }
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+    return list
+  }, [items, listSearch, sortKey, sortDir])
+
+  function toggleSort(key) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
+
+  function SortHead({ col, label }) {
+    const active = sortKey === col
+    const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="-ml-2 h-9 gap-1.5 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+        onClick={() => toggleSort(col)}
+      >
+        {label}
+        <Icon className={cn('size-3.5', active ? 'text-primary opacity-100' : 'opacity-50')} />
+      </Button>
+    )
+  }
+
+  function openDetail(row) {
+    setSelected(row)
+    setDetailOpen(true)
+  }
+
+  function openFileDialog() {
+    setFileDate(getLocalDateStr())
+    setFileIssueKind('missing_in')
+    setFileTimeIn('')
+    setFileTimeOut('')
+    setFileRemarks('')
+    setFileOpen(true)
+  }
+
+  function handleFileIssueKindChange(next) {
+    setFileIssueKind(next)
+    if (next === 'missing_in') setFileTimeOut('')
+    else if (next === 'missing_out') setFileTimeIn('')
+  }
+
+  async function submitFile() {
+    if (!fileDate) {
+      toast({ title: 'Date required', description: 'Select the attendance date.', variant: 'error' })
+      return
+    }
+    const ti = String(fileTimeIn || '').trim()
+    const to = String(fileTimeOut || '').trim()
+    const needIn = fileIssueKind === 'missing_in' || fileIssueKind === 'both'
+    const needOut = fileIssueKind === 'missing_out' || fileIssueKind === 'both'
+    if (needIn && !ti) {
+      toast({
+        title: 'Time required',
+        description: 'Enter your actual clock in time.',
+        variant: 'error',
+      })
+      return
+    }
+    if (needOut && !to) {
+      toast({
+        title: 'Time required',
+        description: 'Enter your actual clock out time.',
+        variant: 'error',
+      })
+      return
+    }
+    if (needIn && !/^\d{2}:\d{2}$/.test(ti)) {
+      toast({ title: 'Invalid time', description: 'Use a valid clock in time.', variant: 'error' })
+      return
+    }
+    if (needOut && !/^\d{2}:\d{2}$/.test(to)) {
+      toast({ title: 'Invalid time', description: 'Use a valid clock out time.', variant: 'error' })
+      return
+    }
+    if (!fileRemarks.trim()) {
+      toast({ title: 'Remarks required', description: 'Explain why you need this correction.', variant: 'error' })
+      return
+    }
+    try {
+      setFileSubmitting(true)
+      await submitPresenceFiling({
+        date: fileDate,
+        issue_kind: fileIssueKind,
+        time_in: needIn ? ti : undefined,
+        time_out: needOut ? to : undefined,
+        remarks: fileRemarks.trim(),
+      })
+      toast({
+        title: 'Request submitted',
+        description: 'Your correction request is pending approval.',
+        variant: 'success',
+      })
+      setFileOpen(false)
+      await load()
+    } catch (e) {
+      toast({ title: 'Failed', description: e.message, variant: 'error' })
+    } finally {
+      setFileSubmitting(false)
+    }
+  }
+
+  return (
+    <Motion.div
+      className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full space-y-6 overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+    >
+      <div className="mx-auto w-full max-w-full space-y-8 px-1 @sm:px-0">
+        {/* Hero */}
+        <header className="flex flex-col gap-6 border-b border-slate-200/80 pb-8 dark:border-slate-800 @lg:flex-row @lg:items-end @lg:justify-between">
+          <div className="max-w-2xl space-y-3">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+              My requests
+            </p>
+            <h1 className="hr-page-title text-slate-900 dark:text-slate-50">
+              My Correction Requests
+            </h1>
+            <p className="text-base leading-relaxed text-slate-600 dark:text-slate-400">
+              Track all your attendance correction requests and their approval status.
+          </p>
+        </div>
+          <div className="flex w-full flex-wrap items-center gap-3 @lg:w-auto @lg:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 flex-1 gap-2 rounded-xl border-slate-200 bg-white @lg:flex-initial dark:border-slate-700 dark:bg-slate-950"
+              onClick={() => load()}
+              disabled={loading}
+            >
+            {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Refresh
+          </Button>
+            <Button
+              type="button"
+              className="h-11 flex-1 gap-2 rounded-xl bg-black px-5 text-white shadow-lg shadow-black/20 ring-1 ring-black/20 @lg:flex-initial dark:bg-black dark:text-white dark:ring-white/15"
+              onClick={openFileDialog}
+            >
+              <Plus className="size-4" />
+              File new correction
+          </Button>
+        </div>
+        </header>
+
+        {/* Main card */}
+        <Card className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xl shadow-slate-200/50 ring-1 ring-slate-100/80 dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-black/40 dark:ring-slate-800/50">
+          <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-6 py-6 dark:border-slate-800 dark:from-slate-900/40 dark:to-slate-950/20">
+            <CardTitle className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+              Your filings
+            </CardTitle>
+            <CardDescription className="text-base text-slate-600 dark:text-slate-400">
+              Each row is one request. Open a row to see the full approval timeline and remarks.
+          </CardDescription>
+        </CardHeader>
+          <CardContent className="p-0">
+          {loading ? (
+              <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-500">
+                <Loader2 className="size-10 animate-spin text-emerald-600" />
+                <p className="text-sm font-medium">Loading your requests…</p>
+            </div>
+          ) : items.length === 0 ? (
+              <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
+                <div className="mb-6 flex size-24 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40">
+                  <Inbox className="size-12 text-slate-400" aria-hidden />
+                </div>
+                <div className="flex items-center gap-2 text-xl font-semibold text-slate-900 dark:text-slate-50">
+                  <Sparkles className="size-6 text-amber-500" aria-hidden />
+                  Nothing here yet
+                </div>
+                <p className="mt-3 max-w-md text-sm leading-relaxed text-slate-600 dark:text-slate-400">
+                  You haven&apos;t filed any corrections yet. Tap <strong className="text-foreground">File correction</strong>{' '}
+                  below to submit a request for a past date.
+                </p>
+                <Button
+                  type="button"
+                  className="mt-8 rounded-xl bg-black px-6 text-white hover:bg-black/90 dark:bg-black"
+                  onClick={openFileDialog}
+                >
+                  <Plus className="size-4" />
+                  File correction
+                </Button>
+              </div>
+            ) : filteredSorted.length === 0 && listSearch.trim() ? (
+              <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+                <p className="text-lg font-semibold text-slate-900 dark:text-slate-50">No matching requests</p>
+                <p className="mt-2 max-w-md text-sm text-slate-600 dark:text-slate-400">
+                  Try a different keyword or clear the search box.
+                </p>
+                <Button type="button" variant="outline" className="mt-6 rounded-xl" onClick={() => setListSearch('')}>
+                  Clear search
+                </Button>
+              </div>
+            ) : (
+              <AnimatedSection staggerChildren={0.03} duration={0.4}>
+                <div className="bg-muted/15 px-4 py-4 dark:bg-muted/10 @sm:px-6">
+                  <div className="relative max-w-xl">
+                    <Search
+                      className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <Input
+                      type="search"
+                      value={listSearch}
+                      onChange={(e) => setListSearch(e.target.value)}
+                      placeholder="Search employee, date, status, issue type, remarks…"
+                      className="h-11 rounded-xl border-slate-200/90 bg-white pl-10 pr-4 dark:border-slate-700 dark:bg-slate-950/45"
+                      aria-label="Search correction requests"
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Showing <span className="font-semibold tabular-nums text-foreground">{filteredSorted.length}</span>
+                    {filteredSorted.length === 1 ? ' request' : ' requests'}
+                    {listSearch.trim() ? ' · filtered' : ''}. Use column headers to sort.
+                  </p>
+                </div>
+
+                {/* Desktop / tablet: scrollable table; Remarks + Date filed only at xl+ */}
+                <div className="hidden w-full min-w-0 touch-pan-x overflow-x-auto bg-card lg:block">
+                  <Table className="w-full min-w-[720px] xl:min-w-[980px]">
+                    <TableHeader className="[&_tr]:border-b-0">
+                      <TableRow className="border-0 bg-muted/40 dark:bg-muted/25">
+                        <TableHead className="min-w-[200px] py-3.5 pl-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <SortHead col="employee_name" label="Employee" />
+                        </TableHead>
+                        <TableHead className="min-w-[7.5rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <SortHead col="date" label="Date" />
+                        </TableHead>
+                        <TableHead className="min-w-[9rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <SortHead col="issue_type" label="Issue type" />
+                        </TableHead>
+                        <TableHead className="min-w-[5.5rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <SortHead col="time_in" label="Time in" />
+                        </TableHead>
+                        <TableHead className="min-w-[5.5rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <SortHead col="time_out" label="Time out" />
+                        </TableHead>
+                        <TableHead className="min-w-[10rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <SortHead col="review_status" label="Status" />
+                        </TableHead>
+                        <TableHead className="hidden min-w-[12rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:table-cell">
+                          <SortHead col="remarks" label="Remarks" />
+                        </TableHead>
+                        <TableHead className="hidden min-w-[9rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:table-cell">
+                          <SortHead col="filed_at" label="Date filed" />
+                        </TableHead>
+                        <TableHead className="w-[7.5rem] min-w-[7.5rem] py-3.5 pr-5 text-right text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:w-[8rem] xl:min-w-[8rem]">
+                          Actions
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredSorted.map((row, rowIdx) => {
+                        const empName = row.employee_name || row.requested_by_name || 'You'
+                        const empImg = row.employee_profile_image_url || row.requested_by_profile_image_url
+                        const empRoleLabel = row.employee_role_label ?? row.requested_by_role_label
+                        const empHrRole = row.employee_hr_role ?? row.requested_by_hr_role
+                        const tIn = row.requested_time_in ?? row.time_in
+                        const tOut = row.requested_time_out ?? row.time_out
+                        return (
+                          <TableRow
+                            key={row.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openDetail(row)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                openDetail(row)
+                              }
+                            }}
+                            className={cn(
+                              'cursor-pointer transition-colors hover:bg-muted/25',
+                              rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10'
+                            )}
+                          >
+                            <TableCell className="pl-5 align-top">
+                              <EmployeeAvatarNameRoleCell
+                                name={empName}
+                                imageUrl={empImg}
+                                profileTo={null}
+                                compact={false}
+                                roleLabel={empRoleLabel}
+                                hrRole={empHrRole}
+                              />
+                            </TableCell>
+                            <TableCell className="align-middle tabular-nums text-foreground">
+                              {row.date ? formatTableDateShort(row.date) : '—'}
+                            </TableCell>
+                            <TableCell className="align-top">
+                              <IssueTypeCell issueType={row.issue_type} reasonCode={row.reason_code} />
+                            </TableCell>
+                            <TableCell className="align-middle">
+                              <TimeCell iso={tIn} />
+                            </TableCell>
+                            <TableCell className="align-middle">
+                              <TimeCell iso={tOut} />
+                            </TableCell>
+                            <TableCell className="align-top">
+                              <ReviewStatusTableBadge item={row} />
+                            </TableCell>
+                            <TableCell
+                              className="hidden max-w-[14rem] align-top xl:table-cell"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <RemarksPreviewCell text={row.remarks} />
+                            </TableCell>
+                            <TableCell className="hidden align-middle text-sm tabular-nums text-foreground xl:table-cell">
+                              {row.filed_at ? formatDateTime(row.filed_at) : '—'}
+                            </TableCell>
+                            <TableCell className="pr-5 text-right align-middle" onClick={(e) => e.stopPropagation()}>
+                              <AdminDataTableActions
+                                onView={() => openDetail(row)}
+                                viewAriaLabel="View correction request details"
+                              />
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Mobile + tablet: card layout (full table from lg) */}
+                <div className="space-y-4 p-4 @sm:px-6 lg:hidden">
+                  {filteredSorted.map((row) => {
+                    const tIn = row.requested_time_in ?? row.time_in
+                    const tOut = row.requested_time_out ?? row.time_out
+                    return (
+                      <button
+                        key={row.id}
+                        type="button"
+                        onClick={() => openDetail(row)}
+                        className="w-full rounded-2xl border border-border/80 bg-card p-4 text-left shadow-sm transition hover:border-primary/25 hover:shadow-md active:scale-[0.99]"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-mono text-xs font-semibold text-muted-foreground">#{row.id}</p>
+                            <p className="mt-1 text-base font-semibold text-foreground">
+                              {formatAttendanceDate(row.date)}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Filed {row.filed_at ? formatDateTime(row.filed_at) : '—'}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-start gap-2">
+                            <ReviewStatusTableBadge item={row} />
+                            <ChevronRight className="size-5 text-muted-foreground" aria-hidden />
+                          </div>
+                        </div>
+                        <div className="mt-3">
+                          <EmployeeAvatarNameRoleCell
+                            name={row.employee_name || 'You'}
+                            imageUrl={row.employee_profile_image_url}
+                            profileTo={null}
+                            compact
+                            roleLabel={row.employee_role_label ?? row.requested_by_role_label}
+                            hrRole={row.employee_hr_role ?? row.requested_by_hr_role}
+                          />
+                        </div>
+                        <div className="mt-3">
+                          <IssueTypeCell issueType={row.issue_type} reasonCode={row.reason_code} />
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <p className="font-semibold uppercase tracking-wide text-muted-foreground">Time in</p>
+                            <div className="mt-0.5">
+                              <TimeCell iso={tIn} />
+                            </div>
+                          </div>
+                          <div>
+                            <p className="font-semibold uppercase tracking-wide text-muted-foreground">Time out</p>
+                            <div className="mt-0.5">
+                              <TimeCell iso={tOut} />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-3 border-t border-border/60 pt-3">
+                          <RemarksPreviewCell text={row.remarks} />
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </AnimatedSection>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+
+      <Dialog open={fileOpen} onOpenChange={setFileOpen}>
+        <DialogContent
+          showCloseButton
+          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_MD)}
+        >
+          <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
+            <div className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
+              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>File correction request</DialogTitle>
+              <DialogDescription className={ADMIN_FORM_DIALOG_DESC_CLASS}>
+                Select issue type first — only the time fields that apply are shown. Remarks are required.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <div className={ADMIN_FORM_DIALOG_BODY_CLASS}>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="emp-corr-date">Attendance date *</Label>
+                <Input
+                  id="emp-corr-date"
+                  type="date"
+                  value={fileDate}
+                  onChange={(e) => setFileDate(e.target.value)}
+                  className="h-11 rounded-lg"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="emp-corr-issue">Issue type *</Label>
+                <Select value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
+                  <SelectTrigger id="emp-corr-issue" className="h-11 rounded-lg">
+                    <SelectValue placeholder="Select issue" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ISSUE_KIND_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Motion.div
+                layout
+                className={cn(
+                  'grid gap-4',
+                  showFileTimeIn && showFileTimeOut ? 'grid-cols-1 @sm:grid-cols-2' : 'grid-cols-1'
+                )}
+                transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
+              >
+                {showFileTimeIn && (
+                  <Motion.div
+                    key="emp-corr-time-in"
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="space-y-2"
+                  >
+                    <Label htmlFor="emp-corr-time-in">Actual Clock In Time *</Label>
+                    <Input
+                      id="emp-corr-time-in"
+                      type="time"
+                      step={60}
+                      className="h-11 rounded-lg"
+                      value={fileTimeIn}
+                      onChange={(e) => setFileTimeIn(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">Enter the actual time you clocked in.</p>
+                  </Motion.div>
+                )}
+                {showFileTimeOut && (
+                  <Motion.div
+                    key="emp-corr-time-out"
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="space-y-2"
+                  >
+                    <Label htmlFor="emp-corr-time-out">Actual Clock Out Time *</Label>
+                    <Input
+                      id="emp-corr-time-out"
+                      type="time"
+                      step={60}
+                      className="h-11 rounded-lg"
+                      value={fileTimeOut}
+                      onChange={(e) => setFileTimeOut(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">Enter the actual time you clocked out.</p>
+                  </Motion.div>
+                )}
+              </Motion.div>
+              <div className="space-y-2">
+                <Label htmlFor="emp-corr-remarks">Remarks *</Label>
+                <Textarea
+                  id="emp-corr-remarks"
+                  value={fileRemarks}
+                  onChange={(e) => setFileRemarks(e.target.value)}
+                  rows={4}
+                  placeholder="Explain what needs to be corrected and why…"
+                  className="min-h-[100px] resize-y rounded-lg"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+            <Button type="button" variant="outline" onClick={() => setFileOpen(false)} disabled={fileSubmitting}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}
+              onClick={submitFile}
+              disabled={fileSubmitting}
+            >
+              {fileSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Submit request'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Details */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto rounded-2xl border-slate-200 p-0 @sm:max-w-2xl dark:border-slate-800">
+          {selected && (
+            <>
+              <DialogHeader className="border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white px-6 py-6 text-left dark:border-slate-800 dark:from-slate-900 dark:to-slate-950">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Correction request</p>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <DialogTitle className="font-mono text-3xl font-black tracking-tight text-slate-900 dark:text-slate-50">
+                    #{selected.id}
+                  </DialogTitle>
+                  <EmployeeStatusPill displayStatus={selected.display_status} status={selected.status} />
+                </div>
+                <DialogDescription className="mt-3 text-left text-sm text-slate-600 dark:text-slate-400">
+                  Summary, requested times, attendance times, remarks, and approval progress.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-5 px-6 py-6">
+                <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
+                  <h3 className="mb-3 flex items-center gap-2 border-b border-slate-100 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 dark:border-slate-800">
+                    <CalendarDays className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                    Summary
+                  </h3>
+                  <div className="grid grid-cols-1 gap-3 text-sm @sm:grid-cols-2">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Attendance date</p>
+                      <p className="mt-0.5 font-semibold tabular-nums text-slate-900 dark:text-slate-50">
+                        {selected.date ? formatAttendanceDate(selected.date) : '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Issue type</p>
+                      <div className="mt-1">
+                        <Badge variant="secondary" className="rounded-lg px-3 py-1 text-xs font-medium">
+                          {issueLabel(selected.issue_type)}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Requested time start</p>
+                      <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-slate-900 dark:text-slate-50">
+                        {formatTimeOnly(selected.requested_time_in ?? selected.time_in)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Requested time end</p>
+                      <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-slate-900 dark:text-slate-50">
+                        {formatTimeOnly(selected.requested_time_out ?? selected.time_out)}
+                      </p>
+                    </div>
+                    <div className="@sm:col-span-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Filed</p>
+                      <p className="mt-0.5 tabular-nums text-slate-700 dark:text-slate-300">
+                        {selected.filed_at ? formatDateTime(selected.filed_at) : '—'}
+                      </p>
+                    </div>
+                  </div>
+                </section>
+
+                {selected.attendance_logs_synced_at ? (
+                  <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/90 px-4 py-3 text-sm shadow-sm dark:border-emerald-800 dark:bg-emerald-950/35">
+                    <p className="font-semibold text-emerald-950 dark:text-emerald-50">Applied to your attendance (DTR)</p>
+                    <p className="mt-1 text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/85">
+                      The approved correction times (only requested missing punches) were saved to your official attendance record on{' '}
+                      {formatDateTime(selected.attendance_logs_synced_at)}
+                      {selected.attendance_logs_synced_by_name
+                        ? ` (${selected.attendance_logs_synced_by_name})`
+                        : ''}
+                      . The Attendance module now shows these times.
+                    </p>
+                  </div>
+                ) : null}
+
+                <section>
+                  <h3 className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    <Clock className="size-4" aria-hidden />
+                    Attendance times
+                  </h3>
+                  <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+                    {selected.display_status === 'HR Approved'
+                      ? 'Final approved correction times on this request (only requested missing punches were applied).'
+                      : 'Filed correction times on this request (only requested missing punches will be applied after final approval).'}
+                  </p>
+                  <AttendanceTimesBlock timeIn={selected.time_in} timeOut={selected.time_out} />
+                </section>
+
+                {selected.remarks ? (
+                  <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/40">
+                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Your remarks</h3>
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{selected.remarks}</p>
+                  </section>
+                ) : null}
+
+                {Array.isArray(selected.approval_progress) && selected.approval_progress.length > 0 ? (
+                  <section>
+                    <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Approval chain</h3>
+                    <ApprovalChainDetailView steps={selected.approval_progress} />
+                  </section>
+                ) : null}
+
+                {Array.isArray(selected.approval_history) && selected.approval_history.length > 0 ? (
+                  <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/30">
+                    <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Approval history</h3>
+                    <ol className="relative ml-0.5 border-l-2 border-emerald-200/80 pl-6 dark:border-emerald-900/50">
+                      {[...selected.approval_history]
+                        .sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
+                        .map((h, idx) => {
+                          const actionLabel =
+                            h.action === 'hr_remark'
+                              ? 'HR internal remark'
+                              : h.action === 'approve_first'
+                                ? 'Line manager approval'
+                                : h.action === 'approve_final'
+                                  ? 'HR final approval'
+                                  : h.action === 'reject'
+                                    ? 'Rejected'
+                                    : h.action === 'file'
+                                      ? 'Request filed'
+                                      : h.action || 'Action'
+                          const headline = [h.actor_name, h.approver_role || actionLabel].filter(Boolean).join(' · ')
+                          return (
+                            <li key={`${h.at}-${idx}-${h.action}`} className="relative pb-5 last:pb-0">
+                              <span className="absolute -left-[1.35rem] top-1 size-2.5 rounded-full border-2 border-white bg-emerald-500 ring-2 ring-white dark:border-slate-950" />
+                              <div className="rounded-xl border border-slate-100 bg-slate-50/90 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-900/50">
+                                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                  <p className="text-sm font-semibold text-foreground">{headline || actionLabel}</p>
+                                  <time className="text-xs tabular-nums text-muted-foreground" dateTime={h.at || undefined}>
+                                    {h.at ? formatDateTime(h.at) : '—'}
+                                  </time>
+                                </div>
+                                {h.details ? (
+                                  <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                                    {h.details}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </li>
+                          )
+                        })}
+                    </ol>
+                  </section>
+                ) : null}
+
+                {selected.rejection_note ? (
+                  <section className="rounded-2xl border border-rose-200 bg-rose-50/50 p-4 dark:border-rose-900/50 dark:bg-rose-950/20">
+                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-rose-800 dark:text-rose-200">
+                      Rejection reason
+                    </h3>
+                    <p className="text-sm leading-relaxed text-foreground">{selected.rejection_note}</p>
+                  </section>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/80 px-6 py-4 dark:border-slate-800 dark:bg-slate-900/50">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 rounded-xl"
+                  onClick={() => {
+                    toast({ title: 'Print', description: 'Use Ctrl+P (or Cmd+P) while this window is open.' })
+                    window.print()
+                  }}
+                >
+                  <Printer className="size-4" />
+                  Print
+                </Button>
+                <Button type="button" className="rounded-xl bg-black text-white hover:bg-black/90" onClick={() => setDetailOpen(false)}>
+                  Close
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </Motion.div>
+  )
+}

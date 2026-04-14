@@ -1,0 +1,482 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Make dark: utilities respond to the .dark class (set by ThemeContext)
+   instead of the OS prefers-color-scheme media query.               */
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Light theme: clearer depth, less generic (cooler page bg, elevated cards/modals) */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.002 247); /* subtle slate-50 tint */
+  --foreground: #0a0a0a;
+  --card: oklch(1 0 0);
+  --card-foreground: #0a0a0a;
+  --popover: oklch(1 0 0);
+  --popover-foreground: #0a0a0a;
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.965 0.003 247);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.89 0.005 247);
+  --input: oklch(0.89 0.005 247);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.992 0.001 247);
+  --sidebar-foreground: #0a0a0a;
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.89 0.005 247);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+/* Dark theme: slate-950 base, 2025/2026 enterprise — no pure black, calm contrast */
+.dark {
+  --background: #0f172a;             /* slate-950 — calm base, no #000 halation */
+  --foreground: #e2e8f0;             /* slate-200 — primary text, WCAG AA */
+  --card: #1e293b;                   /* slate-800 — elevated surface, soft shadow */
+  --card-foreground: #e2e8f0;
+  --popover: #1e293b;
+  --popover-foreground: #e2e8f0;
+  --primary: #f1f5f9;
+  --primary-foreground: #0f172a;
+  --secondary: #334155;              /* slate-700 */
+  --secondary-foreground: #e2e8f0;
+  --muted: #334155;
+  --muted-foreground: #cbd5e1;       /* slate-300 — better contrast */
+  --accent: #1e293b;
+  --accent-foreground: #f1f5f9;
+  --destructive: #b91c1c;            /* desaturated red */
+  --destructive-foreground: #fff;
+  --border: rgba(148, 163, 184, 0.12);  /* subtle elevation borders */
+  --input: rgba(148, 163, 184, 0.14);
+  --ring: #64748b;                   /* tertiary — slate-500 */
+  --chart-1: #60a5fa;                /* blue-400 */
+  --chart-2: #059669;                /* emerald-600 — muted green */
+  --chart-3: #c2410c;               /* orange-700 — desaturated */
+  --chart-4: #a78bfa;                /* violet-400 */
+  --chart-5: #b91c1c;                /* red-700 — desaturated */
+  --sidebar: #0f172a;                 /* slate-950 — distinct sidebar depth */
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #e2e8f0;
+  --sidebar-primary-foreground: #0f172a;
+  --sidebar-accent: #1e293b;
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: rgba(148, 163, 184, 0.10);
+  --sidebar-ring: #475569;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  background-color: var(--background);
+}
+
+/**
+ * Module typography hierarchy (primary ink: --foreground / #0A0A0A in light).
+ * Use on pages outside Dashboard / Employees / Generate Payslip for consistent scan hierarchy.
+ */
+.hr-page-title {
+  font-size: 1.875rem; /* 30px — within 28–32 */
+  line-height: 2.25rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem; /* 24px */
+  letter-spacing: -0.025em;
+  color: var(--foreground);
+}
+
+@media (min-width: 768px) {
+  .hr-page-title {
+    font-size: 2rem; /* 32px */
+    line-height: 2.5rem;
+  }
+}
+
+.hr-section-title {
+  font-size: 1.25rem; /* 20px */
+  line-height: 1.75rem;
+  font-weight: 600;
+  margin-bottom: 1rem; /* 16px */
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+}
+
+@media (min-width: 768px) {
+  .hr-section-title {
+    font-size: 1.375rem; /* 22px */
+    line-height: 1.75rem;
+  }
+}
+
+/* Card/tab titles that sit above a description: tighten title margin; gap handles rhythm */
+.hr-section-title.hr-section-title--tight {
+  margin-bottom: 0.25rem;
+}
+
+.hr-subsection-title {
+  font-size: 1rem; /* 16px */
+  line-height: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem; /* 12px */
+  color: var(--foreground);
+}
+
+@media (min-width: 768px) {
+  .hr-subsection-title {
+    font-size: 1.125rem; /* 18px */
+    line-height: 1.75rem;
+  }
+}
+
+.hr-body {
+  font-size: 0.9375rem; /* 15px */
+  line-height: 1.5rem;
+  font-weight: 400;
+  color: var(--foreground);
+}
+
+.hr-label {
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.25rem;
+  font-weight: 400;
+  color: var(--foreground);
+}
+
+.hr-helper {
+  font-size: 0.8125rem; /* 13px */
+  line-height: 1.25rem;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+
+.hr-table-head {
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.25rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--foreground);
+}
+
+.hr-dialog-title {
+  font-size: 1.125rem; /* 18px — modal primary title */
+  line-height: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+}
+
+/* Primary copy (light theme): map legacy “near-black” Tailwind utilities to brand ink #0A0A0A
+   (matches --foreground in :root). Scoped with html:not(.dark) so pairs like
+   `text-slate-900 dark:text-slate-50` still resolve correctly in dark theme. */
+html:not(.dark) :where(
+  .text-slate-800,
+  .text-slate-900,
+  .text-slate-950,
+  .text-gray-900,
+  .text-zinc-900,
+  .text-neutral-900,
+  .text-stone-900,
+  [class~="text-[#0F172B]"],
+  [class~="text-[#0f172b]"],
+  [class~="text-[#0F172A]"],
+  [class~="text-[#0f172a]"],
+  .hover\:text-slate-800:hover,
+  .hover\:text-slate-900:hover,
+  .hover\:text-slate-950:hover,
+  .hover\:text-gray-900:hover,
+  .hover\:text-zinc-900:hover,
+  .hover\:text-neutral-900:hover,
+  .hover\:text-stone-900:hover
+) {
+  color: #0a0a0a !important;
+}
+
+.dark body {
+  color: var(--foreground);
+  background-color: var(--background);
+}
+
+/**
+ * Dashboard dark: one canvas behind sticky header + main (they are siblings).
+ * Gradient lived only on <main> before, so the header sat over flat --background.
+ */
+.dark .dashboard-content-canvas {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(ellipse 100% 85% at 50% -20%, rgba(51, 65, 85, 0.22), transparent 55%),
+    linear-gradient(to bottom right, #0a0f1c 0%, var(--background) 45%, rgba(30, 41, 59, 0.38) 100%);
+}
+
+/**
+ * Sticky header chrome in dark: tint matches canvas gradient top (#0a0f1c), not --card (slate-800).
+ * `header` tag bumps specificity so Tailwind `from-card` gradient utilities don’t win in dark.
+ */
+.dark header.dashboard-header-glass {
+  background-color: rgba(10, 15, 28, 0.58);
+  background-image: none;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border-bottom-color: rgba(148, 163, 184, 0.1);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Dark theme: legible placeholder text (fixes "secret message" contrast) */
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: rgb(209 213 219); /* gray-300 */
+}
+
+/* GSAP / motion: respect prefers-reduced-motion (accessibility) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .hero-title {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Accessibility: respect prefers-reduced-motion (WCAG) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Subtle hero title entrance — respects prefers-reduced-motion */
+.hero-title {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: hero-fade-up 0.7s ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-title {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-title {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
+@keyframes hero-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Typing animation */
+.hero-title-typing {
+  display: inline;
+}
+
+.typing-cursor {
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Needs Review badge: subtle pulse for audit-critical state */
+@keyframes needs-review-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.15);
+  }
+}
+
+.animate-needs-review-pulse {
+  animation: needs-review-pulse 2s ease-in-out infinite;
+}
+
+/* Fallback text colors for dark mode when CSS variables are misread */
+.dark .text-foreground {
+  color: #e5e7eb; /* zinc-200 */
+}
+
+.dark .text-muted-foreground {
+  color: #9ca3af; /* gray-400 */
+}
+
+/* react-calendar: premium nav + clean grid (no vendor CSS import) */
+.react-calendar {
+  width: 100%;
+}
+
+.react-calendar__navigation {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.react-calendar__navigation button {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  border-radius: calc(var(--radius) - 6px);
+  padding: 0.45rem 0.75rem;
+  font-size: 1.125rem;
+  line-height: 1.5rem;
+  min-width: 2.25rem;
+  transition: transform 150ms ease, filter 150ms ease, box-shadow 150ms ease;
+}
+
+.react-calendar__navigation button:hover {
+  filter: brightness(1.03);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.08);
+}
+
+.react-calendar__navigation button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.react-calendar__navigation__label {
+  flex: 1;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  position: relative;
+}
+
+.react-calendar__navigation__label::after {
+  content: " ▾";
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.react-calendar__month-view__weekdays {
+  text-align: center;
+  margin-bottom: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.react-calendar__month-view__weekdays__weekday abbr {
+  text-decoration: none;
+}
+
+.react-calendar__tile:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--ring) 55%, transparent);
+  outline-offset: 2px;
+}
+
+/* Google Places Autocomplete dropdown must appear above cards/modals */
+.pac-container {
+  z-index: 999999 !important;
+}
+
+/* Hide scrollbar while keeping scroll functionality (used for tab nav rows) */
+.scrollbar-hide {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/WebKit */
+}
+
+/* Accessibility: respect prefers-reduced-motion (WCAG, enterprise QA) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .hero-title {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
