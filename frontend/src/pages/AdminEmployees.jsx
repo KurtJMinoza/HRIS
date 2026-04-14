@@ -53,6 +53,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from '@/components/ui/sheet'
 import {
   getEmployees,
+  exportAllEmployeesCsv,
   addEmployee,
   updateEmployeeSchedule,
   toggleEmployeeActive,
@@ -248,6 +249,7 @@ export default function AdminEmployees() {
   const queryClient = useQueryClient()
   const perms = new Set(user?.permissions ?? [])
   const canCreateEmployees = perms.has('employees.create')
+  const canExportEmployees = perms.has('employees.export')
   const canEditEmployees = perms.has('employees.edit')
   const canDeleteEmployees = perms.has('employees.delete')
   const canAssignSchedule = perms.has('schedule.assign')
@@ -260,6 +262,7 @@ export default function AdminEmployees() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [employees, setEmployees] = useState([])
   const [error, setError] = useState(null)
+  const [exportingCsv, setExportingCsv] = useState(false)
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ total: 0, perPage: 20, lastPage: 1 })
   const didInitialEmployeeLoadRef = useRef(false)
@@ -1524,6 +1527,36 @@ export default function AdminEmployees() {
     setAddOpen(true)
   }, [canCreateEmployees, toast])
 
+  const handleExportAllCsv = useCallback(async () => {
+    if (!canExportEmployees) {
+      toast({
+        title: 'Access denied',
+        description: 'You do not have permission to export employees.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setExportingCsv(true)
+    setError(null)
+    try {
+      const { blob, filename } = await exportAllEmployeesCsv()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename || `employees_export_${new Date().toISOString().slice(0, 10)}.csv`
+      anchor.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      toast({ title: 'Export started', description: 'Employee CSV has been downloaded.' })
+    } catch (e) {
+      const message = e?.message || 'Failed to export employee CSV.'
+      setError(message)
+      toast({ title: 'Export failed', description: message, variant: 'destructive' })
+    } finally {
+      setExportingCsv(false)
+    }
+  }, [canExportEmployees, toast])
+
   const pageTransition = { duration: 0.25, ease: [0.23, 1, 0.32, 1] }
 
   return (
@@ -1633,6 +1666,17 @@ export default function AdminEmployees() {
                   />
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground opacity-90 dark:text-primary/65" />
                 </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9"
+                  onClick={handleExportAllCsv}
+                  disabled={!canExportEmployees || exportingCsv}
+                  title={canExportEmployees ? 'Export all employees to CSV' : 'No export permission'}
+                >
+                  {exportingCsv ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Download className="mr-1.5 size-4" />}
+                  Export All to CSV
+                </Button>
                 {/* Density toggle */}
                 <button
                   type="button"

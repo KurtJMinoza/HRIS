@@ -220,6 +220,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:employees.view')->group(function () {
             Route::get('/admin/employees', [EmployeeController::class, 'index']);
+            Route::get('/admin/employees/export/csv', [EmployeeController::class, 'exportAllCsv'])->middleware('permission:employees.export');
             Route::get('/admin/employees/{id}/qr', [EmployeeController::class, 'getQr']);
             Route::get('/admin/employees/{id}/face', [EmployeeController::class, 'getFace']);
             Route::get('/admin/employees/{userId}/skills', [AdminEmployeeSkillController::class, 'index']);
