@@ -67,8 +67,7 @@ class DataScopeService
 
     /**
      * Organizational scope for data queries.
-     * Returns null when the actor has full (HR admin) access.
-     * Admin (HR) has highest priority and is never downgraded by org-hat assignments.
+     * Admin (HR) is a super-role and bypasses org scoping (returns null).
      */
     private function effectiveOrgScopeRole(User $actor): ?HrRole
     {
@@ -91,7 +90,6 @@ class DataScopeService
      */
     public function getAttendanceScopeMeta(User $user): ?array
     {
-        // Admin (HR) is never scoped to org-hat filters.
         if ($user->isAdmin()) {
             return null;
         }
@@ -148,6 +146,29 @@ class DataScopeService
         }
 
         return null;
+    }
+
+    /**
+     * Branch row for branch-level data scope.
+     */
+    private function branchForBranchScope(User $actor): ?Branch
+    {
+        $branch = Branch::query()->where('branch_manager_id', $actor->id)->first();
+        if ($branch !== null) {
+            return $branch;
+        }
+
+        return null;
+    }
+
+    /**
+     * Department ids for department-level data scope.
+     *
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    private function departmentIdsForDepartmentScope(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->departmentsForDepartmentHead($actor)->pluck('id');
     }
 
     /**
@@ -216,7 +237,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::BranchHead) {
-            $branch = Branch::query()->where('branch_manager_id', $actor->id)->first();
+            $branch = $this->branchForBranchScope($actor);
             if ($branch === null) {
                 $query->whereRaw('1 = 0');
 
@@ -233,7 +254,10 @@ class DataScopeService
         }
 
         if ($role === HrRole::DepartmentHead) {
-            $departments = $this->departmentsForDepartmentHead($actor);
+            $deptIds = $this->departmentIdsForDepartmentScope($actor);
+            $departments = $deptIds->isNotEmpty()
+                ? Department::query()->whereIn('id', $deptIds)->orderBy('name')->get(['id', 'name', 'branch_id'])
+                : new EloquentCollection;
             if ($departments->isEmpty()) {
                 $query->whereRaw('1 = 0');
 
@@ -351,7 +375,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::BranchHead) {
-            $branch = Branch::query()->where('branch_manager_id', $actor->id)->first();
+            $branch = $this->branchForBranchScope($actor);
             if ($branch === null) {
                 abort(403, 'Forbidden.');
             }
@@ -372,7 +396,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::DepartmentHead) {
-            $deptIds = $this->departmentsForDepartmentHead($actor)->pluck('id');
+            $deptIds = $this->departmentIdsForDepartmentScope($actor);
             if ($departmentId === null || ! $deptIds->contains($departmentId)) {
                 abort(403, 'Forbidden.');
             }
@@ -472,7 +496,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::BranchHead) {
-            $branch = Branch::query()->where('branch_manager_id', $actor->id)->first();
+            $branch = $this->branchForBranchScope($actor);
             if ($branch === null) {
                 $query->whereRaw('1 = 0');
 
@@ -484,7 +508,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::DepartmentHead) {
-            $deptIds = $this->departmentsForDepartmentHead($actor)->pluck('id');
+            $deptIds = $this->departmentIdsForDepartmentScope($actor);
             if ($deptIds->isEmpty()) {
                 $query->whereRaw('1 = 0');
 
@@ -536,7 +560,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::BranchHead) {
-            $branch = Branch::query()->where('branch_manager_id', $actor->id)->first();
+            $branch = $this->branchForBranchScope($actor);
             if ($branch === null) {
                 $query->whereRaw('1 = 0');
 
@@ -548,7 +572,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::DepartmentHead) {
-            $deptIds = $this->departmentsForDepartmentHead($actor)->pluck('id');
+            $deptIds = $this->departmentIdsForDepartmentScope($actor);
             if ($deptIds->isEmpty()) {
                 $query->whereRaw('1 = 0');
 
@@ -588,7 +612,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::BranchHead) {
-            $branch = Branch::query()->where('branch_manager_id', $actor->id)->first();
+            $branch = $this->branchForBranchScope($actor);
             if ($branch === null) {
                 $query->whereRaw('1 = 0');
 
@@ -600,7 +624,7 @@ class DataScopeService
         }
 
         if ($role === HrRole::DepartmentHead) {
-            $deptIds = $this->departmentsForDepartmentHead($actor)->pluck('id');
+            $deptIds = $this->departmentIdsForDepartmentScope($actor);
             if ($deptIds->isEmpty()) {
                 $query->whereRaw('1 = 0');
 

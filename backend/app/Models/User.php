@@ -40,6 +40,21 @@ class User extends Authenticatable
         return in_array($this->role, self::ROSTER_ELIGIBLE_ROLES, true);
     }
 
+    /**
+     * Admin (HR) with an explicit org scope on {@see $company_id} / {@see $branch_id} / {@see $department_id}.
+     * When false and {@see isAdmin()}, HR data access is global (within RBAC).
+     */
+    public function hasScopedHrAdminAssignment(): bool
+    {
+        if (! $this->isAdmin()) {
+            return false;
+        }
+
+        return $this->company_id !== null
+            || $this->branch_id !== null
+            || $this->department_id !== null;
+    }
+
     protected $fillable = [
         'name',
         'employee_code',

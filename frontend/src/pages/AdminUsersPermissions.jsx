@@ -53,12 +53,23 @@ import {
 } from '@/api'
 
 const HR_ROLE_OPTIONS = [
-  { value: 'admin_hr', label: 'ADMIN (HR)' },
+  { value: 'admin_hr', label: 'ADMIN (HR) only (no head assignment)' },
   { value: 'company_head', label: 'COMPANY HEAD' },
   { value: 'branch_head', label: 'BRANCH HEAD' },
   { value: 'department_head', label: 'DEPARTMENT HEAD' },
   { value: 'employee', label: 'EMPLOYEE' },
 ]
+
+/** Map API user row to form fields for combined Admin (HR) + org head roles. */
+function deriveUserFormRoles(u) {
+  const isHrAdmin = u.role === 'admin' || u.is_hr_admin === true
+  if (Array.isArray(u.hr_roles) && u.hr_roles.length > 0) {
+    const orgOnly = u.hr_roles.filter((r) => r !== 'admin_hr')
+    const base = orgOnly[0] ?? (isHrAdmin ? 'admin_hr' : 'employee')
+    return { is_hr_admin: isHrAdmin, hr_role: base }
+  }
+  return { is_hr_admin: isHrAdmin, hr_role: u.hr_role ?? 'employee' }
+}
 
 /** Collapsible groups (maps `module` from API to section). Optional `hint` shows under the section header when expanded. */
 const PERMISSION_SECTIONS = [
@@ -323,6 +334,7 @@ function UsersTab({ toast }) {
     name: '',
     email: '',
     password: '',
+    is_hr_admin: false,
     hr_role: 'employee',
     company_id: '',
     branch_id: '',
@@ -386,6 +398,31 @@ function UsersTab({ toast }) {
   const pageIds = useMemo(() => rows.map((r) => r.id), [rows])
   const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
 
+  const adminHrBranchesFiltered = useMemo(() => {
+    if (!form.company_id) return branches
+    return branches.filter((b) => String(b.company_id) === String(form.company_id))
+  }, [branches, form.company_id])
+
+  const adminHrDepartmentsFiltered = useMemo(() => {
+    if (form.branch_id) {
+      return departments.filter((d) => String(d.branch_id) === String(form.branch_id))
+    }
+    if (form.company_id) {
+      const branchIds = new Set(
+        branches.filter((b) => String(b.company_id) === String(form.company_id)).map((b) => b.id)
+      )
+      return departments.filter((d) => branchIds.has(d.branch_id))
+    }
+    return departments
+  }, [departments, branches, form.company_id, form.branch_id])
+
+  const organizationalRoleOptions = useMemo(() => {
+    if (!form.is_hr_admin) {
+      return HR_ROLE_OPTIONS.filter((o) => o.value !== 'admin_hr')
+    }
+    return HR_ROLE_OPTIONS
+  }, [form.is_hr_admin])
+
   function toggleSelect(id) {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -417,6 +454,7 @@ function UsersTab({ toast }) {
       name: '',
       email: '',
       password: '',
+      is_hr_admin: false,
       hr_role: 'employee',
       company_id: '',
       branch_id: '',
@@ -428,11 +466,13 @@ function UsersTab({ toast }) {
 
   function openEdit(u) {
     setEditing(u)
+    const { is_hr_admin: isHr, hr_role: baseRole } = deriveUserFormRoles(u)
     setForm({
       name: u.name ?? '',
       email: u.email ?? '',
       password: '',
-      hr_role: u.hr_role ?? 'employee',
+      is_hr_admin: isHr,
+      hr_role: baseRole,
       company_id: u.company_id != null ? String(u.company_id) : '',
       branch_id: u.branch_id != null ? String(u.branch_id) : '',
       department_id: u.department_id != null ? String(u.department_id) : '',
@@ -444,10 +484,19 @@ function UsersTab({ toast }) {
   async function submitForm() {
     setSaving(true)
     try {
+      let hrRole = form.hr_role
+      let isHrAdmin = form.is_hr_admin
+      if (!isHrAdmin && hrRole === 'admin_hr') {
+        hrRole = 'employee'
+      }
+      if (hrRole === 'admin_hr') {
+        isHrAdmin = true
+      }
       const payload = {
         name: form.name.trim(),
         email: form.email.trim(),
-        hr_role: form.hr_role,
+        hr_role: hrRole,
+        is_hr_admin: isHrAdmin,
         is_active: form.is_active,
         company_id: form.company_id ? Number(form.company_id) : null,
         branch_id: form.branch_id ? Number(form.branch_id) : null,
@@ -711,7 +760,24 @@ function UsersTab({ toast }) {
                         <td className="max-w-[220px] truncate px-3 py-2.5 align-middle text-muted-foreground">{u.email}</td>
                         <td className="px-3 py-2.5 align-middle text-muted-foreground">{u.department_name || '—'}</td>
                         <td className="px-3 py-2.5 align-middle">
-                          <RoleBadge hr_role={u.hr_role} hr_role_label={u.hr_role_label} size="sm" />
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex flex-wrap gap-1">
+                              {(Array.isArray(u.hr_roles) && u.hr_roles.length > 0
+                                ? u.hr_roles.map((key, i) => ({
+                                    key,
+                                    label: u.hr_roles_labels?.[i] ?? null,
+                                  }))
+                                : [{ key: u.hr_role, label: u.hr_role_label }]
+                              ).map(({ key, label }) => (
+                                <RoleBadge key={`${u.id}-${key}`} hr_role={key} hr_role_label={label} size="sm" />
+                              ))}
+                            </div>
+                            {u.hr_admin_scope_label ? (
+                              <span className="text-[11px] text-muted-foreground" title="HR admin org scope">
+                                Scope: {u.hr_admin_scope_label}
+                              </span>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="px-3 py-2.5 align-middle">
                           {u.is_active ? (
@@ -832,8 +898,10 @@ function UsersTab({ toast }) {
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit user' : 'Add user'}</DialogTitle>
             <DialogDescription>
-              Assign one HR role. Company / branch / department are required for head roles (least privilege — scope is
-              limited to that org unit).
+              Enable <strong className="font-medium text-foreground">Admin (HR)</strong> for full HR module access. You can
+              combine it with a company, branch, or department head assignment (or plain employee). Head roles require a
+              matching org unit. For <strong className="font-medium text-foreground">Admin (HR) only</strong>, optional
+              organization fields are informational context only and do not restrict Admin (HR) access.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
@@ -859,14 +927,61 @@ function UsersTab({ toast }) {
                 />
               </div>
             )}
+            <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/15 px-3 py-2">
+              <Checkbox
+                id="is-hr-admin"
+                checked={form.is_hr_admin}
+                onCheckedChange={(c) => {
+                  const on = !!c
+                  setForm((f) => {
+                    const next = { ...f, is_hr_admin: on }
+                    if (!on && f.hr_role === 'admin_hr') {
+                      next.hr_role = 'employee'
+                      next.company_id = ''
+                      next.branch_id = ''
+                      next.department_id = ''
+                    }
+                    return next
+                  })
+                }}
+              />
+              <Label htmlFor="is-hr-admin" className="cursor-pointer font-normal leading-snug">
+                Admin (HR) — full HR privileges (can combine with organizational role below)
+              </Label>
+            </div>
             <div className="grid gap-2">
-              <Label>HR role</Label>
+              <Label>Organizational role</Label>
               <select
                 className={cn(FIELD_SELECT_CLASS_H10, 'w-full')}
-                value={form.hr_role}
-                onChange={(e) => setForm((f) => ({ ...f, hr_role: e.target.value }))}
+                value={organizationalRoleOptions.some((o) => o.value === form.hr_role) ? form.hr_role : 'employee'}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setForm((f) => {
+                    const next = { ...f, hr_role: v }
+                    if (v === 'admin_hr') {
+                      next.is_hr_admin = true
+                      next.branch_id = ''
+                      next.department_id = ''
+                    }
+                    if (v === 'employee') {
+                      next.company_id = ''
+                      next.branch_id = ''
+                      next.department_id = ''
+                    } else if (v === 'company_head') {
+                      next.branch_id = ''
+                      next.department_id = ''
+                    } else if (v === 'branch_head') {
+                      next.company_id = ''
+                      next.department_id = ''
+                    } else if (v === 'department_head') {
+                      next.company_id = ''
+                      next.branch_id = ''
+                    }
+                    return next
+                  })
+                }}
               >
-                {HR_ROLE_OPTIONS.map((o) => (
+                {organizationalRoleOptions.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
@@ -922,6 +1037,72 @@ function UsersTab({ toast }) {
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+            {form.hr_role === 'admin_hr' && (
+              <div className="grid gap-2 rounded-md border border-border/60 bg-muted/20 p-3">
+                <p className="text-xs text-muted-foreground">
+                  Optional organization context for display/reporting. Admin (HR) access remains full admin scope even
+                  when company, branch, or department is selected here.
+                </p>
+                <div className="grid gap-2">
+                  <Label>Company (optional)</Label>
+                  <select
+                    className={cn(FIELD_SELECT_CLASS_H10, 'w-full')}
+                    value={form.company_id || ''}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        company_id: e.target.value,
+                        branch_id: '',
+                        department_id: '',
+                      }))
+                    }
+                  >
+                    <option value="">— Global (no company filter) —</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Branch (optional)</Label>
+                  <select
+                    className={cn(FIELD_SELECT_CLASS_H10, 'w-full')}
+                    value={form.branch_id || ''}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        branch_id: e.target.value,
+                        department_id: '',
+                      }))
+                    }
+                  >
+                    <option value="">—</option>
+                    {adminHrBranchesFiltered.map((b) => (
+                      <option key={b.id} value={String(b.id)}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Department (optional)</Label>
+                  <select
+                    className={cn(FIELD_SELECT_CLASS_H10, 'w-full')}
+                    value={form.department_id || ''}
+                    onChange={(e) => setForm((f) => ({ ...f, department_id: e.target.value }))}
+                  >
+                    <option value="">—</option>
+                    {adminHrDepartmentsFiltered.map((d) => (
+                      <option key={d.id} value={String(d.id)}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             )}
             <div className="flex items-center gap-2 pt-1">

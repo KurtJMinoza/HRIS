@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\EmploymentStatus;
+use App\Enums\HrRole;
 use App\Models\AttendanceLog;
 use App\Models\FailedFaceAttempt;
 use App\Models\User;
@@ -531,6 +532,7 @@ class AuthController extends Controller
         $computedStart = microtime(true);
         $hrResolver = app(HrRoleResolver::class);
         $hr = $hrResolver->resolve($user);
+        $hrRolesList = $hrResolver->listEffectiveHrRoles($user);
         $rbac = app(RbacService::class);
         $payCycleService = app(PayCycleService::class);
         $monthlyBase = (float) ($user->monthly_salary ?? $user->monthly_rate ?? 0);
@@ -583,8 +585,11 @@ class AuthController extends Controller
             'nationality' => $user->nationality,
             'home_address' => $user->home_address,
             'role' => $user->role,
+            'is_hr_admin' => $user->isAdmin(),
             'hr_role' => $hr->value,
             'hr_role_label' => $hr->badgeLabel(),
+            'hr_roles' => array_map(fn (HrRole $r) => $r->value, $hrRolesList),
+            'hr_roles_labels' => array_map(fn (HrRole $r) => $r->badgeLabel(), $hrRolesList),
             'can_file_leave_for_others' => $hrResolver->canFileLeaveForOthers($user),
             'is_super_admin' => (bool) $user->is_super_admin,
             'permissions' => $rbac->getPermissionsForUser($user)->values()->all(),

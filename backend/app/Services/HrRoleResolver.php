@@ -11,9 +11,8 @@ use App\Models\User;
 class HrRoleResolver
 {
     /**
-     * Resolve HR panel role.
-     * Admin accounts are always ADMIN (HR) and override org-hat assignments.
-     * For employees: company head > branch head > department head > employee.
+     * Resolve HR panel role (primary badge / permission tier).
+     * Laravel admins always include ADMIN (HR); organizational hat is separate — see {@see listEffectiveHrRoles()}.
      */
     public function resolve(User $user): HrRole
     {
@@ -22,6 +21,37 @@ class HrRoleResolver
         }
 
         return $this->resolveOrgHierarchyRole($user);
+    }
+
+    /**
+     * Organizational hat only (company / branch / department head, or employee), ignoring Laravel admin flag.
+     * Used when applying combined Admin (HR) + head roles.
+     */
+    public function resolveOrganizationalRole(User $user): HrRole
+    {
+        return $this->resolveOrgHierarchyFromAssignments($user);
+    }
+
+    /**
+     * All roles to show in UI: Admin (HR) when {@see User::isAdmin()}, plus org hat when not plain employee.
+     *
+     * @return list<HrRole>
+     */
+    public function listEffectiveHrRoles(User $user): array
+    {
+        $roles = [];
+        if ($user->isAdmin()) {
+            $roles[] = HrRole::AdminHr;
+        }
+
+        $org = $this->resolveOrgHierarchyFromAssignments($user);
+        if ($org !== HrRole::Employee) {
+            $roles[] = $org;
+        } elseif (! $user->isAdmin()) {
+            $roles[] = HrRole::Employee;
+        }
+
+        return $roles;
     }
 
     /**

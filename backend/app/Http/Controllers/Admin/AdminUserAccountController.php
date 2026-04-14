@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\HrRole;
 use App\Http\Controllers\Controller;
+use App\Models\Branch;
+use App\Models\Company;
+use App\Models\Department;
 use App\Models\User;
 use App\Models\UserAdminActivityLog;
 use App\Services\HrRoleResolver;
@@ -86,6 +89,7 @@ class AdminUserAccountController extends Controller
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:8'],
             'hr_role' => ['required', 'string', Rule::in(array_map(fn (HrRole $r) => $r->value, HrRole::cases()))],
+            'is_hr_admin' => ['sometimes', 'boolean'],
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
@@ -93,14 +97,18 @@ class AdminUserAccountController extends Controller
         ]);
 
         $hrRole = HrRole::from($validated['hr_role']);
+        $isHrAdmin = (bool) ($validated['is_hr_admin'] ?? false);
+        if ($hrRole === HrRole::AdminHr) {
+            $isHrAdmin = true;
+        }
 
         $actor = $request->user();
         if (! $actor instanceof User) {
             abort(401);
         }
 
-        $this->assertAssignable($actor, $hrRole);
-        $this->validateRoleContext($hrRole, $validated);
+        $this->assertAssignable($actor, $hrRole, $isHrAdmin);
+        $this->validateRoleContext($hrRole, $validated, $isHrAdmin);
 
         $user = User::create([
             'name' => trim($validated['name']),
@@ -116,6 +124,7 @@ class AdminUserAccountController extends Controller
             $validated['company_id'] ?? null,
             $validated['branch_id'] ?? null,
             $validated['department_id'] ?? null,
+            $isHrAdmin,
         );
 
         $user->refresh();
@@ -144,27 +153,71 @@ class AdminUserAccountController extends Controller
             'email' => ['sometimes', 'string', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'is_active' => ['sometimes', 'boolean'],
             'hr_role' => ['sometimes', 'string', Rule::in(array_map(fn (HrRole $r) => $r->value, HrRole::cases()))],
+            'is_hr_admin' => ['sometimes', 'boolean'],
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
         ]);
 
-        if (array_key_exists('hr_role', $validated)) {
-            $target = HrRole::from($validated['hr_role']);
-            if ($actor->id === $user->id && $target !== $this->hrRoleResolver->resolve($user)) {
+        $assignmentTouched = array_key_exists('hr_role', $validated)
+            || array_key_exists('is_hr_admin', $validated);
+
+        if ($assignmentTouched) {
+            if ($actor->id === $user->id) {
                 throw ValidationException::withMessages([
-                    'hr_role' => ['You cannot change your own HR role.'],
+                    'hr_role' => ['You cannot change your own HR role or Admin (HR) access. Ask another administrator.'],
                 ]);
             }
-            $this->assertAssignable($actor, $target);
-            $this->validateRoleContext($target, $validated);
+
+            $target = isset($validated['hr_role'])
+                ? HrRole::from($validated['hr_role'])
+                : $this->deriveDefaultHrRoleForAssignmentUpdate($user);
+
+            $isHrAdmin = array_key_exists('is_hr_admin', $validated)
+                ? (bool) $validated['is_hr_admin']
+                : $user->isAdmin();
+            if ($target === HrRole::AdminHr) {
+                $isHrAdmin = true;
+            }
+
+            // Keep existing org context when only toggling Admin (HR) and no explicit org ids are posted.
+            $roleValidationInput = $validated;
+            if (! array_key_exists('company_id', $roleValidationInput)) {
+                $roleValidationInput['company_id'] = $user->company_id;
+            }
+            if (! array_key_exists('branch_id', $roleValidationInput)) {
+                $roleValidationInput['branch_id'] = $user->branch_id;
+            }
+            if (! array_key_exists('department_id', $roleValidationInput)) {
+                $roleValidationInput['department_id'] = $user->department_id;
+            }
+
+            $this->assertAssignable($actor, $target, $isHrAdmin);
+            $this->validateRoleContext($target, $roleValidationInput, $isHrAdmin);
             $this->roleAssignmentService->applyRole(
                 $user,
                 $target,
                 $validated['company_id'] ?? null,
                 $validated['branch_id'] ?? null,
                 $validated['department_id'] ?? null,
+                $isHrAdmin,
             );
+        } elseif ($user->isAdmin()) {
+            $orgTouched = array_key_exists('company_id', $validated)
+                || array_key_exists('branch_id', $validated)
+                || array_key_exists('department_id', $validated);
+            if ($orgTouched) {
+                if ($this->hrRoleResolver->isAssignedOrganizationHead($user)) {
+                    throw ValidationException::withMessages([
+                        'company_id' => ['This user has a company / branch / department head assignment. Change organization via a full role update (hr_role, is_hr_admin, and org fields).'],
+                    ]);
+                }
+                $c = array_key_exists('company_id', $validated) ? $validated['company_id'] : $user->company_id;
+                $b = array_key_exists('branch_id', $validated) ? $validated['branch_id'] : $user->branch_id;
+                $d = array_key_exists('department_id', $validated) ? $validated['department_id'] : $user->department_id;
+                $this->validateOptionalAdminHrOrgScope($c, $b, $d);
+                $this->roleAssignmentService->applyAdminHrOrganizationScope($user, $c, $b, $d);
+            }
         }
 
         if (isset($validated['name'])) {
@@ -269,7 +322,10 @@ class AdminUserAccountController extends Controller
     /**
      * HR org roles cannot assign ADMIN or higher scope than themselves (least privilege).
      */
-    private function validateRoleContext(HrRole $hrRole, array $validated): void
+    /**
+     * @param  bool  $isHrAdmin  Laravel administrator (Admin HR); may combine with org head roles.
+     */
+    private function validateRoleContext(HrRole $hrRole, array $validated, bool $isHrAdmin = false): void
     {
         $companyId = $validated['company_id'] ?? null;
         $branchId = $validated['branch_id'] ?? null;
@@ -291,15 +347,84 @@ class AdminUserAccountController extends Controller
                     throw ValidationException::withMessages(['department_id' => ['Department is required for DEPARTMENT HEAD.']]);
                 }
                 break;
+            case HrRole::AdminHr:
+                $this->validateOptionalAdminHrOrgScope(
+                    $validated['company_id'] ?? null,
+                    $validated['branch_id'] ?? null,
+                    $validated['department_id'] ?? null,
+                );
+                break;
+            case HrRole::Employee:
+                if ($isHrAdmin && ($companyId !== null || $branchId !== null || $departmentId !== null)) {
+                    $this->validateOptionalAdminHrOrgScope($companyId, $branchId, $departmentId);
+                }
+                break;
             default:
                 break;
         }
     }
 
-    private function assertAssignable(User $actor, HrRole $target): void
+    /**
+     * When toggling only {@see is_hr_admin}, keep the same organizational role from org tables / FKs.
+     */
+    private function deriveDefaultHrRoleForAssignmentUpdate(User $user): HrRole
+    {
+        $org = $this->hrRoleResolver->resolveOrganizationalRole($user);
+        if ($user->isAdmin() && $org === HrRole::Employee) {
+            return HrRole::AdminHr;
+        }
+
+        return $org;
+    }
+
+    /**
+     * Consistency rules for scoped Admin (HR): department wins, then branch, then company.
+     */
+    private function validateOptionalAdminHrOrgScope(?int $companyId, ?int $branchId, ?int $departmentId): void
+    {
+        if ($departmentId === null && $branchId === null && $companyId === null) {
+            return;
+        }
+
+        if ($departmentId !== null) {
+            $dept = Department::query()->with('branch')->find($departmentId);
+            if (! $dept) {
+                throw ValidationException::withMessages(['department_id' => ['Invalid department.']]);
+            }
+            if ($branchId !== null && (int) $branchId !== (int) $dept->branch_id) {
+                throw ValidationException::withMessages(['branch_id' => ['Branch does not match the selected department.']]);
+            }
+            $cid = $dept->branch?->company_id;
+            if ($companyId !== null && $cid !== null && (int) $companyId !== (int) $cid) {
+                throw ValidationException::withMessages(['company_id' => ['Company does not match the selected department.']]);
+            }
+
+            return;
+        }
+
+        if ($branchId !== null) {
+            $branch = Branch::query()->find($branchId);
+            if (! $branch) {
+                throw ValidationException::withMessages(['branch_id' => ['Invalid branch.']]);
+            }
+            if ($companyId !== null && (int) $companyId !== (int) $branch->company_id) {
+                throw ValidationException::withMessages(['company_id' => ['Company does not match the selected branch.']]);
+            }
+        } elseif ($companyId !== null) {
+            if (! Company::query()->whereKey($companyId)->exists()) {
+                throw ValidationException::withMessages(['company_id' => ['Invalid company.']]);
+            }
+        }
+    }
+
+    private function assertAssignable(User $actor, HrRole $target, bool $grantsLaravelAdmin = false): void
     {
         if ($actor->isAdmin()) {
             return;
+        }
+
+        if ($grantsLaravelAdmin) {
+            abort(403, 'Only HR administrators can grant Admin (HR) access.');
         }
 
         $actorRole = $this->hrRoleResolver->resolve($actor);
@@ -370,6 +495,7 @@ class AdminUserAccountController extends Controller
         ]);
 
         $hr = $this->hrRoleResolver->resolve($user);
+        $hrList = $this->hrRoleResolver->listEffectiveHrRoles($user);
 
         return [
             'id' => $user->id,
@@ -377,14 +503,25 @@ class AdminUserAccountController extends Controller
             'name' => $user->name,
             'email' => $user->email,
             'role' => $user->role,
+            'is_hr_admin' => $user->isAdmin(),
             'hr_role' => $hr->value,
             'hr_role_label' => $hr->badgeLabel(),
+            'hr_roles' => array_map(fn (HrRole $r) => $r->value, $hrList),
+            'hr_roles_labels' => array_map(fn (HrRole $r) => $r->badgeLabel(), $hrList),
             'is_active' => (bool) $user->is_active,
             'is_super_admin' => (bool) $user->is_super_admin,
             'company_id' => $user->company_id,
             'branch_id' => $user->branch_id,
             'department_id' => $user->department_id,
             'department_name' => $user->departmentRelation?->name,
+            'hr_admin_scoped' => $user->hasScopedHrAdminAssignment(),
+            'hr_admin_scope_label' => $user->hasScopedHrAdminAssignment()
+                ? ($user->department_id !== null
+                    ? $user->departmentRelation?->name
+                    : ($user->branch_id !== null
+                        ? $user->branch?->name
+                        : $user->company?->name))
+                : null,
             'profile_image_url' => $user->profile_image_url,
             'last_login_at' => $user->last_login_at?->toIso8601String(),
             'created_at' => $user->created_at?->toIso8601String(),
