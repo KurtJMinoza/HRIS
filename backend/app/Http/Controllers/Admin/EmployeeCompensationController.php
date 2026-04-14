@@ -52,7 +52,7 @@ class EmployeeCompensationController extends Controller
 
         $employees = User::query()
             ->whereIn('id', $employeeIds)
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->orderBy('name')
             ->get();
 
@@ -141,7 +141,7 @@ class EmployeeCompensationController extends Controller
 
         $employees = User::query()
             ->whereIn('id', $validated['employee_ids'])
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->get();
 
         foreach ($employees as $employee) {
@@ -183,7 +183,7 @@ class EmployeeCompensationController extends Controller
         $userId = (int) $userId;
         $id = (int) $id;
 
-        $employee = User::query()->where('id', $userId)->where('role', User::ROLE_EMPLOYEE)->firstOrFail();
+        $employee = User::query()->where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $assignment = EmployeeCompensationComponent::query()
@@ -253,7 +253,7 @@ class EmployeeCompensationController extends Controller
             throw (new ModelNotFoundException)->setModel(EmployeeCompensationComponent::class, [$id]);
         }
 
-        $employee = User::query()->where('id', $userId)->where('role', User::ROLE_EMPLOYEE)->firstOrFail();
+        $employee = User::query()->where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $assignment = EmployeeCompensationComponent::query()

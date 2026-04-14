@@ -131,7 +131,7 @@ class AttendanceCorrectionController extends Controller
 
         /** @var User $employee */
         $employee = User::where('id', $validated['employee_id'])
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->with('workingSchedule')
             ->firstOrFail();
 
@@ -476,7 +476,7 @@ class AttendanceCorrectionController extends Controller
         $correction = AttendanceCorrection::findOrFail($id);
         $employee = User::query()
             ->where('id', $correction->user_id)
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->first();
         if ($employee) {
             $this->dataScopeService->ensureEmployeeAccessible($request->user(), $employee);

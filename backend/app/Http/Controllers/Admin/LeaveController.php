@@ -53,7 +53,7 @@ class LeaveController extends Controller
             'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
         ]);
 
-        $scope = User::query()->where('role', User::ROLE_EMPLOYEE);
+        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
         $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
         $query->whereIn('user_id', $scope->select('users.id'));
 

@@ -340,15 +340,15 @@ class AdminUserAccountController extends Controller
     {
         match ($roleFilter) {
             'admin_hr' => $query->where('role', User::ROLE_ADMIN),
-            'company_head' => $query->where('role', User::ROLE_EMPLOYEE)
+            'company_head' => $query->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                 ->whereExists(fn ($q) => $q->select(DB::raw(1))
                     ->from('companies')
                     ->whereColumn('companies.company_head_id', 'users.id')),
-            'branch_head' => $query->where('role', User::ROLE_EMPLOYEE)
+            'branch_head' => $query->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                 ->whereExists(fn ($q) => $q->select(DB::raw(1))
                     ->from('branches')
                     ->whereColumn('branches.branch_manager_id', 'users.id')),
-            'department_head' => $query->where('role', User::ROLE_EMPLOYEE)
+            'department_head' => $query->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                 ->whereExists(fn ($q) => $q->select(DB::raw(1))
                     ->from('departments')
                     ->whereColumn('departments.department_head_id', 'users.id')),

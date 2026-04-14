@@ -213,7 +213,7 @@ class EmployeeStatusController extends Controller
 
         // Probationary queue (milestones from hire_date).
         $query = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->whereNotNull('hire_date')
             ->with(['departmentRelation:id,name,branch_id', 'departmentRelation.branch:id,name', 'branch:id,name']);
@@ -386,7 +386,7 @@ class EmployeeStatusController extends Controller
          * and upcoming (next N days).
          */
         $contractQuery = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->whereNotNull('contract_end_date')
             ->where(function ($q) {

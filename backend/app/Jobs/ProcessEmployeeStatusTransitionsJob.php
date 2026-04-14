@@ -50,7 +50,7 @@ class ProcessEmployeeStatusTransitionsJob implements ShouldQueue
     private function processProbationRegularizations(EmployeeStatusService $statusService, Carbon $asOfDate): void
     {
         $probationaryEmployees = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->where('employment_status', EmploymentStatus::Probationary->value)
             ->whereNotNull('hire_date')
@@ -152,7 +152,7 @@ class ProcessEmployeeStatusTransitionsJob implements ShouldQueue
         $asOfDate = $asOfDate->copy()->startOfDay();
 
         $employees = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->where('employment_status', EmploymentStatus::Probationary->value)
             ->whereNotNull('hire_date')
@@ -220,7 +220,7 @@ class ProcessEmployeeStatusTransitionsJob implements ShouldQueue
         $asOf = $asOfDate->copy()->startOfDay();
 
         $users = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->whereIn('employment_status', [
                 EmploymentStatus::Contractual->value,

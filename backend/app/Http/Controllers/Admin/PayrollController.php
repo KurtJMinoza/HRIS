@@ -137,7 +137,7 @@ class PayrollController extends Controller
             ])
             ->with('user:id,name,employee_code,department');
 
-        $scope = User::query()->where('role', User::ROLE_EMPLOYEE);
+        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
         $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
         $query->whereIn('user_id', $scope->select('users.id'));
 

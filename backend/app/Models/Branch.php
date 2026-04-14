@@ -51,7 +51,7 @@ class Branch extends Model
     public function scopeWithTotalEmployeesCount(Builder $query): Builder
     {
         $sub = User::query()
-            ->where('users.role', User::ROLE_EMPLOYEE)
+            ->whereIn('users.role', User::ROSTER_ELIGIBLE_ROLES)
             ->where(function ($q) {
                 $q->whereColumn('users.branch_id', 'branches.id')
                     ->orWhereIn('users.department_id', Department::query()->select('id')->whereColumn('departments.branch_id', 'branches.id'));

@@ -106,7 +106,7 @@ class DepartmentController extends Controller
         // restrictEmployeeQuery here — org-hat exclusions are for cross-department rosters;
         // membership for this screen must match Assign Employees (department_id FK).
         $employees = $department->employees()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->orderBy('name')
             ->get(['id', 'name', 'profile_image'])
             ->map(fn (User $u) => [
@@ -149,7 +149,7 @@ class DepartmentController extends Controller
 
             $headUser = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
                 ->where('id', $validated['department_head_id'])
-                ->where('role', User::ROLE_EMPLOYEE)
+                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                 ->first();
             if (! $headUser || (int) $headUser->department_id !== (int) $department->id) {
                 throw ValidationException::withMessages([
@@ -223,7 +223,7 @@ class DepartmentController extends Controller
 
         $users = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
             ->whereIn('id', $validated['employee_ids'])
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->get();
 
         // Block employees who are Company Heads from being assigned to a department
@@ -276,7 +276,7 @@ class DepartmentController extends Controller
         $companyId = $department->branch?->company_id;
 
         User::whereIn('id', $validated['employee_ids'])
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->update([
                 'department_id' => $department->id,
                 'department' => $department->name,

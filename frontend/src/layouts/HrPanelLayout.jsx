@@ -43,6 +43,13 @@ export function HrPanelLayout() {
     return <Navigate to="/" replace />
   }
 
+  // Admin (HR) must use /admin/* (full modules + nav), not the scoped company/branch/department shell.
+  if (scope !== 'admin' && isAdminHrUser(user)) {
+    const stripped = location.pathname.replace(/^\/(company|branch|department)/, '')
+    const suffix = stripped === '' || stripped === '/' ? '/dashboard' : (stripped.startsWith('/') ? stripped : `/${stripped}`)
+    return <Navigate to={`/admin${suffix}`} replace />
+  }
+
   if (scope === 'admin') {
     if (!isAdminHrUser(user)) {
       try {
@@ -56,6 +63,26 @@ export function HrPanelLayout() {
     const expected = SCOPE_TO_ROLE[scope]
     if (String(user.hr_role || '').trim().toLowerCase() !== expected) {
       return <Navigate to={resolvePostLoginPath(user)} replace />
+    }
+  }
+
+  // Route-level module gates.
+  const permissionSet = new Set(user?.permissions ?? [])
+  const hrAdmin = isAdminHrUser(user)
+  const path = String(location.pathname || '')
+  const isCompensationPath = /\/compensation(\/|$)/.test(path)
+  if (isCompensationPath && !hrAdmin) {
+    const isPayslipPath = /\/compensation\/(payslips|generate-payslips|finalize-payroll)(\/|$)/.test(path)
+    if (isPayslipPath) {
+      const canAccessPayslipPath =
+        (/\/compensation\/generate-payslips(\/|$)/.test(path) && permissionSet.has('payslip.generate')) ||
+        (/\/compensation\/finalize-payroll(\/|$)/.test(path) && permissionSet.has('payslip.finalize')) ||
+        (/\/compensation\/payslips(\/|$)/.test(path) && permissionSet.has('payslip.view'))
+      if (!canAccessPayslipPath) {
+        return <Navigate to={`${hrBase}/dashboard`} replace />
+      }
+    } else if (!permissionSet.has('compensation.view')) {
+      return <Navigate to={`${hrBase}/dashboard`} replace />
     }
   }
 

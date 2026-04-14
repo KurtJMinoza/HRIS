@@ -88,6 +88,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/profile/qr/regenerate', [\App\Http\Controllers\ProfileController::class, 'regenerateMyQr']);
     Route::get('/profile/face', [\App\Http\Controllers\ProfileController::class, 'getMyFace']);
     Route::post('/profile/face/register', [\App\Http\Controllers\ProfileController::class, 'registerMyFace']);
+    Route::get('/profile/face/register/status/{trackId}', [\App\Http\Controllers\ProfileController::class, 'faceRegistrationStatus']);
     Route::delete('/profile/face', [\App\Http\Controllers\ProfileController::class, 'removeMyFace']);
 
     // Employee Dashboard → Profile module (tabbed). Each tab has independent validation/saving.
@@ -142,11 +143,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/employee/contributions', [EmployeeContributionController::class, 'mine']);
 
     /** Payslips (self-service; own records only — {@see EmployeePayslipController}). */
-    Route::get('/employee/payslips', [EmployeePayslipController::class, 'index']);
-    Route::get('/employee/payslips/{id}/data', [EmployeePayslipController::class, 'viewData'])->whereNumber('id');
-    Route::get('/employee/payslips/{id}', [EmployeePayslipController::class, 'show'])->whereNumber('id');
-    Route::get('/employee/payslips/{id}/pdf', [EmployeePayslipController::class, 'download'])->whereNumber('id');
-    Route::get('/employee/payslips/{id}/print', [EmployeePayslipController::class, 'downloadPrint'])->whereNumber('id');
+    Route::middleware('permission:payslip.view')->group(function () {
+        Route::get('/employee/payslips', [EmployeePayslipController::class, 'index']);
+        Route::get('/employee/payslips/{id}/data', [EmployeePayslipController::class, 'viewData'])->whereNumber('id');
+        Route::get('/employee/payslips/{id}', [EmployeePayslipController::class, 'show'])->whereNumber('id');
+    });
+    Route::middleware('permission:payslip.download')->group(function () {
+        Route::get('/employee/payslips/{id}/pdf', [EmployeePayslipController::class, 'download'])->whereNumber('id');
+        Route::get('/employee/payslips/{id}/print', [EmployeePayslipController::class, 'downloadPrint'])->whereNumber('id');
+    });
 
     Route::get('/employee/loan-requests/context', [EmployeeLoanRequestController::class, 'deductionsContext']);
     Route::get('/employee/loan-requests/next-deduction-dates', [EmployeeLoanRequestController::class, 'nextDeductionDates']);
@@ -231,6 +236,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/employees/{id}/signature', [EmployeeController::class, 'saveSignature']);
             Route::delete('/admin/employees/{id}/signature', [EmployeeController::class, 'clearSignature']);
             Route::post('/admin/employees/{id}/face/register', [EmployeeController::class, 'registerFace']);
+            Route::get('/admin/employees/{id}/face/register/status/{trackId}', [EmployeeController::class, 'faceRegistrationStatus']);
             Route::patch('/admin/employees/{id}/face', [EmployeeController::class, 'updateFace']);
             Route::patch('/admin/employees/{id}/toggle-active', [EmployeeController::class, 'toggleActive']);
             Route::post('/admin/employees/{userId}/skills', [AdminEmployeeSkillController::class, 'store']);
@@ -322,31 +328,38 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/payroll/policy-reference', [PayrollController::class, 'policyReference']);
         });
         Route::middleware('permission:payroll.compute')->post('/admin/payroll/compute', [PayrollController::class, 'compute']);
-        /** Finalize payroll batch — Admin role only; see {@see PayrollFinalizeController}. */
-        Route::post('/admin/payroll/finalize/preview', [PayrollFinalizeController::class, 'preview']);
-        Route::post('/admin/payroll/finalize/execute', [PayrollFinalizeController::class, 'execute']);
-        Route::post('/admin/payroll/finalize/employee', [PayrollFinalizeController::class, 'finalizeEmployee']);
-        Route::post('/admin/payroll/finalize/deliver-payslips', [PayrollFinalizeController::class, 'deliverPayslips']);
-        Route::get('/admin/payroll/finalize/status/{batchRunId}', [PayrollFinalizeController::class, 'executeStatus']);
+        /** Finalize payroll batch and send payslips. */
+        Route::middleware('permission:payslip.finalize')->group(function () {
+            Route::post('/admin/payroll/finalize/preview', [PayrollFinalizeController::class, 'preview']);
+            Route::post('/admin/payroll/finalize/execute', [PayrollFinalizeController::class, 'execute']);
+            Route::post('/admin/payroll/finalize/employee', [PayrollFinalizeController::class, 'finalizeEmployee']);
+            Route::post('/admin/payroll/finalize/deliver-payslips', [PayrollFinalizeController::class, 'deliverPayslips']);
+            Route::get('/admin/payroll/finalize/status/{batchRunId}', [PayrollFinalizeController::class, 'executeStatus']);
+        });
         /** Demote finalized payslips + unlock payroll_period rows (admin only; confirm required). */
         Route::post('/admin/payroll/unlock-period', [PayrollPeriodUnlockController::class, 'unlockPayWindow']);
 
-        /** Payslip generation — Admin (Laravel role) only; enforced again in {@see AdminPayslipController}. */
-        Route::get('/admin/payslips', [AdminPayslipController::class, 'index']);
-        Route::get('/admin/payslips/recent-by-company', [AdminPayslipController::class, 'recentByCompany']);
-        Route::delete('/admin/payslips/batch/{id}', [AdminPayslipController::class, 'destroyDraftBatch'])->whereNumber('id');
-        Route::get('/admin/payslips/preview-scope', [AdminPayslipController::class, 'previewScope']);
-        Route::get('/admin/payslips/company-default-dates', [AdminPayslipController::class, 'companyDefaultDates']);
-        Route::post('/admin/payslips/preview-sample', [AdminPayslipController::class, 'previewSample']);
-        Route::post('/admin/payslips/preview-sample-data', [AdminPayslipController::class, 'previewSampleData']);
-        Route::post('/admin/payslips/preview-employee', [AdminPayslipController::class, 'previewEmployee']);
-        Route::post('/admin/payslips/preview-employee-data', [AdminPayslipController::class, 'previewEmployeeData']);
-        Route::post('/admin/payslips/view-preview-data', [AdminPayslipController::class, 'viewPreviewData']);
-        Route::post('/admin/payslips/generate', [AdminPayslipController::class, 'generate']);
-        Route::get('/admin/payslips/{id}/data', [AdminPayslipController::class, 'showData'])->whereNumber('id');
-        Route::get('/admin/payslips/{id}/view', [AdminPayslipController::class, 'viewData'])->whereNumber('id');
-        Route::get('/admin/payslips/{id}/pdf', [AdminPayslipController::class, 'download'])->whereNumber('id');
-        Route::post('/admin/payslips/zip', [AdminPayslipController::class, 'downloadZip']);
+        Route::middleware('permission:payslip.view')->group(function () {
+            Route::get('/admin/payslips', [AdminPayslipController::class, 'index']);
+            Route::get('/admin/payslips/recent-by-company', [AdminPayslipController::class, 'recentByCompany']);
+            Route::get('/admin/payslips/preview-scope', [AdminPayslipController::class, 'previewScope']);
+            Route::get('/admin/payslips/company-default-dates', [AdminPayslipController::class, 'companyDefaultDates']);
+            Route::post('/admin/payslips/preview-sample', [AdminPayslipController::class, 'previewSample']);
+            Route::post('/admin/payslips/preview-sample-data', [AdminPayslipController::class, 'previewSampleData']);
+            Route::post('/admin/payslips/preview-employee', [AdminPayslipController::class, 'previewEmployee']);
+            Route::post('/admin/payslips/preview-employee-data', [AdminPayslipController::class, 'previewEmployeeData']);
+            Route::post('/admin/payslips/view-preview-data', [AdminPayslipController::class, 'viewPreviewData']);
+            Route::get('/admin/payslips/{id}/data', [AdminPayslipController::class, 'showData'])->whereNumber('id');
+            Route::get('/admin/payslips/{id}/view', [AdminPayslipController::class, 'viewData'])->whereNumber('id');
+        });
+        Route::middleware('permission:payslip.generate')->group(function () {
+            Route::post('/admin/payslips/generate', [AdminPayslipController::class, 'generate']);
+            Route::delete('/admin/payslips/batch/{id}', [AdminPayslipController::class, 'destroyDraftBatch'])->whereNumber('id');
+        });
+        Route::middleware('permission:payslip.download')->group(function () {
+            Route::get('/admin/payslips/{id}/pdf', [AdminPayslipController::class, 'download'])->whereNumber('id');
+            Route::post('/admin/payslips/zip', [AdminPayslipController::class, 'downloadZip']);
+        });
         Route::middleware('permission:payroll.policies')->group(function () {
             Route::get('/admin/payroll/policies', [PayPolicyController::class, 'index']);
             Route::get('/admin/payroll/policies/companies', [PayPolicyController::class, 'companies']);
@@ -377,7 +390,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/payroll/remittances/generate', [GovernmentContributionController::class, 'generateRemittance']);
             Route::put('/admin/employees/{userId}/tax-profile', [GovernmentContributionController::class, 'upsertEmployeeTaxProfile']);
         });
-        Route::middleware('permission:compensation.view|compensation.employee_compensation.view|payroll.view')->group(function () {
+        Route::middleware('permission:compensation.view|compensation.employee_compensation.view')->group(function () {
             Route::get('/admin/pay-components', [PayComponentController::class, 'index']);
             Route::get('/admin/employee-compensation', [EmployeeCompensationController::class, 'index']);
             Route::get('/admin/pay-cycles', [PayCycleController::class, 'index']);

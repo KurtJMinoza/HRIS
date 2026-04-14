@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Casts\EncryptedArray;
+use App\Services\HrRoleResolver;
 use App\Support\EmployeeProfileCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -25,6 +26,19 @@ class User extends Authenticatable
     public const ROLE_EMPLOYEE = 'employee';
 
     public const ROLE_ADMIN = 'admin';
+
+    /**
+     * Staff included in HR rosters (Employee module lists, payroll runs, attendance/reports scopes, etc.).
+     * Admin (HR) accounts are part of this set so they appear and behave as staff while retaining admin capabilities.
+     *
+     * @var list<string>
+     */
+    public const ROSTER_ELIGIBLE_ROLES = [self::ROLE_EMPLOYEE, self::ROLE_ADMIN];
+
+    public function isRosterEligible(): bool
+    {
+        return in_array($this->role, self::ROSTER_ELIGIBLE_ROLES, true);
+    }
 
     protected $fillable = [
         'name',
@@ -331,6 +345,15 @@ class User extends Authenticatable
                 ]);
             }
         });
+    }
+
+    /**
+     * Resolved HR role key (e.g. admin_hr, company_head) for middleware and policies.
+     * Not stored on users; mirrors {@see HrRoleResolver::resolve()}.
+     */
+    public function getHrRoleAttribute(): string
+    {
+        return app(HrRoleResolver::class)->resolve($this)->value;
     }
 
     public function isAdmin(): bool

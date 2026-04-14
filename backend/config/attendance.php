@@ -174,6 +174,15 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Stricter liveness for face *registration* (Amplify + Rekognition)
+    |--------------------------------------------------------------------------
+    | Applied only when enrolling a new face template. Higher = fewer spoofs, more retakes.
+    |--------------------------------------------------------------------------
+    */
+    'face_registration_min_liveness_score' => (float) env('ATTENDANCE_FACE_REGISTRATION_MIN_LIVENESS_SCORE', 0.62),
+
+    /*
+    |--------------------------------------------------------------------------
     | Face match threshold (Euclidean distance). Login only allowed if similarity
     | passes: distance <= threshold. Facenet same-person distance often 0.5–1.0.
     | 0.45 = very strict (many false rejections), 0.75 = balanced, 0.9–1.0 = lenient.
@@ -224,34 +233,42 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Face duplicate detection (registration only)
+    | Face duplicate detection (registration only, cross-account)
     |--------------------------------------------------------------------------
-    | Compared against each stored sample + primary embedding (not just the average).
-    | Same identity can look different across expressions; Facenet embeddings shift. Use
-    | face_duplicate_min_best_cosine_similarity (max similarity to any stored vector) as
-    | the main gate, with per-row distance thresholds as fallback.
-    | Cosine distance = 1 − similarity (smaller = more alike).
-    | Euclidean: match when distance <= threshold (Facenet same-person often 0.4–0.9).
+    | Compared only against *other* employees' stored samples + primary (+ optional mean row).
+    | A duplicate is declared when cosine similarity ≥ min_cosine OR Euclidean ≤ max_euclidean.
+    | Previous defaults (~0.50 cosine) caused false "already registered" for different people.
     |--------------------------------------------------------------------------
     */
-    'face_duplicate_match_threshold' => (float) env('ATTENDANCE_FACE_DUPLICATE_MATCH_THRESHOLD', 0.62),
+    'face_duplicate_min_cosine_similarity' => is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_COSINE_SIM'))
+        ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_COSINE_SIM')
+        : null,
 
-    /** Per-sample / primary: max cosine distance (fallback). Default ~0.45 → similarity ≥ ~0.55. */
-    'face_duplicate_cosine_distance_threshold' => (float) env('ATTENDANCE_FACE_DUPLICATE_COSINE_THRESHOLD', 0.45),
-
-    /**
-     * Averaged embedding (2+ samples): looser distance (fallback).
-     * Default ~0.52 → similarity ≥ ~0.48 on the mean vector.
-     */
-    'face_duplicate_cosine_distance_threshold_avg' => (float) env('ATTENDANCE_FACE_DUPLICATE_COSINE_AVG_THRESHOLD', 0.52),
-
-    /**
-     * Primary duplicate rule: block if max cosine similarity (new vs any stored vector) ≥ this.
-     * Default 0.50 helps block same person with different expressions. Lower = stricter (fewer false positives).
-     */
+    /** @deprecated Use face_duplicate_min_cosine_similarity; kept for backward-compatible env keys */
     'face_duplicate_min_best_cosine_similarity' => is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_BEST_SIM'))
         ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_BEST_SIM')
-        : (is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_SIM')) ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_SIM') : 0.50),
+        : (is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_SIM')) ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_SIM') : 0.85),
+
+    /**
+     * When comparing to another user's *averaged* embedding (2+ samples), slightly lower cosine
+     * than per-sample so the same identity still matches under lighting variance.
+     */
+    'face_duplicate_min_cosine_similarity_avg' => is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_COSINE_SIM_AVG'))
+        ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_COSINE_SIM_AVG')
+        : null,
+
+    /** Euclidean distance on raw 128-D vectors; Facenet same-person often below ~0.9, different people often higher. */
+    'face_duplicate_max_euclidean' => (float) env('ATTENDANCE_FACE_DUPLICATE_MAX_EUCLIDEAN', 0.4),
+
+    /**
+     * Log when best cosine to any other employee is in [near_miss_min, min_cosine) for debugging borderline cases.
+     */
+    'face_duplicate_near_miss_log_min_similarity' => (float) env('ATTENDANCE_FACE_DUPLICATE_NEAR_MISS_MIN_SIM', 0.72),
+
+    'face_duplicate_log_near_misses' => filter_var(
+        env('ATTENDANCE_FACE_DUPLICATE_LOG_NEAR_MISS', true),
+        FILTER_VALIDATE_BOOL
+    ),
 
     /*
     |--------------------------------------------------------------------------

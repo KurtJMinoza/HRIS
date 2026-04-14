@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
+import { useAuth } from '@/contexts/AuthContext'
 import { Download, Eye, Loader2 } from 'lucide-react'
 
 function downloadBlob(blob, filename) {
@@ -23,6 +24,8 @@ function downloadBlob(blob, filename) {
 
 export function EmployeePayslipsPanel() {
   const { toast } = useToast()
+  const { user } = useAuth()
+  const canDownloadPayslip = new Set(user?.permissions ?? []).has('payslip.download')
   const [loading, setLoading] = useState(true)
   const [rows, setRows] = useState([])
   const [previewUrl, setPreviewUrl] = useState(null)
@@ -106,21 +109,23 @@ export function EmployeePayslipsPanel() {
                           <Eye className="mr-1 h-4 w-4" />
                           View
                         </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={async () => {
-                            try {
-                              const blob = await getMyPayslipPdfBlob(r.id)
-                              downloadBlob(blob, `payslip-${r.id}.pdf`)
-                            } catch (e) {
-                              toast({ title: 'Download', description: e.message, variant: 'destructive' })
-                            }
-                          }}
-                        >
-                          <Download className="mr-1 h-4 w-4" />
-                          PDF
-                        </Button>
+                        {canDownloadPayslip && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                const blob = await getMyPayslipPdfBlob(r.id)
+                                downloadBlob(blob, `payslip-${r.id}.pdf`)
+                              } catch (e) {
+                                toast({ title: 'Download', description: e.message, variant: 'destructive' })
+                              }
+                            }}
+                          >
+                            <Download className="mr-1 h-4 w-4" />
+                            PDF
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Enums\HrRole;
+use App\Services\HrRoleResolver;
 use App\Services\RbacService;
 use Closure;
 use Illuminate\Http\Request;
@@ -15,6 +17,7 @@ class EnsurePermission
 {
     public function __construct(
         private readonly RbacService $rbacService,
+        private readonly HrRoleResolver $hrRoleResolver,
     ) {}
 
     public function handle(Request $request, Closure $next, string $permissionList): Response
@@ -29,8 +32,8 @@ class EnsurePermission
             return $next($request);
         }
 
-        $hrRole = strtolower(trim((string) ($user->hr_role ?? '')));
-        if ($user->isAdmin() || $hrRole === 'admin_hr' || $hrRole === 'admin') {
+        // Admin (HR) super-role: full access (matches RbacService::can for admin accounts).
+        if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
             return $next($request);
         }
 

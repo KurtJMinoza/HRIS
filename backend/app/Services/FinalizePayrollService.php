@@ -1045,7 +1045,7 @@ class FinalizePayrollService
         ?User $actor = null
     ): array {
         $employee = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->findOrFail($employeeUserId);
 
@@ -1379,7 +1379,7 @@ class FinalizePayrollService
         ?User $actor = null
     ): \Illuminate\Database\Eloquent\Builder {
         $q = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true);
 
         if ($actor !== null) {

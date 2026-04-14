@@ -935,10 +935,44 @@ export async function regenerateMyQr() {
   return data
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Poll async face registration (queue) until completed or failed.
+ * @param {string} pollUrl - GET status URL from the same origin as other API calls
+ */
+async function pollFaceRegistrationUntilDone(pollUrl, options = {}) {
+  const maxAttempts = options.maxAttempts ?? 40
+  const intervalMs = options.intervalMs ?? 400
+  for (let i = 0; i < maxAttempts; i++) {
+    await delay(intervalMs)
+    const res = await authenticatedFetch(pollUrl)
+    const data = await res.json().catch(() => ({}))
+    if (res.status === 404 || res.status === 403) {
+      const err = new Error(data.message || 'Registration request expired or access denied.')
+      err.errorCode = data.error_code || 'registration_poll_denied'
+      throw err
+    }
+    if (data.status === 'completed') return data
+    if (data.status === 'failed' || res.status === 422) {
+      const msg = data.message || data.errors?.face?.[0] || 'Face registration failed'
+      const err = new Error(msg)
+      err.errorCode = data.error_code
+      throw err
+    }
+  }
+  const err = new Error('Face registration is taking longer than expected. You can continue using QR code and try face registration again.')
+  err.errorCode = 'registration_timeout'
+  throw err
+}
+
 /**
  * Register the authenticated employee's face. Use Rekognition liveness (recommended) or legacy image.
+ * Backend may return 202 + track_id (queued); this function polls until the face is stored or an error is returned.
  * @param {{ liveness_session_id?: string, image_base64?: string, liveness_type?: string }} payload - liveness_session_id after Amplify liveness, or image_base64 (legacy)
- * @returns {Promise<{ message: string, user: object }>}
+ * @returns {Promise<{ message: string, user: object, status?: string }>}
  */
 export async function registerMyFace(payload) {
   const body =
@@ -955,6 +989,9 @@ export async function registerMyFace(payload) {
     body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
+  if (res.status === 202 && data.track_id) {
+    return pollFaceRegistrationUntilDone(`/profile/face/register/status/${data.track_id}`)
+  }
   if (!res.ok) {
     const msg = data.errors?.face?.[0] || data.message || 'Face registration failed'
     const err = new Error(msg)
@@ -4062,6 +4099,13 @@ export async function registerEmployeeFace(id, payload, livenessType = 'rekognit
     body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
+  if (res.status === 202 && data.track_id) {
+    const polled = await pollFaceRegistrationUntilDone(
+      `/admin/employees/${id}/face/register/status/${data.track_id}`
+    )
+    clearCachesAfterAdminEmployeeDataChange(id)
+    return polled
+  }
   if (!res.ok) {
     const msg = data.errors?.face?.[0] || data.message || 'Face registration failed'
     const err = new Error(msg)

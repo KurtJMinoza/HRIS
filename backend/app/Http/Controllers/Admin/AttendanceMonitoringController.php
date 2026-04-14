@@ -233,7 +233,7 @@ class AttendanceMonitoringController extends Controller
         $undertimeThresholdMinutes = (int) config('attendance.undertime_threshold_minutes', 60);
 
         $employeesQuery = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true);
 
         if (! empty($validated['department'])) {

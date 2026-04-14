@@ -285,7 +285,7 @@ class ReportsController extends Controller
         }
 
         $employeesQuery = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true);
 
         // Department filter: match employees by departmentRelation.name or legacy department.
@@ -926,7 +926,7 @@ class ReportsController extends Controller
         $requestedEmployeeId = isset($validated['employee_id']) ? (int) $validated['employee_id'] : null;
 
         $employeesQuery = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true);
 
         if ($validated['department'] !== null && $validated['department'] !== '') {
@@ -1657,7 +1657,7 @@ class ReportsController extends Controller
     {
         $actor = $request->user();
         $query = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->orderBy('name');
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
         $users = $query->get([

@@ -41,7 +41,7 @@ class RegularizationController extends Controller
         }
 
         $query = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->whereNotNull('hire_date');
 
@@ -273,7 +273,7 @@ class RegularizationController extends Controller
             ->values();
 
         $q = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true);
         if ($ids->isNotEmpty()) {
             $q->whereIn('id', $ids->all());
@@ -321,7 +321,7 @@ class RegularizationController extends Controller
             'manager_recommendation_received' => ['sometimes', 'boolean'],
         ]);
 
-        $employee = User::query()->where('role', User::ROLE_EMPLOYEE)->findOrFail($userId);
+        $employee = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->findOrFail($userId);
         $this->dataScopeService->ensureEmployeeAccessible($actor, $employee);
 
         $row = RegularizationRequirement::query()->firstOrCreate(['user_id' => $employee->id]);

@@ -249,7 +249,7 @@ class AuthController extends Controller
         ]);
 
         $user = User::where('qr_token', $validated['qr_token'])
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->first();
 
         if (! $user) {

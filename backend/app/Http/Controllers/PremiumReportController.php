@@ -70,7 +70,7 @@ class PremiumReportController extends Controller
         }
 
         $employeesQuery = \App\Models\User::query()
-            ->where('role', \App\Models\User::ROLE_EMPLOYEE)
+            ->whereIn('role', \App\Models\User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true);
 
         if (! empty($validated['employee_id'])) {

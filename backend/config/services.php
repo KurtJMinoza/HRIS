@@ -53,13 +53,16 @@ return [
     // Face verification (Python FastAPI: DeepFace embedding only; liveness via Amazon Rekognition)
     'face_verification' => [
         'url' => env('FACE_VERIFICATION_URL', 'http://127.0.0.1:5000'),
-        // Performance defaults for kiosk matching in controlled environments.
-        'model_name' => env('FACE_VERIFICATION_MODEL_NAME', 'ArcFace'),
+        // Performance defaults prioritize faster embedding generation for registration/login.
+        'model_name' => env('FACE_VERIFICATION_MODEL_NAME', 'Facenet'),
         'detector_backend' => env('FACE_VERIFICATION_DETECTOR_BACKEND', 'mediapipe'),
         'enforce_detection' => filter_var(env('FACE_VERIFICATION_ENFORCE_DETECTION', true), FILTER_VALIDATE_BOOL),
         'align' => filter_var(env('FACE_VERIFICATION_ALIGN', true), FILTER_VALIDATE_BOOL),
         'input_width' => (int) env('FACE_VERIFICATION_INPUT_WIDTH', 640),
         'input_height' => (int) env('FACE_VERIFICATION_INPUT_HEIGHT', 480),
+        'connect_timeout_seconds' => (int) env('FACE_VERIFICATION_CONNECT_TIMEOUT_SECONDS', 3),
+        'embed_timeout_seconds' => (int) env('FACE_VERIFICATION_EMBED_TIMEOUT_SECONDS', 8),
+        'verify_timeout_seconds' => (int) env('FACE_VERIFICATION_VERIFY_TIMEOUT_SECONDS', 10),
     ],
 
     // Amazon Rekognition Face Liveness (create session + get results; frontend uses Amplify FaceLivenessDetector)

@@ -415,6 +415,8 @@ export default function AdminEmployees() {
   const [faceRegisterEmployee, setFaceRegisterEmployee] = useState(null)
   const [faceRegisterSubmitting, setFaceRegisterSubmitting] = useState(false)
   const [faceRegisterError, setFaceRegisterError] = useState(null)
+  const [faceRegisterRetryKey, setFaceRegisterRetryKey] = useState(0)
+  const [faceRegisterSlow, setFaceRegisterSlow] = useState(false)
   const [changeFaceConfirmEmployee, setChangeFaceConfirmEmployee] = useState(null)
 
   const [viewFaceOpen, setViewFaceOpen] = useState(false)
@@ -1381,6 +1383,7 @@ export default function AdminEmployees() {
   const handleFaceRegisterVerified = async (sessionId) => {
     if (!faceRegisterEmployee || faceRegisterSubmitting) return
     setFaceRegisterSubmitting(true)
+    setFaceRegisterSlow(false)
     setFaceRegisterError(null)
     try {
       await registerEmployeeFace(faceRegisterEmployee.id, { liveness_session_id: sessionId })
@@ -1411,6 +1414,15 @@ export default function AdminEmployees() {
       setFaceRegisterSubmitting(false)
     }
   }
+
+  useEffect(() => {
+    if (!faceRegisterSubmitting) {
+      setFaceRegisterSlow(false)
+      return
+    }
+    const timer = setTimeout(() => setFaceRegisterSlow(true), 6000)
+    return () => clearTimeout(timer)
+  }, [faceRegisterSubmitting])
 
   const closeFaceRegister = () => {
     if (!faceRegisterSubmitting) {
@@ -1462,6 +1474,7 @@ export default function AdminEmployees() {
     }
     setFaceRegisterEmployee(emp)
     setFaceRegisterError(null)
+    setFaceRegisterRetryKey((k) => k + 1)
     setFaceRegisterOpen(true)
   }
 
@@ -1469,6 +1482,7 @@ export default function AdminEmployees() {
     if (changeFaceConfirmEmployee) {
       setFaceRegisterEmployee(changeFaceConfirmEmployee)
       setFaceRegisterError(null)
+      setFaceRegisterRetryKey((k) => k + 1)
       setFaceRegisterOpen(true)
       setChangeFaceConfirmEmployee(null)
     }
@@ -2554,15 +2568,45 @@ export default function AdminEmployees() {
             </DialogDescription>
           </DialogHeader>
           <FaceRekognitionLiveness
+            key={faceRegisterRetryKey}
             onVerified={handleFaceRegisterVerified}
             onSuccess={closeFaceRegister}
             hideInstruction
             instructionText="Complete the face liveness check to register this employee's face."
           />
-          {faceRegisterError && (
-            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-              {faceRegisterError}
+          {faceRegisterSubmitting && (
+            <div
+              className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+              Processing face…
+            </div>
+          )}
+          {faceRegisterSlow && (
+            <p className="rounded-md border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              This is taking longer than usual. You can keep this open while registration continues.
             </p>
+          )}
+          {faceRegisterError && (
+            <div className="space-y-2">
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                {faceRegisterError}
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                disabled={faceRegisterSubmitting}
+                onClick={() => {
+                  setFaceRegisterError(null)
+                  setFaceRegisterRetryKey((k) => k + 1)
+                }}
+              >
+                Try again
+              </Button>
+            </div>
           )}
           <Button variant="outline" onClick={closeFaceRegister} disabled={faceRegisterSubmitting} className="w-full">
             Cancel

@@ -1,5 +1,6 @@
 import { FileText } from 'lucide-react'
 import { adminNavItems, employeeNavItems } from '@/config/dashboardNav'
+import { isAdminHrUser } from '@/lib/hrRoutes'
 
 /**
  * Routes only for ADMIN (HR) — non-admin HR panel roles never see these, even if a permission slug matches.
@@ -30,25 +31,16 @@ const pathToPermissions = {
   '/admin/schedule-requests': ['approve-schedule', 'manage-schedules'],
   '/admin/daily-computation': ['payroll.view'],
   '/admin/daily-computation/policy-settings': ['payroll.policies'],
-  '/admin/compensation/pay-cycles': ['compensation.view', 'compensation.employee_compensation.view'],
+  '/admin/compensation/pay-cycles': ['compensation.view'],
   '/admin/compensation/pay-components': ['compensation.view'],
-  '/admin/compensation/deduction-schedule-settings': ['compensation.view', 'payroll.view', 'compensation.employee_compensation.view'],
-  '/admin/compensation/employee-compensation': ['compensation.employee_compensation.view', 'compensation.view'],
-  '/admin/compensation/government-deduction': ['government_deductions.view', 'government_deductions.rates.view'],
-  '/admin/compensation/deductions-loans': ['compensation.deductions_loans.admin'],
-  '/admin/compensation/generate-payslips': ['payroll.generate_payslips'],
-  '/admin/compensation/finalize-payroll': ['payroll.finalize'],
+  '/admin/compensation/deduction-schedule-settings': ['compensation.view'],
+  '/admin/compensation/employee-compensation': ['compensation.view'],
+  '/admin/compensation/government-deduction': ['compensation.view'],
+  '/admin/compensation/deductions-loans': ['compensation.view'],
+  '/admin/compensation/generate-payslips': ['payslip.generate'],
+  '/admin/compensation/finalize-payroll': ['payslip.finalize'],
   /** Any of these — org heads may lack `payroll.view` but have `employees.view` / org scope. */
-  '/admin/compensation/payslips': [
-    'payroll.view',
-    'payroll.finalize',
-    'employees.view',
-    'compensation.view',
-    'compensation.employee_compensation.view',
-    'org.company.view',
-    'org.branch.view',
-    'org.department.view',
-  ],
+  '/admin/compensation/payslips': ['payslip.view'],
   '/admin/government-contributions': ['government_deductions.view', 'government_deductions.rates.view'],
   '/admin/reports': ['reports.view'],
   '/admin/loans-deductions': ['loans.view_own', 'loans.request', 'request-loan'],
@@ -61,13 +53,11 @@ const pathToPermissions = {
 function canSee(user, permissionLists) {
   if (!user) return false
   if (user.is_super_admin) return true
+  // Admin (HR) super-role: full sidebar (matches backend permission bypass).
+  if (isAdminHrUser(user)) return true
   if (permissionLists.length === 0) return true
   const set = new Set(user.permissions ?? [])
   return permissionLists.some((list) => list.length === 0 || list.some((p) => set.has(p)))
-}
-
-function isAdminHrPanelUser(user) {
-  return String(user?.hr_role || '').trim() === 'admin_hr' || String(user?.role || '').trim().toLowerCase() === 'admin'
 }
 
 /** Map manager panel URLs to the same permission keys as `/admin/...`. */
@@ -149,7 +139,7 @@ export function buildManagerNav(user, basePath) {
       if (mappedTo === `${prefix}/companies` && (hr === 'branch_head' || hr === 'department_head')) {
         continue
       }
-      if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrPanelUser(user)) continue
+      if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrUser(user)) continue
       const need = permissionsForPath(normalizePathForPermission(mappedTo))
       if (!canSee(user, [need])) continue
       const navItem = { ...item, to: mappedTo }
@@ -181,11 +171,7 @@ export function buildAdminNav(user) {
       }
       const to = item.to
       if (!to) continue
-      /** Laravel admin (`users.role = admin`): no Payslips module — payroll staff use Finalize / Send only. */
-      if (to === '/admin/compensation/payslips' && String(user?.role || '').trim().toLowerCase() === 'admin') {
-        continue
-      }
-      if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrPanelUser(user)) continue
+      if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrUser(user)) continue
       const need = permissionsForPath(normalizePathForPermission(to))
       if (!canSee(user, [need])) continue
       out.push(item)

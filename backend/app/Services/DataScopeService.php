@@ -66,13 +66,13 @@ class DataScopeService
     }
 
     /**
-     * Organizational scope for data queries. Returns null when the actor has full (HR admin) access
-     * with no org-hat restriction. Admin accounts that are also company/branch/department heads
-     * are not treated as unrestricted.
+     * Organizational scope for data queries.
+     * Returns null when the actor has full (HR admin) access.
+     * Admin (HR) has highest priority and is never downgraded by org-hat assignments.
      */
     private function effectiveOrgScopeRole(User $actor): ?HrRole
     {
-        if ($actor->isAdmin() && ! $this->hrRoleResolver->isAssignedOrganizationHead($actor)) {
+        if ($actor->isAdmin()) {
             return null;
         }
 
@@ -91,6 +91,11 @@ class DataScopeService
      */
     public function getAttendanceScopeMeta(User $user): ?array
     {
+        // Admin (HR) is never scoped to org-hat filters.
+        if ($user->isAdmin()) {
+            return null;
+        }
+
         $role = $this->hrRoleResolver->resolveForApprovalSubject($user);
 
         if ($role === HrRole::DepartmentHead) {
@@ -155,7 +160,7 @@ class DataScopeService
     public function restrictRegularizationRecommendationQuery(User $actor, Builder $query): void
     {
         $query->whereHas('user', function (Builder $q) use ($actor) {
-            $q->where('role', User::ROLE_EMPLOYEE);
+            $q->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
             $this->restrictEmployeeQuery($actor, $q);
         });
     }
@@ -384,7 +389,7 @@ class DataScopeService
             return;
         }
 
-        if ($targetEmployee->role !== User::ROLE_EMPLOYEE) {
+        if (! $targetEmployee->isRosterEligible()) {
             throw new HttpResponseException(response()->json(['message' => 'Forbidden.'], Response::HTTP_FORBIDDEN));
         }
 
@@ -408,7 +413,7 @@ class DataScopeService
             return;
         }
 
-        if ($subject->role !== User::ROLE_EMPLOYEE) {
+        if (! $subject->isRosterEligible()) {
             throw new HttpResponseException(response()->json(['message' => 'Forbidden.'], Response::HTTP_FORBIDDEN));
         }
 
@@ -426,7 +431,7 @@ class DataScopeService
             return;
         }
 
-        $scoped = User::query()->where('role', User::ROLE_EMPLOYEE);
+        $scoped = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
         $this->restrictEmployeeQuery($actor, $scoped);
         $ids = $scoped->pluck('id')->all();
 

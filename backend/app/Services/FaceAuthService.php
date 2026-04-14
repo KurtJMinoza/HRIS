@@ -26,6 +26,22 @@ class FaceAuthService
     }
 
     /**
+     * Whether legacy /verify reported sufficient liveness confidence for registration (when provided).
+     */
+    private static function legacyVerifyPassesRegistrationLiveness(?float $spoofConfidence): bool
+    {
+        $min = max(
+            (float) config('attendance.face_min_liveness_score', 0.52),
+            (float) config('attendance.face_registration_min_liveness_score', 0.62)
+        );
+        if ($spoofConfidence === null) {
+            return true;
+        }
+
+        return $spoofConfidence >= $min;
+    }
+
+    /**
      * Extract 128D face descriptor only (no anti-spoof). Used with Amazon Rekognition Face Liveness.
      * Python service /embed endpoint.
      *
@@ -39,8 +55,8 @@ class FaceAuthService
 
         try {
             // Tight timeouts: embedding is usually sub-second; long waits feel like a stuck kiosk.
-            $response = Http::timeout(12)
-                ->connectTimeout(5)
+            $response = Http::timeout((int) config('services.face_verification.embed_timeout_seconds', 8))
+                ->connectTimeout((int) config('services.face_verification.connect_timeout_seconds', 3))
                 ->post($url, [
                     'image_base64' => $imageBase64,
                     'options' => self::deepfaceOptions(),
@@ -77,13 +93,18 @@ class FaceAuthService
 
     /**
      * Verify face using Amazon Rekognition Face Liveness session: get reference image, extract descriptor, no local anti-spoof.
+     * Liveness is evaluated before embedding extraction (Rekognition session must PASS before /embed runs).
      *
      * @param  string  $sessionId  Rekognition Face Liveness session ID from frontend
+     * @param  bool  $forRegistration  When true, applies {@see config('attendance.face_registration_min_liveness_score')} (stricter Amplify path).
      * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float, reference_image_base64?: string}|null
      */
-    public static function verifyFaceWithLivenessSession(string $sessionId): ?array
+    public static function verifyFaceWithLivenessSession(string $sessionId, bool $forRegistration = false): ?array
     {
-        $result = RekognitionLivenessService::getSessionResults($sessionId);
+        $registrationFloor = $forRegistration
+            ? (float) config('attendance.face_registration_min_liveness_score', 0.62)
+            : null;
+        $result = RekognitionLivenessService::getSessionResults($sessionId, $registrationFloor);
         if ($result === null) {
             return null;
         }
@@ -120,6 +141,30 @@ class FaceAuthService
     }
 
     /**
+     * Legacy image path with registration liveness floor when spoof_confidence is returned by the Python service.
+     *
+     * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float}|null
+     */
+    public static function verifyFaceForRegistration(string $imageBase64): ?array
+    {
+        $base = self::verifyFace($imageBase64);
+        if ($base === null || empty($base['descriptor'])) {
+            return $base;
+        }
+        $spoof = $base['spoof_confidence'] ?? null;
+        if (! self::legacyVerifyPassesRegistrationLiveness($spoof)) {
+            return [
+                'is_live' => false,
+                'descriptor' => null,
+                'message' => 'Liveness confidence too low for registration. Please use a clearer capture or complete guided liveness.',
+                'spoof_confidence' => $spoof,
+            ];
+        }
+
+        return $base;
+    }
+
+    /**
      * Legacy: verify face via Python /verify (embedding only when using Rekognition liveness).
      * Kept for backward compatibility if image_base64 flow is still used elsewhere.
      *
@@ -132,7 +177,8 @@ class FaceAuthService
         $url = rtrim($url, '/').'/verify';
 
         try {
-            $response = Http::timeout(15)
+            $response = Http::timeout((int) config('services.face_verification.verify_timeout_seconds', 10))
+                ->connectTimeout((int) config('services.face_verification.connect_timeout_seconds', 3))
                 ->post($url, [
                     'image_base64' => $imageBase64,
                     'options' => self::deepfaceOptions(),

@@ -365,7 +365,7 @@ class PayslipController extends Controller
         }
 
         $q = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true);
         $this->dataScopeService->restrictEmployeeQuery($request->user(), $q);
 
@@ -482,7 +482,7 @@ class PayslipController extends Controller
 
         // Probe the scope to resolve pay period dates (pay cycle + cut-off integration).
         $probeQ = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true);
         $this->dataScopeService->restrictEmployeeQuery($actor, $probeQ);
         if (is_array($v['employee_ids'] ?? null) && count($v['employee_ids']) > 0) {
@@ -748,7 +748,7 @@ class PayslipController extends Controller
 
         $payload = Cache::remember($cacheKey, now()->addSeconds(45), function () use ($v, $periodInput, $actor) {
             $q = User::query()
-                ->where('role', User::ROLE_EMPLOYEE)
+                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                 ->where('is_active', true);
             if ($actor instanceof User) {
                 $this->dataScopeService->restrictEmployeeQuery($actor, $q);

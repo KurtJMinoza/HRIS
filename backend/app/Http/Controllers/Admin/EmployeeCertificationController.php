@@ -44,7 +44,7 @@ class EmployeeCertificationController extends Controller
 
     public function index(Request $request, int $userId): JsonResponse
     {
-        $employee = User::where('id', $userId)->where('role', User::ROLE_EMPLOYEE)->firstOrFail();
+        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $items = EmployeeCertification::where('user_id', $employee->id)
@@ -59,7 +59,7 @@ class EmployeeCertificationController extends Controller
 
     public function store(Request $request, int $userId): JsonResponse
     {
-        $employee = User::where('id', $userId)->where('role', User::ROLE_EMPLOYEE)->firstOrFail();
+        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $validated = $request->validate([
@@ -113,7 +113,7 @@ class EmployeeCertificationController extends Controller
 
     public function update(Request $request, int $userId, int $id): JsonResponse
     {
-        $employee = User::where('id', $userId)->where('role', User::ROLE_EMPLOYEE)->firstOrFail();
+        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
         $cert = EmployeeCertification::where('id', $id)->where('user_id', $employee->id)->firstOrFail();
 
@@ -173,7 +173,7 @@ class EmployeeCertificationController extends Controller
 
     public function destroy(Request $request, int $userId, int $id): JsonResponse
     {
-        $employee = User::where('id', $userId)->where('role', User::ROLE_EMPLOYEE)->firstOrFail();
+        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
         $cert = EmployeeCertification::where('id', $id)->where('user_id', $employee->id)->firstOrFail();
 
@@ -187,7 +187,7 @@ class EmployeeCertificationController extends Controller
 
     public function verify(Request $request, int $userId, int $id): JsonResponse
     {
-        $employee = User::where('id', $userId)->where('role', User::ROLE_EMPLOYEE)->firstOrFail();
+        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
         $cert = EmployeeCertification::where('id', $id)->where('user_id', $employee->id)->firstOrFail();
 

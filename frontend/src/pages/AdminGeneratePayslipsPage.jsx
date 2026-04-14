@@ -258,9 +258,8 @@ export default function AdminGeneratePayslipsPage() {
   const navigate = useNavigate()
   const hrBase = useHrBasePath()
   const isAdmin = user?.role === 'admin'
-  const hrRole = String(user?.hr_role || '').trim()
-  const isOrgHeadRole = hrRole === 'company_head' || hrRole === 'branch_head' || hrRole === 'department_head'
-  const canManagePayslips = Boolean(user && (isAdmin || user?.can_access_hr_panel || isOrgHeadRole))
+  const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
+  const canManagePayslips = permissionSet.has('payslip.generate')
 
   const [companies, setCompanies] = useState([])
   const [branches, setBranches] = useState([])
@@ -726,7 +725,7 @@ export default function AdminGeneratePayslipsPage() {
             <CardHeader>
               <CardTitle className="text-foreground">Bulk payslip generation</CardTitle>
               <CardDescription>
-                Only HR panel roles can access this module. Employees can view their own payslip under Profile → Payslips.
+                You do not have permission to generate payslips.
               </CardDescription>
             </CardHeader>
           </Card>

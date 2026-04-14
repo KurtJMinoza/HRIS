@@ -9,6 +9,12 @@ use Illuminate\Support\Facades\Log;
 
 class FaceVerificationService
 {
+    /** User-visible message when another employee already owns this face template. */
+    public static function duplicateRegistrationUserMessage(): string
+    {
+        return 'This face is already registered to another employee. Please use a different face or contact HR.';
+    }
+
     /**
      * Default face match distance threshold (Euclidean distance between 128D descriptors).
      * Match when distance <= threshold. Use config('attendance.face_match_threshold') for runtime value.
@@ -44,39 +50,42 @@ class FaceVerificationService
     }
 
     /**
-     * Duplicate registration: Euclidean max distance (only when cosine mode is off).
-     * Same-person cross-session can exceed 0.5; too low allows a second account.
+     * Duplicate registration (cross-account): block only when cosine similarity is very high
+     * or Euclidean distance is very low — loose gates caused false "already registered" errors.
      */
-    private static function duplicateMatchThreshold(): float
+    private static function duplicateMinCosineSimilarity(): float
     {
-        return (float) config('attendance.face_duplicate_match_threshold', 0.62);
+        $v = config('attendance.face_duplicate_min_cosine_similarity');
+
+        return is_numeric($v)
+            ? (float) $v
+            : (float) config('attendance.face_duplicate_min_best_cosine_similarity', 0.85);
     }
 
     /**
-     * Duplicate registration: max cosine distance = 1 - similarity.
-     * Slightly looser than clock-in match so two captures of the same face still collide.
+     * Secondary duplicate rule: L2 distance on raw 128-D Facenet vectors (when cosine alone is ambiguous).
      */
-    private static function duplicateCosineDistanceThreshold(): float
+    private static function duplicateMaxEuclideanDistance(): float
     {
-        return (float) config('attendance.face_duplicate_cosine_distance_threshold', 0.45);
+        return (float) config('attendance.face_duplicate_max_euclidean', 0.4);
     }
 
     /**
-     * Looser max cosine distance when comparing to the averaged embedding (multi-sample users).
+     * Averaged embedding row for another user (optional env). Defaults to the same cosine gate as samples
+     * to avoid extra false "already registered" hits from the mean vector alone.
      */
-    private static function duplicateCosineDistanceThresholdAvg(): float
+    private static function duplicateMinCosineSimilarityAvg(): float
     {
-        return (float) config('attendance.face_duplicate_cosine_distance_threshold_avg', 0.52);
+        $v = config('attendance.face_duplicate_min_cosine_similarity_avg');
+
+        return is_numeric($v)
+            ? (float) $v
+            : self::duplicateMinCosineSimilarity();
     }
 
-    /**
-     * Primary duplicate rule: max cosine similarity between the new embedding and ANY stored
-     * vector (samples, primary, average) must be ≥ this. Catches same identity with different
-     * expressions better than a single distance gate (expression shifts all rows somewhat).
-     */
-    private static function duplicateMinBestCosineSimilarity(): float
+    private static function duplicateNearMissLogMinSimilarity(): float
     {
-        return (float) config('attendance.face_duplicate_min_best_cosine_similarity', 0.50);
+        return (float) config('attendance.face_duplicate_near_miss_log_min_similarity', 0.72);
     }
 
     /**
@@ -332,7 +341,7 @@ class FaceVerificationService
     {
         return User::query()
             ->where('is_active', true)
-            ->whereIn('role', [User::ROLE_EMPLOYEE, User::ROLE_ADMIN])
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where(function ($q) {
                 $q->where('face_status', 'registered')
                     ->orWhereNotNull('face_descriptor_samples')
@@ -526,9 +535,13 @@ class FaceVerificationService
         }
 
         $incomingNorm = self::l2Normalize128($incomingDescriptor);
+        $minCos = self::duplicateMinCosineSimilarity();
+        $minCosAvg = self::duplicateMinCosineSimilarityAvg();
+        $maxEuc = self::duplicateMaxEuclideanDistance();
+        $nearMissMin = self::duplicateNearMissLogMinSimilarity();
 
         $employees = User::query()
-            ->whereIn('role', [User::ROLE_EMPLOYEE, User::ROLE_ADMIN])
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where(function ($q) {
                 $q->where('face_status', 'registered')
                     ->orWhereNotNull('face_descriptor_samples')
@@ -540,11 +553,8 @@ class FaceVerificationService
         }
         $employees = $employees->get();
 
-        $useCosine = self::useCosineThreshold();
-        $euclideanThreshold = self::duplicateMatchThreshold();
-        $cosineThreshold = self::duplicateCosineDistanceThreshold();
-        $cosineThresholdAvg = self::duplicateCosineDistanceThresholdAvg();
-        $bestSimMin = self::duplicateMinBestCosineSimilarity();
+        $globalBestSim = -1.0;
+        $globalBestUserId = null;
 
         foreach ($employees as $user) {
             if (! $user->hasRegisteredFace()) {
@@ -555,39 +565,44 @@ class FaceVerificationService
                 continue;
             }
 
-            if ($useCosine) {
-                $maxSim = 0.0;
-                foreach ($rows as $row) {
-                    $storedN = self::l2Normalize128($row['vec']);
-                    $sim = self::cosineSimilarity($storedN, $incomingNorm);
-                    if ($sim > $maxSim) {
-                        $maxSim = $sim;
-                    }
-                }
-                if ($maxSim >= $bestSimMin) {
-                    return $user;
+            foreach ($rows as $row) {
+                $storedRaw = $row['vec'];
+                $kind = $row['kind'];
+                $storedN = self::l2Normalize128($storedRaw);
+                $cosineSim = self::cosineSimilarity($storedN, $incomingNorm);
+                $distance = self::euclideanDistance($storedRaw, $incomingDescriptor);
+
+                if ($cosineSim > $globalBestSim) {
+                    $globalBestSim = $cosineSim;
+                    $globalBestUserId = $user->id;
                 }
 
-                foreach ($rows as $row) {
-                    $storedRaw = $row['vec'];
-                    $kind = $row['kind'];
-                    $storedN = self::l2Normalize128($storedRaw);
-                    $cosineSim = self::cosineSimilarity($storedN, $incomingNorm);
-                    $cosineDist = 1.0 - $cosineSim;
-                    $t = $kind === 'avg' ? $cosineThresholdAvg : $cosineThreshold;
-                    if ($cosineDist <= $t) {
-                        return $user;
-                    }
-                }
-            } else {
-                foreach ($rows as $row) {
-                    $storedRaw = $row['vec'];
-                    $distance = self::euclideanDistance($storedRaw, $incomingDescriptor);
-                    if ($distance <= $euclideanThreshold) {
-                        return $user;
-                    }
+                $cosineGate = $kind === 'avg' ? $minCosAvg : $minCos;
+                $isDuplicate = ($cosineSim >= $cosineGate) || ($distance <= $maxEuc);
+
+                if ($isDuplicate) {
+                    Log::info('Face duplicate registration check: match (strict gate)', [
+                        'existing_user_id' => $user->id,
+                        'exclude_user_id' => $excludeUserId,
+                        'row_kind' => $kind,
+                        'cosine_similarity' => round($cosineSim, 4),
+                        'euclidean_distance' => round($distance, 4),
+                        'min_cosine_required' => round($cosineGate, 4),
+                        'max_euclidean_allowed' => $maxEuc,
+                    ]);
+
+                    return $user;
                 }
             }
+        }
+
+        if ($globalBestSim >= $nearMissMin && $globalBestSim < $minCos && config('attendance.face_duplicate_log_near_misses', true)) {
+            Log::warning('Face duplicate registration check: near-miss (below duplicate threshold)', [
+                'best_cosine_similarity' => round($globalBestSim, 4),
+                'nearest_user_id' => ((bool) config('attendance.face_log_identification_user_ids', false)) ? $globalBestUserId : null,
+                'min_cosine_for_duplicate' => $minCos,
+                'note' => 'If legitimate users are blocked, lower min_cosine slightly; if different people match, raise it.',
+            ]);
         }
 
         return null;

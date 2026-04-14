@@ -16,6 +16,7 @@ import { CheckCircle2, Home } from 'lucide-react'
 
 const SOUND_FEEDBACK_ENABLED = true
 const FACE_MATCH_TIMEOUT_MS = 6500
+const VERIFY_SLOW_NOTICE_MS = 8000
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   return Promise.race([
@@ -149,7 +150,16 @@ export function FaceRekognitionLiveness({
     setApiError(null)
     try {
       if (onVerified) {
-        await withTimeout(onVerified(session.sessionId), FACE_MATCH_TIMEOUT_MS, 'Face verification timed out. Please try again.')
+        const slowNoticeTimer = setTimeout(() => {
+          toast.info('This is taking longer than usual…', {
+            description: 'Face registration is still processing. Please keep this open for a bit longer.',
+          })
+        }, VERIFY_SLOW_NOTICE_MS)
+        try {
+          await onVerified(session.sessionId)
+        } finally {
+          clearTimeout(slowNoticeTimer)
+        }
         faceMatchAttemptRef.current = 0
         playSuccess(SOUND_FEEDBACK_ENABLED)
         onSuccess?.()

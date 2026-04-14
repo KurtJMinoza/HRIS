@@ -73,9 +73,10 @@ class RekognitionLivenessService
      * Get Face Liveness session results. Call after frontend completes the liveness flow.
      * Returns isLive, confidence (0-100), and referenceImageBase64 (JPEG) for face matching.
      *
-     * @return array{is_live: bool, confidence: float|null, reference_image_base64: string|null, message: string}|null
+     * @param  float|null  $minimumConfidenceFraction  Optional 0–1 floor (stricter than global min). Used for registration.
+     * @return array{is_live: bool, confidence: float|null, reference_image_base64: string|null, message: string, result?: string}|null
      */
-    public static function getSessionResults(string $sessionId): ?array
+    public static function getSessionResults(string $sessionId, ?float $minimumConfidenceFraction = null): ?array
     {
         $config = config('services.rekognition');
         if (empty($config['key']) || empty($config['secret'])) {
@@ -126,9 +127,11 @@ class RekognitionLivenessService
             }
 
             // Validate confidence: Rekognition Face Liveness Confidence is 0–100 (real face vs spoof).
-            // Lower threshold here (see config attendance.face_min_liveness_score) reduces false rejects
-            // from lighting/angle; anti-spoof still relies on AWS + reference image embedding match.
-            $minConfidence = (float) config('attendance.face_min_liveness_score', 0.52) * 100;
+            // Registration can require a higher floor via $minimumConfidenceFraction (stricter anti-spoof).
+            $base = (float) config('attendance.face_min_liveness_score', 0.52);
+            $extra = $minimumConfidenceFraction !== null ? (float) $minimumConfidenceFraction : $base;
+            $minFraction = max($base, $extra);
+            $minConfidence = $minFraction * 100;
             $confidenceVal = $confidence !== null ? (float) $confidence : null;
             $isLive = $confidenceVal !== null && $confidenceVal >= $minConfidence;
 

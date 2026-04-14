@@ -232,9 +232,8 @@ export default function AdminFinalizePayrollPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isAdmin = user?.role === 'admin'
-  const hrRole = String(user?.hr_role || '').trim()
-  const isOrgHeadRole = hrRole === 'company_head' || hrRole === 'branch_head' || hrRole === 'department_head'
-  const canFinalizePayroll = Boolean(user && (isAdmin || user?.can_access_hr_panel || isOrgHeadRole))
+  const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
+  const canFinalizePayroll = permissionSet.has('payslip.finalize')
 
   const payload = useMemo(() => parsePayload(searchParams), [searchParams.toString()])
   const effectivePayload = useMemo(() => {
@@ -865,7 +864,7 @@ export default function AdminFinalizePayrollPage() {
         <Card className={CARD}>
           <CardContent className="p-6">
             <h2 className={cn('text-xl font-semibold', TEXT)}>Finalize payroll</h2>
-            <p className="mt-2 text-sm text-[#0A0A0A]/70">Only HR panel roles can finalize payroll runs.</p>
+            <p className="mt-2 text-sm text-[#0A0A0A]/70">You do not have permission to finalize payroll runs.</p>
           </CardContent>
         </Card>
       </div>

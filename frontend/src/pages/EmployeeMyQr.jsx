@@ -30,6 +30,8 @@ export default function EmployeeMyQr() {
   const [faceRegisterOpen, setFaceRegisterOpen] = useState(false)
   const [faceRegisterSubmitting, setFaceRegisterSubmitting] = useState(false)
   const [faceRegisterError, setFaceRegisterError] = useState(null)
+  const [faceRegisterRetryKey, setFaceRegisterRetryKey] = useState(0)
+  const [faceRegisterSlow, setFaceRegisterSlow] = useState(false)
 
   const [removeFaceConfirmOpen, setRemoveFaceConfirmOpen] = useState(false)
   const [removeFaceSubmitting, setRemoveFaceSubmitting] = useState(false)
@@ -89,6 +91,7 @@ export default function EmployeeMyQr() {
 
   const openFaceRegister = () => {
     setFaceRegisterError(null)
+    setFaceRegisterRetryKey((k) => k + 1)
     setFaceRegisterOpen(true)
   }
 
@@ -108,8 +111,8 @@ export default function EmployeeMyQr() {
     }
   }
 
-  const closeFaceRegister = () => {
-    if (!faceRegisterSubmitting) {
+  const closeFaceRegister = (force = false) => {
+    if (force || !faceRegisterSubmitting) {
       setFaceRegisterOpen(false)
       setFaceRegisterError(null)
     }
@@ -117,6 +120,7 @@ export default function EmployeeMyQr() {
 
   const handleFaceRegisterVerified = async (sessionId) => {
     setFaceRegisterSubmitting(true)
+    setFaceRegisterSlow(false)
     setFaceRegisterError(null)
     try {
       const data = await registerMyFace({ liveness_session_id: sessionId })
@@ -134,6 +138,15 @@ export default function EmployeeMyQr() {
       setFaceRegisterSubmitting(false)
     }
   }
+
+  useEffect(() => {
+    if (!faceRegisterSubmitting) {
+      setFaceRegisterSlow(false)
+      return
+    }
+    const timer = setTimeout(() => setFaceRegisterSlow(true), 6000)
+    return () => clearTimeout(timer)
+  }, [faceRegisterSubmitting])
 
   const handleRemoveFace = async () => {
     setRemoveFaceSubmitting(true)
@@ -335,15 +348,58 @@ export default function EmployeeMyQr() {
             </DialogDescription>
           </DialogHeader>
           <FaceRekognitionLiveness
+            key={faceRegisterRetryKey}
             onVerified={handleFaceRegisterVerified}
             onSuccess={closeFaceRegister}
             hideInstruction
             instructionText="Complete the face liveness check to register your face."
           />
+          {faceRegisterSubmitting && (
+            <div
+              className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+              Processing face…
+            </div>
+          )}
+          {faceRegisterSlow && (
+            <div className="space-y-2 rounded-md border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              <p>This is taking longer than usual. You can keep waiting, or use QR code for attendance now.</p>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                onClick={() => {
+                  closeFaceRegister(true)
+                  toast.info('Use QR code for now', {
+                    description: 'You can retry face registration anytime from this page.',
+                  })
+                }}
+              >
+                Use QR Code instead
+              </Button>
+            </div>
+          )}
           {faceRegisterError && (
-            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-              {faceRegisterError}
-            </p>
+            <div className="space-y-2">
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                {faceRegisterError}
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                disabled={faceRegisterSubmitting}
+                onClick={() => {
+                  setFaceRegisterError(null)
+                  setFaceRegisterRetryKey((k) => k + 1)
+                }}
+              >
+                Try again
+              </Button>
+            </div>
           )}
           <Button variant="outline" onClick={closeFaceRegister} disabled={faceRegisterSubmitting} className="w-full">
             Cancel

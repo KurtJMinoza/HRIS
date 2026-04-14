@@ -21,9 +21,8 @@ class RbacService
 
     public function can(User $user, string $permissionSlug): bool
     {
-        // All accounts with users.role = admin are HR admins: full module access.
-        // (is_super_admin is only for RBAC matrix mutation + audit, not day-to-day checks.)
-        if ($user->isAdmin()) {
+        // Admin (HR) super-role: full module access (highest priority over org-head roles).
+        if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
             return true;
         }
 
@@ -58,7 +57,7 @@ class RbacService
      */
     public function getPermissionsForUser(User $user): \Illuminate\Support\Collection
     {
-        if ($user->isAdmin()) {
+        if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
             return Permission::query()->orderBy('slug')->pluck('slug');
         }
 
@@ -79,10 +78,6 @@ class RbacService
 
     public function roleKeyForUser(User $user): string
     {
-        if ($user->isAdmin()) {
-            return HrRole::AdminHr->value;
-        }
-
         return $this->hrRoleResolver->resolve($user)->value;
     }
 

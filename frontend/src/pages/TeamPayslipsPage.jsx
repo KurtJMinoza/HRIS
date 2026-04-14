@@ -9,7 +9,8 @@ import { useAuth } from '@/contexts/AuthContext'
  */
 export default function TeamPayslipsPage() {
   const { user } = useAuth()
-  if (String(user?.role || '').trim().toLowerCase() === 'admin') {
+  const canViewPayslips = new Set(user?.permissions ?? []).has('payslip.view')
+  if (!canViewPayslips) {
     return <Navigate to="/admin/dashboard" replace />
   }
   return <PayslipsListPage variant="hr" />

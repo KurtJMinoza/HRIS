@@ -58,7 +58,7 @@ class PasswordResetController extends Controller
         /** @var User|null $user */
         $user = User::query()
             ->where('email', $email)
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->first();
 
         if (! $user) {

@@ -137,7 +137,7 @@ class BranchController extends Controller
 
             $manager = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
                 ->where('id', $validated['branch_manager_id'])
-                ->where('role', User::ROLE_EMPLOYEE)
+                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                 ->first();
             if ($manager) {
                 $effectiveCompanyId = $manager->getEffectiveCompanyId();

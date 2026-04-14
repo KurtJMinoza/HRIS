@@ -44,7 +44,7 @@ class CompanyController extends Controller
         // total_employees: count employees via company_id, branch, or department (employees may be assigned to branch/dept without direct company_id).
         // Exclude users who are Company Head of another company — they belong to that company only.
         $totalEmployeesSub = DB::table('users')
-            ->where('users.role', User::ROLE_EMPLOYEE)
+            ->whereIn('users.role', User::ROSTER_ELIGIBLE_ROLES)
             ->where(function ($q) {
                 $q->whereColumn('users.company_id', 'companies.id')
                     ->orWhereExists(function ($sub) {

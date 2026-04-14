@@ -5,6 +5,7 @@ Liveness is handled by Amazon Rekognition Face Liveness (Amplify UI FaceLiveness
 This service only extracts 128D face embeddings via DeepFace Facenet for matching.
 """
 import base64
+import os
 from contextlib import asynccontextmanager
 
 import cv2
@@ -16,9 +17,13 @@ from deepface import DeepFace
 
 # Tuning: small images are upscaled for detection; large images are downscaled for faster inference.
 _MIN_EDGE_PX = 384
-_MAX_EDGE_PX = 768
-# Fast detectors first; RetinaFace last (heaviest). Rekognition crops are usually easy for opencv/ssd.
-_DETECTORS = ["opencv", "ssd", "mediapipe", "mtcnn", "retinaface"]
+_MAX_EDGE_PX = 640
+# Fast detectors first. Keep list env-configurable so ops can trade speed vs robustness.
+_DETECTORS = [
+    d.strip()
+    for d in os.getenv("FACE_EMBED_DETECTORS", "opencv,mediapipe,ssd").split(",")
+    if d.strip()
+]
 
 
 def _warm_facenet_model() -> None:

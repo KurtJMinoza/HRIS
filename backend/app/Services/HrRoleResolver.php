@@ -11,7 +11,8 @@ use App\Models\User;
 class HrRoleResolver
 {
     /**
-     * Resolve HR panel role. Admin accounts are always ADMIN (HR).
+     * Resolve HR panel role.
+     * Admin accounts are always ADMIN (HR) and override org-hat assignments.
      * For employees: company head > branch head > department head > employee.
      */
     public function resolve(User $user): HrRole
@@ -25,12 +26,11 @@ class HrRoleResolver
 
     /**
      * Role for the *subject* of an approval chain (leave, OT, corrections).
-     * Pure HR admin accounts (no org hat) are Admin (HR). Admin accounts with a line role
-     * use org assignments. Employees use org hierarchy (company > branch > dept > employee).
+     * Admin (HR) has highest priority and always resolves as AdminHr.
      */
     public function resolveForApprovalSubject(User $user): HrRole
     {
-        if ($user->isAdmin() && ! $this->isAssignedOrganizationHead($user)) {
+        if ($user->isAdmin()) {
             return HrRole::AdminHr;
         }
 
@@ -100,11 +100,12 @@ class HrRoleResolver
     }
 
     /**
-     * HR-only: may create leave for another user in scope. False for org heads (they use self-service rules).
+     * HR-only: may create leave for other users.
+     * Admin (HR) override is unconditional, even when org-hat assignments exist.
      */
     public function canFileLeaveForOthers(User $user): bool
     {
-        return $user->isAdmin() && ! $this->isAssignedOrganizationHead($user);
+        return $user->isAdmin();
     }
 
     /**

@@ -18,7 +18,7 @@ class PayComponentAssignmentService
         $processed = 0;
 
         $query = User::query()
-            ->where('role', User::ROLE_EMPLOYEE)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->orderBy('id');
 
         if (Schema::hasColumn('users', 'is_active')) {

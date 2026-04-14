@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\EmploymentStatus;
 use App\Enums\HrRole;
 use App\Http\Controllers\Controller;
+use App\Jobs\ProcessFaceRegistrationJob;
 use App\Jobs\UpdateEmployeeProfileJob;
 use App\Models\Branch;
 use App\Models\Company;
@@ -17,7 +18,7 @@ use App\Models\UserPhoneChangeLog;
 use App\Models\WorkingSchedule;
 use App\Services\DataScopeService;
 use App\Services\ESignatureService;
-use App\Services\FaceAuthService;
+use App\Services\FaceRegistrationStatusService;
 use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
@@ -31,6 +32,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -49,7 +51,7 @@ class EmployeeController extends Controller
     ) {}
 
     /**
-     * List employees (users with role employee) with simple pagination.
+     * List staff roster (employees + Admin HR accounts) with simple pagination.
      *
      * Query params:
      * - page (int, default 1)
@@ -267,7 +269,7 @@ class EmployeeController extends Controller
 
         if ($forScheduleAssignment || $perPageParam === 'all' || (int) $perPageParam === 0) {
             $buildStart = microtime(true);
-            $query = $applyOrgFilters($applySearch(User::query()->where('role', User::ROLE_EMPLOYEE)->select($lite ? $liteSelectColumns : $selectColumns)))
+            $query = $applyOrgFilters($applySearch(User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->select($lite ? $liteSelectColumns : $selectColumns)))
                 ->orderBy('name');
             $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
             Log::info('AdminEmployees index timing step', [
@@ -326,7 +328,7 @@ class EmployeeController extends Controller
         $perPage = min($perPage, 100);
 
         $buildStart = microtime(true);
-        $query = $applyOrgFilters($applySearch(User::query()->where('role', User::ROLE_EMPLOYEE)->select($lite ? $liteSelectColumns : $selectColumns)))
+        $query = $applyOrgFilters($applySearch(User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->select($lite ? $liteSelectColumns : $selectColumns)))
             ->orderBy('name');
         if (! $lite) {
             $query->with($fullEagerLoads);
@@ -459,11 +461,11 @@ class EmployeeController extends Controller
 
         if (! empty($validated['supervisor_id'])) {
             $supervisor = User::where('id', (int) $validated['supervisor_id'])
-                ->where('role', User::ROLE_EMPLOYEE)
+                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                 ->first();
             if (! $supervisor || ! $this->isManagerialPosition($supervisor->position)) {
                 throw ValidationException::withMessages([
-                    'supervisor_id' => ['The selected supervisor must be an employee with a managerial/supervisory position.'],
+                    'supervisor_id' => ['The selected supervisor must be a staff member with a managerial/supervisory position.'],
                 ]);
             }
         }
@@ -902,11 +904,11 @@ class EmployeeController extends Controller
                     $employee->supervisor_id = null;
                 } else {
                     $supervisor = User::where('id', (int) $supRaw)
-                        ->where('role', User::ROLE_EMPLOYEE)
+                        ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                         ->first();
                     if (! $supervisor || ! $this->isManagerialPosition($supervisor->position)) {
                         throw ValidationException::withMessages([
-                            'supervisor_id' => ['The selected supervisor must be an employee with a managerial/supervisory position.'],
+                            'supervisor_id' => ['The selected supervisor must be a staff member with a managerial/supervisory position.'],
                         ]);
                     }
                     $employee->supervisor_id = $supervisor->id;
@@ -1273,7 +1275,7 @@ class EmployeeController extends Controller
 
     /**
      * Register employee face. Amazon Rekognition Face Liveness (session) or legacy image capture.
-     * Backend: Rekognition liveness + DeepFace embedding, encrypted storage.
+     * Liveness + DeepFace embedding + duplicate check run in {@see ProcessFaceRegistrationJob} under cache/DB locks.
      */
     public function registerFace(Request $request, int $id): JsonResponse
     {
@@ -1294,88 +1296,76 @@ class EmployeeController extends Controller
             ], 422);
         }
 
-        $result = $sessionId
-            ? FaceAuthService::verifyFaceWithLivenessSession($sessionId)
-            : FaceAuthService::verifyFace($imageBase64);
+        $trackId = (string) Str::uuid();
+        FaceRegistrationStatusService::create($trackId, ['target_user_id' => $employee->id]);
 
-        if ($result === null) {
-            return response()->json([
-                'message' => 'Face verification service unavailable. Please ensure the Python face service is running.',
-                'errors' => ['face' => ['Face verification service unavailable. Please ensure the Python face service is running.']],
-                'error_code' => 'service_unavailable',
-            ], 422);
+        ProcessFaceRegistrationJob::dispatch(
+            $trackId,
+            $employee->id,
+            $sessionId,
+            $imageBase64,
+            $validated['liveness_type'] ?? 'rekognition',
+            $request->user()?->id,
+            $request->ip(),
+            $request->userAgent(),
+            'admin',
+        )->onQueue('face-registration');
+
+        return $this->adminFaceRegistrationHttpResponse($request, $trackId, $employee->id, true);
+    }
+
+    /**
+     * Poll async face registration for an employee (admin HR).
+     */
+    public function faceRegistrationStatus(Request $request, int $id, string $trackId): JsonResponse
+    {
+        $employee = $this->loadScopedEmployee($request, $id);
+
+        return $this->adminFaceRegistrationHttpResponse($request, $trackId, $employee->id, false);
+    }
+
+    /**
+     * @param  bool  $isInitialPost  When true, return 202 for in-progress; when false (GET poll), return 200 for in-progress.
+     */
+    private function adminFaceRegistrationHttpResponse(Request $request, string $trackId, int $expectedUserId, bool $isInitialPost): JsonResponse
+    {
+        $row = FaceRegistrationStatusService::get($trackId);
+        if ($row === null) {
+            return response()->json(['message' => 'Unknown or expired face registration request.'], 404);
+        }
+        if ((int) ($row['target_user_id'] ?? 0) !== $expectedUserId) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
 
-        if (! $result['is_live']) {
-            $msg = $result['message'] ?: 'Liveness check failed. Spoof detected. Please present a real face.';
+        $status = $row['status'] ?? 'pending';
+        if ($status === 'completed') {
+            $employee = User::query()->find($expectedUserId);
 
             return response()->json([
-                'message' => $msg,
-                'errors' => ['face' => [$msg]],
-                'error_code' => 'spoof_detected',
-            ], 422);
-        }
-
-        if (empty($result['descriptor']) || count($result['descriptor']) !== 128) {
-            $msg = $result['message'] ?: 'No face detected or could not extract features. Position the face clearly in frame.';
-
-            return response()->json([
-                'message' => $msg,
-                'errors' => ['face' => [$msg]],
-                'error_code' => 'no_face_detected',
-            ], 422);
-        }
-
-        $descriptor = array_values(array_map('floatval', $result['descriptor']));
-
-        $existingOwner = FaceVerificationService::findExistingOwnerOfFace($descriptor, $employee->id);
-        if ($existingOwner !== null) {
-            DuplicateFaceRegistrationAttempt::create([
-                'attempted_for_user_id' => $employee->id,
-                'existing_user_id' => $existingOwner->id,
-                'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent(),
+                'status' => 'completed',
+                'message' => 'Face registered successfully.',
+                'employee' => $employee
+                    ? $this->employeeResponse($employee->fresh(), $this->viewerCanSensitive($request->user()), false, false)
+                    : null,
             ]);
+        }
+        if ($status === 'failed') {
+            $msg = $row['message'] ?? 'Face registration failed.';
 
             return response()->json([
-                'message' => 'This face is already registered to another account.',
-                'errors' => ['face' => ['This face is already registered to another account.']],
-                'error_code' => 'face_already_registered',
+                'status' => 'failed',
+                'message' => $msg,
+                'errors' => ['face' => [$msg]],
+                'error_code' => $row['error_code'] ?? 'registration_failed',
             ], 422);
         }
-
-        $samples = $employee->face_descriptor_samples;
-        if (! is_array($samples)) {
-            $samples = [];
-        }
-        $maxSamples = (int) config('attendance.face_samples_max', 10);
-        $samples[] = $descriptor;
-        $samples = array_slice($samples, -$maxSamples);
-
-        $primaryEmbedding = json_encode($samples[0]);
-        $employee->face_descriptor = $primaryEmbedding;
-        $employee->face_embedding = $primaryEmbedding;
-        $employee->face_descriptor_samples = $samples;
-        $employee->face_image = $result['reference_image_base64'] ?? $request->input('face_image');
-        $employee->face_registered_at = now();
-        $employee->face_status = 'registered';
-        $employee->face_liveness_type = $validated['liveness_type'] ?? 'rekognition';
-        $employee->save();
-        UserAdminActivityLog::query()->create([
-            'subject_user_id' => $employee->id,
-            'actor_user_id' => $request->user()?->id,
-            'action' => 'face_registered',
-            'meta' => [
-                'channel' => 'admin',
-                'liveness_type' => $employee->face_liveness_type,
-            ],
-            'ip_address' => $request->ip(),
-        ]);
 
         return response()->json([
-            'message' => 'Face registered successfully.',
-            'employee' => $this->employeeResponse($employee->fresh(), $this->viewerCanSensitive($request->user()), false, false),
-        ]);
+            'status' => $status,
+            'message' => 'Processing face…',
+            'track_id' => $trackId,
+            'employee_id' => $expectedUserId,
+        ], $isInitialPost ? 202 : 200);
     }
 
     /**
@@ -1409,8 +1399,8 @@ class EmployeeController extends Controller
                 ]);
 
                 return response()->json([
-                    'message' => 'This face is already registered to another account.',
-                    'errors' => ['face' => ['This face is already registered to another account.']],
+                    'message' => FaceVerificationService::duplicateRegistrationUserMessage(),
+                    'errors' => ['face' => [FaceVerificationService::duplicateRegistrationUserMessage()]],
                     'error_code' => 'face_already_registered',
                 ], 422);
             }
@@ -1581,7 +1571,7 @@ class EmployeeController extends Controller
 
     private function loadScopedEmployee(Request $request, int $id): User
     {
-        $employee = User::where('id', $id)->where('role', User::ROLE_EMPLOYEE)->firstOrFail();
+        $employee = User::where('id', $id)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->dataScopeService->ensureEmployeeAccessible($request->user(), $employee);
 
         return $employee;

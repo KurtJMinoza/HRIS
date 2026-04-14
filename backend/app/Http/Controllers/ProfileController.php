@@ -2,17 +2,17 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\DuplicateFaceRegistrationAttempt;
 use App\Models\User;
 use App\Models\UserAdminActivityLog;
-use App\Services\FaceAuthService;
-use App\Services\FaceVerificationService;
+use App\Jobs\ProcessFaceRegistrationJob;
+use App\Services\FaceRegistrationStatusService;
 use App\Services\RbacService;
 use App\Services\RekognitionLivenessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class ProfileController extends Controller
@@ -239,6 +239,7 @@ class ProfileController extends Controller
     /**
      * Register face for the authenticated user. Same flow as admin registerFace.
      * Self-service (employees, org heads, HR admin); own record only.
+     * Embedding extraction and persistence run in {@see ProcessFaceRegistrationJob} (queue) with duplicate checks under lock.
      */
     public function registerMyFace(Request $request): JsonResponse
     {
@@ -262,88 +263,76 @@ class ProfileController extends Controller
             ], 422);
         }
 
-        $result = $sessionId
-            ? FaceAuthService::verifyFaceWithLivenessSession($sessionId)
-            : FaceAuthService::verifyFace($imageBase64);
+        $trackId = (string) Str::uuid();
+        FaceRegistrationStatusService::create($trackId, ['target_user_id' => $user->id]);
 
-        if ($result === null) {
-            return response()->json([
-                'message' => 'Face verification service unavailable. Please ensure the Python face service is running.',
-                'errors' => ['face' => ['Face verification service unavailable. Please ensure the Python face service is running.']],
-                'error_code' => 'service_unavailable',
-            ], 422);
+        ProcessFaceRegistrationJob::dispatch(
+            $trackId,
+            $user->id,
+            $sessionId,
+            $imageBase64,
+            $validated['liveness_type'] ?? 'rekognition',
+            $user->id,
+            $request->ip(),
+            $request->userAgent(),
+            'self_service',
+        )->onQueue('face-registration');
+
+        return $this->faceRegistrationHttpResponse($request, $trackId, $user->id, true);
+    }
+
+    /**
+     * Poll async face registration status (self-service: target user must match authenticated user).
+     */
+    public function faceRegistrationStatus(Request $request, string $trackId): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || ! $user->canAccessSelfServiceEmployeeProfile()) {
+            return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
-        if (! $result['is_live']) {
-            $msg = $result['message'] ?: 'Liveness check failed. Spoof detected. Please present a real face.';
+        return $this->faceRegistrationHttpResponse($request, $trackId, $user->id, false);
+    }
 
-            return response()->json([
-                'message' => $msg,
-                'errors' => ['face' => [$msg]],
-                'error_code' => 'spoof_detected',
-            ], 422);
+    /**
+     * @param  bool  $isInitialPost  When true, return 202 for in-progress; when false (GET poll), return 200 for in-progress.
+     */
+    private function faceRegistrationHttpResponse(Request $request, string $trackId, int $expectedUserId, bool $isInitialPost): JsonResponse
+    {
+        $row = FaceRegistrationStatusService::get($trackId);
+        if ($row === null) {
+            return response()->json(['message' => 'Unknown or expired face registration request.'], 404);
+        }
+        if ((int) ($row['target_user_id'] ?? 0) !== $expectedUserId) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
 
-        if (empty($result['descriptor']) || count($result['descriptor']) !== 128) {
-            $msg = $result['message'] ?: 'No face detected or could not extract features. Position the face clearly in frame.';
+        $status = $row['status'] ?? 'pending';
+        if ($status === 'completed') {
+            $target = User::query()->find($expectedUserId);
 
             return response()->json([
-                'message' => $msg,
-                'errors' => ['face' => [$msg]],
-                'error_code' => 'no_face_detected',
-            ], 422);
-        }
-
-        $descriptor = array_values(array_map('floatval', $result['descriptor']));
-
-        $existingOwner = FaceVerificationService::findExistingOwnerOfFace($descriptor, $user->id);
-        if ($existingOwner !== null) {
-            DuplicateFaceRegistrationAttempt::create([
-                'attempted_for_user_id' => $user->id,
-                'existing_user_id' => $existingOwner->id,
-                'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent(),
+                'status' => 'completed',
+                'message' => 'Face registered successfully. You can now use Facial Recognition for DTR clock-in and clock-out.',
+                'user' => $target ? $this->userResponse($target->fresh()) : null,
             ]);
+        }
+        if ($status === 'failed') {
+            $msg = $row['message'] ?? 'Face registration failed.';
 
             return response()->json([
-                'message' => 'This face is already registered to another account.',
-                'errors' => ['face' => ['This face is already registered to another account.']],
-                'error_code' => 'face_already_registered',
+                'status' => 'failed',
+                'message' => $msg,
+                'errors' => ['face' => [$msg]],
+                'error_code' => $row['error_code'] ?? 'registration_failed',
             ], 422);
         }
-
-        $samples = $user->face_descriptor_samples;
-        if (! is_array($samples)) {
-            $samples = [];
-        }
-        $maxSamples = (int) config('attendance.face_samples_max', 10);
-        $samples[] = $descriptor;
-        $samples = array_slice($samples, -$maxSamples);
-
-        $primaryEmbedding = json_encode($samples[0]);
-        $user->face_descriptor = $primaryEmbedding;
-        $user->face_embedding = $primaryEmbedding;
-        $user->face_descriptor_samples = $samples;
-        $user->face_image = $result['reference_image_base64'] ?? $request->input('face_image');
-        $user->face_registered_at = now();
-        $user->face_status = 'registered';
-        $user->face_liveness_type = $validated['liveness_type'] ?? 'rekognition';
-        $user->save();
-        UserAdminActivityLog::query()->create([
-            'subject_user_id' => $user->id,
-            'actor_user_id' => $user->id,
-            'action' => 'face_registered',
-            'meta' => [
-                'channel' => 'self_service',
-                'liveness_type' => $user->face_liveness_type,
-            ],
-            'ip_address' => $request->ip(),
-        ]);
 
         return response()->json([
-            'message' => 'Face registered successfully. You can now use Facial Recognition for DTR clock-in and clock-out.',
-            'user' => $this->userResponse($user->fresh()),
-        ]);
+            'status' => $status,
+            'message' => 'Processing face…',
+            'track_id' => $trackId,
+        ], $isInitialPost ? 202 : 200);
     }
 
     /**
