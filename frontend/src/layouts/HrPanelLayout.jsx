@@ -26,7 +26,7 @@ export function HrPanelLayout() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <div className="text-center">
           <div className="inline-block size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
           <p className="mt-3 text-sm text-muted-foreground">Loading…</p>

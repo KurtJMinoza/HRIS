@@ -434,12 +434,12 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background md:flex-row">
+    <div className="flex min-h-screen flex-col bg-white md:flex-row">
       {/* Desktop sidebar – collapsible, no border */}
       <aside
         className={cn(
           'hidden flex-col border-r border-sidebar-border/70 bg-linear-to-b from-sidebar via-sidebar to-sidebar/95 text-sidebar-foreground shadow-[4px_0_32px_-16px_rgba(15,23,42,0.12)] transition-[width] duration-200 ease-in-out dark:border-sidebar-border/50 dark:shadow-[4px_0_40px_-12px_rgba(0,0,0,0.45)] md:flex',
-          sidebarCollapsed ? 'w-16' : 'w-72'
+          sidebarCollapsed ? 'w-16' : 'w-64'
         )}
       >
         <SidebarContent
@@ -498,9 +498,9 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           className={cn(
             'sticky top-0 z-10 grid h-16 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/50 px-4 py-3 shadow-sm shadow-black/5 backdrop-blur-xl @md:px-6',
             /* Light: elevated card strip */
-            'bg-linear-to-b from-card/98 to-card/90 supports-[backdrop-filter]:bg-card/80',
+            'bg-linear-to-b from-card/98 to-card/90 supports-backdrop-filter:bg-card/80',
             /* Dark: no card gradient — glass tint matches .dashboard-content-canvas (see index.css) */
-            'dashboard-header-glass dark:border-border/40 dark:shadow-none dark:bg-none dark:backdrop-blur-xl dark:supports-[backdrop-filter]:bg-transparent'
+            'dashboard-header-glass dark:border-border/40 dark:shadow-none dark:bg-none dark:backdrop-blur-xl dark:supports-backdrop-filter:bg-transparent'
           )}
         >
           <div className="flex min-h-10 min-w-0 items-center gap-3">
@@ -889,11 +889,9 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             'flex-1 px-4 py-4 @md:px-6 @md:py-6 @lg:px-8 @lg:py-8',
             /* Dashboard: airier horizontal inset (24–32px) + slightly more vertical rhythm */
             isDashboardRoute && 'px-6 py-4 @md:px-8 @md:py-5 @lg:px-8 @lg:py-6',
-            isWideAdminModule && '@lg:px-10 @xl:px-12',
-            /* Light: soft cool wash */
-            'bg-linear-to-br from-muted/50 via-background to-muted/40',
-            /* Dark: gradient is on .dashboard-content-canvas parent (header + main share one canvas) */
-            'dark:bg-transparent'
+            isWideAdminModule && '@lg:px-8 @xl:px-10',
+            // Keep canvas consistently white across device sizes.
+            'bg-white dark:bg-white'
           )}
         >
           <div
@@ -903,8 +901,8 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                 ? 'mx-0 max-w-none'
                 : treatAsHrPanel
                   ? isWideAdminModule
-                    ? 'mx-auto max-w-[min(100rem,100%)]'
-                    : 'mx-auto max-w-7xl'
+                    ? 'ml-0 mr-auto max-w-[min(96rem,100%)]'
+                    : 'ml-0 mr-auto max-w-[min(88rem,100%)]'
                   : 'mx-auto max-w-6xl'
             )}
           >
