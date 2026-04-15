@@ -61,7 +61,7 @@
 <head>
   <meta charset="utf-8">
   <style>
-    @page { size: A4 portrait; margin: 12mm 10mm; }
+    @page { size: A4 portrait; margin: 10mm; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       font-family: DejaVu Sans, Arial, Helvetica, sans-serif;
@@ -74,21 +74,22 @@
     }
 
     .sheet {
-      border: 1px solid #e2e8f0;
-      /* mPDF stability: avoid border-radius + overflow clipping on outer wrapper */
+      border: 0;
       border-radius: 0;
-      overflow: visible;
+      overflow: hidden;
       background: #fff;
-      /* IMPORTANT (mPDF): do NOT prevent page breaks on the outer wrapper.
-         The sheet content is taller than a single A4 page; forcing "avoid" here can make mPDF
-         endlessly push the whole block to the next page, producing hundreds of blank pages. */
+      height: 277mm;
+      max-height: 277mm;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
 
     /* ── Header ── */
     .header {
-      border-bottom: 1px solid #e2e8f0;
-      padding: 9px 12px 8px;
+      border-bottom: 0;
+      padding: 6px 8px 5px;
       page-break-inside: avoid;
+      break-inside: avoid;
     }
     .header-table { width: 100%; border-collapse: collapse; }
     .header-table td { vertical-align: top; }
@@ -101,7 +102,7 @@
     .logo {
       width: 52px; height: 52px;
       border-radius: 999px;
-      border: 1px solid #cbd5e1;
+      border: 0;
       object-fit: contain;
       background: #fff;
       display: block;
@@ -109,7 +110,7 @@
     .logo-placeholder {
       width: 52px; height: 52px;
       border-radius: 999px;
-      border: 1px solid #cbd5e1;
+      border: 0;
       background: #f8fafc;
     }
     .company-name {
@@ -147,13 +148,15 @@
       letter-spacing: 0.14em;
     }
     /* ── Content area ── */
-    .content { padding: 8px 12px 6px; }
+    .content { padding: 5px 7px 4px; }
     .meta-bar {
-      border: 1px solid #e2e8f0;
+      border: 0;
       border-radius: 10px;
       background: #f8fafc;
-      padding: 7px 10px;
-      margin-bottom: 7px;
+      padding: 4px 6px;
+      margin-bottom: 4px;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     .meta-bar-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .meta-bar-table td { width: 25%; vertical-align: top; padding-right: 8px; }
@@ -174,12 +177,13 @@
 
     /* ── Section cards (Employee, Gov IDs) ── */
     .section-card {
-      border: 1px solid #e2e8f0;
+      border: 0;
       border-radius: 10px;
-      padding: 7px 9px;
-      margin-bottom: 7px;
+      padding: 5px 6px;
+      margin-bottom: 4px;
       background: #fafbfc;
-      /* mPDF pagination: allow this to break when needed */
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     .section-title {
       font-size: 7.5px;
@@ -208,22 +212,21 @@
     }
 
     /* ── Earnings / Deductions tables ── */
-    .tables-row { width: 100%; border-collapse: separate; border-spacing: 6px 0; margin-top: 2px; }
+    .tables-row { width: 100%; border-collapse: separate; border-spacing: 4px 0; margin-top: 1px; }
     .tables-row > tbody > tr > td { vertical-align: top; width: 50%; }
 
     .table-card {
-      border: 1px solid #e2e8f0;
+      border: 0;
       border-radius: 10px;
-      /* mPDF stability: do not clip table content */
       overflow: visible;
-      /* CRITICAL (mPDF): tables can be taller than one page; do NOT forbid page breaks here,
-         or mPDF may push the whole card repeatedly and emit hundreds of blank pages. */
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     .table-head-earn {
       background: #f0fdf4;
-      border-bottom: 1px solid #e2e8f0;
-      border-left: 3px solid #16a34a;
-      padding: 6px 8px;
+      border-bottom: 0;
+      border-left: 0;
+      padding: 4px 6px;
       font-size: 7.5px;
       font-weight: 700;
       text-transform: uppercase;
@@ -232,9 +235,9 @@
     }
     .table-head-ded {
       background: #fef2f2;
-      border-bottom: 1px solid #e2e8f0;
-      border-left: 3px solid #dc2626;
-      padding: 6px 8px;
+      border-bottom: 0;
+      border-left: 0;
+      padding: 4px 6px;
       font-size: 7.5px;
       font-weight: 700;
       text-transform: uppercase;
@@ -244,8 +247,8 @@
 
     table.lines { width: 100%; border-collapse: collapse; }
     table.lines thead td {
-      border-bottom: 1px solid #e2e8f0;
-      padding: 5px 8px;
+      border-bottom: 0;
+      padding: 3px 6px;
       font-size: 7px;
       font-weight: 700;
       text-transform: uppercase;
@@ -254,10 +257,10 @@
       background: #fafbfc;
     }
     table.lines tbody td {
-      border-bottom: 1px solid #f1f5f9;
-      padding: 4px 8px;
-      font-size: 8px;
-      line-height: 1.25;
+      border-bottom: 0;
+      padding: 2px 6px;
+      font-size: 7.2px;
+      line-height: 1.16;
       vertical-align: top;
       color: rgba(10,10,10,0.8);
     }
@@ -265,16 +268,16 @@
     .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .muted { color: #64748b; }
     .total-row td {
-      border-top: 1px solid #dcfce7 !important;
+      border-top: 0 !important;
       border-bottom: 0 !important;
       background: #f0fdf4;
       font-weight: 700;
-      font-size: 8.8px;
-      padding: 5px 8px;
+      font-size: 8px;
+      padding: 3px 6px;
       color: #0A0A0A;
     }
     .total-row.ded td {
-      border-top: 1px solid #fee2e2 !important;
+      border-top: 0 !important;
       background: #fef2f2;
     }
     .holiday-note {
@@ -290,11 +293,12 @@
       background: #0A0A0A;
       color: #fff;
       text-align: center;
-      padding: 10px 12px;
-      margin: 6px auto 0;
+      padding: 6px 8px;
+      margin: 4px auto 0;
       width: 100%;
       max-width: 100%;
-      /* allow page breaks around this block */
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     .net-hero-label {
       font-size: 7.5px;
@@ -304,10 +308,10 @@
       opacity: 0.8;
     }
     .net-hero-value {
-      font-size: 22px;
+      font-size: 16px;
       font-weight: 700;
-      line-height: 1.1;
-      margin: 4px 0 4px;
+      line-height: 1.08;
+      margin: 2px 0 2px;
       font-variant-numeric: tabular-nums;
     }
     .net-hero-period {
@@ -318,11 +322,14 @@
 
     .foot-note {
       text-align: center;
-      margin-top: 6px;
-      font-size: 6.5px;
+      margin-top: 4px;
+      font-size: 6.3px;
       color: #6b7280;
-      line-height: 1.3;
+      line-height: 1.25;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
+    .units-col { text-align: center; color: #64748b; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -438,30 +445,35 @@
                 <thead>
                   <tr>
                     <td>Description</td>
-                    <td class="num" style="width:80px;">Amount (PHP)</td>
+                    <td class="units-col" style="width:52px;">Units</td>
+                    <td class="num" style="width:78px;">Amount (PHP)</td>
                   </tr>
                 </thead>
                 <tbody>
                   @foreach($displayDailyEarnLines as $line)
                     <tr>
                       <td>{{ strtolower(trim((string) ($line['label'] ?? ''))) === 'holiday premium' ? 'Holiday premium' : ($line['label'] ?? 'Daily computation earning') }}</td>
+                      <td class="units-col">{{ isset($line['units']) && trim((string) $line['units']) !== '' ? $line['units'] : '—' }}</td>
                       <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
                     </tr>
                   @endforeach
                   @foreach($earnLines as $line)
                     <tr>
                       <td>{{ $line['label'] ?? 'Earning' }}</td>
+                      <td class="units-col">{{ isset($line['units']) && trim((string) $line['units']) !== '' ? $line['units'] : '—' }}</td>
                       <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
                     </tr>
                   @endforeach
                   @if(count($displayDailyEarnLines) === 0 && count($earnLines) === 0)
                     <tr>
                       <td>No earnings computed.</td>
+                      <td class="units-col">—</td>
                       <td class="num">—</td>
                     </tr>
                   @endif
                   <tr class="total-row">
-                    <td>Gross Pay</td>
+                    <td>Total Gross Earnings</td>
+                    <td class="units-col"></td>
                     <td class="num">{{ $formatMoney($payslip->gross_pay) }}</td>
                   </tr>
                 </tbody>
@@ -475,13 +487,15 @@
                 <thead>
                   <tr>
                     <td>Description</td>
-                    <td class="num" style="width:80px;">Amount (PHP)</td>
+                    <td class="units-col" style="width:52px;">Units</td>
+                    <td class="num" style="width:78px;">Amount (PHP)</td>
                   </tr>
                 </thead>
                 <tbody>
                   @foreach($govDedLines as $line)
                     <tr>
                       <td>{{ $line['label'] ?? 'Deduction' }}</td>
+                      <td class="units-col">{{ isset($line['units']) && trim((string) $line['units']) !== '' ? $line['units'] : '—' }}</td>
                       <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
                     </tr>
                   @endforeach
@@ -496,23 +510,27 @@
                           <div class="holiday-note" style="color:#b91c1c;">{{ $line['legal_warning'] }}</div>
                         @endif
                       </td>
+                      <td class="units-col">{{ isset($line['units']) && trim((string) $line['units']) !== '' ? $line['units'] : '—' }}</td>
                       <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
                     </tr>
                   @endforeach
                   @if(!$hasWithholdingLine)
                     <tr>
                       <td>Withholding tax</td>
+                      <td class="units-col">—</td>
                       <td class="num">{{ $formatMoney($summary['withholding_tax_this_period_estimate'] ?? 0) }}</td>
                     </tr>
                   @endif
                   @if(count($govDedLines) === 0 && count($customDedLines) === 0)
                     <tr>
                       <td>No additional deductions computed.</td>
+                      <td class="units-col">—</td>
                       <td class="num">—</td>
                     </tr>
                   @endif
                   <tr class="total-row ded">
                     <td>Total Deductions</td>
+                    <td class="units-col"></td>
                     <td class="num">{{ $formatMoney($payslip->total_deductions) }}</td>
                   </tr>
                 </tbody>

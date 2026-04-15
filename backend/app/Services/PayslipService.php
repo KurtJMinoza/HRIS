@@ -554,6 +554,10 @@ class PayslipService
     /**
      * Shared computation for generate + preview — keeps one source of truth for payroll snapshot fields.
      *
+     * Withholding tax (`withholding_tax_this_period_estimate`, `withholding_tax_monthly_estimate`) comes only from
+     * {@see PayrollComputationService::computeEmployeePayroll} — same BIR RR 11-2018 Table A path as Government
+     * Deductions / Compliance Audit (mandatory EE first, then tax; loans after tax in deduction order).
+     *
      * @param  array<string, mixed>  $input
      * @return array{unique: array<string, mixed>, attributes: array<string, mixed>, plain_password: ?string}
      */

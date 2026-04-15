@@ -251,7 +251,8 @@ class RemittanceService
                     'employee_id' => $emp->id,
                     'employee_code' => $emp->employee_code,
                     'name' => $emp->name,
-                    'taxable_monthly' => $basic,
+                    'gross_taxable_monthly' => $wht['gross_monthly_taxable_compensation'] ?? $basic,
+                    'taxable_monthly' => $wht['monthly_taxable_compensation'] ?? $basic,
                     'withholding_tax_monthly' => $wht['withholding_per_month'] ?? 0,
                 ];
                 $totalEe += (float) ($wht['withholding_per_month'] ?? 0);

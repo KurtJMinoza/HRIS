@@ -263,6 +263,7 @@ export default function AdminFinalizePayrollPage() {
   const tickRef = useRef(null)
   const pollRef = useRef(null)
   const [queuedRunId, setQueuedRunId] = useState(null)
+  const [finalizeStage, setFinalizeStage] = useState('Preparing request')
   const pageSize = 12
 
   const [breakdownRow, setBreakdownRow] = useState(null)
@@ -298,6 +299,7 @@ export default function AdminFinalizePayrollPage() {
     setReviewConfirmed(false)
     setProcessedCount(0)
     setProgress(0)
+    setFinalizeStage('Preparing request')
   }, [finalizeScopeKey])
 
   useEffect(() => {
@@ -451,6 +453,7 @@ export default function AdminFinalizePayrollPage() {
     setShowFinalizeModal(true)
     setProgress(4)
     setProcessedCount(0)
+    setFinalizeStage('Submitting finalize request')
     if (tickRef.current) clearInterval(tickRef.current)
     tickRef.current = setInterval(() => {
       setProcessedCount((c) => {
@@ -465,6 +468,7 @@ export default function AdminFinalizePayrollPage() {
       const queued = await adminExecuteFinalizePayroll({ ...effectivePayload, review_confirmed: true })
       const runId = Number(queued?.payroll_batch_run_id ?? 0) || null
       setQueuedRunId(runId)
+      setFinalizeStage('Queued: waiting for worker')
       if (!runId) {
         if (tickRef.current) clearInterval(tickRef.current)
         setFinalizing(false)
@@ -522,12 +526,20 @@ export default function AdminFinalizePayrollPage() {
       try {
         const status = await adminFinalizePayrollStatus(queuedRunId)
         const s = String(status?.status || '').toLowerCase()
+        if (s === 'queued') {
+          setFinalizeStage('Queued: waiting for worker')
+          setProgress((p) => Math.max(p, 22))
+        } else if (s === 'processing') {
+          setFinalizeStage('Processing employee payroll and PDFs')
+          setProgress((p) => Math.max(p, 58))
+        }
         if (s === 'finalized') {
           if (tickRef.current) clearInterval(tickRef.current)
           if (pollRef.current) clearInterval(pollRef.current)
           const total = Math.max(1, Number(status?.totals?.employee_count || totals?.employee_count || 1))
           setProcessedCount(total)
           setProgress(100)
+          setFinalizeStage('Finalized and locked')
           setLocalFinalizeLocked(true)
           setDone(true)
           setFinalizing(false)
@@ -1231,6 +1243,7 @@ export default function AdminFinalizePayrollPage() {
             </DialogHeader>
             <div className="space-y-3 py-2">
               <Progress value={progress} indicatorClassName="bg-emerald-600 transition-all duration-300" />
+              <p className="text-xs font-medium text-[#0A0A0A]/70">{periodFinalized ? 'Finalized and locked' : finalizeStage}</p>
               <div className="flex items-center justify-between text-xs text-[#0A0A0A]/65">
                 <span>{periodFinalized ? 'Done' : `${processedCount}/${Math.max(1, Number(totals?.employee_count || employees.length || 1))}`}</span>
                 <span className="font-semibold text-[#0A0A0A]">{progress}%</span>

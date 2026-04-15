@@ -126,6 +126,7 @@ class FinalizePayrollService
 
             $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
             $rows = [];
+            $lockingStatuses = array_map('strtolower', Payslip::lockingStatuses());
             // Ensure relations required by computation are available without N+1.
             $employees->loadMissing([
                 'company',
@@ -137,50 +138,80 @@ class FinalizePayrollService
 
             foreach ($employees as $employee) {
                 $stored = $payslipByUser->get((int) $employee->id);
-                [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($employee, $periodInput);
-                $computed = $this->payrollComputation->computeEmployeePayroll(
-                    $employee,
-                    $from,
-                    $to,
-                    null,
-                    [
-                        'pay_period_start' => $from->toDateString(),
-                        'pay_period_end' => $to->toDateString(),
-                        'selected_pay_date' => is_array($cyclePreview) ? ($cyclePreview['pay_date'] ?? null) : null,
-                    ]
-                );
-                $summary = is_array($computed['summary'] ?? null) ? $computed['summary'] : [];
-                $gross = round(
-                    (float) ($summary['gross_pay_this_period']
-                        ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
-                    2
-                );
-                $ded = round(
-                    (float) ($summary['employee_statutory_this_period'] ?? 0)
-                    + (float) ($summary['custom_deductions_this_period'] ?? 0)
-                    + (float) ($summary['withholding_tax_this_period_estimate'] ?? 0),
-                    2
-                );
-                $net = round((float) ($summary['net_pay_after_withholding_estimate'] ?? 0), 2);
-                // Use current daily-computation resolver output for finalize preview rows.
-                $dailyRate = round((float) ($summary['daily_rate'] ?? ($computed['daily_rate'] ?? 0)), 2);
-                $basicPay = round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2);
-                $baseMonthly = round((float) ($computed['basic_salary_used'] ?? data_get($summary, 'compensation_breakdown.basic_salary', 0)), 2);
-                $basicScheduleFactor = (float) ($summary['basic_salary_schedule_factor'] ?? 1);
-                $basicSalaryThisPeriod = round(max(0.0, $baseMonthly * $basicScheduleFactor), 2);
-                $actualDaysWorked = round((float) ($summary['actual_days_worked'] ?? 0), 2);
-                $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
-                    ? array_values($summary['daily_computation_earning_lines'])
+                $storedStatus = strtolower(trim((string) ($stored?->status ?? '')));
+                $storedIsPublished = $stored instanceof Payslip && in_array($storedStatus, $lockingStatuses, true);
+                $summary = is_array($stored?->snapshot['summary'] ?? null)
+                    ? (array) $stored->snapshot['summary']
                     : [];
-                $attendanceDisplaySummary = is_array($summary['attendance_display_summary'] ?? null)
-                    ? $summary['attendance_display_summary']
-                    : [
-                        'working_days_count' => 0,
-                        'presence_days_count' => 0,
-                        'lines' => [],
-                        'total_regular_hours' => 0.0,
-                        'total_presence_regular_hours' => 0.0,
-                    ];
+
+                if (! $storedIsPublished) {
+                    [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($employee, $periodInput);
+                    $computed = $this->payrollComputation->computeEmployeePayroll(
+                        $employee,
+                        $from,
+                        $to,
+                        null,
+                        [
+                            'pay_period_start' => $from->toDateString(),
+                            'pay_period_end' => $to->toDateString(),
+                            'selected_pay_date' => is_array($cyclePreview) ? ($cyclePreview['pay_date'] ?? null) : null,
+                        ]
+                    );
+                    $summary = is_array($computed['summary'] ?? null) ? $computed['summary'] : [];
+                    $gross = round(
+                        (float) ($summary['gross_pay_this_period']
+                            ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
+                        2
+                    );
+                    $ded = round(
+                        (float) ($summary['employee_statutory_this_period'] ?? 0)
+                        + (float) ($summary['custom_deductions_this_period'] ?? 0)
+                        + (float) ($summary['withholding_tax_this_period_estimate'] ?? 0),
+                        2
+                    );
+                    $net = round((float) ($summary['net_pay_after_withholding_estimate'] ?? 0), 2);
+                    $dailyRate = round((float) ($summary['daily_rate'] ?? ($computed['daily_rate'] ?? 0)), 2);
+                    $basicPay = round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2);
+                    $baseMonthly = round((float) ($computed['basic_salary_used'] ?? data_get($summary, 'compensation_breakdown.basic_salary', 0)), 2);
+                    $basicScheduleFactor = (float) ($summary['basic_salary_schedule_factor'] ?? 1);
+                    $basicSalaryThisPeriod = round(max(0.0, $baseMonthly * $basicScheduleFactor), 2);
+                    $actualDaysWorked = round((float) ($summary['actual_days_worked'] ?? 0), 2);
+                    $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
+                        ? array_values($summary['daily_computation_earning_lines'])
+                        : [];
+                    $attendanceDisplaySummary = is_array($summary['attendance_display_summary'] ?? null)
+                        ? $summary['attendance_display_summary']
+                        : [
+                            'working_days_count' => 0,
+                            'presence_days_count' => 0,
+                            'lines' => [],
+                            'total_regular_hours' => 0.0,
+                            'total_presence_regular_hours' => 0.0,
+                        ];
+                } else {
+                    $gross = round((float) ($stored->gross_pay ?? 0), 2);
+                    $ded = round((float) ($stored->total_deductions ?? 0), 2);
+                    $net = round((float) ($stored->net_pay ?? 0), 2);
+                    $dailyRate = round((float) ($summary['daily_rate'] ?? 0), 2);
+                    $basicPay = round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2);
+                    $baseMonthly = round((float) (data_get($summary, 'compensation_breakdown.basic_salary', 0)), 2);
+                    $basicScheduleFactor = (float) ($summary['basic_salary_schedule_factor'] ?? 1);
+                    $basicSalaryThisPeriod = round(max(0.0, $baseMonthly * $basicScheduleFactor), 2);
+                    $actualDaysWorked = round((float) ($summary['actual_days_worked'] ?? 0), 2);
+                    $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
+                        ? array_values($summary['daily_computation_earning_lines'])
+                        : [];
+                    $attendanceDisplaySummary = is_array($summary['attendance_display_summary'] ?? null)
+                        ? $summary['attendance_display_summary']
+                        : [
+                            'working_days_count' => 0,
+                            'presence_days_count' => 0,
+                            'lines' => [],
+                            'total_regular_hours' => 0.0,
+                            'total_presence_regular_hours' => 0.0,
+                        ];
+                    [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($employee, $periodInput);
+                }
                 if ($stored instanceof Payslip) {
                     $resolvedHrRole = $this->hrRoleResolver->resolveForApprovalSubject($employee);
                     $rows[] = [
@@ -610,6 +641,15 @@ class FinalizePayrollService
         if ($employees->count() > self::FINALIZE_MAX_EMPLOYEES) {
             throw new \RuntimeException('Too many employees in scope (max '.self::FINALIZE_MAX_EMPLOYEES.'). Narrow by branch or department.');
         }
+
+        // Avoid repeated lazy-loading lookups while finalizing each employee.
+        $employees->loadMissing([
+            'company',
+            'branch',
+            'payCycle',
+            'governmentIds',
+            'workingSchedule',
+        ]);
 
         $probe = $employees->first();
         [$periodStart, $periodEnd, $probeCyclePreview] = $this->payslipService->resolveComputationWindow($probe, $periodInput);

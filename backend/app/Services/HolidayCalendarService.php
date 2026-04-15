@@ -4,26 +4,32 @@ namespace App\Services;
 
 use App\Models\Holiday;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 /**
- * Canonical holiday calendar for payroll and admin: Calendarific API + `holidays` table,
- * with DB rows overriding API on the same date (same merge as Admin HolidayController).
+ * Canonical holiday calendar for payroll and admin using local data only:
+ * `holidays` table + seeded fallback map (no external API call at runtime).
  *
  * **Recurring:** rows with `is_recurring = true` apply to every calendar year on the same month/day
  * (e.g. anchor 2026-01-01 → 2027-01-01) without inserting duplicate DB rows per year.
  */
 class HolidayCalendarService
 {
+    private const CACHE_KEY_PREFIX = 'holiday_calendar:merged_year:';
+
+    private const CACHE_TTL_SECONDS = 86400;
+
     /** @var array<int, array<string, array<string, mixed>>> */
     private array $mergedByYear = [];
 
-    public function __construct(
-        private readonly CalendarificHolidayService $apiHolidayService,
-    ) {}
+    public function __construct() {}
 
     public function flushMergedYearCaches(): void
     {
         $this->mergedByYear = [];
+        foreach (range(2020, 2035) as $year) {
+            Cache::forget(self::CACHE_KEY_PREFIX.$year);
+        }
     }
 
     /**
@@ -33,47 +39,82 @@ class HolidayCalendarService
      */
     public function mergedHolidaysForYear(int $year): array
     {
-        $year = max(2020, min(2030, $year));
+        $year = max(2020, min(2035, $year));
         if (isset($this->mergedByYear[$year])) {
             return $this->mergedByYear[$year];
         }
 
-        $apiHolidays = $this->apiHolidayService->getHolidays($year);
+        $cacheKey = self::CACHE_KEY_PREFIX.$year;
+        $this->mergedByYear[$year] = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($year) {
+            $customHolidays = Holiday::query()
+                ->whereYear('date', $year)
+                ->where(function ($q) {
+                    $q->whereNull('status')->orWhere('status', 'active');
+                })
+                ->orderBy('date')
+                ->get()
+                ->map(fn (Holiday $h) => $this->serializeHolidayRow($h))
+                ->keyBy('date')
+                ->all();
 
-        $customHolidays = Holiday::query()
-            ->whereYear('date', $year)
-            ->where(function ($q) {
-                $q->whereNull('status')->orWhere('status', 'active');
-            })
-            ->orderBy('date')
-            ->get()
-            ->map(fn (Holiday $h) => $this->serializeHolidayRow($h))
-            ->keyBy('date')
-            ->all();
-
-        $map = [];
-        foreach ($apiHolidays as $h) {
-            $map[$h['date']] = [
-                'date' => $h['date'],
-                'name' => $h['name'],
-                'type' => $h['type'],
-                'scope' => 'nationwide',
-                'description' => $h['description'] ?? null,
-            ];
-        }
-        foreach ($customHolidays as $date => $h) {
-            $map[$date] = $h;
-        }
-
-        foreach ($this->recurringHolidayRowsForYear($year, array_keys($map)) as $dateKey => $row) {
-            if (! isset($map[$dateKey])) {
-                $map[$dateKey] = $row;
+            $map = $this->seededFallbackForYear($year);
+            foreach ($customHolidays as $date => $h) {
+                // DB rows always win over seeded defaults on same date.
+                $map[$date] = $h;
             }
-        }
 
-        $this->mergedByYear[$year] = $map;
+            foreach ($this->recurringHolidayRowsForYear($year, array_keys($map)) as $dateKey => $row) {
+                if (! isset($map[$dateKey])) {
+                    $map[$dateKey] = $row;
+                }
+            }
+
+            return $map;
+        });
 
         return $this->mergedByYear[$year];
+    }
+
+    /**
+     * Local seeded fallback holidays (PH nationwide baseline).
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function seededFallbackForYear(int $year): array
+    {
+        // Dynamic movable holidays are expected to come from DB rows; this fallback avoids API dependency.
+        $rows = [
+            ['md' => '01-01', 'name' => "New Year's Day", 'type' => 'regular'],
+            ['md' => '04-09', 'name' => 'Araw ng Kagitingan', 'type' => 'regular'],
+            ['md' => '05-01', 'name' => 'Labor Day', 'type' => 'regular'],
+            ['md' => '06-12', 'name' => 'Independence Day', 'type' => 'regular'],
+            ['md' => '08-21', 'name' => 'Ninoy Aquino Day', 'type' => 'special'],
+            ['md' => '08-25', 'name' => 'National Heroes Day', 'type' => 'regular'],
+            ['md' => '11-01', 'name' => "All Saints' Day", 'type' => 'special'],
+            ['md' => '11-30', 'name' => 'Bonifacio Day', 'type' => 'regular'],
+            ['md' => '12-08', 'name' => 'Feast of the Immaculate Conception', 'type' => 'special'],
+            ['md' => '12-24', 'name' => 'Christmas Eve', 'type' => 'special'],
+            ['md' => '12-25', 'name' => 'Christmas Day', 'type' => 'regular'],
+            ['md' => '12-30', 'name' => 'Rizal Day', 'type' => 'regular'],
+            ['md' => '12-31', 'name' => "New Year's Eve", 'type' => 'special'],
+        ];
+
+        $out = [];
+        foreach ($rows as $r) {
+            $date = sprintf('%04d-%s', $year, $r['md']);
+            $out[$date] = [
+                'date' => $date,
+                'name' => $r['name'],
+                'type' => $r['type'],
+                'scope' => 'nationwide',
+                'description' => null,
+                'regions' => null,
+                'is_recurring' => true,
+                'status' => 'active',
+            ];
+        }
+
+        return $out;
     }
 
     /**

@@ -320,7 +320,7 @@ class GovernmentContributionController extends Controller
     }
 
     /**
-     * Preview BIR withholding (TRAIN annual table) from earnings lines or monthly taxable base.
+     * Preview BIR withholding (RR 11-2018 Table A monthly, after mandatory EE contributions; TRAIN annual for 13th supplement).
      */
     public function previewWithholdingTax(Request $request): JsonResponse
     {

@@ -6,8 +6,8 @@ use App\Models\EmployeeBenefit;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeEmergencyContact;
 use App\Models\EmployeeGovernmentId;
+use App\Models\Holiday;
 use App\Models\User;
-use App\Services\CalendarificHolidayService;
 use App\Services\HolidayCalendarService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Support\ServiceProvider;
@@ -19,11 +19,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->app->singleton(HolidayCalendarService::class, function ($app) {
-            return new HolidayCalendarService(
-                $app->make(CalendarificHolidayService::class)
-            );
-        });
+        $this->app->singleton(HolidayCalendarService::class, fn () => new HolidayCalendarService);
     }
 
     /**
@@ -77,5 +73,8 @@ class AppServiceProvider extends ServiceProvider
                 EmployeeProfileCache::invalidate((int) $record->user_id);
             }
         });
+
+        Holiday::saved(fn () => app(HolidayCalendarService::class)->flushMergedYearCaches());
+        Holiday::deleted(fn () => app(HolidayCalendarService::class)->flushMergedYearCaches());
     }
 }

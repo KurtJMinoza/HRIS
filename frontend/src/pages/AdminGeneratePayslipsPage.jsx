@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { pdf } from '@react-pdf/renderer'
 import {
   adminGeneratePayslips,
+  adminPreviewPayslipSampleBlob,
   adminPreviewPayslipSampleData,
   getAdminPayslipPreviewScope,
   getAdminPayslipsRecentByCompany,
@@ -27,7 +27,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import PayslipPdfDocument from '@/components/payslips/PayslipPdfDocument'
+import PayslipHtmlDocument from '@/components/payslips/PayslipHtmlDocument'
+import { PAYSLIP_MODAL_PRINT_STYLES } from '@/components/payslips/payslipPrintStyles'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -290,9 +291,7 @@ export default function AdminGeneratePayslipsPage() {
   const [samplePreviewLoading, setSamplePreviewLoading] = useState(false)
   const [samplePreviewOpen, setSamplePreviewOpen] = useState(false)
   const [samplePreviewData, setSamplePreviewData] = useState(null)
-  const [samplePreviewPdfUrl, setSamplePreviewPdfUrl] = useState('')
-  const [samplePreviewPdfPreparing, setSamplePreviewPdfPreparing] = useState(false)
-  const samplePreviewFrameRef = useRef(null)
+  const [samplePdfDownloading, setSamplePdfDownloading] = useState(false)
   const [companyRows, setCompanyRows] = useState([])
   const [batchEstimateData, setBatchEstimateData] = useState(null)
   const [batchEstimateLoading, setBatchEstimateLoading] = useState(false)
@@ -668,53 +667,58 @@ export default function AdminGeneratePayslipsPage() {
     }
   }
 
-  useEffect(() => {
-    let cancelled = false
-    let objectUrl = ''
+  const getSamplePdfBlob = useCallback(async () => {
+    const { blob } = await adminPreviewPayslipSampleBlob(bulkPayload)
+    return blob
+  }, [bulkPayload])
 
-    const buildPdf = async () => {
-      if (!samplePreviewData) {
-        setSamplePreviewPdfUrl('')
-        return
+  const handlePrintSamplePreview = async () => {
+    if (!samplePreviewData || samplePreviewLoading || samplePdfDownloading) return
+    setSamplePdfDownloading(true)
+    try {
+      const blob = await getSamplePdfBlob()
+      const url = URL.createObjectURL(blob)
+      const popup = window.open(url, '_blank', 'noopener,noreferrer')
+      if (!popup) {
+        URL.revokeObjectURL(url)
+        throw new Error('Popup blocked. Allow popups for printing.')
       }
-      setSamplePreviewPdfPreparing(true)
-      try {
-        const blob = await pdf(<PayslipPdfDocument data={samplePreviewData} />).toBlob()
-        if (cancelled) return
-        objectUrl = URL.createObjectURL(blob)
-        setSamplePreviewPdfUrl(objectUrl)
-      } catch (e) {
-        if (!cancelled) {
-          setSamplePreviewPdfUrl('')
-          toast({ title: 'Preview failed', description: e.message || 'Could not render sample PDF.', variant: 'destructive' })
-        }
-      } finally {
-        if (!cancelled) setSamplePreviewPdfPreparing(false)
-      }
+      const cleanup = () => URL.revokeObjectURL(url)
+      popup.addEventListener('load', () => {
+        popup.focus()
+        popup.print()
+        setTimeout(cleanup, 15000)
+      })
+    } catch (e) {
+      toast({ title: 'Print failed', description: e.message || 'Unable to open printable PDF.', variant: 'destructive' })
+    } finally {
+      setSamplePdfDownloading(false)
     }
-
-    buildPdf()
-    return () => {
-      cancelled = true
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [samplePreviewData, toast])
-
-  const handlePrintSamplePreview = () => {
-    const frame = samplePreviewFrameRef.current
-    const win = frame?.contentWindow
-    if (!win) return
-    win.focus()
-    win.print()
   }
 
-  const handleDownloadSamplePreview = () => {
-    if (!samplePreviewPdfUrl) return
-    const safeName = String(samplePreviewData?.employee?.name || 'sample').replace(/[^\w-]+/g, '-')
-    const a = document.createElement('a')
-    a.href = samplePreviewPdfUrl
-    a.download = `payslip-sample-${safeName}.pdf`
-    a.click()
+  const handleDownloadSamplePreview = async () => {
+    if (!samplePreviewData || samplePdfDownloading) return
+    setSamplePdfDownloading(true)
+    try {
+      const { blob, pdfPassword } = await adminPreviewPayslipSampleBlob(bulkPayload)
+      const safeName = String(samplePreviewData?.employee?.name || 'sample').replace(/[^\w-]+/g, '-')
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `payslip-sample-${safeName}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+      if (pdfPassword) {
+        toast({
+          title: 'PDF downloaded',
+          description: `Password: ${pdfPassword}`,
+        })
+      }
+    } catch (e) {
+      toast({ title: 'Download failed', description: e.message || 'Could not generate sample PDF.', variant: 'destructive' })
+    } finally {
+      setSamplePdfDownloading(false)
+    }
   }
 
   if (!canManagePayslips) {
@@ -1392,15 +1396,15 @@ export default function AdminGeneratePayslipsPage() {
             if (!open) {
               setSamplePreviewOpen(false)
               setSamplePreviewData(null)
-              setSamplePreviewPdfUrl('')
-              setSamplePreviewPdfPreparing(false)
+              setSamplePdfDownloading(false)
               return
             }
             setSamplePreviewOpen(true)
           }}
         >
           <DialogContent className={cn(PAYSLIP_PREVIEW_DIALOG, 'max-h-[95vh]')}>
-            <div className="border-b border-slate-200/80 bg-white px-6 py-4 dark:border-slate-800">
+            <style dangerouslySetInnerHTML={{ __html: PAYSLIP_MODAL_PRINT_STYLES }} />
+            <div data-payslip-modal-chrome className="border-b border-slate-200/80 bg-white px-6 py-4 dark:border-slate-800">
               <DialogHeader>
                 <div className="flex items-start justify-between gap-4">
                   <DialogTitle>Sample payslip preview</DialogTitle>
@@ -1409,7 +1413,7 @@ export default function AdminGeneratePayslipsPage() {
                       type="button"
                       variant="outline"
                       onClick={handlePrintSamplePreview}
-                      disabled={!samplePreviewPdfUrl || samplePreviewPdfPreparing}
+                      disabled={!samplePreviewData || samplePreviewLoading}
                     >
                       <Printer className="mr-2 h-4 w-4" />
                       Print
@@ -1417,30 +1421,29 @@ export default function AdminGeneratePayslipsPage() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={handleDownloadSamplePreview}
-                      disabled={!samplePreviewPdfUrl || samplePreviewPdfPreparing}
+                      onClick={() => void handleDownloadSamplePreview()}
+                      disabled={!samplePreviewData || samplePreviewLoading || samplePdfDownloading}
                     >
-                      <FileDown className="mr-2 h-4 w-4" />
+                      {samplePdfDownloading ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <FileDown className="mr-2 h-4 w-4" />
+                      )}
                       Download PDF
                     </Button>
                   </div>
                 </div>
               </DialogHeader>
             </div>
-            <div className="h-[88vh] overflow-y-auto bg-[#F8FAFC] p-6">
-              {samplePreviewLoading || samplePreviewPdfPreparing ? (
+            <div data-payslip-print-mount className="h-[88vh] overflow-y-auto bg-[#F8FAFC] p-6">
+              {samplePreviewLoading ? (
                 <div className="flex h-full items-center justify-center rounded-2xl border border-slate-200/80 bg-white text-[#0A0A0A]/55 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  {samplePreviewLoading ? 'Loading sample data…' : 'Rendering sample payslip PDF…'}
+                  Loading sample data…
                 </div>
-              ) : samplePreviewPdfUrl ? (
+              ) : samplePreviewData ? (
                 <div className="mx-auto h-full w-full max-w-[min(80rem,100%)] rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-950">
-                  <iframe
-                    ref={samplePreviewFrameRef}
-                    title="Sample Payslip PDF Preview"
-                    src={samplePreviewPdfUrl}
-                    className="h-full min-h-[80vh] w-full rounded-xl border-0 bg-slate-50/50 shadow-inner dark:bg-slate-900/30"
-                  />
+                  <PayslipHtmlDocument data={samplePreviewData} isPreviewMode />
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">No preview available.</p>
