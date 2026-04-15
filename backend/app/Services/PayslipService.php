@@ -873,7 +873,12 @@ class PayslipService
             $summary['daily_computation_earning_lines'] ?? [],
             'Daily computation earning'
         );
-        $summary['payslip_deduction_lines'] = $this->normalizePayslipLineList($summary['payslip_deduction_lines'] ?? [], 'Deduction');
+        $summary['payslip_deduction_lines'] = $this->normalizePayslipLineList(
+            $summary['payslip_deduction_lines'] ?? [],
+            'Deduction',
+            false,
+            true
+        );
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? []);
 
         $holiday = [];
@@ -984,7 +989,12 @@ class PayslipService
     /**
      * @return list<array{key: string, label: string, amount: float, units: ?string}>
      */
-    private function normalizePayslipLineList(mixed $raw, string $defaultLabel): array
+    private function normalizePayslipLineList(
+        mixed $raw,
+        string $defaultLabel,
+        bool $keepWithholdingWhenZero = false,
+        bool $keepAllAmounts = false
+    ): array
     {
         $rows = is_array($raw) ? $raw : [];
         $out = [];
@@ -996,6 +1006,21 @@ class PayslipService
             $amt = (float) ($row['amount'] ?? 0);
             $unitsRaw = $row['units'] ?? null;
             $unitsStr = $unitsRaw === null || $unitsRaw === '' ? null : trim((string) $unitsRaw);
+            // Payslip preview/PDF requirement: hide non-positive line items.
+            // Schedule-aware inclusion (15th/30th/both) is resolved upstream in payroll computation.
+            $lineKey = strtolower(trim((string) ($row['key'] ?? '')));
+            $lineLabel = strtolower($label);
+            $isWithholdingLine = str_contains($lineKey, 'withholding')
+                || str_contains($lineKey, 'wht')
+                || str_contains($lineLabel, 'withholding')
+                || str_contains($lineLabel, 'wht');
+            if (
+                ! $keepAllAmounts
+                && $amt <= 0.000009
+                && ! ($keepWithholdingWhenZero && $isWithholdingLine)
+            ) {
+                continue;
+            }
             if ($label === '' && abs($amt) < 1e-9 && ($unitsStr === null || $unitsStr === '')) {
                 continue;
             }

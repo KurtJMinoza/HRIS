@@ -65,13 +65,16 @@ function isPublishedPayslipStatus(status) {
  */
 export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
   const summary = data?.summary
+  const hasPositiveAmount = (line) => Number(line?.amount || 0) > 0
 
   const earnings = useMemo(() => {
-    return Array.isArray(summary?.payslip_earning_lines) ? summary.payslip_earning_lines : []
+    const rows = Array.isArray(summary?.payslip_earning_lines) ? summary.payslip_earning_lines : []
+    return rows.filter(hasPositiveAmount)
   }, [summary])
 
   const dailyComputationEarnings = useMemo(() => {
-    return Array.isArray(summary?.daily_computation_earning_lines) ? summary.daily_computation_earning_lines : []
+    const rows = Array.isArray(summary?.daily_computation_earning_lines) ? summary.daily_computation_earning_lines : []
+    return rows.filter(hasPositiveAmount)
   }, [summary])
 
   const displayEarnings = useMemo(() => {
