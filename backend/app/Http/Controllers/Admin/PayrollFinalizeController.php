@@ -239,6 +239,24 @@ class PayrollFinalizeController extends Controller
         ]);
     }
 
+    public function deleteBatch(Request $request, int $batchRunId): JsonResponse
+    {
+        $this->ensurePayrollFinalizeAccess($request);
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        try {
+            $result = $this->finalizePayrollService->deleteFinalizedPayrollBatch($batchRunId, $actor);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Finalized payroll batch deleted. Regenerate payroll to proceed.',
+            ...$result,
+        ]);
+    }
+
     /**
      * Finalize a single employee payslip for the current scope + pay window (sync; no queue).
      */

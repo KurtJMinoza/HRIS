@@ -337,6 +337,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/payroll/finalize/employee', [PayrollFinalizeController::class, 'finalizeEmployee']);
             Route::post('/admin/payroll/finalize/deliver-payslips', [PayrollFinalizeController::class, 'deliverPayslips']);
             Route::get('/admin/payroll/finalize/status/{batchRunId}', [PayrollFinalizeController::class, 'executeStatus']);
+            Route::delete('/admin/payroll/finalize/batch/{batchRunId}', [PayrollFinalizeController::class, 'deleteBatch']);
         });
         /** Demote finalized payslips + unlock payroll_period rows (admin only; confirm required). */
         Route::post('/admin/payroll/unlock-period', [PayrollPeriodUnlockController::class, 'unlockPayWindow']);

@@ -1696,6 +1696,19 @@ export async function adminFinalizePayrollStatus(batchRunId) {
   return data
 }
 
+/**
+ * Admin/HR: delete a finalized payroll batch and all generated payslips/PDFs for that batch scope.
+ */
+export async function adminDeleteFinalizedPayrollBatch(batchRunId) {
+  const res = await authenticatedFetch(`/admin/payroll/finalize/batch/${encodeURIComponent(String(batchRunId))}`, {
+    method: 'DELETE',
+    timeoutMs: 90000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to delete finalized payroll batch')
+  return data
+}
+
 export async function adminGeneratePayslips(payload) {
   const res = await authenticatedFetch('/admin/payslips/generate', {
     method: 'POST',

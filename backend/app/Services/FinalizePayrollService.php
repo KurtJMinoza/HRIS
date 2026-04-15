@@ -5,12 +5,14 @@ namespace App\Services;
 use App\Models\PayrollBatchRun;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
+use App\Models\UserAdminActivityLog;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 /**
@@ -1029,6 +1031,127 @@ class FinalizePayrollService
     }
 
     /**
+     * Delete a finalized payroll batch and all generated artifacts so the same period can be regenerated.
+     *
+     * @return array{deleted_payslips: int, deleted_pdfs: int, deleted_payroll_periods: int}
+     */
+    public function deleteFinalizedPayrollBatch(int $batchId, User $actor): array
+    {
+        $run = PayrollBatchRun::query()->findOrFail($batchId);
+        $status = strtolower(trim((string) $run->status));
+        if ($status !== PayrollBatchRun::STATUS_FINALIZED) {
+            throw new \RuntimeException('Only finalized payroll batches can be deleted.');
+        }
+
+        $baseQuery = $this->payslipQueryForBatchRun($run);
+        $targetUserIds = (clone $baseQuery)->distinct()->pluck('user_id')->map(fn ($id) => (int) $id)->all();
+        if ($targetUserIds !== [] && ! $actor->isAdmin()) {
+            $accessibleIds = $this->scopedEmployees(
+                $run->company_id ? (int) $run->company_id : null,
+                $run->branch_id ? (int) $run->branch_id : null,
+                $run->department_id ? (int) $run->department_id : null,
+                $run->employee_id ? (int) $run->employee_id : null,
+                $actor
+            )->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $missing = array_diff($targetUserIds, $accessibleIds);
+            if ($missing !== []) {
+                throw new \RuntimeException('You do not have access to delete this finalized batch.');
+            }
+        }
+
+        $deletedPayslips = 0;
+        $deletedPdfs = 0;
+        $deletedPayrollPeriods = 0;
+
+        DB::transaction(function () use (
+            $run,
+            $targetUserIds,
+            &$deletedPayslips,
+            &$deletedPdfs,
+            &$deletedPayrollPeriods
+        ) {
+            $rows = $this->payslipQueryForBatchRun($run)
+                ->lockForUpdate()
+                ->get(['id', 'pdf_path', 'payroll_period_id']);
+            $payslipIds = $rows->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $pdfPaths = $rows->pluck('pdf_path')
+                ->filter(fn ($p) => is_string($p) && trim($p) !== '')
+                ->map(fn ($p) => trim((string) $p))
+                ->unique()
+                ->values()
+                ->all();
+            $payrollPeriodIds = $rows->pluck('payroll_period_id')
+                ->filter(fn ($id) => $id !== null)
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+
+            if ($payslipIds !== []) {
+                $deletedPayslips = Payslip::query()->whereIn('id', $payslipIds)->delete();
+            }
+
+            if ($payrollPeriodIds !== []) {
+                $deletedPayrollPeriods = PayrollPeriod::query()
+                    ->whereIn('id', $payrollPeriodIds)
+                    ->delete();
+            } elseif ($targetUserIds !== [] && $run->pay_period_start !== null && $run->pay_period_end !== null) {
+                $deletedPayrollPeriods = PayrollPeriod::query()
+                    ->whereIn('user_id', $targetUserIds)
+                    ->whereDate('from_date', $run->pay_period_start->toDateString())
+                    ->whereDate('to_date', $run->pay_period_end->toDateString())
+                    ->delete();
+            }
+
+            $run->delete();
+
+            foreach ($pdfPaths as $relativePath) {
+                // Payslip pdf_path is stored relative to storage/app/private.
+                if (Storage::disk('local')->exists('private/'.$relativePath)) {
+                    if (Storage::disk('local')->delete('private/'.$relativePath)) {
+                        $deletedPdfs++;
+                    }
+                }
+            }
+        });
+
+        UserAdminActivityLog::query()->create([
+            'subject_user_id' => (int) $actor->id,
+            'actor_user_id' => (int) $actor->id,
+            'action' => 'finalized_payroll_batch_deleted',
+            'meta' => [
+                'payroll_batch_run_id' => $batchId,
+                'batch_key' => $run->batch_key,
+                'company_id' => $run->company_id,
+                'branch_id' => $run->branch_id,
+                'department_id' => $run->department_id,
+                'employee_id' => $run->employee_id,
+                'pay_period_start' => $run->pay_period_start?->toDateString(),
+                'pay_period_end' => $run->pay_period_end?->toDateString(),
+                'deleted_payslips' => $deletedPayslips,
+                'deleted_pdfs' => $deletedPdfs,
+                'deleted_payroll_periods' => $deletedPayrollPeriods,
+            ],
+            'ip_address' => request()->ip(),
+        ]);
+
+        Log::warning('Finalized payroll batch deleted', [
+            'actor_user_id' => (int) $actor->id,
+            'payroll_batch_run_id' => $batchId,
+            'batch_key' => $run->batch_key,
+            'deleted_payslips' => $deletedPayslips,
+            'deleted_pdfs' => $deletedPdfs,
+            'deleted_payroll_periods' => $deletedPayrollPeriods,
+        ]);
+
+        return [
+            'deleted_payslips' => (int) $deletedPayslips,
+            'deleted_pdfs' => (int) $deletedPdfs,
+            'deleted_payroll_periods' => (int) $deletedPayrollPeriods,
+        ];
+    }
+
+    /**
      * Finalize one employee: same pipeline as batch (daily computation → persist → payslip PDF → lock period).
      * Batch run row stays draft until every payslip in scope is finalized.
      *
@@ -1369,6 +1492,34 @@ class FinalizePayrollService
             $payPeriodEnd,
             (string) ($payCycleId ?? 'x'),
         ]));
+    }
+
+    private function payslipQueryForBatchRun(PayrollBatchRun $run): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = Payslip::query()
+            ->when(
+                $run->pay_period_start !== null,
+                fn ($q) => $q->whereDate('pay_period_start', $run->pay_period_start->toDateString())
+            )
+            ->when(
+                $run->pay_period_end !== null,
+                fn ($q) => $q->whereDate('pay_period_end', $run->pay_period_end->toDateString())
+            );
+
+        if ($run->company_id !== null) {
+            $query->where('company_id', (int) $run->company_id);
+        }
+        if ($run->branch_id !== null) {
+            $query->where('branch_id', (int) $run->branch_id);
+        }
+        if ($run->department_id !== null) {
+            $query->where('department_id', (int) $run->department_id);
+        }
+        if ($run->employee_id !== null) {
+            $query->where('user_id', (int) $run->employee_id);
+        }
+
+        return $query;
     }
 
     private function scopedEmployees(

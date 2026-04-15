@@ -1,10 +1,9 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { pdf } from '@react-pdf/renderer'
 import {
+  adminDeleteFinalizedPayrollBatch,
   adminDeliverFinalizePayslips,
   adminExecuteFinalizePayroll,
-  adminFinalizeEmployeePayslip,
   adminFinalizePayrollStatus,
   adminPreviewFinalizePayroll,
   companyLogoUrl,
@@ -17,7 +16,6 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import PayslipPdfDocument from '@/components/payslips/PayslipPdfDocument'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -33,13 +31,12 @@ import {
   Building2,
   CheckCircle2,
   Eye,
-  FileDown,
   RefreshCw,
   Loader2,
   Lock,
-  Printer,
   Search,
   Send,
+  Trash2,
   Users,
 } from 'lucide-react'
 
@@ -103,32 +100,8 @@ function parsePayload(sp) {
   }
 }
 
-function buildFinalizeEmployeeBody(base, userId) {
-  const body = {
-    employee_id: userId,
-    confirm: true,
-    use_company_default: Boolean(base.use_company_default),
-    password_protect: Boolean(base.password_protect),
-    is_final_pay: Boolean(base.is_final_pay),
-  }
-  if (base.company_id) body.company_id = base.company_id
-  if (base.branch_id) body.branch_id = base.branch_id
-  if (base.department_id) body.department_id = base.department_id
-  if (base.from_date) body.from_date = base.from_date
-  if (base.to_date) body.to_date = base.to_date
-  if (base.pay_cycle_id) body.pay_cycle_id = base.pay_cycle_id
-  if (base.reference_date) body.reference_date = base.reference_date
-  if (base.payroll_period_id) body.payroll_period_id = base.payroll_period_id
-  return body
-}
-
 function hasScope(p) {
   return Boolean(p.company_id || p.branch_id || p.department_id || p.employee_id)
-}
-
-/** Matches {@see PayrollFinalizeController::finalizeEmployee}: admins need org scope, not employee-only URLs. */
-function hasAdminEmployeeFinalizeOrgScope(p) {
-  return Boolean(p.company_id || p.branch_id || p.department_id)
 }
 
 function employeeRole(row) {
@@ -292,25 +265,16 @@ export default function AdminFinalizePayrollPage() {
   const [queuedRunId, setQueuedRunId] = useState(null)
   const pageSize = 12
 
-  const [showPayslipPreview, setShowPayslipPreview] = useState(false)
-  const [previewingRow, setPreviewingRow] = useState(null)
-  const [payslipPreviewData, setPayslipPreviewData] = useState(null)
-  const [payslipPdfPassword, setPayslipPdfPassword] = useState(null)
-  const [payslipLoading, setPayslipLoading] = useState(false)
-  const [payslipPreviewUrl, setPayslipPreviewUrl] = useState('')
-  const [payslipPdfPreparing, setPayslipPdfPreparing] = useState(false)
   const [breakdownRow, setBreakdownRow] = useState(null)
-  const payslipFrameRef = useRef(null)
   const [refreshToken, setRefreshToken] = useState(() => String(Date.now()))
-  const [finalizingEmployeeId, setFinalizingEmployeeId] = useState(null)
   /** Set when status polling sees `finalized` so the badge flips immediately (before preview refetch). */
   const [localFinalizeLocked, setLocalFinalizeLocked] = useState(false)
-  /** Synchronous guard so rapid double-clicks cannot enqueue multiple finalize requests before React state updates. */
-  const finalizeEmployeeInFlightRef = useRef(false)
 
   const [selectedPayslipIds, setSelectedPayslipIds] = useState(() => new Set())
   const [deliveringBulk, setDeliveringBulk] = useState(false)
   const [deliveringPayslipId, setDeliveringPayslipId] = useState(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deletingBatch, setDeletingBatch] = useState(false)
 
   const periodFinalized = useMemo(() => {
     if (done || localFinalizeLocked) return true
@@ -606,64 +570,6 @@ export default function AdminFinalizePayrollPage() {
     }
   }, [queuedRunId, periodFinalized, totals?.employee_count])
 
-  const handleFinalizeEmployee = useCallback(
-    async (row) => {
-      const uid = Number(row?.user_id)
-      if (!canFinalizePayroll || !Number.isFinite(uid) || uid <= 0) return
-      if (periodFinalized || finalizing || loading) return
-      if (finalizeEmployeeInFlightRef.current) return
-      if (String(row?.status || '').toLowerCase() === 'finalized') return
-      if (isAdmin && !hasAdminEmployeeFinalizeOrgScope(effectivePayload)) {
-        toastRef.current({
-          title: 'Select company, branch, or department',
-          description: 'Individual finalize requires org scope (not employee-only filters).',
-          variant: 'destructive',
-        })
-        return
-      }
-      if (!isAdmin && !hasScope(effectivePayload)) return
-
-      finalizeEmployeeInFlightRef.current = true
-      setFinalizingEmployeeId(uid)
-      try {
-        const body = buildFinalizeEmployeeBody(effectivePayload, uid)
-        const res = await adminFinalizeEmployeePayslip(body)
-        toastRef.current({
-          title: 'Employee payslip finalized',
-          description: res?.message || 'Payslip is locked for this period.',
-        })
-        setRefreshToken(String(Date.now()))
-        if (res?.batch_all_finalized) {
-          setLocalFinalizeLocked(true)
-          setDone(true)
-          setReviewConfirmed(true)
-          try {
-            const marker = String(Date.now())
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('hr:payroll-finalized', { detail: { at: marker } }))
-              window.localStorage.setItem('hr:payroll-finalized-at', marker)
-            }
-          } catch {
-            // no-op
-          }
-        }
-      } catch (e) {
-        toastRef.current({ title: 'Finalize failed', description: e.message, variant: 'destructive' })
-      } finally {
-        finalizeEmployeeInFlightRef.current = false
-        setFinalizingEmployeeId(null)
-      }
-    },
-    [
-      canFinalizePayroll,
-      periodFinalized,
-      finalizing,
-      loading,
-      isAdmin,
-      effectivePayload,
-    ],
-  )
-
   const handlePreviewPayslip = async (row) => {
     /** Scope + period for round-trip Back navigation (must match Finalize URL; never omit branch/dept when user narrowed scope). */
     const appendFinalizeScopeToQuery = (q) => {
@@ -757,6 +663,32 @@ export default function AdminFinalizePayrollPage() {
     }
   }
 
+  const handleDeleteFinalizedBatch = async () => {
+    const batchRunId = Number(preview?.batch_run?.payroll_batch_run_id || 0)
+    if (batchRunId <= 0 || deletingBatch) return
+    setDeletingBatch(true)
+    try {
+      await adminDeleteFinalizedPayrollBatch(batchRunId)
+      setDeleteDialogOpen(false)
+      setDone(false)
+      setLocalFinalizeLocked(false)
+      setSelectedPayslipIds(new Set())
+      setRefreshToken(String(Date.now()))
+      toastRef.current({
+        title: 'Finalized batch deleted',
+        description: 'All payslips and sent records were removed. Regenerate payroll to finalize again.',
+      })
+    } catch (e) {
+      toastRef.current({
+        title: 'Delete failed',
+        description: e.message || 'Could not delete finalized batch.',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingBatch(false)
+    }
+  }
+
   const togglePayslipSelected = (id) => {
     setSelectedPayslipIds((prev) => {
       const next = new Set(prev)
@@ -785,70 +717,6 @@ export default function AdminFinalizePayrollPage() {
       return next
     })
   }
-
-  useEffect(() => {
-    let cancelled = false
-    let currentObjectUrl = ''
-
-    const buildPreviewPdf = async () => {
-      if (!payslipPreviewData) {
-        setPayslipPreviewUrl('')
-        return
-      }
-      setPayslipPdfPreparing(true)
-      try {
-        const blob = await pdf(<PayslipPdfDocument data={payslipPreviewData} logoUrl={selectedCompanyLogo || undefined} />).toBlob()
-        if (cancelled) return
-        currentObjectUrl = URL.createObjectURL(blob)
-        setPayslipPreviewUrl(currentObjectUrl)
-      } catch (e) {
-        if (!cancelled) {
-          setPayslipPreviewUrl('')
-          toastRef.current({
-            title: 'PDF preview failed',
-            description: String(e?.message || 'Unable to render payslip PDF preview.'),
-            variant: 'destructive',
-          })
-        }
-      } finally {
-        if (!cancelled) setPayslipPdfPreparing(false)
-      }
-    }
-
-    buildPreviewPdf()
-
-    return () => {
-      cancelled = true
-      if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl)
-    }
-  }, [payslipPreviewData, selectedCompanyLogo])
-
-  const handleDownloadPreviewPdf = () => {
-    if (!payslipPreviewUrl) return
-    const safeName = String(previewingRow?.name || 'employee').replace(/[^\w-]+/g, '-')
-    const a = document.createElement('a')
-    a.href = payslipPreviewUrl
-    a.download = `payslip-preview-${safeName}.pdf`
-    a.click()
-  }
-
-  const handlePrintPayslip = () => {
-    const frame = payslipFrameRef.current
-    const w = frame?.contentWindow
-    if (!w) return
-    w.focus()
-    w.print()
-  }
-
-  const resetPayslipPreview = useCallback(() => {
-    setShowPayslipPreview(false)
-    setPreviewingRow(null)
-    setPayslipPdfPassword(null)
-    setPayslipPreviewData(null)
-    setPayslipPreviewUrl('')
-    setPayslipPdfPreparing(false)
-    setPayslipLoading(false)
-  }, [])
 
   useEffect(
     () => () => {
@@ -980,14 +848,30 @@ export default function AdminFinalizePayrollPage() {
               you confirm and click Finalize Payroll.
             </p>
           ) : (
-            <p className="mt-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-[#0A0A0A]">
-              <Lock className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
-              <span>
-                <span className="font-semibold text-emerald-900">This payroll has been finalized and is now locked.</span> Use{' '}
-                <span className="font-medium text-emerald-900">Send payslips</span> for each finalized row (or bulk) so they appear in My Payslips.
-                You cannot change attendance, leave, or amounts for this period.
-              </span>
-            </p>
+            <div className="mt-4 space-y-3">
+              <p className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-[#0A0A0A]">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
+                <span>
+                  <span className="font-semibold text-emerald-900">This payroll has been finalized and is now locked.</span> Use{' '}
+                  <span className="font-medium text-emerald-900">Send payslips</span> for each finalized row (or bulk) so they appear in My Payslips.
+                  You cannot change attendance, leave, or amounts for this period.
+                </span>
+              </p>
+              {Number(preview?.batch_run?.payroll_batch_run_id || 0) > 0 ? (
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="h-9 gap-2"
+                    onClick={() => setDeleteDialogOpen(true)}
+                    disabled={deletingBatch}
+                  >
+                    {deletingBatch ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    Delete Finalized Batch
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           )}
 
           {!loading && previewError ? (
@@ -1127,17 +1011,6 @@ export default function AdminFinalizePayrollPage() {
                     <TableBody className="[&_tr]:border-0 [&_tr]:transition-colors">
                       {pageRows.map((row) => {
                         const rowFinalized = isPayslipPublishedDone(row.status)
-                        const adminOrgOk = !isAdmin || hasAdminEmployeeFinalizeOrgScope(effectivePayload)
-                        const scopeOk = isAdmin ? adminOrgOk : hasScope(effectivePayload)
-                        const finalizeDisabled =
-                          !canFinalizePayroll ||
-                          periodFinalized ||
-                          finalizing ||
-                          loading ||
-                          rowFinalized ||
-                          !scopeOk ||
-                          finalizingEmployeeId != null
-                        const rowFinalizing = finalizingEmployeeId === Number(row.user_id)
                         const payslipIdNum = Number(row.payslip_id ?? 0)
                         const canSendRow = periodFinalized && payslipIdNum > 0 && isSendablePayslipStatus(row.status)
                         const rowIsSent = Boolean(row.is_sent || row.delivered_at)
@@ -1259,32 +1132,7 @@ export default function AdminFinalizePayrollPage() {
                               <Button
                                 type="button"
                                 size="sm"
-                                title={
-                                  !scopeOk && isAdmin
-                                    ? 'Select company, branch, or department to finalize individual payslips.'
-                                    : undefined
-                                }
-                                disabled={finalizeDisabled}
-                                onClick={() => handleFinalizeEmployee(row)}
-                                className={cn(
-                                  'h-8 shrink-0 whitespace-nowrap rounded-lg px-3 text-xs font-semibold @sm:text-sm',
-                                  finalizeDisabled
-                                    ? 'border border-slate-200/90 bg-slate-100 text-[#0A0A0A]/50 shadow-none'
-                                    : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700',
-                                )}
-                              >
-                                {rowFinalizing ? (
-                                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin @sm:h-4 @sm:w-4" aria-hidden />
-                                ) : rowFinalized ? (
-                                  'Finalized'
-                                ) : (
-                                  'Finalize'
-                                )}
-                              </Button>
-                              <Button
-                                type="button"
                                 variant="outline"
-                                size="sm"
                                 className="h-8 shrink-0 gap-1.5 whitespace-nowrap rounded-lg border-slate-200/90 bg-white px-3 text-xs font-semibold text-[#0A0A0A] hover:bg-slate-50 @sm:text-sm"
                                 onClick={() => handlePreviewPayslip(row)}
                               >
@@ -1398,88 +1246,6 @@ export default function AdminFinalizePayrollPage() {
         </Dialog>
 
         <Dialog
-          open={showPayslipPreview}
-          onOpenChange={(open) => {
-            if (!open) resetPayslipPreview()
-          }}
-        >
-          <DialogContent className={cn(PAYSLIP_PREVIEW_DIALOG, 'max-h-[95vh]')}>
-            <div className="border-b border-slate-200/80 bg-white px-6 py-4">
-              <div className="mb-4 flex min-w-0 flex-wrap items-center gap-3 @md:gap-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="default"
-                  className="h-10 shrink-0 rounded-xl border-[#0A0A0A]/20 bg-white px-4 font-medium text-[#0A0A0A] shadow-sm hover:bg-[#0A0A0A]/5"
-                  onClick={resetPayslipPreview}
-                >
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back
-                </Button>
-                <nav className="flex min-w-0 flex-wrap items-center text-sm text-muted-foreground" aria-label="Breadcrumb">
-                  <Link to={`${hrBase}/dashboard`} className="text-[#0A0A0A]/70 transition-colors hover:text-[#0A0A0A] hover:underline">
-                    Registry
-                  </Link>
-                  <span className="px-2 text-[#0A0A0A]/35">/</span>
-                  {previewingRow?.user_id ? (
-                    <Link
-                      to={`${hrBase}/employees/${previewingRow.user_id}`}
-                      className="font-medium text-[#0A0A0A]/85 transition-colors hover:text-[#0A0A0A] hover:underline"
-                    >
-                      {previewingRow.employee_code || '—'}
-                    </Link>
-                  ) : (
-                    <span className="font-medium text-[#0A0A0A]/85">{previewingRow?.employee_code || '—'}</span>
-                  )}
-                  <span className="px-2 text-[#0A0A0A]/35">/</span>
-                  <span className="font-semibold text-[#0A0A0A]">Payslip</span>
-                </nav>
-              </div>
-              <DialogHeader>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <DialogTitle className={cn('text-xl font-bold', TEXT)}>Payslip preview</DialogTitle>
-                    <DialogDescription className="text-sm text-[#0A0A0A]/70">
-                      {previewingRow?.name ? `${previewingRow.name} · ${previewingRow.employee_code || '—'}` : 'Preview'}
-                      {payslipPdfPassword ? ` · PDF password: ${payslipPdfPassword}` : ''}
-                    </DialogDescription>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Button type="button" variant="outline" className="border-[#0A0A0A]/20 bg-white text-[#0A0A0A] hover:bg-[#0A0A0A]/5" onClick={handlePrintPayslip} disabled={!payslipPreviewUrl || payslipPdfPreparing}>
-                      <Printer className="mr-2 h-4 w-4" />
-                      Print
-                    </Button>
-                    <Button type="button" variant="outline" className="border-[#0A0A0A]/20 bg-white text-[#0A0A0A] hover:bg-[#0A0A0A]/5" onClick={handleDownloadPreviewPdf} disabled={!payslipPreviewUrl || payslipPdfPreparing}>
-                      <FileDown className="mr-2 h-4 w-4" />
-                      Download PDF
-                    </Button>
-                  </div>
-                </div>
-              </DialogHeader>
-            </div>
-            <div className="h-[88vh] overflow-y-auto bg-[#F8FAFC] p-6">
-              {payslipLoading || payslipPdfPreparing ? (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-slate-200/80 bg-white text-[#0A0A0A]/60">
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  {payslipLoading ? 'Loading payslip data…' : 'Rendering payslip PDF preview…'}
-                </div>
-              ) : payslipPreviewUrl ? (
-                <div className="mx-auto h-full w-full max-w-[min(80rem,100%)] rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm">
-                  <iframe
-                    ref={payslipFrameRef}
-                    title="Payslip PDF Preview"
-                    src={payslipPreviewUrl}
-                    className="h-full min-h-[80vh] w-full rounded-xl border-0 bg-slate-50/50 shadow-inner"
-                  />
-                </div>
-              ) : (
-                <div className="flex h-full items-center justify-center text-[#0A0A0A]/60">No preview available.</div>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog
           open={breakdownRow != null}
           onOpenChange={(open) => {
             if (!open) setBreakdownRow(null)
@@ -1554,6 +1320,31 @@ export default function AdminFinalizePayrollPage() {
                   Open payslip
                 </Button>
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={deleteDialogOpen}
+          onOpenChange={(open) => {
+            if (!deletingBatch) setDeleteDialogOpen(open)
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className={cn('text-xl font-bold', TEXT)}>Delete finalized batch?</DialogTitle>
+              <DialogDescription className="text-sm text-[#0A0A0A]/70">
+                This will delete all payslips and sent records. You will need to regenerate the payroll.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={deletingBatch}>
+                Cancel
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => handleDeleteFinalizedBatch()} disabled={deletingBatch}>
+                {deletingBatch ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Delete Finalized Batch
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
