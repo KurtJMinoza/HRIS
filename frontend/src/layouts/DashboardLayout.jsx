@@ -434,7 +434,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-white md:flex-row">
+    <div className="flex min-h-screen flex-col bg-background md:flex-row">
       {/* Desktop sidebar – collapsible, no border */}
       <aside
         className={cn(
@@ -890,8 +890,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             /* Dashboard: airier horizontal inset (24–32px) + slightly more vertical rhythm */
             isDashboardRoute && 'px-5 py-4 @md:px-6 @md:py-5 @lg:px-6 @lg:py-6',
             isWideAdminModule && '@lg:px-6 @xl:px-8',
-            // Keep canvas consistently white across device sizes.
-            'bg-white dark:bg-white'
+            'bg-background'
           )}
         >
           <div

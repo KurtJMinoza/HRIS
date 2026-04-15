@@ -3916,7 +3916,7 @@ export default function AdminEmployeeProfile() {
 
   return (
     <Motion.div
-      className="mx-auto w-full max-w-[min(100%,85rem)] space-y-6"
+      className="mx-auto w-full max-w-[min(100%,92rem)] 2xl:max-w-[min(100%,100rem)] space-y-6"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: 'easeOut' }}
