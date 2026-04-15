@@ -185,7 +185,7 @@ export default function EmployeeMyQr() {
 
       <div className="flex flex-col @md:flex-row gap-6">
       {/* QR Code Card */}
-      <Card className="flex-1 min-w-0">
+      <Card className="flex-1 min-w-0 bg-card/95 shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2"> 
             <QrCode className="size-5 text-primary" />
@@ -197,7 +197,7 @@ export default function EmployeeMyQr() {
         </CardHeader>
         <CardContent className="space-y-4">
           {loading ? (
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-border p-4 shadow-inner">
+            <div className="flex flex-col items-center gap-3 rounded-xl bg-muted/25 p-4 shadow-inner">
               <Skeleton className="size-[280px] rounded-lg" />
               <Skeleton className="h-4 w-64 rounded-md" />
               <Skeleton className="h-3 w-40 rounded-md" />
@@ -210,7 +210,7 @@ export default function EmployeeMyQr() {
             <>
               <div
                 ref={qrCanvasRef}
-                className="flex justify-center rounded-xl border-2 border-border bg-white p-4 shadow-inner ring-1 ring-black/5"
+                className="flex justify-center rounded-xl bg-white p-4 shadow-inner ring-1 ring-black/5"
               >
                 <QRCodeCanvas
                   value={qrToken}
@@ -256,7 +256,7 @@ export default function EmployeeMyQr() {
               </div>
             </>
           ) : (
-            <div className="rounded-lg border bg-muted px-4 py-8 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg bg-muted/70 px-4 py-8 text-center text-sm text-muted-foreground shadow-inner">
               No QR code available. If this persists, contact your administrator.
             </div>
           )}
@@ -264,7 +264,7 @@ export default function EmployeeMyQr() {
       </Card>
 
       {/* Face Recognition Card */}
-      <Card className="flex-1 min-w-0">
+      <Card className="flex-1 min-w-0 bg-card/95 shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ScanFace className="size-5 text-primary" />
@@ -275,7 +275,7 @@ export default function EmployeeMyQr() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-3">
+          <div className="flex items-center justify-between rounded-lg bg-muted/35 px-4 py-3 shadow-xs">
             <span className="text-sm font-medium">
               Status: {hasFace ? (
                 <span className="text-emerald-600 dark:text-emerald-400">Face Registered</span>
@@ -356,7 +356,7 @@ export default function EmployeeMyQr() {
           />
           {faceRegisterSubmitting && (
             <div
-              className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+              className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground shadow-xs"
               role="status"
               aria-live="polite"
             >
@@ -365,7 +365,7 @@ export default function EmployeeMyQr() {
             </div>
           )}
           {faceRegisterSlow && (
-            <div className="space-y-2 rounded-md border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            <div className="space-y-2 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 shadow-xs dark:text-amber-300">
               <p>This is taking longer than usual. You can keep waiting, or use QR code for attendance now.</p>
               <Button
                 type="button"
@@ -424,7 +424,7 @@ export default function EmployeeMyQr() {
               <Loader2 className="size-10 animate-spin text-muted-foreground" />
             </div>
           ) : viewFaceImage ? (
-            <div className="flex justify-center rounded-lg border-2 border-border bg-muted/30 p-4">
+            <div className="flex justify-center rounded-lg bg-muted/30 p-4 shadow-inner">
               <img
                 src={viewFaceImage}
                 alt="Your registered face"

@@ -920,7 +920,7 @@ class EmployeeController extends Controller
      */
     public function regenerateQr(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         $employee->update([
             'qr_token' => User::generateQrTokenFor($employee),
@@ -954,7 +954,7 @@ class EmployeeController extends Controller
      */
     public function clearQr(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         $employee->update([
             'qr_token' => null,
@@ -972,7 +972,7 @@ class EmployeeController extends Controller
      */
     public function updateSchedule(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         $validated = $request->validate([
             'schedule' => ['nullable', 'array'],
@@ -1023,7 +1023,7 @@ class EmployeeController extends Controller
     {
         $startedAt = microtime(true);
         try {
-            $employee = $this->loadScopedEmployee($request, $id);
+            $employee = $this->loadScopedEmployee($request, $id, true);
             $oldPhone = $employee->phone_number;
 
             $request->validate([
@@ -1373,7 +1373,7 @@ class EmployeeController extends Controller
      */
     public function transfer(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
         $employee->loadMissing(['branch', 'departmentRelation.branch', 'companyHeadships']);
 
         $validated = $request->validate([
@@ -1495,7 +1495,7 @@ class EmployeeController extends Controller
      */
     public function uploadPhoto(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
         $request->validate([
             'photo' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:2048'],
         ]);
@@ -1519,7 +1519,7 @@ class EmployeeController extends Controller
      */
     public function removePhoto(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
         if ($employee->profile_image) {
             Storage::disk('public')->delete($employee->profile_image);
             $employee->profile_image = null;
@@ -1537,7 +1537,7 @@ class EmployeeController extends Controller
      */
     public function toggleActive(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         $employee->update(['is_active' => ! $employee->is_active]);
         $employee->refresh();
@@ -1564,7 +1564,7 @@ class EmployeeController extends Controller
      */
     public function registerFace(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         $validated = $request->validate([
             'liveness_session_id' => ['nullable', 'string', 'max:255'],
@@ -1604,7 +1604,7 @@ class EmployeeController extends Controller
      */
     public function faceRegistrationStatus(Request $request, int $id, string $trackId): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         return $this->adminFaceRegistrationHttpResponse($request, $trackId, $employee->id, false);
     }
@@ -1658,7 +1658,7 @@ class EmployeeController extends Controller
      */
     public function updateFace(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         $validated = $request->validate([
             'face_descriptor' => ['nullable', 'array'],
@@ -1730,7 +1730,7 @@ class EmployeeController extends Controller
      */
     public function resetPassword(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         $validated = $request->validate([
             'password' => ['required', 'string', 'min:8'],
@@ -1776,7 +1776,7 @@ class EmployeeController extends Controller
      */
     public function destroy(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         $name = $employee->name;
         $employee->delete();
@@ -1790,7 +1790,7 @@ class EmployeeController extends Controller
 
     public function saveSignature(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
         $validated = $request->validate([
             'signature_data_url' => ['required', 'string'],
         ]);
@@ -1808,7 +1808,7 @@ class EmployeeController extends Controller
 
     public function clearSignature(Request $request, int $id): JsonResponse
     {
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
         try {
             $updated = $this->eSignatureService->clear($employee);
         } catch (\Throwable $e) {
@@ -1831,7 +1831,7 @@ class EmployeeController extends Controller
             'reason' => ['required', 'string', 'max:2000'],
         ]);
 
-        $employee = $this->loadScopedEmployee($request, $id);
+        $employee = $this->loadScopedEmployee($request, $id, true);
 
         try {
             $balance = $this->leaveCreditService->adjustLeaveCredits(
@@ -1854,12 +1854,44 @@ class EmployeeController extends Controller
         ]);
     }
 
-    private function loadScopedEmployee(Request $request, int $id): User
+    private function loadScopedEmployee(Request $request, int $id, bool $forMutation = false): User
     {
         $employee = User::where('id', $id)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
         $this->dataScopeService->ensureEmployeeAccessible($request->user(), $employee);
+        if ($forMutation) {
+            $this->ensureActorCanMutateEmployee($request, $employee);
+        }
 
         return $employee;
+    }
+
+    /**
+     * Non Admin/HR users can only mutate their own profile record.
+     * Admin/HR retain full edit/delete access across scoped employees.
+     */
+    private function ensureActorCanMutateEmployee(Request $request, User $employee): void
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            throw new HttpResponseException(response()->json(['message' => 'Unauthenticated.'], 401));
+        }
+        if ($this->canMutateAnyEmployee($actor)) {
+            return;
+        }
+        if ((int) $actor->id === (int) $employee->id) {
+            return;
+        }
+
+        throw new HttpResponseException(response()->json([
+            'message' => 'Forbidden. You may only edit your own profile.',
+        ], 403));
+    }
+
+    private function canMutateAnyEmployee(User $actor): bool
+    {
+        $hrRole = strtolower(trim((string) ($actor->hr_role ?? '')));
+
+        return $actor->isAdmin() || in_array($hrRole, ['admin_hr', 'admin'], true);
     }
 
     private function viewerCanSensitive(?User $viewer): bool

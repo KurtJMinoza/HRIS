@@ -733,20 +733,19 @@ export default function AdminEmployeeProfile() {
   const isOwnProfile = Number(effectiveEmployeeId) === Number(user?.id)
   const roleValue = String(user?.role || '').trim().toLowerCase()
   const hrRoleValue = String(user?.hr_role || '').trim().toLowerCase()
-  const isAdminOrHr = roleValue === 'admin' || hrRoleValue === 'admin_hr' || hrRoleValue === 'admin' || !!user?.can_access_hr_panel
-  // Profile permissions: `employees.edit` must allow editing any scoped employee (not only own), matching PATCH /admin/employees/{id}.
-  const canEditProfile = isAdminOrHr
-    || (user?.permissions ?? []).includes('profile.edit')
-    || (user?.permissions ?? []).includes('employees.edit')
-    || (isOwnProfile && (user?.permissions ?? []).includes('edit-own-profile'))
-  const canEditProfilePhoto = (user?.permissions ?? []).includes('profile.picture.edit')
-    || (user?.permissions ?? []).includes('employees.edit')
-    || (isOwnProfile && canEditProfile)
-  const canEditEmployeeRecord = (user?.permissions ?? []).includes('employees.edit')
+  const isAdminOrHr = roleValue === 'admin' || hrRoleValue === 'admin_hr' || hrRoleValue === 'admin'
+  const permissions = user?.permissions ?? []
+  const hasSelfEditPermission = permissions.includes('profile.edit')
+    || permissions.includes('edit-own-profile')
+    || permissions.includes('employees.edit')
+  const canEditProfile = isAdminOrHr || (isOwnProfile && hasSelfEditPermission)
+  const canEditProfilePhoto = isAdminOrHr
+    || (isOwnProfile && (permissions.includes('profile.picture.edit') || hasSelfEditPermission))
+  const canEditEmployeeRecord = isAdminOrHr || (isOwnProfile && permissions.includes('employees.edit'))
   const canViewPayrollHistory = (user?.permissions ?? []).includes('payroll.view')
   /** Backend: `employees.sensitive` + `profile.salary.edit`; Laravel `admin` role bypasses checks server-side. */
   const canEditSalaryDetails =
-    roleValue === 'admin' || (user?.permissions ?? []).includes('profile.salary.edit')
+    isAdminOrHr || permissions.includes('profile.salary.edit')
   const employeeId = effectiveEmployeeId
   const queryClient = useQueryClient()
   const refreshAdminEmployeeCaches = useCallback(

@@ -248,12 +248,19 @@ export default function AdminEmployees() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const perms = new Set(user?.permissions ?? [])
+  const roleValue = String(user?.role || '').trim().toLowerCase()
+  const hrRoleValue = String(user?.hr_role || '').trim().toLowerCase()
+  const isAdminOrHr = roleValue === 'admin' || hrRoleValue === 'admin_hr' || hrRoleValue === 'admin'
   const canCreateEmployees = perms.has('employees.create')
   const canExportEmployees = perms.has('employees.export')
   const canEditEmployees = perms.has('employees.edit')
   const canDeleteEmployees = perms.has('employees.delete')
   const canAssignSchedule = perms.has('schedule.assign')
   const canPasswordReset = perms.has('employees.password_reset')
+  const canScopedEditEmployees = canEditEmployees && isAdminOrHr
+  const canDeleteEmployeeTarget = (emp) => canDeleteEmployees && isAdminOrHr && Number(emp?.id) !== Number(user?.id)
+  const canEditEmployeeTarget = (emp) =>
+    canEditEmployees && (isAdminOrHr || Number(emp?.id) === Number(user?.id))
   const canMutateRows =
     canEditEmployees || canAssignSchedule || canDeleteEmployees || canPasswordReset
   const location = useLocation()
@@ -579,7 +586,7 @@ export default function AdminEmployees() {
   }
 
   const savePersonalInfo = async () => {
-    if (!previewEmployee) return
+    if (!previewEmployee || !canEditEmployeeTarget(previewEmployee)) return
     const phoneRaw = personalInfoForm.phone_number.trim().replace(/[^\d+\s]/g, '')
     if (!personalInfoForm.first_name.trim() || !personalInfoForm.last_name.trim()) {
       setError('First Name and Last Name are required.')
@@ -1710,7 +1717,7 @@ export default function AdminEmployees() {
                       Assign Schedule
                     </Button>
                   )}
-                  {canEditEmployees && (
+                  {canScopedEditEmployees && (
                     <Button
                       type="button"
                       variant="outline"
@@ -1723,7 +1730,7 @@ export default function AdminEmployees() {
                       Issue QR
                     </Button>
                   )}
-                  {canEditEmployees && (
+                  {canScopedEditEmployees && (
                     <Button
                       type="button"
                       variant="outline"
@@ -2202,7 +2209,7 @@ export default function AdminEmployees() {
                                     <Clock className="size-3.5" />
                                   </Button>
                                 )}
-                                {canEditEmployees && (
+                                {canEditEmployeeTarget(emp) && (
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -2235,7 +2242,7 @@ export default function AdminEmployees() {
                                 <DropdownMenuContent align="end" className="w-52">
                                   <DropdownMenuItem onClick={() => openPreview(emp)}>
                                     <Eye className="size-4 mr-2" />
-                                    {canEditEmployees ? 'Edit / View profile' : 'View profile'}
+                                    {canEditEmployeeTarget(emp) ? 'Edit / View profile' : 'View profile'}
                                   </DropdownMenuItem>
                                   {canAssignSchedule && (
                                     <DropdownMenuItem onClick={() => openSchedule(emp)}>
@@ -2249,13 +2256,13 @@ export default function AdminEmployees() {
                                       View QR
                                     </DropdownMenuItem>
                                   )}
-                                  {!emp.has_qr && canEditEmployees && (
+                                  {!emp.has_qr && canEditEmployeeTarget(emp) && (
                                     <DropdownMenuItem onClick={() => generateOrRegenerateQr(emp)}>
                                       <QrCode className="size-4 mr-2" />
                                       Issue QR
                                     </DropdownMenuItem>
                                   )}
-                                  {canEditEmployees && (
+                                  {canEditEmployeeTarget(emp) && (
                                     <DropdownMenuItem
                                       onClick={() => {
                                         setManageFaceEmployee(emp)
@@ -2278,7 +2285,7 @@ export default function AdminEmployees() {
                                       Reset password
                                     </DropdownMenuItem>
                                   )}
-                                  {canEditEmployees && (
+                                  {canEditEmployeeTarget(emp) && (
                                     <DropdownMenuItem
                                       onClick={() => handleToggleActive(emp)}
                                       disabled={togglingId === emp.id}
@@ -2298,7 +2305,7 @@ export default function AdminEmployees() {
                                       {emp.is_active ? 'Deactivate' : 'Activate'}
                                     </DropdownMenuItem>
                                   )}
-                                  {canDeleteEmployees && (
+                                  {canDeleteEmployeeTarget(emp) && (
                                     <>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem
@@ -4278,7 +4285,7 @@ export default function AdminEmployees() {
                       variant="outline"
                       size="sm"
                           className="h-8 text-xs"
-                          disabled={profilePhotoUploading}
+                          disabled={profilePhotoUploading || !canEditEmployeeTarget(previewEmployee)}
                           onClick={() => profilePhotoInputRef.current?.click()}
                         >
                           <Upload className="size-3.5 mr-1.5" />
@@ -4290,10 +4297,10 @@ export default function AdminEmployees() {
                           type="file"
                           accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
                           className="hidden"
-                          disabled={profilePhotoUploading}
+                          disabled={profilePhotoUploading || !canEditEmployeeTarget(previewEmployee)}
                           onChange={async (e) => {
                             const file = e.target.files?.[0]
-                            if (!file || !previewEmployee) return
+                            if (!file || !previewEmployee || !canEditEmployeeTarget(previewEmployee)) return
                             setProfilePhotoUploading(true)
                         setError(null)
                         try {
@@ -4328,9 +4335,9 @@ export default function AdminEmployees() {
                             variant="outline"
                             size="sm"
                             className="h-8 text-xs"
-                            disabled={profilePhotoUploading}
+                            disabled={profilePhotoUploading || !canEditEmployeeTarget(previewEmployee)}
                             onClick={async () => {
-                              if (!previewEmployee) return
+                              if (!previewEmployee || !canEditEmployeeTarget(previewEmployee)) return
                               setProfilePhotoUploading(true)
                               setError(null)
                               try {
@@ -4367,7 +4374,7 @@ export default function AdminEmployees() {
               <section className="rounded-lg border border-border/50 bg-muted/20 px-4 py-2.5">
                 <div className="mb-1.5 flex items-center justify-between">
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Schedule</h3>
-                  {previewEmployee && (
+                  {previewEmployee && canEditEmployeeTarget(previewEmployee) && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -4389,7 +4396,7 @@ export default function AdminEmployees() {
                   <p className="text-sm font-medium text-foreground">
                     {previewEmployee?.has_qr ? 'Issued' : 'Not issued'}
                   </p>
-                  {previewEmployee && (
+                  {previewEmployee && canEditEmployeeTarget(previewEmployee) && (
                     <Button
                       type="button"
                       variant="outline"
@@ -4420,7 +4427,7 @@ export default function AdminEmployees() {
                   <p className="text-sm font-medium text-foreground">
                     {previewEmployee?.has_face ? 'Face Registered' : 'Not registered'}
                   </p>
-                  {previewEmployee && (
+                  {previewEmployee && canEditEmployeeTarget(previewEmployee) && (
                     <div className="flex flex-wrap items-center gap-2">
                       {previewEmployee.has_face ? (
                         <>
@@ -4550,9 +4557,11 @@ export default function AdminEmployees() {
             >
                 Cancel
             </Button>
-              <Button type="button" onClick={savePersonalInfo} disabled={profileDetailsSaving}>
-                {profileDetailsSaving ? <Loader2 className="size-4 animate-spin" /> : 'Save Changes'}
-              </Button>
+              {canEditEmployeeTarget(previewEmployee) ? (
+                <Button type="button" onClick={savePersonalInfo} disabled={profileDetailsSaving}>
+                  {profileDetailsSaving ? <Loader2 className="size-4 animate-spin" /> : 'Save Changes'}
+                </Button>
+              ) : null}
             </div>
           </SheetFooter>
         </SheetContent>
