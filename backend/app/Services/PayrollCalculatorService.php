@@ -695,6 +695,86 @@ class PayrollCalculatorService
     }
 
     /**
+     * BIR Revenue Regulations No. 11-2018 — **Table A** (Withholding Tax on Compensation, **monthly**).
+     * TRAIN (RA 10963) rates applied on **taxable income for the month** (after mandatory EE contributions are
+     * already removed in {@see calculateWithholdingTax()}). This matches the official monthly bracket method,
+     * e.g. second bracket: 15% of excess over ₱20,833 → ₱22,925 taxable → (22,925 − 20,833) × 15% = ₱313.80.
+     *
+     * @return array{
+     *   withholding_monthly: float,
+     *   bracket_index: int,
+     *   bracket_description: string,
+     *   marginal_rate: float|null
+     * }
+     */
+    public function computeBirRr112018MonthlyWithholdingTax(float $monthlyTaxableCompensation): array
+    {
+        $tc = round(max(0.0, $monthlyTaxableCompensation), 2);
+
+        if ($tc <= 20833.0) {
+            return [
+                'withholding_monthly' => 0.0,
+                'bracket_index' => 0,
+                'bracket_description' => 'Not over ₱20,833 (0%)',
+                'marginal_rate' => null,
+            ];
+        }
+
+        if ($tc <= 33332.0) {
+            $tax = ($tc - 20833.0) * 0.15;
+
+            return [
+                'withholding_monthly' => round($tax, 2),
+                'bracket_index' => 1,
+                'bracket_description' => 'Over ₱20,833 but not over ₱33,332 (15% of excess over ₱20,833)',
+                'marginal_rate' => 0.15,
+            ];
+        }
+
+        if ($tc <= 66667.0) {
+            $tax = 1875.0 + ($tc - 33333.0) * 0.20;
+
+            return [
+                'withholding_monthly' => round($tax, 2),
+                'bracket_index' => 2,
+                'bracket_description' => 'Over ₱33,332 but not over ₱66,667 (₱1,875 + 20% of excess over ₱33,333)',
+                'marginal_rate' => 0.20,
+            ];
+        }
+
+        if ($tc <= 166667.0) {
+            $tax = 8541.80 + ($tc - 66667.0) * 0.25;
+
+            return [
+                'withholding_monthly' => round($tax, 2),
+                'bracket_index' => 3,
+                'bracket_description' => 'Over ₱66,667 but not over ₱166,667 (₱8,541.80 + 25% of excess over ₱66,667)',
+                'marginal_rate' => 0.25,
+            ];
+        }
+
+        if ($tc <= 666667.0) {
+            $tax = 33541.80 + ($tc - 166667.0) * 0.30;
+
+            return [
+                'withholding_monthly' => round($tax, 2),
+                'bracket_index' => 4,
+                'bracket_description' => 'Over ₱166,667 but not over ₱666,667 (₱33,541.80 + 30% of excess over ₱166,667)',
+                'marginal_rate' => 0.30,
+            ];
+        }
+
+        $tax = 183541.80 + ($tc - 666667.0) * 0.35;
+
+        return [
+            'withholding_monthly' => round($tax, 2),
+            'bracket_index' => 5,
+            'bracket_description' => 'Over ₱666,667 (₱183,541.80 + 35% of excess over ₱666,667)',
+            'marginal_rate' => 0.35,
+        ];
+    }
+
+    /**
      * Classify pay components into taxable vs non-taxable buckets for withholding base.
      * De minimis and other non-taxable items must be flagged `taxable => false` at source (pay rules).
      *
@@ -750,18 +830,42 @@ class PayrollCalculatorService
     }
 
     /**
+     * Monthly amount used as the TRAIN withholding base: taxable compensation for the period
+     * minus employee share of mandatory SSS, PhilHealth, and Pag-IBIG only (same components as
+     * {@see calculateAllStatutoryContributions()} totals.employee_deduction).
+     *
+     * Order: mandatory EE contributions first, then BIR RR 11-2018 Table A on the balance (see {@see calculateWithholdingTax()}).
+     */
+    public function monthlyTaxableCompensationForWithholding(float $grossMonthlyTaxableCompensation, array $statutoryBreakdown): float
+    {
+        $eeMandatory = (float) data_get($statutoryBreakdown, 'totals.employee_deduction', 0);
+
+        return round(max(0.0, $grossMonthlyTaxableCompensation - $eeMandatory), 2);
+    }
+
+    /**
      * BIR creditable withholding on compensation — preview engine.
      *
-     * **Annualized method (default):** Project annual taxable income = (monthly recurring taxable × 12)
-     * plus one-time taxable items (e.g. taxable portion of 13th month), apply TRAIN annual tax, divide by 12
-     * for monthly withholding; semi-monthly = monthly ÷ 2. Aligns with RR 11-2018 Annex A style projections.
+     * **Monthly withholding (default):** After mandatory EE contributions, apply **BIR RR 11-2018 Table A**
+     * (monthly compensation brackets). This is the standard “excess over ₱20,833 × 15%” (etc.) method — not
+     * annual TRAIN ÷ 12, which can differ by a few pesos in the same band.
      *
-     * **Per-period monthly:** Withhold = annual_tax(monthly_taxable × 12) ÷ 12 (same as annualized for stable salary).
-     * For variable pay, use YTD annualization (not implemented here — pass adjusted monthly_taxable).
+     * **13th month (taxable excess over ₱90,000):** Adds a monthly supplement from the marginal **annual** TRAIN
+     * tax on that excess (÷ 12). Loans and non-mandatory deductions never reduce the withholding base here.
+     *
+     * **Philippine withholding base:** By default, `monthly_taxable_compensation` and classified `earnings` are treated
+     * as *gross* monthly taxable compensation. Employee SSS, PhilHealth, and Pag-IBIG shares (from the same
+     * statutory engine as payslips) are subtracted *before* TRAIN. Pass `withholding_base_is_net_of_mandatory => true`
+     * when the input is already net of those contributions (e.g. after {@see buildEmployeeCompensationSummary()}).
      *
      * @param  array{
      *   earnings?: array<int, array<string, mixed>>,
      *   monthly_taxable_compensation?: float,
+     *   withholding_base_is_net_of_mandatory?: bool,
+     *   withholding_gross_taxable_monthly?: float,
+     *   withholding_employee_mandatory_monthly?: float,
+     *   statutory_salary_basis?: float,
+     *   statutory_contribution_bases?: array<string, float>,
      *   method?: 'annualized'|'per_period_monthly',
      *   period_type?: 'monthly'|'semimonthly',
      *   thirteenth_month_amount?: float,
@@ -785,13 +889,57 @@ class PayrollCalculatorService
 
         $monthlyTaxable = null;
         $classification = null;
+        $grossMonthlyTaxableForWithholding = null;
+        $employeeMandatoryForWithholdingBase = null;
+        $netOfMandatory = filter_var($params['withholding_base_is_net_of_mandatory'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
         if (! empty($params['earnings']) && is_array($params['earnings'])) {
             $classification = $this->classifyTaxableIncome($params['earnings']);
-            $monthlyTaxable = (float) $classification['taxable_total'];
+            $grossTaxableFromEarnings = (float) $classification['taxable_total'];
+            $grossAllFromEarnings = (float) $classification['gross_total'];
+            // One gross for SSS/PH/Pag EE when computing mandatory reduction for WHT (align with payslip taxable pay).
+            $basisDefault = $grossTaxableFromEarnings > 0.0 ? $grossTaxableFromEarnings : $grossAllFromEarnings;
+            $basisForStatutory = (float) ($params['statutory_salary_basis'] ?? $basisDefault);
+            $bases = is_array($params['statutory_contribution_bases'] ?? null) ? $params['statutory_contribution_bases'] : [];
+            $statutoryForWht = empty($bases)
+                ? $this->calculateAllStatutoryContributions($basisForStatutory, [
+                    'sss' => $basisForStatutory,
+                    'philhealth' => $basisForStatutory,
+                    'pagibig' => $basisForStatutory,
+                ])
+                : $this->calculateAllStatutoryContributions($basisForStatutory, $bases);
+            $grossMonthlyTaxableForWithholding = $grossTaxableFromEarnings;
+            $employeeMandatoryForWithholdingBase = (float) data_get($statutoryForWht, 'totals.employee_deduction', 0);
+            $monthlyTaxable = $netOfMandatory
+                ? $grossTaxableFromEarnings
+                : $this->monthlyTaxableCompensationForWithholding($grossTaxableFromEarnings, $statutoryForWht);
         } else {
-            $monthlyTaxable = round(max(0.0, (float) ($params['monthly_taxable_compensation'] ?? 0)), 2);
+            $grossInput = round(max(0.0, (float) ($params['monthly_taxable_compensation'] ?? 0)), 2);
+            if ($netOfMandatory) {
+                $monthlyTaxable = $grossInput;
+                if (isset($params['withholding_gross_taxable_monthly'])) {
+                    $grossMonthlyTaxableForWithholding = round(max(0.0, (float) $params['withholding_gross_taxable_monthly']), 2);
+                }
+                if (isset($params['withholding_employee_mandatory_monthly'])) {
+                    $employeeMandatoryForWithholdingBase = round(max(0.0, (float) $params['withholding_employee_mandatory_monthly']), 2);
+                }
+            } else {
+                $basisForStatutory = (float) ($params['statutory_salary_basis'] ?? $grossInput);
+                $bases = is_array($params['statutory_contribution_bases'] ?? null) ? $params['statutory_contribution_bases'] : [];
+                $statutoryForWht = $bases !== []
+                    ? $this->calculateAllStatutoryContributions($basisForStatutory, $bases)
+                    : $this->calculateAllStatutoryContributions($basisForStatutory, [
+                        'sss' => $basisForStatutory,
+                        'philhealth' => $basisForStatutory,
+                        'pagibig' => $basisForStatutory,
+                    ]);
+                $grossMonthlyTaxableForWithholding = $grossInput;
+                $employeeMandatoryForWithholdingBase = (float) data_get($statutoryForWht, 'totals.employee_deduction', 0);
+                $monthlyTaxable = $this->monthlyTaxableCompensationForWithholding($grossInput, $statutoryForWht);
+            }
         }
+
+        $monthlyTaxableBeforeProfileExemptions = round($monthlyTaxable, 2);
 
         $additionalMonthly = round(max(0.0, (float) ($profile['additional_exemption_amount'] ?? 0)), 2);
         if ($additionalMonthly > 0) {
@@ -807,8 +955,21 @@ class PayrollCalculatorService
         $train = $this->computeTrainAnnualIncomeTax($annualTaxable);
         $annualTaxDue = (float) $train['tax_due'];
 
-        // Standard creditable withholding spread: annual tax ÷ 12 (monthly), ÷ 24 (semi-monthly per cutoff).
-        $monthlyWithholding = round($annualTaxDue / 12.0, 2);
+        // 1) RR 11-2018 Table A on monthly taxable income (after mandatory SSS/PhilHealth/Pag-IBIG only).
+        $birMonthly = $this->computeBirRr112018MonthlyWithholdingTax($monthlyTaxable);
+        $monthlyWithholdingFromTable = (float) ($birMonthly['withholding_monthly'] ?? 0);
+
+        // 2) Taxable 13th-month amount in excess of ₱90k: marginal annual TRAIN on that excess, spread ÷ 12.
+        $thirteenthSupplementMonthly = 0.0;
+        if ($thirteenthTaxableExcess > 0) {
+            $annualWith13th = $monthlyTaxable * 12.0 + $thirteenthTaxableExcess;
+            $annualSalaryOnly = $monthlyTaxable * 12.0;
+            $taxWith = (float) $this->computeTrainAnnualIncomeTax($annualWith13th)['tax_due'];
+            $taxWithout = (float) $this->computeTrainAnnualIncomeTax($annualSalaryOnly)['tax_due'];
+            $thirteenthSupplementMonthly = round(max(0.0, $taxWith - $taxWithout) / 12.0, 2);
+        }
+
+        $monthlyWithholding = round($monthlyWithholdingFromTable + $thirteenthSupplementMonthly, 2);
 
         $perPeriod = $periodType === 'semimonthly'
             ? round($monthlyWithholding / 2.0, 2)
@@ -843,9 +1004,11 @@ class PayrollCalculatorService
 
         return [
             'type' => 'BIR_WITHHOLDING',
-            'tax_table' => 'train_2018_annual',
+            'tax_table' => 'bir_rr11_2018_table_a_monthly',
             'method' => $method,
             'period_type' => $periodType,
+            'gross_monthly_taxable_compensation' => $grossMonthlyTaxableForWithholding,
+            'employee_mandatory_contributions_monthly' => $employeeMandatoryForWithholdingBase,
             'monthly_taxable_compensation' => $monthlyTaxable,
             'classification' => $classification,
             'tax_profile_applied' => $profile !== [] ? $profile : null,
@@ -854,12 +1017,21 @@ class PayrollCalculatorService
             'annual_taxable_income_projected' => $annualTaxable,
             'annual_income_tax_per_train' => $annualTaxDue,
             'train_bracket' => $train,
+            'bir_monthly_table_bracket' => $birMonthly,
+            'withholding_per_month_from_table' => round($monthlyWithholdingFromTable, 2),
+            'withholding_per_month_from_thirteenth_supplement' => $thirteenthSupplementMonthly,
             'withholding_per_month' => $monthlyWithholding,
             'withholding_per_period' => $perPeriod,
             'effective_rate_percent_of_monthly_taxable' => $effectiveRateMonthly,
             'metadata' => [
-                'law_reference' => 'NIRC Sec. 24(A), RA 10963 (TRAIN); withholding RR 11-2018 family',
-                'note' => 'Personal exemptions (pre-TRAIN) were replaced by the zero-rate bracket up to ₱250,000. Verify CREATE (RA 11976) if using simplified tax regime.',
+                'law_reference' => 'BIR RR 11-2018 Table A (monthly); TRAIN annual for 13th-month marginal / year-end',
+                'note' => 'Regular monthly WHT uses RR 11-2018 monthly brackets on taxable income after mandatory EE contributions only. Loans do not reduce this base.',
+                'withholding_base_computation' => [
+                    'gross_monthly_taxable' => $grossMonthlyTaxableForWithholding,
+                    'employee_mandatory_monthly' => $employeeMandatoryForWithholdingBase,
+                    'base_after_mandatory_before_profile_exemptions' => $monthlyTaxableBeforeProfileExemptions,
+                    'withholding_base_is_net_of_mandatory' => $netOfMandatory,
+                ],
                 'mwe_exemption_applied' => $mweApplied,
                 'mwe_note' => $mweReason,
                 'special_taxpayer_flags' => $specialReview,
@@ -867,6 +1039,43 @@ class PayrollCalculatorService
                 'dependent_count_stored' => 'TRAIN compensation withholding does not use dependent exemptions; field kept for HR records / future rules.',
             ],
         ];
+    }
+
+    /**
+     * Merge {@see EmployeeTaxInfo} into withholding params (method, period_type, tax_profile).
+     *
+     * @param  array<string, mixed>  $params
+     * @return array<string, mixed>
+     */
+    public function mergeEmployeeTaxProfileIntoWithholdingParams(User $user, array $params): array
+    {
+        try {
+            $info = EmployeeTaxInfo::query()->where('user_id', $user->id)->first();
+            if ($info) {
+                if (! empty($info->withholding_method)) {
+                    $params['method'] = $info->withholding_method;
+                }
+                if (! empty($info->period_type)) {
+                    $params['period_type'] = $info->period_type;
+                }
+                $params['tax_profile'] = [
+                    'is_mwe' => (bool) ($info->is_mwe ?? false),
+                    'mwe_monthly_ceiling' => isset($info->mwe_monthly_ceiling) ? (float) $info->mwe_monthly_ceiling : null,
+                    'is_senior_citizen' => (bool) ($info->is_senior_citizen ?? false),
+                    'is_pwd' => (bool) ($info->is_pwd ?? false),
+                    'is_solo_parent' => (bool) ($info->is_solo_parent ?? false),
+                    'tax_regime' => (string) ($info->tax_regime ?? 'standard_train'),
+                    'additional_exemption_amount' => isset($info->additional_exemption_amount) ? (float) $info->additional_exemption_amount : null,
+                ];
+            }
+        } catch (QueryException $e) {
+            Log::warning('Payroll calculator tax profile fallback', [
+                'employee_id' => $user->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return $params;
     }
 
     /**
@@ -890,31 +1099,7 @@ class PayrollCalculatorService
                     $params['monthly_taxable_compensation'] = $this->resolveBasicSalaryForPayroll($user);
                 }
 
-                try {
-                    $info = EmployeeTaxInfo::query()->where('user_id', $user->id)->first();
-                    if ($info) {
-                        if (! empty($info->withholding_method)) {
-                            $params['method'] = $info->withholding_method;
-                        }
-                        if (! empty($info->period_type)) {
-                            $params['period_type'] = $info->period_type;
-                        }
-                        $params['tax_profile'] = [
-                            'is_mwe' => (bool) ($info->is_mwe ?? false),
-                            'mwe_monthly_ceiling' => isset($info->mwe_monthly_ceiling) ? (float) $info->mwe_monthly_ceiling : null,
-                            'is_senior_citizen' => (bool) ($info->is_senior_citizen ?? false),
-                            'is_pwd' => (bool) ($info->is_pwd ?? false),
-                            'is_solo_parent' => (bool) ($info->is_solo_parent ?? false),
-                            'tax_regime' => (string) ($info->tax_regime ?? 'standard_train'),
-                            'additional_exemption_amount' => isset($info->additional_exemption_amount) ? (float) $info->additional_exemption_amount : null,
-                        ];
-                    }
-                } catch (QueryException $e) {
-                    Log::warning('Payroll calculator tax profile fallback', [
-                        'employee_id' => $user->id,
-                        'message' => $e->getMessage(),
-                    ]);
-                }
+                $params = $this->mergeEmployeeTaxProfileIntoWithholdingParams($user, $params);
 
                 return $this->calculateWithholdingTax($params);
             }
@@ -1452,12 +1637,35 @@ class PayrollCalculatorService
         $earningsTotal = round(collect($earnings)->sum('computed_amount'), 2);
         $deductionsTotal = round(collect($deductions)->sum('computed_amount'), 2);
         $taxClassification = $this->classifyTaxableIncome($taxableEarnings);
-        $statutory = $this->calculateAllStatutoryContributions($basicSalary, [
-            'sss' => $sssBase,
-            'philhealth' => $philHealthBase,
-            'pagibig' => $pagIbigBase,
+        /*
+         * Statutory employee shares for payroll withholding use the monthly BASIC salary base.
+         * This keeps SSS/PhilHealth/Pag-IBIG aligned with Government Deductions Compliance Audit
+         * (e.g. ₱25,000 -> PhilHealth EE ₱625.00) and prevents pay-component flag drift.
+         */
+        $statutoryBase = round(max(0.0, $basicSalary), 2);
+        $statutory = $this->calculateAllStatutoryContributions($statutoryBase, [
+            'sss' => $statutoryBase,
+            'philhealth' => $statutoryBase,
+            'pagibig' => $statutoryBase,
         ]);
-        $withholding = $this->calculateWithholdingTaxForEmployee((int) $user->id, $taxableEarnings, true);
+        /*
+         * Tax order (PH payroll): mandatory EE first, then RR 11-2018 monthly withholding table.
+         * For monthly withholding estimate in payslip/generate/finalize, use the monthly BASIC salary
+         * as gross taxable compensation baseline so ₱25,000 -> ₱22,925 taxable -> ₱313.80 withholding.
+         */
+        $grossTaxableMonthly = $statutoryBase > 0.0
+            ? $statutoryBase
+            : (float) ($taxClassification['taxable_total'] ?? 0);
+        $monthlyBaseNetOfMandatory = $this->monthlyTaxableCompensationForWithholding($grossTaxableMonthly, $statutory);
+        $withholdingParams = $this->mergeEmployeeTaxProfileIntoWithholdingParams($user, [
+            'monthly_taxable_compensation' => $monthlyBaseNetOfMandatory,
+            'withholding_base_is_net_of_mandatory' => true,
+            'withholding_gross_taxable_monthly' => $grossTaxableMonthly,
+            'withholding_employee_mandatory_monthly' => (float) data_get($statutory, 'totals.employee_deduction', 0),
+            'method' => 'annualized',
+            'period_type' => 'monthly',
+        ]);
+        $withholding = $this->calculateWithholdingTax($withholdingParams);
         $employeeStatutory = (float) ($statutory['totals']['employee_deduction'] ?? 0);
         $withholdingMonthly = (float) ($withholding['withholding_per_month'] ?? 0);
         // Government/statutory and withholding before employee loan & other custom deductions (typical PH net pay ordering).
@@ -1595,6 +1803,7 @@ class PayrollCalculatorService
         $zeroStatutory = $this->calculateAllStatutoryContributions(0.0);
         $zeroWithholding = $this->calculateWithholdingTax([
             'monthly_taxable_compensation' => 0.0,
+            'withholding_base_is_net_of_mandatory' => true,
             'method' => 'annualized',
             'period_type' => 'monthly',
         ]);

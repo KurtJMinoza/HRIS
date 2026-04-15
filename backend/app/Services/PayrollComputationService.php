@@ -1093,11 +1093,33 @@ class PayrollComputationService
         $employerStatutoryTotal = (float) ($statutory['totals']['employer_liability'] ?? 0);
         $customDeductionsFullMonthly = (float) ($compensationSummary['totals']['custom_deductions'] ?? 0);
 
-        $withholdingPreview = $compensationSummary['withholding'] ?? $this->payrollCalculator->calculateWithholdingTax([
-            'monthly_taxable_compensation' => $basicSalary,
-            'method' => 'annualized',
-            'period_type' => 'monthly',
-        ]);
+        $taxClassification = is_array($compensationSummary['tax_classification'] ?? null)
+            ? $compensationSummary['tax_classification']
+            : [];
+        // Keep payslip preview/generate/finalize in sync with Compliance Audit:
+        // monthly withholding uses BASIC salary gross, then subtract EE mandatory contributions first.
+        $grossTaxableMonthly = round(max(0.0, $basicSalary), 2);
+        if ($grossTaxableMonthly <= 0.0) {
+            $grossTaxableMonthly = (float) ($taxClassification['taxable_total'] ?? 0);
+        }
+        $monthlyBaseNetOfMandatory = $this->payrollCalculator->monthlyTaxableCompensationForWithholding(
+            $grossTaxableMonthly,
+            $statutory
+        );
+        // Single source of truth with Compliance Audit / Government Deductions: same call chain as
+        // {@see PayrollCalculatorService::buildEmployeeCompensationSummary}. Do not use cached
+        // `compensationSummary['withholding']` here — file-cached compensation can show ₱313.80 in audit while
+        // payslip used a stale withholding object (e.g. ₱383.xx). Always merge tax profile + recompute.
+        $withholdingPreview = $this->payrollCalculator->calculateWithholdingTax(
+            $this->payrollCalculator->mergeEmployeeTaxProfileIntoWithholdingParams($user, [
+                'monthly_taxable_compensation' => $monthlyBaseNetOfMandatory,
+                'withholding_base_is_net_of_mandatory' => true,
+                'withholding_gross_taxable_monthly' => $grossTaxableMonthly,
+                'withholding_employee_mandatory_monthly' => (float) data_get($statutory, 'totals.employee_deduction', 0),
+                'method' => 'annualized',
+                'period_type' => 'monthly',
+            ])
+        );
         $withholdingMonthlyFull = (float) ($withholdingPreview['withholding_per_month'] ?? 0);
 
         $refForSchedule = $to->copy()->timezone($tz)->startOfDay();
