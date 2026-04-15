@@ -185,7 +185,7 @@ export default function EmployeeMyQr() {
 
       <div className="flex flex-col @md:flex-row gap-6">
       {/* QR Code Card */}
-      <Card className="flex-1 min-w-0 bg-card/95 shadow-sm">
+      <Card className="flex-1 min-w-0 border border-black/10 bg-card/95 shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2"> 
             <QrCode className="size-5 text-primary" />
@@ -210,7 +210,7 @@ export default function EmployeeMyQr() {
             <>
               <div
                 ref={qrCanvasRef}
-                className="flex justify-center rounded-xl bg-white p-4 shadow-inner ring-1 ring-black/5"
+                className="flex justify-center rounded-xl bg-white p-4 shadow-inner"
               >
                 <QRCodeCanvas
                   value={qrToken}
@@ -264,7 +264,7 @@ export default function EmployeeMyQr() {
       </Card>
 
       {/* Face Recognition Card */}
-      <Card className="flex-1 min-w-0 bg-card/95 shadow-sm">
+      <Card className="flex-1 min-w-0 border border-black/10 bg-card/95 shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ScanFace className="size-5 text-primary" />

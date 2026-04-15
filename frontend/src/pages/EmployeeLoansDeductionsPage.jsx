@@ -508,16 +508,17 @@ export default function EmployeeLoansDeductionsPage() {
             {/* Hero metrics — premium metric cards */}
             <section className="grid gap-4 md:grid-cols-2 lg:gap-6">
               <motion.div
+                className="h-full"
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
               >
                 <Card
-                  className={cn('overflow-hidden rounded-2xl border-border/50 bg-card', cardShadow, cardShadowHover)}
+                  className={cn('h-full overflow-hidden rounded-2xl border-border/50 bg-card', cardShadow, cardShadowHover)}
                   style={{ borderRadius: 16 }}
                 >
                   <div className="h-1 w-full bg-[#0A0A0A]/12 dark:bg-white/15" aria-hidden />
-                  <CardContent className="flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
+                  <CardContent className="flex h-full flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
                     <div className="min-w-0 flex-1 space-y-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Total remaining debt</p>
                       <p
@@ -558,16 +559,17 @@ export default function EmployeeLoansDeductionsPage() {
               </motion.div>
 
               <motion.div
+                className="h-full"
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.45, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
               >
                 <Card
-                  className={cn('overflow-hidden rounded-2xl border-border/50 bg-card', cardShadow, cardShadowHover)}
+                  className={cn('h-full overflow-hidden rounded-2xl border-border/50 bg-card', cardShadow, cardShadowHover)}
                   style={{ borderRadius: 16 }}
                 >
                   <div className="h-1 w-full bg-muted-foreground/15 dark:bg-white/15" aria-hidden />
-                  <CardContent className="space-y-5 p-6 md:p-8">
+                  <CardContent className="flex h-full flex-col justify-between space-y-5 p-6 md:p-8">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Total monthly deductions</p>
                       <p
