@@ -1325,7 +1325,7 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
     <div
       className={cn(
         'flex min-h-screen w-full flex-col items-center justify-center px-6 py-10 md:px-8 lg:px-12',
-        'bg-linear-to-b from-slate-50/80 via-background to-slate-100/50 dark:from-slate-900/40 dark:via-background dark:to-slate-800/30',
+        'bg-white',
         className
       )}
     >
@@ -1414,12 +1414,12 @@ function LoginPageWrapper() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-white text-foreground">
       <div className="flex flex-col lg:grid lg:grid-cols-2 lg:min-h-screen lg:items-stretch">
         <main className="order-1 min-h-screen shrink-0 lg:order-2">
           <AuthPanel onSuccess={handleAuthSuccess} resetSuccess={resetSuccess} />
         </main>
-        <div className="order-2 flex justify-center border-t border-border bg-card px-4 py-3 lg:order-2 lg:hidden">
+        <div className="order-2 flex justify-center border-t border-border bg-white px-4 py-3 lg:order-2 lg:hidden">
           <Button
             type="button"
             variant="ghost"
@@ -1455,7 +1455,7 @@ function HomeRedirect() {
   const { user, loading } = useAuth()
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <Loader2 className="size-8 animate-spin text-primary" aria-hidden />
       </div>
     )

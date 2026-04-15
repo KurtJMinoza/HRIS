@@ -12,7 +12,7 @@
 /* Light theme: clearer depth, less generic (cooler page bg, elevated cards/modals) */
 :root {
   --radius: 0.625rem;
-  --background: oklch(0.985 0.002 247); /* subtle slate-50 tint */
+  --background: #ffffff; /* enforce white canvas across all modules/screen sizes */
   --foreground: #0a0a0a;
   --card: oklch(1 0 0);
   --card-foreground: #0a0a0a;

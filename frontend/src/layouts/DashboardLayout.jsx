@@ -886,10 +886,10 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
 
         <main
           className={cn(
-            'flex-1 px-4 py-4 @md:px-6 @md:py-6 @lg:px-8 @lg:py-8',
+            'flex-1 px-4 py-4 @md:px-5 @md:py-5 @lg:px-6 @lg:py-6',
             /* Dashboard: airier horizontal inset (24–32px) + slightly more vertical rhythm */
-            isDashboardRoute && 'px-6 py-4 @md:px-8 @md:py-5 @lg:px-8 @lg:py-6',
-            isWideAdminModule && '@lg:px-8 @xl:px-10',
+            isDashboardRoute && 'px-5 py-4 @md:px-6 @md:py-5 @lg:px-6 @lg:py-6',
+            isWideAdminModule && '@lg:px-6 @xl:px-8',
             // Keep canvas consistently white across device sizes.
             'bg-white dark:bg-white'
           )}
@@ -901,8 +901,8 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                 ? 'mx-0 max-w-none'
                 : treatAsHrPanel
                   ? isWideAdminModule
-                    ? 'ml-0 mr-auto max-w-[min(96rem,100%)]'
-                    : 'ml-0 mr-auto max-w-[min(88rem,100%)]'
+                    ? 'ml-0 mr-auto max-w-[min(92rem,100%)]'
+                    : 'ml-0 mr-auto max-w-[min(84rem,100%)]'
                   : 'mx-auto max-w-6xl'
             )}
           >
