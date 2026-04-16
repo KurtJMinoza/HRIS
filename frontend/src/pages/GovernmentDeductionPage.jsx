@@ -507,7 +507,7 @@ export default function AdminGovernmentContributions() {
   )
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-7xl space-y-4 bg-slate-50 px-3 py-4 sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 2xl:max-w-[min(90rem,100%)] 3xl:max-w-[min(100rem,100%)] 3xl:space-y-8 3xl:px-10 3xl:py-6 3xl:text-[1.0625rem] 4xl:px-12 print:max-w-none print:bg-white">
+    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6 3xl:text-[1.0625rem] 4xl:px-12 print:max-w-none print:bg-white">
       {/* Fluid inside layout outlet; mobile-first; 3xl/4xl scales type for TV / screen share. */}
       <div className="mb-1 flex flex-col gap-4 sm:mb-0 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
         <div className="min-w-0 flex-1">
@@ -1006,7 +1006,7 @@ export default function AdminGovernmentContributions() {
               </div>
 
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-5 py-3 sm:px-6">
+                <div className="flex items-center gap-2 border-b border-slate-100 bg-white px-5 py-3 sm:px-6">
                   <Scale className="size-5 shrink-0 text-slate-700" aria-hidden />
                   <h4 className="text-base font-semibold text-slate-900 3xl:text-lg">Summary</h4>
                 </div>

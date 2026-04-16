@@ -421,7 +421,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background md:flex-row">
+    <div className="flex min-h-screen flex-col bg-white dark:bg-background md:flex-row">
       {/* Desktop sidebar – collapsible, no border */}
       <aside
         className={cn(
@@ -443,14 +443,14 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           (narrow main column) still get “small canvas” styles; viewport-only md:/lg: would misfire. */}
       <div
         className={cn(
-          '@container flex min-h-0 flex-1 flex-col min-w-0 w-full',
+          '@container flex min-h-0 flex-1 flex-col min-w-0 w-full bg-white dark:bg-background',
           'dark:dashboard-content-canvas'
         )}
       >
         {/* Mobile: sheet menu — inside content canvas so dark gradient matches the sticky bar */}
         <header
           className={cn(
-            'flex h-14 items-center gap-3 border-b border-border/40 bg-card px-3 sm:px-4 md:hidden',
+            'flex h-14 items-center gap-3 border-b border-border/40 bg-white px-3 sm:px-4 dark:bg-card md:hidden',
             'dashboard-header-glass dark:border-border/40 dark:shadow-none'
           )}
         >
@@ -484,8 +484,8 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
         <header
           className={cn(
             'sticky top-0 z-10 grid h-16 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/50 px-3 py-3 shadow-sm shadow-black/5 backdrop-blur-xl @sm:px-4 @lg:px-5',
-            /* Light: elevated card strip */
-            'bg-linear-to-b from-card/98 to-card/90 supports-backdrop-filter:bg-card/80',
+            /* Light: flat white strip flush with main canvas */
+            'bg-white supports-backdrop-filter:bg-white/95',
             /* Dark: no card gradient — glass tint matches .dashboard-content-canvas (see index.css) */
             'dashboard-header-glass dark:border-border/40 dark:shadow-none dark:bg-none dark:backdrop-blur-xl dark:supports-backdrop-filter:bg-transparent'
           )}
@@ -872,7 +872,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             /* Tight horizontal inset so main content sits closer to the sidebar on md+; vertical rhythm unchanged */
             'flex-1 px-3 py-4 @sm:px-4 @md:py-5 @lg:px-5 @lg:py-6',
             isDashboardRoute && 'py-4 @md:py-5 @lg:py-6',
-            'bg-background'
+            'bg-white dark:bg-background'
           )}
         >
           <div className="mx-0 w-full min-w-0 max-w-none">

@@ -786,7 +786,7 @@ export default function AdminRegularization() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22 }}
     >
-      <div className="mx-auto w-full max-w-7xl space-y-6 px-1 @sm:px-0">
+      <div className="w-full max-w-none space-y-6 px-1 @sm:px-0">
         <header className="relative overflow-hidden rounded-3xl border border-border/70 bg-card/60 p-5 shadow-[0_1px_0_rgba(0,0,0,0.03),0_18px_60px_rgba(0,0,0,0.06)] backdrop-blur @lg:p-6 dark:bg-card/40 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_18px_60px_rgba(0,0,0,0.35)]">
           <div className="flex flex-col gap-4 @lg:flex-row @lg:items-end @lg:justify-between">
           <div className="space-y-2">

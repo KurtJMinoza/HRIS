@@ -305,7 +305,7 @@ export default function PayslipsListPage({ variant }) {
           : 'Any pay date'
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-7xl space-y-8 bg-slate-50 px-3 py-5 pb-12 sm:space-y-10 sm:px-4 md:px-5 lg:space-y-12 lg:px-6 lg:py-6 2xl:max-w-[min(90rem,100%)] 3xl:max-w-[min(100rem,100%)] 3xl:px-10">
+    <div className="w-full min-w-0 max-w-none space-y-8 bg-white px-3 py-5 pb-12 sm:space-y-10 sm:px-4 md:px-5 lg:space-y-12 lg:px-6 lg:py-6 3xl:px-10">
       <header className="space-y-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0A0A0A]/55">Compensation</p>
         <h1 className={cn('text-[1.75rem] font-bold tracking-tight text-[#0A0A0A] @md:text-[2.125rem]', TEXT)}>Payslips</h1>

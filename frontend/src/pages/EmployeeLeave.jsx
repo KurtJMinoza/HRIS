@@ -646,21 +646,21 @@ export default function EmployeeLeave() {
       <div className="overflow-x-auto">
         <table className="w-full min-w-[960px] border-collapse text-[15px]">
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50/95 text-left dark:border-slate-800 dark:bg-slate-900/50">
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Leave type</th>
-              <th className="min-w-[200px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+            <tr className="border-b border-slate-200 bg-white text-left dark:border-slate-800 dark:bg-card">
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Leave type</th>
+              <th className="min-w-[200px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                 Date / range
               </th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Duration</th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Duration</th>
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                 Supporting documents
               </th>
-              <th className="min-w-[180px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+              <th className="min-w-[180px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                 Reason / remarks
               </th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Status</th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Date filed</th>
-              <th className="w-28 px-4 py-4 text-right text-xs font-bold uppercase tracking-wider text-slate-500">Actions</th>
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Status</th>
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Date filed</th>
+              <th className="w-28 px-4 py-4 text-right text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Actions</th>
             </tr>
           </thead>
           <tbody>

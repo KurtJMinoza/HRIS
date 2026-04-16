@@ -371,7 +371,7 @@ export default function AdminEmployeeBenefits() {
           )}
 
           <Card className="border-0 bg-card shadow-sm overflow-hidden">
-            <CardHeader className="border-b border-border/40 bg-muted/20">
+            <CardHeader className="border-b border-border/40 bg-white">
               <div className="flex flex-col gap-3 @md:flex-row @md:items-center @md:justify-between">
                 <div>
                   <CardTitle className="text-lg font-semibold">Assigned Benefits</CardTitle>
@@ -396,24 +396,24 @@ export default function AdminEmployeeBenefits() {
             <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[920px] text-sm">
-                  <thead className="sticky top-0 z-10 border-b border-border/40 bg-muted/40 dark:bg-[#0f0f0f] shadow-[0_1px_0_0_var(--border)]">
+                  <thead className="sticky top-0 z-10 border-b border-border/40 bg-white shadow-[0_1px_0_0_var(--border)] dark:bg-card">
                     <tr>
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                         Benefit Type
                       </th>
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                         Plan / Benefit Name
                       </th>
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                         Coverage / Details
                       </th>
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                         Effective Date
                       </th>
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                         Status
                       </th>
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
                         Actions
                       </th>
                     </tr>

@@ -1406,7 +1406,7 @@ export default function AdminDailyComputation() {
                           </td>
                         </tr>
                         {isExpanded && row.expanded && (
-                          <tr className="border-b border-border/20 bg-slate-50 dark:border-border/40 dark:bg-muted/25">
+                          <tr className="border-b border-border/20 bg-white dark:border-border/40 dark:bg-muted/25">
                             <td colSpan={10} className="p-0">
                               <div className="border-l-4 border-border px-4 py-3 @sm:px-5">
                                 <div className="mb-3 grid grid-cols-1 gap-x-6 gap-y-1.5 border-b border-border/40 pb-3 text-xs @sm:grid-cols-2">

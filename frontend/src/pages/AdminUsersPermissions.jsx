@@ -264,7 +264,7 @@ export default function AdminUsersPermissions() {
   const canRbacMatrix = user?.role === 'admin' || perms.has('rbac.manage')
 
   return (
-    <div className="mx-auto max-w-[1500px] space-y-8 p-4 md:p-6">
+    <div className="w-full max-w-none space-y-8 bg-white p-4 md:p-6 dark:bg-background">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex gap-4">
           <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-muted/50 shadow-xs dark:bg-muted/30">

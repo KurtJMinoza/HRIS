@@ -202,7 +202,7 @@ export default function AdminPayslipViewPage() {
   }
 
   return (
-    <div className="relative min-h-screen bg-slate-50 text-[#0A0A0A] print:min-h-0 print:bg-white print:p-0 dark:bg-background dark:text-foreground">
+    <div className="relative min-h-screen bg-white text-[#0A0A0A] print:min-h-0 print:bg-white print:p-0 dark:bg-background dark:text-foreground">
       <style dangerouslySetInnerHTML={{ __html: PAYSLIP_PAGE_PRINT_STYLES }} />
 
       <div aria-hidden data-payslip-bg className="pointer-events-none absolute inset-0 -z-10 overflow-hidden print:hidden">
@@ -210,7 +210,7 @@ export default function AdminPayslipViewPage() {
         <div className="absolute inset-0 bg-[linear-gradient(180deg,oklch(0.992_0.002_247)_0%,oklch(0.985_0.002_247)_45%,oklch(0.975_0.004_247)_100%)]" />
       </div>
 
-      <div className="relative mx-auto w-full min-w-0 max-w-7xl px-3 py-4 print:max-w-none print:px-0 print:py-0 sm:px-4 md:px-5 lg:px-6 lg:py-5 2xl:max-w-[min(90rem,100%)] 3xl:max-w-[min(100rem,100%)] @2xl:py-8">
+      <div className="relative w-full min-w-0 max-w-none px-3 py-4 print:max-w-none print:px-0 print:py-0 sm:px-4 md:px-5 lg:px-6 lg:py-5 @2xl:py-8">
         {/* Toolbar */}
         <div data-payslip-toolbar className="mb-8 flex flex-col gap-4 print:hidden">
           <div className="flex flex-wrap items-center justify-between gap-4">

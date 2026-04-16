@@ -43,7 +43,7 @@ import {
 const TEXT = 'text-[#0A0A0A]'
 /** Full-width shell aligned with Government Deduction / Pay Cycles style */
 const PAYSLIP_MODULE_SHELL =
-  'mx-auto w-full min-w-0 max-w-7xl bg-slate-50 px-3 py-4 sm:px-4 md:px-5 lg:px-6 lg:py-5 2xl:max-w-[min(90rem,100%)] 3xl:max-w-[min(100rem,100%)]'
+  'w-full min-w-0 max-w-none bg-white px-3 py-4 sm:px-4 md:px-5 lg:px-6 lg:py-5'
 const PAYSLIP_STACK = 'space-y-5 sm:space-y-6 lg:space-y-8'
 const CARD = 'rounded-2xl border border-slate-200/90 bg-white shadow-sm'
 const PAYSLIP_PREVIEW_DIALOG =

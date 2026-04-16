@@ -58,7 +58,7 @@ import {
 
 /** Full-width shell aligned with Government Deduction / Pay Cycles */
 const PAYSLIP_MODULE_SHELL =
-  'mx-auto w-full min-w-0 max-w-7xl bg-slate-50 px-3 py-4 sm:px-4 md:px-5 lg:px-6 lg:py-5 2xl:max-w-[min(90rem,100%)] 3xl:max-w-[min(100rem,100%)]'
+  'w-full min-w-0 max-w-none bg-white px-3 py-4 sm:px-4 md:px-5 lg:px-6 lg:py-5'
 const PAYSLIP_STACK = 'space-y-5 sm:space-y-6 lg:space-y-8'
 const PAYSLIP_PREVIEW_DIALOG =
   '!max-w-[min(88rem,calc(100vw-1.5rem))] w-full overflow-hidden border-slate-200/90 bg-white p-0 shadow-xl shadow-slate-900/[0.07] sm:!max-w-[min(88rem,calc(100vw-2rem))]'

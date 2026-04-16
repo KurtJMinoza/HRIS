@@ -811,7 +811,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         )}
 
         <Card className="overflow-hidden border-slate-200/80 shadow-sm dark:border-slate-800 @md:rounded-2xl">
-          <CardHeader className="border-b border-border/60 bg-muted/20 px-4 py-5 @sm:px-6 md:px-8">
+          <CardHeader className="border-b border-border/60 bg-white px-4 py-5 @sm:px-6 md:px-8 dark:bg-card">
             <CardTitle className="text-lg font-semibold">Requests</CardTitle>
             <CardDescription className="text-sm">
               {tab === 'mine'
@@ -918,7 +918,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               </div>
             ) : (
               <AnimatedSection delay={0.05}>
-                <div className="overflow-x-auto bg-gradient-to-b from-slate-50/50 to-white px-4 pb-8 pt-2 @sm:px-6 md:px-8 dark:from-slate-950/20 dark:to-slate-950/40">
+                <div className="overflow-x-auto bg-white px-4 pb-8 pt-2 @sm:px-6 md:px-8 dark:bg-background">
                   <Table>
                     <TableHeader>
                       <TableRow className="sticky top-0 z-10 border-b border-slate-200/90 bg-white/95 hover:bg-white/95 dark:border-slate-800 dark:bg-slate-950/95">

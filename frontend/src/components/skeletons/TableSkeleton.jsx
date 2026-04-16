@@ -12,7 +12,7 @@ export function TableSkeleton({ rows = 5, cols = 5, className = '' }) {
     <div className={className}>
       <table className="w-full border-0 text-sm">
         <thead>
-          <tr className="border-b border-border/40 bg-muted/60">
+          <tr className="border-b border-border/40 bg-white">
             {Array.from({ length: cols }, (_, i) => (
               <th key={i} className="px-4 py-3 text-left">
                 <Skeleton className="h-4 w-24" />
