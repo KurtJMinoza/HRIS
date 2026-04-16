@@ -745,16 +745,16 @@ export default function AdminDashboard() {
 
   return (
     <Motion.div
-      className="space-y-10 text-foreground dark:text-zinc-50"
+      className="space-y-6 text-foreground dark:text-zinc-50"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
     >
       <Motion.div
-        className="flex flex-col gap-1 @md:flex-row @md:items-start @md:justify-between"
+        className="-mb-3 flex flex-col gap-1 @md:flex-row @md:items-start @md:justify-between"
         variants={itemVariants}
       >
-        <div className="space-y-2">
+        <div className="space-y-1">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {getGreeting()}
             {isHrAdmin ? ', Admin' : dashboardScopeLabel ? `, ${dashboardScopeLabel} lead` : ''}

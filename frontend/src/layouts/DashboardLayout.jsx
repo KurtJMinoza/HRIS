@@ -27,7 +27,7 @@ import { hrPanelPath } from '@/lib/hrRoutes'
 import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
-import { Bell, CalendarClock, Banknote, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, User, Loader2, Sun, Moon, Monitor } from 'lucide-react'
+import { Bell, CalendarClock, Banknote, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, User, Loader2, Sun, Moon } from 'lucide-react'
 
 const SIDEBAR_COLLAPSED_KEY = 'smartdtr_sidebar_collapsed'
 
@@ -287,19 +287,6 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   const treatAsHrPanel = role === 'admin' || role === 'manager'
 
   const panelPrefixes = ['/admin', '/company', '/branch', '/department']
-  /** Data-heavy admin modules need a wider canvas than typical CRUD pages */
-  const isWideAdminModule =
-    treatAsHrPanel &&
-    panelPrefixes.some(
-      (prefix) =>
-        location.pathname.startsWith(`${prefix}/daily-computation`) ||
-        location.pathname.startsWith(`${prefix}/leave`) ||
-        location.pathname.startsWith(`${prefix}/compensation/government-deduction`) ||
-        location.pathname.startsWith(`${prefix}/compensation/deduction-schedule-settings`) ||
-        location.pathname.startsWith(`${prefix}/compensation/pay-cycles`) ||
-        location.pathname.startsWith(`${prefix}/compensation/generate-payslips`) ||
-        location.pathname.startsWith(`${prefix}/compensation/finalize-payroll`)
-    )
 
   const isDashboardRoute =
     treatAsHrPanel &&
@@ -463,7 +450,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
         {/* Mobile: sheet menu — inside content canvas so dark gradient matches the sticky bar */}
         <header
           className={cn(
-            'flex h-14 items-center gap-3 border-b border-border/40 bg-card px-4 md:hidden',
+            'flex h-14 items-center gap-3 border-b border-border/40 bg-card px-3 sm:px-4 md:hidden',
             'dashboard-header-glass dark:border-border/40 dark:shadow-none'
           )}
         >
@@ -496,7 +483,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
         {/* Top bar: toggle + search in one row (min-w-0 keeps Popover/search from collapsing the layout). */}
         <header
           className={cn(
-            'sticky top-0 z-10 grid h-16 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/50 px-4 py-3 shadow-sm shadow-black/5 backdrop-blur-xl @md:px-6',
+            'sticky top-0 z-10 grid h-16 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/50 px-3 py-3 shadow-sm shadow-black/5 backdrop-blur-xl @sm:px-4 @lg:px-5',
             /* Light: elevated card strip */
             'bg-linear-to-b from-card/98 to-card/90 supports-backdrop-filter:bg-card/80',
             /* Dark: no card gradient — glass tint matches .dashboard-content-canvas (see index.css) */
@@ -686,20 +673,16 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               className="rounded-full"
               onClick={cycleTheme}
               title={
-                theme === 'system'
-                  ? 'Theme: System (follows OS) — click for Light'
-                  : theme === 'light'
-                    ? 'Theme: Light — click for Dark'
-                    : 'Theme: Dark — click for System'
+                theme === 'light'
+                  ? 'Theme: Light — click for Dark'
+                  : 'Theme: Dark — click for Light'
               }
               aria-label="Cycle theme"
             >
               {theme === 'dark' ? (
                 <Moon className="size-[18px] text-muted-foreground" />
-              ) : theme === 'light' ? (
-                <Sun className="size-[18px] text-muted-foreground" />
               ) : (
-                <Monitor className="size-[18px] text-muted-foreground" />
+                <Sun className="size-[18px] text-muted-foreground" />
               )}
             </Button>
             <Popover>
@@ -886,25 +869,13 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
 
         <main
           className={cn(
-            'flex-1 px-4 py-4 @md:px-5 @md:py-5 @lg:px-6 @lg:py-6',
-            /* Dashboard: airier horizontal inset (24–32px) + slightly more vertical rhythm */
-            isDashboardRoute && 'px-5 py-4 @md:px-6 @md:py-5 @lg:px-6 @lg:py-6',
-            isWideAdminModule && '@lg:px-6 @xl:px-8',
+            /* Tight horizontal inset so main content sits closer to the sidebar on md+; vertical rhythm unchanged */
+            'flex-1 px-3 py-4 @sm:px-4 @md:py-5 @lg:px-5 @lg:py-6',
+            isDashboardRoute && 'py-4 @md:py-5 @lg:py-6',
             'bg-background'
           )}
         >
-          <div
-            className={cn(
-              'w-full',
-              sidebarCollapsed
-                ? 'mx-0 max-w-none'
-                : treatAsHrPanel
-                  ? isWideAdminModule
-                    ? 'ml-0 mr-auto max-w-[min(92rem,100%)]'
-                    : 'ml-0 mr-auto max-w-[min(84rem,100%)]'
-                  : 'mx-auto max-w-6xl'
-            )}
-          >
+          <div className="mx-0 w-full min-w-0 max-w-none">
             <div key={location.pathname} className="min-w-0 w-full @container">
               <Outlet />
             </div>

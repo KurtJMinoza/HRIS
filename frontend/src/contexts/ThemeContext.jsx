@@ -4,29 +4,36 @@ const ThemeContext = createContext(null)
 
 const STORAGE_KEY = 'smartdtr_theme'
 
-function getSystemDark() {
-  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches
-}
-
+/** Applies Tailwind `dark` class + explicit light/dark markers. Never reads OS preference. */
 function applyTheme(theme) {
   if (typeof document === 'undefined') return
   const root = document.documentElement
-  if (theme === 'dark' || (theme === 'system' && getSystemDark())) {
+  const isDark = theme === 'dark'
+  if (isDark) {
     root.classList.add('dark')
+    root.classList.remove('light')
+    root.dataset.theme = 'dark'
   } else {
     root.classList.remove('dark')
+    root.classList.add('light')
+    root.dataset.theme = 'light'
   }
 }
 
 function getInitialTheme() {
-  if (typeof window === 'undefined') return 'system'
+  if (typeof window === 'undefined') return 'light'
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY)
-    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
+    // No longer follow OS: migrate legacy "system" to light
+    if (stored === 'system') {
+      window.localStorage.setItem(STORAGE_KEY, 'light')
+      return 'light'
+    }
+    if (stored === 'light' || stored === 'dark') return stored
   } catch {
     // ignore
   }
-  return 'system'
+  return 'light'
 }
 
 export function ThemeProvider({ children }) {
@@ -39,20 +46,10 @@ export function ThemeProvider({ children }) {
       // ignore
     }
     applyTheme(theme)
-    if (theme === 'system') {
-      const mq = window.matchMedia('(prefers-color-scheme: dark)')
-      const handler = () => applyTheme('system')
-      mq.addEventListener('change', handler)
-      return () => mq.removeEventListener('change', handler)
-    }
   }, [theme])
 
   const cycleTheme = () => {
-    setTheme((prev) => {
-      if (prev === 'system') return 'light'
-      if (prev === 'light') return 'dark'
-      return 'system'
-    })
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))
   }
 
   return (
