@@ -1445,12 +1445,12 @@ export default function AdminGeneratePayslipsPage() {
             </div>
             <div data-payslip-print-mount className="h-[88vh] overflow-y-auto bg-[#F8FAFC] p-6">
               {samplePreviewLoading ? (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-slate-200/80 bg-white text-[#0A0A0A]/55 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400">
+                <div className="flex h-full items-center justify-center rounded-2xl border border-slate-200/80 bg-white text-[#0A0A0A]/55">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                   Loading sample data…
                 </div>
               ) : samplePreviewData ? (
-                <div className="mx-auto h-full w-full max-w-[min(80rem,100%)] rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                <div className="mx-auto h-full w-full max-w-[min(80rem,100%)] rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm">
                   <PayslipHtmlDocument data={samplePreviewData} isPreviewMode />
                 </div>
               ) : (
