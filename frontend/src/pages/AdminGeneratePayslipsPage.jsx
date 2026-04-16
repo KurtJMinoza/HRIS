@@ -368,7 +368,10 @@ export default function AdminGeneratePayslipsPage() {
       to_date: toDate || null,
       pay_cycle_id: payCycleId ? Number(payCycleId) : null,
       reference_date: referenceDate || null,
-      use_company_default: Boolean(useCompanyDefaultDates && !payCycleId),
+      // Only treat as "Company Default" when the toggle is ON and no explicit cycle is chosen.
+      // When the user manually enters custom dates (toggle OFF), use_company_default must be false
+      // so the backend does NOT override the user-provided pay date with default cycle logic.
+      use_company_default: useCompanyDefaultDates && !payCycleId,
       password_protect: passwordProtect,
       company_id: companyId ? Number(companyId) : null,
       branch_id: branchId ? Number(branchId) : null,
@@ -533,7 +536,7 @@ export default function AdminGeneratePayslipsPage() {
     const eid = String(employeeId || '').trim()
     if (eid) p.set('employee_id', eid)
     return p
-  }, [fromDate, toDate, payCycleId, referenceDate, passwordProtect, useCompanyDefaultDates, companyId, branchId, departmentId, employeeId])
+  }, [fromDate, toDate, payCycleId, referenceDate, useCompanyDefaultDates, passwordProtect, companyId, branchId, departmentId, employeeId])
 
   useEffect(() => {
     if (!payCycleId) return
@@ -551,9 +554,12 @@ export default function AdminGeneratePayslipsPage() {
       try {
         const todayIso = new Date().toISOString().slice(0, 10)
         const anchor = toDate || fromDate || todayIso
-        const res = await getAdminCompanyDefaultPayslipDates(
-          referenceDate ? { pay_date: referenceDate } : { anchor_date: anchor },
-        )
+        // Always use anchor_date so the backend derives the correct pay date
+        // from the cut-off window (15th / last calendar day of month + weekend adjustment).
+        const res = await getAdminCompanyDefaultPayslipDates({
+          company_id: companyId ? Number(companyId) : undefined,
+          anchor_date: anchor,
+        })
         if (cancelled) return
         if (res?.from_date) setFromDate(String(res.from_date))
         if (res?.to_date) setToDate(String(res.to_date))
@@ -571,7 +577,9 @@ export default function AdminGeneratePayslipsPage() {
     return () => {
       cancelled = true
     }
-  }, [useCompanyDefaultDates, payCycleId, fromDate, toDate, referenceDate])
+    // companyId triggers re-fetch when company changes; fromDate/toDate only on initial
+    // toggle-on (subsequent fetches are idempotent since anchor stays the same).
+  }, [useCompanyDefaultDates, payCycleId, companyId, fromDate, toDate])
 
   const handleGeneratePayslips = useCallback(async () => {
     if (!canManagePayslips) return

@@ -15,8 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Mpdf\Mpdf;
-use Mpdf\Output\Destination;
+use Spatie\Browsershot\Browsershot;
 use setasign\Fpdi\Tcpdf\Fpdi;
 use Throwable;
 
@@ -720,25 +719,18 @@ class PayslipService
             'employee' => $employee,
             'company' => $company,
             'snapshot' => $snapshotForView,
+            // Download should use the standard payslip layout.
             'printMode' => false,
             'govIds' => (object) $this->governmentIdFieldsForPayslip($employee),
             'employmentStatusLabel' => $this->employmentStatusLabelForPayslip($employee),
         ])->render();
-
-        $pdf = $this->buildMpdf();
-        $sanitized = $this->sanitizeHtmlForMpdf($html);
+        $sanitized = $this->sanitizeHtmlForPdfRenderer($html);
         $this->logPayslipTableArraysBeforeWriteHtml($payslip, $employee, $snapshotForView, 'generatePdf', strlen($sanitized));
-        try {
-            $pdf->WriteHTML($sanitized);
-        } catch (Throwable $e) {
-            $this->logPayslipMpdfFailure($payslip, $employee, $snapshotForView, $e, 'generatePdf');
-
-            throw $e;
-        }
+        $pdfBytes = $this->renderHtmlToPdfWithBrowsershot($sanitized, 'generatePdf');
 
         $relative = $relativeOverride ?? ('payslips/'.$payslip->id.'/payslip.pdf');
         Storage::disk('local')->makeDirectory(dirname($relative));
-        Storage::disk('local')->put($relative, $pdf->Output('', Destination::STRING_RETURN));
+        Storage::disk('local')->put($relative, $pdfBytes);
         $full = storage_path('app/private/'.$relative);
 
         if ($plainPassword !== null && $plainPassword !== '') {
@@ -773,53 +765,74 @@ class PayslipService
             'govIds' => (object) $this->governmentIdFieldsForPayslip($employee),
             'employmentStatusLabel' => $this->employmentStatusLabelForPayslip($employee),
         ])->render();
-
-        $pdf = $this->buildMpdf();
-        $sanitized = $this->sanitizeHtmlForMpdf($html);
+        $sanitized = $this->sanitizeHtmlForPdfRenderer($html);
         $this->logPayslipTableArraysBeforeWriteHtml($payslip, $employee, $snapshotForView, 'generatePrintPdf', strlen($sanitized));
-        try {
-            $pdf->WriteHTML($sanitized);
-        } catch (Throwable $e) {
-            $this->logPayslipMpdfFailure($payslip, $employee, $snapshotForView, $e, 'generatePrintPdf');
-
-            throw $e;
-        }
+        $pdfBytes = $this->renderHtmlToPdfWithBrowsershot($sanitized, 'generatePrintPdf');
         $relative = 'payslips/'.$payslip->id.'/payslip-print.pdf';
         Storage::disk('local')->makeDirectory(dirname($relative));
-        Storage::disk('local')->put($relative, $pdf->Output('', Destination::STRING_RETURN));
+        Storage::disk('local')->put($relative, $pdfBytes);
 
         return $relative;
     }
 
-    private function buildMpdf(): Mpdf
+    /**
+     * Render payslip HTML to PDF using real Chromium via Browsershot.
+     * This mirrors browser print output and avoids mPDF table pagination anomalies.
+     */
+    private function renderHtmlToPdfWithBrowsershot(string $html, string $stage): string
     {
-        $tmp = storage_path('app/private/mpdf-temp');
+        $tmp = storage_path('app/private/browsershot-temp');
         if (! is_dir($tmp)) {
             @mkdir($tmp, 0775, true);
         }
 
-        return new Mpdf([
-            'mode' => 'utf-8',
-            'format' => 'A4',
-            'orientation' => 'P',
-            'tempDir' => $tmp,
-            // Keep print margins aligned with the preview print profile.
-            'margin_left' => 10,
-            'margin_right' => 10,
-            'margin_top' => 12,
-            'margin_bottom' => 12,
-            // Helps prevent wide tables from forcing pathological layout.
-            'shrink_tables_to_fit' => 1,
-            // Legacy DB text / copy-paste can include bytes that fail mPDF’s strict is_utf8() check.
-            'ignore_invalid_utf8' => true,
-        ]);
+        try {
+            $shot = Browsershot::html($html)
+                ->format('A4')
+                ->margins(10, 10, 10, 10)
+                ->showBackground()
+                ->setOption('printBackground', true)
+                ->setOption('preferCSSPageSize', true)
+                ->timeout(120)
+                ->noSandbox()
+                ->setTemporaryDirectory($tmp);
+
+            // Browsershot resolves puppeteer from Node module paths.
+            // Reuse frontend dependency installation in this monorepo layout.
+            $frontendNodeModules = realpath(base_path('../frontend/node_modules'));
+            if (is_string($frontendNodeModules) && $frontendNodeModules !== '' && is_dir($frontendNodeModules)) {
+                $shot->setNodeModulePath($frontendNodeModules);
+            }
+
+            $nodeBinary = trim((string) config('services.browsershot.node_binary', ''));
+            if ($nodeBinary !== '') {
+                $shot->setNodeBinary($nodeBinary);
+            }
+            $npmBinary = trim((string) config('services.browsershot.npm_binary', ''));
+            if ($npmBinary !== '') {
+                $shot->setNpmBinary($npmBinary);
+            }
+            $chromePath = trim((string) config('services.browsershot.chrome_path', ''));
+            if ($chromePath !== '') {
+                $shot->setChromePath($chromePath);
+            }
+
+            return $shot->pdf();
+        } catch (Throwable $e) {
+            Log::error('Payslip PDF: Browsershot render failed', [
+                'stage' => $stage,
+                'exception' => $e->getMessage(),
+                'exception_class' => $e::class,
+            ]);
+            throw $e;
+        }
     }
 
     /**
-     * Normalize rendered HTML to valid UTF-8 before passing to mPDF.
+     * Normalize rendered HTML to valid UTF-8 before PDF rendering.
      * Some legacy DB text may include malformed byte sequences.
      */
-    private function sanitizeHtmlForMpdf(string $html): string
+    private function sanitizeHtmlForPdfRenderer(string $html): string
     {
         if ($html === '') {
             return '';
@@ -1326,161 +1339,112 @@ class PayslipService
      */
     private function resolveComputationContext(User $user, array $validated): array
     {
-        // Manual generation rule:
-        // If no explicit pay-cycle template is selected, always use company default schedule logic.
-        $useCompanyDefault = (bool) ($validated['use_company_default'] ?? empty($validated['pay_cycle_id']));
+        // UI contract:
+        // - `use_company_default=true` means "force the configured company default pay cycle" (ignore employee overrides).
+        // - `reference_date` is treated as the *actual pay date* when provided.
+        //
+        // Pay date rule (PH semi-monthly, any year):
+        //   - Cut-off 11–25 → pay date = last calendar day of the month (30, 31, or 28/29 for Feb)
+        //   - Cut-off 26–10 → pay date = 15th of the month containing the cut-off end
+        //   - Weekend adjustment: Saturday/Sunday → previous Friday
+        $useCompanyDefault = (bool) ($validated['use_company_default'] ?? false);
 
         if (! empty($validated['from_date']) && ! empty($validated['to_date'])) {
             $from = Carbon::parse($validated['from_date'])->startOfDay();
             $to = Carbon::parse($validated['to_date'])->endOfDay();
-            if ($useCompanyDefault && empty($validated['pay_cycle_id'])) {
-                // Company default logic: infer pay date from explicit cut-off end when possible.
-                $toDay = (int) $to->copy()->setTimezone($this->payCycleService->timezone())->day;
-                if ($toDay === 10 || $toDay === 25) {
-                    $preview = $this->payCycleService->buildCompanyDefaultPreview($to->copy()->setTimezone($this->payCycleService->timezone())->startOfDay());
-                } else {
-                    $anchor = $validated['reference_date'] ?? $validated['to_date'] ?? $validated['from_date'];
-                    // Reference date requirement: pay date is the reference date, so treat it as pay date here.
-                    $preview = $anchor
-                        ? $this->payCycleService->buildCompanyDefaultPreviewFromPayDate((string) $anchor)
-                        : $this->payCycleService->buildCompanyDefaultPreview($to->copy()->setTimezone($this->payCycleService->timezone())->startOfDay());
-                }
-                // Enforce reference date = pay date for downstream modules.
-                $validated['reference_date'] = $preview['pay_date'] ?? ($validated['reference_date'] ?? null);
+            $toStartOfDay = $to->copy()->startOfDay();
 
-                return [$from, $to, $preview, null];
-            }
-
-            // Critical fallback: even when explicit dates are provided, still resolve the effective
-            // cycle (selected -> employee/company default) so preview/finalize can show cycle name
-            // and compute pay date inheritance correctly.
             $cycle = ! empty($validated['pay_cycle_id'])
                 ? PayCycle::query()->find((int) $validated['pay_cycle_id'])
-                : $this->payCycleService->resolveForUser($user);
+                : ($useCompanyDefault ? $this->payCycleService->resolveCompanyDefaultForUser($user) : $this->payCycleService->resolveForUser($user));
 
-            // Manual selection fix:
-            // If `reference_date` is provided, the UI contract says it is the *actual pay date*.
-            // `buildCyclePreview()` uses the reference date as a segment-selection anchor, which produces
-            // wrong cut-offs/labels for the same pay date.
-            //
-            // So when reference_date is present, we build the preview directly from the explicit from/to
-            // and weekend-adjusted pay date.
             $referenceDate = $validated['reference_date'] ?? null;
+
             if (! empty($referenceDate)) {
+                // Explicit pay date provided — honour it with weekend adjustment only.
                 $payDateRaw = Carbon::parse((string) $referenceDate, $this->payCycleService->timezone())->startOfDay();
-                $payDate = app(\App\Services\PayrollCalculatorService::class)->adjustForWeekend(
-                    $payDateRaw,
-                    PayCycle::WEEKEND_ADJUST_PREVIOUS_FRIDAY
-                );
+                $weekendRule = $cycle
+                    ? (string) data_get($cycle->metadata, 'weekend_adjustment_rule', PayCycle::WEEKEND_ADJUST_PREVIOUS_FRIDAY)
+                    : PayCycle::WEEKEND_ADJUST_PREVIOUS_FRIDAY;
+                $payDate = app(\App\Services\PayrollCalculatorService::class)->adjustForWeekend($payDateRaw, $weekendRule);
 
                 $weekendAdjusted = ! $payDate->isSameDay($payDateRaw);
                 $validated['reference_date'] = $payDate->toDateString();
 
-                $dateRangeLabel = sprintf(
-                    '%s %s, %s – %s %s, %s',
-                    $from->format('F'),
-                    $from->format('j'),
-                    $from->format('Y'),
-                    $to->format('F'),
-                    $to->format('j'),
-                    $to->format('Y')
-                );
-
-                $preview = [
-                    'cut_off_start_date' => $from->toDateString(),
-                    'cut_off_end_date' => $to->toDateString(),
-                    'pay_date' => $payDate->toDateString(),
-                    // Requirement: reference date must be pay date.
-                    'reference_date' => $payDate->toDateString(),
-                    // PDF uses `cycle_label`, so show the selected cut-off window.
-                    'cycle_label' => $dateRangeLabel,
-                    'weekend_adjusted' => $weekendAdjusted,
-                    'weekend_adjustment_note' => $weekendAdjusted
-                        ? 'Weekend adjustment applied: pay dates landing on Saturday or Sunday move to the previous Friday.'
-                        : null,
-                ];
-
-                return [$from, $to, $preview, $cycle];
+                return [$from, $to, $this->buildCustomPeriodPreview($from, $toStartOfDay, $payDate, $weekendAdjusted), $cycle];
             }
 
-            // No explicit pay date: calculate one using the selected/effective pay cycle,
-            // but still force cycle label + cut-off window to match the explicit from/to the user chose.
-            $dateRangeLabel = sprintf(
-                '%s %s, %s – %s %s, %s',
-                $from->format('F'),
-                $from->format('j'),
-                $from->format('Y'),
-                $to->format('F'),
-                $to->format('j'),
-                $to->format('Y')
-            );
+            // No explicit pay date — derive it from the cut-off window.
+            // Only use template logic when an explicit pay_cycle_id was selected by the user.
+            // Otherwise, always use the canonical PH semi-monthly rule (15th / last day of month).
+            if ($cycle && ! empty($validated['pay_cycle_id'])) {
+                $cyclePreview = $this->payCycleService->buildCyclePreview($cycle, $validated['to_date'] ?? $validated['from_date']);
+                $payDateRawStr = $cyclePreview['pay_date'] ?? $toStartOfDay->toDateString();
+                $payDateRaw = Carbon::parse((string) $payDateRawStr, $this->payCycleService->timezone())->startOfDay();
+                $weekendRule = (string) data_get($cycle->metadata, 'weekend_adjustment_rule', PayCycle::WEEKEND_ADJUST_PREVIOUS_FRIDAY);
+                $payDate = app(\App\Services\PayrollCalculatorService::class)->adjustForWeekend($payDateRaw, $weekendRule);
+            } else {
+                $computed = $this->payCycleService->computePayDateForPeriod($from, $toStartOfDay);
+                $payDate = $computed['pay_date'];
+            }
 
-            $cyclePreview = $cycle
-                ? $this->payCycleService->buildCyclePreview(
-                    $cycle,
-                    // Anchor to the explicit period end so semi-monthly segment selection matches the chosen cut-off.
-                    $validated['to_date'] ?? $validated['from_date']
-                )
-                : null;
-
-            $payDateRawStr = is_array($cyclePreview)
-                ? ($cyclePreview['pay_date'] ?? $to->toDateString())
-                : $to->toDateString();
-            $payDateRaw = Carbon::parse((string) $payDateRawStr, $this->payCycleService->timezone())->startOfDay();
-            $payDate = app(\App\Services\PayrollCalculatorService::class)->adjustForWeekend(
-                $payDateRaw,
-                PayCycle::WEEKEND_ADJUST_PREVIOUS_FRIDAY
-            );
-
-            $weekendAdjusted = ! $payDate->isSameDay($payDateRaw);
+            // Determine weekend adjustment by comparing against the unadjusted canonical pay date.
+            $segment = $this->payCycleService->inferSemiMonthSegment($from, $toStartOfDay);
+            $unadjustedPayDate = $segment === 'first'
+                ? $toStartOfDay->copy()->startOfMonth()->day(15)->startOfDay()
+                : $toStartOfDay->copy()->endOfMonth()->startOfDay();
+            $weekendAdjusted = ! $payDate->isSameDay($unadjustedPayDate);
             $validated['reference_date'] = $payDate->toDateString();
 
-            $preview = [
-                'cut_off_start_date' => $from->toDateString(),
-                'cut_off_end_date' => $to->toDateString(),
-                'pay_date' => $payDate->toDateString(),
-                'reference_date' => $payDate->toDateString(),
-                'cycle_label' => $dateRangeLabel,
-                'weekend_adjusted' => $weekendAdjusted,
-                'weekend_adjustment_note' => $weekendAdjusted
-                    ? 'Weekend adjustment applied: pay dates landing on Saturday or Sunday move to the previous Friday.'
-                    : null,
-            ];
-
-            return [$from, $to, $preview, $cycle];
+            return [$from, $to, $this->buildCustomPeriodPreview($from, $toStartOfDay, $payDate, $weekendAdjusted), $cycle];
         }
 
         $referenceDate = (string) ($validated['reference_date'] ?? now()->toDateString());
 
-        if ($useCompanyDefault && empty($validated['pay_cycle_id'])) {
-            // Requirement: reference date must be pay date.
-            $preview = $this->payCycleService->buildCompanyDefaultPreviewFromPayDate($referenceDate);
-            $from = Carbon::parse($preview['cut_off_start_date'])->startOfDay();
-            $to = Carbon::parse($preview['cut_off_end_date'])->endOfDay();
-
-            // Normalize reference_date to computed pay date (weekend adjustment).
-            $previewPayDate = $preview['pay_date'] ?? null;
-            if (is_string($previewPayDate) && $previewPayDate !== '') {
-                $preview['reference_date'] = $previewPayDate;
-            }
-
-            return [$from, $to, $preview, null];
-        }
-
         $cycle = ! empty($validated['pay_cycle_id'])
             ? PayCycle::query()->find((int) $validated['pay_cycle_id'])
-            : $this->payCycleService->resolveForUser($user);
-        $preview = $cycle ? $this->payCycleService->buildCyclePreview($cycle, $referenceDate) : null;
-        if (! is_array($preview)) {
-            throw new \RuntimeException(
-                'No pay cycle is configured for this employee or company. Assign a pay cycle (or set pay period dates) before finalizing payroll.'
-            );
-        }
-        $from = Carbon::parse($preview['cut_off_start_date'] ?? $referenceDate)->startOfDay();
-        $to = Carbon::parse($preview['cut_off_end_date'] ?? $referenceDate)->endOfDay();
+            : ($useCompanyDefault ? $this->payCycleService->resolveCompanyDefaultForUser($user) : $this->payCycleService->resolveForUser($user));
 
-        return [$from, $to, $preview, $cycle];
+        if ($cycle) {
+            $preview = ! empty($validated['reference_date'])
+                ? $this->payCycleService->buildCyclePreviewFromPayDate($cycle, $referenceDate)
+                : $this->payCycleService->buildCyclePreview($cycle, $referenceDate);
+            $from = Carbon::parse($preview['cut_off_start_date'] ?? $referenceDate)->startOfDay();
+            $to = Carbon::parse($preview['cut_off_end_date'] ?? $referenceDate)->endOfDay();
+
+            return [$from, $to, $preview, $cycle];
+        }
+
+        // Fallback: canonical PH company default rule (15th / last day of month + weekend adjustment).
+        $preview = $this->payCycleService->buildCompanyDefaultPreviewFromPayDate($referenceDate);
+        $from = Carbon::parse($preview['cut_off_start_date'])->startOfDay();
+        $to = Carbon::parse($preview['cut_off_end_date'])->endOfDay();
+
+        return [$from, $to, $preview, null];
     }
+
+    /**
+     * Build a preview array for custom from/to dates (shared by explicit and derived pay date paths).
+     */
+    private function buildCustomPeriodPreview(Carbon $from, Carbon $to, Carbon $payDate, bool $weekendAdjusted): array
+    {
+        return [
+            'cut_off_start_date' => $from->toDateString(),
+            'cut_off_end_date' => $to->toDateString(),
+            'pay_date' => $payDate->toDateString(),
+            'reference_date' => $payDate->toDateString(),
+            'cycle_label' => sprintf(
+                '%s %s, %s – %s %s, %s',
+                $from->format('F'), $from->format('j'), $from->format('Y'),
+                $to->format('F'), $to->format('j'), $to->format('Y')
+            ),
+            'weekend_adjusted' => $weekendAdjusted,
+            'weekend_adjustment_note' => $weekendAdjusted
+                ? 'Weekend adjustment applied: pay dates landing on Saturday or Sunday move to the previous Friday.'
+                : null,
+        ];
+    }
+
 
     /**
      * Exposes the same pay-cycle / cut-off window resolution as payslip PDF generation for finalize payroll and previews.

@@ -952,19 +952,41 @@ class PayslipController extends Controller
     /**
      * Company default cut-off + pay-date calculator for the SPA Advanced section.
      * Reference date is always the (weekend-adjusted) pay date.
+     *
+     * Pay date rule (PH semi-monthly, any year):
+     *   - Cut-off 11–25 → pay date = last calendar day of the month (weekend-adjusted)
+     *   - Cut-off 26–10 → pay date = 15th of the month (weekend-adjusted)
      */
     public function companyDefaultDates(Request $request): JsonResponse
     {
         $this->ensurePayslipAccess($request);
         $v = $request->validate([
-            // One of these may be provided; if both are provided, pay_date takes precedence.
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'anchor_date' => ['nullable', 'date'],
             'pay_date' => ['nullable', 'date'],
         ]);
 
-        $preview = ! empty($v['pay_date'])
-            ? app(\App\Services\PayCycleService::class)->buildCompanyDefaultPreviewFromPayDate((string) $v['pay_date'])
-            : app(\App\Services\PayCycleService::class)->buildCompanyDefaultPreview($v['anchor_date'] ?? null);
+        $payCycleService = app(\App\Services\PayCycleService::class);
+        $company = ! empty($v['company_id']) ? Company::query()->with('defaultPayCycle')->find((int) $v['company_id']) : null;
+        $cycle = $company?->defaultPayCycle;
+        $preview = null;
+
+        if ($cycle && $cycle->code === \App\Models\PayCycle::CODE_SEMI_MONTHLY) {
+            // Semi-monthly template: use the canonical PH rule via buildCompanyDefaultPreview
+            // to ensure 15th / last-day-of-month + weekend adjustment is always applied.
+            $preview = ! empty($v['pay_date'])
+                ? $payCycleService->buildCompanyDefaultPreviewFromPayDate((string) $v['pay_date'])
+                : $payCycleService->buildCompanyDefaultPreview($v['anchor_date'] ?? null);
+        } elseif ($cycle) {
+            // Non-semi-monthly templates (weekly, daily, project, etc.) use template logic.
+            $preview = ! empty($v['pay_date'])
+                ? $payCycleService->buildCyclePreviewFromPayDate($cycle, (string) $v['pay_date'])
+                : $payCycleService->buildCyclePreview($cycle, $v['anchor_date'] ?? null);
+        } else {
+            $preview = ! empty($v['pay_date'])
+                ? $payCycleService->buildCompanyDefaultPreviewFromPayDate((string) $v['pay_date'])
+                : $payCycleService->buildCompanyDefaultPreview($v['anchor_date'] ?? null);
+        }
 
         return response()->json([
             'from_date' => $preview['cut_off_start_date'] ?? null,
@@ -989,20 +1011,17 @@ class PayslipController extends Controller
         abort_unless($employee instanceof User, 404);
         $this->dataScopeService->ensureEmployeeAccessible($request->user(), $employee);
 
-        if ($payslip->pdf_path && is_file(storage_path('app/private/'.$payslip->pdf_path))) {
-            return response()->download(
-                storage_path('app/private/'.$payslip->pdf_path),
-                'payslip-'.$payslip->id.'.pdf',
-                ['Content-Type' => 'application/pdf'],
-            );
-        }
-
+        // Always regenerate on download so all modules use the latest clean PDF template.
         $relative = $this->payslipService->generatePdf($payslip, $employee);
         $payslip->update(['pdf_path' => $relative]);
+        $employeeCode = trim((string) ($employee->employee_code ?? ''));
+        $filename = $employeeCode !== ''
+            ? 'Payslip-'.$employeeCode.'.pdf'
+            : 'payslip-'.$payslip->id.'.pdf';
 
         return response()->download(
             storage_path('app/private/'.$relative),
-            'payslip-'.$payslip->id.'.pdf',
+            $filename,
             ['Content-Type' => 'application/pdf'],
         );
     }

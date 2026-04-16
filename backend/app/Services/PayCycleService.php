@@ -13,6 +13,27 @@ use Illuminate\Support\Facades\Schema;
 class PayCycleService
 {
     /**
+     * Resolve the company default pay cycle template for a user (ignores user overrides).
+     * Uses {@see User::getEffectiveCompanyId()} so Company Heads still resolve.
+     */
+    public function resolveCompanyDefaultForUser(User $user): ?PayCycle
+    {
+        $effectiveCompanyId = $user->getEffectiveCompanyId();
+        if ($effectiveCompanyId === null) {
+            return null;
+        }
+        $company = Company::query()->find($effectiveCompanyId);
+        $defaultId = $company?->default_pay_cycle_id;
+        if ($defaultId === null) {
+            return null;
+        }
+
+        $company->loadMissing('defaultPayCycle');
+
+        return $company->defaultPayCycle ?: PayCycle::query()->find((int) $defaultId);
+    }
+
+    /**
      * Company default cut-off/pay-date logic (no PayCycle template selected).
      *
      * Recurring pattern (dynamic for any month/year):
@@ -92,6 +113,49 @@ class PayCycleService
 
         // Fallback: treat provided date as anchor.
         return $this->buildCompanyDefaultPreview($ref);
+    }
+
+    /**
+     * Build a pay-cycle preview by anchoring to a selected pay date.
+     * Used when the UI treats `reference_date` as the *actual pay date* (Finalize Payroll / Generate Payslip flows).
+     *
+     * @return array<string, mixed>
+     */
+    public function buildCyclePreviewFromPayDate(PayCycle $cycle, Carbon|string $payDate): array
+    {
+        $ref = $payDate instanceof Carbon
+            ? $payDate->copy()->setTimezone($this->timezone())->startOfDay()
+            : Carbon::parse((string) $payDate, $this->timezone())->startOfDay();
+
+        $rule = (string) data_get($cycle->metadata, 'weekend_adjustment_rule', PayCycle::WEEKEND_ADJUST_PREVIOUS_FRIDAY);
+        $desired = app(PayrollCalculatorService::class)->adjustForWeekend($ref->copy(), $rule)->startOfDay();
+        $desiredStr = $desired->toDateString();
+
+        $candidates = [
+            $desired->copy(),
+            $desired->copy()->subDays(10),
+            $desired->copy()->subDays(20),
+            $desired->copy()->subMonthNoOverflow(),
+            $desired->copy()->addDays(10),
+            $desired->copy()->addDays(20),
+            $desired->copy()->addMonthNoOverflow(),
+        ];
+
+        foreach ($candidates as $anchor) {
+            $preview = $this->buildCyclePreview($cycle, $anchor);
+            if (($preview['pay_date'] ?? null) === $desiredStr) {
+                // UI contract: reference_date is the pay date.
+                $preview['reference_date'] = $desiredStr;
+
+                return $preview;
+            }
+        }
+
+        // Fallback: treat the desired pay date as anchor and still force reference_date=pay_date.
+        $preview = $this->buildCyclePreview($cycle, $desired);
+        $preview['reference_date'] = $desiredStr;
+
+        return $preview;
     }
 
     public function supportsDefaultFlag(): bool
@@ -379,6 +443,38 @@ class PayCycleService
             'as_of_date' => $asOf->toDateString(),
             'next_dates' => $selected->pluck('pay_date')->filter()->values()->all(),
             'periods' => $selected->values()->all(),
+        ];
+    }
+
+    /**
+     * Compute the correct pay date for arbitrary custom from/to dates using the PH semi-monthly rule.
+     *
+     * Rule:
+     *   - 11–25 cut-off → pay date = last calendar day of the month containing the cut-off end
+     *   - 26–10 cut-off → pay date = 15th of the month containing the cut-off end
+     *   - Weekend adjustment: Saturday/Sunday → previous Friday
+     *
+     * @return array{
+     *   pay_date: string,
+     *   weekend_adjusted: bool,
+     *   weekend_adjustment_note: string|null,
+     *   semi_month_segment: 'first'|'second'
+     * }
+     */
+    public function getPayDateForCustomPeriod(Carbon|string $startDate, Carbon|string $endDate): array
+    {
+        $start = $this->normalizeDate($startDate);
+        $end = $this->normalizeDate($endDate);
+
+        $result = $this->computePayDateForPeriod($start, $end);
+
+        return [
+            'pay_date' => $result['pay_date']->toDateString(),
+            'weekend_adjusted' => $result['weekend_adjusted'],
+            'weekend_adjustment_note' => $result['weekend_adjusted']
+                ? 'Weekend adjustment applied: pay dates landing on Saturday or Sunday move to the previous Friday.'
+                : null,
+            'semi_month_segment' => $this->inferSemiMonthSegment($start, $end),
         ];
     }
 
@@ -739,6 +835,109 @@ class PayCycleService
     }
 
     /**
+     * Compute the correct pay date for a given cut-off period using the canonical PH semi-monthly rule:
+     *   - First pay date:  15th of the month (weekend-adjusted to previous Friday)
+     *   - Second pay date: Last calendar day of the month (28/29/30/31) (weekend-adjusted to previous Friday)
+     *
+     * Works for any year (leap years, varying month lengths).
+     *
+     * @return array{pay_date: Carbon, unadjusted_pay_date: Carbon, weekend_adjusted: bool}
+     */
+    public function computePayDateForPeriod(Carbon $cutOffStart, Carbon $cutOffEnd): array
+    {
+        $segment = $this->inferSemiMonthSegment($cutOffStart, $cutOffEnd);
+
+        if ($segment === 'first') {
+            $unadjusted = $cutOffEnd->copy()->startOfMonth()->day(15)->startOfDay();
+        } else {
+            $unadjusted = $cutOffEnd->copy()->endOfMonth()->startOfDay();
+        }
+
+        $payDate = app(PayrollCalculatorService::class)->adjustForWeekend(
+            $unadjusted,
+            PayCycle::WEEKEND_ADJUST_PREVIOUS_FRIDAY
+        );
+
+        return [
+            'pay_date' => $payDate,
+            'unadjusted_pay_date' => $unadjusted,
+            'weekend_adjusted' => ! $payDate->isSameDay($unadjusted),
+        ];
+    }
+
+    /**
+     * Get correct pay dates for a company-default period (no pay cycle template).
+     *
+     * @return array{
+     *   reference_date: string,
+     *   cut_off_start_date: string,
+     *   cut_off_end_date: string,
+     *   pay_date: string,
+     *   cycle_label: string,
+     *   weekend_adjusted: bool,
+     *   weekend_adjustment_note: string|null,
+     *   semi_month_segment: 'first'|'second'
+     * }
+     */
+    public function getCompanyDefaultPayDates(?int $companyId, int $year, int $month, string $segment = 'second'): array
+    {
+        if ($segment === 'second') {
+            $start = Carbon::create($year, $month, 11)->startOfDay();
+            $end = Carbon::create($year, $month, 25)->startOfDay();
+            $unadjusted = Carbon::create($year, $month, 1)->endOfMonth()->startOfDay();
+        } else {
+            $prevMonth = Carbon::create($year, $month, 1)->subMonthNoOverflow();
+            $start = $prevMonth->copy()->day(26)->startOfDay();
+            $end = Carbon::create($year, $month, 10)->startOfDay();
+            $unadjusted = Carbon::create($year, $month, 15)->startOfDay();
+        }
+
+        $payDate = app(PayrollCalculatorService::class)->adjustForWeekend(
+            $unadjusted,
+            PayCycle::WEEKEND_ADJUST_PREVIOUS_FRIDAY
+        );
+
+        $cycleLabel = sprintf(
+            '%s %s, %s – %s %s, %s',
+            $start->format('F'), $start->format('j'), $start->format('Y'),
+            $end->format('F'), $end->format('j'), $end->format('Y'),
+        );
+
+        return [
+            'reference_date' => $payDate->toDateString(),
+            'cut_off_start_date' => $start->toDateString(),
+            'cut_off_end_date' => $end->toDateString(),
+            'pay_date' => $payDate->toDateString(),
+            'cycle_label' => $cycleLabel,
+            'weekend_adjusted' => ! $payDate->isSameDay($unadjusted),
+            'weekend_adjustment_note' => ! $payDate->isSameDay($unadjusted)
+                ? 'Weekend adjustment applied: pay dates landing on Saturday or Sunday move to the previous Friday.'
+                : null,
+            'semi_month_segment' => $segment,
+        ];
+    }
+
+    /**
+     * Infer whether a cut-off window is the 'first' (26–10 → 15th pay) or 'second' (11–25 → month-end pay) segment.
+     *
+     * @return 'first'|'second'
+     */
+    public function inferSemiMonthSegment(Carbon $cutOffStart, Carbon $cutOffEnd): string
+    {
+        $startDay = (int) $cutOffStart->day;
+        $endDay = (int) $cutOffEnd->day;
+
+        if ($startDay >= 11 && $endDay >= 20 && $endDay <= 25) {
+            return 'second';
+        }
+        if ($startDay >= 26 || $endDay <= 15) {
+            return 'first';
+        }
+
+        return $endDay <= 15 ? 'first' : 'second';
+    }
+
+    /**
      * @return array{
      *   start: Carbon,
      *   end: Carbon,
@@ -761,7 +960,6 @@ class PayCycleService
             $unadjustedPay = $end->copy()->day(15)->startOfDay();
             $segment = 'first';
         } else {
-            // day 1–10 belongs to prior month 26–10 window.
             $end = $anchor->copy()->day(10)->startOfDay();
             $start = $anchor->copy()->subMonthNoOverflow()->startOfMonth()->day(26)->startOfDay();
             $unadjustedPay = $end->copy()->day(15)->startOfDay();
