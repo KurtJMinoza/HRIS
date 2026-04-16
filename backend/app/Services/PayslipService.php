@@ -435,7 +435,10 @@ class PayslipService
     {
         $gen = $this->computePayslipGenerationData($employee, $periodInput);
         $attrs = $gen['attributes'];
-        $snapshot = is_array($attrs['snapshot'] ?? null) ? $attrs['snapshot'] : [];
+        $snapshotRaw = is_array($attrs['snapshot'] ?? null) ? $attrs['snapshot'] : [];
+        // Keep preview data on the same normalization path used by PDF generation.
+        // This guarantees identical Units/Amount rendering between modal preview and PDF output.
+        $snapshot = $this->normalizeSnapshotForPayslipPdf($snapshotRaw);
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
             ? array_values($summary['daily_computation_earning_lines'])
@@ -1017,11 +1020,25 @@ class PayslipService
             }
             $label = trim((string) ($row['label'] ?? ''));
             $amt = (float) ($row['amount'] ?? 0);
+            $minutesWorkedRaw = $row['minutes_worked'] ?? null;
+            $minutesWorked = is_numeric($minutesWorkedRaw) ? (int) round((float) $minutesWorkedRaw) : null;
+            $hourlyRateRaw = $row['hourly_rate'] ?? null;
+            $hourlyRate = is_numeric($hourlyRateRaw) ? (float) $hourlyRateRaw : null;
             $unitsRaw = $row['units'] ?? null;
             $unitsStr = $unitsRaw === null || $unitsRaw === '' ? null : trim((string) $unitsRaw);
-            // Payslip preview/PDF requirement: hide non-positive line items.
-            // Schedule-aware inclusion (15th/30th/both) is resolved upstream in payroll computation.
+            if (($minutesWorked === null || $minutesWorked <= 0) && $unitsStr !== null && $unitsStr !== '') {
+                $minutesWorked = $this->parseLegacyUnitsToMinutes($unitsStr);
+            }
             $lineKey = strtolower(trim((string) ($row['key'] ?? '')));
+
+            // Regular-pay lines use day-split display ("X days, Y hrs Z mins") because
+            // they span multiple work days. All other lines use simple "X hrs Y mins".
+            $usesDaySplitUnits = str_contains($lineKey, 'regular_pay');
+            $formatted = $this->formatUnitsAndAmount($minutesWorked, $hourlyRate);
+            $unitsFromMinutes = $usesDaySplitUnits
+                ? ($this->formatPayslipUnitsFromMinutes($minutesWorked) ?? $formatted['units'])
+                : $formatted['units'];
+            $amountFromMinutes = $formatted['amount'];
             $lineLabel = strtolower($label);
             $isWithholdingLine = str_contains($lineKey, 'withholding')
                 || str_contains($lineKey, 'wht')
@@ -1048,8 +1065,10 @@ class PayslipService
             $out[] = [
                 'key' => isset($row['key']) ? (string) $row['key'] : '',
                 'label' => $label,
-                'amount' => $amt,
-                'units' => ($unitsStr !== null && $unitsStr !== '') ? $this->sanitizePayslipText($unitsStr) : null,
+                'amount' => $amountFromMinutes ?? $amt,
+                'units' => $unitsFromMinutes ?: (($unitsStr !== null && $unitsStr !== '') ? $this->sanitizePayslipText($unitsStr) : null),
+                'minutes_worked' => $minutesWorked,
+                'hourly_rate' => $hourlyRate,
             ];
         }
 
@@ -1103,6 +1122,124 @@ class PayslipService
         }
 
         return substr($text, 0, 500);
+    }
+
+    /**
+     * Convert minutes to "X days, Y hrs Z mins" using 8 hours/day.
+     * Omits zero-valued day/hour segments for cleaner display.
+     */
+    private function formatPayslipUnitsFromMinutes(?int $minutesWorked): ?string
+    {
+        if ($minutesWorked === null || $minutesWorked <= 0) {
+            return null;
+        }
+        $minutesPerDay = 8 * 60;
+        $days = intdiv($minutesWorked, $minutesPerDay);
+        $remaining = $minutesWorked % $minutesPerDay;
+        $hours = intdiv($remaining, 60);
+        $minutes = $remaining % 60;
+
+        $dayPart = $days > 0 ? $days.' '.($days === 1 ? 'day' : 'days') : null;
+        $minLabel = $minutes === 1 ? 'min' : 'mins';
+        $timePart = null;
+        if ($hours > 0 && $minutes > 0) {
+            $timePart = $hours.' '.($hours === 1 ? 'hr' : 'hrs').' '.$minutes.' '.$minLabel;
+        } elseif ($hours > 0) {
+            $timePart = $hours.' '.($hours === 1 ? 'hr' : 'hrs');
+        } elseif ($minutes > 0) {
+            $timePart = $minutes.' '.$minLabel;
+        }
+
+        if ($dayPart !== null && $timePart !== null) {
+            return $dayPart.', '.$timePart;
+        }
+
+        return $dayPart ?? $timePart;
+    }
+
+    /**
+     * Unified minute-based formatter for both preview payload and PDF snapshot normalization.
+     *
+     * All unit display and amount computation is based on **total minutes** to avoid
+     * floating-point errors from hours-based arithmetic.
+     *
+     * Rules:
+     * - Units: integer arithmetic only → "X hr(s) Y min(s)" (uses {@see formatPayslipUnitsFromMinutes}
+     *   for regular-pay lines where day-split is appropriate).
+     * - Amount: `round((totalMinutes / 60) * hourlyRate, 2)` — single rounding at the end.
+     *
+     * @return array{units: ?string, amount: ?float}
+     */
+    private function formatUnitsAndAmount(?int $totalMinutes, ?float $hourlyRate): array
+    {
+        if ($totalMinutes === null || $totalMinutes <= 0) {
+            return ['units' => null, 'amount' => null];
+        }
+
+        $hours = (int) floor($totalMinutes / 60);
+        $minutes = $totalMinutes % 60;
+
+        $unitString = '';
+        if ($hours > 0) {
+            $unitString .= $hours.' '.($hours > 1 ? 'hrs' : 'hr').' ';
+        }
+        if ($minutes > 0) {
+            $unitString .= $minutes.' '.($minutes > 1 ? 'mins' : 'min');
+        }
+        $units = trim($unitString) ?: '0 mins';
+
+        if ($hourlyRate === null || ! is_finite($hourlyRate) || $hourlyRate <= 0) {
+            return ['units' => $units, 'amount' => null];
+        }
+
+        $amount = round(($totalMinutes / 60.0) * $hourlyRate, 2);
+
+        return [
+            'units' => $units,
+            'amount' => $amount,
+        ];
+    }
+
+    /**
+     * Parse legacy unit strings into total minutes.
+     *
+     * Supported formats:
+     *  - "1.2 days" → 1.2 × 8 × 60
+     *  - "2 hrs 30 mins" / "2 hr 30 min" → 2×60 + 30
+     *  - "45 mins" / "45 min" → 45
+     *  - "3 hrs" / "3 hr" → 180
+     */
+    private function parseLegacyUnitsToMinutes(string $units): ?int
+    {
+        $raw = trim($units);
+        if ($raw === '') {
+            return null;
+        }
+
+        if (preg_match('/^(\d+(?:\.\d+)?)\s*days?$/i', $raw, $m)) {
+            $days = (float) $m[1];
+
+            return $days > 0 ? (int) round($days * 8 * 60) : null;
+        }
+
+        $hours = 0;
+        $mins = 0;
+        $matched = false;
+        if (preg_match('/(\d+)\s*hrs?/i', $raw, $hm)) {
+            $hours = (int) $hm[1];
+            $matched = true;
+        }
+        if (preg_match('/(\d+)\s*mins?/i', $raw, $mm)) {
+            $mins = (int) $mm[1];
+            $matched = true;
+        }
+        if ($matched) {
+            $total = $hours * 60 + $mins;
+
+            return $total > 0 ? $total : null;
+        }
+
+        return null;
     }
 
     /** Max rows logged per table array (full structure); larger lists log head/tail only. */

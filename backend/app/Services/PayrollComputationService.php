@@ -947,7 +947,9 @@ class PayrollComputationService
                 if ($component === '' || $amount <= 0) {
                     continue;
                 }
-                $dailyBreakdownTotals[$component] = round((float) ($dailyBreakdownTotals[$component] ?? 0) + $amount, 2);
+                // Accumulate exact (unrounded) amounts to avoid compounding rounding errors across days.
+                // The per-line round(…, 2) happens once below when writing the earning line.
+                $dailyBreakdownTotals[$component] = (float) ($dailyBreakdownTotals[$component] ?? 0) + $amount;
                 $mins = (int) ($entry['minutes'] ?? 0);
                 $dailyBreakdownMinutes[$component] = ($dailyBreakdownMinutes[$component] ?? 0) + $mins;
                 if ($mins > 0) {
@@ -990,33 +992,21 @@ class PayrollComputationService
         // mislabels rows (e.g. "5 days" while amount is 4 × daily rate). Derive day-equivalent from amount ÷ daily rate.
         $dailyComputationEarningLines = collect($dailyBreakdownTotals)
             ->map(function (float $amount, string $component) use ($componentLabelMap, $componentSortRank, $dailyBreakdownMinutes, $dailyBreakdownDays, $dailyRate, $attendanceDisplaySummary): array {
-                $mins = $dailyBreakdownMinutes[$component] ?? 0;
-                $dayCount = $dailyBreakdownDays[$component] ?? 0;
-                $hours = round($mins / 60, 2);
-                // Pick the most meaningful unit label per component type.
+                $mins = (int) ($dailyBreakdownMinutes[$component] ?? 0);
+                $dayCount = (int) ($dailyBreakdownDays[$component] ?? 0);
+
+                // Minute-based components leave units = null; the single downstream formatter
+                // (PayslipService::formatUnitsAndAmount) derives the canonical display string
+                // from minutes_worked. Day-count components keep their day-based label.
+
                 if ($component === 'regular_pay') {
                     $units = null;
-                    if ($amount > 0 && $dailyRate > 0) {
-                        $regularRateDays = (int) ($attendanceDisplaySummary['working_days_count'] ?? 0);
-                        $expectedWholeDays = $regularRateDays > 0 ? round($regularRateDays * $dailyRate, 2) : 0.0;
-                        // Prefer whole-day count from attendance summary when it matches the line amount (avoids
-                        // off-by-one from amount ÷ daily rate when rates were rounded per day).
-                        if ($regularRateDays > 0 && abs($amount - $expectedWholeDays) < 0.08) {
-                            $units = $regularRateDays.' '.($regularRateDays === 1 ? 'day' : 'days');
-                        } else {
-                            $equivDays = round($amount / $dailyRate, 2);
-                            if ($equivDays > 0) {
-                                $nearestWhole = (int) round($equivDays);
-                                $units = abs($equivDays - $nearestWhole) < 0.02
-                                    ? $nearestWhole.' days'
-                                    : number_format($equivDays, 1).' days';
-                            }
-                        }
+                    if ($mins <= 0 && $amount > 0 && $dailyRate > 0) {
+                        $hourlyRate = $dailyRate / 8.0;
+                        $mins = $hourlyRate > 0 ? (int) round(($amount / $hourlyRate) * 60) : 0;
                     }
-                } elseif (in_array($component, ['ot_pay', 'overtime_premium'], true)) {
-                    $units = $hours > 0 ? ($hours == (int) $hours ? ((int) $hours).' hrs' : number_format($hours, 2).' hrs') : null;
-                } elseif (in_array($component, ['nd_pay', 'night_diff'], true)) {
-                    $units = $hours > 0 ? ($hours == (int) $hours ? ((int) $hours).' hrs' : number_format($hours, 2).' hrs') : null;
+                } elseif (in_array($component, ['ot_pay', 'overtime_premium', 'nd_pay', 'night_diff'], true)) {
+                    $units = null;
                 } elseif ($component === 'holiday_premium') {
                     $units = $dayCount > 0 ? $dayCount.' '.($dayCount === 1 ? 'day' : 'days') : null;
                 } elseif (in_array($component, ['paid_leave', 'paid_leave_daily_flat'], true)) {
@@ -1025,11 +1015,24 @@ class PayrollComputationService
                     $units = null;
                 }
 
+                // Effective hourly rate: derive from unrounded accumulated amount and exact total
+                // minutes so that downstream (totalMinutes / 60) * hourlyRate reproduces the
+                // original amount without precision loss from per-day rounding artifacts.
+                $effectiveHourlyRate = $mins > 0 ? ((float) $amount * 60.0) / (float) $mins : null;
+
+                // Canonical amount: recompute from exact minutes × effective rate, rounded once.
+                // This eliminates drift from summing individually-rounded per-day amounts.
+                $canonicalAmount = ($effectiveHourlyRate !== null && $mins > 0)
+                    ? round(($mins / 60.0) * $effectiveHourlyRate, 2)
+                    : round($amount, 2);
+
                 return [
                     'key' => 'daily:'.$component,
                     'label' => $componentLabelMap[$component] ?? Str::headline(str_replace('_', ' ', $component)),
-                    'amount' => round($amount, 2),
+                    'amount' => $canonicalAmount,
                     'units' => $units,
+                    'minutes_worked' => $mins,
+                    'hourly_rate' => $effectiveHourlyRate,
                     '_sort' => $componentSortRank[$component] ?? 999,
                 ];
             })
