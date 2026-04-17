@@ -928,18 +928,14 @@ export default function AdminDashboard() {
             <Motion.div key={key} variants={itemVariants} whileHover={{ y: -3, scale: 1.02, transition: { duration: 0.15, ease: 'easeOut' } }}>
               <Card
                 className={[
-                  'relative gap-5 overflow-hidden shadow-md transition-all duration-200',
+                  'relative gap-0 overflow-hidden shadow-sm transition-all duration-200',
                   'dark:bg-white/4 dark:backdrop-blur-sm',
                   isLateAlert
-                    ? 'bg-card/95 border-2 border-red-500/60 shadow-red-500/10 ring-1 ring-red-500/25 dark:border-red-500/50 dark:shadow-red-500/20'
-                    : `bg-card/95 border border-border/70 ring-1 ring-black/0 hover:ring-black/5 hover:shadow-xl ${meta.border} ${meta.hoverShadow ?? ''} dark:border-white/10 dark:hover:border-white/20`,
+                    ? 'bg-card/95 border-2 border-border/80 ring-0 hover:border-border hover:shadow-md dark:bg-card/90 dark:border-white/20 dark:hover:border-white/30'
+                    : `bg-card/95 border-2 border-border/80 ring-0 hover:border-border hover:shadow-md dark:bg-card/90 dark:border-white/20 dark:hover:border-white/30 ${meta.hoverShadow ?? ''}`,
                 ].join(' ')}
               >
-              <div
-                className={`pointer-events-none absolute inset-0 bg-linear-to-br opacity-80 ${isLateAlert ? 'from-red-500/20 via-red-500/5 to-transparent' : meta.gradient}`}
-                aria-hidden="true"
-              />
-              <CardHeader className="relative z-10 flex flex-row items-center justify-between space-y-0 pb-0 pt-0">
+              <CardHeader className="relative z-10 flex flex-row items-center justify-between space-y-0 px-5 pb-1 pt-5">
                 <CardTitle className={`mb-0 text-sm font-medium uppercase tracking-[0.08em] ${isLateAlert ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'}`}>
                   {label}
                 </CardTitle>
@@ -947,7 +943,7 @@ export default function AdminDashboard() {
                   <Icon className={`size-4 ${isLateAlert ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground/90'}`} />
                 </div>
               </CardHeader>
-              <CardContent className="relative z-10 pt-0">
+              <CardContent className="relative z-10 px-5 pb-5 pt-1">
                 <div className="flex items-baseline justify-between gap-3">
                   <div className={`text-5xl font-bold tabular-nums leading-none tracking-tight @md:text-[56px] ${isLateAlert ? 'text-red-600 dark:text-red-400' : ''}`}>
                     <KpiValue value={value} />
@@ -990,21 +986,22 @@ export default function AdminDashboard() {
                     </span>
                   </div>
                 </div>
-                <div className="mt-5 h-8 w-full">
+                <div className="mt-6 h-8 w-full">
                   {miniSeries.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <div className="h-full w-full text-slate-500 dark:text-slate-300">
+                      <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={miniSeries} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
                         <defs>
                           <linearGradient id={`miniArea-${key}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="hsl(160 84% 39%)" stopOpacity={0.7} />
-                            <stop offset="100%" stopColor="hsl(160 84% 39%)" stopOpacity={0.05} />
+                            <stop offset="0%" stopColor="currentColor" stopOpacity={0.12} />
+                            <stop offset="100%" stopColor="currentColor" stopOpacity={0.01} />
                           </linearGradient>
                         </defs>
                         <Area
                           type="monotone"
                           dataKey="value"
-                          stroke="hsl(160 84% 39%)"
-                          strokeWidth={1.5}
+                          stroke="currentColor"
+                          strokeWidth={1.1}
                           fill={`url(#miniArea-${key})`}
                           isAnimationActive
                           animationDuration={500}
@@ -1012,6 +1009,7 @@ export default function AdminDashboard() {
                         />
                       </AreaChart>
                     </ResponsiveContainer>
+                    </div>
                   ) : (
                     <div className="h-full rounded-md bg-muted/40" />
                   )}
