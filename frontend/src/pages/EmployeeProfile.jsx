@@ -1031,7 +1031,7 @@ export default function EmployeeProfile() {
     enabled: Boolean(effectiveProfileId) && activeTab === 'salary' && canViewPayrollHistory,
     staleTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
-    queryFn: () => getPayrollPeriodsForEmployee(effectiveProfileId, { per_page: 6 }),
+    queryFn: () => getPayrollPeriodsForEmployee(effectiveProfileId, { per_page: 6, finalized_only: true }),
   })
 
   useEffect(() => {

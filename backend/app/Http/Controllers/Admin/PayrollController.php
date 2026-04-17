@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\PayCycle;
+use App\Models\PayrollBatchRun;
 use App\Models\PayrollPeriod;
 use App\Models\User;
 use App\Services\DataScopeService;
@@ -122,6 +123,7 @@ class PayrollController extends Controller
     public function periods(Request $request): JsonResponse
     {
         $perPage = max(1, min(20, (int) $request->integer('per_page', 6)));
+        $finalizedOnly = $request->boolean('finalized_only', false);
         $query = PayrollPeriod::query()
             // Keep list endpoint lightweight: avoid selecting large JSON/audit blobs.
             ->select([
@@ -151,7 +153,29 @@ class PayrollController extends Controller
             $query->where('from_date', '<=', $request->string('to_date'));
         }
 
-        $periods = $query->orderByDesc('created_at')->paginate($perPage);
+        if ($finalizedOnly) {
+            // Salary tab history: include only payroll periods that belong to finalized payroll batch runs.
+            // This excludes draft/queued/processing/failed runs.
+            $query->whereExists(function ($sub) {
+                $sub->selectRaw('1')
+                    ->from('payroll_batch_runs')
+                    ->whereColumn('payroll_batch_runs.payroll_period_id', 'payroll_periods.id')
+                    ->where('payroll_batch_runs.status', PayrollBatchRun::STATUS_FINALIZED);
+            });
+        }
+
+        $periods = $query
+            ->orderByDesc('pay_date')
+            ->orderByDesc('created_at')
+            ->paginate($perPage);
+
+        if ($finalizedOnly) {
+            $periods->getCollection()->transform(function ($period) {
+                $period->status = 'finalized';
+
+                return $period;
+            });
+        }
 
         return response()->json($periods);
     }

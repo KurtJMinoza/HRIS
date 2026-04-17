@@ -2146,7 +2146,7 @@ export default function AdminEmployeeProfile() {
     let cancelled = false
     setPayrollPeriodsLoading(true)
     setPayrollPeriodsError('')
-    getPayrollPeriodsForEmployee(employee.id, { per_page: 6 })
+    getPayrollPeriodsForEmployee(employee.id, { per_page: 6, finalized_only: true })
       .then((data) => {
         if (cancelled) return
         setPayrollPeriods(Array.isArray(data?.data) ? data.data : [])

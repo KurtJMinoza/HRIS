@@ -1469,7 +1469,7 @@ export async function getAdminDailyComputationLogs(params = {}) {
 /**
  * Paginated payroll periods for an employee (requires `payroll.view`).
  * @param {number|string} employeeId
- * @param {{ per_page?: number, page?: number }} [opts]
+ * @param {{ per_page?: number, page?: number, finalized_only?: boolean }} [opts]
  * @returns {Promise<{ data: any[], current_page?: number, last_page?: number, per_page?: number, total?: number }>}
  */
 export async function getPayrollPeriodsForEmployee(employeeId, opts = {}) {
@@ -1478,6 +1478,7 @@ export async function getPayrollPeriodsForEmployee(employeeId, opts = {}) {
   const payrollPerPage = normalizePerPage(opts.per_page)
   if (payrollPerPage != null) q.set('per_page', String(payrollPerPage))
   if (opts.page != null) q.set('page', String(opts.page))
+  if (opts.finalized_only === true) q.set('finalized_only', '1')
   const res = await authenticatedFetch(`/admin/payroll/periods?${q.toString()}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load payroll history')

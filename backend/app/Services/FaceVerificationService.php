@@ -645,7 +645,8 @@ class FaceVerificationService
                 'id', 'name', 'email', 'role', 'is_active',
                 'face_status', 'face_descriptor', 'face_descriptor_samples',
                 'face_embedding', 'face_registered_at',
-                'profile_image', 'profile_image_url',
+                // `profile_image` only — `profile_image_url` is an appended accessor, not a DB column.
+                'profile_image',
                 'updated_at',
             ])
             ->get();
