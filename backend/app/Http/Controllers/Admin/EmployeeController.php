@@ -27,10 +27,13 @@ use App\Services\RbacService;
 use App\Services\ScheduleRateService;
 use App\Support\LeaveScheduleSupport;
 use App\Support\ManagementRole;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
@@ -1674,53 +1677,114 @@ class EmployeeController extends Controller
                 return response()->json(['message' => 'Face descriptor must be 128 dimensions.'], 422);
             }
             $descriptorArray = array_values(array_map('floatval', $descriptor));
-            $existingOwner = FaceVerificationService::findExistingOwnerOfFace($descriptorArray, $employee->id);
-            if ($existingOwner !== null) {
-                DuplicateFaceRegistrationAttempt::create([
-                    'attempted_for_user_id' => $employee->id,
-                    'existing_user_id' => $existingOwner->id,
-                    'ip_address' => $request->ip(),
-                    'user_agent' => $request->userAgent(),
+
+            $outcome = ['status' => 'pending'];
+            $userLock = Cache::lock('face-registration-user:'.$employee->id, 60);
+
+            try {
+                $userLock->block(20, function () use ($request, $employee, $descriptorArray, $faceImage, &$outcome): void {
+                    Cache::lock('face-registration-dup-global', 20)->block(10, function () use ($request, $employee, $descriptorArray, $faceImage, &$outcome): void {
+                        DB::transaction(function () use ($request, $employee, $descriptorArray, $faceImage, &$outcome): void {
+                            $locked = User::query()->whereKey($employee->id)->lockForUpdate()->first();
+                            if (! $locked) {
+                                $outcome = ['status' => 'not_found'];
+
+                                return;
+                            }
+
+                            $dupResult = FaceVerificationService::findExistingOwnerOfFaceWithDetails(
+                                $descriptorArray,
+                                $locked->id,
+                                (bool) config('attendance.face_duplicate_registration_force_full_db_scan', true)
+                            );
+                            if ($dupResult !== null) {
+                                $existingOwner = $dupResult['user'];
+                                DuplicateFaceRegistrationAttempt::create([
+                                    'attempted_for_user_id' => $locked->id,
+                                    'existing_user_id' => $existingOwner->id,
+                                    'similarity_score' => $dupResult['similarity_score'] ?? null,
+                                    'detection_method' => $dupResult['detection_method'] ?? null,
+                                    'ip_address' => $request->ip(),
+                                    'user_agent' => $request->userAgent(),
+                                ]);
+                                $outcome = ['status' => 'duplicate'];
+
+                                return;
+                            }
+
+                            $samples = $locked->face_descriptor_samples;
+                            if (! is_array($samples)) {
+                                $samples = [];
+                            }
+                            $maxSamples = (int) config('attendance.face_samples_max', 10);
+                            $samples[] = $descriptorArray;
+                            $samples = array_slice($samples, -$maxSamples);
+                            $primaryEmbedding = json_encode($samples[0]);
+                            $locked->face_descriptor = $primaryEmbedding;
+                            $locked->face_embedding = $primaryEmbedding;
+                            $locked->face_descriptor_samples = $samples;
+                            $locked->face_image = $faceImage;
+                            $locked->face_registered_at = now();
+                            $locked->face_status = 'registered';
+                            $locked->face_liveness_type = 'manual_descriptor';
+                            $locked->save();
+
+                            UserAdminActivityLog::query()->create([
+                                'subject_user_id' => $locked->id,
+                                'actor_user_id' => $request->user()?->id,
+                                'action' => 'face_registered',
+                                'meta' => [
+                                    'channel' => 'admin_manual',
+                                    'liveness_type' => 'manual_descriptor',
+                                ],
+                                'ip_address' => $request->ip(),
+                            ]);
+
+                            $outcome = ['status' => 'ok'];
+                        });
+                    });
+                });
+            } catch (LockTimeoutException $e) {
+                Log::warning('Admin updateFace lock timeout', [
+                    'employee_id' => $employee->id,
+                    'message' => $e->getMessage(),
                 ]);
 
+                return response()->json([
+                    'message' => 'Face registration is taking longer than expected due to high traffic. Please wait a moment and try again.',
+                    'errors' => ['face' => ['Face registration is taking longer than expected due to high traffic. Please wait a moment and try again.']],
+                    'error_code' => 'registration_busy',
+                ], 423);
+            }
+
+            if (($outcome['status'] ?? '') === 'not_found') {
+                return response()->json(['message' => 'Employee not found.'], 404);
+            }
+            if (($outcome['status'] ?? '') === 'duplicate') {
                 return response()->json([
                     'message' => FaceVerificationService::duplicateRegistrationUserMessage(),
                     'errors' => ['face' => [FaceVerificationService::duplicateRegistrationUserMessage()]],
                     'error_code' => 'face_already_registered',
                 ], 422);
             }
-            $samples = $employee->face_descriptor_samples;
-            if (! is_array($samples)) {
-                $samples = [];
-            }
-            $maxSamples = (int) config('attendance.face_samples_max', 10);
-            $samples[] = array_values(array_map('floatval', $descriptor));
-            $samples = array_slice($samples, -$maxSamples);
-            $primaryEmbedding = json_encode($samples[0]);
-            $employee->face_descriptor = $primaryEmbedding;
-            $employee->face_embedding = $primaryEmbedding;
-            $employee->face_descriptor_samples = $samples;
-            $employee->face_image = $faceImage;
-            $employee->face_registered_at = now();
-            $employee->face_status = 'registered';
-            UserAdminActivityLog::query()->create([
-                'subject_user_id' => $employee->id,
-                'actor_user_id' => $request->user()?->id,
-                'action' => 'face_registered',
-                'meta' => [
-                    'channel' => 'admin_manual',
-                    'liveness_type' => 'manual_descriptor',
-                ],
-                'ip_address' => $request->ip(),
+
+            FaceVerificationService::bumpDuplicateEmbeddingIndexVersion();
+
+            return response()->json([
+                'message' => 'Face registered.',
+                'employee' => $this->employeeResponse(
+                    $employee->fresh(),
+                    $this->viewerCanSensitive($request->user()),
+                    false,
+                    false
+                ),
             ]);
-        } else {
-            $employee->clearFaceRegistrationData($request->user()?->id);
         }
 
-        $employee->save();
+        $employee->clearFaceRegistrationData($request->user()?->id);
 
         return response()->json([
-            'message' => $descriptor ? 'Face registered.' : 'Face removed.',
+            'message' => 'Face removed.',
             'employee' => $this->employeeResponse($employee->fresh(), $this->viewerCanSensitive($request->user()), false, false),
         ]);
     }

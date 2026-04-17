@@ -95,4 +95,11 @@ return [
         'base_url' => env('CALENDARIFIC_BASE_URL', 'https://calendarific.com/api/v2'),
     ],
 
+    // Browsershot / Chromium renderer for payslip PDFs
+    'browsershot' => [
+        'node_binary' => env('BROWSERSHOT_NODE_BINARY'),
+        'npm_binary' => env('BROWSERSHOT_NPM_BINARY'),
+        'chrome_path' => env('BROWSERSHOT_CHROME_PATH'),
+    ],
+
 ];

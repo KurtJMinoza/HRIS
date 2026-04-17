@@ -17,19 +17,27 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Face liveness + DeepFace embedding + duplicate check + DB write, serialized with locks to reduce races.
  *
  * Liveness runs before embedding in {@see FaceAuthService::verifyFaceWithLivenessSession()}.
+ *
+ * Requires a queue worker listening on the `face-registration` queue (see .env.example).
+ * The worker `--timeout` value should be greater than this job's `$timeout` (e.g. 90 seconds).
  */
 class ProcessFaceRegistrationJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 45;
+    /** Seconds before the worker kills this job (Rekognition + DeepFace + DB under load). */
+    public int $timeout = 60;
 
     public int $tries = 3;
+
+    /** Seconds to wait before each retry after a failure (see Laravel queue backoff). */
+    public int $backoff = 10;
 
     public function __construct(
         public string $trackId,
@@ -43,8 +51,41 @@ class ProcessFaceRegistrationJob implements ShouldQueue
         public string $channel,
     ) {}
 
+    /**
+     * After all retries are exhausted, ensure polling clients do not hang on "processing" forever.
+     */
+    public function failed(?Throwable $exception): void
+    {
+        Log::error('ProcessFaceRegistrationJob permanently failed after retries', [
+            'track_id' => $this->trackId,
+            'target_user_id' => $this->targetUserId,
+            'attempts' => $this->attempts(),
+            'exception' => $exception instanceof Throwable
+                ? $exception::class.': '.$exception->getMessage()
+                : null,
+        ]);
+
+        $state = FaceRegistrationStatusService::get($this->trackId);
+        $status = is_array($state) ? ($state['status'] ?? '') : '';
+        if (in_array($status, ['pending', 'processing'], true)) {
+            FaceRegistrationStatusService::fail(
+                $this->trackId,
+                'Face registration could not be completed. Ensure a queue worker is running for the face-registration queue, then try again.',
+                'job_failed'
+            );
+        }
+    }
+
     public function handle(): void
     {
+        Log::info('ProcessFaceRegistrationJob started', [
+            'track_id' => $this->trackId,
+            'target_user_id' => $this->targetUserId,
+            'channel' => $this->channel,
+            'has_liveness_session' => $this->livenessSessionId !== null,
+            'queue' => $this->queue,
+        ]);
+
         FaceRegistrationStatusService::markProcessing($this->trackId);
 
         $result = $this->livenessSessionId
@@ -52,6 +93,10 @@ class ProcessFaceRegistrationJob implements ShouldQueue
             : FaceAuthService::verifyFaceForRegistration((string) $this->imageBase64);
 
         if ($result === null) {
+            Log::warning('ProcessFaceRegistrationJob: face verification returned null (service down or timeout)', [
+                'track_id' => $this->trackId,
+                'target_user_id' => $this->targetUserId,
+            ]);
             FaceRegistrationStatusService::fail(
                 $this->trackId,
                 'Face verification service unavailable. Please ensure the Python face service is running.',
@@ -84,7 +129,9 @@ class ProcessFaceRegistrationJob implements ShouldQueue
         try {
             $userLock->block(20, function () use ($descriptor, $referenceImage, $result): void {
                 Cache::lock('face-registration-dup-global', 20)->block(10, function () use ($descriptor, $referenceImage, $result): void {
-                    DB::transaction(function () use ($descriptor, $referenceImage, $result): void {
+                    $bumpDuplicateIndex = false;
+                    $registeredOk = false;
+                    DB::transaction(function () use ($descriptor, $referenceImage, $result, &$bumpDuplicateIndex, &$registeredOk): void {
                         $user = User::query()->whereKey($this->targetUserId)->lockForUpdate()->first();
                         if (! $user) {
                             FaceRegistrationStatusService::fail($this->trackId, 'User not found.', 'not_found');
@@ -92,11 +139,20 @@ class ProcessFaceRegistrationJob implements ShouldQueue
                             return;
                         }
 
-                        $existingOwner = FaceVerificationService::findExistingOwnerOfFace($descriptor, $user->id);
-                        if ($existingOwner !== null) {
+                        // Anti-duplicate: full DB scan comparing cosine similarity (normalized + raw),
+                        // Euclidean distance, dual-signal band, and aggregate best-of-samples.
+                        $dupResult = FaceVerificationService::findExistingOwnerOfFaceWithDetails(
+                            $descriptor,
+                            $user->id,
+                            (bool) config('attendance.face_duplicate_registration_force_full_db_scan', true)
+                        );
+                        if ($dupResult !== null) {
+                            $existingOwner = $dupResult['user'];
                             DuplicateFaceRegistrationAttempt::create([
                                 'attempted_for_user_id' => $user->id,
                                 'existing_user_id' => $existingOwner->id,
+                                'similarity_score' => $dupResult['similarity_score'] ?? null,
+                                'detection_method' => $dupResult['detection_method'] ?? null,
                                 'ip_address' => $this->ipAddress,
                                 'user_agent' => $this->userAgent,
                             ]);
@@ -140,7 +196,18 @@ class ProcessFaceRegistrationJob implements ShouldQueue
                         ]);
 
                         FaceRegistrationStatusService::complete($this->trackId);
+                        $bumpDuplicateIndex = true;
+                        $registeredOk = true;
                     });
+                    if ($bumpDuplicateIndex) {
+                        FaceVerificationService::bumpDuplicateEmbeddingIndexVersion();
+                    }
+                    if ($registeredOk) {
+                        Log::info('ProcessFaceRegistrationJob succeeded', [
+                            'track_id' => $this->trackId,
+                            'target_user_id' => $this->targetUserId,
+                        ]);
+                    }
                 });
             });
         } catch (LockTimeoutException $e) {
@@ -151,13 +218,14 @@ class ProcessFaceRegistrationJob implements ShouldQueue
             ]);
             FaceRegistrationStatusService::fail(
                 $this->trackId,
-                'Face registration is taking longer than expected due to high traffic. Please retry in a moment or use QR code.',
+                'Face registration is taking longer than expected due to high traffic. Please wait a moment and try again.',
                 'registration_busy'
             );
         } catch (\Throwable $e) {
             Log::error('ProcessFaceRegistrationJob failed', [
                 'track_id' => $this->trackId,
                 'target_user_id' => $this->targetUserId,
+                'exception' => $e::class,
                 'message' => $e->getMessage(),
             ]);
             FaceRegistrationStatusService::fail($this->trackId, 'Face registration failed. Please try again.', 'job_failed');

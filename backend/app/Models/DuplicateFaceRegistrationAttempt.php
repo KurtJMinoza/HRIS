@@ -10,6 +10,8 @@ class DuplicateFaceRegistrationAttempt extends Model
     protected $fillable = [
         'attempted_for_user_id',
         'existing_user_id',
+        'similarity_score',
+        'detection_method',
         'ip_address',
         'user_agent',
     ];

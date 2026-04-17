@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react'
 import {
-  getAdminPayslipPdfBlob,
+  adminPreviewPayslipEmployeeBlob,
   getAdminPayslipViewData,
   getAdminPayslipViewPreviewData,
   getEmployeePayslipViewData,
-  getMyPayslipPdfBlob,
+  getPayslipDownloadBlob,
 } from '@/api'
 import PayslipHtmlDocument from '@/components/payslips/PayslipHtmlDocument'
 import { PAYSLIP_PAGE_PRINT_STYLES } from '@/components/payslips/payslipPrintStyles'
@@ -146,47 +146,68 @@ export default function AdminPayslipViewPage() {
   }, [data?.employee?.id, searchParams])
   const employeeCodeLabel = data?.employee?.employee_code || (payslipId ? `Payslip #${payslipId}` : '—')
 
+  const buildDraftDownloadPayload = useCallback(() => {
+    const employeeId = Number(
+      data?.employee?.id ??
+        searchParams.get('employee_id') ??
+        (typeof data?.employee_id !== 'undefined' ? data.employee_id : NaN),
+    )
+    if (!Number.isFinite(employeeId) || employeeId <= 0) return null
+
+    const payroll = data?.payroll ?? {}
+    const fromDate = payroll?.pay_period_start || searchParams.get('from_date') || null
+    const toDate = payroll?.pay_period_end || searchParams.get('to_date') || null
+    const payCycleRaw = payroll?.pay_cycle_id ?? searchParams.get('pay_cycle_id')
+    const payrollPeriodRaw = payroll?.payroll_period_id ?? searchParams.get('payroll_period_id')
+    const referenceDate = payroll?.pay_date || searchParams.get('reference_date') || null
+
+    return {
+      employee_id: employeeId,
+      from_date: fromDate,
+      to_date: toDate,
+      pay_cycle_id: payCycleRaw != null && String(payCycleRaw).trim() !== '' ? Number(payCycleRaw) : null,
+      reference_date: referenceDate,
+      payroll_period_id:
+        payrollPeriodRaw != null && String(payrollPeriodRaw).trim() !== '' ? Number(payrollPeriodRaw) : null,
+      is_final_pay: Boolean(payroll?.is_final_pay || searchParams.get('is_final_pay') === 'true'),
+      use_company_default: searchParams.get('use_company_default') === 'true',
+      password_protect: false,
+    }
+  }, [data, searchParams])
+
   const exportPdf = useCallback(async () => {
     if (downloading) return
 
-    if (payslipId) {
-      setDownloading(true)
-      try {
-        const blob = employeeSelfServiceView ? await getMyPayslipPdfBlob(payslipId) : await getAdminPayslipPdfBlob(payslipId)
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `payslip-${payslipId}.pdf`
-        a.click()
-        URL.revokeObjectURL(url)
-      } catch (e) {
-        toast({ title: 'Export failed', description: e.message || 'Unable to export payslip PDF.', variant: 'destructive' })
-      } finally {
-        setDownloading(false)
-      }
-      return
-    }
+    const targetId = payslipId || data?.payslip_id
+    setDownloading(true)
+    try {
+      let blob
+      let downloadName = targetId ? `payslip-${targetId}.pdf` : 'payslip-draft-preview.pdf'
 
-    if (isPreviewMode && data?.payslip_id) {
-      setDownloading(true)
-      try {
-        const blob = await getAdminPayslipPdfBlob(data.payslip_id)
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `payslip-preview-${data.payslip_id}.pdf`
-        a.click()
-        URL.revokeObjectURL(url)
-      } catch (e) {
-        toast({ title: 'Export failed', description: e.message || 'Unable to export payslip PDF.', variant: 'destructive' })
-      } finally {
-        setDownloading(false)
+      if (targetId) {
+        blob = await getPayslipDownloadBlob(targetId)
+      } else {
+        const payload = buildDraftDownloadPayload()
+        if (!payload) {
+          throw new Error('Unable to resolve draft preview context for PDF generation.')
+        }
+        const res = await adminPreviewPayslipEmployeeBlob(payload)
+        blob = res.blob
+        downloadName = `payslip-draft-${payload.employee_id}.pdf`
       }
-      return
-    }
 
-    window.print()
-  }, [payslipId, downloading, toast, isPreviewMode, data?.payslip_id, employeeSelfServiceView])
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = downloadName
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      toast({ title: 'Export failed', description: e.message || 'Unable to export payslip PDF.', variant: 'destructive' })
+    } finally {
+      setDownloading(false)
+    }
+  }, [payslipId, downloading, toast, data?.payslip_id, buildDraftDownloadPayload])
 
   const printDocument = useCallback(() => {
     window.print()

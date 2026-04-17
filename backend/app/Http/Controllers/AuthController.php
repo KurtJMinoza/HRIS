@@ -573,6 +573,8 @@ class AuthController extends Controller
             'hr_roles' => array_map(fn (HrRole $r) => $r->value, $hrRolesList),
             'hr_roles_labels' => array_map(fn (HrRole $r) => $r->badgeLabel(), $hrRolesList),
             'can_file_leave_for_others' => $hrResolver->canFileLeaveForOthers($user),
+            /** True when user is company head, branch manager, or department head in org data (SPA routing; not the same as badge-only hr_role). */
+            'is_assigned_organization_head' => $hrResolver->isAssignedOrganizationHead($user),
             'is_super_admin' => (bool) $user->is_super_admin,
             'permissions' => $rbac->getPermissionsForUser($user)->values()->all(),
             'can_access_hr_panel' => $hr->canAccessHrPanel(),

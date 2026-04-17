@@ -50,24 +50,117 @@ class FaceVerificationService
     }
 
     /**
-     * Duplicate registration (cross-account): block only when cosine similarity is very high
-     * or Euclidean distance is very low — loose gates caused false "already registered" errors.
+     * Duplicate registration (cross-account): block when cosine similarity is high enough
+     * to indicate the same person. Multi-signal approach (cosine, Euclidean, dual-signal, aggregate)
+     * catches most cases; this is the primary per-row cosine gate.
      */
     private static function duplicateMinCosineSimilarity(): float
     {
         $v = config('attendance.face_duplicate_min_cosine_similarity');
 
-        return is_numeric($v)
+        $resolved = is_numeric($v)
             ? (float) $v
             : (float) config('attendance.face_duplicate_min_best_cosine_similarity', 0.85);
+
+        if (config('attendance.face_duplicate_enforce_registration_cosine_floor', true)) {
+            $floor = (float) config('attendance.face_duplicate_registration_cosine_floor', 0.80);
+
+            return max($resolved, $floor);
+        }
+
+        return $resolved;
     }
 
     /**
-     * Secondary duplicate rule: L2 distance on raw 128-D Facenet vectors (when cosine alone is ambiguous).
+     * Secondary duplicate rule: L2 distance on raw 128-D ArcFace vectors (when cosine alone is ambiguous).
      */
     private static function duplicateMaxEuclideanDistance(): float
     {
-        return (float) config('attendance.face_duplicate_max_euclidean', 0.4);
+        return (float) config('attendance.face_duplicate_max_euclidean', 0.65);
+    }
+
+    /**
+     * Duplicate rule: L2 distance between L2-normalized 128-D vectors (same geometry as cosine similarity).
+     * For unit vectors, distance d relates to cosine similarity as cos = 1 - d²/2 (small-angle regime).
+     */
+    private static function duplicateMaxEuclideanNormalized(): float
+    {
+        return (float) config('attendance.face_duplicate_max_euclidean_normalized', 0.55);
+    }
+
+    /**
+     * Extra duplicate rule: both cosine and raw Euclidean are in a "borderline same person" band.
+     * Catches pairs that miss the primary OR gates (e.g. cos 0.83 with euc 0.42) without loosening single-signal checks.
+     */
+    private static function duplicateDualSignalEnabled(): bool
+    {
+        return (bool) config('attendance.face_duplicate_dual_signal_enabled', true);
+    }
+
+    private static function duplicateDualCosineMin(): float
+    {
+        return (float) config('attendance.face_duplicate_dual_cosine_min', 0.80);
+    }
+
+    private static function duplicateDualMaxEuclidean(): float
+    {
+        return (float) config('attendance.face_duplicate_dual_max_euclidean', 0.65);
+    }
+
+    /**
+     * Aggregate best-across-all-samples threshold: if the BEST cosine similarity
+     * across ALL stored vectors for a single other user exceeds this, flag as duplicate.
+     * Lower than per-row gate because the "best sample" comparison is the most reliable signal.
+     */
+    private static function duplicateAggregateBestCosineMin(): float
+    {
+        return (float) config('attendance.face_duplicate_aggregate_best_cosine_min', 0.80);
+    }
+
+    /**
+     * Also check raw (un-normalized) cosine similarity. ArcFace vectors are not always
+     * unit-length; raw cosine can diverge from normalized cosine for high-norm vectors.
+     */
+    private static function duplicateRawCosineMin(): float
+    {
+        return (float) config('attendance.face_duplicate_raw_cosine_min', 0.80);
+    }
+
+    /**
+     * Strict cross-account duplicate: any of cosine-on-normalized, raw cosine, raw L2,
+     * or normalized L2 crosses threshold.
+     *
+     * @param  'sample'|'avg'  $kind
+     */
+    private static function duplicateRowMatchesIncoming(
+        float $cosineSim,
+        float $rawCosineSim,
+        float $rawEuclideanDistance,
+        float $normEuclideanDistance,
+        string $kind,
+        float $minCosSample,
+        float $minCosAvg,
+        float $maxEucPrimary,
+        float $maxEucNormPrimary
+    ): bool {
+        $cosineGate = $kind === 'avg' ? $minCosAvg : $minCosSample;
+
+        if ($cosineSim >= $cosineGate
+            || $rawCosineSim >= self::duplicateRawCosineMin()
+            || $rawEuclideanDistance <= $maxEucPrimary
+            || $normEuclideanDistance <= $maxEucNormPrimary) {
+            return true;
+        }
+        if (! self::duplicateDualSignalEnabled()) {
+            return false;
+        }
+
+        $dualCosMin = self::duplicateDualCosineMin();
+        $dualMaxEuc = self::duplicateDualMaxEuclidean();
+
+        return ($cosineSim >= $dualCosMin || $rawCosineSim >= $dualCosMin)
+            && ($rawEuclideanDistance <= $dualMaxEuc
+                || $normEuclideanDistance <= $maxEucNormPrimary);
     }
 
     /**
@@ -78,14 +171,87 @@ class FaceVerificationService
     {
         $v = config('attendance.face_duplicate_min_cosine_similarity_avg');
 
-        return is_numeric($v)
+        $resolved = is_numeric($v)
             ? (float) $v
             : self::duplicateMinCosineSimilarity();
+
+        if (config('attendance.face_duplicate_enforce_registration_cosine_floor', true)) {
+            $floor = (float) config('attendance.face_duplicate_registration_cosine_floor', 0.80);
+
+            return max($resolved, $floor);
+        }
+
+        return $resolved;
     }
 
     private static function duplicateNearMissLogMinSimilarity(): float
     {
         return (float) config('attendance.face_duplicate_near_miss_log_min_similarity', 0.72);
+    }
+
+    /**
+     * Bump after any face enrollment change so cached duplicate rows rebuild from the database.
+     */
+    public static function bumpDuplicateEmbeddingIndexVersion(): void
+    {
+        Cache::increment('face:dup-embedding-index-ver');
+    }
+
+    /**
+     * Base query for cross-account duplicate scans: any user row that may hold face embeddings (not limited by roster role).
+     */
+    private static function duplicateScanUserQuery(): Builder
+    {
+        return User::query()
+            ->where(function ($q) {
+                $q->where('face_status', 'registered')
+                    ->orWhereNotNull('face_descriptor_samples')
+                    ->orWhereNotNull('face_embedding')
+                    ->orWhereNotNull('face_descriptor');
+            });
+    }
+
+    /**
+     * Flattened duplicate-comparison rows for all users with a registered face (for caching).
+     *
+     * @return array<int, array{user_id: int, kind: 'sample'|'avg', vec: array<int, float>}>
+     */
+    private static function buildDuplicateEmbeddingIndexPayload(): array
+    {
+        $employees = self::duplicateScanUserQuery()->get();
+
+        $out = [];
+        foreach ($employees as $user) {
+            if (! $user->hasRegisteredFace()) {
+                continue;
+            }
+            $rows = self::duplicateComparisonRowsForUser($user);
+            // Do not truncate: duplicate index must include every stored sample row or the cache can miss a match.
+            foreach ($rows as $row) {
+                $out[] = [
+                    'user_id' => (int) $user->id,
+                    'kind' => $row['kind'],
+                    'vec' => $row['vec'],
+                ];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return array<int, array{user_id: int, kind: 'sample'|'avg', vec: array<int, float>}>
+     */
+    private static function getCachedDuplicateEmbeddingIndexRows(): array
+    {
+        $ver = (int) Cache::get('face:dup-embedding-index-ver', 0);
+        $ttl = max(60, (int) config('attendance.face_duplicate_embedding_index_ttl_seconds', 86400));
+
+        return Cache::remember(
+            'face:dup-embedding-index:data:'.$ver,
+            now()->addSeconds($ttl),
+            static fn () => self::buildDuplicateEmbeddingIndexPayload()
+        );
     }
 
     /**
@@ -279,7 +445,7 @@ class FaceVerificationService
 
     /**
      * Rows to compare during duplicate registration: each raw sample + primary, and when
-     * multiple samples exist, the averaged embedding (looser threshold in findExistingOwnerOfFace).
+     * multiple samples exist, the averaged embedding (kind `avg` uses the avg cosine gate).
      *
      * @return array<int, array{vec: array<int, float>, kind: 'sample'|'avg'}>
      */
@@ -526,9 +692,10 @@ class FaceVerificationService
      *
      * @param  array<int, float>  $incomingDescriptor  128D face descriptor
      * @param  int|null  $excludeUserId  User ID to exclude (e.g. current employee being registered)
-     * @return User|null The existing user who already has this face, or null if unique
+     * @param  bool  $useExhaustiveDatabaseScan  When true, compares against every stored row in the DB (registration path). Skips the embedding index cache so no row is omitted.
+     * @return array{user: User, similarity_score: float, detection_method: string}|null
      */
-    public static function findExistingOwnerOfFace(array $incomingDescriptor, ?int $excludeUserId = null): ?User
+    public static function findExistingOwnerOfFaceWithDetails(array $incomingDescriptor, ?int $excludeUserId = null, bool $useExhaustiveDatabaseScan = false): ?array
     {
         if (count($incomingDescriptor) !== 128) {
             return null;
@@ -538,73 +705,210 @@ class FaceVerificationService
         $minCos = self::duplicateMinCosineSimilarity();
         $minCosAvg = self::duplicateMinCosineSimilarityAvg();
         $maxEuc = self::duplicateMaxEuclideanDistance();
+        $maxEucNorm = self::duplicateMaxEuclideanNormalized();
         $nearMissMin = self::duplicateNearMissLogMinSimilarity();
+        $aggregateBestMin = self::duplicateAggregateBestCosineMin();
 
-        $employees = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where(function ($q) {
-                $q->where('face_status', 'registered')
-                    ->orWhereNotNull('face_descriptor_samples')
-                    ->orWhereNotNull('face_embedding')
-                    ->orWhereNotNull('face_descriptor');
-            });
-        if ($excludeUserId !== null) {
-            $employees->where('id', '!=', $excludeUserId);
-        }
-        $employees = $employees->get();
+        $useIndex = ! $useExhaustiveDatabaseScan && (bool) config('attendance.face_duplicate_use_embedding_index_cache', true);
+        $rowsFlat = $useIndex
+            ? self::getCachedDuplicateEmbeddingIndexRows()
+            : null;
 
         $globalBestSim = -1.0;
+        $globalBestRawSim = -1.0;
         $globalBestUserId = null;
+        $globalBestDistance = PHP_FLOAT_MAX;
+        $globalBestNormDistance = PHP_FLOAT_MAX;
 
-        foreach ($employees as $user) {
-            if (! $user->hasRegisteredFace()) {
-                continue;
-            }
-            $rows = self::duplicateComparisonRowsForUser($user);
-            if ($rows === []) {
-                continue;
-            }
+        // Track best cosine per other user for aggregate best-of-all-samples check.
+        $bestSimPerUser = [];
 
-            foreach ($rows as $row) {
+        if ($rowsFlat !== null) {
+            foreach ($rowsFlat as $row) {
+                $uid = (int) $row['user_id'];
+                if ($excludeUserId !== null && $uid === $excludeUserId) {
+                    continue;
+                }
                 $storedRaw = $row['vec'];
                 $kind = $row['kind'];
                 $storedN = self::l2Normalize128($storedRaw);
                 $cosineSim = self::cosineSimilarity($storedN, $incomingNorm);
+                $rawCosineSim = self::cosineSimilarity($storedRaw, $incomingDescriptor);
                 $distance = self::euclideanDistance($storedRaw, $incomingDescriptor);
+                $normDistance = self::euclideanDistance($storedN, $incomingNorm);
 
-                if ($cosineSim > $globalBestSim) {
-                    $globalBestSim = $cosineSim;
-                    $globalBestUserId = $user->id;
+                $effectiveSim = max($cosineSim, $rawCosineSim);
+                if ($effectiveSim > $globalBestSim) {
+                    $globalBestSim = $effectiveSim;
+                    $globalBestRawSim = $rawCosineSim;
+                    $globalBestUserId = $uid;
+                    $globalBestDistance = $distance;
+                    $globalBestNormDistance = $normDistance;
                 }
 
-                $cosineGate = $kind === 'avg' ? $minCosAvg : $minCos;
-                $isDuplicate = ($cosineSim >= $cosineGate) || ($distance <= $maxEuc);
+                if (! isset($bestSimPerUser[$uid]) || $effectiveSim > $bestSimPerUser[$uid]) {
+                    $bestSimPerUser[$uid] = $effectiveSim;
+                }
 
-                if ($isDuplicate) {
+                if (self::duplicateRowMatchesIncoming($cosineSim, $rawCosineSim, $distance, $normDistance, $kind, $minCos, $minCosAvg, $maxEuc, $maxEucNorm)) {
+                    $owner = User::query()->whereKey($uid)->first();
+                    if ($owner === null) {
+                        continue;
+                    }
+                    $cosineGate = $kind === 'avg' ? $minCosAvg : $minCos;
                     Log::info('Face duplicate registration check: match (strict gate)', [
-                        'existing_user_id' => $user->id,
+                        'existing_user_id' => $owner->id,
                         'exclude_user_id' => $excludeUserId,
                         'row_kind' => $kind,
-                        'cosine_similarity' => round($cosineSim, 4),
-                        'euclidean_distance' => round($distance, 4),
-                        'min_cosine_required' => round($cosineGate, 4),
-                        'max_euclidean_allowed' => $maxEuc,
+                        'cosine_similarity_normalized' => round($cosineSim, 4),
+                        'cosine_similarity_raw' => round($rawCosineSim, 4),
+                        'euclidean_distance_raw' => round($distance, 4),
+                        'euclidean_distance_normalized' => round($normDistance, 4),
+                        'min_cosine_gate' => round($cosineGate, 4),
+                        'max_euclidean_primary_raw' => $maxEuc,
+                        'max_euclidean_primary_normalized' => $maxEucNorm,
+                        'dual_signal_used' => self::duplicateDualSignalEnabled(),
+                        'used_cached_index' => true,
                     ]);
 
-                    return $user;
+                    return ['user' => $owner, 'similarity_score' => round($effectiveSim, 4), 'detection_method' => 'per_row_strict'];
+                }
+            }
+
+            // Aggregate best-of-all-samples: if any user's best row exceeds the aggregate threshold, block.
+            foreach ($bestSimPerUser as $uid => $bestSim) {
+                if ($bestSim >= $aggregateBestMin) {
+                    $owner = User::query()->whereKey($uid)->first();
+                    if ($owner === null) {
+                        continue;
+                    }
+                    Log::info('Face duplicate registration check: match (aggregate best-of-samples)', [
+                        'existing_user_id' => $owner->id,
+                        'exclude_user_id' => $excludeUserId,
+                        'best_cosine_similarity' => round($bestSim, 4),
+                        'aggregate_threshold' => $aggregateBestMin,
+                        'used_cached_index' => true,
+                    ]);
+
+                    return ['user' => $owner, 'similarity_score' => round($bestSim, 4), 'detection_method' => 'aggregate_best'];
+                }
+            }
+        } else {
+            $employees = self::duplicateScanUserQuery();
+            if ($excludeUserId !== null) {
+                $employees->where('id', '!=', $excludeUserId);
+            }
+            $employees = $employees->get();
+
+            foreach ($employees as $user) {
+                if (! $user->hasRegisteredFace()) {
+                    continue;
+                }
+                $rows = self::duplicateComparisonRowsForUser($user);
+                if ($rows === []) {
+                    continue;
+                }
+
+                $userBestSim = -1.0;
+
+                foreach ($rows as $row) {
+                    $storedRaw = $row['vec'];
+                    $kind = $row['kind'];
+                    $storedN = self::l2Normalize128($storedRaw);
+                    $cosineSim = self::cosineSimilarity($storedN, $incomingNorm);
+                    $rawCosineSim = self::cosineSimilarity($storedRaw, $incomingDescriptor);
+                    $distance = self::euclideanDistance($storedRaw, $incomingDescriptor);
+                    $normDistance = self::euclideanDistance($storedN, $incomingNorm);
+
+                    $effectiveSim = max($cosineSim, $rawCosineSim);
+                    if ($effectiveSim > $globalBestSim) {
+                        $globalBestSim = $effectiveSim;
+                        $globalBestRawSim = $rawCosineSim;
+                        $globalBestUserId = $user->id;
+                        $globalBestDistance = $distance;
+                        $globalBestNormDistance = $normDistance;
+                    }
+                    if ($effectiveSim > $userBestSim) {
+                        $userBestSim = $effectiveSim;
+                    }
+
+                    if (self::duplicateRowMatchesIncoming($cosineSim, $rawCosineSim, $distance, $normDistance, $kind, $minCos, $minCosAvg, $maxEuc, $maxEucNorm)) {
+                        $cosineGate = $kind === 'avg' ? $minCosAvg : $minCos;
+                        Log::info('Face duplicate registration check: match (strict gate)', [
+                            'existing_user_id' => $user->id,
+                            'exclude_user_id' => $excludeUserId,
+                            'row_kind' => $kind,
+                            'cosine_similarity_normalized' => round($cosineSim, 4),
+                            'cosine_similarity_raw' => round($rawCosineSim, 4),
+                            'euclidean_distance_raw' => round($distance, 4),
+                            'euclidean_distance_normalized' => round($normDistance, 4),
+                            'min_cosine_gate' => round($cosineGate, 4),
+                            'max_euclidean_primary_raw' => $maxEuc,
+                            'max_euclidean_primary_normalized' => $maxEucNorm,
+                            'dual_signal_used' => self::duplicateDualSignalEnabled(),
+                            'used_cached_index' => false,
+                        ]);
+
+                        return ['user' => $user, 'similarity_score' => round($effectiveSim, 4), 'detection_method' => 'per_row_strict'];
+                    }
+                }
+
+                // Aggregate best-of-all-samples for this user.
+                if ($userBestSim >= $aggregateBestMin) {
+                    Log::info('Face duplicate registration check: match (aggregate best-of-samples)', [
+                        'existing_user_id' => $user->id,
+                        'exclude_user_id' => $excludeUserId,
+                        'best_cosine_similarity' => round($userBestSim, 4),
+                        'aggregate_threshold' => $aggregateBestMin,
+                        'used_cached_index' => false,
+                    ]);
+
+                    return ['user' => $user, 'similarity_score' => round($userBestSim, 4), 'detection_method' => 'aggregate_best'];
                 }
             }
         }
 
-        if ($globalBestSim >= $nearMissMin && $globalBestSim < $minCos && config('attendance.face_duplicate_log_near_misses', true)) {
+        if ($useExhaustiveDatabaseScan && (bool) config('attendance.face_duplicate_log_registration_scan_summary', true)) {
+            Log::info('Face duplicate registration scan complete (no cross-account match)', [
+                'exclude_user_id' => $excludeUserId,
+                'best_cosine_similarity_to_other' => $globalBestSim >= 0 ? round($globalBestSim, 4) : null,
+                'best_raw_cosine_similarity' => $globalBestRawSim >= 0 ? round($globalBestRawSim, 4) : null,
+                'best_raw_euclidean_at_best_cos' => $globalBestDistance < PHP_FLOAT_MAX ? round($globalBestDistance, 4) : null,
+                'best_normalized_euclidean_at_best_cos' => $globalBestNormDistance < PHP_FLOAT_MAX ? round($globalBestNormDistance, 4) : null,
+                'nearest_other_user_id' => ((bool) config('attendance.face_log_identification_user_ids', false)) ? $globalBestUserId : null,
+                'min_cosine_primary' => round($minCos, 4),
+                'aggregate_best_threshold' => $aggregateBestMin,
+                'max_euclidean_primary_raw' => $maxEuc,
+                'max_euclidean_primary_normalized' => $maxEucNorm,
+                'exhaustive_db_scan' => true,
+            ]);
+        }
+
+        $effectiveMinForNearMiss = min($minCos, $aggregateBestMin);
+        if ($globalBestSim >= $nearMissMin && $globalBestSim < $effectiveMinForNearMiss && config('attendance.face_duplicate_log_near_misses', true)) {
             Log::warning('Face duplicate registration check: near-miss (below duplicate threshold)', [
                 'best_cosine_similarity' => round($globalBestSim, 4),
                 'nearest_user_id' => ((bool) config('attendance.face_log_identification_user_ids', false)) ? $globalBestUserId : null,
-                'min_cosine_for_duplicate' => $minCos,
+                'min_cosine_for_duplicate' => $effectiveMinForNearMiss,
                 'note' => 'If legitimate users are blocked, lower min_cosine slightly; if different people match, raise it.',
             ]);
         }
 
         return null;
+    }
+
+    /**
+     * Backward-compatible wrapper: returns only the User or null.
+     *
+     * @param  array<int, float>  $incomingDescriptor  128D face descriptor
+     * @param  int|null  $excludeUserId  User ID to exclude
+     * @param  bool  $useExhaustiveDatabaseScan  When true, full DB scan
+     * @return User|null
+     */
+    public static function findExistingOwnerOfFace(array $incomingDescriptor, ?int $excludeUserId = null, bool $useExhaustiveDatabaseScan = false): ?User
+    {
+        $result = self::findExistingOwnerOfFaceWithDetails($incomingDescriptor, $excludeUserId, $useExhaustiveDatabaseScan);
+
+        return $result ? $result['user'] : null;
     }
 }

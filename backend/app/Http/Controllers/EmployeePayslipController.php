@@ -113,13 +113,18 @@ class EmployeePayslipController extends Controller
         $payslip = Payslip::query()->where('user_id', $user->id)->findOrFail($id);
         abort_if($payslip->status === Payslip::STATUS_DRAFT, 404);
         abort_unless($payslip->is_sent || $payslip->delivered_at !== null, 404);
-        $full = storage_path('app/private/'.$payslip->pdf_path);
-        abort_unless($payslip->pdf_path && is_file($full), 404);
+        // Regenerate so employee downloads use the same clean template as admin preview/download.
+        $relative = $this->payslipService->generatePdf($payslip, $user);
+        $payslip->update(['pdf_path' => $relative]);
 
         // Keep status as finalized / sent_finalized for HR reporting (Finalize Payroll shows a single “Finalized” label).
         // Do not overwrite to `viewed` on download.
+        $employeeCode = trim((string) ($user->employee_code ?? ''));
+        $filename = $employeeCode !== ''
+            ? 'Payslip-'.$employeeCode.'.pdf'
+            : 'payslip-'.$payslip->id.'.pdf';
 
-        return response()->download($full, 'payslip-'.$payslip->id.'.pdf', ['Content-Type' => 'application/pdf']);
+        return response()->download(storage_path('app/private/'.$relative), $filename, ['Content-Type' => 'application/pdf']);
     }
 
     /**

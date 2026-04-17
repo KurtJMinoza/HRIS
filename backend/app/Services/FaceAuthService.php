@@ -30,10 +30,13 @@ class FaceAuthService
      */
     private static function legacyVerifyPassesRegistrationLiveness(?float $spoofConfidence): bool
     {
-        $min = max(
-            (float) config('attendance.face_min_liveness_score', 0.52),
-            (float) config('attendance.face_registration_min_liveness_score', 0.62)
-        );
+        $light = (bool) config('attendance.face_registration_light_liveness', true);
+        $min = $light
+            ? (float) config('attendance.face_min_liveness_score', 0.52)
+            : max(
+                (float) config('attendance.face_min_liveness_score', 0.52),
+                (float) config('attendance.face_registration_min_liveness_score', 0.62)
+            );
         if ($spoofConfidence === null) {
             return true;
         }
@@ -96,14 +99,15 @@ class FaceAuthService
      * Liveness is evaluated before embedding extraction (Rekognition session must PASS before /embed runs).
      *
      * @param  string  $sessionId  Rekognition Face Liveness session ID from frontend
-     * @param  bool  $forRegistration  When true, applies {@see config('attendance.face_registration_min_liveness_score')} (stricter Amplify path).
+     * @param  bool  $forRegistration  When true and {@see config('attendance.face_registration_light_liveness')} is false, applies stricter registration floor.
      * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float, reference_image_base64?: string}|null
      */
     public static function verifyFaceWithLivenessSession(string $sessionId, bool $forRegistration = false): ?array
     {
-        $registrationFloor = $forRegistration
-            ? (float) config('attendance.face_registration_min_liveness_score', 0.62)
-            : null;
+        $registrationFloor = null;
+        if ($forRegistration && ! (bool) config('attendance.face_registration_light_liveness', true)) {
+            $registrationFloor = (float) config('attendance.face_registration_min_liveness_score', 0.62);
+        }
         $result = RekognitionLivenessService::getSessionResults($sessionId, $registrationFloor);
         if ($result === null) {
             return null;

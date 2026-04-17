@@ -884,10 +884,24 @@ class PayslipService
         $out = $snapshot;
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
 
-        $summary['payslip_earning_lines'] = $this->normalizePayslipLineList($summary['payslip_earning_lines'] ?? [], 'Earning');
+        $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
+        $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
+
+        $summary['payslip_earning_lines'] = $this->normalizePayslipLineList(
+            $summary['payslip_earning_lines'] ?? [],
+            'Earning',
+            false,
+            false,
+            $regularHourlyRate,
+            $dailyRate
+        );
         $summary['daily_computation_earning_lines'] = $this->normalizePayslipLineList(
             $summary['daily_computation_earning_lines'] ?? [],
-            'Daily computation earning'
+            'Daily computation earning',
+            false,
+            false,
+            $regularHourlyRate,
+            $dailyRate
         );
         $summary['payslip_deduction_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_deduction_lines'] ?? [],
@@ -1009,7 +1023,9 @@ class PayslipService
         mixed $raw,
         string $defaultLabel,
         bool $keepWithholdingWhenZero = false,
-        bool $keepAllAmounts = false
+        bool $keepAllAmounts = false,
+        ?float $defaultRegularHourlyRate = null,
+        ?float $defaultDailyRate = null
     ): array
     {
         $rows = is_array($raw) ? $raw : [];
@@ -1024,12 +1040,29 @@ class PayslipService
             $minutesWorked = is_numeric($minutesWorkedRaw) ? (int) round((float) $minutesWorkedRaw) : null;
             $hourlyRateRaw = $row['hourly_rate'] ?? null;
             $hourlyRate = is_numeric($hourlyRateRaw) ? (float) $hourlyRateRaw : null;
+            $lineKey = strtolower(trim((string) ($row['key'] ?? '')));
             $unitsRaw = $row['units'] ?? null;
             $unitsStr = $unitsRaw === null || $unitsRaw === '' ? null : trim((string) $unitsRaw);
+
+            // Legacy snapshots may miss hourly_rate for regular pay lines.
+            // Backfill from daily_rate/8 so amount and minutes can be reconciled exactly.
+            if (
+                ($hourlyRate === null || ! is_finite($hourlyRate) || $hourlyRate <= 0)
+                && $defaultRegularHourlyRate !== null
+                && str_contains($lineKey, 'regular_pay')
+            ) {
+                $hourlyRate = $defaultRegularHourlyRate;
+            }
+
+            // Prefer deriving missing minutes from amount + hourly rate. This avoids precision loss
+            // from parsing rounded display labels (example: "1.6 days" -> 768 mins).
+            if (($minutesWorked === null || $minutesWorked <= 0) && $hourlyRate !== null && $hourlyRate > 0 && $amt > 0) {
+                $minutesWorked = (int) round(($amt / $hourlyRate) * 60.0);
+            }
+
             if (($minutesWorked === null || $minutesWorked <= 0) && $unitsStr !== null && $unitsStr !== '') {
                 $minutesWorked = $this->parseLegacyUnitsToMinutes($unitsStr);
             }
-            $lineKey = strtolower(trim((string) ($row['key'] ?? '')));
 
             // Regular-pay lines use day-split display ("X days, Y hrs Z mins") because
             // they span multiple work days. All other lines use simple "X hrs Y mins".
@@ -1039,6 +1072,21 @@ class PayslipService
                 ? ($this->formatPayslipUnitsFromMinutes($minutesWorked) ?? $formatted['units'])
                 : $formatted['units'];
             $amountFromMinutes = $formatted['amount'];
+
+            // Regular pay must reconcile against the daily rate from payroll computation:
+            // amount = (totalMinutes / 480) * dailyRate, rounded once at the end.
+            // This avoids cent-loss on whole-day amounts (e.g. 6 * 961.54 = 5769.24).
+            if (
+                $usesDaySplitUnits
+                && $minutesWorked !== null
+                && $minutesWorked > 0
+                && $defaultDailyRate !== null
+                && is_finite($defaultDailyRate)
+                && $defaultDailyRate > 0
+            ) {
+                $dayUnits = $minutesWorked / 480.0;
+                $amountFromMinutes = round($dayUnits * $defaultDailyRate, 2);
+            }
             $lineLabel = strtolower($label);
             $isWithholdingLine = str_contains($lineKey, 'withholding')
                 || str_contains($lineKey, 'wht')

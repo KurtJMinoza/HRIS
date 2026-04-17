@@ -13,9 +13,8 @@
         "laravel/octane": "^2.17",
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^2.10.1",
-        "mpdf/mpdf": "^8.3",
-        "mpdf/qrcode": "^1.2",
         "setasign/fpdi": "*",
+        "spatie/browsershot": "^5.2",
         "tecnickcom/tcpdf": "*",
         "twilio/sdk": "^8.11"
     },

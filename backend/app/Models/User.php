@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Casts\EncryptedArray;
+use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
 use App\Support\EmployeeProfileCache;
 use Carbon\Carbon;
@@ -359,6 +360,8 @@ class User extends Authenticatable
                     'ip_address' => request()?->ip(),
                 ]);
             }
+
+            FaceVerificationService::bumpDuplicateEmbeddingIndexVersion();
         });
     }
 

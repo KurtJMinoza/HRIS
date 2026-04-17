@@ -13,7 +13,8 @@ function normalizeRole(role) {
  *
  * - variant="adminHr" — only ADMIN (HR); `users.role === admin` or `hr_role === admin_hr`
  * - variant="manager" — only company_head, branch_head, department_head
- * - variant="employee" — `users.role === employee` only (org heads are redirected to their `/company|branch|department` panel)
+ * - variant="employee" — `users.role === employee` and not an assigned org head (`is_assigned_organization_head`);
+ *   line employees stay on `/employee/*`; company/branch/department heads go to their scoped panel.
  *
  * Legacy: `role="admin"` → adminHr, `role="employee"` → employee.
  */
@@ -64,7 +65,7 @@ export function ProtectedRoute({ children, variant, role }) {
     if (isAdminHrUser(user)) {
       return <Navigate to="/admin/dashboard" replace />
     }
-    /** Company / branch / department heads must never use the employee app shell (`/employee/*`). */
+    /** Org heads (company / branch / department assignments) use scoped panels, not `/employee/*`. */
     if (isManagerialHrRole(user)) {
       try {
         sessionStorage.setItem('employee_route_denied', '1')

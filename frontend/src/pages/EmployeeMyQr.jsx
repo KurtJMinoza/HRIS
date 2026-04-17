@@ -31,7 +31,6 @@ export default function EmployeeMyQr() {
   const [faceRegisterSubmitting, setFaceRegisterSubmitting] = useState(false)
   const [faceRegisterError, setFaceRegisterError] = useState(null)
   const [faceRegisterRetryKey, setFaceRegisterRetryKey] = useState(0)
-  const [faceRegisterSlow, setFaceRegisterSlow] = useState(false)
 
   const [removeFaceConfirmOpen, setRemoveFaceConfirmOpen] = useState(false)
   const [removeFaceSubmitting, setRemoveFaceSubmitting] = useState(false)
@@ -120,11 +119,20 @@ export default function EmployeeMyQr() {
 
   const handleFaceRegisterVerified = async (sessionId) => {
     setFaceRegisterSubmitting(true)
-    setFaceRegisterSlow(false)
     setFaceRegisterError(null)
     try {
       const data = await registerMyFace({ liveness_session_id: sessionId })
-      if (data.user) setUser(data.user)
+      if (data.user) {
+        setUser((prev) => {
+          if (!prev || typeof prev !== 'object') return data.user
+          const merged = { ...prev, ...data.user }
+          // Keep explicit org-head flag if this response omitted it (avoids falling back to hr_role-only heuristics).
+          if (typeof merged.is_assigned_organization_head !== 'boolean' && typeof prev.is_assigned_organization_head === 'boolean') {
+            merged.is_assigned_organization_head = prev.is_assigned_organization_head
+          }
+          return merged
+        })
+      }
       setViewFaceImage(null)
       closeFaceRegister()
       toast.success('Face registered', {
@@ -133,20 +141,12 @@ export default function EmployeeMyQr() {
     } catch (e) {
       const msg = e.message || 'Face registration failed'
       setFaceRegisterError(msg)
-      toast.error('Registration failed', { description: msg })
+      const dup = e.errorCode === 'face_already_registered'
+      toast.error(dup ? 'Face already in use' : 'Registration failed', { description: msg })
     } finally {
       setFaceRegisterSubmitting(false)
     }
   }
-
-  useEffect(() => {
-    if (!faceRegisterSubmitting) {
-      setFaceRegisterSlow(false)
-      return
-    }
-    const timer = setTimeout(() => setFaceRegisterSlow(true), 6000)
-    return () => clearTimeout(timer)
-  }, [faceRegisterSubmitting])
 
   const handleRemoveFace = async () => {
     setRemoveFaceSubmitting(true)
@@ -361,25 +361,7 @@ export default function EmployeeMyQr() {
               aria-live="polite"
             >
               <Loader2 className="size-4 shrink-0 animate-spin" />
-              Processing face…
-            </div>
-          )}
-          {faceRegisterSlow && (
-            <div className="space-y-2 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 shadow-xs dark:text-amber-300">
-              <p>This is taking longer than usual. You can keep waiting, or use QR code for attendance now.</p>
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-full"
-                onClick={() => {
-                  closeFaceRegister(true)
-                  toast.info('Use QR code for now', {
-                    description: 'You can retry face registration anytime from this page.',
-                  })
-                }}
-              >
-                Use QR Code instead
-              </Button>
+              Registering face…
             </div>
           )}
           {faceRegisterError && (

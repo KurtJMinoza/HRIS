@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { pdf } from '@react-pdf/renderer'
-import * as XLSX from 'xlsx'
+import { exportRowsToXlsx } from '@/lib/excelExport'
 import { FileDown, FileText, Filter, RefreshCw, Table2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -863,7 +863,7 @@ export default function AdminReports() {
     }
   }
 
-  function handleExportExcel() {
+  async function handleExportExcel() {
     const cols = currentColumns()
     const rows = filteredRows
     // Match UI: same filters and formulas as Reports summary.
@@ -891,11 +891,13 @@ export default function AdminReports() {
         [...pad(Math.max(0, colCount - 2)), 'Total Hours Rendered', exportTotalHours.toFixed(2)],
         [...pad(Math.max(0, colCount - 2)), 'Total Absences', exportTotalAbsences],
       ]
-      const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows, ...summaryRowsBottom])
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, ws, getReportTitle(tab).slice(0, 31))
       const filename = `report-${tab}-${data.from_date || fromDate}-${data.to_date || toDate}.xlsx`
-      XLSX.writeFile(wb, filename)
+      await exportRowsToXlsx(
+        headerRow,
+        [...dataRows, ...summaryRowsBottom],
+        filename,
+        getReportTitle(tab).slice(0, 31) || 'Report',
+      )
     } finally {
       setExportingExcel(false)
     }

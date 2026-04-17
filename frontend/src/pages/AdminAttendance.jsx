@@ -18,7 +18,7 @@ import {
   ChevronDown,
   Download,
 } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import { exportRowsToXlsx } from '@/lib/excelExport'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRecordsDataTable'
@@ -632,27 +632,46 @@ export default function AdminAttendance() {
   async function exportAttendanceExcel() {
     const data = await exportAdminAttendance({ ...attendanceParams, format: 'json' })
     const exportRows = Array.isArray(data?.rows) ? data.rows : []
-    const rowsMatrix = exportRows.map((r) => ({
-      employee_id: r.employee_id ?? '',
-      employee_name: r.employee_name ?? '',
-      department: r.department ?? '',
-      company: r.company_name ?? '',
-      date: r.date ?? '',
-      time_in: r.time_in ?? '',
-      time_out: r.time_out ?? '',
-      status: resolveAdminStatusLabel(r),
-      overtime_hours: r.approved_overtime_hours ?? r.overtime_hours ?? '',
-      rendered_overtime_hours: r.rendered_overtime_hours ?? '',
-      night_hours: r.night_hours ?? '',
-      total_hours_worked: r.total_rendered_hours ?? r.total_hours ?? '',
-      has_correction: r.has_correction ? 'Yes' : 'No',
-      correction_approved: r.correction_approved ? 'Yes' : 'No',
-      correction_remarks: r.correction_remarks ?? '',
-    }))
-    const ws = XLSX.utils.json_to_sheet(rowsMatrix)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Attendance')
-    XLSX.writeFile(wb, `attendance-${fromDate || ''}-${toDate || ''}.xlsx`)
+    const headers = [
+      'Employee ID',
+      'Employee Name',
+      'Department',
+      'Company',
+      'Date',
+      'Time In',
+      'Time Out',
+      'Status',
+      'Overtime Hours',
+      'Rendered Overtime Hours',
+      'Night Hours',
+      'Total Hours Worked',
+      'Has Correction',
+      'Correction Approved',
+      'Correction Remarks',
+    ]
+    const rowsMatrix = exportRows.map((r) => [
+      r.employee_id ?? '',
+      r.employee_name ?? '',
+      r.department ?? '',
+      r.company_name ?? '',
+      r.date ?? '',
+      r.time_in ?? '',
+      r.time_out ?? '',
+      resolveAdminStatusLabel(r),
+      r.approved_overtime_hours ?? r.overtime_hours ?? '',
+      r.rendered_overtime_hours ?? '',
+      r.night_hours ?? '',
+      r.total_rendered_hours ?? r.total_hours ?? '',
+      r.has_correction ? 'Yes' : 'No',
+      r.correction_approved ? 'Yes' : 'No',
+      r.correction_remarks ?? '',
+    ])
+    await exportRowsToXlsx(
+      headers,
+      rowsMatrix,
+      `attendance-${fromDate || ''}-${toDate || ''}.xlsx`,
+      'Attendance',
+    )
   }
 
   return (

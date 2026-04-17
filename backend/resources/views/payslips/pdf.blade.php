@@ -4,26 +4,27 @@
   $dailyEarnLines = is_array($summary['daily_computation_earning_lines'] ?? null) ? array_values($summary['daily_computation_earning_lines']) : [];
   $govDedLines = is_array($summary['payslip_deduction_lines'] ?? null) ? array_values($summary['payslip_deduction_lines']) : [];
   $customDedLines = is_array($summary['payslip_custom_deduction_lines'] ?? null) ? array_values($summary['payslip_custom_deduction_lines']) : [];
-  $hasWithholdingLine = collect(array_merge($govDedLines, $customDedLines))
-    ->contains(function ($line) {
-      $key = strtolower((string) ($line['key'] ?? ''));
-      $label = strtolower((string) ($line['label'] ?? ''));
-      return str_contains($key, 'withholding') || str_contains($label, 'withholding');
-    });
   $govIds = isset($govIds) && $govIds !== null ? $govIds : $employee->governmentIds;
-  $logoRaw = $company?->logo;
-  $logoPath = null;
-  if (is_string($logoRaw) && trim($logoRaw) !== '') {
-    $normalized = ltrim(trim($logoRaw), '/');
-    if (str_starts_with($normalized, 'storage/')) {
-      $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
-    }
-    $segments = array_filter(explode('/', $normalized), fn ($s) => $s !== '');
-    $logoPath = '/api/media/public/'.implode('/', array_map('rawurlencode', $segments));
-  }
+  $govTin = trim((string) ($govIds?->tin_number ?? '')) !== '' ? trim((string) $govIds->tin_number) : 'Not set';
+  $govSss = trim((string) ($govIds?->sss_number ?? '')) !== '' ? trim((string) $govIds->sss_number) : 'Not set';
+  $govPhilhealth = trim((string) ($govIds?->philhealth_number ?? '')) !== '' ? trim((string) $govIds->philhealth_number) : 'Not set';
+  $govPagibig = trim((string) ($govIds?->pagibig_number ?? '')) !== '' ? trim((string) $govIds->pagibig_number) : 'Not set';
+  $govLine = "{$govTin} — {$govSss} — {$govPhilhealth} — {$govPagibig} —";
 
   $formatMoney = static function ($value): string {
     return 'PHP '.number_format((float) ($value ?? 0), 2);
+  };
+
+  /**
+   * Units are pre-normalized in PayslipService via formatUnitsAndAmount().
+   * Blade only displays the normalized value to avoid divergence from preview.
+   */
+  $formatUnits = static function (array $line): string {
+    $unitsRaw = trim((string) ($line['units'] ?? ''));
+    if ($unitsRaw !== '') {
+      return $unitsRaw;
+    }
+    return '—';
   };
 
   $formatDate = static function ($value): string {
@@ -38,23 +39,35 @@
   };
 
   $periodLabel = $formatDate($payslip->pay_period_start).' - '.$formatDate($payslip->pay_period_end);
-  $displayDailyEarnLines = $dailyEarnLines;
-  if (count($displayDailyEarnLines) === 0) {
-      $fallback = [];
-      $regularPay = (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
-      $attendancePremium = (float) ($summary['attendance_premium_pay_this_period'] ?? 0);
-      if ($regularPay > 0) {
-          $fallback[] = ['label' => 'Regular pay', 'amount' => $regularPay];
-      }
-      if ($attendancePremium > 0) {
-          $fallback[] = ['label' => 'Attendance premiums (OT/ND/Holiday)', 'amount' => $attendancePremium];
-      }
-      $displayDailyEarnLines = $fallback;
+  $payDate = $payslip->pay_date ?? $payslip->reference_date ?? null;
+  $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
+  $statusLabel = strtolower(trim((string) ($payslip->status ?? ''))) === 'finalized' ? 'Finalized' : 'Draft';
+
+  if (count($dailyEarnLines) === 0) {
+    $fallback = [];
+    $regularPay = (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
+    $attendancePremium = (float) ($summary['attendance_premium_pay_this_period'] ?? 0);
+    if ($regularPay > 0) {
+      $fallback[] = ['label' => 'Regular pay', 'amount' => $regularPay];
+    }
+    if ($attendancePremium > 0) {
+      $fallback[] = ['label' => 'Attendance premiums (OT/ND/Holiday)', 'amount' => $attendancePremium];
+    }
+    $dailyEarnLines = $fallback;
   }
 
-  $payDate = $payslip->pay_date ?? $payslip->reference_date ?? null;
-  $dailyRate = $summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0);
-  $statusLabel = strtolower(trim((string) ($payslip->status ?? ''))) === 'finalized' ? 'Finalized' : 'Draft';
+  $logoLocalPath = null;
+  $logoRaw = is_string($company?->logo ?? null) ? trim((string) $company->logo) : '';
+  if ($logoRaw !== '') {
+    $normalized = ltrim($logoRaw, '/');
+    if (str_starts_with($normalized, 'storage/')) {
+      $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+    }
+    $candidate = storage_path('app/public/'.$normalized);
+    if (is_file($candidate)) {
+      $logoLocalPath = $candidate;
+    }
+  }
 @endphp
 <!DOCTYPE html>
 <html lang="en">
@@ -62,493 +75,385 @@
   <meta charset="utf-8">
   <style>
     @page { size: A4 portrait; margin: 10mm; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; }
     html, body {
-      font-family: DejaVu Sans, Arial, Helvetica, sans-serif;
-      color: #0A0A0A;
-      background: #fff;
-      font-size: 9px;
-      line-height: 1.28;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
+      margin: 0;
+      padding: 0;
+      color: #0a0a0a;
+      background: #ffffff;
+      font-family: DejaVu Sans, Arial, sans-serif;
+      font-size: 10px;
+      line-height: 1.35;
     }
-
     .sheet {
-      border: 0;
-      border-radius: 0;
-      overflow: hidden;
-      background: #fff;
-      height: 277mm;
-      max-height: 277mm;
+      width: 100%;
+      margin: 0;
+      padding: 0;
       page-break-inside: avoid;
       break-inside: avoid;
     }
-
-    /* ── Header ── */
     .header {
-      border-bottom: 0;
-      padding: 6px 8px 5px;
-      page-break-inside: avoid;
-      break-inside: avoid;
+      width: 100%;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
     }
-    .header-table { width: 100%; border-collapse: collapse; }
-    .header-table td { vertical-align: top; }
-    .header-left { width: 62%; }
-    .header-right { width: 38%; text-align: right; }
-
-    .brand-table { width: 100%; border-collapse: collapse; }
-    .brand-table td { vertical-align: top; }
-    .logo-cell { width: 56px; padding-right: 10px; }
-    .logo {
-      width: 52px; height: 52px;
+    .header-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .header-table td {
+      vertical-align: top;
+    }
+    .left {
+      width: 72%;
+    }
+    .right {
+      width: 28%;
+      text-align: right;
+    }
+    .logo-wrap {
+      width: 48px;
+      height: 48px;
       border-radius: 999px;
-      border: 0;
-      object-fit: contain;
+      overflow: hidden;
+      display: inline-block;
+      vertical-align: top;
+      margin-right: 8px;
       background: #fff;
+    }
+    .logo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
       display: block;
     }
-    .logo-placeholder {
-      width: 52px; height: 52px;
-      border-radius: 999px;
-      border: 0;
-      background: #f8fafc;
+    .company {
+      display: inline-block;
+      vertical-align: top;
+      max-width: 460px;
     }
-    .company-name {
+    .company h1 {
+      margin: 0 0 3px;
       font-size: 15px;
-      font-weight: 700;
-      line-height: 1.15;
-      color: #0A0A0A;
-      margin-bottom: 3px;
+      line-height: 1.2;
     }
-    .meta-label {
-      font-size: 7.2px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+    .muted {
       color: #64748b;
-      line-height: 1.3;
+      font-size: 9px;
     }
-    .meta-value {
-      font-size: 8.4px;
-      color: #0A0A0A;
-      line-height: 1.3;
-      margin-bottom: 3px;
-    }
-
     .badge {
       display: inline-block;
-      border: 1px solid #bae6fd;
-      background: #f0f9ff;
-      color: #0c4a6e;
+      border: 1px solid #dbeafe;
+      background: #eff6ff;
+      color: #1e3a8a;
+      padding: 4px 10px;
       border-radius: 999px;
-      padding: 3px 10px;
-      font-size: 7px;
+      font-size: 8px;
       font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.14em;
-    }
-    /* ── Content area ── */
-    .content { padding: 5px 7px 4px; }
-    .meta-bar {
-      border: 0;
-      border-radius: 10px;
-      background: #f8fafc;
-      padding: 4px 6px;
-      margin-bottom: 4px;
-      page-break-inside: avoid;
-      break-inside: avoid;
-    }
-    .meta-bar-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    .meta-bar-table td { width: 25%; vertical-align: top; padding-right: 8px; }
-    .meta-bar-label {
-      font-size: 7px;
-      font-weight: 700;
-      text-transform: uppercase;
       letter-spacing: 0.08em;
-      color: #64748b;
+      text-transform: uppercase;
     }
-    .meta-bar-value {
-      font-size: 8.8px;
+    .meta {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .meta td {
+      width: 25%;
+      padding: 6px 8px;
+      vertical-align: top;
+    }
+    .k {
+      font-size: 8px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 2px;
+    }
+    .v {
+      font-size: 10px;
       font-weight: 600;
-      margin-top: 2px;
-      color: #0A0A0A;
+      color: #0a0a0a;
       font-variant-numeric: tabular-nums;
     }
-
-    /* ── Section cards (Employee, Gov IDs) ── */
-    .section-card {
-      border: 0;
-      border-radius: 10px;
-      padding: 5px 6px;
-      margin-bottom: 4px;
-      background: #fafbfc;
+    .gov-grid {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .gov-grid td {
+      padding: 1px 0;
+      vertical-align: top;
+      font-size: 10px;
+      line-height: 1.25;
+      color: #0a0a0a;
+    }
+    .gov-grid .gov-key {
+      width: 18%;
+      color: #0a0a0a;
+      font-size: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 600;
+      padding-right: 6px;
+      white-space: nowrap;
+    }
+    .gov-grid .gov-val {
+      width: 32%;
+      color: #0a0a0a;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      padding-right: 12px;
+    }
+    .section {
+      border-radius: 8px;
+      margin-bottom: 8px;
+      overflow: hidden;
       page-break-inside: avoid;
       break-inside: avoid;
     }
     .section-title {
-      font-size: 7.5px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      color: rgba(10,10,10,0.55);
-      margin-bottom: 6px;
-    }
-    .fields-grid { width: 100%; border-collapse: collapse; }
-    .fields-grid td { vertical-align: top; padding-right: 8px; padding-bottom: 2px; }
-    .field-label {
-      font-size: 7px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #64748b;
-      line-height: 1.4;
-    }
-    .field-value {
-      font-size: 8.4px;
-      font-weight: 500;
-      color: #0A0A0A;
-      line-height: 1.3;
-      margin-top: 1px;
-    }
-
-    /* ── Earnings / Deductions tables ── */
-    .tables-row { width: 100%; border-collapse: separate; border-spacing: 4px 0; margin-top: 1px; }
-    .tables-row > tbody > tr > td { vertical-align: top; width: 50%; }
-
-    .table-card {
-      border: 0;
-      border-radius: 10px;
-      overflow: visible;
-      page-break-inside: avoid;
-      break-inside: avoid;
-    }
-    .table-head-earn {
-      background: #f0fdf4;
-      border-bottom: 0;
-      border-left: 0;
-      padding: 4px 6px;
-      font-size: 7.5px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #14532d;
-    }
-    .table-head-ded {
-      background: #fef2f2;
-      border-bottom: 0;
-      border-left: 0;
-      padding: 4px 6px;
-      font-size: 7.5px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #450a0a;
-    }
-
-    table.lines { width: 100%; border-collapse: collapse; }
-    table.lines thead td {
-      border-bottom: 0;
-      padding: 3px 6px;
-      font-size: 7px;
-      font-weight: 700;
+      background: #f8fafc;
+      padding: 6px 8px;
+      font-size: 9px;
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      color: rgba(10,10,10,0.45);
-      background: #fafbfc;
-    }
-    table.lines tbody td {
-      border-bottom: 0;
-      padding: 2px 6px;
-      font-size: 7.2px;
-      line-height: 1.16;
-      vertical-align: top;
-      color: rgba(10,10,10,0.8);
-    }
-    table.lines tbody tr:last-child td { border-bottom: 0; }
-    .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-    .muted { color: #64748b; }
-    .total-row td {
-      border-top: 0 !important;
-      border-bottom: 0 !important;
-      background: #f0fdf4;
       font-weight: 700;
-      font-size: 8px;
-      padding: 3px 6px;
-      color: #0A0A0A;
     }
-    .total-row.ded td {
-      border-top: 0 !important;
-      background: #fef2f2;
-    }
-    .holiday-note {
-      font-size: 6.4px;
-      line-height: 1.15;
-      color: #94a3b8;
-      margin-bottom: 1px;
-    }
-
-    /* ── Net Pay Hero ── */
-    .net-hero {
-      border-radius: 12px;
-      background: #0A0A0A;
-      color: #fff;
-      text-align: center;
-      padding: 6px 8px;
-      margin: 4px auto 0;
+    .employee-grid {
       width: 100%;
-      max-width: 100%;
+      border-collapse: collapse;
+    }
+    .employee-grid td {
+      width: 25%;
+      padding: 6px 8px;
+      vertical-align: top;
+    }
+    .tables {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      margin-bottom: 8px;
+    }
+    .tables > tbody > tr > td {
+      width: 50%;
+      vertical-align: top;
+      padding-right: 6px;
+    }
+    .tables > tbody > tr > td:last-child {
+      padding-right: 0;
+      padding-left: 6px;
+    }
+    .block-title {
+      margin: 0 0 4px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #0a0a0a;
+    }
+    .lines {
+      width: 100%;
+      border-collapse: collapse;
+      border-radius: 8px;
+      overflow: hidden;
       page-break-inside: avoid;
       break-inside: avoid;
     }
-    .net-hero-label {
-      font-size: 7.5px;
+    .lines thead td {
+      background: #ffffff;
+      padding: 6px 8px;
+      font-size: 8px;
       font-weight: 700;
+      color: #0a0a0a;
       text-transform: uppercase;
-      letter-spacing: 0.2em;
-      opacity: 0.8;
+      letter-spacing: 0.06em;
     }
-    .net-hero-value {
-      font-size: 16px;
+    .lines tbody td {
+      padding: 5px 8px;
+      font-size: 9px;
+      color: #0a0a0a;
+      vertical-align: top;
+    }
+    .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .units { text-align: center; color: #64748b; white-space: nowrap; }
+    .total td {
+      background: #f8fafc;
       font-weight: 700;
-      line-height: 1.08;
-      margin: 2px 0 2px;
+    }
+    .net {
+      border-radius: 10px;
+      background: #0a0a0a;
+      color: #ffffff;
+      text-align: center;
+      padding: 8px 10px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .net .k {
+      color: rgba(255,255,255,0.82);
+      margin-bottom: 3px;
+    }
+    .net .value {
+      font-size: 18px;
+      line-height: 1.1;
+      font-weight: 700;
+      margin-bottom: 3px;
       font-variant-numeric: tabular-nums;
     }
-    .net-hero-period {
-      font-size: 7.5px;
-      opacity: 0.7;
-      line-height: 1.3;
+    .net .period {
+      font-size: 9px;
+      color: rgba(255,255,255,0.82);
     }
-
-    .foot-note {
-      text-align: center;
-      margin-top: 4px;
-      font-size: 6.3px;
-      color: #6b7280;
-      line-height: 1.25;
-      page-break-inside: avoid;
-      break-inside: avoid;
-    }
-    .units-col { text-align: center; color: #64748b; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
   <div class="sheet">
-    {{-- ═══ HEADER ═══ --}}
     <div class="header">
       <table class="header-table">
         <tr>
-          <td class="header-left">
-            <table class="brand-table">
-              <tr>
-                <td class="logo-cell">
-                  @if($logoPath)
-                    <img src="{{ $logoPath }}" alt="" class="logo" />
-                  @else
-                    <div class="logo-placeholder"></div>
-                  @endif
-                </td>
-                <td>
-                  <div class="company-name">{{ $company?->name ?? 'Company' }}</div>
-                  <div class="meta-label">Company Address</div>
-                  <div class="meta-value">{{ ($company?->address && trim((string) $company->address) !== '') ? trim((string) $company->address) : '—' }}</div>
-                  <div class="meta-label">Company TIN</div>
-                  <div class="meta-value" style="margin-bottom:0;">{{ ($company?->tin && trim((string) $company->tin) !== '') ? trim((string) $company->tin) : '—' }}</div>
-                </td>
-              </tr>
-            </table>
+          <td class="left">
+            @if($logoLocalPath)
+              <span class="logo-wrap"><img src="{{ $logoLocalPath }}" class="logo" alt=""></span>
+            @endif
+            <div class="company">
+              <h1>{{ $company?->name ?? 'Company' }}</h1>
+              <div class="muted">{{ trim((string) ($company?->address ?? '')) !== '' ? trim((string) $company->address) : '—' }}</div>
+              <div class="muted">TIN: {{ trim((string) ($company?->tin ?? '')) !== '' ? trim((string) $company->tin) : '—' }}</div>
+            </div>
           </td>
-          <td class="header-right">
+          <td class="right">
             <span class="badge">Official Payslip</span>
           </td>
         </tr>
       </table>
     </div>
 
-    {{-- ═══ CONTENT ═══ --}}
-    <div class="content">
-      <div class="meta-bar">
-        <table class="meta-bar-table">
-          <tr>
-            <td>
-              <div class="meta-bar-label">Pay Cycle</div>
-              <div class="meta-bar-value">{{ $periodLabel }}</div>
-            </td>
-            <td>
-              <div class="meta-bar-label">Pay Date</div>
-              <div class="meta-bar-value">{{ $formatDate($payDate) }}</div>
-            </td>
-            <td>
-              <div class="meta-bar-label">Status</div>
-              <div class="meta-bar-value">{{ $statusLabel }}</div>
-            </td>
-            <td style="padding-right:0;">
-              <div class="meta-bar-label">Daily Rate</div>
-              <div class="meta-bar-value">{{ $formatMoney($dailyRate) }}</div>
-            </td>
-          </tr>
-        </table>
-      </div>
+    <table class="meta">
+      <tr>
+        <td>
+          <div class="k">Pay Period</div>
+          <div class="v">{{ $periodLabel }}</div>
+        </td>
+        <td>
+          <div class="k">Pay Date</div>
+          <div class="v">{{ $formatDate($payDate) }}</div>
+        </td>
+        <td>
+          <div class="k">Status</div>
+          <div class="v">{{ $statusLabel }}</div>
+        </td>
+        <td>
+          <div class="k">Daily Rate</div>
+          <div class="v">{{ $formatMoney($dailyRate) }}</div>
+        </td>
+      </tr>
+    </table>
 
-      {{-- Employee details --}}
-      <div class="section-card">
-        <div class="section-title">Employee Information</div>
-        <table class="fields-grid">
-          <tr>
-            <td style="width:20%;">
-              <div class="field-label">Name</div>
-              <div class="field-value">{{ $employee->name ?? '—' }}</div>
-            </td>
-            <td style="width:14%;">
-              <div class="field-label">Employee ID</div>
-              <div class="field-value">{{ $employee->employee_code ?? '—' }}</div>
-            </td>
-            <td style="width:16%;">
-              <div class="field-label">Department</div>
-              <div class="field-value">{{ $employee->departmentRelation?->name ?? $employee->department ?? '—' }}</div>
-            </td>
-            <td style="width:13%;">
-              <div class="field-label">Position</div>
-              <div class="field-value">{{ trim((string) ($employee->position ?? '')) !== '' ? trim((string) $employee->position) : '—' }}</div>
-            </td>
-            <td style="width:12%;">
-              <div class="field-label">Employment Status</div>
-              <div class="field-value">{{ (isset($employmentStatusLabel) && is_string($employmentStatusLabel) && trim($employmentStatusLabel) !== '') ? trim($employmentStatusLabel) : '—' }}</div>
-            </td>
-            <td style="width:8%;">
-              <div class="field-label">TIN</div>
-              <div class="field-value">{{ $govIds?->tin_number ?? 'Not set' }}</div>
-            </td>
-            <td style="width:8%;">
-              <div class="field-label">SSS</div>
-              <div class="field-value">{{ $govIds?->sss_number ?? 'Not set' }}</div>
-            </td>
-            <td style="width:9%;">
-              <div class="field-label">PhilHealth</div>
-              <div class="field-value">{{ $govIds?->philhealth_number ?? 'Not set' }}</div>
-            </td>
-            <td style="width:10%;padding-right:0;">
-              <div class="field-label">Pag-IBIG</div>
-              <div class="field-value">{{ $govIds?->pagibig_number ?? 'Not set' }}</div>
-            </td>
-          </tr>
-        </table>
-      </div>
-
-      {{-- Earnings + Deductions side by side --}}
-      <table class="tables-row">
+    <div class="section">
+      <div class="section-title">Employee Information</div>
+      <table class="employee-grid">
         <tr>
-          <td>
-            <div class="table-card">
-              <div class="table-head-earn">Earnings</div>
-              <table class="lines">
-                <thead>
-                  <tr>
-                    <td>Description</td>
-                    <td class="units-col" style="width:52px;">Units</td>
-                    <td class="num" style="width:78px;">Amount (PHP)</td>
-                  </tr>
-                </thead>
-                <tbody>
-                  @foreach($displayDailyEarnLines as $line)
-                    <tr>
-                      <td>{{ strtolower(trim((string) ($line['label'] ?? ''))) === 'holiday premium' ? 'Holiday premium' : ($line['label'] ?? 'Daily computation earning') }}</td>
-                      <td class="units-col">{{ isset($line['units']) && trim((string) $line['units']) !== '' ? $line['units'] : '—' }}</td>
-                      <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
-                    </tr>
-                  @endforeach
-                  @foreach($earnLines as $line)
-                    <tr>
-                      <td>{{ $line['label'] ?? 'Earning' }}</td>
-                      <td class="units-col">{{ isset($line['units']) && trim((string) $line['units']) !== '' ? $line['units'] : '—' }}</td>
-                      <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
-                    </tr>
-                  @endforeach
-                  @if(count($displayDailyEarnLines) === 0 && count($earnLines) === 0)
-                    <tr>
-                      <td>No earnings computed.</td>
-                      <td class="units-col">—</td>
-                      <td class="num">—</td>
-                    </tr>
-                  @endif
-                  <tr class="total-row">
-                    <td>Total Gross Earnings</td>
-                    <td class="units-col"></td>
-                    <td class="num">{{ $formatMoney($payslip->gross_pay) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </td>
-          <td>
-            <div class="table-card">
-              <div class="table-head-ded">Deductions</div>
-              <table class="lines">
-                <thead>
-                  <tr>
-                    <td>Description</td>
-                    <td class="units-col" style="width:52px;">Units</td>
-                    <td class="num" style="width:78px;">Amount (PHP)</td>
-                  </tr>
-                </thead>
-                <tbody>
-                  @foreach($govDedLines as $line)
-                    <tr>
-                      <td>{{ $line['label'] ?? 'Deduction' }}</td>
-                      <td class="units-col">{{ isset($line['units']) && trim((string) $line['units']) !== '' ? $line['units'] : '—' }}</td>
-                      <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
-                    </tr>
-                  @endforeach
-                  @foreach($customDedLines as $line)
-                    <tr>
-                      <td>
-                        {{ $line['label'] ?? 'Custom deduction' }}
-                        @if(!empty($line['priority_bucket']))
-                          <div class="holiday-note" style="color:#475569;">Priority: {{ $line['priority_bucket'] }}</div>
-                        @endif
-                        @if(!empty($line['legal_warning']))
-                          <div class="holiday-note" style="color:#b91c1c;">{{ $line['legal_warning'] }}</div>
-                        @endif
-                      </td>
-                      <td class="units-col">{{ isset($line['units']) && trim((string) $line['units']) !== '' ? $line['units'] : '—' }}</td>
-                      <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
-                    </tr>
-                  @endforeach
-                  @if(!$hasWithholdingLine)
-                    <tr>
-                      <td>Withholding tax</td>
-                      <td class="units-col">—</td>
-                      <td class="num">{{ $formatMoney($summary['withholding_tax_this_period_estimate'] ?? 0) }}</td>
-                    </tr>
-                  @endif
-                  @if(count($govDedLines) === 0 && count($customDedLines) === 0)
-                    <tr>
-                      <td>No additional deductions computed.</td>
-                      <td class="units-col">—</td>
-                      <td class="num">—</td>
-                    </tr>
-                  @endif
-                  <tr class="total-row ded">
-                    <td>Total Deductions</td>
-                    <td class="units-col"></td>
-                    <td class="num">{{ $formatMoney($payslip->total_deductions) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+          <td><div class="k">Name</div><div class="v">{{ $employee->name ?? '—' }}</div></td>
+          <td><div class="k">Employee ID</div><div class="v">{{ $employee->employee_code ?? '—' }}</div></td>
+          <td><div class="k">Department</div><div class="v">{{ $employee->departmentRelation?->name ?? $employee->department ?? '—' }}</div></td>
+          <td><div class="k">Position</div><div class="v">{{ trim((string) ($employee->position ?? '')) !== '' ? trim((string) $employee->position) : '—' }}</div></td>
+        </tr>
+        <tr>
+          <td><div class="k">Employment Status</div><div class="v">{{ (isset($employmentStatusLabel) && trim((string) $employmentStatusLabel) !== '') ? trim((string) $employmentStatusLabel) : '—' }}</div></td>
+          <td colspan="3">
+            <div class="k">Government IDs</div>
+            <table class="gov-grid" role="presentation">
+              <tr>
+                <td class="gov-key">TIN</td>
+                <td class="gov-val">{{ $govTin }}</td>
+                <td class="gov-key">PhilHealth</td>
+                <td class="gov-val">{{ $govPhilhealth }}</td>
+              </tr>
+              <tr>
+                <td class="gov-key">SSS</td>
+                <td class="gov-val">{{ $govSss }}</td>
+                <td class="gov-key">Pag-IBIG</td>
+                <td class="gov-val">{{ $govPagibig }}</td>
+              </tr>
+            </table>
           </td>
         </tr>
       </table>
+    </div>
 
-      {{-- Net Pay Hero --}}
-      <div class="net-hero">
-        <div class="net-hero-label">Net Take-Home Pay</div>
-        <div class="net-hero-value">{{ $formatMoney($payslip->net_pay) }}</div>
-        <div class="net-hero-period">For the period {{ $periodLabel }}</div>
-      </div>
-      <div class="foot-note">
-        This is a system-generated document. Generated {{ now()->format('M d, Y h:i A') }}.
-      </div>
+    <table class="tables">
+      <tr>
+        <td>
+          <div class="block-title">Earnings</div>
+          <table class="lines">
+            <thead>
+              <tr>
+                <td>Description</td>
+                <td class="units" style="width:60px;">Units</td>
+                <td class="num" style="width:92px;">Amount</td>
+              </tr>
+            </thead>
+            <tbody>
+              @foreach($dailyEarnLines as $line)
+                <tr>
+                  <td>{{ strtolower(trim((string) ($line['label'] ?? ''))) === 'holiday premium' ? 'Holiday premium' : ($line['label'] ?? 'Daily computation earning') }}</td>
+                  <td class="units">{{ $formatUnits($line) }}</td>
+                  <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
+                </tr>
+              @endforeach
+              @foreach($earnLines as $line)
+                <tr>
+                  <td>{{ $line['label'] ?? 'Earning' }}</td>
+                  <td class="units">{{ $formatUnits($line) }}</td>
+                  <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
+                </tr>
+              @endforeach
+              @if(count($dailyEarnLines) === 0 && count($earnLines) === 0)
+                <tr><td>No earnings computed.</td><td class="units">—</td><td class="num">—</td></tr>
+              @endif
+              <tr class="total"><td>Total Gross Earnings</td><td class="units"></td><td class="num">{{ $formatMoney($payslip->gross_pay) }}</td></tr>
+            </tbody>
+          </table>
+        </td>
+        <td>
+          <div class="block-title">Deductions</div>
+          <table class="lines">
+            <thead>
+              <tr>
+                <td>Description</td>
+                <td class="num" style="width:92px;">Amount</td>
+              </tr>
+            </thead>
+            <tbody>
+              @foreach($govDedLines as $line)
+                <tr>
+                  <td>{{ $line['label'] ?? 'Deduction' }}</td>
+                  <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
+                </tr>
+              @endforeach
+              @foreach($customDedLines as $line)
+                <tr>
+                  <td>{{ $line['label'] ?? 'Custom deduction' }}</td>
+                  <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
+                </tr>
+              @endforeach
+              @if(count($govDedLines) === 0 && count($customDedLines) === 0)
+                <tr><td>No deductions computed.</td><td class="num">—</td></tr>
+              @endif
+              <tr class="total"><td>Total Deductions</td><td class="num">{{ $formatMoney($payslip->total_deductions) }}</td></tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <div class="net">
+      <div class="k">Net Take-Home Pay</div>
+      <div class="value">{{ $formatMoney($payslip->net_pay) }}</div>
+      <div class="period">For the period {{ $periodLabel }}</div>
     </div>
   </div>
 </body>

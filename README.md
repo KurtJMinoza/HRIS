@@ -1,32 +1,86 @@
-# HRIS (Human Resource Information System)
+# HRIS — Human Resource Information System
 
-Full-stack **HRIS** for workforce, attendance, payroll, and employee self-service — built with a **React (Vite)** SPA and a **Laravel** REST API backed by **MySQL**.
-
-**Repository:** [github.com/KurtJMinoza/HRIS](https://github.com/KurtJMinoza/HRIS)
+Full-stack **HRIS** for workforce management, attendance (including face-verified DTR), payroll, and employee self-service. The app is a **React (Vite)** SPA talking to a **Laravel 12** REST API, with optional **Python (FastAPI + DeepFace)** for face embeddings and integrations with **Amazon Rekognition** / **Amplify Face Liveness**.
 
 ---
 
-## Overview
+## Tech stack (versions — see lockfiles for exact pins)
 
-This application supports **multi-company / multi-branch** HR operations: employee records, organizational structure, time and attendance (including **face-verified** clock in/out), leave and overtime workflows, compensation and deductions, **Philippine payroll** concepts (SSS, PhilHealth, Pag-IBIG, withholding), payslips, loans, benefits, documents, and **role-based access control (RBAC)** for HR admins vs employees.
+### Runtime & language
 
-### Main capabilities
+| Layer | Technology | Notes |
+|--------|------------|--------|
+| **PHP** | **8.2+** (`^8.2` in Composer) | Required extensions: `pdo_mysql`, `mbstring`, `openssl`, `curl`, `json`, `tokenizer`, `xml`, `ctype`, `fileinfo`, `intl` (as needed) |
+| **Node.js** | **20+ LTS** recommended | Used for Vite build and frontend tooling |
+| **Python** | **3.10+** recommended | For `face_service/` (FastAPI + DeepFace) |
 
-| Area | Highlights |
-|------|------------|
-| **Identity & access** | Laravel Sanctum (Bearer tokens), SPA-friendly CORS, admin vs employee roles, granular HR permissions |
-| **Attendance** | Clock in/out, schedules, corrections, monitoring, SmartDTR / kiosk-style flows with face checks |
-| **Leave & overtime** | Requests, approvals, audits, attachments where applicable |
-| **Payroll** | Pay cycles, pay components, daily computation logs, batch runs, finalization jobs, payslip PDF generation |
-| **People data** | Profiles, government IDs, emergency contacts, skills, certifications, documents |
-| **Loans & deductions** | Employee loans, amortization, deduction schedules aligned with payroll runs |
+### Backend (`backend/`)
 
-### Tech stack
+| Package / area | Version (constraint / lock) | Role |
+|----------------|----------------------------|------|
+| **Laravel Framework** | **12.x** (lock: **v12.52.0**) | HTTP API, queues, scheduling, Eloquent ORM |
+| **Laravel Sanctum** | **^4.3** (lock: **v4.3.1**) | SPA/API Bearer token authentication |
+| **Laravel Octane** | **^2.17** | High-performance app server (optional in production) |
+| **AWS SDK for PHP** | **^3.371** | Rekognition (Face Liveness, face search), S3, etc. |
+| **barryvdh/laravel-dompdf** | * | Payslip / PDF generation |
+| **Spatie Browsershot** | **^5.2** | Headless Chromium PDFs where used |
+| **Twilio SDK** | **^8.11** | SMS / OTP flows |
+| **tecnickcom/tcpdf** / **setasign/fpdi** | * | Additional PDF tooling |
+| **PHPUnit** | **^11.5** (dev) | Tests |
+| **Laravel Pint** | **^1.24** (dev) | Code style |
 
-- **Frontend:** React, Vite, Tailwind CSS, TanStack Query, client-side routing  
-- **Backend:** PHP 8.x, Laravel, queues/jobs for heavy payroll and report work  
-- **Database:** MySQL (migrations under `backend/database/migrations`)  
-- **Auth:** Token-based API auth (see below)
+**Patterns:** REST JSON under `/api`, Sanctum tokens, queue workers for payroll batches, face registration jobs, mail, and heavy reports. MySQL for persistence.
+
+### Frontend (`frontend/`)
+
+| Package | Version (package.json) | Role |
+|---------|------------------------|------|
+| **React** | **^19.2** | UI |
+| **React DOM** | **^19.2** | Rendering |
+| **Vite** | **^7.3** | Dev server & production build |
+| **@vitejs/plugin-react** | **^5.1** | React Fast Refresh |
+| **React Router** | **^7.13** | Client-side routing (`BrowserRouter`) |
+| **TanStack Query** | **^5.96** | Server state / caching |
+| **TanStack Table** | **^8.21** | Data grids |
+| **Tailwind CSS** | **^4.2** | Utility-first styling (`@tailwindcss/postcss`) |
+| **Radix UI** / **radix-ui** | **^1.x** | Accessible primitives |
+| **class-variance-authority** + **clsx** + **tailwind-merge** | latest ^ | Component variants |
+| **AWS Amplify** | **^6.16** | AWS integration |
+| **@aws-amplify/ui-react** | **^6.15** | Amplify UI components |
+| **@aws-amplify/ui-react-liveness** | **^3.3** | **Amazon Rekognition Face Liveness** (guided liveness) |
+| **axios** | **^1.13** | HTTP client (alongside `fetch` wrappers) |
+| **date-fns** | **^4.1** | Date utilities |
+| **Zod** | **^4.3** | Schema validation |
+| **Recharts** | **^3.7** | Charts |
+| **ExcelJS** | **^4.4** | Excel export |
+| **@react-pdf/renderer** | **^4.3** | Client-side PDF previews where used |
+| **face-api.js** / **@mediapipe/face_mesh** | legacy / auxiliary | Legacy or auxiliary face UI (primary liveness is Rekognition + backend) |
+| **QR / scanning** | **qrcode.react**, **@zxing/browser** | QR codes for attendance |
+| **Framer Motion / Motion** | **^12.x** | Animation |
+| **Sonner** | **^2.x** | Toasts |
+| **ESLint** | **^9.39** | Linting |
+
+**UI:** Employee dashboard, HR admin panel, org-scoped panels (company / branch / department heads), kiosk-style flows, payslip viewers, and reports.
+
+### Face embedding service (`face_service/`)
+
+| Technology | Role |
+|------------|------|
+| **FastAPI** (`>=0.104`) | HTTP API (`uvicorn`) |
+| **DeepFace** (`>=0.0.79`) | **Facenet**-style **128D embeddings** (ArcFace model configurable from Laravel) |
+| **OpenCV** (`>=4.8`), **NumPy** | Image preprocessing |
+| **Endpoints** | `/embed`, `/verify` (legacy), `/health` — used after Rekognition liveness supplies a reference image |
+
+Liveness and anti-spoofing are handled by **Amazon Rekognition Face Liveness** (Amplify **FaceLivenessDetector**); this service focuses on **embedding extraction** and optional legacy verify paths.
+
+### Data & infrastructure
+
+| Component | Technology |
+|-----------|------------|
+| **Database** | **MySQL 8.x** (migrations in `backend/database/migrations`) |
+| **Cache / queues** | Laravel cache, **database** or **Redis** queue drivers (see `config/queue.php`) |
+| **File storage** | Laravel `storage/` + public media URLs for profiles, documents |
+| **Cloud (optional)** | **AWS** Rekognition, Cognito (Amplify), S3 |
 
 ---
 
@@ -34,35 +88,33 @@ This application supports **multi-company / multi-branch** HR operations: employ
 
 ```
 HR/
-├── frontend/     # React SPA (Vite)
-├── backend/      # Laravel API
-├── face_service/ # Optional / auxiliary face-related tooling (if present)
-├── package.json  # Root workspace helpers (if used)
-└── README.md
+├── backend/           # Laravel 12 API (Composer, artisan)
+├── frontend/          # React 19 + Vite 7 SPA (npm)
+├── face_service/      # Python FastAPI + DeepFace embedding service
+├── README.md          # This file
+└── (root)             # Optional workspace scripts if present
 ```
 
 ---
 
 ## Prerequisites
 
-- **PHP** ≥ 8.2 (with extensions typical for Laravel: `pdo_mysql`, `mbstring`, `openssl`, `curl`, etc.)
-- **Composer**
-- **Node.js** LTS + **npm**
-- **MySQL** 8.x (or compatible)
+- **PHP** ≥ 8.2, **Composer**
+- **Node.js** LTS (v20+) and **npm**
+- **MySQL** 8.x
+- **Python** 3.10+ and **pip** (for `face_service/`)
 
 ---
 
-## Quick start
+## Quick start (local)
 
 ### 1. Database
-
-Create a database (example name `hris`):
 
 ```sql
 CREATE DATABASE hris CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-### 2. Backend (Laravel)
+### 2. Backend
 
 ```bash
 cd backend
@@ -70,82 +122,67 @@ cp .env.example .env
 php artisan key:generate
 ```
 
-Configure `.env` with `DB_*` credentials, `APP_URL`, mail/SMS keys as needed, then:
+Configure `.env` (`DB_*`, `APP_URL`, `QUEUE_CONNECTION`, AWS keys for Rekognition/face, mail/SMS, etc.), then:
 
 ```bash
 composer install
 php artisan migrate
-# Optional: seed admin / demo data (see seeders)
-php artisan db:seed --class=AdminUserSeeder   # if you use the bundled admin seeder
 php artisan serve
 ```
 
-API default: `http://localhost:8000` — routes are typically under `/api`.
+API base is typically `http://localhost:8000/api` (see `routes/api.php`).
 
-### 3. Frontend (React)
+### 3. Queue worker (payroll, face registration, mail)
+
+```bash
+cd backend
+php artisan queue:work database --queue=face-registration,default --timeout=90
+```
+
+### 4. Frontend
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env   # if present; set VITE_API_URL
+# copy .env.example to .env if present — set VITE_API_URL to your API base
 npm run dev
 ```
 
-SPA default: `http://localhost:5173` (Vite).
+Default Vite dev URL: `http://localhost:5173`.
 
-Point `VITE_API_URL` at your API base (e.g. `http://localhost:8000/api`).
-
-### 4. Queue worker (recommended for payroll / PDF / mail)
+### 5. Face embedding service (optional local)
 
 ```bash
-cd backend
-php artisan queue:work
+cd face_service
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 5000
 ```
 
----
-
-## Authentication (Sanctum, token-only)
-
-The SPA uses **Bearer tokens** (no cookie CSRF coupling across origins). Login/register return a token; the client sends `Authorization: Bearer <token>` on protected routes.
-
-- Configure token lifetime via `SANCTUM_TOKEN_EXPIRATION` in `backend/.env` if needed.
-- Set `CORS_ALLOWED_ORIGINS` (or equivalent) for your frontend origin in production.
+Point Laravel `FACE_VERIFICATION_URL` (or equivalent in `config/services.php`) at this service.
 
 ---
 
-## Face verification (SmartDTR)
+## Authentication
 
-Face enrollment and verification use:
-
-- **AWS Rekognition** for server-side face matching and descriptor handling
-- **AWS Amplify Face Liveness** for anti-spoofing and session liveness checks
-- **DeepFace** services for additional face-processing and verification workflows
-
-The `frontend/public/models/` folder is kept for legacy compatibility notes only and is not part of the primary production verification pipeline.
+The SPA uses **Laravel Sanctum** with **Bearer tokens** (`Authorization: Bearer <token>`). Configure token lifetime and CORS for your production origins in `.env` and `config/cors.php`.
 
 ---
 
-## Security & production checklist
+## Security & production
 
-- Never commit `.env` or production secrets; use `.env.example` as a template only.
-- Change default seeded admin passwords before go-live.
+- Do not commit `.env` or production secrets; use `.env.example` as a template only.
 - Use HTTPS, restrict CORS, and run `php artisan config:cache` / `route:cache` in production.
-- Back up the database and stored uploads (`storage`) according to your retention policy.
-
----
-
-## Scripts (root)
-
-If the repository root defines npm scripts (e.g. concurrently running API + UI), see root `package.json`. Otherwise run backend and frontend in separate terminals as above.
+- Rotate default seeded passwords before go-live.
+- Back up MySQL and `storage/` according to your retention policy.
 
 ---
 
 ## License
 
-Specify your license here (e.g. MIT, proprietary). Default: **all rights reserved** until you add a `LICENSE` file.
+Add a `LICENSE` file (e.g. MIT or proprietary). Until then, **all rights reserved** unless stated otherwise.
 
 ---
 
 ## Author
 
-**KurtJMinoza** — [github.com/KurtJMinoza](https://github.com/KurtJMinoza)
+Configure your name and repository URL after you publish this project to a new remote.

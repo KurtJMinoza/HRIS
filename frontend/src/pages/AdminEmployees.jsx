@@ -426,7 +426,6 @@ export default function AdminEmployees() {
   const [faceRegisterSubmitting, setFaceRegisterSubmitting] = useState(false)
   const [faceRegisterError, setFaceRegisterError] = useState(null)
   const [faceRegisterRetryKey, setFaceRegisterRetryKey] = useState(0)
-  const [faceRegisterSlow, setFaceRegisterSlow] = useState(false)
   const [changeFaceConfirmEmployee, setChangeFaceConfirmEmployee] = useState(null)
 
   const [viewFaceOpen, setViewFaceOpen] = useState(false)
@@ -1393,7 +1392,6 @@ export default function AdminEmployees() {
   const handleFaceRegisterVerified = async (sessionId) => {
     if (!faceRegisterEmployee || faceRegisterSubmitting) return
     setFaceRegisterSubmitting(true)
-    setFaceRegisterSlow(false)
     setFaceRegisterError(null)
     try {
       await registerEmployeeFace(faceRegisterEmployee.id, { liveness_session_id: sessionId })
@@ -1412,27 +1410,20 @@ export default function AdminEmployees() {
       setFaceRegisterError(msg)
       const code = e.errorCode
       const title =
-        code === 'spoof_detected'
-          ? 'Spoof detected'
-          : code === 'no_face_detected'
-            ? 'Face not registered'
-            : code === 'service_unavailable'
-              ? 'Face service unavailable'
-              : 'Face registration failed'
+        code === 'face_already_registered'
+          ? 'Face already in use'
+          : code === 'spoof_detected'
+            ? 'Spoof detected'
+            : code === 'no_face_detected'
+              ? 'Face not registered'
+              : code === 'service_unavailable'
+                ? 'Face service unavailable'
+                : 'Face registration failed'
       toast({ title, description: msg, variant: 'destructive' })
     } finally {
       setFaceRegisterSubmitting(false)
     }
   }
-
-  useEffect(() => {
-    if (!faceRegisterSubmitting) {
-      setFaceRegisterSlow(false)
-      return
-    }
-    const timer = setTimeout(() => setFaceRegisterSlow(true), 6000)
-    return () => clearTimeout(timer)
-  }, [faceRegisterSubmitting])
 
   const closeFaceRegister = () => {
     if (!faceRegisterSubmitting) {
@@ -2632,13 +2623,8 @@ export default function AdminEmployees() {
               aria-live="polite"
             >
               <Loader2 className="size-4 shrink-0 animate-spin" />
-              Processing face…
+              Registering face…
             </div>
-          )}
-          {faceRegisterSlow && (
-            <p className="rounded-md border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-              This is taking longer than usual. You can keep this open while registration continues.
-            </p>
           )}
           {faceRegisterError && (
             <div className="space-y-2">

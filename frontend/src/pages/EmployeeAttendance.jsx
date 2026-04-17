@@ -17,7 +17,7 @@ import {
   ChevronDown,
   Download,
 } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import { exportRowsToXlsx } from '@/lib/excelExport'
 import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRecordsDataTable'
 import { AttendanceRecordDetailSheet } from '@/components/attendance/AttendanceRecordDetailSheet'
 import {
@@ -365,20 +365,18 @@ export default function EmployeeAttendance() {
     URL.revokeObjectURL(url)
   }
 
-  function exportEmployeeExcel() {
-    const data = displayRows.map((r) => ({
-      record_id: attendanceRecordRef(null, r.date),
-      date: r.date,
-      rendered_hours: employeeDurationLabel(r),
-      type: employeeTypeReasonLabel(r),
-      documents: r.presence_filing ? 1 : 0,
-      activity: employeeActivityLine(r),
-      status: resolveEmployeeStatusLabel(r),
-    }))
-    const ws = XLSX.utils.json_to_sheet(data)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Attendance')
-    XLSX.writeFile(wb, `my-attendance-${fromDate}-${toDate}.xlsx`)
+  async function exportEmployeeExcel() {
+    const headers = ['Record ID', 'Date', 'Rendered Hours', 'Type', 'Documents', 'Activity', 'Status']
+    const rows = displayRows.map((r) => [
+      attendanceRecordRef(null, r.date),
+      r.date,
+      employeeDurationLabel(r),
+      employeeTypeReasonLabel(r),
+      r.presence_filing ? 1 : 0,
+      employeeActivityLine(r),
+      resolveEmployeeStatusLabel(r),
+    ])
+    await exportRowsToXlsx(headers, rows, `my-attendance-${fromDate}-${toDate}.xlsx`, 'Attendance')
   }
 
   return (

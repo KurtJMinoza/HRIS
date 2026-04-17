@@ -16,8 +16,6 @@ import { CheckCircle2, Home } from 'lucide-react'
 
 const SOUND_FEEDBACK_ENABLED = true
 const FACE_MATCH_TIMEOUT_MS = 6500
-const VERIFY_SLOW_NOTICE_MS = 8000
-
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   return Promise.race([
     promise,
@@ -150,16 +148,11 @@ export function FaceRekognitionLiveness({
     setApiError(null)
     try {
       if (onVerified) {
-        const slowNoticeTimer = setTimeout(() => {
-          toast.info('This is taking longer than usual…', {
-            description: 'Face registration is still processing. Please keep this open for a bit longer.',
-          })
-        }, VERIFY_SLOW_NOTICE_MS)
-        try {
-          await onVerified(session.sessionId)
-        } finally {
-          clearTimeout(slowNoticeTimer)
-        }
+        await withTimeout(
+          onVerified(session.sessionId),
+          8000,
+          'Face registration timed out. Please try again.'
+        )
         faceMatchAttemptRef.current = 0
         playSuccess(SOUND_FEEDBACK_ENABLED)
         onSuccess?.()
@@ -171,7 +164,7 @@ export function FaceRekognitionLiveness({
             liveness_session_id: session.sessionId,
           }),
           FACE_MATCH_TIMEOUT_MS,
-          'Face verification took too long. Please use QR code for faster fallback.'
+          'Face verification took too long. Please try again.'
         )
         faceMatchAttemptRef.current = 0
         playSuccess(SOUND_FEEDBACK_ENABLED)
@@ -346,6 +339,14 @@ export function FaceRekognitionLiveness({
                 <>
                   <Loader2 className="size-10 animate-spin text-emerald-400" aria-hidden />
                   <span className="text-sm font-medium text-white">Preparing another try…</span>
+                </>
+              ) : onVerified ? (
+                <>
+                  <Loader2 className="size-10 animate-spin text-emerald-400" aria-hidden />
+                  <span className="text-sm font-medium text-white">Registering face…</span>
+                  <span className="max-w-[18rem] text-center text-[11px] text-white/65">
+                    Securing your template and checking for duplicates. This usually finishes in a few seconds.
+                  </span>
                 </>
               ) : (
                 <>

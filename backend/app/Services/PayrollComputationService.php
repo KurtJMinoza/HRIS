@@ -1015,10 +1015,19 @@ class PayrollComputationService
                     $units = null;
                 }
 
-                // Effective hourly rate: derive from unrounded accumulated amount and exact total
-                // minutes so that downstream (totalMinutes / 60) * hourlyRate reproduces the
-                // original amount without precision loss from per-day rounding artifacts.
-                $effectiveHourlyRate = $mins > 0 ? ((float) $amount * 60.0) / (float) $mins : null;
+                // Hourly-rate source of truth:
+                // - Regular pay must use payroll daily rate / 8 (exact business rule), not back-derived
+                //   from rounded amounts.
+                // - Other minute-based components can use an effective rate derived from minutes + amount.
+                $effectiveHourlyRate = null;
+                if ($mins > 0) {
+                    if ($component === 'regular_pay' && $dailyRate > 0) {
+                        // Keep the exact rate from daily rate for regular-pay reconciliation.
+                        $effectiveHourlyRate = $dailyRate / 8.0;
+                    } else {
+                        $effectiveHourlyRate = ((float) $amount * 60.0) / (float) $mins;
+                    }
+                }
 
                 // Canonical amount: recompute from exact minutes × effective rate, rounded once.
                 // This eliminates drift from summing individually-rounded per-day amounts.

@@ -11,6 +11,12 @@ return [
     | API, giving you convenient access to each backend using identical
     | syntax for each. The default queue connection is defined below.
     |
+    | Face registration (ProcessFaceRegistrationJob) uses the `face-registration` queue.
+    | Prefer redis in production when available; set retry_after above your longest job
+    | worker --timeout (e.g. REDIS_QUEUE_RETRY_AFTER=120 with a 90s worker timeout).
+    | Example worker: php artisan queue:work redis --queue=face-registration,default --timeout=90
+    | See .env.example and deployment/supervisor-face-registration.conf.example.
+    |
     */
 
     'default' => env('QUEUE_CONNECTION', 'database'),
@@ -40,7 +46,8 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            // Must exceed worker --timeout and longest job (face registration defaults to 60s).
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 120),
             'after_commit' => false,
         ],
 
@@ -68,7 +75,8 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            // Must exceed worker --timeout and longest job (face registration job timeout is 60s by default).
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 120),
             'block_for' => null,
             'after_commit' => false,
         ],

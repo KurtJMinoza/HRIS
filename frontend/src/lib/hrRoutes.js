@@ -14,7 +14,22 @@ export function isAdminHrUser(userLike) {
   return hrRole === 'admin_hr' || hrRole === 'admin'
 }
 
+/**
+ * Org-head accounts that must use `/company`, `/branch`, or `/department` (not the `/employee/*` shell).
+ *
+ * Prefer `is_assigned_organization_head` from the API (DB-backed org assignments). Some cached or
+ * secondary payloads only expose `management_role`; use that before `hr_role` so badge / display
+ * resolution cannot incorrectly block line employees from `/employee/qr` and face registration.
+ */
 export function isManagerialHrRole(userLike) {
+  if (!userLike) return false
+  if (typeof userLike.is_assigned_organization_head === 'boolean') {
+    return userLike.is_assigned_organization_head
+  }
+  const mgmt = String(userLike.management_role || '').trim().toLowerCase()
+  if (mgmt === 'company_head' || mgmt === 'branch_head' || mgmt === 'department_head') {
+    return true
+  }
   const hr = String(userLike?.hr_role || '').trim().toLowerCase()
   return hr === 'company_head' || hr === 'branch_head' || hr === 'department_head'
 }

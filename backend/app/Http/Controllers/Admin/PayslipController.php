@@ -16,7 +16,6 @@ use App\Support\PayslipStoredSnapshotViewPayload;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use ZipArchive;
 
@@ -731,44 +730,31 @@ class PayslipController extends Controller
         ];
 
         $actor = $request->user();
-        $cacheKey = 'payslip_sample_preview_data:'.hash('sha256', json_encode([
-            'actor_id' => $actor?->id,
-            'company_id' => $v['company_id'] ?? null,
-            'branch_id' => $v['branch_id'] ?? null,
-            'department_id' => $v['department_id'] ?? null,
-            'period' => [
-                'from_date' => $periodInput['from_date'],
-                'to_date' => $periodInput['to_date'],
-                'pay_cycle_id' => $periodInput['pay_cycle_id'],
-                'reference_date' => $periodInput['reference_date'],
-                'payroll_period_id' => $periodInput['payroll_period_id'],
-                'is_final_pay' => (bool) $periodInput['is_final_pay'],
-            ],
-        ]));
+        $q = User::query()
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->where('is_active', true);
+        if ($actor instanceof User) {
+            $this->dataScopeService->restrictEmployeeQuery($actor, $q);
+        }
+        if (! empty($v['company_id'])) {
+            $q->where('company_id', (int) $v['company_id']);
+        }
+        if (! empty($v['branch_id'])) {
+            $q->where('branch_id', (int) $v['branch_id']);
+        }
+        if (! empty($v['department_id'])) {
+            $q->where('department_id', (int) $v['department_id']);
+        }
+        $employee = $q->orderBy('id')->first();
+        if (! $employee) {
+            return response()->json(['message' => 'No active employee in the selected scope.'], 422);
+        }
 
-        $payload = Cache::remember($cacheKey, now()->addSeconds(45), function () use ($v, $periodInput, $actor) {
-            $q = User::query()
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-                ->where('is_active', true);
-            if ($actor instanceof User) {
-                $this->dataScopeService->restrictEmployeeQuery($actor, $q);
-            }
-            if (! empty($v['company_id'])) {
-                $q->where('company_id', (int) $v['company_id']);
-            }
-            if (! empty($v['branch_id'])) {
-                $q->where('branch_id', (int) $v['branch_id']);
-            }
-            if (! empty($v['department_id'])) {
-                $q->where('department_id', (int) $v['department_id']);
-            }
-            $employee = $q->orderBy('id')->first();
-            if (! $employee) {
-                throw new \RuntimeException('No active employee in the selected scope.');
-            }
-
-            return $this->payslipService->previewDataForEmployee($employee, $periodInput);
-        });
+        try {
+            $payload = $this->payslipService->previewDataForEmployee($employee, $periodInput);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         return response()->json($payload);
     }

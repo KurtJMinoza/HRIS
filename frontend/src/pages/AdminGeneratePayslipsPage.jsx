@@ -215,7 +215,8 @@ function CircularProgress({ value = 0, size = 160, strokeWidth = 10, children, c
   )
 }
 
-function MetricCard({ icon: Icon, label, value, subtext, accent = false }) {
+function MetricCard({ icon, label, value, subtext, accent = false }) {
+  const MetricIcon = icon
   return (
     <div
       className={cn(
@@ -226,7 +227,7 @@ function MetricCard({ icon: Icon, label, value, subtext, accent = false }) {
       )}
     >
       <div className="flex items-center gap-2">
-        <Icon className={cn('h-4 w-4 shrink-0', accent ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')} />
+        <MetricIcon className={cn('h-4 w-4 shrink-0', accent ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')} />
         <span className="text-sm font-normal uppercase leading-tight tracking-[0.06em] text-muted-foreground">{label}</span>
       </div>
       <p
@@ -986,7 +987,7 @@ export default function AdminGeneratePayslipsPage() {
                             variant="outline"
                             className="h-10 rounded-lg border-slate-200/90 dark:border-slate-700"
                             onClick={handleGeneratePayslips}
-                            disabled={!Boolean(String(employeeId || '').trim()) || generating}
+                            disabled={!String(employeeId || '').trim() || generating}
                           >
                             Generate one
                           </Button>

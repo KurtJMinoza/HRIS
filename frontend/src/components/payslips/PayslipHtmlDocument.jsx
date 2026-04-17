@@ -2,10 +2,25 @@ import { useMemo } from 'react'
 import { companyLogoUrl, userProfileImageSrc } from '@/api'
 import { displayCompanyAddress, displayCompanyTin } from '@/lib/payslipCompanyDisplay'
 import { cn } from '@/lib/utils'
+
 function peso(v) {
   const n = Number(v)
   if (!Number.isFinite(n)) return 'PHP 0.00'
   return `PHP ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+/**
+ * Units are normalized on the backend (PayslipService::formatUnitsAndAmount).
+ * The preview modal displays the backend-provided value to stay identical with PDF.
+ *
+ * @param {number|null|undefined} _minutesWorked
+ * @param {string|null|undefined} unitsFallback
+ * @returns {string|null}
+ */
+function formatUnits(_minutesWorked, unitsFallback) {
+  const normalized = String(unitsFallback || '').trim()
+  if (normalized) return normalized
+  return null
 }
 
 function dateValue(value) {
@@ -308,7 +323,9 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">{line?.units || '-'}</td>
+                        <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">
+                          {formatUnits(line?.minutes_worked, line?.units) || '-'}
+                        </td>
                         <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-medium tabular-nums text-[#0A0A0A]">
                           {Number(line?.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
@@ -321,7 +338,9 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                       className="border-b border-slate-100/90 transition-colors last:border-b-0 bg-white hover:bg-white"
                     >
                       <td className="py-2.5 pl-3 pr-2 font-normal text-[#0A0A0A]/88">{line?.label || 'Earning'}</td>
-                      <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">{line?.units || '-'}</td>
+                      <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">
+                        {formatUnits(line?.minutes_worked, line?.units) || '-'}
+                      </td>
                       <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-medium tabular-nums text-[#0A0A0A]">
                         {Number(line?.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>

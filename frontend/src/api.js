@@ -947,8 +947,9 @@ function delay(ms) {
  * @param {string} pollUrl - GET status URL from the same origin as other API calls
  */
 async function pollFaceRegistrationUntilDone(pollUrl, options = {}) {
-  const maxAttempts = options.maxAttempts ?? 40
-  const intervalMs = options.intervalMs ?? 400
+  // Allow slow queue starts, retries, and DeepFace — ~2.5m max (job timeout 60s × tries + backoff if worker runs)
+  const maxAttempts = options.maxAttempts ?? 75
+  const intervalMs = options.intervalMs ?? 2000
   for (let i = 0; i < maxAttempts; i++) {
     await delay(intervalMs)
     const res = await authenticatedFetch(pollUrl)
@@ -966,7 +967,9 @@ async function pollFaceRegistrationUntilDone(pollUrl, options = {}) {
       throw err
     }
   }
-  const err = new Error('Face registration is taking longer than expected. You can continue using QR code and try face registration again.')
+  const err = new Error(
+    'Face registration is taking longer than expected. Please wait a moment and try again. If this keeps happening, ask your administrator to confirm the face queue worker is running.'
+  )
   err.errorCode = 'registration_timeout'
   throw err
 }
@@ -1522,6 +1525,20 @@ export async function getMyPayslipPdfBlob(id) {
   return res.blob()
 }
 
+/**
+ * Unified payslip download endpoint (self-service + HR/admin scope-aware checks in backend).
+ * @param {number|string} id
+ * @returns {Promise<Blob>}
+ */
+export async function getPayslipDownloadBlob(id) {
+  const res = await authenticatedFetch(`/payslips/${encodeURIComponent(String(id))}/download`)
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download payslip PDF')
+  }
+  return res.blob()
+}
+
 /** Employee: full payslip preview JSON (stored snapshot). */
 export async function getEmployeePayslipViewData(id) {
   const res = await authenticatedFetch(`/employee/payslips/${encodeURIComponent(String(id))}/data`, { timeoutMs: 60000 })
@@ -1610,11 +1627,12 @@ export async function getAdminPayslipPreviewScope(params = {}) {
 
 /**
  * Company default cut-off + pay-date calculator (Advanced section).
- * @param {{ anchor_date?: string, pay_date?: string }} params
+ * @param {{ company_id?: number, anchor_date?: string, pay_date?: string }} params
  * @returns {Promise<{ from_date: string|null, to_date: string|null, pay_date: string|null, reference_date: string|null, weekend_adjusted: boolean, weekend_adjustment_note?: string|null, cycle_label?: string|null }>}
  */
 export async function getAdminCompanyDefaultPayslipDates(params = {}) {
   const q = new URLSearchParams()
+  if (params.company_id != null && params.company_id !== '') q.set('company_id', String(params.company_id))
   if (params.anchor_date) q.set('anchor_date', params.anchor_date)
   if (params.pay_date) q.set('pay_date', params.pay_date)
   const res = await authenticatedFetch(`/admin/payslips/company-default-dates${q.toString() ? `?${q}` : ''}`)
@@ -4182,7 +4200,12 @@ export async function updateEmployeeFace(id, payload) {
     body: JSON.stringify(payload),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to save face')
+  if (!res.ok) {
+    const msg = data.errors?.face?.[0] || data.message || 'Failed to save face'
+    const err = new Error(msg)
+    err.errorCode = data.error_code
+    throw err
+  }
   clearCachesAfterAdminEmployeeDataChange(id)
   return data
 }

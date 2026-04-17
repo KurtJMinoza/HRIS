@@ -183,6 +183,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Registration liveness (Rekognition) — lighter floor than strict registration
+    |--------------------------------------------------------------------------
+    | When true, registration uses the same floor as clock-in/out (face_min_liveness_score only).
+    | When false, max(face_min_liveness_score, face_registration_min_liveness_score) is used.
+    |--------------------------------------------------------------------------
+    */
+    'face_registration_light_liveness' => filter_var(
+        env('ATTENDANCE_FACE_REGISTRATION_LIGHT_LIVENESS', true),
+        FILTER_VALIDATE_BOOL
+    ),
+
+    /*
+    |--------------------------------------------------------------------------
     | Face match threshold (Euclidean distance). Login only allowed if similarity
     | passes: distance <= threshold. Facenet same-person distance often 0.5–1.0.
     | 0.45 = very strict (many false rejections), 0.75 = balanced, 0.9–1.0 = lenient.
@@ -235,9 +248,10 @@ return [
     |--------------------------------------------------------------------------
     | Face duplicate detection (registration only, cross-account)
     |--------------------------------------------------------------------------
-    | Compared only against *other* employees' stored samples + primary (+ optional mean row).
-    | A duplicate is declared when cosine similarity ≥ min_cosine OR Euclidean ≤ max_euclidean.
-    | Previous defaults (~0.50 cosine) caused false "already registered" for different people.
+    | Compared against *other* users' stored samples + primary (+ optional mean row); scan is not limited by roster role.
+    | Primary duplicate: cosine ≥ min_cosine OR raw Euclidean ≤ max_euclidean OR normalized Euclidean ≤ max_euclidean_normalized.
+    | Optional dual-signal: cosine ≥ dual_min AND (raw Euclidean ≤ dual_max OR normalized Euclidean ≤ max_euclidean_normalized).
+    | Registration compares every DB row when face_duplicate_registration_force_full_db_scan is true.
     |--------------------------------------------------------------------------
     */
     'face_duplicate_min_cosine_similarity' => is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_COSINE_SIM'))
@@ -257,8 +271,51 @@ return [
         ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_COSINE_SIM_AVG')
         : null,
 
-    /** Euclidean distance on raw 128-D vectors; Facenet same-person often below ~0.9, different people often higher. */
-    'face_duplicate_max_euclidean' => (float) env('ATTENDANCE_FACE_DUPLICATE_MAX_EUCLIDEAN', 0.4),
+    /** Euclidean distance on raw 128-D vectors; ArcFace same-person typically 0.5–1.2, different people higher. */
+    'face_duplicate_max_euclidean' => (float) env('ATTENDANCE_FACE_DUPLICATE_MAX_EUCLIDEAN', 0.65),
+
+    /** Euclidean distance on L2-normalized 128-D vectors (same space as cosine similarity). */
+    'face_duplicate_max_euclidean_normalized' => (float) env('ATTENDANCE_FACE_DUPLICATE_MAX_EUCLIDEAN_NORM', 0.55),
+
+    /** Block weak env values: effective min cosine for duplicate = max(resolved config, this floor). */
+    'face_duplicate_enforce_registration_cosine_floor' => filter_var(
+        env('ATTENDANCE_FACE_DUPLICATE_ENFORCE_COSINE_FLOOR', true),
+        FILTER_VALIDATE_BOOL
+    ),
+    'face_duplicate_registration_cosine_floor' => (float) env('ATTENDANCE_FACE_DUPLICATE_REGISTRATION_COSINE_FLOOR', 0.80),
+
+    /** Extra OR-path for same-face pairs that miss both primary gates (see FaceVerificationService::duplicateRowMatchesIncoming). */
+    'face_duplicate_dual_signal_enabled' => filter_var(
+        env('ATTENDANCE_FACE_DUPLICATE_DUAL_SIGNAL', true),
+        FILTER_VALIDATE_BOOL
+    ),
+    'face_duplicate_dual_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_DUAL_COSINE_MIN', 0.80),
+    'face_duplicate_dual_max_euclidean' => (float) env('ATTENDANCE_FACE_DUPLICATE_DUAL_MAX_EUCLIDEAN', 0.65),
+
+    /**
+     * Aggregate best-of-all-samples: if the BEST cosine similarity across ALL stored vectors
+     * for a single other user exceeds this threshold, flag as duplicate. Lower than per-row gate
+     * because looking at the best sample pair is the most reliable single-signal check.
+     */
+    'face_duplicate_aggregate_best_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_AGGREGATE_BEST_COSINE_MIN', 0.80),
+
+    /**
+     * Raw (un-normalized) cosine similarity threshold for duplicate detection.
+     * Catches cases where ArcFace embeddings have varying norms and normalized comparison diverges.
+     */
+    'face_duplicate_raw_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_RAW_COSINE_MIN', 0.80),
+
+    /** Registration job / admin descriptor: compare all rows in DB (recommended). Non-registration callers may use the embedding index when false. */
+    'face_duplicate_registration_force_full_db_scan' => filter_var(
+        env('ATTENDANCE_FACE_DUPLICATE_REGISTRATION_FULL_SCAN', true),
+        FILTER_VALIDATE_BOOL
+    ),
+
+    /** After exhaustive registration scan with no match, log best cosine / distance for debugging. */
+    'face_duplicate_log_registration_scan_summary' => filter_var(
+        env('ATTENDANCE_FACE_DUPLICATE_LOG_SCAN_SUMMARY', true),
+        FILTER_VALIDATE_BOOL
+    ),
 
     /**
      * Log when best cosine to any other employee is in [near_miss_min, min_cosine) for debugging borderline cases.
@@ -269,6 +326,20 @@ return [
         env('ATTENDANCE_FACE_DUPLICATE_LOG_NEAR_MISS', true),
         FILTER_VALIDATE_BOOL
     ),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Duplicate embedding index (registration speed)
+    |--------------------------------------------------------------------------
+    | Precomputes flattened comparison rows (per-user samples + optional avg) in cache.
+    | Version bumps on successful registration or face reset so the next check rebuilds from DB.
+    |--------------------------------------------------------------------------
+    */
+    'face_duplicate_use_embedding_index_cache' => filter_var(
+        env('ATTENDANCE_FACE_DUPLICATE_USE_INDEX_CACHE', true),
+        FILTER_VALIDATE_BOOL
+    ),
+    'face_duplicate_embedding_index_ttl_seconds' => (int) env('ATTENDANCE_FACE_DUPLICATE_INDEX_TTL_SECONDS', 86400),
 
     /*
     |--------------------------------------------------------------------------

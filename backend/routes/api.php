@@ -47,6 +47,7 @@ use App\Http\Controllers\EmployeeProfileController;
 use App\Http\Controllers\EmployeeSkillController;
 use App\Http\Controllers\LivenessController;
 use App\Http\Controllers\MyScheduleController;
+use App\Http\Controllers\PayslipDownloadController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\PremiumReportController;
 use App\Http\Controllers\PresenceFilingController;
@@ -150,6 +151,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/employee/payslips/{id}', [EmployeePayslipController::class, 'show'])->whereNumber('id');
     });
     Route::middleware('permission:payslip.download')->group(function () {
+        Route::get('/payslips/{id}/download', [PayslipDownloadController::class, 'download'])->whereNumber('id');
         Route::get('/employee/payslips/{id}/pdf', [EmployeePayslipController::class, 'download'])->whereNumber('id');
         Route::get('/employee/payslips/{id}/print', [EmployeePayslipController::class, 'downloadPrint'])->whereNumber('id');
     });

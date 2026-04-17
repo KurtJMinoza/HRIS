@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion } from 'framer-motion'
-import * as XLSX from 'xlsx'
+import { exportRowsToXlsx } from '@/lib/excelExport'
 import {
   Loader2,
   RefreshCw,
@@ -660,12 +660,14 @@ export default function AttendanceCorrections() {
     URL.revokeObjectURL(url)
   }
 
-  function exportToExcel(list) {
+  async function exportToExcel(list) {
     const { headers, rows } = buildExportMatrix(list)
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Corrections')
-    XLSX.writeFile(wb, `correction-requests-${tab}-${new Date().toISOString().split('T')[0]}.xlsx`)
+    await exportRowsToXlsx(
+      headers,
+      rows,
+      `correction-requests-${tab}-${new Date().toISOString().split('T')[0]}.xlsx`,
+      'Corrections',
+    )
   }
 
   const cellPad = tableDensity === 'compact' ? '!p-2' : '!p-3.5'
