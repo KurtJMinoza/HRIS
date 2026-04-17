@@ -2,6 +2,8 @@
 
 Full-stack **HRIS** for workforce management, attendance (including face-verified DTR), payroll, and employee self-service. The app is a **React (Vite)** SPA talking to a **Laravel 12** REST API, with optional **Python (FastAPI + DeepFace)** for face embeddings and integrations with **Amazon Rekognition** / **Amplify Face Liveness**.
 
+**Repository:** [github.com/KurtJMinoza/HRIS](https://github.com/KurtJMinoza/HRIS)
+
 ---
 
 ## Tech stack (versions — see lockfiles for exact pins)
@@ -185,4 +187,4 @@ Add a `LICENSE` file (e.g. MIT or proprietary). Until then, **all rights reserve
 
 ## Author
 
-Configure your name and repository URL after you publish this project to a new remote.
+**KurtJMinoza** — [github.com/KurtJMinoza](https://github.com/KurtJMinoza)
