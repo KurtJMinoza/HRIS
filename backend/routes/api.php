@@ -147,6 +147,7 @@ Route::middleware('auth:sanctum')->group(function () {
     /** Payslips (self-service; own records only — {@see EmployeePayslipController}). */
     Route::middleware('permission:payslip.view')->group(function () {
         Route::get('/employee/payslips', [EmployeePayslipController::class, 'index']);
+        Route::get('/employee/payslips/salary-history', [EmployeePayslipController::class, 'salaryHistory']);
         Route::get('/employee/payslips/{id}/data', [EmployeePayslipController::class, 'viewData'])->whereNumber('id');
         Route::get('/employee/payslips/{id}', [EmployeePayslipController::class, 'show'])->whereNumber('id');
     });

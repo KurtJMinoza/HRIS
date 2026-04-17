@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\PayCycle;
 use App\Models\PayrollBatchRun;
+use App\Models\Payslip;
 use App\Models\PayrollPeriod;
 use App\Models\User;
 use App\Services\DataScopeService;
@@ -124,6 +125,89 @@ class PayrollController extends Controller
     {
         $perPage = max(1, min(20, (int) $request->integer('per_page', 6)));
         $finalizedOnly = $request->boolean('finalized_only', false);
+        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
+
+        if ($finalizedOnly) {
+            // Salary tabs should display finalized payslips only.
+            $query = Payslip::query()
+                ->select([
+                    'id',
+                    'user_id',
+                    'pay_period_start as from_date',
+                    'pay_period_end as to_date',
+                    'pay_date',
+                    'cycle_label',
+                    'net_pay',
+                    'status',
+                    'finalized_at',
+                    'created_at',
+                ])
+                ->whereIn('user_id', $scope->select('users.id'))
+                ->where(function ($finalizedFilter) {
+                    // Preferred signal: payslip belongs to a finalized payroll batch run.
+                    $finalizedFilter->whereExists(function ($sub) {
+                        $sub->selectRaw('1')
+                            ->from('payroll_batch_runs')
+                            ->where('payroll_batch_runs.status', PayrollBatchRun::STATUS_FINALIZED)
+                            ->where(function ($match) {
+                                // Primary link for newer records.
+                                $match->whereColumn('payroll_batch_runs.payroll_period_id', 'payslips.payroll_period_id')
+                                    // Backward-compatible link for older finalized rows that may not carry payroll_period_id.
+                                    ->orWhere(function ($legacy) {
+                                        $legacy->whereColumn('payroll_batch_runs.pay_period_start', 'payslips.pay_period_start')
+                                            ->whereColumn('payroll_batch_runs.pay_period_end', 'payslips.pay_period_end')
+                                            ->where(function ($employeeScope) {
+                                                $employeeScope
+                                                    // Employee-specific finalize run
+                                                    ->whereColumn('payroll_batch_runs.employee_id', 'payslips.user_id')
+                                                    // Company/branch/department finalize run (employee_id NULL)
+                                                    ->orWhereNull('payroll_batch_runs.employee_id');
+                                            });
+                                    });
+                            });
+                    })
+                    // Fallback for legacy/partial linkage rows that are still finalized/published.
+                        ->orWhereNotNull('payslips.finalized_at')
+                        ->orWhereIn('payslips.status', [
+                            Payslip::STATUS_FINALIZED,
+                            Payslip::STATUS_SENT_FINALIZED,
+                            Payslip::STATUS_VIEWED,
+                            Payslip::STATUS_EMAILED,
+                        ]);
+                });
+
+            $isEmployeeSelfService = (string) ($request->user()?->role ?? '') === User::ROLE_EMPLOYEE;
+
+            // Employee self-service: enforce own records only.
+            if ($isEmployeeSelfService) {
+                $query->where('user_id', (int) $request->user()->id);
+            }
+
+            if (! $isEmployeeSelfService && $request->has('employee_id')) {
+                $query->where('user_id', $request->integer('employee_id'));
+            }
+            if ($request->has('from_date')) {
+                $query->where('pay_period_end', '>=', $request->string('from_date'));
+            }
+            if ($request->has('to_date')) {
+                $query->where('pay_period_start', '<=', $request->string('to_date'));
+            }
+
+            $periods = $query
+                ->orderByDesc('pay_date')
+                ->orderByDesc('created_at')
+                ->paginate($perPage);
+
+            $periods->getCollection()->transform(function ($row) {
+                $row->status = 'finalized';
+
+                return $row;
+            });
+
+            return response()->json($periods);
+        }
+
         $query = PayrollPeriod::query()
             // Keep list endpoint lightweight: avoid selecting large JSON/audit blobs.
             ->select([
@@ -137,11 +221,8 @@ class PayrollController extends Controller
                 'net_pay',
                 'created_at',
             ])
-            ->with('user:id,name,employee_code,department');
-
-        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
-        $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
-        $query->whereIn('user_id', $scope->select('users.id'));
+            ->with('user:id,name,employee_code,department')
+            ->whereIn('user_id', $scope->select('users.id'));
 
         if ($request->has('employee_id')) {
             $query->where('user_id', $request->integer('employee_id'));
@@ -153,29 +234,10 @@ class PayrollController extends Controller
             $query->where('from_date', '<=', $request->string('to_date'));
         }
 
-        if ($finalizedOnly) {
-            // Salary tab history: include only payroll periods that belong to finalized payroll batch runs.
-            // This excludes draft/queued/processing/failed runs.
-            $query->whereExists(function ($sub) {
-                $sub->selectRaw('1')
-                    ->from('payroll_batch_runs')
-                    ->whereColumn('payroll_batch_runs.payroll_period_id', 'payroll_periods.id')
-                    ->where('payroll_batch_runs.status', PayrollBatchRun::STATUS_FINALIZED);
-            });
-        }
-
         $periods = $query
             ->orderByDesc('pay_date')
             ->orderByDesc('created_at')
             ->paginate($perPage);
-
-        if ($finalizedOnly) {
-            $periods->getCollection()->transform(function ($period) {
-                $period->status = 'finalized';
-
-                return $period;
-            });
-        }
 
         return response()->json($periods);
     }

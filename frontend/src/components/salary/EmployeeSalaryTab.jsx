@@ -339,6 +339,7 @@ function nextPreviewWindow(preview) {
 
 function mapPayrollPeriodStatus(status) {
   const s = String(status || '').toLowerCase()
+  if (s === 'finalized' || s === 'sent_finalized' || s === 'generated' || s === 'emailed' || s === 'viewed') return 'Finalized'
   if (s === 'locked' || s === 'computed') return 'Disbursed'
   if (s === 'draft') return 'Draft'
   return status ? String(status) : '—'
@@ -625,7 +626,7 @@ export function SalaryPayrollHistoryCard({ periods, loading, error, onViewAll, c
             <Receipt className="size-5 text-[#0A0A0A] dark:text-slate-100" aria-hidden />
             Payroll History
           </CardTitle>
-          <CardDescription className="text-slate-600 dark:text-slate-400">Recent payroll periods from posted payroll runs.</CardDescription>
+          <CardDescription className="text-slate-600 dark:text-slate-400">Recent finalized payslips from completed payroll runs.</CardDescription>
         </div>
         {canView && onViewAll ? (
           <Button type="button" variant="outline" size="sm" className="border-slate-200 text-[#0A0A0A] hover:bg-slate-100 dark:border-white/15 dark:text-slate-100 dark:hover:bg-white/10" onClick={onViewAll}>
@@ -643,7 +644,7 @@ export function SalaryPayrollHistoryCard({ periods, loading, error, onViewAll, c
           </p>
         ) : rows.length === 0 ? (
           <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-sm text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400">
-            No posted payslips yet. History appears after payroll is saved for this employee.
+            No finalized payslips yet. History appears after payroll is finalized for this employee.
           </p>
         ) : (
           <ul className="space-y-2">

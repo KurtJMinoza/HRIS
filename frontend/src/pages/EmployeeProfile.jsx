@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { Loader2, User, UserRound, Briefcase, Gift, IdCard, Users, ShieldCheck, MapPin, Calendar, Clock, FileText, Phone, Zap, Plus, Upload, Eye, Pencil, Trash2, CheckCircle2, X, Mail, Flag, Home, Hash, Heart, Folder, FileUp, FileDown, Archive, AlertTriangle, Award, Gavel, HeartPulse, LineChart, Camera, FilePenLine, CircleDollarSign, Wallet, Receipt } from 'lucide-react'
+import { Loader2, User, UserRound, Briefcase, Gift, IdCard, Users, ShieldCheck, MapPin, Calendar, Clock, FileText, Phone, Zap, Plus, Upload, Eye, Pencil, Trash2, CheckCircle2, X, Mail, Flag, Home, Hash, Heart, Folder, FileUp, FileDown, Archive, AlertTriangle, Award, Gavel, HeartPulse, LineChart, Camera, FilePenLine, CircleDollarSign, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -44,6 +44,7 @@ import {
   getMyEmployeeProfile,
   getEmployeeProfileSnapshot,
   getPayrollPeriodsForEmployee,
+  getMySalaryHistory,
   getMySkills,
   getEmployeeSkills,
   addMySkill,
@@ -101,7 +102,6 @@ import {
   SalaryTabShell,
   resolveTinForSalaryDisplay,
 } from '@/components/salary/EmployeeSalaryTab'
-import { EmployeePayslipsPanel } from '@/components/payslips/EmployeePayslipsPanel'
 
 function toStr(v) {
   if (v === undefined || v === null) return ''
@@ -458,7 +458,9 @@ export default function EmployeeProfile() {
     || isAdminOrHr
   )
   const canEditPhoto = !isReadOnly && (permissionSet.has('profile.picture.edit') || canEdit)
-  const canViewPayrollHistory = permissionSet.has('payroll.view')
+  const canViewPayrollHistory = isReadOnly
+    ? permissionSet.has('payroll.view')
+    : permissionSet.has('payslip.view') || permissionSet.has('payroll.view')
 
   const effectivePayCyclePreview = useMemo(
     () => payCyclePreview ?? compensationSummary?.pay_cycle_preview ?? null,
@@ -1027,11 +1029,15 @@ export default function EmployeeProfile() {
   })
 
   const payrollPeriodsQuery = useQuery({
-    queryKey: ['employee-profile-payroll-periods', { employeeId: effectiveProfileId }],
+    queryKey: ['employee-profile-payroll-periods', { employeeId: effectiveProfileId, readOnly: isReadOnly }],
     enabled: Boolean(effectiveProfileId) && activeTab === 'salary' && canViewPayrollHistory,
     staleTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
-    queryFn: () => getPayrollPeriodsForEmployee(effectiveProfileId, { per_page: 6, finalized_only: true }),
+    queryFn: () => (
+      isReadOnly
+        ? getPayrollPeriodsForEmployee(effectiveProfileId, { per_page: 6, finalized_only: true })
+        : getMySalaryHistory({ per_page: 6 })
+    ),
   })
 
   useEffect(() => {
@@ -1090,7 +1096,8 @@ export default function EmployeeProfile() {
       return
     }
     if (payrollPeriodsQuery.data) {
-      setPayrollPeriods(Array.isArray(payrollPeriodsQuery.data?.data) ? payrollPeriodsQuery.data.data : [])
+      const normalized = Array.isArray(payrollPeriodsQuery.data?.data) ? payrollPeriodsQuery.data.data : []
+      setPayrollPeriods(normalized)
       setPayrollPeriodsError('')
     }
   }, [payrollPeriodsQuery.data, payrollPeriodsQuery.error, payrollPeriodsQuery.isLoading, payrollPeriodsQuery.isFetching])
@@ -2375,7 +2382,6 @@ export default function EmployeeProfile() {
       { id: 'profile', label: 'Profile', icon: User },
       { id: 'employment', label: 'Employment', icon: Briefcase },
       { id: 'salary', label: 'Salary', icon: CircleDollarSign },
-      ...(!isReadOnly ? [{ id: 'payslips', label: 'Payslips', icon: Receipt }] : []),
       { id: 'benefits', label: 'Benefits', icon: Gift },
       { id: 'documents', label: 'Documents', icon: FileText },
       { id: 'government', label: 'Government IDs', icon: IdCard },
@@ -3286,12 +3292,6 @@ export default function EmployeeProfile() {
               contributions.
             </SalaryTabNotice>
           </SalaryTabShell>
-        </div>
-      )}
-
-      {activeTab === 'payslips' && !isReadOnly && (
-        <div className="rounded-2xl border border-slate-200/90 bg-slate-50/60 p-4 shadow-sm sm:p-6 dark:border-white/10 dark:bg-slate-950/40">
-          <EmployeePayslipsPanel />
         </div>
       )}
 

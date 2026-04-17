@@ -1488,6 +1488,21 @@ export async function getPayrollPeriodsForEmployee(employeeId, opts = {}) {
 // —— Payslips (PayrollComputationService + PayCycle integration) ——
 
 /**
+ * Salary-tab Payroll History for the logged-in employee.
+ * Returns all finalized/published payslips regardless of send/delivery status.
+ * @param {{ per_page?: number }} [opts]
+ */
+export async function getMySalaryHistory(opts = {}) {
+  const q = new URLSearchParams()
+  const perPage = normalizePerPage(opts.per_page)
+  if (perPage != null) q.set('per_page', String(perPage))
+  const res = await authenticatedFetch(`/employee/payslips/salary-history${q.toString() ? `?${q}` : ''}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load payroll history')
+  return data
+}
+
+/**
  * @param {{ per_page?: number, page?: number, from_date?: string, to_date?: string, status?: 'all'|'finalized'|'generated'|'emailed'|'sent_finalized'|'viewed' }} [opts]
  */
 export async function getMyPayslips(opts = {}) {

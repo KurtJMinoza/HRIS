@@ -67,6 +67,58 @@ class EmployeePayslipController extends Controller
         return response()->json($paginated);
     }
 
+    /**
+     * Salary-tab Payroll History: all finalized/published payslips for the logged-in
+     * employee, regardless of whether HR has explicitly "sent" them. This lets the
+     * Salary tab show history as soon as payroll is finalized.
+     */
+    public function salaryHistory(Request $request): JsonResponse
+    {
+        $this->ensureSelfServiceAccess($request);
+        $user = $request->user();
+
+        $perPage = max(1, min(20, (int) $request->integer('per_page', 6)));
+
+        $rows = Payslip::query()
+            ->select([
+                'id',
+                'pay_period_start',
+                'pay_period_end',
+                'pay_date',
+                'cycle_label',
+                'net_pay',
+                'status',
+                'finalized_at',
+                'created_at',
+            ])
+            ->where('user_id', $user->id)
+            ->where(function ($q) {
+                $q->whereIn('status', Payslip::lockingStatuses())
+                    ->orWhereNotNull('finalized_at');
+            })
+            ->where('status', '!=', Payslip::STATUS_DRAFT)
+            ->orderByDesc('pay_date')
+            ->orderByDesc('created_at')
+            ->paginate($perPage);
+
+        \Log::info('salaryHistory endpoint', [
+            'user_id' => $user->id,
+            'total' => $rows->total(),
+            'per_page' => $perPage,
+            'statuses' => Payslip::lockingStatuses(),
+        ]);
+
+        $rows->getCollection()->transform(function ($row) {
+            $row->from_date = $row->pay_period_start;
+            $row->to_date = $row->pay_period_end;
+            $row->status = 'finalized';
+
+            return $row;
+        });
+
+        return response()->json($rows);
+    }
+
     public function show(Request $request, int $id): JsonResponse
     {
         $this->ensureSelfServiceAccess($request);
