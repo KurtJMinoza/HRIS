@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Payslip;
+use App\Models\PayrollBatchRun;
 use App\Models\User;
 use App\Services\PayslipService;
 use App\Support\PayslipStoredSnapshotViewPayload;
@@ -39,17 +40,45 @@ class EmployeePayslipController extends Controller
             'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
             /** `all` = any published; other values filter to that status (delivered payslips only). */
             'status' => ['nullable', 'string', 'in:all,finalized,generated,emailed,sent_finalized,viewed'],
+            // Salary tab compatibility mode: finalized history regardless of send/delivered flags.
+            'salary_history' => ['nullable', 'boolean'],
+            'finalized_only' => ['nullable', 'boolean'],
         ]);
 
         $published = Payslip::lockingStatuses();
+        $salaryHistoryMode = (bool) ($v['salary_history'] ?? false) || (bool) ($v['finalized_only'] ?? false);
 
-        $q = Payslip::query()
-            ->where('user_id', $user->id)
-            ->whereIn('status', $published)
-            ->where(function ($sub) {
-                $sub->where('is_sent', true)
-                    ->orWhereNotNull('delivered_at');
-            });
+        $q = Payslip::query()->where('user_id', $user->id);
+
+        if ($salaryHistoryMode) {
+            // Align self-service Salary tab with admin finalized-history logic.
+            $q->where(function ($finalizedFilter) use ($published) {
+                $finalizedFilter->whereExists(function ($sub) {
+                    $sub->selectRaw('1')
+                        ->from('payroll_batch_runs')
+                        ->where('payroll_batch_runs.status', PayrollBatchRun::STATUS_FINALIZED)
+                        ->where(function ($match) {
+                            $match->whereColumn('payroll_batch_runs.payroll_period_id', 'payslips.payroll_period_id')
+                                ->orWhere(function ($legacy) {
+                                    $legacy->whereColumn('payroll_batch_runs.pay_period_start', 'payslips.pay_period_start')
+                                        ->whereColumn('payroll_batch_runs.pay_period_end', 'payslips.pay_period_end')
+                                        ->where(function ($employeeScope) {
+                                            $employeeScope->whereColumn('payroll_batch_runs.employee_id', 'payslips.user_id')
+                                                ->orWhereNull('payroll_batch_runs.employee_id');
+                                        });
+                                });
+                        });
+                })
+                    ->orWhereNotNull('payslips.finalized_at')
+                    ->orWhereIn('payslips.status', $published);
+            })->where('status', '!=', Payslip::STATUS_DRAFT);
+        } else {
+            $q->whereIn('status', $published)
+                ->where(function ($sub) {
+                    $sub->where('is_sent', true)
+                        ->orWhereNotNull('delivered_at');
+                });
+        }
 
         if (! empty($v['from_date'])) {
             $q->whereDate('pay_period_end', '>=', (string) $v['from_date']);
@@ -58,11 +87,24 @@ class EmployeePayslipController extends Controller
             $q->whereDate('pay_period_start', '<=', (string) $v['to_date']);
         }
         $st = (string) ($v['status'] ?? 'all');
-        if ($st !== 'all' && in_array($st, $published, true)) {
+        if (! $salaryHistoryMode && $st !== 'all' && in_array($st, $published, true)) {
             $q->where('status', $st);
         }
 
-        $paginated = $q->orderByDesc('pay_period_end')->paginate((int) ($v['per_page'] ?? 15));
+        $paginated = $q
+            ->orderByDesc('pay_date')
+            ->orderByDesc('created_at')
+            ->paginate((int) ($v['per_page'] ?? 15));
+
+        if ($salaryHistoryMode) {
+            $paginated->getCollection()->transform(function ($row) {
+                $row->from_date = $row->pay_period_start;
+                $row->to_date = $row->pay_period_end;
+                $row->status = 'finalized';
+
+                return $row;
+            });
+        }
 
         return response()->json($paginated);
     }

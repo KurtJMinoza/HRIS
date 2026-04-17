@@ -2406,7 +2406,7 @@ export default function EmployeeProfile() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[min(100%,92rem)] 2xl:max-w-[min(100%,100rem)] space-y-6">
+    <div className="w-full space-y-6">
       <div>
         <h2 className="text-2xl font-bold tracking-tight @md:text-3xl">
           {isReadOnly ? (

@@ -1496,7 +1496,8 @@ export async function getMySalaryHistory(opts = {}) {
   const q = new URLSearchParams()
   const perPage = normalizePerPage(opts.per_page)
   if (perPage != null) q.set('per_page', String(perPage))
-  const res = await authenticatedFetch(`/employee/payslips/salary-history${q.toString() ? `?${q}` : ''}`)
+  q.set('salary_history', '1')
+  const res = await authenticatedFetch(`/employee/payslips${q.toString() ? `?${q}` : ''}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load payroll history')
   return data
