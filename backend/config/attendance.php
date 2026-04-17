@@ -229,6 +229,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Kiosk / clock-in-out: looser thresholds for faster, more reliable matching
+    |--------------------------------------------------------------------------
+    | Registration uses stricter duplicate thresholds (0.80+ cosine). Verification
+    | (kiosk clock in/out) can afford slightly looser gates because Rekognition
+    | liveness already authenticates a live person, and the ambiguity margin
+    | still prevents misidentification between enrolled employees.
+    |
+    | Set to null to use the same thresholds as general face identification.
+    */
+    'face_kiosk_cosine_distance_threshold' => is_numeric(env('ATTENDANCE_FACE_KIOSK_COSINE_DISTANCE_THRESHOLD'))
+        ? (float) env('ATTENDANCE_FACE_KIOSK_COSINE_DISTANCE_THRESHOLD')
+        : 0.42,
+    'face_kiosk_min_similarity_score' => is_numeric(env('ATTENDANCE_FACE_KIOSK_MIN_SIMILARITY_SCORE'))
+        ? (float) env('ATTENDANCE_FACE_KIOSK_MIN_SIMILARITY_SCORE')
+        : 0.58,
+    'face_kiosk_match_threshold' => is_numeric(env('ATTENDANCE_FACE_KIOSK_MATCH_THRESHOLD'))
+        ? (float) env('ATTENDANCE_FACE_KIOSK_MATCH_THRESHOLD')
+        : 0.90,
+
+    /*
+    |--------------------------------------------------------------------------
     | Identification debug logging (kiosk / face login)
     |--------------------------------------------------------------------------
     | On a failed match, log best near-miss cosine similarity and thresholds (no PII by default).

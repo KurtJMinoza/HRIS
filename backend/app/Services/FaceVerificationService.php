@@ -49,6 +49,27 @@ class FaceVerificationService
         return (float) config('attendance.face_min_similarity_margin', 0.04);
     }
 
+    private static function kioskCosineDistanceThreshold(): ?float
+    {
+        $v = config('attendance.face_kiosk_cosine_distance_threshold');
+
+        return $v !== null && is_numeric($v) ? (float) $v : null;
+    }
+
+    private static function kioskMinSimilarityScore(): ?float
+    {
+        $v = config('attendance.face_kiosk_min_similarity_score');
+
+        return $v !== null && is_numeric($v) ? (float) $v : null;
+    }
+
+    private static function kioskMatchThreshold(): ?float
+    {
+        $v = config('attendance.face_kiosk_match_threshold');
+
+        return $v !== null && is_numeric($v) ? (float) $v : null;
+    }
+
     /**
      * Duplicate registration (cross-account): block when cosine similarity is high enough
      * to indicate the same person. Multi-signal approach (cosine, Euclidean, dual-signal, aggregate)
@@ -521,9 +542,10 @@ class FaceVerificationService
      * Uses max cosine similarity across enrollment captures — same idea as duplicate detection
      * (mean-only matching caused false rejects when kiosk lighting differed from registration).
      *
+     * @param  bool  $kioskMode  Use looser kiosk thresholds (clock-in/out with liveness already verified)
      * @return array{similarity_score: float, distance: float, cmp: float, passes: bool}|null
      */
-    public static function aggregateBestMatchForUser(User $user, array $incomingDescriptor): ?array
+    public static function aggregateBestMatchForUser(User $user, array $incomingDescriptor, bool $kioskMode = false): ?array
     {
         if (count($incomingDescriptor) !== 128) {
             return null;
@@ -540,14 +562,19 @@ class FaceVerificationService
             return null;
         }
 
+        $incomingNorm = self::l2Normalize128($incomingDescriptor);
+
         $bestCosineSim = -1.0;
         $bestDistance = PHP_FLOAT_MAX;
         foreach ($candidates as $stored) {
             if (count($stored) !== 128) {
                 continue;
             }
+            $storedNorm = self::l2Normalize128($stored);
+            $sNorm = self::cosineSimilarity($storedNorm, $incomingNorm);
+            $sRaw = self::cosineSimilarity($stored, $incomingDescriptor);
+            $s = max($sNorm, $sRaw);
             $d = self::euclideanDistance($stored, $incomingDescriptor);
-            $s = self::cosineSimilarity($stored, $incomingDescriptor);
             if ($s > $bestCosineSim) {
                 $bestCosineSim = $s;
                 $bestDistance = $d;
@@ -559,10 +586,18 @@ class FaceVerificationService
         }
 
         $useCosine = self::useCosineThreshold();
-        $euclideanThreshold = self::matchThreshold();
-        $cosineThreshold = self::cosineDistanceThreshold();
-        $minSim = self::minSimilarityScore();
         $cosineDist = 1.0 - $bestCosineSim;
+
+        if ($kioskMode) {
+            $cosineThreshold = self::kioskCosineDistanceThreshold() ?? self::cosineDistanceThreshold();
+            $minSim = self::kioskMinSimilarityScore() ?? self::minSimilarityScore();
+            $euclideanThreshold = self::kioskMatchThreshold() ?? self::matchThreshold();
+        } else {
+            $cosineThreshold = self::cosineDistanceThreshold();
+            $minSim = self::minSimilarityScore();
+            $euclideanThreshold = self::matchThreshold();
+        }
+
         $passes = $useCosine
             ? ($cosineDist <= $cosineThreshold && $bestCosineSim >= $minSim)
             : ($bestDistance <= $euclideanThreshold && $bestCosineSim >= $minSim);
@@ -596,15 +631,24 @@ class FaceVerificationService
      * similarity_score = cosine similarity (0–1) for storage in attendance log.
      *
      * @param  array<int, float>  $incomingDescriptor  128D descriptor
+     * @param  bool  $kioskMode  Use relaxed kiosk thresholds (liveness already proven by Rekognition)
      * @return array{user: User, distance: float, similarity_score: float}|null
      */
-    public static function identifyUserByFaceWithScore(array $incomingDescriptor): ?array
+    public static function identifyUserByFaceWithScore(array $incomingDescriptor, bool $kioskMode = false): ?array
     {
         if (count($incomingDescriptor) !== 128) {
             return null;
         }
 
-        $employees = self::faceIdentificationCandidateQuery()->get();
+        $employees = self::faceIdentificationCandidateQuery()
+            ->select([
+                'id', 'name', 'email', 'role', 'is_active',
+                'face_status', 'face_descriptor', 'face_descriptor_samples',
+                'face_embedding', 'face_registered_at',
+                'profile_image', 'profile_image_url',
+                'updated_at',
+            ])
+            ->get();
         $minMargin = self::minSimilarityMargin();
 
         $passing = [];
@@ -612,7 +656,7 @@ class FaceVerificationService
             if (! $user->hasRegisteredFace()) {
                 continue;
             }
-            $agg = self::aggregateBestMatchForUser($user, $incomingDescriptor);
+            $agg = self::aggregateBestMatchForUser($user, $incomingDescriptor, $kioskMode);
             if ($agg === null || ! $agg['passes']) {
                 continue;
             }

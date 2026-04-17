@@ -1240,7 +1240,9 @@ class AttendanceController extends Controller
             ], 422);
         }
 
-        $identified = FaceAuthService::identifyUserWithScore($result['descriptor']);
+        $matchStarted = microtime(true);
+        $identified = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true);
+        $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
         if (! $identified) {
             $this->recordFailedAttempt(null, $request, false, 'face_not_recognized');
 
@@ -1250,6 +1252,7 @@ class AttendanceController extends Controller
                 'error_code' => 'face_not_recognized',
                 'hint' => 'If you are enrolled, try once more; automatic retries may help. QR is always available below.',
                 'fallback' => 'qr',
+                'performance' => ['match_ms' => $matchMs],
             ], 422);
         }
 
@@ -1416,6 +1419,7 @@ class AttendanceController extends Controller
 
         $payload['performance'] = [
             'server_processing_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'match_ms' => $matchMs,
             'client_capture_started_at_ms' => isset($validated['client_capture_started_at_ms']) ? (int) $validated['client_capture_started_at_ms'] : null,
         ];
 
@@ -1424,6 +1428,8 @@ class AttendanceController extends Controller
             'type' => $type,
             'uses_liveness_session' => ! empty($sessionId),
             'server_processing_ms' => $payload['performance']['server_processing_ms'],
+            'match_ms' => $matchMs,
+            'similarity_score' => $identified['similarity_score'],
             'client_capture_started_at_ms' => $payload['performance']['client_capture_started_at_ms'],
         ]);
 

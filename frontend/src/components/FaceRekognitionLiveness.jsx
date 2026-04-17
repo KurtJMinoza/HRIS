@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { CheckCircle2, Home } from 'lucide-react'
 
 const SOUND_FEEDBACK_ENABLED = true
-const FACE_MATCH_TIMEOUT_MS = 6500
+const FACE_MATCH_TIMEOUT_MS = 12000
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   return Promise.race([
     promise,
@@ -133,11 +133,10 @@ export function FaceRekognitionLiveness({
     }
   }, [kioskSuccess, kioskSuccessData, onKioskSuccess])
 
-  // After Amplify reports analysis complete, the overlay stays until the API returns — split copy so it feels faster.
   useEffect(() => {
     if (!submitting && !silentSessionRefresh) return
     setVerifyPhase('verify')
-    const t = setTimeout(() => setVerifyPhase('match'), 700)
+    const t = setTimeout(() => setVerifyPhase('match'), 1800)
     return () => clearTimeout(t)
   }, [submitting, silentSessionRefresh])
 
@@ -193,12 +192,14 @@ export function FaceRekognitionLiveness({
       const msg = err?.message || 'Face verification failed'
       playError(SOUND_FEEDBACK_ENABLED)
       const code = err?.errorCode
-      // Auto-retry up to 2 more times on face-not-match (no match ≠ spoof): new liveness session, user scans again.
-      if (code === 'face_not_recognized' && faceMatchAttemptRef.current < 2) {
+      const maxAutoRetries = kioskMode ? 3 : 2
+      if (code === 'face_not_recognized' && faceMatchAttemptRef.current < maxAutoRetries) {
         faceMatchAttemptRef.current += 1
-        toast.info(`Trying again (${faceMatchAttemptRef.current + 1} of 3)`, {
+        const attemptNum = faceMatchAttemptRef.current + 1
+        const total = maxAutoRetries + 1
+        toast.info(`Trying again (${attemptNum} of ${total})`, {
           description:
-            'Face the camera straight-on, use even lighting (avoid backlight), then hold still when prompted.',
+            'Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the prompt.',
         })
         setSubmitting(false)
         await fetchSession({ silent: true })
@@ -311,7 +312,7 @@ export function FaceRekognitionLiveness({
             (onVerified
               ? 'Complete the face liveness check to verify your identity.'
               : kioskMode
-                ? 'Position your face in the frame. Use even lighting and avoid backlight from windows.'
+                ? 'Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the guided check.'
                 : 'Complete the face liveness check to sign in. Use even lighting in front of your face.')}
         </p>
       )}
@@ -355,7 +356,9 @@ export function FaceRekognitionLiveness({
                     {verifyPhase === 'verify' ? 'Verifying liveness…' : 'Matching your face…'}
                   </span>
                   <span className="max-w-[18rem] text-center text-[11px] text-white/65">
-                    Hold still until the prompt finishes — this usually takes a few seconds.
+                    {verifyPhase === 'verify'
+                      ? "Hold still — confirming it's a live face."
+                      : 'Comparing your face against enrolled profiles…'}
                   </span>
                 </>
               )}
