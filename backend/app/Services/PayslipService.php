@@ -748,6 +748,28 @@ class PayslipService
     }
 
     /**
+     * Return an on-disk payslip PDF path (relative to storage/app/private), reusing {@see Payslip::$pdf_path}
+     * when the file already exists — avoids a slow Browsershot pass for bulk ZIP exports after finalize.
+     *
+     * @param  bool  $forceRegenerate  When true, always run {@see generatePdf()} (e.g. HR explicitly wants a refresh).
+     */
+    public function ensurePayslipPdfOnDisk(Payslip $payslip, User $employee, bool $forceRegenerate = false): string
+    {
+        $relative = $payslip->pdf_path;
+        if (! $forceRegenerate && is_string($relative) && trim($relative) !== '') {
+            $full = storage_path('app/private/'.$relative);
+            if (is_file($full)) {
+                return $relative;
+            }
+        }
+
+        $relative = $this->generatePdf($payslip, $employee);
+        $payslip->forceFill(['pdf_path' => $relative])->saveQuietly();
+
+        return $relative;
+    }
+
+    /**
      * Optional print-optimized PDF (same data, print CSS).
      */
     public function generatePrintPdf(Payslip $payslip, User $employee): string

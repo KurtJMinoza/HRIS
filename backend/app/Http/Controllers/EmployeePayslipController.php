@@ -2,13 +2,14 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Payslip;
 use App\Models\PayrollBatchRun;
+use App\Models\Payslip;
 use App\Models\User;
 use App\Services\PayslipService;
 use App\Support\PayslipStoredSnapshotViewPayload;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
@@ -143,7 +144,7 @@ class EmployeePayslipController extends Controller
             ->orderByDesc('created_at')
             ->paginate($perPage);
 
-        \Log::info('salaryHistory endpoint', [
+        Log::info('salaryHistory endpoint', [
             'user_id' => $user->id,
             'total' => $rows->total(),
             'per_page' => $perPage,

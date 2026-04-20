@@ -1871,6 +1871,29 @@ export async function adminDownloadPayslipsZip(payslipIds) {
   return res.blob()
 }
 
+/**
+ * Finalized batch only: payslip PDFs as one ZIP (reuses on-disk PDFs unless forceRegenerate).
+ * @param {number|string} batchRunId — {@see PayrollBatchRun} id
+ * @param {{ forceRegenerate?: boolean }} [options]
+ * @returns {Promise<Blob>}
+ */
+export async function adminBulkDownloadPayrollBatchPdfZip(batchRunId, options = {}) {
+  const res = await authenticatedFetch(
+    `/admin/payroll-batches/${encodeURIComponent(String(batchRunId))}/bulk-download-pdf`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, application/zip, */*' },
+      body: JSON.stringify({ force_regenerate: Boolean(options.forceRegenerate) }),
+      timeoutMs: 300000,
+    }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to build batch ZIP')
+  }
+  return res.blob()
+}
+
 /** @param {number|string} id */
 export async function getAdminPayslipPdfBlob(id) {
   const res = await authenticatedFetch(`/admin/payslips/${encodeURIComponent(String(id))}/pdf`)

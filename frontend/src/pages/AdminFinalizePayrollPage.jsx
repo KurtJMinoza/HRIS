@@ -1,6 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  adminBulkDownloadPayrollBatchPdfZip,
   adminDeleteFinalizedPayrollBatch,
   adminDeliverFinalizePayslips,
   adminExecuteFinalizePayroll,
@@ -31,6 +32,7 @@ import {
   Building2,
   CheckCircle2,
   Eye,
+  FileDown,
   RefreshCw,
   Loader2,
   Lock,
@@ -207,6 +209,7 @@ export default function AdminFinalizePayrollPage() {
   const isAdmin = user?.role === 'admin'
   const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canFinalizePayroll = permissionSet.has('payslip.finalize')
+  const canBulkDownloadPayslipZip = permissionSet.has('payslip.download')
 
   const payload = useMemo(() => parsePayload(searchParams), [searchParams.toString()])
   const effectivePayload = useMemo(() => {
@@ -276,6 +279,7 @@ export default function AdminFinalizePayrollPage() {
   const [deliveringPayslipId, setDeliveringPayslipId] = useState(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deletingBatch, setDeletingBatch] = useState(false)
+  const [bulkDownloadingZip, setBulkDownloadingZip] = useState(false)
 
   const periodFinalized = useMemo(() => {
     if (done || localFinalizeLocked) return true
@@ -289,6 +293,11 @@ export default function AdminFinalizePayrollPage() {
     }
     return false
   }, [preview, done, localFinalizeLocked])
+
+  const batchRunStatusFinalized = useMemo(
+    () => String(preview?.batch_run?.status || '').toLowerCase() === 'finalized',
+    [preview?.batch_run?.status]
+  )
 
   useEffect(() => {
     setDone(false)
@@ -701,6 +710,40 @@ export default function AdminFinalizePayrollPage() {
     }
   }
 
+  const handleBulkDownloadFinalizedZip = async () => {
+    const batchRunId = Number(preview?.batch_run?.payroll_batch_run_id || 0)
+    if (batchRunId <= 0 || bulkDownloadingZip || !batchRunStatusFinalized || !canBulkDownloadPayslipZip) return
+    setBulkDownloadingZip(true)
+    toastRef.current({
+      title: 'Preparing download…',
+      description: 'Reusing saved PDFs when available. First-time or forced rebuilds may take several minutes.',
+    })
+    try {
+      const blob = await adminBulkDownloadPayrollBatchPdfZip(batchRunId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const safeCo = String(preview?.totals?.company_name || preview?.company?.name || selectedCompany?.name || 'batch')
+        .replace(/[^\w-]+/g, '-')
+        .slice(0, 40)
+      a.download = `payslips-${safeCo}-${batchRunId}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      toastRef.current({
+        title: 'Download started',
+        description: 'Your ZIP file of payslip PDFs is downloading.',
+      })
+    } catch (e) {
+      toastRef.current({
+        title: 'Download failed',
+        description: e.message || 'Could not build ZIP.',
+        variant: 'destructive',
+      })
+    } finally {
+      setBulkDownloadingZip(false)
+    }
+  }
+
   const togglePayslipSelected = (id) => {
     setSelectedPayslipIds((prev) => {
       const next = new Set(prev)
@@ -776,25 +819,46 @@ export default function AdminFinalizePayrollPage() {
   return (
     <TooltipProvider>
       <div className={cn(PAYSLIP_MODULE_SHELL, PAYSLIP_STACK)}>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <Button variant="ghost" size="sm" className="w-fit gap-2" asChild>
             <Link to={`${hrBase}/compensation/generate-payslips`}>
               <ArrowLeft className="h-4 w-4" />
               Back
             </Link>
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={() => setRefreshToken(String(Date.now()))}
-            disabled={loading || periodFinalized}
-            title={periodFinalized ? 'Preview refresh is disabled while this payroll is locked.' : undefined}
-          >
-            <RefreshCw className={cn('h-4 w-4', loading ? 'animate-spin' : '')} />
-            Refresh calculation
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {batchRunStatusFinalized &&
+              Number(preview?.batch_run?.payroll_batch_run_id || 0) > 0 &&
+              canBulkDownloadPayslipZip && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  disabled={bulkDownloadingZip || loading}
+                  onClick={handleBulkDownloadFinalizedZip}
+                >
+                  {bulkDownloadingZip ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  Bulk Download PDF
+                </Button>
+              )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => setRefreshToken(String(Date.now()))}
+              disabled={loading || periodFinalized}
+              title={periodFinalized ? 'Preview refresh is disabled while this payroll is locked.' : undefined}
+            >
+              <RefreshCw className={cn('h-4 w-4', loading ? 'animate-spin' : '')} />
+              Refresh calculation
+            </Button>
+          </div>
         </div>
 
         <div className={cn(CARD, 'p-6')}>

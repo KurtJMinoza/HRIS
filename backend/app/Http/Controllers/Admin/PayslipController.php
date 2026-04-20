@@ -17,7 +17,10 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
-use ZipArchive;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use ZipStream\CompressionMethod;
+use ZipStream\OperationMode;
+use ZipStream\ZipStream;
 
 /**
  * Payslip admin API — generation, bulk, zip.
@@ -1013,16 +1016,227 @@ class PayslipController extends Controller
     }
 
     /**
+     * Build a ZIP of payslip PDFs for a finalized {@see PayrollBatchRun}.
+     *
+     * **Speed:** By default reuses {@see Payslip::$pdf_path} files from finalize (no Browsershot). Send JSON
+     * `{ "force_regenerate": true }` to rebuild every PDF (slow).
+     *
+     * **ZIP entry names:** `FirstName_PayDate.pdf` (duplicates → `FirstName_PayDate_{payslip_id}.pdf`), A–Z by first name.
+     *
+     * Route: {@code POST /admin/payroll-batches/{batchId}/bulk-download-pdf}
+     */
+    public function bulkDownloadBatchPdf(Request $request, int $batchId): JsonResponse|StreamedResponse
+    {
+        $this->ensurePayslipAccess($request);
+
+        $run = PayrollBatchRun::query()->findOrFail($batchId);
+        if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
+            return response()->json([
+                'message' => 'Bulk download is only available when the payroll batch status is finalized.',
+            ], 422);
+        }
+
+        $agg = $this->payslipService->aggregateForBatchRun($run);
+        /** @var list<int> $ids */
+        $ids = $agg['payslip_ids'] ?? [];
+        if (count($ids) === 0) {
+            return response()->json(['message' => 'No payslips found for this batch.'], 422);
+        }
+
+        $max = 500;
+        if (count($ids) > $max) {
+            return response()->json([
+                'message' => 'This batch exceeds the maximum of '.$max.' payslips for one ZIP export.',
+            ], 422);
+        }
+
+        // Eager-load everything {@see PayslipService::generatePdf} may touch so bulk runs avoid N+1 when PDFs must be built.
+        $payslips = Payslip::query()
+            ->with([
+                'employee.company',
+                'employee.branch',
+                'employee.departmentRelation',
+                'employee.governmentIds',
+            ])
+            ->whereIn('id', $ids)
+            ->get()
+            ->sortBy(function (Payslip $p) {
+                $e = $p->employee;
+
+                return $e instanceof User
+                    ? $this->employeeFirstNameSortKey($e)
+                    : "\u{10FFFF}";
+            })
+            ->values();
+
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        /** When false (default), reuse existing finalized PDFs on disk — much faster than re-running Browsershot per row. */
+        $forceRegenerate = $request->boolean('force_regenerate');
+
+        /** @var list<array{name: string, path: string}> $entries */
+        $entries = [];
+        /** @var array<string, int> $zipNameCounts — detect collisions for `FirstName_PayDate.pdf` */
+        $zipNameCounts = [];
+
+        foreach ($payslips as $payslip) {
+            $employee = $payslip->employee;
+            if (! $employee instanceof User) {
+                return response()->json(['message' => 'A payslip in this batch is missing an employee record.'], 422);
+            }
+
+            $this->dataScopeService->ensureEmployeeAccessible($actor, $employee);
+
+            $relative = $this->payslipService->ensurePayslipPdfOnDisk($payslip, $employee, $forceRegenerate);
+
+            $full = storage_path('app/private/'.$relative);
+            if (! is_file($full)) {
+                return response()->json(['message' => 'PDF generation failed for one or more payslips.'], 500);
+            }
+
+            // ZIP member name only (not stored path): `FirstName_PayDate.pdf`; $entries order is A–Z by first name.
+            $entries[] = [
+                'name' => $this->allocateBulkZipPdfEntryName($payslip, $employee, $zipNameCounts),
+                'path' => $full,
+            ];
+        }
+
+        $periodLabel = $run->pay_period_start && $run->pay_period_end
+            ? $run->pay_period_start->format('Y-m-d').'_'.$run->pay_period_end->format('Y-m-d')
+            : (string) $run->id;
+
+        $downloadName = 'payroll-batch-'.$run->id.'-'.$periodLabel.'.zip';
+
+        return response()->streamDownload(function () use ($entries): void {
+            $out = fopen('php://output', 'wb');
+            if ($out === false) {
+                throw new \RuntimeException('Could not open output stream for ZIP.');
+            }
+
+            $zip = new ZipStream(
+                operationMode: OperationMode::NORMAL,
+                outputStream: $out,
+                defaultCompressionMethod: CompressionMethod::STORE,
+                sendHttpHeaders: false,
+            );
+
+            foreach ($entries as $entry) {
+                $path = $entry['path'];
+                $size = filesize($path);
+                if ($size === false) {
+                    throw new \RuntimeException('Could not read payslip file size.');
+                }
+
+                $zip->addFileFromCallback(
+                    fileName: $entry['name'],
+                    callback: function () use ($path) {
+                        $h = fopen($path, 'rb');
+                        if ($h === false) {
+                            throw new \RuntimeException('Could not open payslip PDF for ZIP.');
+                        }
+
+                        return $h;
+                    },
+                    exactSize: (int) $size,
+                    compressionMethod: CompressionMethod::STORE,
+                );
+            }
+
+            $zip->finish();
+        }, $downloadName, [
+            'Content-Type' => 'application/zip',
+        ]);
+    }
+
+    /**
+     * Payslip pay date for filenames: prefer {@see Payslip::$pay_date}, else period end.
+     */
+    private function payslipPayDateYmd(Payslip $payslip): string
+    {
+        if ($payslip->pay_date) {
+            return $payslip->pay_date->format('Y-m-d');
+        }
+        if ($payslip->pay_period_end) {
+            return $payslip->pay_period_end->format('Y-m-d');
+        }
+
+        return now()->format('Y-m-d');
+    }
+
+    /**
+     * Case-insensitive sort key for ordering by first name (A–Z).
+     */
+    private function employeeFirstNameSortKey(User $employee): string
+    {
+        $fn = trim((string) ($employee->first_name ?? ''));
+        if ($fn !== '') {
+            return mb_strtolower($fn, 'UTF-8');
+        }
+        $name = trim((string) ($employee->name ?? ''));
+        if ($name === '') {
+            return '';
+        }
+        $parts = preg_split('/\s+/u', $name, -1, PREG_SPLIT_NO_EMPTY);
+        if ($parts === false || $parts === []) {
+            return '';
+        }
+
+        return mb_strtolower((string) $parts[0], 'UTF-8');
+    }
+
+    /**
+     * First-name segment for `FirstName_PayDate.pdf` — uses {@see User::$first_name} or first token of {@see User::$name}.
+     */
+    private function employeeFirstNameForZipEntry(User $employee): string
+    {
+        $fn = trim((string) ($employee->first_name ?? ''));
+        if ($fn !== '') {
+            return $this->safeZipFilenameSegment($fn);
+        }
+        $name = trim((string) ($employee->name ?? ''));
+        if ($name === '') {
+            return 'Employee';
+        }
+        $parts = preg_split('/\s+/u', $name, -1, PREG_SPLIT_NO_EMPTY);
+        if ($parts === false || $parts === []) {
+            return 'Employee';
+        }
+        $first = (string) $parts[0];
+
+        return $this->safeZipFilenameSegment($first);
+    }
+
+    /**
+     * Unique entry inside the bulk ZIP: `FirstName_PayDate.pdf`, or `FirstName_PayDate_{payslip_id}.pdf` on duplicate.
+     */
+    private function allocateBulkZipPdfEntryName(Payslip $payslip, User $employee, array &$zipNameCounts): string
+    {
+        $first = $this->employeeFirstNameForZipEntry($employee);
+        $payYmd = $this->payslipPayDateYmd($payslip);
+        $baseKey = $first.'_'.$payYmd;
+        $zipNameCounts[$baseKey] = ($zipNameCounts[$baseKey] ?? 0) + 1;
+        if ($zipNameCounts[$baseKey] === 1) {
+            return $baseKey.'.pdf';
+        }
+
+        return $baseKey.'_'.$payslip->id.'.pdf';
+    }
+
+    private function safeZipFilenameSegment(string $value): string
+    {
+        $value = preg_replace('/[^\p{L}\p{N}._-]+/u', '-', $value) ?? $value;
+        $value = trim((string) $value, '-');
+
+        return $value !== '' ? $value : 'emp';
+    }
+
+    /**
      * Zip multiple payslips by id list (must already have pdf_path).
      */
-    public function downloadZip(Request $request): BinaryFileResponse|JsonResponse
+    public function downloadZip(Request $request): JsonResponse|StreamedResponse
     {
         $this->ensureAdmin($request);
-        if (! class_exists(ZipArchive::class)) {
-            return response()->json([
-                'message' => 'ZIP export is unavailable: PHP extension "zip" (ZipArchive) is not enabled on this server.',
-            ], 503);
-        }
 
         $v = $request->validate([
             'payslip_ids' => ['required', 'array', 'min:1', 'max:500'],
@@ -1030,17 +1244,22 @@ class PayslipController extends Controller
         ]);
 
         $payslips = Payslip::query()
-            ->with('employee:id,employee_code,name')
+            ->with(['employee.company', 'employee.branch', 'employee.departmentRelation', 'employee.governmentIds'])
             ->whereIn('id', $v['payslip_ids'])
-            ->get();
+            ->get()
+            ->sortBy(function (Payslip $p) {
+                $e = $p->employee;
 
-        $tmp = tempnam(sys_get_temp_dir(), 'psl');
-        $zipPath = $tmp.'.zip';
-        @unlink($tmp);
+                return $e instanceof User
+                    ? $this->employeeFirstNameSortKey($e)
+                    : "\u{10FFFF}";
+            })
+            ->values();
 
-        $zip = new ZipArchive;
-        abort_unless($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true, 500);
-
+        /** @var list<array{name: string, path: string}> $entries */
+        $entries = [];
+        /** @var array<string, int> $zipNameCounts */
+        $zipNameCounts = [];
         foreach ($payslips as $p) {
             if (! $p->pdf_path) {
                 continue;
@@ -1049,12 +1268,63 @@ class PayslipController extends Controller
             if (! is_file($full)) {
                 continue;
             }
-            $code = $p->employee?->employee_code ?: 'EMP';
-            $zip->addFile($full, $code.'-'.$p->id.'-payslip.pdf');
+            $emp = $p->employee;
+            if (! $emp instanceof User) {
+                continue;
+            }
+            $entries[] = [
+                'name' => $this->allocateBulkZipPdfEntryName($p, $emp, $zipNameCounts),
+                'path' => $full,
+            ];
         }
-        $zip->close();
 
-        return response()->download($zipPath, 'payslips-'.now()->format('Y-m-d-His').'.zip')->deleteFileAfterSend(true);
+        if (count($entries) === 0) {
+            return response()->json([
+                'message' => 'No payslip PDF files were found for the selected ids.',
+            ], 422);
+        }
+
+        $downloadName = 'payslips-'.now()->format('Y-m-d-His').'.zip';
+
+        return response()->streamDownload(function () use ($entries): void {
+            $out = fopen('php://output', 'wb');
+            if ($out === false) {
+                throw new \RuntimeException('Could not open output stream for ZIP.');
+            }
+
+            $zip = new ZipStream(
+                operationMode: OperationMode::NORMAL,
+                outputStream: $out,
+                defaultCompressionMethod: CompressionMethod::STORE,
+                sendHttpHeaders: false,
+            );
+
+            foreach ($entries as $entry) {
+                $path = $entry['path'];
+                $size = filesize($path);
+                if ($size === false) {
+                    throw new \RuntimeException('Could not read payslip file size.');
+                }
+
+                $zip->addFileFromCallback(
+                    fileName: $entry['name'],
+                    callback: function () use ($path) {
+                        $h = fopen($path, 'rb');
+                        if ($h === false) {
+                            throw new \RuntimeException('Could not open payslip PDF for ZIP.');
+                        }
+
+                        return $h;
+                    },
+                    exactSize: (int) $size,
+                    compressionMethod: CompressionMethod::STORE,
+                );
+            }
+
+            $zip->finish();
+        }, $downloadName, [
+            'Content-Type' => 'application/zip',
+        ]);
     }
 
     private function ensurePayslipAccess(Request $request): void

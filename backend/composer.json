@@ -13,6 +13,7 @@
         "laravel/octane": "^2.17",
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^2.10.1",
+        "maennchen/zipstream-php": "3.1",
         "setasign/fpdi": "*",
         "spatie/browsershot": "^5.2",
         "tecnickcom/tcpdf": "*",

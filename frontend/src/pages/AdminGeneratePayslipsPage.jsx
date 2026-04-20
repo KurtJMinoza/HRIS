@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   adminGeneratePayslips,
+  adminBulkDownloadPayrollBatchPdfZip,
   adminPreviewPayslipSampleBlob,
   adminPreviewPayslipSampleData,
   getAdminPayslipPreviewScope,
@@ -262,6 +263,7 @@ export default function AdminGeneratePayslipsPage() {
   const isAdmin = user?.role === 'admin'
   const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canManagePayslips = permissionSet.has('payslip.generate')
+  const canBulkDownloadPayslipZip = permissionSet.has('payslip.download')
 
   const [companies, setCompanies] = useState([])
   const [branches, setBranches] = useState([])
@@ -287,6 +289,7 @@ export default function AdminGeneratePayslipsPage() {
   const [generating, setGenerating] = useState(false)
 
   const [listLoading, setListLoading] = useState(false)
+  const [bulkDownloadingBatchId, setBulkDownloadingBatchId] = useState(null)
   const [deletingBatchId, setDeletingBatchId] = useState(null)
   const [deleteBatchDialogRow, setDeleteBatchDialogRow] = useState(null)
   const [samplePreviewLoading, setSamplePreviewLoading] = useState(false)
@@ -628,6 +631,35 @@ export default function AdminGeneratePayslipsPage() {
     const id = row?.payroll_batch_run_id
     if (id == null || deletingBatchId || !row?.can_delete) return
     setDeleteBatchDialogRow(row)
+  }
+
+  const handleBulkDownloadBatchPdf = async (row) => {
+    const id = row?.payroll_batch_run_id
+    if (id == null || bulkDownloadingBatchId != null) return
+    if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
+    if (!canBulkDownloadPayslipZip) return
+    setBulkDownloadingBatchId(id)
+    toast({
+      title: 'Preparing download…',
+      description: 'Reusing saved PDFs when available. First-time or forced rebuilds may take several minutes.',
+    })
+    try {
+      const blob = await adminBulkDownloadPayrollBatchPdfZip(id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const safeCo = String(row?.company_name || 'batch')
+        .replace(/[^\w-]+/g, '-')
+        .slice(0, 40)
+      a.download = `payslips-${safeCo}-${id}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast({ title: 'Download started', description: 'Your ZIP file of payslip PDFs is downloading.' })
+    } catch (e) {
+      toast({ title: 'Download failed', description: e.message || 'Could not build ZIP.', variant: 'destructive' })
+    } finally {
+      setBulkDownloadingBatchId(null)
+    }
   }
 
   const executeDeleteBatch = async () => {
@@ -1275,6 +1307,8 @@ export default function AdminGeneratePayslipsPage() {
                       const logo = resolveLogoUrl(r.company_logo_url)
                       const showDelete = Boolean(r.can_delete)
                       const deleteDisabled = !r.can_delete || deletingBatchId === r.payroll_batch_run_id
+                      const batchFinalized = String(r.batch_run_status || '').toLowerCase() === 'finalized'
+                      const showBulkPdf = batchFinalized && canBulkDownloadPayslipZip
                       return (
                         <TableRow
                           key={key}
@@ -1328,6 +1362,23 @@ export default function AdminGeneratePayslipsPage() {
                                 <Eye className="mr-1.5 h-4 w-4" />
                                 View
                               </Button>
+                              {showBulkPdf && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 rounded-lg border-slate-200/90 bg-white px-3 text-xs font-normal text-[#0A0A0A]/65 shadow-sm hover:bg-slate-50 hover:text-[#0A0A0A] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                                  disabled={bulkDownloadingBatchId === r.payroll_batch_run_id}
+                                  onClick={() => handleBulkDownloadBatchPdf(r)}
+                                >
+                                  {bulkDownloadingBatchId === r.payroll_batch_run_id ? (
+                                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <FileDown className="mr-1.5 h-4 w-4" />
+                                  )}
+                                  Bulk Download PDF
+                                </Button>
+                              )}
                               {showDelete && (
                                 <Button
                                   type="button"
