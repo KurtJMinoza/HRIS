@@ -12,6 +12,7 @@ use App\Services\LeaveCreditService;
 use App\Services\PayCycleService;
 use App\Services\PayrollCalculatorService;
 use App\Services\RbacService;
+use App\Services\ScheduleRateService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
@@ -28,6 +29,7 @@ class EmployeeProfileController extends Controller
         private readonly RbacService $rbacService,
         private readonly PayrollCalculatorService $payrollCalculator,
         private readonly PayCycleService $payCycleService,
+        private readonly ScheduleRateService $scheduleRateService,
         private readonly DataScopeService $dataScopeService,
         private readonly HrRoleResolver $hrRoleResolver,
     ) {}
@@ -452,6 +454,11 @@ class EmployeeProfileController extends Controller
     {
         $hr = $this->hrRoleResolver->resolve($user);
         $ws = $user->workingSchedule;
+        $monthlyBase = (float) ($user->monthly_salary ?? $user->monthly_rate ?? 0);
+        $scheduleRates = $this->scheduleRateService->describeForUser(
+            $user,
+            $monthlyBase > 0 ? $monthlyBase : null
+        );
 
         return [
             'id' => $user->id,
@@ -502,6 +509,14 @@ class EmployeeProfileController extends Controller
             'working_schedule_break_start' => $ws?->break_start,
             'working_schedule_break_end' => $ws?->break_end,
             'working_schedule_grace_minutes' => $ws?->grace_period_minutes,
+            // Keep self-service Salary tab aligned with Auth payload and payroll ScheduleRateService.
+            'schedule_working_days_per_week' => $scheduleRates['working_days_per_week'] ?? 0,
+            'schedule_working_days_per_month' => $scheduleRates['working_days_per_month'] ?? 0,
+            'schedule_working_days_in_calendar_month' => $scheduleRates['working_days_in_calendar_month'] ?? 0,
+            'schedule_working_hours_per_day' => $scheduleRates['working_hours_per_day'] ?? 0,
+            'schedule_rate_divisor_source' => $scheduleRates['rate_divisor_source'] ?? null,
+            'schedule_derived_daily_rate' => $scheduleRates['derived_daily_rate'] ?? null,
+            'schedule_derived_hourly_rate' => $scheduleRates['derived_hourly_rate'] ?? null,
             'monthly_salary' => $user->monthly_salary !== null ? (string) $user->monthly_salary : null,
             'daily_rate' => $user->daily_rate !== null ? (string) $user->daily_rate : null,
             'monthly_rate' => $user->monthly_rate !== null ? (string) $user->monthly_rate : null,

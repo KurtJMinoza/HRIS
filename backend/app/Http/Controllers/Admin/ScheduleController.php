@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Events\ScheduleUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\WorkingSchedule;
@@ -153,6 +154,16 @@ class ScheduleController extends Controller
         $schedule->fill($validated);
         $schedule->save();
 
+        $affectedIds = User::query()
+            ->where('working_schedule_id', $schedule->id)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+        if ($affectedIds !== []) {
+            ScheduleUpdated::dispatch($schedule->fresh(), $affectedIds, 'updated');
+        }
+
         return response()->json([
             'message' => 'Schedule updated.',
             'schedule' => $this->scheduleResponse($schedule->fresh()),
@@ -166,6 +177,13 @@ class ScheduleController extends Controller
     {
         $schedule = WorkingSchedule::findOrFail($id);
 
+        $affectedIds = User::query()
+            ->where('working_schedule_id', $schedule->id)
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
         // Unassign all employees before deleting so they show as "Available".
         User::where('working_schedule_id', $schedule->id)
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
@@ -173,6 +191,10 @@ class ScheduleController extends Controller
                 'schedule' => null,
                 'working_schedule_id' => null,
             ]);
+
+        if ($affectedIds !== []) {
+            ScheduleUpdated::dispatch(null, $affectedIds, 'destroyed');
+        }
 
         $schedule->delete();
 
@@ -276,6 +298,14 @@ class ScheduleController extends Controller
         }
         if ($unassignedCount > 0) {
             $message[] = "{$unassignedCount} unassigned.";
+        }
+
+        $rosterChanged = array_values(array_unique(array_merge(
+            array_map('intval', $toAssign),
+            array_map('intval', $toUnassign)
+        )));
+        if ($rosterChanged !== []) {
+            ScheduleUpdated::dispatch($schedule->fresh(), $rosterChanged, 'assigned');
         }
 
         return response()->json([

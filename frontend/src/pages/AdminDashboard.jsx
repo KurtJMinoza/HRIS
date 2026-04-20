@@ -975,7 +975,7 @@ export default function AdminDashboard() {
                             <span>—</span>
                           )
                         ) : (
-                          <span>—</span>
+                          <span>—</span>  
                         )
                       ) : (
                         <span className="text-[11px] font-normal">—</span>
@@ -2439,11 +2439,6 @@ export default function AdminDashboard() {
                         .slice(0, 2) || '?'
                       const isEven = rowIndex % 2 === 1
                       const isExpanded = expandedRowId === log.id
-                      const companyLogoSrc = (
-                        companyLogoUrl({ logo_url: log.company_logo_url })
-                        || (log.company_id != null ? companyLogoMap[log.company_id] : null)
-                        || null
-                      )
                       const rowBase = log.is_late
                         ? 'bg-amber-50/60 dark:bg-amber-950/50 hover:bg-amber-100/70 dark:hover:bg-amber-950/70'
                         : log.time_in
@@ -2496,9 +2491,9 @@ export default function AdminDashboard() {
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle`}>
                               <div className="flex items-center gap-2">
-                                {companyLogoSrc ? (
+                                {log.company_logo_url ? (
                                   <img
-                                    src={companyLogoSrc}
+                                    src={log.company_logo_url}
                                     alt=""
                                     className="size-8 shrink-0 rounded object-contain border border-border/50 bg-background"
                                   />

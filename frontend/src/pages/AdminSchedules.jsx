@@ -52,6 +52,7 @@ import {
   profileImageUrl,
   updateEmployeeSchedule,
 } from '@/api'
+import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { cn } from '@/lib/utils'
@@ -141,6 +142,16 @@ function formatWorkingDaysAbbr(restDays = []) {
 }
 
 export default function AdminSchedules() {
+  const queryClient = useQueryClient()
+
+  /** Refresh employee calendar, attendance tables, and profile snapshots after schedule changes. */
+  const notifySchedulePropagation = useCallback(() => {
+    window.dispatchEvent(new Event('hr:schedules-changed'))
+    void queryClient.invalidateQueries({ queryKey: ['admin-attendance'] })
+    void queryClient.invalidateQueries({ queryKey: ['employee-profile-snapshot'] })
+    void queryClient.invalidateQueries({ queryKey: ['admin-employee-profile-snapshot'] })
+  }, [queryClient])
+
   const [schedules, setSchedules] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -286,6 +297,7 @@ export default function AdminSchedules() {
       setEditOpen(false)
       setEditingSchedule(null)
       await loadSchedules()
+      notifySchedulePropagation()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -301,6 +313,7 @@ export default function AdminSchedules() {
       await deleteWorkingSchedule(deleteConfirmSchedule.id)
       setDeleteConfirmSchedule(null)
       await loadSchedules()
+      notifySchedulePropagation()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -406,6 +419,7 @@ export default function AdminSchedules() {
       setAssignSchedule(null)
       setSelectedEmployeeIds([])
       await Promise.all([loadSchedules(), loadEmployees()])
+      notifySchedulePropagation()
     } catch (err) {
       const msg = err.conflicts?.length
         ? `Employee already assigned: ${err.conflicts.map((c) => `${c.employee_name} (${c.current_schedule} ${formatScheduleLabel12h(c.current_time)})`).join('; ')}. Unassign first.`
@@ -447,6 +461,7 @@ export default function AdminSchedules() {
         })
       )
       await Promise.all([loadSchedules(), loadEmployees()])
+      notifySchedulePropagation()
     } catch (err) {
       const msg = err.conflicts?.length
         ? `Employee already assigned: ${err.conflicts.map((c) => `${c.employee_name} (${c.current_schedule} ${formatScheduleLabel12h(c.current_time)})`).join('; ')}. Unassign first.`
@@ -469,6 +484,7 @@ export default function AdminSchedules() {
       toast.success('Schedule unassigned', { description: `${emp.name} can now be assigned to a new shift.` })
       await loadEmployees()
       await loadSchedules()
+      notifySchedulePropagation()
     } catch (err) {
       setError(err.message)
       toast.error('Failed to unassign', { description: err.message })
@@ -553,6 +569,7 @@ export default function AdminSchedules() {
       await createWorkingSchedule(payload)
       toast.success('Schedule duplicated')
       await loadSchedules()
+      notifySchedulePropagation()
     } catch (err) {
       setError(err.message)
       toast.error(err.message)

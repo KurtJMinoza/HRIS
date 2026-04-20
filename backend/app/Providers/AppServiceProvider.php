@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Events\ScheduleUpdated;
+use App\Listeners\RecalculatePayrollDailyRecords;
 use App\Models\EmployeeBenefit;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeEmergencyContact;
@@ -10,6 +12,7 @@ use App\Models\Holiday;
 use App\Models\User;
 use App\Services\HolidayCalendarService;
 use App\Support\EmployeeProfileCache;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -76,5 +79,7 @@ class AppServiceProvider extends ServiceProvider
 
         Holiday::saved(fn () => app(HolidayCalendarService::class)->flushMergedYearCaches());
         Holiday::deleted(fn () => app(HolidayCalendarService::class)->flushMergedYearCaches());
+
+        Event::listen(ScheduleUpdated::class, RecalculatePayrollDailyRecords::class);
     }
 }

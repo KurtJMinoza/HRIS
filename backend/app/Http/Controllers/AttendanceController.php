@@ -1588,6 +1588,7 @@ class AttendanceController extends Controller
         $todayLeavePayStatus = null;
 
         // Resolve effective schedule once: prefer legacy JSON, fall back to working_schedule_id.
+        $user->loadMissing('workingSchedule');
         $effectiveSchedule = $user->schedule;
         if ((! is_array($effectiveSchedule) || $effectiveSchedule === []) && $user->working_schedule_id !== null) {
             $derived = $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
@@ -1876,9 +1877,16 @@ class AttendanceController extends Controller
                 ? (string) $daySchedule['out']
                 : null;
 
+            $scheduleAssignedForRow = is_array($effectiveSchedule) && $effectiveSchedule !== [];
+            $isRestDayRow = false;
+            if (! $isOnLeave && $scheduleAssignedForRow) {
+                $isRestDayRow = ! (is_array($daySchedule) && ! empty(trim((string) ($daySchedule['in'] ?? ''))));
+            }
+
             $days[] = [
                 'date' => $dateKey,
                 'status' => $status,
+                'is_rest_day' => $isRestDayRow,
                 'employee_status_label' => $employeeStatusLabel,
                 'schedule_in' => $scheduleInDay,
                 'schedule_out' => $scheduleOutDay,

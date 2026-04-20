@@ -424,6 +424,22 @@ class PayrollComputationService
         $graceCreditMinutes = max(0, $paidReg - $regSeg);
         $lateDeductionMinutes = max(0, $regSeg - $paidReg);
 
+        // PH Labor Code Art. 83: normal-hours regular pay is capped at 8h/day.
+        // Use a fixed 8-hour cap for regular-pay computation (instead of env-config threshold) so
+        // long scheduled shifts never inflate payslip "Regular pay" day-equivalent counts.
+        // Any minutes beyond 8h/day must flow through overtime policy, not basic regular pay.
+        $regularDailyThresholdMinutes = 8 * 60;
+        $regularMinutesOverThreshold = 0;
+        if ($regularDailyThresholdMinutes > 0 && $paidReg > $regularDailyThresholdMinutes) {
+            $regularMinutesOverThreshold = $paidReg - $regularDailyThresholdMinutes;
+            $paidReg = $regularDailyThresholdMinutes;
+            // Clamp segmented regular + ND regular so ratio / ND split below stays consistent.
+            $regSeg = min($regSeg, $regularDailyThresholdMinutes);
+            if ($ndReg > $regularDailyThresholdMinutes) {
+                $ndReg = $regularDailyThresholdMinutes;
+            }
+        }
+
         $ratio = $regSeg > 0 ? ($paidReg / $regSeg) : 0.0;
         $ndRegPaid = (int) round($ndReg * $ratio);
         $regularDayMinutes = (int) round(($regSeg - $ndReg) * $ratio);
@@ -486,6 +502,14 @@ class PayrollComputationService
 
         $ndNightMinutesForBreakdown = $ndRegPaid + $effectiveNdOvertimeMinutes;
         $breakdown[] = ['component' => 'regular_pay', 'minutes' => $isHolidayDay ? 0 : $paidReg, 'rate' => $hourlyRate, 'multiplier' => 1.0, 'amount' => max(0.0, $regularBasePayOnly)];
+        if ($regularMinutesOverThreshold > 0) {
+            $breakdown[] = [
+                'component' => 'regular_hours_over_threshold',
+                'minutes' => $regularMinutesOverThreshold,
+                'amount' => 0.0,
+                'note' => 'Scheduled minutes beyond '.($regularDailyThresholdMinutes / 60).'h daily threshold (Labor Code Art. 83). Excluded from Regular pay — file as overtime to earn premium.',
+            ];
+        }
         $breakdown[] = [
             'component' => 'ot_pay',
             'minutes' => $paidOtMinutes,
@@ -922,12 +946,24 @@ class PayrollComputationService
             $dayTotalPay = (float) ($d['total_pay'] ?? 0);
             $regularPaidMinutes = (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0));
             $requiredMinutes = (int) ($d['required_minutes'] ?? 0);
-            $calendarStatutoryHoliday = is_array($d['holiday'] ?? null) && ((float) ($d['conditions']['first_8'] ?? 1.0)) > 1.00001;
-            // Split basic vs premium: only zero "regular base" when holiday premium was actually earned
-            // (full presence or paid leave). Otherwise attribute minutes at ordinary daily rate like non-holiday days.
-            $earnedHolidayPremium = round((float) ($d['holiday_premium_pay'] ?? 0), 2) > 0.0001;
-            $dayIsHolidayForBaseSplit = $calendarStatutoryHoliday && $earnedHolidayPremium;
-            $regularBasePay = $dayIsHolidayForBaseSplit ? 0.0 : round(($regularPaidMinutes / 60.0) * $this->hourlyRateFromDaily($dailyRate), 2);
+            // Keep "Regular pay" strictly attendance-driven and schedule-aware:
+            // count only worked days that are NOT schedule rest days.
+            // Rest-day work (RD), leave credits, and holiday-only premium days must not inflate
+            // ordinary regular-pay day counts in payslip preview/generate/finalize.
+            $dayStatus = strtolower(trim((string) ($d['status'] ?? '')));
+            $dayIsRest = (bool) ($d['is_rest_day'] ?? false);
+            $regularBasePay = collect((array) ($d['breakdown'] ?? []))
+                ->filter(function ($entry) use ($dayStatus, $dayIsRest): bool {
+                    if ($dayStatus !== 'worked' || $dayIsRest) {
+                        return false;
+                    }
+
+                    return strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay';
+                })
+                ->sum(function ($entry): float {
+                    return (float) ($entry['amount'] ?? 0);
+                });
+            $regularBasePay = round(max(0.0, $regularBasePay), 2);
             $dayPremium = round(max(0.0, $dayTotalPay - $regularBasePay), 2);
 
             $totalPay += $dayTotalPay;
@@ -938,13 +974,17 @@ class PayrollComputationService
             $totalRegularNight += $d['regular_night_minutes'];
             $totalOtDay += $d['ot_day_minutes'];
             $totalOtNight += $d['ot_night_minutes'];
-            if ($requiredMinutes > 0) {
+            if ($requiredMinutes > 0 && $dayStatus === 'worked' && ! $dayIsRest) {
                 $actualWorkedDayUnits += min(1.0, $regularPaidMinutes / $requiredMinutes);
             }
             foreach ((array) ($d['breakdown'] ?? []) as $entry) {
                 $component = strtolower(trim((string) ($entry['component'] ?? '')));
                 $amount = (float) ($entry['amount'] ?? 0);
                 if ($component === '' || $amount <= 0) {
+                    continue;
+                }
+                // Regular-pay line is ordinary worked non-rest-day only.
+                if ($component === 'regular_pay' && ($dayStatus !== 'worked' || $dayIsRest)) {
                     continue;
                 }
                 // Accumulate exact (unrounded) amounts to avoid compounding rounding errors across days.
@@ -1384,11 +1424,25 @@ class PayrollComputationService
                 continue;
             }
             $dayKey = $this->dayKeyForDate(Carbon::parse($dateKey, $tz));
-            if ($dayKey === 'sun') {
+            // Schedule module = single source of truth for rest days.
+            $dayCfgForRestCheck = $effectiveSchedule[$dayKey] ?? null;
+            $dayIsScheduledRestDay = ($day['is_rest_day'] ?? false) === true || $dayCfgForRestCheck === null;
+            $dayHasActualAttendance = (int) ($day['worked_minutes'] ?? 0) > 0;
+            if ($dayIsScheduledRestDay && ! $dayHasActualAttendance) {
+                continue;
+            }
+            $status = strtolower(trim((string) ($day['status'] ?? '')));
+            // Attendance module source of truth: only actual present/worked days count toward
+            // regular-pay day display. Leave may be compensated, but is not a "present day".
+            if ($status !== 'worked') {
+                continue;
+            }
+            if ($dayIsScheduledRestDay) {
+                // Present on a rest day is treated as premium/rest-day work, not ordinary regular day.
                 continue;
             }
             $regularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
-            // Payable presence: present or approved paid leave with regular minutes — excludes absent / unpaid leave.
+            // Only attendance-backed regular minutes.
             if ($regularMinutes <= 0) {
                 continue;
             }

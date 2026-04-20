@@ -29,6 +29,9 @@ const MONTHS = [
 ]
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
 
+/** JS Date#getDay(): 0=Sunday … 6=Saturday → backend schedule keys (matches AttendanceController). */
+const DAY_KEYS_FROM_JS_WEEKDAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+
 /** Same 6×7 grid algorithm as Admin → Holidays calendar. */
 function getCalendarCells(year, month) {
   const first = new Date(year, month, 1)
@@ -310,7 +313,7 @@ function LiveClock() {
 
 export default function EmployeeDashboard() {
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, refreshUser } = useAuth()
   const firstName = user?.name?.trim().split(/\s+/)[0] ?? 'there'
 
   const [summary, setSummary] = useState(null)
@@ -378,6 +381,15 @@ export default function EmployeeDashboard() {
   }, [loadDashboard])
 
   useEffect(() => {
+    const onSchedulesChanged = () => {
+      void refreshUser?.()
+      void loadDashboard({ soft: true })
+    }
+    window.addEventListener('hr:schedules-changed', onSchedulesChanged)
+    return () => window.removeEventListener('hr:schedules-changed', onSchedulesChanged)
+  }, [loadDashboard, refreshUser])
+
+  useEffect(() => {
     if (!user?.has_face) {
       setFaceImage(null)
       return
@@ -386,6 +398,19 @@ export default function EmployeeDashboard() {
       .then((data) => setFaceImage(data.face_image))
       .catch(() => setFaceImage(null))
   }, [user?.has_face])
+
+  /** Prefer server-computed rest day from /attendance/summary; fallback to schedule template / legacy JSON. */
+  const restDayByDate = useMemo(() => {
+    const map = {}
+    if (Array.isArray(days)) {
+      for (const row of days) {
+        if (row?.date && typeof row.is_rest_day === 'boolean') {
+          map[row.date] = row.is_rest_day
+        }
+      }
+    }
+    return map
+  }, [days])
 
   /** Absent cutoff: 5 PM (17:00) — only show "Absent" after shift end. Before that, use softer messaging. */
   const ABSENT_CUTOFF_HOUR = 17
@@ -397,12 +422,30 @@ export default function EmployeeDashboard() {
     return hour > ABSENT_CUTOFF_HOUR || (hour === ABSENT_CUTOFF_HOUR && minute >= 0)
   }
 
-  function isRestDay(dateKey) {
-    if (!dateKey) return false
-    const d = new Date(dateKey + 'T12:00:00')
-    const day = d.getDay()
-    return day === 0
-  }
+  const isRestDay = useCallback(
+    (dateKey) => {
+      if (!dateKey) return false
+      if (Object.prototype.hasOwnProperty.call(restDayByDate, dateKey)) {
+        return restDayByDate[dateKey]
+      }
+      const hasTemplateRest = Array.isArray(user?.working_schedule_rest_days)
+      const hasPerDay = user?.schedule_per_day && typeof user.schedule_per_day === 'object'
+      if (hasTemplateRest || hasPerDay) {
+        const d = new Date(`${dateKey}T12:00:00`)
+        const key = DAY_KEYS_FROM_JS_WEEKDAY[d.getDay()]
+        if (hasTemplateRest && user.working_schedule_rest_days.includes(key)) return true
+        if (hasPerDay) {
+          const row = user.schedule_per_day[key]
+          if (row === null || row === undefined) return true
+          if (typeof row === 'object' && row !== null && !String(row.in || '').trim()) return true
+        }
+        return false
+      }
+      const d = new Date(`${dateKey}T12:00:00`)
+      return d.getDay() === 0
+    },
+    [restDayByDate, user]
+  )
 
   function formatTodayStatus() {
     if (summary?.schedule_assigned === false) return 'No schedule assigned'

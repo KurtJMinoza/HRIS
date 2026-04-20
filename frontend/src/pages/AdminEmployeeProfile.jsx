@@ -34,6 +34,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath } from '@/lib/hrRoutes'
+import { cn } from '@/lib/utils'
 import {
   SalaryAutomatedDeductionsCard,
   SalaryCompensationStructureCard,
@@ -182,7 +183,9 @@ function buildWorkingScheduleRateMeta(schedule) {
 
   const restDays = Array.isArray(schedule.rest_days) ? schedule.rest_days : []
   const workingDaysPerWeek = Math.max(0, 7 - restDays.length)
-  const workingDaysPerMonth = Number(((workingDaysPerWeek * 52) / 12).toFixed(2))
+  // Keep admin fallback aligned with backend payroll divisor:
+  // 5d/week => 22 days/month, 6d/week => 26 days/month.
+  const workingDaysPerMonth = Number(Math.max(1, Math.round((workingDaysPerWeek * 52) / 12)))
   const workingHoursPerDay = computeScheduleWorkingHours(schedule)
 
   return {
@@ -947,6 +950,19 @@ export default function AdminEmployeeProfile() {
     }
   }, [employeeId])
 
+  useEffect(() => {
+    const onSchedulesChanged = () => {
+      const sid = String(employeeId || '')
+      if (!sid) return
+      // Realtime schedule propagation: refresh profile snapshot so Salary-tab schedule hints
+      // (working days/month, hours/day, derived rates) reflect Admin->Schedules changes immediately.
+      void queryClient.invalidateQueries({ queryKey: ['admin-employee-profile-snapshot', sid] })
+      void queryClient.refetchQueries({ queryKey: ['admin-employee-profile-snapshot', sid], type: 'active' })
+    }
+    window.addEventListener('hr:schedules-changed', onSchedulesChanged)
+    return () => window.removeEventListener('hr:schedules-changed', onSchedulesChanged)
+  }, [employeeId, queryClient])
+
   const profileSnapshotQuery = useQuery({
     queryKey: ['admin-employee-profile-snapshot', String(employeeId || '')],
     enabled: Boolean(employeeId),
@@ -976,6 +992,9 @@ export default function AdminEmployeeProfile() {
   const fileInputRef = useRef(null)
   const photoInputRef = useRef(null)
   const govIdFileInputRef = useRef(null)
+  /** Hidden file inputs for Government IDs tab upload / edit modals (separate from salary TIN picker ref). */
+  const govUploadModalFileRef = useRef(null)
+  const govEditModalFileRef = useRef(null)
   const skillInputRef = useRef(null)
   const reportingManagerOrgKeyRef = useRef('')
   const [activeGovIdFileField, setActiveGovIdFileField] = useState('')
@@ -5634,85 +5653,103 @@ export default function AdminEmployeeProfile() {
                 Loading government IDs...
               </div>
             )}
-            <div className="flex flex-col gap-3 @sm:flex-row @sm:items-start @sm:justify-between">
-              <div className="space-y-1">
-                <h3 className="text-2xl font-semibold">Government IDs</h3>
-                <p className="text-sm text-muted-foreground">Review employee IDs and approve/reject after checking the uploaded document.</p>
+            <div className="rounded-xl border border-border/40 bg-white shadow-sm dark:border-white/10 dark:bg-[#111827]">
+              <div className="flex flex-col gap-3 border-b border-border/30 px-5 py-4 @sm:flex-row @sm:items-start @sm:justify-between">
+                <div className="space-y-1">
+                  <h3 className="text-lg font-semibold text-[#0A0A0A] dark:text-white">Government IDs</h3>
+                  <p className="text-sm text-muted-foreground">Review uploaded IDs and approve or reject after verification.</p>
+                </div>
+                <Button type="button" size="sm" className="gap-1.5" onClick={openAddGovModal}>
+                  <Plus className="size-3.5" />
+                  Upload ID
+                </Button>
               </div>
-              <Button type="button" onClick={openAddGovModal}>
-                <Plus className="mr-2 size-4" />
-                Upload Government ID
-              </Button>
-            </div>
 
-            <div className="overflow-x-auto rounded-lg border border-border/60">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr className="[&>th]:px-4 [&>th]:py-3 [&>th]:text-left">
-                    <th>ID Type</th>
-                    <th>ID Number</th>
-                    <th>Issuing Agency</th>
-                    <th>Expiry Date</th>
-                    <th>Status</th>
-                    <th>Date Uploaded</th>
-                    <th className="w-[168px] whitespace-nowrap text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {govDocsLoading ? (
-                    <tr><td colSpan={7} className="px-4 py-6 text-muted-foreground">Loading…</td></tr>
-                  ) : govDocs.length === 0 ? (
-                    <tr><td colSpan={7} className="px-4 py-6 text-muted-foreground">No government IDs uploaded yet.</td></tr>
-                  ) : (
-                    govDocs.map((doc) => (
-                      <tr key={doc.id} className="[&>td]:px-4 [&>td]:py-4">
-                        <td className="font-semibold">{doc.id_type}</td>
-                        <td className="text-muted-foreground">{doc.id_number}</td>
-                        <td className="text-muted-foreground">{doc.issuing_agency}</td>
-                        {(() => {
-                          const expMeta = doc.expiry_date ? expiryMeta(doc.expiry_date) : { cls: 'text-muted-foreground' }
-                          return (
-                            <td className={expMeta.cls === 'text-rose-700' ? 'font-medium text-rose-700' : expMeta.cls}>
-                              {doc.expiry_date ? formatDate(doc.expiry_date) : '—'}
-                              {expMeta.label && (expMeta.cls === 'text-rose-700' || expMeta.cls === 'text-amber-800') ? (
-                                <span className="ml-1.5 text-xs">({expMeta.label})</span>
-                              ) : null}
-                            </td>
-                          )
-                        })()}
-                        <td>
-                          <Badge
-                            variant="outline"
-                            className={doc.status === 'approved' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : doc.status === 'rejected' ? 'border-rose-200 bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : 'border-amber-200 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'}
-                          >
-                            <span className="inline-flex items-center gap-1.5">
-                              {doc.status === 'approved' ? <CheckCircle2 className="size-3.5" /> : doc.status === 'rejected' ? <X className="size-3.5" /> : <Clock4 className="size-3.5" />}
-                              <span>{doc.status === 'approved' ? 'Approved' : doc.status === 'rejected' ? 'Rejected' : 'Pending'}</span>
-                            </span>
-                          </Badge>
-                        </td>
-                        <td className="text-muted-foreground">{formatDate(doc.created_at)}</td>
-                        <td className="w-[168px] whitespace-nowrap text-right">
-                          <div className="inline-flex items-center justify-end gap-1">
-                            <Button type="button" variant="ghost" size="icon" className="cursor-pointer hover:bg-muted/60" onClick={() => openPreviewGovModal(doc)} aria-label="Preview">
-                              <Eye className="size-4" />
-                            </Button>
-                            <Button type="button" variant="ghost" size="icon" className="cursor-pointer hover:bg-muted/60" onClick={() => openEditGovModal(doc)} aria-label="Edit">
-                              <Pencil className="size-4" />
-                            </Button>
-                            <Button type="button" variant="ghost" size="icon" className="cursor-pointer hover:bg-muted/60" onClick={() => openVerifyGovModal(doc)} aria-label="Verify">
-                              <BadgeCheck className="size-4" />
-                            </Button>
-                            <Button type="button" variant="ghost" size="icon" className="cursor-pointer hover:bg-muted/60" onClick={() => requestDeleteGov(doc)} aria-label="Delete" disabled={govDocsSaving}>
-                              <Trash2 className="size-4" />
-                            </Button>
-                          </div>
-                        </td>
+              {govDocsLoading ? (
+                <div className="flex items-center justify-center px-6 py-14">
+                  <Loader2 className="mr-2 size-5 animate-spin text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Loading documents…</span>
+                </div>
+              ) : govDocs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center px-6 py-14">
+                  <div className="rounded-xl border border-dashed border-border/60 bg-muted/15 p-4">
+                    <IdCard className="size-8 text-muted-foreground/50" />
+                  </div>
+                  <p className="mt-4 text-sm font-medium text-[#0A0A0A] dark:text-white">No government IDs on file</p>
+                  <p className="mt-1 max-w-sm text-center text-xs text-muted-foreground">Upload an ID document for this employee so it can be reviewed and verified.</p>
+                  <Button type="button" variant="outline" size="sm" className="mt-4 gap-1.5" onClick={openAddGovModal}>
+                    <Upload className="size-3.5" />
+                    Upload first ID
+                  </Button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-y border-border/40 bg-muted/25 text-xs font-medium tracking-wide text-muted-foreground [&>th]:px-5 [&>th]:py-2.5 [&>th]:text-left">
+                        <th>ID Type</th>
+                        <th>ID Number</th>
+                        <th className="hidden @lg:table-cell">Issuing Agency</th>
+                        <th>Expiry</th>
+                        <th>Status</th>
+                        <th className="hidden @md:table-cell">Uploaded</th>
+                        <th className="w-[168px] text-right">Actions</th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {govDocs.map((doc) => (
+                        <tr key={doc.id} className="border-b border-border/30 transition-colors hover:bg-muted/20 [&>td]:px-5 [&>td]:py-3.5">
+                          <td className="font-medium text-[#0A0A0A] dark:text-white">{doc.id_type}</td>
+                          <td className="font-mono text-xs text-muted-foreground">{doc.id_number}</td>
+                          <td className="hidden text-muted-foreground @lg:table-cell">{doc.issuing_agency || '—'}</td>
+                          {(() => {
+                            const expMeta = doc.expiry_date ? expiryMeta(doc.expiry_date) : { cls: 'text-muted-foreground' }
+                            return (
+                              <td className={expMeta.cls === 'text-rose-700' ? 'font-medium text-rose-700' : expMeta.cls}>
+                                {doc.expiry_date ? formatDate(doc.expiry_date) : '—'}
+                                {expMeta.label && (expMeta.cls === 'text-rose-700' || expMeta.cls === 'text-amber-800') ? (
+                                  <span className="ml-1 text-[10px]">({expMeta.label})</span>
+                                ) : null}
+                              </td>
+                            )
+                          })()}
+                          <td>
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                                doc.status === 'approved' ? 'border-emerald-200/80 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : doc.status === 'rejected' ? 'border-rose-200/80 bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+                                  : 'border-amber-200/80 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                              )}
+                            >
+                              {doc.status === 'approved' ? <CheckCircle2 className="size-3" /> : doc.status === 'rejected' ? <X className="size-3" /> : <Clock4 className="size-3" />}
+                              {doc.status === 'approved' ? 'Approved' : doc.status === 'rejected' ? 'Rejected' : 'Pending'}
+                            </Badge>
+                          </td>
+                          <td className="hidden text-muted-foreground @md:table-cell">{formatDate(doc.created_at)}</td>
+                          <td className="w-[168px] text-right">
+                            <div className="inline-flex items-center justify-end gap-0.5">
+                              <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-muted/60 hover:text-foreground" onClick={() => openPreviewGovModal(doc)} aria-label="Preview">
+                                <Eye className="size-3.5" />
+                              </Button>
+                              <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-muted/60 hover:text-foreground" onClick={() => openEditGovModal(doc)} aria-label="Edit">
+                                <Pencil className="size-3.5" />
+                              </Button>
+                              <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-muted/60 hover:text-foreground" onClick={() => openVerifyGovModal(doc)} aria-label="Verify">
+                                <BadgeCheck className="size-3.5" />
+                              </Button>
+                              <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-red-50 hover:text-rose-600 dark:hover:bg-rose-950/30" onClick={() => requestDeleteGov(doc)} aria-label="Delete" disabled={govDocsSaving}>
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </Motion.div>
         </TabsContent>
@@ -6658,10 +6695,10 @@ export default function AdminEmployeeProfile() {
           setGovForm((p) => ({ ...p, document_file: null }))
         }
       }}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-xl border-border/40 bg-white shadow-lg dark:bg-[#111827]">
           <DialogHeader>
-            <DialogTitle>Upload Government ID</DialogTitle>
-            <DialogDescription>Upload an ID document (PDF/JPG/PNG) for verification.</DialogDescription>
+            <DialogTitle className="text-[#0A0A0A] dark:text-white">Upload Government ID</DialogTitle>
+            <DialogDescription>Upload a clear scan or photo (PDF, JPG, or PNG, max 10 MB) for HR verification.</DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 @sm:grid-cols-2">
@@ -6711,26 +6748,83 @@ export default function AdminEmployeeProfile() {
               <Label>Expiration Date (optional)</Label>
               <Input type="date" value={govForm.expiry_date} onChange={(e) => setGovForm((p) => ({ ...p, expiry_date: e.target.value }))} />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 @sm:col-span-2">
               <Label>Document File</Label>
               <input
+                ref={govUploadModalFileRef}
                 type="file"
                 accept=".pdf,.jpg,.jpeg,.png"
-                className="block w-full text-sm"
+                className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
                   e.target.value = ''
                   setGovForm((p) => ({ ...p, document_file: file || null }))
                 }}
               />
-              {govErrors.document_file ? <p className="text-xs text-destructive">{govErrors.document_file}</p> : null}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => govUploadModalFileRef.current?.click()}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') govUploadModalFileRef.current?.click() }}
+                onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-primary', 'bg-primary/5') }}
+                onDragLeave={(e) => { e.currentTarget.classList.remove('border-primary', 'bg-primary/5') }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  e.currentTarget.classList.remove('border-primary', 'bg-primary/5')
+                  const file = e.dataTransfer.files?.[0]
+                  if (file) setGovForm((p) => ({ ...p, document_file: file }))
+                }}
+                className={cn(
+                  'group flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-6 transition-all',
+                  govForm.document_file
+                    ? 'border-emerald-300 bg-emerald-50/50 dark:border-emerald-700 dark:bg-emerald-950/20'
+                    : 'border-border/60 bg-muted/10 hover:border-primary/50 hover:bg-muted/20',
+                  govErrors.document_file && 'border-destructive/50'
+                )}
+              >
+                {govForm.document_file ? (
+                  <>
+                    <div className="flex size-10 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40">
+                      <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-[#0A0A0A] dark:text-white">{govForm.document_file.name}</p>
+                    <p className="text-xs text-muted-foreground">{formatFileSize(govForm.document_file.size)}</p>
+                    <button
+                      type="button"
+                      className="mt-2 text-xs font-medium text-primary hover:underline"
+                      onClick={(e) => { e.stopPropagation(); setGovForm((p) => ({ ...p, document_file: null })) }}
+                    >
+                      Remove and choose another
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex size-10 items-center justify-center rounded-full bg-muted/40 transition-colors group-hover:bg-primary/10">
+                      <Upload className="size-5 text-muted-foreground transition-colors group-hover:text-primary" />
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-[#0A0A0A] dark:text-white">Click to upload or drag and drop</p>
+                    <p className="text-xs text-muted-foreground">PDF, JPG, or PNG · max 10 MB</p>
+                  </>
+                )}
+              </div>
+              {govErrors.document_file ? <p className="mt-1 text-xs text-destructive">{govErrors.document_file}</p> : null}
             </div>
           </div>
 
           <div className="mt-2 flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setGovAddOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={() => { void submitCreateGov() }} disabled={govDocsSaving}>
-              {govDocsSaving ? 'Saving…' : 'Upload'}
+            <Button type="button" className="bg-[#0A0A0A] text-white hover:bg-[#0A0A0A]/90 dark:bg-white dark:text-[#0A0A0A] dark:hover:bg-white/90" onClick={() => { void submitCreateGov() }} disabled={govDocsSaving}>
+              {govDocsSaving ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  Uploading…
+                </>
+              ) : (
+                <>
+                  <Upload className="mr-2 size-4" />
+                  Upload ID
+                </>
+              )}
             </Button>
           </div>
         </DialogContent>
@@ -6744,10 +6838,10 @@ export default function AdminEmployeeProfile() {
           setGovForm((p) => ({ ...p, document_file: null }))
         }
       }}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-xl border-border/40 bg-white shadow-lg dark:bg-[#111827]">
           <DialogHeader>
-            <DialogTitle>Edit Government ID</DialogTitle>
-            <DialogDescription>Editing resets status to pending until re-verified.</DialogDescription>
+            <DialogTitle className="text-[#0A0A0A] dark:text-white">Edit Government ID</DialogTitle>
+            <DialogDescription>Editing resets status to pending until re-verified. Replace the file if needed (PDF, JPG, or PNG, max 10 MB).</DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 @sm:grid-cols-2">
@@ -6797,26 +6891,73 @@ export default function AdminEmployeeProfile() {
               <Label>Expiration Date (optional)</Label>
               <Input type="date" value={govForm.expiry_date} onChange={(e) => setGovForm((p) => ({ ...p, expiry_date: e.target.value }))} />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 @sm:col-span-2">
               <Label>Replace Document (optional)</Label>
               <input
+                ref={govEditModalFileRef}
                 type="file"
                 accept=".pdf,.jpg,.jpeg,.png"
-                className="block w-full text-sm"
+                className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
                   e.target.value = ''
                   setGovForm((p) => ({ ...p, document_file: file || null }))
                 }}
               />
-              {govErrors.document_file ? <p className="text-xs text-destructive">{govErrors.document_file}</p> : null}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => govEditModalFileRef.current?.click()}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') govEditModalFileRef.current?.click() }}
+                onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-primary', 'bg-primary/5') }}
+                onDragLeave={(e) => { e.currentTarget.classList.remove('border-primary', 'bg-primary/5') }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  e.currentTarget.classList.remove('border-primary', 'bg-primary/5')
+                  const file = e.dataTransfer.files?.[0]
+                  if (file) setGovForm((p) => ({ ...p, document_file: file }))
+                }}
+                className={cn(
+                  'group flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-5 transition-all',
+                  govForm.document_file
+                    ? 'border-emerald-300 bg-emerald-50/50 dark:border-emerald-700 dark:bg-emerald-950/20'
+                    : 'border-border/60 bg-muted/10 hover:border-primary/50 hover:bg-muted/20'
+                )}
+              >
+                {govForm.document_file ? (
+                  <>
+                    <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
+                    <p className="mt-1.5 text-sm font-medium text-[#0A0A0A] dark:text-white">{govForm.document_file.name}</p>
+                    <p className="text-xs text-muted-foreground">{formatFileSize(govForm.document_file.size)}</p>
+                    <button
+                      type="button"
+                      className="mt-1.5 text-xs font-medium text-primary hover:underline"
+                      onClick={(e) => { e.stopPropagation(); setGovForm((p) => ({ ...p, document_file: null })) }}
+                    >
+                      Remove
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="size-5 text-muted-foreground transition-colors group-hover:text-primary" />
+                    <p className="mt-1.5 text-sm text-muted-foreground">Click or drag to replace document</p>
+                    <p className="text-[11px] text-muted-foreground/80">PDF, JPG, or PNG · max 10 MB</p>
+                  </>
+                )}
+              </div>
+              {govErrors.document_file ? <p className="mt-1 text-xs text-destructive">{govErrors.document_file}</p> : null}
             </div>
           </div>
 
           <div className="mt-2 flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setGovEditOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={() => { void submitUpdateGov() }} disabled={govDocsSaving}>
-              {govDocsSaving ? 'Saving…' : 'Save Changes'}
+            <Button type="button" className="bg-[#0A0A0A] text-white hover:bg-[#0A0A0A]/90 dark:bg-white dark:text-[#0A0A0A] dark:hover:bg-white/90" onClick={() => { void submitUpdateGov() }} disabled={govDocsSaving}>
+              {govDocsSaving ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  Saving…
+                </>
+              ) : 'Save Changes'}
             </Button>
           </div>
         </DialogContent>
