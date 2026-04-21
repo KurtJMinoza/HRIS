@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceStatusService;
 use App\Services\FaceAuthService;
+use App\Services\FaceVerificationService;
 use App\Services\LeaveCreditService;
 use App\Services\OvertimeService;
 use App\Services\PremiumPayCalculatorService;
@@ -163,6 +164,31 @@ class AttendanceController extends Controller
         }
 
         return $user;
+    }
+
+    /**
+     * Temporary lockout guard for repeated face verification failures.
+     */
+    private function isFaceAttemptTemporarilyLocked(?int $userId, Request $request): bool
+    {
+        $limit = (int) config('attendance.face_failed_attempts_limit', 5);
+        $windowMinutes = (int) config('attendance.face_failed_attempts_window_minutes', 10);
+        if ($limit <= 0 || $windowMinutes <= 0) {
+            return false;
+        }
+
+        $since = now()->subMinutes($windowMinutes);
+        $ip = $request->ip() ?? '0.0.0.0';
+
+        return FailedFaceAttempt::query()
+            ->where('created_at', '>=', $since)
+            ->where(function ($q) use ($userId, $ip) {
+                if ($userId !== null) {
+                    $q->orWhere('user_id', $userId);
+                }
+                $q->orWhere('ip_address', $ip);
+            })
+            ->count() >= $limit;
     }
 
     /**
@@ -1220,16 +1246,48 @@ class AttendanceController extends Controller
         $startedAt = microtime(true);
         $validated = $request->validate([
             'type' => ['required', 'string', 'in:clock_in,clock_out'],
+            'login' => ['nullable', 'string', 'max:255'],
             'liveness_session_id' => ['nullable', 'string', 'max:255'],
             'image_base64' => ['nullable', 'string'],
             'client_capture_started_at_ms' => ['nullable', 'numeric'],
         ]);
+        $login = trim((string) ($validated['login'] ?? ''));
         $sessionId = $validated['liveness_session_id'] ?? null;
         $imageBase64 = $validated['image_base64'] ?? null;
         if (! $sessionId && ! $imageBase64) {
             throw ValidationException::withMessages([
                 'face' => ['Perform face liveness first, then submit the session.'],
             ]);
+        }
+
+        $claimedUser = null;
+        if ($login !== '') {
+            try {
+                $claimedUser = $this->resolveUserFromLoginIdentifier($login);
+            } catch (ValidationException $e) {
+                $this->recordFailedAttempt(null, $request, false, 'login_not_found');
+                throw $e;
+            }
+
+            if (! $claimedUser->hasRegisteredFace()) {
+                $this->recordFailedAttempt($claimedUser->id, $request, false, 'face_not_registered');
+
+                return response()->json([
+                    'message' => 'Face not registered. Please register your face in My QR & Face first.',
+                    'errors' => ['face' => ['Face not registered. Please register your face in My QR & Face first.']],
+                    'error_code' => 'face_not_registered',
+                ], 422);
+            }
+
+            if ($this->isFaceAttemptTemporarilyLocked((int) $claimedUser->id, $request)) {
+                $this->recordFailedAttempt($claimedUser->id, $request, false, 'rate_limited');
+
+                return response()->json([
+                    'message' => 'Too many failed face attempts. Please wait a few minutes before trying again.',
+                    'errors' => ['face' => ['Too many failed face attempts. Please wait a few minutes before trying again.']],
+                    'error_code' => 'rate_limited',
+                ], 429);
+            }
         }
 
         $result = $sessionId
@@ -1280,36 +1338,66 @@ class AttendanceController extends Controller
         }
 
         $matchStarted = microtime(true);
-        $identified = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true);
-        $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
-        if (! $identified) {
-            $this->recordFailedAttempt(null, $request, false, 'face_not_recognized');
+        $similarityScore = null;
+        if ($claimedUser) {
+            $strictMatch = FaceVerificationService::verifySpecificUserByFaceWithScore($claimedUser, $result['descriptor']);
+            $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
+            if (! $strictMatch || ! $strictMatch['passes']) {
+                $this->recordFailedAttempt($claimedUser->id, $request, false, 'face_not_recognized');
+                Log::warning('Identity-bound face attendance rejected', [
+                    'employee_id' => $claimedUser->id,
+                    'similarity_score' => $strictMatch['similarity_score'] ?? null,
+                    'distance' => $strictMatch['distance'] ?? null,
+                    'min_similarity_required' => (float) config('attendance.face_identity_min_similarity_score', 0.88),
+                    'max_distance_allowed' => (float) config('attendance.face_identity_max_euclidean_distance', 0.35),
+                ]);
 
-            return response()->json([
-                'message' => 'We could not match your face to an enrolled profile this time. Face the camera straight-on, use even lighting (avoid backlight), then try again—or scan your QR code below.',
-                'errors' => ['face' => ['No match this time. Try again with better lighting, or use your QR code on this kiosk.']],
-                'error_code' => 'face_not_recognized',
-                'hint' => 'If you are enrolled, try once more; automatic retries may help. QR is always available below.',
-                'fallback' => 'qr',
-                'performance' => ['match_ms' => $matchMs],
-            ], 422);
+                return response()->json([
+                    'message' => 'Face does not match your registered profile. Please try again with better lighting.',
+                    'errors' => ['face' => ['Face does not match your registered profile. Please try again with better lighting.']],
+                    'error_code' => 'face_not_recognized',
+                    'hint' => 'If this keeps happening, re-register your face in My QR & Face.',
+                    'fallback' => 'qr',
+                    'performance' => [
+                        'match_ms' => $matchMs,
+                        'similarity_score' => $strictMatch['similarity_score'] ?? null,
+                    ],
+                ], 422);
+            }
+            $similarityScore = $strictMatch['similarity_score'];
+            $user = $this->refreshUserForScheduleCheck($claimedUser);
+        } else {
+            $identified = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true);
+            $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
+            if (! $identified) {
+                $this->recordFailedAttempt(null, $request, false, 'face_not_recognized');
+
+                return response()->json([
+                    'message' => 'Face not recognized. Please use your registered face or contact HR.',
+                    'errors' => ['face' => ['Face not recognized. Please use your registered face or contact HR.']],
+                    'error_code' => 'face_not_recognized',
+                    'hint' => 'If you are enrolled, try once more; automatic retries may help. QR is always available below.',
+                    'fallback' => 'qr',
+                    'performance' => ['match_ms' => $matchMs],
+                ], 422);
+            }
+
+            $identifiedUser = $identified['user'];
+            if (! $identifiedUser->hasRegisteredFace()) {
+                $this->recordFailedAttempt($identifiedUser->id, $request, false, 'face_not_registered');
+
+                return response()->json([
+                    'message' => 'Face not registered. Please register your face in My QR & Face first.',
+                    'errors' => ['face' => ['Face not registered. Please register your face in My QR & Face first.']],
+                    'error_code' => 'face_not_registered',
+                ], 422);
+            }
+            $similarityScore = $identified['similarity_score'];
+            $user = $this->refreshUserForScheduleCheck($identifiedUser);
         }
-
-        $identifiedUser = $identified['user'];
-        if (! $identifiedUser->hasRegisteredFace()) {
-            $this->recordFailedAttempt($identifiedUser->id, $request, false, 'face_not_registered');
-
-            return response()->json([
-                'message' => 'No registered face found. Please register your face before using facial recognition clock-in.',
-                'errors' => ['face' => ['No registered face found. Please register your face before using facial recognition clock-in.']],
-                'error_code' => 'face_not_registered',
-            ], 422);
-        }
-
-        $user = $this->refreshUserForScheduleCheck($identifiedUser);
         $type = $validated['type'];
         $faceContext = [
-            'similarity_score' => $identified['similarity_score'],
+            'similarity_score' => $similarityScore,
             'liveness_score' => $result['spoof_confidence'] ?? null,
             'authentication_method' => AttendanceLog::AUTH_METHOD_FACE,
         ];
@@ -1468,7 +1556,7 @@ class AttendanceController extends Controller
             'uses_liveness_session' => ! empty($sessionId),
             'server_processing_ms' => $payload['performance']['server_processing_ms'],
             'match_ms' => $matchMs,
-            'similarity_score' => $identified['similarity_score'],
+            'similarity_score' => $similarityScore,
             'client_capture_started_at_ms' => $payload['performance']['client_capture_started_at_ms'],
         ]);
 

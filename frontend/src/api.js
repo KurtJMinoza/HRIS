@@ -4563,6 +4563,7 @@ export async function recordAttendanceKioskFace(type, payload) {
       ? { type, image_base64: payload }
       : {
           type,
+          login: payload?.login,
           liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
           client_capture_started_at_ms: payload?.client_capture_started_at_ms,

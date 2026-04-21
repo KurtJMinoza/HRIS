@@ -698,6 +698,33 @@ class FaceVerificationService
     }
 
     /**
+     * Verify incoming descriptor against one specific employee only (identity-bound).
+     *
+     * @return array{passes: bool, similarity_score: float, distance: float}|null
+     */
+    public static function verifySpecificUserByFaceWithScore(User $user, array $incomingDescriptor): ?array
+    {
+        if (! $user->hasRegisteredFace() || count($incomingDescriptor) !== 128) {
+            return null;
+        }
+
+        $agg = self::aggregateBestMatchForUser($user, $incomingDescriptor, false);
+        if ($agg === null) {
+            return null;
+        }
+
+        $minSimilarity = (float) config('attendance.face_identity_min_similarity_score', 0.88);
+        $maxDistance = (float) config('attendance.face_identity_max_euclidean_distance', 0.35);
+        $passes = $agg['similarity_score'] >= $minSimilarity && $agg['distance'] <= $maxDistance;
+
+        return [
+            'passes' => $passes,
+            'similarity_score' => (float) $agg['similarity_score'],
+            'distance' => (float) $agg['distance'],
+        ];
+    }
+
+    /**
      * @param  \Illuminate\Support\Collection<int, User>  $employees
      */
     private static function logIdentificationNearMiss(array $incomingDescriptor, $employees): void

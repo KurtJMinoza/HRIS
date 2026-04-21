@@ -250,6 +250,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Identity-bound face verification thresholds (specific employee only)
+    |--------------------------------------------------------------------------
+    | Used when attendance face verification is bound to a claimed employee
+    | (e.g., kiosk login field). Prevents cross-employee matching.
+    */
+    'face_identity_min_similarity_score' => (float) env('ATTENDANCE_FACE_IDENTITY_MIN_SIMILARITY_SCORE', 0.88),
+    'face_identity_max_euclidean_distance' => (float) env('ATTENDANCE_FACE_IDENTITY_MAX_EUCLIDEAN_DISTANCE', 0.35),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Face failure lockout (temporary)
+    |--------------------------------------------------------------------------
+    */
+    'face_failed_attempts_limit' => (int) env('ATTENDANCE_FACE_FAILED_ATTEMPTS_LIMIT', 5),
+    'face_failed_attempts_window_minutes' => (int) env('ATTENDANCE_FACE_FAILED_ATTEMPTS_WINDOW_MINUTES', 10),
+
+    /*
+    |--------------------------------------------------------------------------
     | Identification debug logging (kiosk / face login)
     |--------------------------------------------------------------------------
     | On a failed match, log best near-miss cosine similarity and thresholds (no PII by default).

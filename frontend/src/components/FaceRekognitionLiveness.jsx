@@ -54,6 +54,7 @@ export function FaceRekognitionLiveness({
   const [kioskSuccessData, setKioskSuccessData] = useState(null)
   const [kioskSuccessPhase, setKioskSuccessPhase] = useState('verified') // 'verified' | 'closing'
   const [apiError, setApiError] = useState(null)
+  const [apiErrorCode, setApiErrorCode] = useState(null)
   const [successSummary, setSuccessSummary] = useState(null)
   const [silentSessionRefresh, setSilentSessionRefresh] = useState(false)
   /** 0 = first attempt; after face_not_recognized we auto-retry up to 2 more times (3 total). */
@@ -145,6 +146,7 @@ export function FaceRekognitionLiveness({
     setSubmitting(true)
     setError(null)
     setApiError(null)
+    setApiErrorCode(null)
     try {
       if (onVerified) {
         await withTimeout(
@@ -209,22 +211,48 @@ export function FaceRekognitionLiveness({
         toast.error('Spoof detected', {
           description: 'Liveness check failed. Please use a real face, not a photo or screen.',
         })
+        if (kioskMode) {
+          setApiError('Face liveness/quality check failed. Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the prompt.')
+          setApiErrorCode(code)
+        }
       } else if (code === 'face_not_recognized') {
         toast.error('No match this attempt', {
           description: kioskMode
             ? msg || 'Try again with even lighting, or scan your QR code on this kiosk.'
             : msg || 'Try again with good lighting, or sign in with email and password.',
         })
+        if (kioskMode) {
+          setApiError('Face not recognized. Please use your registered face or contact HR.')
+          setApiErrorCode(code)
+        }
+      } else if (code === 'face_not_registered') {
+        toast.error('Face not registered', {
+          description: 'Please register your face in My QR & Face first.',
+        })
+        if (kioskMode) {
+          setApiError('Face not registered. Please register your face in My QR & Face first.')
+          setApiErrorCode(code)
+        }
       } else if (code === 'no_face_detected') {
         toast.error('No face detected', { description: msg })
+        if (kioskMode) {
+          setApiError('Face liveness/quality check failed. Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the prompt.')
+          setApiErrorCode(code)
+        }
       } else if (code === 'service_unavailable') {
         toast.error('Service unavailable', { description: msg })
+        if (kioskMode) {
+          setApiError('Face liveness/quality check failed. Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the prompt.')
+          setApiErrorCode(code)
+        }
       } else {
         toast.error(kioskMode ? 'Face verification failed' : 'Face login failed', { description: msg })
+        if (kioskMode) {
+          setApiError(msg)
+          setApiErrorCode(code || 'unknown')
+        }
       }
-      if (kioskMode) {
-        setApiError(msg)
-      } else {
+      if (!kioskMode) {
         setError(msg)
       }
     } finally {
@@ -368,18 +396,33 @@ export function FaceRekognitionLiveness({
       )}
       {apiError && (
         <>
-          <p className="text-center text-sm text-white/90">{apiError}</p>
+          <div className="rounded-lg border border-rose-400/35 bg-rose-500/10 p-3">
+            <p className="text-center text-sm font-semibold text-rose-100">{apiError}</p>
+          </div>
           <div className="mt-4 flex flex-row items-center justify-center gap-3">
             <Button
               size="sm"
               className="min-w-28 border border-white/30 bg-white/15 text-white hover:bg-white/25"
               onClick={() => {
                 setApiError(null)
+                setApiErrorCode(null)
                 fetchSession()
               }}
             >
               Try again
             </Button>
+            {apiErrorCode === 'face_not_registered' && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="min-w-28"
+                onClick={() => {
+                  window.location.assign('/login')
+                }}
+              >
+                Register Face
+              </Button>
+            )}
             {onKioskCancel && (
               <Button
                 variant="ghost"
@@ -387,6 +430,7 @@ export function FaceRekognitionLiveness({
                 className="min-w-28 text-white/90 hover:bg-white/10 hover:text-white"
                 onClick={() => {
                   setApiError(null)
+                  setApiErrorCode(null)
                   onKioskCancel()
                 }}
               >
