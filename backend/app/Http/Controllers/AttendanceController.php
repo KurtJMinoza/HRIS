@@ -68,7 +68,7 @@ class AttendanceController extends Controller
     private function refreshUserForScheduleCheck(User $user): User
     {
         $fresh = User::query()
-            ->select(['id', 'name', 'email', 'phone_number', 'schedule', 'working_schedule_id', 'qr_token', 'is_active', 'role', 'profile_image'])
+            ->select(['id', 'name', 'username', 'email', 'phone_number', 'schedule', 'working_schedule_id', 'qr_token', 'is_active', 'role', 'profile_image'])
             ->where('id', $user->id)
             ->first();
 
@@ -137,6 +137,29 @@ class AttendanceController extends Controller
                     ],
                 ]);
             }
+        }
+
+        return $user;
+    }
+
+    /**
+     * Resolve active employee via username or email (kiosk fallback).
+     */
+    private function resolveUserFromLoginIdentifier(string $login): User
+    {
+        $normalized = mb_strtolower(trim($login));
+        $user = User::query()
+            ->where(function ($query) use ($normalized) {
+                $query->whereRaw('LOWER(email) = ?', [$normalized])
+                    ->orWhereRaw('LOWER(username) = ?', [$normalized]);
+            })
+            ->where('is_active', true)
+            ->first();
+
+        if (! $user || ! $user->canRecordOwnAttendanceViaQrOrFace()) {
+            throw ValidationException::withMessages([
+                'login' => ['Account not recognized. Please use your username or email.'],
+            ]);
         }
 
         return $user;
@@ -589,17 +612,23 @@ class AttendanceController extends Controller
     {
         $validated = $request->validate([
             'type' => ['required', 'string', 'in:clock_in,clock_out'],
-            'qr_token' => ['required', 'string', 'min:8'],
+            'qr_token' => ['nullable', 'string', 'min:8', 'required_without:login'],
+            'login' => ['nullable', 'string', 'max:255', 'required_without:qr_token'],
             'latitude' => ['nullable', 'numeric'],
             'longitude' => ['nullable', 'numeric'],
         ]);
 
-        $qrToken = trim($validated['qr_token']);
+        $qrToken = trim((string) ($validated['qr_token'] ?? ''));
+        $login = trim((string) ($validated['login'] ?? ''));
 
         $this->validateGeo($request);
 
         try {
-            $user = $this->resolveUserFromQrToken($qrToken);
+            if ($qrToken !== '') {
+                $user = $this->resolveUserFromQrToken($qrToken);
+            } else {
+                $user = $this->resolveUserFromLoginIdentifier($login);
+            }
         } catch (ValidationException $e) {
             $this->recordFailedAttempt(null, $request);
             throw $e;
@@ -628,7 +657,7 @@ class AttendanceController extends Controller
         }
 
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
-            'authentication_method' => AttendanceLog::AUTH_METHOD_QR,
+            'authentication_method' => $qrToken !== '' ? AttendanceLog::AUTH_METHOD_QR : AttendanceLog::AUTH_METHOD_CREDENTIALS,
         ]));
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
@@ -665,9 +694,19 @@ class AttendanceController extends Controller
                 }
             }
 
-            $msg = $this->buildAttendanceSmsMessage($type, $timeOnly, $classification, AttendanceLog::AUTH_METHOD_QR);
+            $msg = $this->buildAttendanceSmsMessage(
+                $type,
+                $timeOnly,
+                $classification,
+                $qrToken !== '' ? AttendanceLog::AUTH_METHOD_QR : AttendanceLog::AUTH_METHOD_CREDENTIALS
+            );
         } else {
-            $msg = $this->buildAttendanceSmsMessage($type, $timeOnly, null, AttendanceLog::AUTH_METHOD_QR);
+            $msg = $this->buildAttendanceSmsMessage(
+                $type,
+                $timeOnly,
+                null,
+                $qrToken !== '' ? AttendanceLog::AUTH_METHOD_QR : AttendanceLog::AUTH_METHOD_CREDENTIALS
+            );
         }
         $this->sendAttendanceSms($user, $msg, $context);
 

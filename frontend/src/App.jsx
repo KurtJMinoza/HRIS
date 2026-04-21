@@ -18,9 +18,9 @@ import {
 import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
 import { playSuccess, playError } from '@/lib/attendanceSounds'
 import {
-  validateEmail,
+  validateLoginIdentifier,
   validatePassword,
-  sanitizeEmail,
+  sanitizeLogin,
   sanitizePassword,
 } from './validation'
 import { Button } from '@/components/ui/button'
@@ -265,7 +265,7 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
             msg ||
             (kioskMode
               ? 'Try again with even lighting, or scan your QR code on this kiosk.'
-              : 'Try again with good lighting, or sign in with email and password.'),
+              : 'Try again with good lighting, or sign in with username/email and password.'),
         })
       } else if (code === 'no_face_detected') {
         toast.error('No face detected', { description: msg })
@@ -399,6 +399,8 @@ function SmartDTRPreview({ className }) {
     undertimeMinutes: null,
   })
   const [kioskFaceInError, setKioskFaceInError] = useState(false)
+  const [kioskLoginInput, setKioskLoginInput] = useState('')
+  const [kioskLoginSubmitting, setKioskLoginSubmitting] = useState(false)
   const lastScanRef = useRef({ text: null, at: 0 })
 
   const RECENT_VISIBLE_COUNT = 5
@@ -495,6 +497,36 @@ function SmartDTRPreview({ className }) {
       playError(SOUND_FEEDBACK_ENABLED)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleKioskLoginFallback() {
+    if (!kioskType || kioskLoginSubmitting || !kioskLoginInput.trim()) return
+    setError(null)
+    setScanResult(null)
+    setKioskLoginSubmitting(true)
+    try {
+      const data = await recordAttendanceKiosk(kioskType, kioskLoginInput.trim(), { useLoginFallback: true })
+      playSuccess(SOUND_FEEDBACK_ENABLED)
+      setScanResult({
+        employeeId: data.employee_id ?? null,
+        employeeName: data.employee_name ?? null,
+        employeeProfileImageUrl: data.employee_profile_image_url ?? null,
+        employeeProfileImage: data.employee_profile_image ?? null,
+        type: kioskType,
+        recordedAt: new Date().toISOString(),
+        status: data.attendance?.status ?? null,
+        lateMinutes: data.attendance?.late_minutes ?? null,
+        lateLabel: data.attendance?.late_label ?? null,
+        undertimeMinutes: data.attendance?.undertime_minutes ?? null,
+      })
+      setKioskLoginInput('')
+      fetchRecent()
+    } catch (e) {
+      setError(e.message)
+      playError(SOUND_FEEDBACK_ENABLED)
+    } finally {
+      setKioskLoginSubmitting(false)
     }
   }
 
@@ -697,6 +729,27 @@ function SmartDTRPreview({ className }) {
                 successResult={scanResult}
                 theme="dark"
               />
+              {kioskType && (
+                <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
+                  <p className="text-[11px] text-white/60">Fallback: Login with Username / Email</p>
+                  <div className="flex gap-2">
+                    <Input
+                      value={kioskLoginInput}
+                      onChange={(e) => setKioskLoginInput(e.target.value)}
+                      placeholder="Type username or email"
+                      className="h-10 border-white/15 bg-white/10 text-white placeholder:text-white/45"
+                    />
+                    <Button
+                      type="button"
+                      onClick={handleKioskLoginFallback}
+                      disabled={kioskLoginSubmitting || !kioskLoginInput.trim()}
+                      className="h-10 shrink-0"
+                    >
+                      {kioskLoginSubmitting ? 'Processing…' : 'Submit'}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : !kioskType ? (
             /* ── Face recognition mode: choose action first ── */
@@ -1213,22 +1266,22 @@ function LoginFormWithTabs({ onSuccess, onError }) {
 function LoginForm({ onSuccess, onError }) {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
-  const [email, setEmail] = useState('')
+  const [loginValue, setLoginValue] = useState('')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(false)
-  const [errors, setErrors] = useState({ email: '', password: '' })
+  const [errors, setErrors] = useState({ login: '', password: '' })
 
   function validateAll() {
-    const emailErr = validateEmail(email)
+    const loginErr = validateLoginIdentifier(loginValue)
     const passwordErr = validatePassword(password, false)
-    setErrors({ email: emailErr, password: passwordErr })
-    return !emailErr && !passwordErr
+    setErrors({ login: loginErr, password: passwordErr })
+    return !loginErr && !passwordErr
   }
 
-  function handleEmailChange(e) {
-    const next = sanitizeEmail(e.target.value)
-    setEmail(next)
-    setErrors((prev) => ({ ...prev, email: validateEmail(next) }))
+  function handleLoginChange(e) {
+    const next = sanitizeLogin(e.target.value)
+    setLoginValue(next)
+    setErrors((prev) => ({ ...prev, login: validateLoginIdentifier(next) }))
   }
 
   function handlePasswordChange(e) {
@@ -1243,7 +1296,7 @@ function LoginForm({ onSuccess, onError }) {
     setLoading(true)
     onError?.('')
     try {
-      const data = await login(email.trim(), password, undefined, { remember })
+      const data = await login(loginValue.trim(), password, undefined, { remember })
       onSuccess?.(data?.user ?? null)
     } catch (err) {
       const message = String(err?.message || 'Login failed')
@@ -1261,14 +1314,14 @@ function LoginForm({ onSuccess, onError }) {
   return (
     <form className="space-y-5" onSubmit={handleSubmit}>
       <AuthInput
-        label="Email"
-        type="email"
-        name="email"
-        placeholder="Enter your work email"
-        value={email}
-        onChange={handleEmailChange}
-        onBlur={() => setErrors((prev) => ({ ...prev, email: validateEmail(email) }))}
-        error={errors.email}
+        label="Username or Email"
+        type="text"
+        name="login"
+        placeholder="Enter username or work email"
+        value={loginValue}
+        onChange={handleLoginChange}
+        onBlur={() => setErrors((prev) => ({ ...prev, login: validateLoginIdentifier(loginValue) }))}
+        error={errors.login}
         required
       />
       <AuthInput

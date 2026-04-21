@@ -6,33 +6,33 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { requestPasswordResetOtp } from '@/api'
-import { validateEmail, sanitizeEmail } from '@/validation'
+import { validateLoginIdentifier, sanitizeLogin } from '@/validation'
 
 export default function ForgotPassword() {
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [loginValue, setLoginValue] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const [emailErr, setEmailErr] = useState('')
+  const [loginErr, setLoginErr] = useState('')
 
-  function handleEmailChange(e) {
-    const next = sanitizeEmail(e.target.value)
-    setEmail(next)
-    setEmailErr(validateEmail(next))
+  function handleLoginChange(e) {
+    const next = sanitizeLogin(e.target.value)
+    setLoginValue(next)
+    setLoginErr(validateLoginIdentifier(next))
   }
 
   async function handleSubmit(e) {
     e.preventDefault()
-    const err = validateEmail(email)
-    setEmailErr(err)
+    const err = validateLoginIdentifier(loginValue)
+    setLoginErr(err)
     if (err) return
     setSubmitting(true)
     setError('')
     try {
-      const data = await requestPasswordResetOtp(email.trim())
+      const data = await requestPasswordResetOtp(loginValue.trim())
       navigate('/verify-otp', {
         replace: true,
-        state: { requestId: data.request_id, email: email.trim(), expiresInSeconds: data.expires_in_seconds },
+        state: { requestId: data.request_id, login: loginValue.trim(), expiresInSeconds: data.expires_in_seconds },
       })
     } catch (e2) {
       setError(e2.message)
@@ -51,7 +51,7 @@ export default function ForgotPassword() {
               Forgot password
             </CardTitle>
             <CardDescription>
-              Enter your registered email. We’ll send a one-time code (OTP) to reset your password.
+              Enter your registered username or email. We’ll send a one-time code (OTP) to your account email.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -63,21 +63,21 @@ export default function ForgotPassword() {
             <form className="space-y-4" onSubmit={handleSubmit}>
               <div className="space-y-2">
                 <Label htmlFor="fp-email" className="text-sm font-semibold">
-                  Email
+                  Username or Email
                 </Label>
                 <Input
                   id="fp-email"
-                  type="email"
-                  value={email}
-                  onChange={handleEmailChange}
-                  onBlur={() => setEmailErr(validateEmail(email))}
+                  type="text"
+                  value={loginValue}
+                  onChange={handleLoginChange}
+                  onBlur={() => setLoginErr(validateLoginIdentifier(loginValue))}
                   placeholder="you@company.com"
                   required
                   className="h-11 rounded-lg px-4"
                 />
-                {emailErr && (
+                {loginErr && (
                   <p className="text-sm text-destructive" role="alert">
-                    {emailErr}
+                    {loginErr}
                   </p>
                 )}
               </div>

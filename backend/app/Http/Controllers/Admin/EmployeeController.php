@@ -60,7 +60,7 @@ class EmployeeController extends Controller
      * - page (int, default 1)
      * - per_page (int, default 10, max 100). Use 0 or "all" for schedule assignment (returns all, cap 2000).
      * - for_schedule_assignment (bool): if 1, returns all employees without pagination (for Assign Schedule modal).
-     * - q (string, optional): search by name/email/phone/department/position.
+     * - q (string, optional): search by name/username/email/phone/department/position.
      *
      * Heavy work (exports, bulk reports) belongs in queued jobs — this listing stays paginated + lite by default.
      */
@@ -96,6 +96,7 @@ class EmployeeController extends Controller
 
             return $query->where(function ($sub) use ($like) {
                 $sub->where('name', 'like', $like)
+                    ->orWhere('username', 'like', $like)
                     ->orWhere('email', 'like', $like)
                     ->orWhere('phone_number', 'like', $like)
                     ->orWhere('department', 'like', $like)
@@ -169,6 +170,7 @@ class EmployeeController extends Controller
             'first_name',
             'middle_name',
             'last_name',
+            'username',
             'email',
             'phone_number',
             'role',
@@ -204,6 +206,7 @@ class EmployeeController extends Controller
             'first_name',
             'middle_name',
             'last_name',
+            'username',
             'email',
             'phone_number',
             'date_of_birth',
@@ -705,6 +708,7 @@ class EmployeeController extends Controller
             'province' => ['nullable', 'string', 'max:255'],
             'postal_code' => ['nullable', 'string', 'max:32'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'username' => ['required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username'],
             'password' => ['required', 'string', 'min:8'],
             'phone_number' => $phoneRules,
             'schedule' => ['nullable', 'array'],
@@ -798,6 +802,7 @@ class EmployeeController extends Controller
             'province' => isset($validated['province']) && trim((string) $validated['province']) !== '' ? trim((string) $validated['province']) : null,
             'postal_code' => isset($validated['postal_code']) && trim((string) $validated['postal_code']) !== '' ? trim((string) $validated['postal_code']) : null,
             'email' => $validated['email'],
+            'username' => trim((string) $validated['username']),
             'phone_number' => $phone,
             'password' => Hash::make($validated['password']),
             'role' => User::ROLE_EMPLOYEE,
@@ -1034,6 +1039,7 @@ class EmployeeController extends Controller
                 'middle_name' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'last_name' => ['sometimes', 'required', 'string', 'max:255'],
                 'email' => ['sometimes', 'required', 'string', 'email', 'max:255', 'unique:users,email,'.$id],
+                'username' => ['sometimes', 'required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username,'.$id],
                 'department_id' => ['sometimes', 'nullable', 'integer', 'exists:departments,id'],
                 'department' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'company_id' => ['sometimes', 'nullable', 'integer', 'exists:companies,id'],
@@ -1093,6 +1099,9 @@ class EmployeeController extends Controller
             }
             if ($this->requestHasInput($request, 'email')) {
                 $employee->email = trim((string) $request->input('email'));
+            }
+            if ($this->requestHasInput($request, 'username')) {
+                $employee->username = trim((string) $request->input('username'));
             }
             if ($this->requestHasInput($request, 'phone_number')) {
                 $raw = $request->input('phone_number');
@@ -2097,6 +2106,7 @@ class EmployeeController extends Controller
             'first_name' => $user->first_name ?: $firstNameFallback,
             'middle_name' => $user->middle_name ?: $middleNameFallback,
             'last_name' => $user->last_name ?: $lastNameFallback,
+            'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
             'date_of_birth' => $user->date_of_birth?->toDateString(),
@@ -2596,6 +2606,7 @@ class EmployeeController extends Controller
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,
             'last_name' => $user->last_name,
+            'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
             'role' => $user->role,

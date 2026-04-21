@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -45,6 +46,7 @@ class AuthController extends Controller
         $validated = $request->validate([
             'first_name' => ['required', 'string', 'max:255'],
             'last_name' => ['required', 'string', 'max:255'],
+            'username' => ['required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users'],
             'password' => ['required', 'string', 'min:8'],
             'phone_number' => $phoneRules,
@@ -58,6 +60,7 @@ class AuthController extends Controller
 
         $user = User::create([
             'name' => trim($validated['first_name'].' '.$validated['last_name']),
+            'username' => trim((string) $validated['username']),
             'email' => $validated['email'],
             'phone_number' => $phone,
             'password' => Hash::make($validated['password']),
@@ -86,7 +89,7 @@ class AuthController extends Controller
 
         $validationStart = microtime(true);
         $validated = $request->validate([
-            'email' => ['required', 'string', 'email'],
+            'login' => ['required', 'string', 'max:255'],
             'password' => ['required', 'string'],
         ]);
         Log::info('Auth login timing step', [
@@ -97,7 +100,11 @@ class AuthController extends Controller
 
         /** @var User|null $user */
         $lookupStart = microtime(true);
-        $user = User::query()->where('email', $validated['email'])->first();
+        $loginValue = trim((string) $validated['login']);
+        $user = User::query()
+            ->whereRaw('LOWER(email) = ?', [Str::lower($loginValue)])
+            ->orWhereRaw('LOWER(username) = ?', [Str::lower($loginValue)])
+            ->first();
         Log::info('Auth login timing step', [
             'endpoint' => 'Auth.login',
             'step' => 'user_lookup',
@@ -114,7 +121,7 @@ class AuthController extends Controller
                 'reason' => 'invalid_credentials',
             ]);
             throw ValidationException::withMessages([
-                'email' => ['The provided credentials are incorrect.'],
+                'login' => ['The provided credentials are incorrect.'],
             ]);
         }
         Log::info('Auth login timing step', [
@@ -133,7 +140,7 @@ class AuthController extends Controller
 
         if (! $user->is_active) {
             throw ValidationException::withMessages([
-                'email' => ['Account is deactivated.'],
+                'login' => ['Account is deactivated.'],
             ]);
         }
 
@@ -357,8 +364,8 @@ class AuthController extends Controller
             $this->recordFaceLoginFailure($request, null, false, 'face_not_recognized');
 
             return response()->json([
-                'message' => 'We could not match your face to an enrolled profile. Face the camera straight-on, use even lighting (no glare), then try again—or sign in with email and password.',
-                'errors' => ['face' => ['No match this time. Try again with steady lighting, or use email and password.']],
+                'message' => 'We could not match your face to an enrolled profile. Face the camera straight-on, use even lighting (no glare), then try again—or sign in with username/email and password.',
+                'errors' => ['face' => ['No match this time. Try again with steady lighting, or use username/email and password.']],
                 'error_code' => 'face_not_recognized',
                 'hint' => 'If you registered your face already, a second try after adjusting lighting often works.',
                 'fallback' => 'password',
@@ -559,6 +566,7 @@ class AuthController extends Controller
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,
             'last_name' => $user->last_name,
+            'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
             'date_of_birth' => $user->date_of_birth?->toDateString(),

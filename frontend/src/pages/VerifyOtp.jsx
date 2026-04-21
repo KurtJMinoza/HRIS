@@ -12,19 +12,19 @@ export default function VerifyOtp() {
   const location = useLocation()
   const state = location.state || {}
   const requestId = state.requestId || null
-  const email = state.email || ''
+  const login = state.login || ''
 
   const [otp, setOtp] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  const maskedEmail = useMemo(() => {
-    if (!email || typeof email !== 'string') return ''
-    const [u, d] = email.split('@')
-    if (!d) return email
+  const maskedLogin = useMemo(() => {
+    if (!login || typeof login !== 'string') return ''
+    const [u, d] = login.split('@')
+    if (!d) return login
     const uMask = u.length <= 2 ? `${u[0] || ''}*` : `${u.slice(0, 2)}***`
     return `${uMask}@${d}`
-  }, [email])
+  }, [login])
 
   if (!requestId) {
     // No state -> user directly navigated here; send them back.
@@ -60,7 +60,7 @@ export default function VerifyOtp() {
       const data = await verifyPasswordResetOtp(requestId, normalized)
       navigate('/reset-password', {
         replace: true,
-        state: { requestId: data.request_id, resetToken: data.reset_token, email },
+        state: { requestId: data.request_id, resetToken: data.reset_token, login },
       })
     } catch (e2) {
       setError(e2.message)
@@ -79,7 +79,7 @@ export default function VerifyOtp() {
               Verify OTP
             </CardTitle>
             <CardDescription>
-              Enter the 6-digit code sent to <span className="font-medium text-foreground">{maskedEmail || 'your email'}</span>.
+              Enter the 6-digit code sent to <span className="font-medium text-foreground">{maskedLogin || 'your email'}</span>.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

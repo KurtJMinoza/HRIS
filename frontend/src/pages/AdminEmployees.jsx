@@ -133,6 +133,9 @@ function getAddEmployeeFriendlyError(error) {
   if (raw.includes('users_email_unique') || raw.includes('duplicate entry') && raw.includes('email')) {
     return 'This email address is already used by another employee.'
   }
+  if (raw.includes('users_username_unique') || raw.includes('duplicate entry') && raw.includes('username')) {
+    return 'This username is already used by another employee.'
+  }
   return error?.message || 'Failed to add employee. Please try again.'
 }
 
@@ -195,6 +198,10 @@ function isValidPhMobile(number) {
   return /^(\+63\s?9\d{9}|09\d{9})$/.test(String(number || '').trim())
 }
 
+function isValidUsername(value) {
+  return /^[A-Za-z0-9._]+$/.test(String(value || '').trim())
+}
+
 function getPasswordStrength(password) {
   const value = String(password || '')
   if (!value) return { label: 'None', tone: 'text-muted-foreground' }
@@ -224,6 +231,7 @@ const INITIAL_ADD_FORM = {
   city: '',
   province: '',
   postal_code: '',
+  username: '',
   email: '',
   phone_number: '',
   branch_id: '',
@@ -391,6 +399,7 @@ export default function AdminEmployees() {
     first_name: '',
     middle_name: '',
     last_name: '',
+    username: '',
     email: '',
     phone_number: '',
     date_of_birth: '',
@@ -595,6 +604,14 @@ export default function AdminEmployees() {
       setError('Email Address is required.')
       return
     }
+    if (!personalInfoForm.username.trim()) {
+      setError('Username is required.')
+      return
+    }
+    if (!isValidUsername(personalInfoForm.username)) {
+      setError('Username can only contain letters, numbers, underscores, and dots (no spaces).')
+      return
+    }
     if (!phoneRaw) {
       setError('Contact Number is required.')
       return
@@ -620,6 +637,7 @@ export default function AdminEmployees() {
         first_name: personalInfoForm.first_name.trim(),
         middle_name: personalInfoForm.middle_name.trim() || null,
         last_name: personalInfoForm.last_name.trim(),
+        username: personalInfoForm.username.trim(),
         email: personalInfoForm.email.trim(),
         phone_number: phoneRaw || null,
         date_of_birth: personalInfoForm.date_of_birth || null,
@@ -643,6 +661,7 @@ export default function AdminEmployees() {
         first_name: emp?.first_name || '',
         middle_name: emp?.middle_name || '',
         last_name: emp?.last_name || '',
+        username: emp?.username || '',
         email: emp?.email || '',
         phone_number: emp?.phone_number || '',
         date_of_birth: emp?.date_of_birth || '',
@@ -729,6 +748,14 @@ export default function AdminEmployees() {
       setAddFormError('Email Address is required.')
       return
     }
+    if (!addForm.username.trim()) {
+      setAddFormError('Username is required.')
+      return
+    }
+    if (!isValidUsername(addForm.username)) {
+      setAddFormError('Username can only contain letters, numbers, underscores, and dots (no spaces).')
+      return
+    }
     if (!isValidEmailAddress(addForm.email)) {
       setAddFormError('Enter a valid email address.')
       return
@@ -783,6 +810,7 @@ export default function AdminEmployees() {
         city: addForm.city?.trim() || undefined,
         province: addForm.province?.trim() || undefined,
         postal_code: addForm.postal_code?.trim() || undefined,
+        username: addForm.username.trim(),
         email: addForm.email.trim(),
         phone_number: phoneRaw || undefined,
         company_id: derivedCompanyId,
@@ -1595,7 +1623,7 @@ export default function AdminEmployees() {
             <Input
               ref={searchModalInputRef}
               type="text"
-              placeholder="Search employees by name, email, department..."
+              placeholder="Search employees by name, username, email, department..."
               value={searchModalQuery}
               onChange={(e) => setSearchModalQuery(e.target.value)}
               className="h-12 border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -1658,7 +1686,7 @@ export default function AdminEmployees() {
                   <Input
                     type="text"
                     className="h-9 pl-8 text-sm"
-                    placeholder="Search name, email, department"
+                    placeholder="Search name, username, email, department"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -3126,6 +3154,19 @@ export default function AdminEmployees() {
                       )}
               </div>
                     <div className="grid gap-1.5">
+                      <Label htmlFor="add-username" className="text-[13px] font-medium">Username <span className="text-muted-foreground">*</span></Label>
+                      <Input
+                        id="add-username"
+                        type="text"
+                        value={addForm.username}
+                        onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value }))}
+                        placeholder="e.g., neziahpaul or npbernabé"
+                        className="h-9 focus-visible:ring-ring/50"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">Used for login along with email</p>
+                    </div>
+                    <div className="grid gap-1.5">
                       <Label htmlFor="add-email" className="text-[13px] font-medium">Email Address <span className="text-muted-foreground">*</span></Label>
                       <Input
                         id="add-email"
@@ -4000,6 +4041,18 @@ export default function AdminEmployees() {
                           onChange={(e) => setPersonalInfoForm((f) => ({ ...f, last_name: e.target.value }))}
                           required
                         />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-medium text-muted-foreground">Username</label>
+                        <Input
+                          type="text"
+                          className="h-9 text-sm"
+                          placeholder="e.g., neziahpaul or npbernabé"
+                          value={personalInfoForm.username}
+                          onChange={(e) => setPersonalInfoForm((f) => ({ ...f, username: e.target.value }))}
+                          required
+                        />
+                        <p className="mt-2 text-xs text-muted-foreground">Used for login along with email</p>
                       </div>
                       <div>
                         <label className="mb-2 block text-xs font-medium text-muted-foreground">Email Address</label>

@@ -467,6 +467,7 @@ class EmployeeProfileController extends Controller
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,
             'last_name' => $user->last_name,
+            'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
             'date_of_birth' => $user->date_of_birth?->toDateString(),
@@ -543,6 +544,7 @@ class EmployeeProfileController extends Controller
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,
             'last_name' => $user->last_name,
+            'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
             'date_of_birth' => $user->date_of_birth?->toDateString(),
@@ -602,6 +604,7 @@ class EmployeeProfileController extends Controller
             'first_name',
             'middle_name',
             'last_name',
+            'username',
             'email',
             'phone_number',
             'date_of_birth',
@@ -661,6 +664,7 @@ class EmployeeProfileController extends Controller
             'Marital Status',
             'Nationality',
             'Email',
+            'Username',
             'Phone Number',
             'Home Address',
             'Street',
@@ -793,6 +797,7 @@ class EmployeeProfileController extends Controller
             (string) ($user->civil_status ?? ''),
             (string) ($user->nationality ?? ''),
             (string) ($user->email ?? ''),
+            (string) ($user->username ?? ''),
             $this->csvPhone($user->phone_number),
             (string) ($user->home_address ?? ''),
             (string) ($user->street_address ?? ''),
@@ -929,6 +934,7 @@ class EmployeeProfileController extends Controller
                 'first_name' => ['sometimes', 'required', 'string', 'max:255'],
                 'middle_name' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'last_name' => ['sometimes', 'required', 'string', 'max:255'],
+                'username' => ['sometimes', 'required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username,'.$user->id],
                 'date_of_birth' => ['sometimes', 'nullable', 'date'],
                 'gender' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'civil_status' => ['sometimes', 'nullable', 'string', 'max:50'],
@@ -945,6 +951,10 @@ class EmployeeProfileController extends Controller
             if (array_key_exists('middle_name', $validated)) {
                 $raw = $validated['middle_name'];
                 $user->middle_name = is_string($raw) && trim($raw) !== '' ? trim($raw) : null;
+            }
+            if (array_key_exists('username', $validated)) {
+                $raw = $validated['username'];
+                $user->username = is_string($raw) && trim($raw) !== '' ? trim($raw) : null;
             }
             if (array_key_exists('date_of_birth', $validated)) {
                 $raw = $validated['date_of_birth'];

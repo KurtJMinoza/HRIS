@@ -30,25 +30,25 @@ class PasswordResetController extends Controller
     public function requestOtp(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'email' => ['required', 'string', 'email', 'max:255'],
+            'login' => ['required', 'string', 'max:255'],
         ]);
 
-        $email = mb_strtolower(trim((string) $validated['email']));
+        $login = mb_strtolower(trim((string) $validated['login']));
         $ip = $request->ip() ?? '0.0.0.0';
 
         $ipKey = 'pwdreset:request:ip:'.$ip;
         if (RateLimiter::tooManyAttempts($ipKey, self::RL_REQUESTS_PER_IP_PER_MINUTE)) {
             $seconds = RateLimiter::availableIn($ipKey);
             throw ValidationException::withMessages([
-                'email' => ["Too many requests. Please try again in {$seconds} seconds."],
+                'login' => ["Too many requests. Please try again in {$seconds} seconds."],
             ]);
         }
 
-        $emailKey = 'pwdreset:request:email:'.sha1($email);
+        $emailKey = 'pwdreset:request:login:'.sha1($login);
         if (RateLimiter::tooManyAttempts($emailKey, self::RL_REQUESTS_PER_EMAIL_PER_5MIN)) {
             $seconds = RateLimiter::availableIn($emailKey);
             throw ValidationException::withMessages([
-                'email' => ["Too many requests for this email. Please try again in {$seconds} seconds."],
+                'login' => ["Too many requests for this account. Please try again in {$seconds} seconds."],
             ]);
         }
 
@@ -57,19 +57,22 @@ class PasswordResetController extends Controller
 
         /** @var User|null $user */
         $user = User::query()
-            ->where('email', $email)
+            ->where(function ($query) use ($login) {
+                $query->whereRaw('LOWER(email) = ?', [$login])
+                    ->orWhereRaw('LOWER(username) = ?', [$login]);
+            })
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->first();
 
         if (! $user) {
             throw ValidationException::withMessages([
-                'email' => ['Email not found.'],
+                'login' => ['Account not found.'],
             ]);
         }
 
         if (! $user->is_active) {
             throw ValidationException::withMessages([
-                'email' => ['Account is deactivated.'],
+                'login' => ['Account is deactivated.'],
             ]);
         }
 
@@ -79,7 +82,7 @@ class PasswordResetController extends Controller
         $record = PasswordResetOtp::create([
             'request_id' => $requestId,
             'user_id' => $user->id,
-            'email' => $email,
+            'email' => (string) $user->email,
             'otp_hash' => Hash::make($otp),
             'expires_at' => now()->addMinutes(self::OTP_EXPIRES_MINUTES),
             'attempts' => 0,
@@ -91,7 +94,7 @@ class PasswordResetController extends Controller
             // If mail fails, invalidate the request to avoid "ghost" OTPs.
             $record->delete();
             throw ValidationException::withMessages([
-                'email' => ['Could not send OTP email. Please try again later.'],
+                'login' => ['Could not send OTP email. Please try again later.'],
             ]);
         }
 

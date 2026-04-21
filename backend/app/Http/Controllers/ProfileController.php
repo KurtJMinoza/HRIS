@@ -37,6 +37,7 @@ class ProfileController extends Controller
         $messages = [];
 
         $sensitiveChange = $request->filled('email')
+            || $request->filled('username')
             || $request->has('phone_number')
             || $request->filled('password');
 
@@ -64,6 +65,10 @@ class ProfileController extends Controller
         if ($request->filled('email')) {
             $rules['email'] = ['required', 'string', 'email', 'max:255', 'unique:users,email,'.$user->id];
             $data['email'] = $request->input('email');
+        }
+        if ($request->filled('username')) {
+            $rules['username'] = ['required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username,'.$user->id];
+            $data['username'] = trim((string) $request->input('username'));
         }
 
         if ($request->has('phone_number')) {

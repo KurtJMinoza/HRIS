@@ -6,6 +6,8 @@
 const ALLOWED_NAME = /^[a-zA-Z\s\-']*$/
 // Email: letters, digits, . _ % + - @
 const ALLOWED_EMAIL = /^[a-zA-Z0-9._%+\-@]*$/
+const ALLOWED_LOGIN = /^[a-zA-Z0-9._%+\-@]*$/
+const ALLOWED_USERNAME = /^[a-zA-Z0-9._]*$/
 // Password: printable ASCII only (no emojis or fancy symbols)
 const ALLOWED_PASSWORD = /^[\x20-\x7E]*$/
 
@@ -42,6 +44,14 @@ export function sanitizeEmail(value) {
   return value.replace(/[^a-zA-Z0-9._%+\-@]/g, '')
 }
 
+export function sanitizeLogin(value) {
+  return value.replace(/[^a-zA-Z0-9._%+\-@]/g, '')
+}
+
+export function sanitizeUsername(value) {
+  return value.replace(/[^a-zA-Z0-9._]/g, '')
+}
+
 export function sanitizePassword(value) {
   return value.replace(/[^\x20-\x7E]/g, '')
 }
@@ -66,6 +76,24 @@ export function validateEmail(value, required = true) {
   if (!ALLOWED_EMAIL.test(trimmed)) return 'Email can only contain letters, numbers, and . _ % + - @'
   if (!EMAIL_FORMAT.test(trimmed)) return 'Please enter a valid email address.'
   if (trimmed.length > 255) return 'Email is too long.'
+  return ''
+}
+
+export function validateLoginIdentifier(value, required = true) {
+  const trimmed = value.trim()
+  if (!trimmed) return required ? 'Username or email is required.' : ''
+  if (hasEmoji(trimmed)) return 'Emojis are not allowed.'
+  if (hasFancyUnicode(trimmed)) return 'Please use standard characters only.'
+  if (!ALLOWED_LOGIN.test(trimmed)) return 'Use only letters, numbers, and . _ % + - @'
+  if (trimmed.length > 255) return 'Username or email is too long.'
+  return ''
+}
+
+export function validateUsername(value, required = true) {
+  const trimmed = value.trim()
+  if (!trimmed) return required ? 'Username is required.' : ''
+  if (!ALLOWED_USERNAME.test(trimmed)) return 'Username can only contain letters, numbers, underscores, and dots (no spaces).'
+  if (trimmed.length > 255) return 'Username is too long.'
   return ''
 }
 

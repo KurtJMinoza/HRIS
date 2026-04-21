@@ -547,8 +547,8 @@ export async function authenticatedFetch(path, options = {}) {
   return attempt(false)
 }
 
-export async function login(email, password, role, options = {}) {
-  return loginWithRole(email, password, role, options)
+export async function login(loginValue, password, role, options = {}) {
+  return loginWithRole(loginValue, password, role, options)
 }
 
 /** Login via QR code scan (employee badge). */
@@ -658,7 +658,7 @@ export async function verifyFaceOnly(imageBase64) {
   }
 }
 
-export async function loginWithRole(email, password, role, options = {}) {
+export async function loginWithRole(loginValue, password, role, options = {}) {
   const LOGIN_TIMEOUT_MS = 60 * 1000
   if (USE_SANCTUM_SESSION) {
     await ensureSanctumCsrfCookie()
@@ -673,7 +673,7 @@ export async function loginWithRole(email, password, role, options = {}) {
         Accept: 'application/json',
         ...(xsrf ? { 'X-XSRF-TOKEN': xsrf } : {}),
       },
-      body: JSON.stringify({ email, password, role }),
+      body: JSON.stringify({ login: loginValue, password, role }),
     }, LOGIN_TIMEOUT_MS)
   )
   let data
@@ -683,7 +683,7 @@ export async function loginWithRole(email, password, role, options = {}) {
     throw new Error('Invalid response from server. Is the backend running?')
   }
   if (!res.ok) {
-    const msg = data.errors?.email?.[0] || data.errors?.role?.[0] || data.message || 'Login failed'
+    const msg = data.errors?.login?.[0] || data.errors?.role?.[0] || data.message || 'Login failed'
     throw new Error(msg)
   }
   if (data.token) setToken(data.token, options)
@@ -699,14 +699,14 @@ export async function loginWithRole(email, password, role, options = {}) {
 
 // ---- Password reset (OTP via email) ----
 
-export async function requestPasswordResetOtp(email) {
+export async function requestPasswordResetOtp(login) {
   const res = await fetchWithSanctumCsrf('/password/forgot', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ login }),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const msg = data.errors?.email?.[0] || data.message || 'Could not send OTP.'
+    const msg = data.errors?.login?.[0] || data.message || 'Could not send OTP.'
     throw new Error(msg)
   }
   return data
@@ -4535,8 +4535,21 @@ export async function getHalfDayAvailability(date) {
  * @param {'clock_in'|'clock_out'} type
  * @param {string} qrToken - scanned QR token (employee_code)
  */
-export async function recordAttendanceKiosk(type, qrToken) {
-  return recordAttendanceScan(type, qrToken, { authenticated: false })
+export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) {
+  const { useLoginFallback = false } = options
+  if (useLoginFallback) {
+    const res = await fetchWithSanctumCsrf('/attendance/kiosk', {
+      method: 'POST',
+      body: JSON.stringify({ type, login: qrTokenOrLogin }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const msg = data.errors?.login?.[0] || data.errors?.type?.[0] || data.message || 'Attendance failed'
+      throw new Error(msg)
+    }
+    return data
+  }
+  return recordAttendanceScan(type, qrTokenOrLogin, { authenticated: false })
 }
 
 /**

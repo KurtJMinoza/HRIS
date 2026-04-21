@@ -77,7 +77,7 @@ import {
 } from '@/api'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
-import { validateEmail, validatePassword, validateConfirmPassword, validatePhone, sanitizeEmail, sanitizePassword } from '@/validation'
+import { validateEmail, validatePassword, validateConfirmPassword, validatePhone, validateUsername, sanitizeEmail, sanitizePassword } from '@/validation'
 import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
 import ESignatureCard from '@/components/ESignatureCard'
 import SignaturePadDialog from '@/components/SignaturePadDialog'
@@ -644,6 +644,7 @@ export default function EmployeeProfile() {
     first_name: '',
     middle_name: '',
     last_name: '',
+    username: '',
     date_of_birth: '',
     gender: '',
     civil_status: '',
@@ -789,6 +790,7 @@ export default function EmployeeProfile() {
       first_name: toStr(u?.first_name),
       middle_name: toStr(u?.middle_name),
       last_name: toStr(u?.last_name),
+      username: toStr(u?.username),
       date_of_birth: toStr(u?.date_of_birth),
       gender: toStr(u?.gender),
       civil_status: toStr(u?.civil_status),
@@ -834,6 +836,7 @@ export default function EmployeeProfile() {
       first_name: toStr(u?.first_name),
       middle_name: toStr(u?.middle_name),
       last_name: toStr(u?.last_name),
+      username: toStr(u?.username),
       date_of_birth: toStr(u?.date_of_birth),
       gender: toStr(u?.gender),
       civil_status: toStr(u?.civil_status),
@@ -1421,6 +1424,11 @@ export default function EmployeeProfile() {
     const errs = {}
     if (!String(next.first_name || '').trim()) errs.first_name = 'First name is required.'
     if (!String(next.last_name || '').trim()) errs.last_name = 'Last name is required.'
+    if (!String(next.username || '').trim()) errs.username = 'Username is required.'
+    else {
+      const usernameErr = validateUsername(String(next.username || '').trim())
+      if (usernameErr) errs.username = usernameErr
+    }
     if (String(next.first_name || '').length > 255) errs.first_name = 'First name must be 255 characters or less.'
     if (String(next.middle_name || '').length > 255) errs.middle_name = 'Middle name must be 255 characters or less.'
     if (String(next.last_name || '').length > 255) errs.last_name = 'Last name must be 255 characters or less.'
@@ -1459,6 +1467,7 @@ export default function EmployeeProfile() {
       first_name: String(personal.first_name ?? '').trim(),
       middle_name: String(personal.middle_name ?? '').trim() || null,
       last_name: String(personal.last_name ?? '').trim(),
+      username: String(personal.username ?? '').trim(),
       date_of_birth: personal.date_of_birth ? String(personal.date_of_birth).trim() : null,
       gender: String(personal.gender ?? '').trim() || null,
       civil_status: String(personal.civil_status ?? '').trim() || null,
@@ -2725,6 +2734,22 @@ export default function EmployeeProfile() {
                   className={cn('h-11', personalErrors.last_name && 'border-destructive')}
                 />
                 {personalErrors.last_name && <p className="text-sm text-destructive">{personalErrors.last_name}</p>}
+              </div>
+              <div className="space-y-2 @sm:col-span-2">
+                <Label htmlFor="profile_username" className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <UserRound className="size-4 shrink-0 text-muted-foreground" />
+                  <span>Username</span>
+                  <span className="text-destructive" aria-hidden>*</span>
+                </Label>
+                <Input
+                  id="profile_username"
+                  value={personal.username || ''}
+                  onChange={(e) => updatePersonalField('username', e.target.value)}
+                  placeholder="e.g., neziahpaul or npbernabé"
+                  className={cn('h-11', personalErrors.username && 'border-destructive')}
+                />
+                <FieldHint>Used for login along with email</FieldHint>
+                {personalErrors.username && <p className="text-sm text-destructive">{personalErrors.username}</p>}
               </div>
               <div className="space-y-2 @sm:col-span-2">
                 <Label htmlFor="profile_email" className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -4155,7 +4180,7 @@ export default function EmployeeProfile() {
               <CardDescription>Sensitive fields are managed by administrators.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <p><span className="text-muted-foreground">Username:</span> {displayUser?.email || '—'}</p>
+              <p><span className="text-muted-foreground">Username:</span> {displayUser?.username || '—'}</p>
               <p><span className="text-muted-foreground">Email Address:</span> {displayUser?.email || '—'}</p>
               <p className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground">Role:</span>
