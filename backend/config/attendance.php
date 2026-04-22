@@ -260,6 +260,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Cross-camera accuracy mode (registration camera != kiosk camera)
+    |--------------------------------------------------------------------------
+    | Different devices can shift exposure, white balance, focal length, and compression.
+    | When liveness confidence is very high, allow a small relaxed matching window while
+    | still enforcing anti-ambiguity (stronger top-1 vs top-2 margin in matcher).
+    */
+    'face_cross_camera_relax_enabled' => filter_var(
+        env('ATTENDANCE_FACE_CROSS_CAMERA_RELAX_ENABLED', true),
+        FILTER_VALIDATE_BOOL
+    ),
+    'face_cross_camera_high_liveness_score' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_HIGH_LIVENESS', 0.90),
+    'face_cross_camera_min_similarity_relax_delta' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_SIM_RELAX_DELTA', 0.05),
+    'face_cross_camera_cosine_distance_relax_delta' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_COS_DIST_RELAX_DELTA', 0.04),
+    'face_cross_camera_kiosk_min_similarity_floor' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_SIM_FLOOR', 0.33),
+    'face_cross_camera_min_similarity_margin' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_MARGIN', 0.06),
+
+    /*
+    |--------------------------------------------------------------------------
     | Identity-bound face verification thresholds (specific employee only)
     |--------------------------------------------------------------------------
     | Used when attendance face verification is bound to a claimed employee

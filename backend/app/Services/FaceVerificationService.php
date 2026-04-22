@@ -78,6 +78,36 @@ class FaceVerificationService
         return $v !== null && is_numeric($v) ? (float) $v : null;
     }
 
+    private static function crossCameraRelaxEnabled(): bool
+    {
+        return (bool) config('attendance.face_cross_camera_relax_enabled', true);
+    }
+
+    private static function crossCameraHighLivenessScore(): float
+    {
+        return (float) config('attendance.face_cross_camera_high_liveness_score', 0.90);
+    }
+
+    private static function crossCameraMinSimilarityRelaxDelta(): float
+    {
+        return (float) config('attendance.face_cross_camera_min_similarity_relax_delta', 0.05);
+    }
+
+    private static function crossCameraCosineDistanceRelaxDelta(): float
+    {
+        return (float) config('attendance.face_cross_camera_cosine_distance_relax_delta', 0.04);
+    }
+
+    private static function crossCameraKioskMinSimilarityFloor(): float
+    {
+        return (float) config('attendance.face_cross_camera_kiosk_min_similarity_floor', 0.33);
+    }
+
+    private static function crossCameraMinMargin(): float
+    {
+        return (float) config('attendance.face_cross_camera_min_similarity_margin', 0.06);
+    }
+
     /**
      * Duplicate registration (cross-account): block when cosine similarity is high enough
      * to indicate the same person. Multi-signal approach (cosine, Euclidean, dual-signal, aggregate)
@@ -574,7 +604,7 @@ class FaceVerificationService
      * @param  bool  $kioskMode  Use looser kiosk thresholds (clock-in/out with liveness already verified)
      * @return array{similarity_score: float, distance: float, cmp: float, passes: bool}|null
      */
-    public static function aggregateBestMatchForUser(User $user, array $incomingDescriptor, bool $kioskMode = false): ?array
+    public static function aggregateBestMatchForUser(User $user, array $incomingDescriptor, bool $kioskMode = false, ?float $livenessScore = null): ?array
     {
         $dim = self::EMBEDDING_DIM;
         if (count($incomingDescriptor) !== $dim) {
@@ -628,6 +658,19 @@ class FaceVerificationService
             $euclideanThreshold = self::matchThreshold();
         }
 
+        if (
+            $kioskMode
+            && self::crossCameraRelaxEnabled()
+            && $livenessScore !== null
+            && $livenessScore >= self::crossCameraHighLivenessScore()
+        ) {
+            $cosineThreshold = min(0.75, $cosineThreshold + self::crossCameraCosineDistanceRelaxDelta());
+            $minSim = max(
+                self::crossCameraKioskMinSimilarityFloor(),
+                $minSim - self::crossCameraMinSimilarityRelaxDelta()
+            );
+        }
+
         $passes = $useCosine
             ? ($cosineDist <= $cosineThreshold && $bestCosineSim >= $minSim)
             : ($bestDistance <= $euclideanThreshold && $bestCosineSim >= $minSim);
@@ -664,7 +707,7 @@ class FaceVerificationService
      * @param  bool  $kioskMode  Use relaxed kiosk thresholds (liveness already proven by Rekognition)
      * @return array{user: User, distance: float, similarity_score: float}|null
      */
-    public static function identifyUserByFaceWithScore(array $incomingDescriptor, bool $kioskMode = false): ?array
+    public static function identifyUserByFaceWithScore(array $incomingDescriptor, bool $kioskMode = false, ?float $livenessScore = null): ?array
     {
         if (count($incomingDescriptor) !== self::EMBEDDING_DIM) {
             return null;
@@ -681,13 +724,22 @@ class FaceVerificationService
             ])
             ->get();
         $minMargin = self::minSimilarityMargin();
+        if (
+            $kioskMode
+            && self::crossCameraRelaxEnabled()
+            && $livenessScore !== null
+            && $livenessScore >= self::crossCameraHighLivenessScore()
+        ) {
+            // Keep cross-camera mode accurate by enforcing a stronger top-1 vs top-2 margin.
+            $minMargin = max($minMargin, self::crossCameraMinMargin());
+        }
 
         $passing = [];
         foreach ($employees as $user) {
             if (! $user->hasRegisteredFace()) {
                 continue;
             }
-            $agg = self::aggregateBestMatchForUser($user, $incomingDescriptor, $kioskMode);
+            $agg = self::aggregateBestMatchForUser($user, $incomingDescriptor, $kioskMode, $livenessScore);
             if ($agg === null || ! $agg['passes']) {
                 continue;
             }
@@ -732,19 +784,30 @@ class FaceVerificationService
      *
      * @return array{passes: bool, similarity_score: float, distance: float}|null
      */
-    public static function verifySpecificUserByFaceWithScore(User $user, array $incomingDescriptor): ?array
+    public static function verifySpecificUserByFaceWithScore(User $user, array $incomingDescriptor, ?float $livenessScore = null): ?array
     {
         if (! $user->hasRegisteredFace() || count($incomingDescriptor) !== self::EMBEDDING_DIM) {
             return null;
         }
 
-        $agg = self::aggregateBestMatchForUser($user, $incomingDescriptor, false);
+        $agg = self::aggregateBestMatchForUser($user, $incomingDescriptor, false, $livenessScore);
         if ($agg === null) {
             return null;
         }
 
         $minSimilarity = (float) config('attendance.face_identity_min_similarity_score', 0.55);
         $maxDistance = (float) config('attendance.face_identity_max_euclidean_distance', 1.0);
+        if (
+            self::crossCameraRelaxEnabled()
+            && $livenessScore !== null
+            && $livenessScore >= self::crossCameraHighLivenessScore()
+        ) {
+            $minSimilarity = max(
+                self::crossCameraKioskMinSimilarityFloor(),
+                $minSimilarity - self::crossCameraMinSimilarityRelaxDelta()
+            );
+            $maxDistance = min(1.25, $maxDistance + 0.08);
+        }
         $passes = $agg['similarity_score'] >= $minSimilarity && $agg['distance'] <= $maxDistance;
 
         return [

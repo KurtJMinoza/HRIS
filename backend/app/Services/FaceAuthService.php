@@ -205,8 +205,8 @@ class FaceAuthService
      *
      * @return array{user: User, distance: float, similarity_score: float}|null
      */
-    public static function identifyUserWithScore(array $descriptor, bool $kioskMode = false): ?array
+    public static function identifyUserWithScore(array $descriptor, bool $kioskMode = false, ?float $livenessScore = null): ?array
     {
-        return FaceVerificationService::identifyUserByFaceWithScore($descriptor, $kioskMode);
+        return FaceVerificationService::identifyUserByFaceWithScore($descriptor, $kioskMode, $livenessScore);
     }
 }

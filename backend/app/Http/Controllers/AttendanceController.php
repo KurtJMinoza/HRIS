@@ -1358,11 +1358,11 @@ class AttendanceController extends Controller
         $matchStarted = microtime(true);
         $similarityScore = null;
         if ($claimedUser) {
-            $strictMatch = FaceVerificationService::verifySpecificUserByFaceWithScore($claimedUser, $result['descriptor']);
+            $strictMatch = FaceVerificationService::verifySpecificUserByFaceWithScore($claimedUser, $result['descriptor'], $spoofConfidence);
             $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
             if (! $strictMatch || ! $strictMatch['passes']) {
                 $mismatchMinSimilarity = (float) config('attendance.face_kiosk_account_mismatch_min_similarity', 0.60);
-                $identifiedOther = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true);
+                $identifiedOther = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true, livenessScore: $spoofConfidence);
                 if (
                     $identifiedOther
                     && (int) $identifiedOther['user']->id !== (int) $claimedUser->id
@@ -1423,7 +1423,7 @@ class AttendanceController extends Controller
             $similarityScore = $strictMatch['similarity_score'];
             $user = $this->refreshUserForScheduleCheck($claimedUser);
         } else {
-            $identified = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true);
+            $identified = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true, livenessScore: $spoofConfidence);
             $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
             if (! $identified) {
                 $this->recordFailedAttempt(null, $request, false, 'face_not_recognized');
