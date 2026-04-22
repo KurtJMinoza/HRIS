@@ -434,6 +434,7 @@ export default function AdminEmployees() {
   const [faceRegisterEmployee, setFaceRegisterEmployee] = useState(null)
   const [faceRegisterSubmitting, setFaceRegisterSubmitting] = useState(false)
   const [faceRegisterError, setFaceRegisterError] = useState(null)
+  const [faceRegisterErrorCode, setFaceRegisterErrorCode] = useState(null)
   const [faceRegisterRetryKey, setFaceRegisterRetryKey] = useState(0)
   const [changeFaceConfirmEmployee, setChangeFaceConfirmEmployee] = useState(null)
 
@@ -1435,19 +1436,24 @@ export default function AdminEmployees() {
       })
     } catch (e) {
       const msg = e.message || 'Face registration failed'
-      setFaceRegisterError(msg)
       const code = e.errorCode
+      setFaceRegisterError(msg)
+      setFaceRegisterErrorCode(code || null)
       const title =
         code === 'face_already_registered'
-          ? 'Face already in use'
+          ? 'Duplicate face detected'
           : code === 'spoof_detected'
-            ? 'Spoof detected'
+            ? 'Liveness check failed'
             : code === 'no_face_detected'
-              ? 'Face not registered'
-              : code === 'service_unavailable'
-                ? 'Face service unavailable'
-                : 'Face registration failed'
-      toast({ title, description: msg, variant: 'destructive' })
+              ? 'No face detected'
+              : code === 'registration_timeout'
+                ? 'Registration timed out'
+                : code === 'service_unavailable'
+                  ? 'Face service unavailable'
+                  : code === 'face_needs_reregistration'
+                    ? 'Face update required'
+                    : 'Face registration failed'
+      toast({ title, description: msg, variant: 'destructive', duration: code === 'face_already_registered' ? 8000 : 4000 })
     } finally {
       setFaceRegisterSubmitting(false)
     }
@@ -1458,6 +1464,7 @@ export default function AdminEmployees() {
       setFaceRegisterOpen(false)
       setFaceRegisterEmployee(null)
       setFaceRegisterError(null)
+      setFaceRegisterErrorCode(null)
     }
   }
 
@@ -1503,6 +1510,7 @@ export default function AdminEmployees() {
     }
     setFaceRegisterEmployee(emp)
     setFaceRegisterError(null)
+    setFaceRegisterErrorCode(null)
     setFaceRegisterRetryKey((k) => k + 1)
     setFaceRegisterOpen(true)
   }
@@ -2656,21 +2664,34 @@ export default function AdminEmployees() {
           )}
           {faceRegisterError && (
             <div className="space-y-2">
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-                {faceRegisterError}
-              </p>
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-full"
-                disabled={faceRegisterSubmitting}
-                onClick={() => {
-                  setFaceRegisterError(null)
-                  setFaceRegisterRetryKey((k) => k + 1)
-                }}
-              >
-                Try again
-              </Button>
+              {faceRegisterErrorCode === 'face_already_registered' ? (
+                <div className="flex items-start gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3" role="alert">
+                  <AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-destructive">Duplicate Face Detected</p>
+                    <p className="text-sm text-destructive/90">{faceRegisterError}</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                  {faceRegisterError}
+                </p>
+              )}
+              {faceRegisterErrorCode !== 'face_already_registered' && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full"
+                  disabled={faceRegisterSubmitting}
+                  onClick={() => {
+                    setFaceRegisterError(null)
+                    setFaceRegisterErrorCode(null)
+                    setFaceRegisterRetryKey((k) => k + 1)
+                  }}
+                >
+                  Try again
+                </Button>
+              )}
             </div>
           )}
           <Button variant="outline" onClick={closeFaceRegister} disabled={faceRegisterSubmitting} className="w-full">

@@ -57,7 +57,7 @@ export function FaceRekognitionLiveness({
   const [apiErrorCode, setApiErrorCode] = useState(null)
   const [successSummary, setSuccessSummary] = useState(null)
   const [silentSessionRefresh, setSilentSessionRefresh] = useState(false)
-  /** 0 = first attempt; after face_not_recognized we auto-retry up to 2 more times (3 total). */
+  /** 0 = first attempt; auto-retry up to 2 more times (3 total). */
   const faceMatchAttemptRef = useRef(0)
   const [verifyPhase, setVerifyPhase] = useState('verify') // 'verify' | 'match' — shown during backend round-trip
   const handlingErrorRef = useRef(false)
@@ -149,11 +149,10 @@ export function FaceRekognitionLiveness({
     setApiErrorCode(null)
     try {
       if (onVerified) {
-        await withTimeout(
-          onVerified(session.sessionId),
-          8000,
-          'Face registration timed out. Please try again.'
-        )
+        // No timeout here — registration polls the queue job which can take up to 2 min
+        // (InsightFace embedding + duplicate scan + DB write under lock).
+        // The parent's handleFaceRegisterVerified owns the timeout/error display.
+        await onVerified(session.sessionId)
         faceMatchAttemptRef.current = 0
         playSuccess(SOUND_FEEDBACK_ENABLED)
         onSuccess?.()
@@ -191,17 +190,22 @@ export function FaceRekognitionLiveness({
         typeLabel,
       })
     } catch (err) {
+      // Registration mode: parent (EmployeeMyQr / AdminEmployees) owns all error display.
+      // The component just resets its own spinner state — no toast, no error UI here.
+      if (onVerified) {
+        return
+      }
       const msg = err?.message || 'Face verification failed'
       playError(SOUND_FEEDBACK_ENABLED)
       const code = err?.errorCode
-      const maxAutoRetries = kioskMode ? 3 : 2
+      const maxAutoRetries = kioskMode ? 1 : 1
       if (code === 'face_not_recognized' && faceMatchAttemptRef.current < maxAutoRetries) {
         faceMatchAttemptRef.current += 1
         const attemptNum = faceMatchAttemptRef.current + 1
         const total = maxAutoRetries + 1
         toast.info(`Trying again (${attemptNum} of ${total})`, {
           description:
-            'Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the prompt.',
+            'Face not recognized. If your face is not yet enrolled, please register it first in My QR & Face.',
         })
         setSubmitting(false)
         await fetchSession({ silent: true })
@@ -212,17 +216,17 @@ export function FaceRekognitionLiveness({
           description: 'Liveness check failed. Please use a real face, not a photo or screen.',
         })
         if (kioskMode) {
-          setApiError('Face liveness/quality check failed. Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the prompt.')
+          setApiError('Face not clear. Please face the camera straight with good lighting and hold still.')
           setApiErrorCode(code)
         }
       } else if (code === 'face_not_recognized') {
         toast.error('No match this attempt', {
           description: kioskMode
-            ? msg || 'Try again with even lighting, or scan your QR code on this kiosk.'
+            ? msg || 'Face not recognized. Please use your registered face.'
             : msg || 'Try again with good lighting, or sign in with email and password.',
         })
         if (kioskMode) {
-          setApiError('Face not recognized. Please use your registered face or contact HR.')
+          setApiError('Face not recognized. If your face is not registered yet, please register it first in My QR & Face.')
           setApiErrorCode(code)
         }
       } else if (code === 'face_not_registered') {
@@ -233,16 +237,24 @@ export function FaceRekognitionLiveness({
           setApiError('Face not registered. Please register your face in My QR & Face first.')
           setApiErrorCode(code)
         }
+      } else if (code === 'face_needs_reregistration') {
+        toast.error('Face update required', {
+          description: 'Your face data needs to be updated. Please re-register your face in My QR & Face.',
+        })
+        if (kioskMode) {
+          setApiError('Your face data needs to be updated. Please re-register your face in My QR & Face.')
+          setApiErrorCode(code)
+        }
       } else if (code === 'no_face_detected') {
         toast.error('No face detected', { description: msg })
         if (kioskMode) {
-          setApiError('Face liveness/quality check failed. Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the prompt.')
+          setApiError('Face not clear. Please face the camera straight with good lighting and hold still.')
           setApiErrorCode(code)
         }
       } else if (code === 'service_unavailable') {
         toast.error('Service unavailable', { description: msg })
         if (kioskMode) {
-          setApiError('Face liveness/quality check failed. Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the prompt.')
+          setApiError('Face not clear. Please face the camera straight with good lighting and hold still.')
           setApiErrorCode(code)
         }
       } else {
@@ -340,7 +352,7 @@ export function FaceRekognitionLiveness({
             (onVerified
               ? 'Complete the face liveness check to verify your identity.'
               : kioskMode
-                ? 'Face the camera straight-on with even lighting. Avoid backlight from windows. Hold still during the guided check.'
+                ? 'Face the camera straight, align your face in the frame, and hold still in good lighting.'
                 : 'Complete the face liveness check to sign in. Use even lighting in front of your face.')}
         </p>
       )}
@@ -374,7 +386,7 @@ export function FaceRekognitionLiveness({
                   <Loader2 className="size-10 animate-spin text-emerald-400" aria-hidden />
                   <span className="text-sm font-medium text-white">Registering face…</span>
                   <span className="max-w-[18rem] text-center text-[11px] text-white/65">
-                    Securing your template and checking for duplicates. This usually finishes in a few seconds.
+                    Generating your face template and checking for duplicates. This may take up to 30 seconds.
                   </span>
                 </>
               ) : (
@@ -409,9 +421,9 @@ export function FaceRekognitionLiveness({
                 fetchSession()
               }}
             >
-              Try again
+              {apiErrorCode === 'face_not_recognized' ? 'Try Again' : 'Try again'}
             </Button>
-            {apiErrorCode === 'face_not_registered' && (
+            {(apiErrorCode === 'face_not_registered' || apiErrorCode === 'face_needs_reregistration') && (
               <Button
                 size="sm"
                 variant="secondary"
@@ -420,7 +432,7 @@ export function FaceRekognitionLiveness({
                   window.location.assign('/login')
                 }}
               >
-                Register Face
+                {apiErrorCode === 'face_needs_reregistration' ? 'Re-register Face' : 'Register Face'}
               </Button>
             )}
             {onKioskCancel && (

@@ -1682,8 +1682,10 @@ class EmployeeController extends Controller
         $faceImage = $validated['face_image'] ?? null;
 
         if ($descriptor !== null) {
-            if (count($descriptor) !== 128) {
-                return response()->json(['message' => 'Face descriptor must be 128 dimensions.'], 422);
+            if (count($descriptor) !== FaceVerificationService::EMBEDDING_DIM) {
+                return response()->json([
+                    'message' => 'Face descriptor must be '.FaceVerificationService::EMBEDDING_DIM.' dimensions.',
+                ], 422);
             }
             $descriptorArray = array_values(array_map('floatval', $descriptor));
 
@@ -1701,10 +1703,9 @@ class EmployeeController extends Controller
                                 return;
                             }
 
-                            $dupResult = FaceVerificationService::findExistingOwnerOfFaceWithDetails(
+                            $dupResult = FaceVerificationService::findDuplicateFaceForRegistration(
                                 $descriptorArray,
-                                $locked->id,
-                                (bool) config('attendance.face_duplicate_registration_force_full_db_scan', true)
+                                $locked->id
                             );
                             if ($dupResult !== null) {
                                 $existingOwner = $dupResult['user'];

@@ -9,6 +9,13 @@ use Illuminate\Support\Facades\Log;
 
 class FaceVerificationService
 {
+    /**
+     * Embedding vector dimension produced by the Python face service.
+     * InsightFace ArcFace (buffalo_l) → 512-D L2-normalized unit vectors.
+     * All stored embeddings, distance computations, and validation checks use this value.
+     */
+    public const EMBEDDING_DIM = 512;
+
     /** User-visible message when another employee already owns this face template. */
     public static function duplicateRegistrationUserMessage(): string
     {
@@ -16,10 +23,11 @@ class FaceVerificationService
     }
 
     /**
-     * Default face match distance threshold (Euclidean distance between 128D descriptors).
+     * Default face match distance threshold (Euclidean distance between 512D ArcFace descriptors).
+     * InsightFace unit vectors: cos_sim=0.5 → euc≈1.0; cos_sim=0.3 → euc≈1.18.
      * Match when distance <= threshold. Use config('attendance.face_match_threshold') for runtime value.
      */
-    public const DEFAULT_MATCH_THRESHOLD = 0.45;
+    public const DEFAULT_MATCH_THRESHOLD = 1.0;
 
     private static function matchThreshold(): float
     {
@@ -36,12 +44,12 @@ class FaceVerificationService
     private static function cosineDistanceThreshold(): float
     {
         // Default is set in config/attendance.php; keep a safe fallback here.
-        return (float) config('attendance.face_cosine_distance_threshold', 0.35);
+        return (float) config('attendance.face_cosine_distance_threshold', 0.55);
     }
 
     private static function minSimilarityScore(): float
     {
-        return (float) config('attendance.face_min_similarity_score', 0.65);
+        return (float) config('attendance.face_min_similarity_score', 0.40);
     }
 
     private static function minSimilarityMargin(): float
@@ -81,10 +89,10 @@ class FaceVerificationService
 
         $resolved = is_numeric($v)
             ? (float) $v
-            : (float) config('attendance.face_duplicate_min_best_cosine_similarity', 0.85);
+            : (float) config('attendance.face_duplicate_min_best_cosine_similarity', 0.70);
 
         if (config('attendance.face_duplicate_enforce_registration_cosine_floor', true)) {
-            $floor = (float) config('attendance.face_duplicate_registration_cosine_floor', 0.80);
+            $floor = (float) config('attendance.face_duplicate_registration_cosine_floor', 0.65);
 
             return max($resolved, $floor);
         }
@@ -93,20 +101,20 @@ class FaceVerificationService
     }
 
     /**
-     * Secondary duplicate rule: L2 distance on raw 128-D ArcFace vectors (when cosine alone is ambiguous).
+     * Secondary duplicate rule: L2 distance on raw ArcFace vectors (when cosine alone is ambiguous).
      */
     private static function duplicateMaxEuclideanDistance(): float
     {
-        return (float) config('attendance.face_duplicate_max_euclidean', 0.65);
+        return (float) config('attendance.face_duplicate_max_euclidean', 0.80);
     }
 
     /**
-     * Duplicate rule: L2 distance between L2-normalized 128-D vectors (same geometry as cosine similarity).
-     * For unit vectors, distance d relates to cosine similarity as cos = 1 - d²/2 (small-angle regime).
+     * Duplicate rule: L2 distance between L2-normalized 512-D vectors (same geometry as cosine similarity).
+     * For unit vectors, distance d relates to cosine similarity as cos = 1 - d^2/2.
      */
     private static function duplicateMaxEuclideanNormalized(): float
     {
-        return (float) config('attendance.face_duplicate_max_euclidean_normalized', 0.55);
+        return (float) config('attendance.face_duplicate_max_euclidean_normalized', 0.80);
     }
 
     /**
@@ -120,12 +128,12 @@ class FaceVerificationService
 
     private static function duplicateDualCosineMin(): float
     {
-        return (float) config('attendance.face_duplicate_dual_cosine_min', 0.80);
+        return (float) config('attendance.face_duplicate_dual_cosine_min', 0.65);
     }
 
     private static function duplicateDualMaxEuclidean(): float
     {
-        return (float) config('attendance.face_duplicate_dual_max_euclidean', 0.65);
+        return (float) config('attendance.face_duplicate_dual_max_euclidean', 0.85);
     }
 
     /**
@@ -135,7 +143,7 @@ class FaceVerificationService
      */
     private static function duplicateAggregateBestCosineMin(): float
     {
-        return (float) config('attendance.face_duplicate_aggregate_best_cosine_min', 0.80);
+        return (float) config('attendance.face_duplicate_aggregate_best_cosine_min', 0.65);
     }
 
     /**
@@ -144,7 +152,7 @@ class FaceVerificationService
      */
     private static function duplicateRawCosineMin(): float
     {
-        return (float) config('attendance.face_duplicate_raw_cosine_min', 0.80);
+        return (float) config('attendance.face_duplicate_raw_cosine_min', 0.70);
     }
 
     /**
@@ -197,7 +205,7 @@ class FaceVerificationService
             : self::duplicateMinCosineSimilarity();
 
         if (config('attendance.face_duplicate_enforce_registration_cosine_floor', true)) {
-            $floor = (float) config('attendance.face_duplicate_registration_cosine_floor', 0.80);
+            $floor = (float) config('attendance.face_duplicate_registration_cosine_floor', 0.65);
 
             return max($resolved, $floor);
         }
@@ -276,15 +284,17 @@ class FaceVerificationService
     }
 
     /**
-     * L2-normalize a 128-D vector (stabilizes cosine / Euclidean comparisons across sessions).
+     * L2-normalize a face embedding vector (stabilizes cosine / Euclidean comparisons across sessions).
+     * InsightFace already returns unit vectors, but normalizing again is safe and idempotent.
      *
      * @param  array<int, float>  $v
      * @return array<int, float>
      */
-    public static function l2Normalize128(array $v): array
+    public static function l2Normalize(array $v): array
     {
+        $dim = count($v);
         $sum = 0.0;
-        for ($i = 0; $i < 128; $i++) {
+        for ($i = 0; $i < $dim; $i++) {
             $x = (float) ($v[$i] ?? 0);
             $sum += $x * $x;
         }
@@ -293,11 +303,22 @@ class FaceVerificationService
             return array_map('floatval', array_values($v));
         }
         $out = [];
-        for ($i = 0; $i < 128; $i++) {
+        for ($i = 0; $i < $dim; $i++) {
             $out[$i] = (float) ($v[$i] ?? 0) / $n;
         }
 
         return $out;
+    }
+
+    /**
+     * @deprecated Use l2Normalize(). Kept as a backward-compatible alias.
+     *
+     * @param  array<int, float>  $v
+     * @return array<int, float>
+     */
+    public static function l2Normalize128(array $v): array
+    {
+        return self::l2Normalize($v);
     }
 
     /**
@@ -323,8 +344,8 @@ class FaceVerificationService
             return false;
         }
 
-        // Expect 128-dimensional descriptor
-        if (count($stored) !== 128 || count($incomingDescriptor) !== 128) {
+        // Expect EMBEDDING_DIM-dimensional descriptor
+        if (count($stored) !== self::EMBEDDING_DIM || count($incomingDescriptor) !== self::EMBEDDING_DIM) {
             return false;
         }
 
@@ -334,12 +355,13 @@ class FaceVerificationService
     }
 
     /**
-     * Euclidean distance between two 128D vectors.
+     * Euclidean distance between two face embedding vectors.
      */
     public static function euclideanDistance(array $a, array $b): float
     {
+        $dim = max(count($a), count($b));
         $sum = 0.0;
-        for ($i = 0; $i < 128; $i++) {
+        for ($i = 0; $i < $dim; $i++) {
             $d = ($a[$i] ?? 0) - ($b[$i] ?? 0);
             $sum += $d * $d;
         }
@@ -348,14 +370,15 @@ class FaceVerificationService
     }
 
     /**
-     * Cosine similarity (0–1) for L2-normalized vectors. For Facenet embeddings.
+     * Cosine similarity (0–1) for InsightFace ArcFace embeddings (L2-normalized unit vectors).
      */
     public static function cosineSimilarity(array $a, array $b): float
     {
+        $dim = max(count($a), count($b));
         $dot = 0.0;
         $normA = 0.0;
         $normB = 0.0;
-        for ($i = 0; $i < 128; $i++) {
+        for ($i = 0; $i < $dim; $i++) {
             $x = (float) ($a[$i] ?? 0);
             $y = (float) ($b[$i] ?? 0);
             $dot += $x * $y;
@@ -376,10 +399,10 @@ class FaceVerificationService
     }
 
     /**
-     * Average multiple 128D descriptors element-wise.
+     * Average multiple face embedding descriptors element-wise, then L2-normalize the result.
      * Used to combine 5–10 samples for better match reliability.
      *
-     * @param  array<int, array<int, float>>  $descriptors  Non-empty list of 128-length arrays
+     * @param  array<int, array<int, float>>  $descriptors  Non-empty list of EMBEDDING_DIM-length arrays
      * @return array<int, float>
      */
     public static function averageDescriptor(array $descriptors): array
@@ -388,9 +411,10 @@ class FaceVerificationService
             return [];
         }
 
+        $dim = self::EMBEDDING_DIM;
         $n = count($descriptors);
         $out = [];
-        for ($i = 0; $i < 128; $i++) {
+        for ($i = 0; $i < $dim; $i++) {
             $sum = 0.0;
             foreach ($descriptors as $d) {
                 $sum += (float) ($d[$i] ?? 0);
@@ -398,7 +422,7 @@ class FaceVerificationService
             $out[$i] = $sum / $n;
         }
 
-        return $out;
+        return self::l2Normalize($out);
     }
 
     /**
@@ -409,11 +433,13 @@ class FaceVerificationService
      */
     public static function getEffectiveDescriptor(User $user): ?array
     {
+        $dim = self::EMBEDDING_DIM;
+
         $samples = $user->face_descriptor_samples;
         if (is_array($samples) && ! empty($samples)) {
             $valid = [];
             foreach ($samples as $s) {
-                if (is_array($s) && count($s) === 128) {
+                if (is_array($s) && count($s) === $dim) {
                     $valid[] = array_map('floatval', array_values($s));
                 }
             }
@@ -428,7 +454,7 @@ class FaceVerificationService
         }
 
         $decoded = is_string($stored) ? json_decode($stored, true) : $stored;
-        if (! is_array($decoded) || isset($decoded['type']) || count($decoded) !== 128) {
+        if (! is_array($decoded) || isset($decoded['type']) || count($decoded) !== $dim) {
             return null;
         }
 
@@ -443,11 +469,13 @@ class FaceVerificationService
      */
     public static function descriptorCandidatesForUser(User $user): array
     {
+        $dim = self::EMBEDDING_DIM;
         $candidates = [];
+
         $samples = $user->face_descriptor_samples;
         if (is_array($samples)) {
             foreach ($samples as $s) {
-                if (is_array($s) && count($s) === 128) {
+                if (is_array($s) && count($s) === $dim) {
                     $candidates[] = array_map('floatval', array_values($s));
                 }
             }
@@ -456,7 +484,7 @@ class FaceVerificationService
         $stored = $user->face_embedding ?? $user->face_descriptor;
         if (! empty($stored)) {
             $decoded = is_string($stored) ? json_decode($stored, true) : $stored;
-            if (is_array($decoded) && ! isset($decoded['type']) && count($decoded) === 128) {
+            if (is_array($decoded) && ! isset($decoded['type']) && count($decoded) === $dim) {
                 $candidates[] = array_map('floatval', array_values($decoded));
             }
         }
@@ -472,16 +500,17 @@ class FaceVerificationService
      */
     public static function duplicateComparisonRowsForUser(User $user): array
     {
+        $dim = self::EMBEDDING_DIM;
         $rows = [];
         foreach (self::descriptorCandidatesForUser($user) as $vec) {
-            if (count($vec) === 128) {
+            if (count($vec) === $dim) {
                 $rows[] = ['vec' => $vec, 'kind' => 'sample'];
             }
         }
 
         if ($rows === []) {
             $eff = self::getEffectiveDescriptor($user);
-            if ($eff !== null && count($eff) === 128) {
+            if ($eff !== null && count($eff) === $dim) {
                 $rows[] = ['vec' => $eff, 'kind' => 'sample'];
             }
 
@@ -492,7 +521,7 @@ class FaceVerificationService
         $samples = $user->face_descriptor_samples;
         if (is_array($samples)) {
             foreach ($samples as $s) {
-                if (is_array($s) && count($s) === 128) {
+                if (is_array($s) && count($s) === $dim) {
                     $validSampleCount++;
                 }
             }
@@ -500,7 +529,7 @@ class FaceVerificationService
 
         if ($validSampleCount >= 2) {
             $avg = self::getEffectiveDescriptor($user);
-            if ($avg !== null && count($avg) === 128) {
+            if ($avg !== null && count($avg) === $dim) {
                 $rows[] = ['vec' => $avg, 'kind' => 'avg'];
             }
         }
@@ -512,7 +541,7 @@ class FaceVerificationService
      * Find an employee whose stored face descriptor best matches the given descriptor.
      * Returns the user with smallest distance if within MATCH_THRESHOLD, else null.
      *
-     * @param  array<int, float>  $incomingDescriptor  128D descriptor
+     * @param  array<int, float>  $incomingDescriptor  512D descriptor (InsightFace ArcFace)
      */
     public static function identifyUserByFace(array $incomingDescriptor): ?User
     {
@@ -547,14 +576,15 @@ class FaceVerificationService
      */
     public static function aggregateBestMatchForUser(User $user, array $incomingDescriptor, bool $kioskMode = false): ?array
     {
-        if (count($incomingDescriptor) !== 128) {
+        $dim = self::EMBEDDING_DIM;
+        if (count($incomingDescriptor) !== $dim) {
             return null;
         }
 
         $candidates = self::descriptorCandidatesForUserCached($user);
         if ($candidates === []) {
             $eff = self::getEffectiveDescriptor($user);
-            if ($eff !== null && count($eff) === 128) {
+            if ($eff !== null && count($eff) === $dim) {
                 $candidates = [$eff];
             }
         }
@@ -562,15 +592,15 @@ class FaceVerificationService
             return null;
         }
 
-        $incomingNorm = self::l2Normalize128($incomingDescriptor);
+        $incomingNorm = self::l2Normalize($incomingDescriptor);
 
         $bestCosineSim = -1.0;
         $bestDistance = PHP_FLOAT_MAX;
         foreach ($candidates as $stored) {
-            if (count($stored) !== 128) {
+            if (count($stored) !== $dim) {
                 continue;
             }
-            $storedNorm = self::l2Normalize128($stored);
+            $storedNorm = self::l2Normalize($stored);
             $sNorm = self::cosineSimilarity($storedNorm, $incomingNorm);
             $sRaw = self::cosineSimilarity($stored, $incomingDescriptor);
             $s = max($sNorm, $sRaw);
@@ -636,7 +666,7 @@ class FaceVerificationService
      */
     public static function identifyUserByFaceWithScore(array $incomingDescriptor, bool $kioskMode = false): ?array
     {
-        if (count($incomingDescriptor) !== 128) {
+        if (count($incomingDescriptor) !== self::EMBEDDING_DIM) {
             return null;
         }
 
@@ -704,7 +734,7 @@ class FaceVerificationService
      */
     public static function verifySpecificUserByFaceWithScore(User $user, array $incomingDescriptor): ?array
     {
-        if (! $user->hasRegisteredFace() || count($incomingDescriptor) !== 128) {
+        if (! $user->hasRegisteredFace() || count($incomingDescriptor) !== self::EMBEDDING_DIM) {
             return null;
         }
 
@@ -713,8 +743,8 @@ class FaceVerificationService
             return null;
         }
 
-        $minSimilarity = (float) config('attendance.face_identity_min_similarity_score', 0.88);
-        $maxDistance = (float) config('attendance.face_identity_max_euclidean_distance', 0.35);
+        $minSimilarity = (float) config('attendance.face_identity_min_similarity_score', 0.55);
+        $maxDistance = (float) config('attendance.face_identity_max_euclidean_distance', 1.0);
         $passes = $agg['similarity_score'] >= $minSimilarity && $agg['distance'] <= $maxDistance;
 
         return [
@@ -758,6 +788,136 @@ class FaceVerificationService
     }
 
     /**
+     * Strict global duplicate gate for face registration.
+     *
+     * Security invariants:
+     *  1. ALWAYS queries the live database — never reads from the embedding index
+     *     cache.  The cache can be stale (e.g. cleared between registrations, or
+     *     not yet rebuilt after the previous successful enrolment).
+     *  2. Compares the incoming vector against every valid 512-D sample and the
+     *     averaged embedding stored for every other user.
+     *  3. Uses L2-normalised vectors for both cosine AND Euclidean so the
+     *     thresholds are geometry-consistent (cos 0.88 ≡ norm-euc ≈ 0.49).
+     *  4. Logs every single-row score during the scan for auditability.
+     *
+     * Gate: flagged as duplicate when ANY stored vector from another user satisfies
+     *   cosine(norm_a, norm_b) >= strict_min_cosine          (default 0.88)
+     *   OR euclidean(norm_a, norm_b) <= strict_max_euc_norm  (default 0.35 ≡ cos ≈ 0.939)
+     *
+     * @param  array<int, float>  $incomingDescriptor  512-D ArcFace embedding (unit vector)
+     * @param  int|null  $excludeUserId  User being registered/re-registered (exclude self)
+     * @return array{user: User, similarity_score: float, euclidean_distance: float, detection_method: string}|null
+     */
+    public static function findExistingOwnerOfFaceStrictGlobal(array $incomingDescriptor, ?int $excludeUserId = null): ?array
+    {
+        if (count($incomingDescriptor) !== self::EMBEDDING_DIM) {
+            Log::warning('Face duplicate strict check: incoming descriptor has wrong dimension', [
+                'expected' => self::EMBEDDING_DIM,
+                'got' => count($incomingDescriptor),
+                'exclude_user_id' => $excludeUserId,
+            ]);
+
+            return null;
+        }
+
+        $minCosine = (float) config('attendance.face_duplicate_strict_min_cosine_similarity', 0.88);
+        $maxEucNorm = (float) config('attendance.face_duplicate_strict_max_euclidean_normalized', 0.35);
+        $nearMissCosine = (float) config('attendance.face_duplicate_strict_near_miss_cosine', 0.72);
+        $logUserIds = (bool) config('attendance.face_log_identification_user_ids', false);
+
+        $incomingNorm = self::l2Normalize($incomingDescriptor);
+
+        // Always scan the live database — never use cache for registration security.
+        $query = self::duplicateScanUserQuery();
+        if ($excludeUserId !== null) {
+            $query->where('id', '!=', $excludeUserId);
+        }
+        $employees = $query->get();
+
+        $bestCosine = -1.0;
+        $bestEucNorm = PHP_FLOAT_MAX;
+        $bestUserId = null;
+        $rowsScanned = 0;
+
+        foreach ($employees as $user) {
+            $rows = self::duplicateComparisonRowsForUser($user);
+            if ($rows === []) {
+                continue;
+            }
+
+            foreach ($rows as $row) {
+                $storedRaw = $row['vec'];
+                $kind = $row['kind'];
+                $rowsScanned++;
+
+                // Normalise the stored vector — ArcFace returns unit vectors but
+                // re-normalising is safe and guards against any DB precision drift.
+                $storedNorm = self::l2Normalize($storedRaw);
+
+                // Cosine similarity on normalised vectors (scale-invariant, primary metric).
+                $cosine = self::cosineSimilarity($storedNorm, $incomingNorm);
+
+                // Euclidean distance on normalised vectors (euc = sqrt(2*(1-cos)) for unit vecs).
+                $eucNorm = self::euclideanDistance($storedNorm, $incomingNorm);
+
+                if ($cosine > $bestCosine) {
+                    $bestCosine = $cosine;
+                    $bestEucNorm = $eucNorm;
+                    $bestUserId = $user->id;
+                }
+
+                $isDuplicate = ($cosine >= $minCosine || $eucNorm <= $maxEucNorm);
+
+                if ($isDuplicate) {
+                    Log::warning('Face duplicate strict gate: MATCH — blocking registration', [
+                        'existing_user_id' => $user->id,
+                        'exclude_user_id' => $excludeUserId,
+                        'row_kind' => $kind,
+                        'cosine_similarity' => round($cosine, 4),
+                        'euclidean_normalized' => round($eucNorm, 4),
+                        'min_cosine_threshold' => $minCosine,
+                        'max_euclidean_norm_threshold' => $maxEucNorm,
+                        'rows_scanned_so_far' => $rowsScanned,
+                    ]);
+
+                    return [
+                        'user' => $user,
+                        'similarity_score' => round($cosine, 4),
+                        'euclidean_distance' => round($eucNorm, 4),
+                        'detection_method' => 'strict_global_db',
+                    ];
+                }
+
+                // Near-miss: in the band [near_miss, strict_min) — log for threshold tuning.
+                if ($cosine >= $nearMissCosine) {
+                    Log::info('Face duplicate strict gate: near-miss (below threshold, not blocked)', [
+                        'other_user_id' => $logUserIds ? $user->id : null,
+                        'exclude_user_id' => $excludeUserId,
+                        'row_kind' => $kind,
+                        'cosine_similarity' => round($cosine, 4),
+                        'euclidean_normalized' => round($eucNorm, 4),
+                        'min_cosine_threshold' => $minCosine,
+                        'near_miss_threshold' => $nearMissCosine,
+                    ]);
+                }
+            }
+        }
+
+        Log::info('Face duplicate strict gate: scan complete — no duplicate found', [
+            'exclude_user_id' => $excludeUserId,
+            'rows_scanned' => $rowsScanned,
+            'users_checked' => $employees->count(),
+            'best_cosine_to_any_other' => $bestCosine >= 0 ? round($bestCosine, 4) : null,
+            'best_euclidean_norm_to_any_other' => $bestEucNorm < PHP_FLOAT_MAX ? round($bestEucNorm, 4) : null,
+            'nearest_other_user_id' => $logUserIds ? $bestUserId : null,
+            'min_cosine_threshold' => $minCosine,
+            'max_euclidean_norm_threshold' => $maxEucNorm,
+        ]);
+
+        return null;
+    }
+
+    /**
      * Check if the given face descriptor is already registered to another employee.
      * Used during registration to enforce one-face-per-account. Excludes the given user ID
      * (e.g. the user we are registering for) so re-registration or update is allowed.
@@ -769,11 +929,11 @@ class FaceVerificationService
      */
     public static function findExistingOwnerOfFaceWithDetails(array $incomingDescriptor, ?int $excludeUserId = null, bool $useExhaustiveDatabaseScan = false): ?array
     {
-        if (count($incomingDescriptor) !== 128) {
+        if (count($incomingDescriptor) !== self::EMBEDDING_DIM) {
             return null;
         }
 
-        $incomingNorm = self::l2Normalize128($incomingDescriptor);
+        $incomingNorm = self::l2Normalize($incomingDescriptor);
         $minCos = self::duplicateMinCosineSimilarity();
         $minCosAvg = self::duplicateMinCosineSimilarityAvg();
         $maxEuc = self::duplicateMaxEuclideanDistance();
@@ -803,7 +963,7 @@ class FaceVerificationService
                 }
                 $storedRaw = $row['vec'];
                 $kind = $row['kind'];
-                $storedN = self::l2Normalize128($storedRaw);
+                $storedN = self::l2Normalize($storedRaw);
                 $cosineSim = self::cosineSimilarity($storedN, $incomingNorm);
                 $rawCosineSim = self::cosineSimilarity($storedRaw, $incomingDescriptor);
                 $distance = self::euclideanDistance($storedRaw, $incomingDescriptor);
@@ -886,7 +1046,7 @@ class FaceVerificationService
                 foreach ($rows as $row) {
                     $storedRaw = $row['vec'];
                     $kind = $row['kind'];
-                    $storedN = self::l2Normalize128($storedRaw);
+                    $storedN = self::l2Normalize($storedRaw);
                     $cosineSim = self::cosineSimilarity($storedN, $incomingNorm);
                     $rawCosineSim = self::cosineSimilarity($storedRaw, $incomingDescriptor);
                     $distance = self::euclideanDistance($storedRaw, $incomingDescriptor);
@@ -982,5 +1142,65 @@ class FaceVerificationService
         $result = self::findExistingOwnerOfFaceWithDetails($incomingDescriptor, $excludeUserId, $useExhaustiveDatabaseScan);
 
         return $result ? $result['user'] : null;
+    }
+
+    /**
+     * Combined registration duplicate gate: runs the strict global check first,
+     * then falls through to the multi-signal check for defense-in-depth.
+     *
+     * The strict gate (cosine ≥ 0.88 / euc_norm ≤ 0.35) catches obvious same-face
+     * registrations with near-identical captures.
+     *
+     * The multi-signal gate (cosine ≥ 0.65, raw euclidean, dual-signal, aggregate-best)
+     * catches borderline same-person pairs that the strict single-pass misses —
+     * e.g. same person under varied lighting, angle, or expression.
+     *
+     * Both always query the live database (never use the embedding index cache).
+     *
+     * @param  array<int, float>  $incomingDescriptor  512-D ArcFace embedding
+     * @param  int|null  $excludeUserId  User being registered (exclude self)
+     * @return array{user: User, similarity_score: float, euclidean_distance: float|null, detection_method: string}|null
+     */
+    public static function findDuplicateFaceForRegistration(array $incomingDescriptor, ?int $excludeUserId = null): ?array
+    {
+        if (count($incomingDescriptor) !== self::EMBEDDING_DIM) {
+            return null;
+        }
+
+        $strictResult = self::findExistingOwnerOfFaceStrictGlobal($incomingDescriptor, $excludeUserId);
+        if ($strictResult !== null) {
+            Log::info('Registration duplicate: blocked by strict global gate', [
+                'exclude_user_id' => $excludeUserId,
+                'existing_user_id' => $strictResult['user']->id,
+                'cosine_similarity' => $strictResult['similarity_score'],
+                'euclidean_distance' => $strictResult['euclidean_distance'] ?? null,
+                'detection_method' => $strictResult['detection_method'],
+            ]);
+
+            return $strictResult;
+        }
+
+        $multiResult = self::findExistingOwnerOfFaceWithDetails(
+            $incomingDescriptor,
+            $excludeUserId,
+            true
+        );
+        if ($multiResult !== null) {
+            Log::warning('Registration duplicate: strict gate passed but multi-signal gate caught duplicate', [
+                'exclude_user_id' => $excludeUserId,
+                'existing_user_id' => $multiResult['user']->id,
+                'similarity_score' => $multiResult['similarity_score'],
+                'detection_method' => $multiResult['detection_method'],
+            ]);
+
+            return [
+                'user' => $multiResult['user'],
+                'similarity_score' => $multiResult['similarity_score'],
+                'euclidean_distance' => null,
+                'detection_method' => 'multi_signal_'.$multiResult['detection_method'],
+            ];
+        }
+
+        return null;
     }
 }

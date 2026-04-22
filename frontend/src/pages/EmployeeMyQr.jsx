@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Download, Eye, Loader2, QrCode, RefreshCw, ScanFace, Trash2 } from 'lucide-react'
+import { AlertTriangle, Download, Eye, Loader2, QrCode, RefreshCw, ScanFace, Trash2 } from 'lucide-react'
 import { Skeleton } from '@/components/skeletons'
 import { QRCodeCanvas } from 'qrcode.react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -30,6 +30,7 @@ export default function EmployeeMyQr() {
   const [faceRegisterOpen, setFaceRegisterOpen] = useState(false)
   const [faceRegisterSubmitting, setFaceRegisterSubmitting] = useState(false)
   const [faceRegisterError, setFaceRegisterError] = useState(null)
+  const [faceRegisterErrorCode, setFaceRegisterErrorCode] = useState(null)
   const [faceRegisterRetryKey, setFaceRegisterRetryKey] = useState(0)
 
   const [removeFaceConfirmOpen, setRemoveFaceConfirmOpen] = useState(false)
@@ -90,6 +91,7 @@ export default function EmployeeMyQr() {
 
   const openFaceRegister = () => {
     setFaceRegisterError(null)
+    setFaceRegisterErrorCode(null)
     setFaceRegisterRetryKey((k) => k + 1)
     setFaceRegisterOpen(true)
   }
@@ -114,6 +116,7 @@ export default function EmployeeMyQr() {
     if (force || !faceRegisterSubmitting) {
       setFaceRegisterOpen(false)
       setFaceRegisterError(null)
+      setFaceRegisterErrorCode(null)
     }
   }
 
@@ -140,9 +143,22 @@ export default function EmployeeMyQr() {
       })
     } catch (e) {
       const msg = e.message || 'Face registration failed'
+      const code = e.errorCode
       setFaceRegisterError(msg)
-      const dup = e.errorCode === 'face_already_registered'
-      toast.error(dup ? 'Face already in use' : 'Registration failed', { description: msg })
+      setFaceRegisterErrorCode(code || null)
+      const title =
+        code === 'face_already_registered'
+          ? 'Duplicate face detected'
+          : code === 'registration_timeout'
+            ? 'Registration timed out'
+            : code === 'no_face_detected'
+              ? 'No face detected'
+              : code === 'spoof_detected'
+                ? 'Liveness check failed'
+                : code === 'service_unavailable'
+                  ? 'Face service unavailable'
+                  : 'Registration failed'
+      toast.error(title, { description: msg, duration: code === 'face_already_registered' ? 8000 : 4000 })
     } finally {
       setFaceRegisterSubmitting(false)
     }
@@ -157,6 +173,7 @@ export default function EmployeeMyQr() {
       setViewFaceOpen(false)
       setViewFaceImage(null)
       setFaceRegisterError(null)
+      setFaceRegisterErrorCode(null)
       toast.success('Face registration reset', {
         description: 'All face data was cleared. You can register again immediately.',
       })
@@ -366,21 +383,34 @@ export default function EmployeeMyQr() {
           )}
           {faceRegisterError && (
             <div className="space-y-2">
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-                {faceRegisterError}
-              </p>
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-full"
-                disabled={faceRegisterSubmitting}
-                onClick={() => {
-                  setFaceRegisterError(null)
-                  setFaceRegisterRetryKey((k) => k + 1)
-                }}
-              >
-                Try again
-              </Button>
+              {faceRegisterErrorCode === 'face_already_registered' ? (
+                <div className="flex items-start gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3" role="alert">
+                  <AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-destructive">Duplicate Face Detected</p>
+                    <p className="text-sm text-destructive/90">{faceRegisterError}</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                  {faceRegisterError}
+                </p>
+              )}
+              {faceRegisterErrorCode !== 'face_already_registered' && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full"
+                  disabled={faceRegisterSubmitting}
+                  onClick={() => {
+                    setFaceRegisterError(null)
+                    setFaceRegisterErrorCode(null)
+                    setFaceRegisterRetryKey((k) => k + 1)
+                  }}
+                >
+                  Try again
+                </Button>
+              )}
             </div>
           )}
           <Button variant="outline" onClick={closeFaceRegister} disabled={faceRegisterSubmitting} className="w-full">

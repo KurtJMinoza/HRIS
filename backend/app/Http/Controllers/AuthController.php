@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\EmployeeStatusService;
 use App\Services\FaceAuthService;
+use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
 use App\Services\PayCycleService;
@@ -347,7 +348,7 @@ class AuthController extends Controller
             }
         }
 
-        if (empty($result['descriptor']) || count($result['descriptor']) !== 128) {
+        if (empty($result['descriptor']) || count($result['descriptor']) !== FaceVerificationService::EMBEDDING_DIM) {
             $this->recordFaceLoginFailure($request, null, false, 'no_face_detected');
             $msg = $result['message'] ?: 'No face detected. Position your face in the frame.';
 
@@ -381,6 +382,14 @@ class AuthController extends Controller
                 'message' => 'No registered face found. Please register your face before using facial recognition clock-in.',
                 'errors' => ['face' => ['No registered face found. Please register your face before using facial recognition clock-in.']],
                 'error_code' => 'face_not_registered',
+            ], 422);
+        }
+
+        if ($user->needsFaceReregistration()) {
+            return response()->json([
+                'message' => 'Your face data needs to be updated. Please re-register your face in My QR & Face.',
+                'errors' => ['face' => ['Your face data needs to be updated. Please re-register your face in My QR & Face.']],
+                'error_code' => 'face_needs_reregistration',
             ], 422);
         }
 

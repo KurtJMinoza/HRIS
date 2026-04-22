@@ -947,9 +947,11 @@ function delay(ms) {
  * @param {string} pollUrl - GET status URL from the same origin as other API calls
  */
 async function pollFaceRegistrationUntilDone(pollUrl, options = {}) {
-  // Allow slow queue starts, retries, and DeepFace — ~2.5m max (job timeout 60s × tries + backoff if worker runs)
-  const maxAttempts = options.maxAttempts ?? 75
-  const intervalMs = options.intervalMs ?? 2000
+  // InsightFace registration budget: job timeout 120s × up to 3 tries + 15s backoff between retries
+  // = ~390s worst case. Poll every 2.5s for up to 180 attempts = ~7.5 min ceiling.
+  // In practice a healthy worker finishes in 3–10 seconds.
+  const maxAttempts = options.maxAttempts ?? 180
+  const intervalMs = options.intervalMs ?? 2500
   for (let i = 0; i < maxAttempts; i++) {
     await delay(intervalMs)
     const res = await authenticatedFetch(pollUrl)
@@ -968,7 +970,7 @@ async function pollFaceRegistrationUntilDone(pollUrl, options = {}) {
     }
   }
   const err = new Error(
-    'Face registration is taking longer than expected. Please wait a moment and try again. If this keeps happening, ask your administrator to confirm the face queue worker is running.'
+    'Registration timed out. Please try again with better lighting and your face clearly in frame. If this keeps happening, ask your administrator to confirm the face queue worker is running.'
   )
   err.errorCode = 'registration_timeout'
   throw err
@@ -4553,7 +4555,7 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
 }
 
 /**
- * Record clock in/out by face on kiosk (no auth, no login). Uses Rekognition liveness session or legacy image.
+ * Record clock in/out by face on kiosk (no auth, face/liveness only).
  * @param {'clock_in'|'clock_out'} type
  * @param {{ liveness_session_id?: string, image_base64?: string } | string} payload - liveness_session_id (after Amplify liveness) or image_base64 (legacy), or raw base64 string
  */

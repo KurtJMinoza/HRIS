@@ -174,6 +174,15 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Clock-in/out liveness floor (identity verification path)
+    |--------------------------------------------------------------------------
+    | Additional guard for attendance scanFace endpoint. Keeps Amplify/Rekognition
+    | mandatory and requires a stronger confidence floor before face matching.
+    */
+    'face_clock_min_liveness_score' => (float) env('ATTENDANCE_FACE_CLOCK_MIN_LIVENESS_SCORE', 0.60),
+
+    /*
+    |--------------------------------------------------------------------------
     | Stricter liveness for face *registration* (Amplify + Rekognition)
     |--------------------------------------------------------------------------
     | Applied only when enrolling a new face template. Higher = fewer spoofs, more retakes.
@@ -196,42 +205,41 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Face match threshold (Euclidean distance). Login only allowed if similarity
-    | passes: distance <= threshold. Facenet same-person distance often 0.5–1.0.
-    | 0.45 = very strict (many false rejections), 0.75 = balanced, 0.9–1.0 = lenient.
-    | Use 0.9 default to reduce false rejections for registered users.
+    | Face match threshold (Euclidean distance, InsightFace 512D ArcFace).
+    | InsightFace returns L2-normalized unit vectors, so Euclidean and cosine
+    | are directly related: cos_sim=0.5 → euc≈1.0; cos_sim=0.3 → euc≈1.18.
+    | Used only when cosine threshold is disabled (face_cosine_distance_threshold=null).
     |--------------------------------------------------------------------------
     */
-    // Euclidean mode only (when cosine threshold is disabled). Higher = fewer false rejects at kiosk.
-    'face_match_threshold' => (float) env('ATTENDANCE_FACE_MATCH_THRESHOLD', 0.78),
+    'face_match_threshold' => (float) env('ATTENDANCE_FACE_MATCH_THRESHOLD', 1.10),
 
     /*
     |--------------------------------------------------------------------------
-    | Face similarity threshold (cosine distance 0–1). Alternative to Euclidean.
-    | Match when cosine_distance <= threshold. E.g. 0.6–0.8 = similarity 0.2–0.4.
-    | Set to null to use face_match_threshold (Euclidean) only.
+    | Face similarity threshold (cosine distance 0–1). Primary matching mode.
+    | InsightFace ArcFace: same-person cosine similarity ≈ 0.3–0.7 depending on
+    | lighting/pose; different-person typically < 0.25.
+    | Match when cosine_distance <= threshold (i.e. cosine_similarity >= 1 - threshold).
+    | 0.55 ≈ similarity ≥ 0.45 — balanced for real-world HR kiosk conditions.
     |--------------------------------------------------------------------------
     */
-    // Cosine distance threshold (0–1). When non-null, cosine distance is used instead of Euclidean.
-    // Larger = more tolerant (fewer false rejects). ~0.35 ≈ similarity ≥ 0.65 for a pass when paired with min_similarity.
-    'face_cosine_distance_threshold' => (float) env('ATTENDANCE_FACE_COSINE_DISTANCE_THRESHOLD', 0.35),
+    'face_cosine_distance_threshold' => (float) env('ATTENDANCE_FACE_COSINE_DISTANCE_THRESHOLD', 0.55),
 
     /*
     |--------------------------------------------------------------------------
     | Face matching safety checks (anti-misidentification)
     |--------------------------------------------------------------------------
     | Require both:
-    | - minimum cosine similarity (0–1)
+    | - minimum cosine similarity (0–1) — InsightFace ArcFace same-person ≈ 0.35–0.70
     | - a margin vs the second-best match (prevents "close call" misidentifications)
     */
-    'face_min_similarity_score' => (float) env('ATTENDANCE_FACE_MIN_SIMILARITY_SCORE', 0.65),
+    'face_min_similarity_score' => (float) env('ATTENDANCE_FACE_MIN_SIMILARITY_SCORE', 0.40),
     'face_min_similarity_margin' => (float) env('ATTENDANCE_FACE_MIN_SIMILARITY_MARGIN', 0.04),
 
     /*
     |--------------------------------------------------------------------------
     | Kiosk / clock-in-out: looser thresholds for faster, more reliable matching
     |--------------------------------------------------------------------------
-    | Registration uses stricter duplicate thresholds (0.80+ cosine). Verification
+    | Registration uses stricter duplicate thresholds (0.65+ cosine). Verification
     | (kiosk clock in/out) can afford slightly looser gates because Rekognition
     | liveness already authenticates a live person, and the ambiguity margin
     | still prevents misidentification between enrolled employees.
@@ -240,13 +248,13 @@ return [
     */
     'face_kiosk_cosine_distance_threshold' => is_numeric(env('ATTENDANCE_FACE_KIOSK_COSINE_DISTANCE_THRESHOLD'))
         ? (float) env('ATTENDANCE_FACE_KIOSK_COSINE_DISTANCE_THRESHOLD')
-        : 0.42,
+        : 0.62,
     'face_kiosk_min_similarity_score' => is_numeric(env('ATTENDANCE_FACE_KIOSK_MIN_SIMILARITY_SCORE'))
         ? (float) env('ATTENDANCE_FACE_KIOSK_MIN_SIMILARITY_SCORE')
-        : 0.58,
+        : 0.35,
     'face_kiosk_match_threshold' => is_numeric(env('ATTENDANCE_FACE_KIOSK_MATCH_THRESHOLD'))
         ? (float) env('ATTENDANCE_FACE_KIOSK_MATCH_THRESHOLD')
-        : 0.90,
+        : 1.20,
 
     /*
     |--------------------------------------------------------------------------
@@ -254,9 +262,10 @@ return [
     |--------------------------------------------------------------------------
     | Used when attendance face verification is bound to a claimed employee
     | (e.g., kiosk login field). Prevents cross-employee matching.
+    | InsightFace ArcFace: strict same-person cosine ≥ 0.50 and euc ≤ 1.0.
     */
-    'face_identity_min_similarity_score' => (float) env('ATTENDANCE_FACE_IDENTITY_MIN_SIMILARITY_SCORE', 0.88),
-    'face_identity_max_euclidean_distance' => (float) env('ATTENDANCE_FACE_IDENTITY_MAX_EUCLIDEAN_DISTANCE', 0.35),
+    'face_identity_min_similarity_score' => (float) env('ATTENDANCE_FACE_IDENTITY_MIN_SIMILARITY_SCORE', 0.55),
+    'face_identity_max_euclidean_distance' => (float) env('ATTENDANCE_FACE_IDENTITY_MAX_EUCLIDEAN_DISTANCE', 1.0),
 
     /*
     |--------------------------------------------------------------------------
@@ -300,7 +309,7 @@ return [
     /** @deprecated Use face_duplicate_min_cosine_similarity; kept for backward-compatible env keys */
     'face_duplicate_min_best_cosine_similarity' => is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_BEST_SIM'))
         ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_BEST_SIM')
-        : (is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_SIM')) ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_SIM') : 0.85),
+        : (is_numeric(env('ATTENDANCE_FACE_DUPLICATE_MIN_SIM')) ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_SIM') : 0.60),
 
     /**
      * When comparing to another user's *averaged* embedding (2+ samples), slightly lower cosine
@@ -310,44 +319,86 @@ return [
         ? (float) env('ATTENDANCE_FACE_DUPLICATE_MIN_COSINE_SIM_AVG')
         : null,
 
-    /** Euclidean distance on raw 128-D vectors; ArcFace same-person typically 0.5–1.2, different people higher. */
-    'face_duplicate_max_euclidean' => (float) env('ATTENDANCE_FACE_DUPLICATE_MAX_EUCLIDEAN', 0.65),
+    /**
+     * Euclidean distance on raw InsightFace 512-D unit vectors.
+     * cos_sim=0.70 → euc≈0.77; cos_sim=0.65 → euc≈0.84.
+     * Block duplicate when distance is at or below this value.
+     */
+    'face_duplicate_max_euclidean' => (float) env('ATTENDANCE_FACE_DUPLICATE_MAX_EUCLIDEAN', 0.80),
 
-    /** Euclidean distance on L2-normalized 128-D vectors (same space as cosine similarity). */
-    'face_duplicate_max_euclidean_normalized' => (float) env('ATTENDANCE_FACE_DUPLICATE_MAX_EUCLIDEAN_NORM', 0.55),
+    /** Euclidean distance on L2-normalized 512-D vectors (same geometry as cosine; unit vectors ≈ same values). */
+    'face_duplicate_max_euclidean_normalized' => (float) env('ATTENDANCE_FACE_DUPLICATE_MAX_EUCLIDEAN_NORM', 0.80),
 
     /** Block weak env values: effective min cosine for duplicate = max(resolved config, this floor). */
     'face_duplicate_enforce_registration_cosine_floor' => filter_var(
         env('ATTENDANCE_FACE_DUPLICATE_ENFORCE_COSINE_FLOOR', true),
         FILTER_VALIDATE_BOOL
     ),
-    'face_duplicate_registration_cosine_floor' => (float) env('ATTENDANCE_FACE_DUPLICATE_REGISTRATION_COSINE_FLOOR', 0.80),
+    'face_duplicate_registration_cosine_floor' => (float) env('ATTENDANCE_FACE_DUPLICATE_REGISTRATION_COSINE_FLOOR', 0.60),
 
     /** Extra OR-path for same-face pairs that miss both primary gates (see FaceVerificationService::duplicateRowMatchesIncoming). */
     'face_duplicate_dual_signal_enabled' => filter_var(
         env('ATTENDANCE_FACE_DUPLICATE_DUAL_SIGNAL', true),
         FILTER_VALIDATE_BOOL
     ),
-    'face_duplicate_dual_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_DUAL_COSINE_MIN', 0.80),
-    'face_duplicate_dual_max_euclidean' => (float) env('ATTENDANCE_FACE_DUPLICATE_DUAL_MAX_EUCLIDEAN', 0.65),
+    'face_duplicate_dual_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_DUAL_COSINE_MIN', 0.60),
+    'face_duplicate_dual_max_euclidean' => (float) env('ATTENDANCE_FACE_DUPLICATE_DUAL_MAX_EUCLIDEAN', 0.85),
 
     /**
      * Aggregate best-of-all-samples: if the BEST cosine similarity across ALL stored vectors
      * for a single other user exceeds this threshold, flag as duplicate. Lower than per-row gate
      * because looking at the best sample pair is the most reliable single-signal check.
+     * InsightFace ArcFace: 0.65 ≈ clearly the same person.
      */
-    'face_duplicate_aggregate_best_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_AGGREGATE_BEST_COSINE_MIN', 0.80),
+    'face_duplicate_aggregate_best_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_AGGREGATE_BEST_COSINE_MIN', 0.60),
 
     /**
      * Raw (un-normalized) cosine similarity threshold for duplicate detection.
-     * Catches cases where ArcFace embeddings have varying norms and normalized comparison diverges.
+     * InsightFace already returns normalized vectors, so raw ≈ normalized; set same as primary.
      */
-    'face_duplicate_raw_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_RAW_COSINE_MIN', 0.80),
+    'face_duplicate_raw_cosine_min' => (float) env('ATTENDANCE_FACE_DUPLICATE_RAW_COSINE_MIN', 0.60),
 
     /** Registration job / admin descriptor: compare all rows in DB (recommended). Non-registration callers may use the embedding index when false. */
     'face_duplicate_registration_force_full_db_scan' => filter_var(
         env('ATTENDANCE_FACE_DUPLICATE_REGISTRATION_FULL_SCAN', true),
         FILTER_VALIDATE_BOOL
+    ),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Strict global registration gate (ProcessFaceRegistrationJob)
+    |--------------------------------------------------------------------------
+    | This gate runs ONCE per registration attempt inside a DB transaction with
+    | a global lock.  It ALWAYS queries the live database (never uses the
+    | embedding index cache) to ensure newly-registered faces are always seen.
+    |
+    | Cosine similarity (L2-normalised ArcFace vectors):
+    |   • ≥ 0.88 → almost certainly the same person → block
+    | Normalised Euclidean distance (same unit-vector geometry):
+    |   • ≤ 0.50 → equivalent to cosine ≈ 0.875 → block
+    |   (For unit vectors: euc = sqrt(2*(1-cos)), so euc=0.50 → cos=0.875)
+    |
+    | Raise ATTENDANCE_FACE_DUPLICATE_STRICT_COSINE to reduce false positives.
+    | Lower it to catch more borderline same-person pairs (more aggressive).
+    |--------------------------------------------------------------------------
+    */
+    'face_duplicate_strict_min_cosine_similarity' => (float) env(
+        'ATTENDANCE_FACE_DUPLICATE_STRICT_COSINE',
+        0.88
+    ),
+    'face_duplicate_strict_max_euclidean_normalized' => (float) env(
+        'ATTENDANCE_FACE_DUPLICATE_STRICT_EUCLIDEAN_NORM',
+        0.35
+    ),
+
+    /**
+     * Near-miss logging for the strict gate: log matches in [near_miss, strict_min) so
+     * administrators can tune the threshold without missing borderline cases.
+     * InsightFace ArcFace: 0.72 is already very high for unrelated people.
+     */
+    'face_duplicate_strict_near_miss_cosine' => (float) env(
+        'ATTENDANCE_FACE_DUPLICATE_STRICT_NEAR_MISS',
+        0.72
     ),
 
     /** After exhaustive registration scan with no match, log best cosine / distance for debugging. */
@@ -358,8 +409,9 @@ return [
 
     /**
      * Log when best cosine to any other employee is in [near_miss_min, min_cosine) for debugging borderline cases.
+     * InsightFace ArcFace: 0.55 is unusually high for unrelated people; log it for review.
      */
-    'face_duplicate_near_miss_log_min_similarity' => (float) env('ATTENDANCE_FACE_DUPLICATE_NEAR_MISS_MIN_SIM', 0.72),
+    'face_duplicate_near_miss_log_min_similarity' => (float) env('ATTENDANCE_FACE_DUPLICATE_NEAR_MISS_MIN_SIM', 0.55),
 
     'face_duplicate_log_near_misses' => filter_var(
         env('ATTENDANCE_FACE_DUPLICATE_LOG_NEAR_MISS', true),

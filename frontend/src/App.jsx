@@ -399,8 +399,6 @@ function SmartDTRPreview({ className }) {
     undertimeMinutes: null,
   })
   const [kioskFaceInError, setKioskFaceInError] = useState(false)
-  const [kioskLoginInput, setKioskLoginInput] = useState('')
-  const [kioskLoginSubmitting, setKioskLoginSubmitting] = useState(false)
   const lastScanRef = useRef({ text: null, at: 0 })
 
   const RECENT_VISIBLE_COUNT = 5
@@ -497,36 +495,6 @@ function SmartDTRPreview({ className }) {
       playError(SOUND_FEEDBACK_ENABLED)
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  async function handleKioskLoginFallback() {
-    if (!kioskType || kioskLoginSubmitting || !kioskLoginInput.trim()) return
-    setError(null)
-    setScanResult(null)
-    setKioskLoginSubmitting(true)
-    try {
-      const data = await recordAttendanceKiosk(kioskType, kioskLoginInput.trim(), { useLoginFallback: true })
-      playSuccess(SOUND_FEEDBACK_ENABLED)
-      setScanResult({
-        employeeId: data.employee_id ?? null,
-        employeeName: data.employee_name ?? null,
-        employeeProfileImageUrl: data.employee_profile_image_url ?? null,
-        employeeProfileImage: data.employee_profile_image ?? null,
-        type: kioskType,
-        recordedAt: new Date().toISOString(),
-        status: data.attendance?.status ?? null,
-        lateMinutes: data.attendance?.late_minutes ?? null,
-        lateLabel: data.attendance?.late_label ?? null,
-        undertimeMinutes: data.attendance?.undertime_minutes ?? null,
-      })
-      setKioskLoginInput('')
-      fetchRecent()
-    } catch (e) {
-      setError(e.message)
-      playError(SOUND_FEEDBACK_ENABLED)
-    } finally {
-      setKioskLoginSubmitting(false)
     }
   }
 
@@ -729,27 +697,6 @@ function SmartDTRPreview({ className }) {
                 successResult={scanResult}
                 theme="dark"
               />
-              {kioskType && (
-                <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
-                  <p className="text-[11px] text-white/60">Fallback: Login with Username / Email</p>
-                  <div className="flex gap-2">
-                    <Input
-                      value={kioskLoginInput}
-                      onChange={(e) => setKioskLoginInput(e.target.value)}
-                      placeholder="Type username or email"
-                      className="h-10 border-white/15 bg-white/10 text-white placeholder:text-white/45"
-                    />
-                    <Button
-                      type="button"
-                      onClick={handleKioskLoginFallback}
-                      disabled={kioskLoginSubmitting || !kioskLoginInput.trim()}
-                      className="h-10 shrink-0"
-                    >
-                      {kioskLoginSubmitting ? 'Processing…' : 'Submit'}
-                    </Button>
-                  </div>
-                </div>
-              )}
             </div>
           ) : !kioskType ? (
             /* ── Face recognition mode: choose action first ── */
@@ -790,7 +737,7 @@ function SmartDTRPreview({ className }) {
             /* ── Face recognition capture ── */
             <div className="space-y-3">
               <p className="text-center text-[11px] text-white/40">
-                Look into the camera · no badge or login needed
+                Look into the camera and hold still during the guided liveness check.
               </p>
               <FaceRekognitionLiveness
                 kioskMode

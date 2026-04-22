@@ -20,24 +20,28 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Face liveness + DeepFace embedding + duplicate check + DB write, serialized with locks to reduce races.
+ * Face liveness + InsightFace embedding + duplicate check + DB write, serialized with locks to reduce races.
  *
  * Liveness runs before embedding in {@see FaceAuthService::verifyFaceWithLivenessSession()}.
  *
  * Requires a queue worker listening on the `face-registration` queue (see .env.example).
- * The worker `--timeout` value should be greater than this job's `$timeout` (e.g. 90 seconds).
+ * The worker `--timeout` value should be greater than this job's `$timeout` (e.g. 150 seconds).
  */
 class ProcessFaceRegistrationJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    /** Seconds before the worker kills this job (Rekognition + DeepFace + DB under load). */
-    public int $timeout = 60;
+    /**
+     * Seconds before the worker kills this job.
+     * InsightFace ONNX inference + Rekognition liveness fetch + global duplicate scan + DB write.
+     * Set higher than the Python embed timeout (8s) + duplicate scan time + lock waits.
+     */
+    public int $timeout = 120;
 
     public int $tries = 3;
 
-    /** Seconds to wait before each retry after a failure (see Laravel queue backoff). */
-    public int $backoff = 10;
+    /** Seconds to wait before each retry after a failure. */
+    public int $backoff = 15;
 
     public function __construct(
         public string $trackId,
@@ -113,7 +117,7 @@ class ProcessFaceRegistrationJob implements ShouldQueue
             return;
         }
 
-        if (empty($result['descriptor']) || count($result['descriptor']) !== 128) {
+        if (empty($result['descriptor']) || count($result['descriptor']) !== FaceVerificationService::EMBEDDING_DIM) {
             $msg = $result['message'] ?: 'No face detected or could not extract features. Position the face clearly in frame.';
             FaceRegistrationStatusService::fail($this->trackId, $msg, 'no_face_detected');
 
@@ -139,13 +143,43 @@ class ProcessFaceRegistrationJob implements ShouldQueue
                             return;
                         }
 
-                        // Anti-duplicate: full DB scan comparing cosine similarity (normalized + raw),
-                        // Euclidean distance, dual-signal band, and aggregate best-of-samples.
-                        $dupResult = FaceVerificationService::findExistingOwnerOfFaceWithDetails(
+                        if ($user->hasRegisteredFace()) {
+                            Log::info('ProcessFaceRegistrationJob: target user already has a registered face — proceeding with secure re-registration (duplicate check still runs against all other users)', [
+                                'track_id' => $this->trackId,
+                                'target_user_id' => $user->id,
+                                'is_reregistration' => true,
+                            ]);
+                        }
+
+                        // ── Critical anti-duplicate gate (defense-in-depth) ─────────────────
+                        // Two-tier check against EVERY stored embedding in the database:
+                        //
+                        // Tier 1 — Strict global gate (definitive same-face):
+                        //   Cosine ≥ 0.88  →  blocked  (near-identical capture)
+                        //   Norm-Euclidean ≤ 0.35 → blocked
+                        //
+                        // Tier 2 — Multi-signal gate (borderline same-person):
+                        //   Per-row cosine ≥ 0.65–0.70, raw/norm Euclidean, dual-signal,
+                        //   aggregate best-of-all-samples ≥ 0.65.
+                        //   Catches the same person under varied lighting/angle/expression.
+                        //
+                        // Both tiers query the live DB (no cache) inside per-user + global
+                        // lock + DB transaction to prevent race conditions.
+                        Log::info('ProcessFaceRegistrationJob: starting combined duplicate scan (strict + multi-signal)', [
+                            'track_id' => $this->trackId,
+                            'target_user_id' => $user->id,
+                            'embedding_dim' => count($descriptor),
+                            'strict_cosine_gate' => (float) config('attendance.face_duplicate_strict_min_cosine_similarity', 0.88),
+                            'strict_euclidean_norm_gate' => (float) config('attendance.face_duplicate_strict_max_euclidean_normalized', 0.35),
+                            'multi_signal_cosine_gate' => (float) config('attendance.face_duplicate_min_best_cosine_similarity', 0.70),
+                            'multi_signal_aggregate_gate' => (float) config('attendance.face_duplicate_aggregate_best_cosine_min', 0.65),
+                        ]);
+
+                        $dupResult = FaceVerificationService::findDuplicateFaceForRegistration(
                             $descriptor,
-                            $user->id,
-                            (bool) config('attendance.face_duplicate_registration_force_full_db_scan', true)
+                            $user->id
                         );
+
                         if ($dupResult !== null) {
                             $existingOwner = $dupResult['user'];
                             DuplicateFaceRegistrationAttempt::create([
@@ -155,6 +189,14 @@ class ProcessFaceRegistrationJob implements ShouldQueue
                                 'detection_method' => $dupResult['detection_method'] ?? null,
                                 'ip_address' => $this->ipAddress,
                                 'user_agent' => $this->userAgent,
+                            ]);
+                            Log::warning('ProcessFaceRegistrationJob: DUPLICATE FACE — registration blocked', [
+                                'track_id' => $this->trackId,
+                                'attempted_for_user_id' => $user->id,
+                                'existing_user_id' => $existingOwner->id,
+                                'cosine_similarity' => $dupResult['similarity_score'] ?? null,
+                                'euclidean_norm_distance' => $dupResult['euclidean_distance'] ?? null,
+                                'detection_method' => $dupResult['detection_method'] ?? null,
                             ]);
                             FaceRegistrationStatusService::fail(
                                 $this->trackId,

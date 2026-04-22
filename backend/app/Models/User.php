@@ -302,13 +302,14 @@ class User extends Authenticatable
 
     /**
      * Whether this user has a registered face embedding (allowed to use facial recognition DTR).
+     * Accepts both legacy 128D (DeepFace) and current 512D (InsightFace) embeddings.
      */
     public function hasRegisteredFace(): bool
     {
         $samples = $this->face_descriptor_samples;
         if (is_array($samples) && ! empty($samples)) {
             foreach ($samples as $sample) {
-                if (is_array($sample) && count($sample) === 128) {
+                if (is_array($sample) && count($sample) >= 64) {
                     return true;
                 }
             }
@@ -320,7 +321,39 @@ class User extends Authenticatable
         }
         $decoded = is_string($stored) ? json_decode($stored, true) : $stored;
 
-        return is_array($decoded) && ! isset($decoded['type']) && count($decoded) === 128;
+        return is_array($decoded) && ! isset($decoded['type']) && count($decoded) >= 64;
+    }
+
+    /**
+     * Whether the stored face embedding uses the legacy format (e.g. 128D from DeepFace)
+     * and needs re-registration with the current model (512D InsightFace).
+     */
+    public function needsFaceReregistration(): bool
+    {
+        if (! $this->hasRegisteredFace()) {
+            return false;
+        }
+
+        $dim = \App\Services\FaceVerificationService::EMBEDDING_DIM;
+
+        $samples = $this->face_descriptor_samples;
+        if (is_array($samples) && ! empty($samples)) {
+            foreach ($samples as $sample) {
+                if (is_array($sample) && count($sample) === $dim) {
+                    return false;
+                }
+            }
+        }
+
+        $stored = $this->face_embedding ?? $this->face_descriptor;
+        if (! empty($stored)) {
+            $decoded = is_string($stored) ? json_decode($stored, true) : $stored;
+            if (is_array($decoded) && ! isset($decoded['type']) && count($decoded) === $dim) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

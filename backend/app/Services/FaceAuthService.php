@@ -9,60 +9,22 @@ use Illuminate\Support\Facades\Log;
 class FaceAuthService
 {
     /**
-     * Runtime options passed to DeepFace service endpoints.
+     * Extract 512D face embedding via InsightFace ArcFace (no anti-spoof).
+     * Used with Amazon Rekognition Face Liveness: liveness is verified first
+     * by Rekognition, then the reference image is passed here for embedding.
      *
-     * @return array<string, mixed>
-     */
-    private static function deepfaceOptions(): array
-    {
-        return [
-            'model_name' => (string) config('services.face_verification.model_name', 'ArcFace'),
-            'detector_backend' => (string) config('services.face_verification.detector_backend', 'mediapipe'),
-            'enforce_detection' => (bool) config('services.face_verification.enforce_detection', true),
-            'align' => (bool) config('services.face_verification.align', true),
-            'input_width' => (int) config('services.face_verification.input_width', 640),
-            'input_height' => (int) config('services.face_verification.input_height', 480),
-        ];
-    }
-
-    /**
-     * Whether legacy /verify reported sufficient liveness confidence for registration (when provided).
-     */
-    private static function legacyVerifyPassesRegistrationLiveness(?float $spoofConfidence): bool
-    {
-        $light = (bool) config('attendance.face_registration_light_liveness', true);
-        $min = $light
-            ? (float) config('attendance.face_min_liveness_score', 0.52)
-            : max(
-                (float) config('attendance.face_min_liveness_score', 0.52),
-                (float) config('attendance.face_registration_min_liveness_score', 0.62)
-            );
-        if ($spoofConfidence === null) {
-            return true;
-        }
-
-        return $spoofConfidence >= $min;
-    }
-
-    /**
-     * Extract 128D face descriptor only (no anti-spoof). Used with Amazon Rekognition Face Liveness.
-     * Python service /embed endpoint.
-     *
-     * @param  string  $imageBase64  Base64-encoded face image (e.g. Rekognition reference image)
-     * @return array{descriptor: array|null, message: string}|null Null on service error
+     * @param  string  $imageBase64  Base64-encoded face image (Rekognition reference image)
+     * @return array{descriptor: array|null, message: string}|null  Null on service error
      */
     public static function embedFace(string $imageBase64): ?array
     {
-        $url = config('services.face_verification.url', 'http://127.0.0.1:5000');
-        $url = rtrim($url, '/').'/embed';
+        $url = rtrim((string) config('services.face_verification.url', 'http://127.0.0.1:5000'), '/').'/embed';
 
         try {
-            // Tight timeouts: embedding is usually sub-second; long waits feel like a stuck kiosk.
             $response = Http::timeout((int) config('services.face_verification.embed_timeout_seconds', 8))
                 ->connectTimeout((int) config('services.face_verification.connect_timeout_seconds', 3))
                 ->post($url, [
                     'image_base64' => $imageBase64,
-                    'options' => self::deepfaceOptions(),
                 ]);
 
             if (! $response->successful()) {
@@ -95,11 +57,12 @@ class FaceAuthService
     }
 
     /**
-     * Verify face using Amazon Rekognition Face Liveness session: get reference image, extract descriptor, no local anti-spoof.
-     * Liveness is evaluated before embedding extraction (Rekognition session must PASS before /embed runs).
+     * Verify face using Amazon Rekognition Face Liveness session.
+     * Gets reference image from the session, then extracts InsightFace embedding.
+     * Liveness is evaluated before embedding (Rekognition session must PASS before /embed runs).
      *
      * @param  string  $sessionId  Rekognition Face Liveness session ID from frontend
-     * @param  bool  $forRegistration  When true and {@see config('attendance.face_registration_light_liveness')} is false, applies stricter registration floor.
+     * @param  bool  $forRegistration  When true and face_registration_light_liveness is false, applies stricter registration floor
      * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float, reference_image_base64?: string}|null
      */
     public static function verifyFaceWithLivenessSession(string $sessionId, bool $forRegistration = false): ?array
@@ -145,7 +108,8 @@ class FaceAuthService
     }
 
     /**
-     * Legacy image path with registration liveness floor when spoof_confidence is returned by the Python service.
+     * Legacy image path: verify + embed via Python /verify endpoint.
+     * Kept for backward compatibility when the Rekognition liveness flow is unavailable.
      *
      * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float}|null
      */
@@ -156,36 +120,43 @@ class FaceAuthService
             return $base;
         }
         $spoof = $base['spoof_confidence'] ?? null;
-        if (! self::legacyVerifyPassesRegistrationLiveness($spoof)) {
-            return [
-                'is_live' => false,
-                'descriptor' => null,
-                'message' => 'Liveness confidence too low for registration. Please use a clearer capture or complete guided liveness.',
-                'spoof_confidence' => $spoof,
-            ];
+        if ($spoof !== null) {
+            $light = (bool) config('attendance.face_registration_light_liveness', true);
+            $min = $light
+                ? (float) config('attendance.face_min_liveness_score', 0.52)
+                : max(
+                    (float) config('attendance.face_min_liveness_score', 0.52),
+                    (float) config('attendance.face_registration_min_liveness_score', 0.62)
+                );
+            if ($spoof < $min) {
+                return [
+                    'is_live' => false,
+                    'descriptor' => null,
+                    'message' => 'Liveness confidence too low for registration. Please use a clearer capture or complete guided liveness.',
+                    'spoof_confidence' => $spoof,
+                ];
+            }
         }
 
         return $base;
     }
 
     /**
-     * Legacy: verify face via Python /verify (embedding only when using Rekognition liveness).
-     * Kept for backward compatibility if image_base64 flow is still used elsewhere.
+     * Legacy: extract 512D descriptor via Python /verify endpoint.
+     * Returns is_live=True and spoof_confidence=1.0 (liveness is always handled by Rekognition).
      *
      * @param  string  $imageBase64  Base64-encoded face image
      * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float}|null
      */
     public static function verifyFace(string $imageBase64): ?array
     {
-        $url = config('services.face_verification.url', 'http://127.0.0.1:5000');
-        $url = rtrim($url, '/').'/verify';
+        $url = rtrim((string) config('services.face_verification.url', 'http://127.0.0.1:5000'), '/').'/verify';
 
         try {
             $response = Http::timeout((int) config('services.face_verification.verify_timeout_seconds', 10))
                 ->connectTimeout((int) config('services.face_verification.connect_timeout_seconds', 3))
                 ->post($url, [
                     'image_base64' => $imageBase64,
-                    'options' => self::deepfaceOptions(),
                 ]);
 
             if (! $response->successful()) {
@@ -230,9 +201,9 @@ class FaceAuthService
     }
 
     /**
-     * Find user by face descriptor and return user with distance for similarity score.
+     * Find user by face descriptor and return user with similarity score.
      *
-     * @return array{user: User, distance: float}|null
+     * @return array{user: User, distance: float, similarity_score: float}|null
      */
     public static function identifyUserWithScore(array $descriptor, bool $kioskMode = false): ?array
     {
