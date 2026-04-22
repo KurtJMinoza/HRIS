@@ -237,6 +237,22 @@ export function FaceRekognitionLiveness({
           setApiError('Face not registered. Please register your face in My QR & Face first.')
           setApiErrorCode(code)
         }
+      } else if (code === 'login_required_for_face') {
+        toast.error('Employee login required', {
+          description: 'Enter your username, email, or employee code before face clocking.',
+        })
+        if (kioskMode) {
+          setApiError('Employee login is required before face clocking. Enter your username, email, or employee code.')
+          setApiErrorCode(code)
+        }
+      } else if (code === 'face_account_mismatch') {
+        toast.error('Face and account mismatch', {
+          description: 'The scanned face does not match the entered account.',
+        })
+        if (kioskMode) {
+          setApiError('Face and account do not match. Please use the correct account or register your own face.')
+          setApiErrorCode(code)
+        }
       } else if (code === 'face_needs_reregistration') {
         toast.error('Face update required', {
           description: 'Your face data needs to be updated. Please re-register your face in My QR & Face.',

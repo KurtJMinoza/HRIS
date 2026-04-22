@@ -1361,6 +1361,40 @@ class AttendanceController extends Controller
             $strictMatch = FaceVerificationService::verifySpecificUserByFaceWithScore($claimedUser, $result['descriptor']);
             $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
             if (! $strictMatch || ! $strictMatch['passes']) {
+                $mismatchMinSimilarity = (float) config('attendance.face_kiosk_account_mismatch_min_similarity', 0.60);
+                $identifiedOther = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true);
+                if (
+                    $identifiedOther
+                    && (int) $identifiedOther['user']->id !== (int) $claimedUser->id
+                    && (float) ($identifiedOther['similarity_score'] ?? 0.0) >= $mismatchMinSimilarity
+                ) {
+                    $otherUser = $identifiedOther['user'];
+                    $this->recordFailedAttempt($claimedUser->id, $request, false, 'face_account_mismatch', [
+                        'claimed_user_id' => $claimedUser->id,
+                        'matched_user_id' => $otherUser->id,
+                        'matched_similarity_score' => $identifiedOther['similarity_score'] ?? null,
+                        'liveness_score' => $spoofConfidence,
+                    ]);
+                    Log::warning('Kiosk face attendance rejected: claimed account does not match scanned face', [
+                        'claimed_user_id' => $claimedUser->id,
+                        'matched_user_id' => $otherUser->id,
+                        'matched_similarity_score' => $identifiedOther['similarity_score'] ?? null,
+                        'threshold' => $mismatchMinSimilarity,
+                    ]);
+
+                    return response()->json([
+                        'message' => 'Face and account do not match. Please use the correct account or register your own face.',
+                        'errors' => ['face' => ['Face and account do not match.']],
+                        'error_code' => 'face_account_mismatch',
+                        'fallback' => 'qr',
+                        'performance' => [
+                            'match_ms' => $matchMs,
+                            'claimed_similarity_score' => $strictMatch['similarity_score'] ?? null,
+                            'matched_similarity_score' => $identifiedOther['similarity_score'] ?? null,
+                        ],
+                    ], 422);
+                }
+
                 $this->recordFailedAttempt($claimedUser->id, $request, false, 'face_not_recognized', [
                     'similarity_score' => $strictMatch['similarity_score'] ?? null,
                     'distance' => $strictMatch['distance'] ?? null,

@@ -256,6 +256,8 @@ return [
         ? (float) env('ATTENDANCE_FACE_KIOSK_MATCH_THRESHOLD')
         : 1.20,
 
+    'face_kiosk_account_mismatch_min_similarity' => (float) env('ATTENDANCE_FACE_KIOSK_ACCOUNT_MISMATCH_MIN_SIMILARITY', 0.60),
+
     /*
     |--------------------------------------------------------------------------
     | Identity-bound face verification thresholds (specific employee only)
