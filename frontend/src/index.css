@@ -46,40 +46,40 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-/* Dark theme: slate-950 base, 2025/2026 enterprise — no pure black, calm contrast */
+/* Hard light fallback: even if `.dark` appears (cache/stale script/device), keep UI white. */
 .dark {
-  --background: #0f172a;             /* slate-950 — calm base, no #000 halation */
-  --foreground: #e2e8f0;             /* slate-200 — primary text, WCAG AA */
-  --card: #1e293b;                   /* slate-800 — elevated surface, soft shadow */
-  --card-foreground: #e2e8f0;
-  --popover: #1e293b;
-  --popover-foreground: #e2e8f0;
-  --primary: #f1f5f9;
-  --primary-foreground: #0f172a;
-  --secondary: #334155;              /* slate-700 */
-  --secondary-foreground: #e2e8f0;
-  --muted: #334155;
-  --muted-foreground: #cbd5e1;       /* slate-300 — better contrast */
-  --accent: #1e293b;
-  --accent-foreground: #f1f5f9;
-  --destructive: #b91c1c;            /* desaturated red */
-  --destructive-foreground: #fff;
-  --border: rgba(148, 163, 184, 0.12);  /* subtle elevation borders */
-  --input: rgba(148, 163, 184, 0.14);
-  --ring: #64748b;                   /* tertiary — slate-500 */
-  --chart-1: #60a5fa;                /* blue-400 */
-  --chart-2: #059669;                /* emerald-600 — muted green */
-  --chart-3: #c2410c;               /* orange-700 — desaturated */
-  --chart-4: #a78bfa;                /* violet-400 */
-  --chart-5: #b91c1c;                /* red-700 — desaturated */
-  --sidebar: #0f172a;                 /* slate-950 — distinct sidebar depth */
-  --sidebar-foreground: #e2e8f0;
-  --sidebar-primary: #e2e8f0;
-  --sidebar-primary-foreground: #0f172a;
-  --sidebar-accent: #1e293b;
-  --sidebar-accent-foreground: #e2e8f0;
-  --sidebar-border: rgba(148, 163, 184, 0.10);
-  --sidebar-ring: #475569;
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.965 0.003 247);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.89 0.005 247);
+  --input: oklch(0.89 0.005 247);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.992 0.001 247);
+  --sidebar-foreground: #0a0a0a;
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.89 0.005 247);
+  --sidebar-ring: oklch(0.708 0 0);
 }
 
 @theme inline {
@@ -125,6 +125,28 @@ body {
   font-family: var(--font-sans);
   color: var(--foreground);
   background-color: var(--background);
+}
+
+html,
+body,
+#root {
+  background-color: #ffffff !important;
+  color-scheme: light;
+}
+
+/* Force day-picker surfaces to stay light on devices with dark OS preference. */
+:root {
+  --rdp-accent-color: #4f46e5;
+  --rdp-background-color: #ffffff;
+  --rdp-color: #0a0a0a;
+}
+
+.dark .rdp,
+.dark .react-calendar,
+.dark [data-slot='dialog-content'],
+.dark [data-slot='popover-content'] {
+  background-color: #ffffff !important;
+  color: #0a0a0a !important;
 }
 
 /**
