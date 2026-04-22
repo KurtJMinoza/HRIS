@@ -620,7 +620,7 @@ export default function Profile() {
         <p className="hr-helper max-w-2xl">Review your employee profile and manage your account settings.</p>
       </div>
 
-      <Card className="border-2 border-primary/20 bg-primary/5">
+      <Card className="border-2 border-primary/20 bg-primary/5 dark:border-border dark:bg-card/80">
         <CardContent className="pt-6">
           <div className="flex flex-col gap-4 @sm:flex-row @sm:items-center">
             <Avatar className="size-20 rounded-2xl border border-border/60">
@@ -767,7 +767,7 @@ export default function Profile() {
                 </CardTitle>
                 <CardDescription>These values are stored locally on this device.</CardDescription>
               </div>
-              <Badge variant="outline" className="inline-flex items-center gap-1 border-amber-300 bg-amber-50 text-amber-800">
+              <Badge variant="outline" className="inline-flex items-center gap-1 border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
                 <LockKeyhole className="size-3.5" />
                 Sensitive
               </Badge>
@@ -821,7 +821,7 @@ export default function Profile() {
                             <p className="font-semibold">{c.full_name}</p>
                             <p className="text-xs text-muted-foreground">{c.relationship}</p>
                           </div>
-                          {c.is_primary && <Badge className="bg-blue-600 text-white">Primary</Badge>}
+                          {c.is_primary && <Badge className="bg-primary text-primary-foreground">Primary</Badge>}
                         </div>
                         <p className="mt-2 text-sm text-muted-foreground">{c.phone_number}</p>
                         <p className="text-sm text-muted-foreground">{c.address}</p>

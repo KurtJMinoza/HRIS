@@ -12,11 +12,6 @@ if (!rootEl) {
   throw new Error('Missing #root — index.html must contain <div id="root"></div>.')
 }
 
-// Enforce light mode before first paint (prevents dark/gray flash on other devices).
-document.documentElement.classList.remove('dark')
-document.documentElement.classList.add('light')
-document.documentElement.dataset.theme = 'light'
-
 async function bootstrap() {
   createRoot(rootEl).render(
     <StrictMode>

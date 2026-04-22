@@ -35,7 +35,7 @@ export default function ESignatureCard({
                 On file
               </div>
               {signatureImage ? (
-                <div className="min-w-0 overflow-hidden rounded-lg border border-border/70 bg-white p-3 shadow-inner dark:bg-slate-950">
+                <div className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-3 shadow-inner">
                   <img
                     src={signatureImage}
                     alt="Signature preview"
