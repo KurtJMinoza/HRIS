@@ -101,7 +101,18 @@ const MOCK_NOTIFICATIONS = [
   },
 ]
 
-function SidebarContent({ navItems, homePath, onNavClick, collapsed, onToggleCollapse, pathname }) {
+function SidebarContent({
+  navItems,
+  homePath,
+  profilePath,
+  user,
+  initials,
+  onLogout,
+  onNavClick,
+  collapsed,
+  onToggleCollapse,
+  pathname,
+}) {
   const [manualExpanded, setManualExpanded] = useState({})
   const autoExpanded = useMemo(() => {
     const next = {}
@@ -137,7 +148,7 @@ function SidebarContent({ navItems, homePath, onNavClick, collapsed, onToggleCol
           className={cn(
             'mx-auto flex size-10 items-center justify-center rounded-xl text-sm font-medium transition-all duration-200',
             active
-              ? 'bg-black text-white ring-1 ring-black/20 dark:bg-black dark:text-white dark:ring-white/15'
+              ? 'bg-slate-100 text-black ring-1 ring-slate-200 dark:bg-white/10 dark:text-white dark:ring-white/15'
               : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
           )}
           onClick={onNavClick}
@@ -158,7 +169,7 @@ function SidebarContent({ navItems, homePath, onNavClick, collapsed, onToggleCol
               'flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-all duration-200',
               depth > 0 && 'ml-4',
               active
-                ? 'bg-black text-white dark:bg-black dark:text-white'
+                ? 'bg-slate-100 text-black dark:bg-white/10 dark:text-white'
                 : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
             )}
             onClick={() => setManualExpanded((prev) => ({ ...prev, [key]: !isOpen }))}
@@ -187,7 +198,7 @@ function SidebarContent({ navItems, homePath, onNavClick, collapsed, onToggleCol
           cn(
             'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200',
             isActive
-              ? 'border-l-2 border-white bg-black text-white shadow-sm dark:bg-black dark:text-white'
+              ? 'bg-slate-100 text-black shadow-sm dark:bg-white/10 dark:text-white'
               : 'border-l-2 border-transparent text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
           )
         }
@@ -218,21 +229,122 @@ function SidebarContent({ navItems, homePath, onNavClick, collapsed, onToggleCol
         {navItems.map((item) => renderItem(item))}
       </nav>
       <div className={cn('border-t border-border/40 p-2', collapsed ? 'space-y-1' : 'space-y-2')}>
-        {onToggleCollapse && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn('w-full', collapsed && 'mx-auto size-9')}
-            onClick={onToggleCollapse}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            {collapsed ? <PanelLeft className="size-5" /> : <PanelLeftClose className="size-5" />}
-          </Button>
+        {collapsed ? (
+          <div className="space-y-1">
+            <Link
+              to={profilePath}
+              className="mx-auto flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+              onClick={onNavClick}
+              title="Profile"
+            >
+              <User className="size-5" />
+            </Link>
+            <button
+              type="button"
+              className="mx-auto flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive"
+              onClick={async () => {
+                await onLogout?.()
+                onNavClick?.()
+              }}
+              title="Log out"
+            >
+              <LogOut className="size-5" />
+            </button>
+          </div>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="w-full rounded-xl border border-border/60 bg-background/70 p-2 text-left transition-colors hover:bg-muted/40"
+              >
+                <div className="flex items-center gap-2">
+                  <Avatar key={user?.id ?? 'sidebar-u'} className="size-8 rounded-full ring-1 ring-border/40">
+                    <AvatarImage src={employeeAvatarSrc(user) || undefined} alt="" className="object-cover" />
+                    <AvatarFallback
+                      className={cn(
+                        'rounded-full text-xs font-bold',
+                        getEmployeeAvatarColorClass(user?.id, user?.name),
+                      )}
+                    >
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-foreground">{user?.name ?? 'User'}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{user?.email ?? ''}</p>
+                  </div>
+                  <ChevronDown className="size-4 text-muted-foreground" />
+                </div>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" className="w-56">
+              <DropdownMenuLabel>
+                <div className="flex flex-col">
+                  <span>{user?.name ?? 'User'}</span>
+                  <span className="text-xs font-normal text-muted-foreground">{user?.email}</span>
+                  <span className="mt-1">
+                    <RoleBadge user={user} size="sm" />
+                  </span>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link to={homePath} onClick={onNavClick}>
+                  <LayoutDashboard className="mr-2 size-4" />
+                  Dashboard
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to={profilePath} onClick={onNavClick}>
+                  <User className="mr-2 size-4" />
+                  Profile
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={async () => {
+                  await onLogout?.()
+                  onNavClick?.()
+                }}
+                className="text-destructive focus:text-destructive"
+              >
+                <LogOut className="mr-2 size-4" />
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         {collapsed ? (
-          <p className="text-center text-[10px] text-muted-foreground" title="SmartDTR v1.0">v1</p>
+          <>
+            {onToggleCollapse && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="mx-auto size-9"
+                onClick={onToggleCollapse}
+                title="Expand sidebar"
+              >
+                <PanelLeft className="size-5" />
+              </Button>
+            )}
+            <p className="text-center text-[10px] text-muted-foreground" title="SmartDTR v1.0">v1</p>
+          </>
         ) : (
-          <p className="px-3 text-xs text-muted-foreground">SmartDTR v1.0</p>
+          <div className="flex items-center justify-between px-1">
+            <p className="text-xs text-muted-foreground">SmartDTR v1.0</p>
+            {onToggleCollapse && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={onToggleCollapse}
+                title="Collapse sidebar"
+              >
+                <PanelLeftClose className="size-4" />
+              </Button>
+            )}
+          </div>
         )}
       </div>
     </>
@@ -432,6 +544,10 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
         <SidebarContent
           navItems={navItems}
           homePath={homePath}
+          profilePath={profilePath}
+          user={user}
+          initials={initials}
+          onLogout={handleLogout}
           onNavClick={() => {}}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
@@ -467,6 +583,10 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             <SidebarContent
               navItems={navItems}
               homePath={homePath}
+              profilePath={profilePath}
+              user={user}
+              initials={initials}
+              onLogout={handleLogout}
               onNavClick={() => setSheetOpen(false)}
               pathname={location.pathname}
             />
