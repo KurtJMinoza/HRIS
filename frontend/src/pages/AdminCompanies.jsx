@@ -394,6 +394,20 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                 </div>
               </PopoverContent>
             </Popover>
+            {headId && (
+              <div className="mt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-destructive/40 text-destructive hover:bg-destructive/10"
+                  onClick={() => onHeadIdChange('')}
+                >
+                  <UserMinus className="mr-1.5 size-3.5" />
+                  Remove employee
+                </Button>
+              </div>
+            )}
             <p className="mt-1 text-xs text-muted-foreground">Type to search. Employees already assigned elsewhere are shown but cannot be selected.</p>
           </div>
           </div>

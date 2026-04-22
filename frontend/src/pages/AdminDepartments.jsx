@@ -1625,6 +1625,18 @@ export default function AdminDepartments() {
             <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
             <div className="space-y-2">
               <Label>Department Head</Label>
+              {headId !== '' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-destructive/40 text-destructive hover:bg-destructive/10"
+                  onClick={() => setHeadId('')}
+                >
+                  <UserMinus className="mr-1.5 size-3.5" />
+                  Remove employee
+                </Button>
+              )}
               {(() => {
                 // Employees in this dept
                 const deptEmps = employees.filter(

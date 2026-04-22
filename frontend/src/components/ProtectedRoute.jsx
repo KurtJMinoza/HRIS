@@ -44,12 +44,22 @@ export function ProtectedRoute({ children, variant, role }) {
 
   if (resolvedVariant === 'adminHr') {
     if (!isAdminHrUser(user)) {
+      // Managerial org-head accounts are expected to use scoped HR panels.
+      // Redirect silently to avoid showing a misleading "no access" bug toast.
+      if (isManagerialHrRole(user)) {
+        return <Navigate to={resolvePostLoginPath(user)} replace />
+      }
       try {
         sessionStorage.setItem('hr_access_denied', '1')
       } catch {
         // ignore
       }
       return <Navigate to={resolvePostLoginPath(user)} replace />
+    }
+    try {
+      sessionStorage.removeItem('hr_access_denied')
+    } catch {
+      // ignore
     }
     return children
   }

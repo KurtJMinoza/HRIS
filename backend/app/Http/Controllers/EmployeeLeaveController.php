@@ -642,7 +642,8 @@ class EmployeeLeaveController extends Controller
             false
         );
 
-        $chain = $this->hrApprovalChainResolver->getApprovalChain($user);
+        $routing = $this->hrApprovalChainResolver->resolveRoutingDecision($user);
+        $chain = $routing['chain'];
         if ($chain === null) {
             throw ValidationException::withMessages([
                 'user' => ['Your role cannot file leave requests.'],
@@ -650,11 +651,19 @@ class EmployeeLeaveController extends Controller
         }
 
         $stage = $this->hrApprovalChainResolver->initialApprovalStage($user);
+        $firstApproverId = $stage === \App\Support\HrApprovalStages::PENDING_FIRST
+            ? ($routing['first_level_approver']?->id)
+            : null;
+        $hrApproverId = $routing['hr_approver']?->id;
+        if (! $hrApproverId) {
+            throw ValidationException::withMessages([
+                'approval' => ['No active Admin (HR) approver is configured.'],
+            ]);
+        }
         $reasonTrim = trim((string) ($validated['reason'] ?? ''));
         $notes = $reasonTrim !== '' ? $reasonTrim : null;
         $fileDetails = $type === 'undertime' ? $reasonTrim : ($notes ?? 'Leave request submitted.');
-
-        $leave = DB::transaction(function () use ($user, $type, $validated, $stage, $fileDetails, $notes) {
+        $leave = DB::transaction(function () use ($user, $type, $validated, $stage, $fileDetails, $notes, $firstApproverId, $hrApproverId) {
             $leave = LeaveRequest::create([
                 'user_id' => $user->id,
                 'type' => $type,
@@ -666,6 +675,8 @@ class EmployeeLeaveController extends Controller
                 'status' => LeaveRequest::STATUS_PENDING,
                 'approval_stage' => $stage,
                 'pending_approval' => true,
+                'first_approver_id' => $firstApproverId,
+                'second_approver_id' => $hrApproverId,
                 'filed_at' => now(),
                 'filed_by' => $user->id,
             ]);

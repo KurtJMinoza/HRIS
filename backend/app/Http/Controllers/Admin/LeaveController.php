@@ -243,7 +243,7 @@ class LeaveController extends Controller
             ], 422);
         }
 
-        $stage = $this->hrApprovalChainResolver->initialApprovalStage($employee);
+        $stage = $this->hrApprovalChainResolver->initialApprovalStage($employee, employeeSubmitted: false);
 
         $restBypassReason = $bypassRest ? trim((string) $request->input('rest_day_bypass_reason')) : null;
 

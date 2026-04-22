@@ -38,6 +38,7 @@ import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath } from '@/lib/hrRoutes'
+import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import {
   Dialog,
   DialogContent,
@@ -1394,9 +1395,9 @@ export default function AttendanceCorrections() {
                                       {h.at ? formatDateTime(h.at) : '—'}
                                     </time>
                                   </div>
-                                  {h.details ? (
+                                  {sanitizeApprovalDisplayText(h?.details) ? (
                                     <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-                                      {h.details}
+                                      {sanitizeApprovalDisplayText(h.details)}
                                     </p>
                                   ) : null}
                                 </div>

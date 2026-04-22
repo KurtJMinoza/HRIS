@@ -705,7 +705,8 @@ class EmployeeOvertimeController extends Controller
 
         $computed = $this->computeOvertimeRequestQuantities($user, $dateYmd, $validated['expected_end_time']);
 
-        $chain = $this->hrApprovalChainResolver->getApprovalChain($user);
+        $routing = $this->hrApprovalChainResolver->resolveRoutingDecision($user);
+        $chain = $routing['chain'];
         if ($chain === null) {
             throw ValidationException::withMessages([
                 'user' => ['Your role cannot file overtime requests.'],
@@ -718,8 +719,18 @@ class EmployeeOvertimeController extends Controller
         }
 
         $stage = $this->hrApprovalChainResolver->initialApprovalStage($user);
+        $firstApproverId = $stage === \App\Support\HrApprovalStages::PENDING_FIRST
+            ? ($routing['first_level_approver']?->id)
+            : null;
+        $hrApproverId = $routing['hr_approver']?->id;
+        if (! $hrApproverId) {
+            throw ValidationException::withMessages([
+                'approval' => ['No active Admin (HR) approver is configured.'],
+            ]);
+        }
+        $fileDetails = (string) $validated['reason'];
 
-        $overtime = DB::transaction(function () use ($user, $dateYmd, $computed, $validated, $attachmentPath, $stage) {
+        $overtime = DB::transaction(function () use ($user, $dateYmd, $computed, $validated, $attachmentPath, $stage, $firstApproverId, $hrApproverId, $fileDetails) {
             $overtime = Overtime::create([
                 'user_id' => $user->id,
                 'date' => $dateYmd,
@@ -736,6 +747,8 @@ class EmployeeOvertimeController extends Controller
                 'created_by' => $user->id,
                 'approval_stage' => $stage,
                 'pending_approval' => true,
+                'first_approver_id' => $firstApproverId,
+                'second_approver_id' => $hrApproverId,
                 'filed_at' => now(),
                 'filed_by' => $user->id,
             ]);
@@ -745,7 +758,7 @@ class EmployeeOvertimeController extends Controller
                 'actor_id' => $user->id,
                 'employee_id' => $user->id,
                 'action' => 'file',
-                'details' => $validated['reason'],
+                'details' => $fileDetails,
                 'approver_role' => $this->hrRoleResolver->resolveForApprovalSubject($user)->badgeLabel(),
             ]);
 

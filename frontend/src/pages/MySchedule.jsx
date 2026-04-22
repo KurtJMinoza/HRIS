@@ -37,6 +37,7 @@ import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableC
 import { ScheduleRequestStatusBadge } from '@/components/schedules/ScheduleRequestTableCells'
 import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 
 const DAY_OPTIONS = [
   { key: 'mon', label: 'M', full: 'Monday' },
@@ -1186,7 +1187,9 @@ export default function MySchedule() {
                       <div key={`${entry.action}-${index}`} className="rounded-lg border border-border/60 px-3 py-3 dark:border-border/50">
                         <p className="text-sm font-medium text-foreground">{formatHistoryAction(entry.action)}</p>
                         <p className="text-xs text-muted-foreground">{entry.actor_name || 'System'} · {formatDateTime(entry.at)}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">{entry.details || 'No remarks'}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {sanitizeApprovalDisplayText(entry?.details) || 'No remarks'}
+                        </p>
                       </div>
                     ))}
                   </div>

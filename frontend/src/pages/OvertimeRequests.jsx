@@ -29,6 +29,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { Link } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
+import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import {
   Dialog,
   DialogContent,
@@ -1426,8 +1427,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                               {new Date(h.at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}
                             </time>
                           ) : null}
-                          {h.details ? (
-                            <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">{h.details}</p>
+                          {sanitizeApprovalDisplayText(h?.details) ? (
+                            <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">
+                              {sanitizeApprovalDisplayText(h.details)}
+                            </p>
                           ) : null}
                         </li>
                       ))}

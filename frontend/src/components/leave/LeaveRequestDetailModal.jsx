@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
+import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import {
   APP_MODAL_DESCRIPTION_CLASS,
   APP_MODAL_FOOTER,
@@ -358,9 +359,9 @@ export function LeaveRequestDetailModal({
                                   {h.at ? formatDateTime(h.at) : '—'}
                                 </time>
                               </div>
-                              {h.details ? (
+                              {sanitizeApprovalDisplayText(h?.details) ? (
                                 <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-                                  {h.details}
+                                  {sanitizeApprovalDisplayText(h.details)}
                                 </p>
                               ) : null}
                             </div>

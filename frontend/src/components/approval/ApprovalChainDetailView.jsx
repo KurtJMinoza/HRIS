@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { profileImageUrl } from '@/api'
+import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 
 function formatDateTime(iso) {
   if (!iso) return '—'
@@ -73,7 +74,7 @@ export function ApprovalChainDetailView({ steps }) {
           s.acted_at != null && s.acted_at !== ''
             ? `${statusLabel} · ${formatDateTime(s.acted_at)}`
             : statusLabel
-        const remarks = s.remarks && String(s.remarks).trim() ? String(s.remarks).trim() : null
+        const remarks = sanitizeApprovalDisplayText(s?.remarks)
 
         return (
           <li key={s.key || `step-${idx}`}>

@@ -58,6 +58,20 @@ class AttendanceCorrectionApprovalService
         return $this->chainResolver->initialApprovalStage($employee);
     }
 
+    /**
+     * @return array{
+     *   chain: array<int, \App\Enums\HrRole>|null,
+     *   fallback_to_admin: bool,
+     *   fallback_reasons: array<int, string>,
+     *   first_level_approver: ?\App\Models\User,
+     *   hr_approver: ?\App\Models\User
+     * }
+     */
+    public function resolveRoutingDecision(User $employee): array
+    {
+        return $this->chainResolver->resolveRoutingDecision($employee);
+    }
+
     public function canApprove(User $actor, AttendanceCorrection $correction): bool
     {
         if (! $correction->pending_approval || $correction->approved || $correction->rejected_at) {

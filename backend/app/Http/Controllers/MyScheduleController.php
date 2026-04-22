@@ -91,6 +91,23 @@ class MyScheduleController extends Controller
             );
         }
 
+        $routing = $this->approvalChainResolver->resolveRoutingDecision($user);
+        if (($routing['chain'] ?? null) === null) {
+            throw ValidationException::withMessages([
+                'approval' => ['Your account cannot file schedule requests right now.'],
+            ]);
+        }
+        $initialStage = $this->approvalChainResolver->initialApprovalStage($user);
+        $firstApproverId = $initialStage === \App\Support\HrApprovalStages::PENDING_FIRST
+            ? ($routing['first_level_approver']?->id)
+            : null;
+        $hrApproverId = $routing['hr_approver']?->id;
+        if (! $hrApproverId) {
+            throw ValidationException::withMessages([
+                'approval' => ['No active Admin (HR) approver is configured.'],
+            ]);
+        }
+
         $scheduleRequest = new ScheduleRequest([
             'user_id' => $user->id,
             'request_kind' => $base['request_kind'],
@@ -99,19 +116,23 @@ class MyScheduleController extends Controller
             'effective_from' => $base['effective_from'],
             'remarks' => isset($base['remarks']) ? trim((string) $base['remarks']) : null,
             'status' => ScheduleRequest::STATUS_PENDING,
-            'approval_stage' => $this->approvalChainResolver->initialApprovalStage($user),
+            'approval_stage' => $initialStage,
             'pending_approval' => true,
+            'first_approver_id' => $firstApproverId,
+            'second_approver_id' => $hrApproverId,
             'filed_at' => now(),
             'filed_by' => $user->id,
         ]);
         $scheduleRequest->save();
+
+        $auditDetails = $scheduleRequest->remarks;
 
         ScheduleRequestApprovalAudit::create([
             'schedule_request_id' => $scheduleRequest->id,
             'actor_id' => $user->id,
             'employee_id' => $user->id,
             'action' => 'file',
-            'details' => $scheduleRequest->remarks,
+            'details' => $auditDetails,
             'approver_role' => $this->hrRoleResolver->resolveForApprovalSubject($user)->value,
         ]);
 

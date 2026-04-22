@@ -171,9 +171,25 @@ class PresenceFilingController extends Controller
             ->whereDate('date', $dateKey)
             ->first();
 
+        $routing = $this->approvalService->resolveRoutingDecision($employee);
+        if (($routing['chain'] ?? null) === null) {
+            throw ValidationException::withMessages([
+                'approval' => ['Your account cannot file attendance corrections right now.'],
+            ]);
+        }
         $initialStage = $this->approvalService->initialApprovalStage($employee);
+        $firstApproverId = $initialStage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST
+            ? ($routing['first_level_approver']?->id)
+            : null;
+        $hrApproverId = $routing['hr_approver']?->id;
+        if (! $hrApproverId) {
+            throw ValidationException::withMessages([
+                'approval' => ['No active Admin (HR) approver is configured.'],
+            ]);
+        }
+        $auditReason = $fullRemarks;
 
-        $correction = DB::transaction(function () use ($employee, $dateKey, $timeInUtc, $timeOutUtc, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind) {
+        $correction = DB::transaction(function () use ($employee, $dateKey, $timeInUtc, $timeOutUtc, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId, $auditReason) {
             $correction = AttendanceCorrection::updateOrCreate(
                 [
                     'user_id' => $employee->id,
@@ -196,9 +212,9 @@ class PresenceFilingController extends Controller
                     'rejection_note' => null,
                     'manual_presence_reason' => null,
                     'approval_stage' => $initialStage,
-                    'first_approver_id' => null,
+                    'first_approver_id' => $firstApproverId,
                     'first_approved_at' => null,
-                    'second_approver_id' => null,
+                    'second_approver_id' => $hrApproverId,
                     'second_approved_at' => null,
                     'is_incomplete_record' => $isIncompleteRecord,
                 ]
@@ -213,7 +229,7 @@ class PresenceFilingController extends Controller
                 'previous_time_out' => $existing?->time_out,
                 'new_time_in' => $correction->time_in,
                 'new_time_out' => $correction->time_out,
-                'reason' => $fullRemarks,
+                'reason' => $auditReason,
                 'action' => 'file',
             ]);
 

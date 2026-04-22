@@ -745,16 +745,16 @@ export default function AdminDashboard() {
 
   return (
     <Motion.div
-      className="space-y-6 text-foreground dark:text-zinc-50"
+      className="space-y-8 text-foreground dark:text-zinc-50"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
     >
       <Motion.div
-        className="-mb-3 flex flex-col gap-1 @md:flex-row @md:items-start @md:justify-between"
+        className="mb-2 flex flex-col gap-4 pt-2 @md:mb-4 @md:flex-row @md:items-start @md:justify-between"
         variants={itemVariants}
       >
-        <div className="space-y-1">
+        <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {getGreeting()}
             {isHrAdmin ? ', Admin' : dashboardScopeLabel ? `, ${dashboardScopeLabel} lead` : ''}
@@ -775,7 +775,7 @@ export default function AdminDashboard() {
               <RoleBadge user={user} size="md" className="shrink-0" />
             ) : null}
           </div>
-          <p className="max-w-2xl text-[15px] font-normal leading-[1.55] text-muted-foreground">
+          <p className="max-w-2xl pb-1 text-[15px] font-normal leading-[1.55] text-muted-foreground">
             {isHrAdmin
               ? 'Real-time insight into employees, attendance, and daily workforce activity.'
               : hrRole === 'department_head'
@@ -855,7 +855,7 @@ export default function AdminDashboard() {
 
       {/* Top stats cards */}
       <Motion.div
-        className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-5"
+        className="mt-2 grid gap-4 @sm:mt-3 @sm:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-5"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"

@@ -68,6 +68,7 @@ import {
   reviewStatusSortValue,
   formatTimeOnly,
 } from '@/lib/presenceFilingTable'
+import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import {
   EmployeeAvatarNameRoleCell,
   ReviewStatusTableBadge,
@@ -222,9 +223,9 @@ function ApprovalTimeline({ steps }) {
                   {formatDateTime(s.acted_at)}
                 </time>
               ) : null}
-              {s.remarks && String(s.remarks).trim() ? (
+              {sanitizeApprovalDisplayText(s?.remarks) ? (
                 <p className="mt-2 rounded-lg border border-border/50 bg-muted/40 px-3 py-2 text-xs leading-relaxed dark:bg-white/5">
-                  {s.remarks}
+                  {sanitizeApprovalDisplayText(s.remarks)}
                 </p>
               ) : null}
             </div>
@@ -1020,9 +1021,9 @@ export default function EmployeeCorrectionRequests() {
                                     {h.at ? formatDateTime(h.at) : '—'}
                                   </time>
                                 </div>
-                                {h.details ? (
+                                {sanitizeApprovalDisplayText(h?.details) ? (
                                   <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-                                    {h.details}
+                                    {sanitizeApprovalDisplayText(h.details)}
                                   </p>
                                 ) : null}
                               </div>

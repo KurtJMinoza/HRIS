@@ -137,6 +137,19 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
             </div>
           ) : (
             <>
+              {value ? (
+                <div className="border-b border-border/60 p-2 dark:border-slate-700">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-full border-destructive/40 text-destructive hover:bg-destructive/10"
+                    onClick={() => { onChange(''); setOpen(false) }}
+                  >
+                    Remove employee
+                  </Button>
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={() => { onChange(''); setOpen(false) }}
