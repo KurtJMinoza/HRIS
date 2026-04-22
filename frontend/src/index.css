@@ -134,6 +134,23 @@ body,
   color-scheme: light dark;
 }
 
+/* Host/device consistency: when theme is explicitly light, force pure-white base canvas. */
+html.light,
+html.light body,
+html.light #root {
+  background-color: #ffffff !important;
+  color-scheme: light;
+}
+
+/* Keep common overlay/card surfaces white in light theme across modules/devices. */
+html.light [data-slot='dialog-content'],
+html.light [data-slot='popover-content'],
+html.light .rdp,
+html.light .react-calendar {
+  background-color: #ffffff !important;
+  color: #0a0a0a;
+}
+
 /* Force day-picker surfaces to stay light on devices with dark OS preference. */
 :root {
   --rdp-accent-color: #4f46e5;
