@@ -62,7 +62,24 @@ function getXsrfTokenFromCookie() {
 export function profileImageUrl(pathOrUrl) {
   if (!pathOrUrl) return undefined
   if (typeof pathOrUrl !== 'string') return undefined
-  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) return pathOrUrl
+  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+    // Hosted safeguard: backend may emit localhost APP_URL media links; remap to the real API origin.
+    try {
+      const parsed = new URL(pathOrUrl)
+      const host = String(parsed.hostname || '').toLowerCase()
+      const isLocalHost =
+        host === 'localhost'
+        || host === '127.0.0.1'
+        || host === '0.0.0.0'
+        || host === '::1'
+      if (!isLocalHost) return pathOrUrl
+      const origin = apiOrigin()
+      if (!origin) return pathOrUrl
+      return `${origin}${parsed.pathname}${parsed.search || ''}${parsed.hash || ''}`
+    } catch {
+      return pathOrUrl
+    }
+  }
   const origin = apiOrigin()
   return pathOrUrl.startsWith('/') ? `${origin}${pathOrUrl}` : `${origin}/${pathOrUrl}`
 }
