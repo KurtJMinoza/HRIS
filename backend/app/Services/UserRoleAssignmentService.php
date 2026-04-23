@@ -108,7 +108,7 @@ class UserRoleAssignmentService
             }
 
             match ($hrRole) {
-                HrRole::Employee => $this->syncPlainEmployeeOrgFks($user, $laravelAdmin),
+                HrRole::Employee => $this->syncPlainEmployeeOrgFks($user, $laravelAdmin, $context),
                 HrRole::CompanyHead => $this->assignCompanyHead($user, $context['company_id']),
                 HrRole::BranchHead => $this->assignBranchHead($user, $context['branch_id']),
                 HrRole::DepartmentHead => $this->assignDepartmentHead($user, $context['department_id']),
@@ -120,12 +120,38 @@ class UserRoleAssignmentService
     }
 
     /**
-     * Employee base role: clear org FKs, or only clear optional admin-only scope when still Laravel admin.
+     * Employee hat: sync users.company_id / branch_id / department_id for roster, payroll, and attendance.
+     *
+     * Admin (HR) + Employee: do not blanket-clear org FKs. Legacy behavior called
+     * {@see applyAdminHrOrganizationScope()} with all nulls, which removed the user's employment
+     * placement and excluded them from company/branch/department-scoped employee lists and runs.
+     * When the assignment payload includes org ids, apply them; otherwise keep existing placement.
      */
-    private function syncPlainEmployeeOrgFks(User $user, bool $laravelAdmin): void
+    private function syncPlainEmployeeOrgFks(User $user, bool $laravelAdmin, array $context): void
     {
+        $companyId = $context['company_id'] ?? null;
+        $branchId = $context['branch_id'] ?? null;
+        $departmentId = $context['department_id'] ?? null;
+        $hasIncomingOrg = $companyId !== null || $branchId !== null || $departmentId !== null;
+
         if ($laravelAdmin) {
-            $this->applyAdminHrOrganizationScope($user, null, null, null);
+            if ($hasIncomingOrg) {
+                $user->forceFill([
+                    'company_id' => $companyId,
+                    'branch_id' => $branchId,
+                    'department_id' => $departmentId,
+                ])->save();
+            }
+
+            return;
+        }
+
+        if ($hasIncomingOrg) {
+            $user->forceFill([
+                'company_id' => $companyId,
+                'branch_id' => $branchId,
+                'department_id' => $departmentId,
+            ])->save();
 
             return;
         }

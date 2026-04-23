@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { isRosterStaffMember } from '@/lib/rosterStaff'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -1263,7 +1264,7 @@ export default function AdminLeave() {
                 className={FIELD_SELECT_CLASS_H10}
               >
                 <option value="">Select employee…</option>
-                {employees.filter((e) => e.role === 'employee').map((emp) => (
+                {employees.filter((e) => isRosterStaffMember(e)).map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.name}</option>
                 ))}
               </select>

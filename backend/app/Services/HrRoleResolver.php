@@ -44,10 +44,12 @@ class HrRoleResolver
             $roles[] = HrRole::AdminHr;
         }
 
+        // Org hat (company / branch / department head) or line employee. Admins who are also
+        // roster staff (no head assignment) must still show EMPLOYEE alongside ADMIN (HR).
         $org = $this->resolveOrgHierarchyFromAssignments($user);
         if ($org !== HrRole::Employee) {
             $roles[] = $org;
-        } elseif (! $user->isAdmin()) {
+        } else {
             $roles[] = HrRole::Employee;
         }
 

@@ -584,6 +584,8 @@ class AuthController extends Controller
             'nationality' => $user->nationality,
             'home_address' => $user->home_address,
             'role' => $user->role,
+            /** Aligned with {@see User::ROSTER_ELIGIBLE_ROLES} for SPA filters (assign pools, profile, etc.). */
+            'is_roster_staff' => $user->isRosterEligible(),
             'is_hr_admin' => $user->isAdmin(),
             'hr_role' => $hr->value,
             'hr_role_label' => $hr->badgeLabel(),

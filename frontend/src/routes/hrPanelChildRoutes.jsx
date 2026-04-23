@@ -30,7 +30,6 @@ const MySchedule = lazy(() => import('@/pages/MySchedule'))
 const AdminDashboard = lazy(() => import('@/pages/AdminDashboard'))
 const AdminAttendance = lazy(() => import('@/pages/AdminAttendance'))
 const AdminReports = lazy(() => import('@/pages/AdminReports'))
-const EmployeeProfile = lazy(() => import('@/pages/EmployeeProfile'))
 const AdminCompanies = lazy(() => import('@/pages/AdminCompanies'))
 const AdminBranches = lazy(() => import('@/pages/AdminBranches'))
 const AdminDepartments = lazy(() => import('@/pages/AdminDepartments'))
@@ -153,7 +152,7 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route
     key="hr-pr"
     path="profile"
-    element={withSuspense(<EmployeeProfile />, <ProfileRouteFallback />)}
+    element={withSuspense(<AdminEmployeeProfile />, <ProfileRouteFallback />)}
   />,
   <Route
     key="hr-pr-id"

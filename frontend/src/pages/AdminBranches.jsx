@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { getBranches, getCompanies, getEmployees, createBranch, updateBranch, deleteBranch, profileImageUrl, departmentLogoUrl } from '@/api'
+import { isRosterStaffMember } from '@/lib/rosterStaff'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 import { FIELD_SELECT_CLASS_H8, FIELD_SELECT_CLASS_H10 } from '@/lib/fieldClasses'
@@ -76,7 +77,7 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
     return map
   }, [companies])
   const filtered = useMemo(() => {
-    const list = (employees || []).filter((e) => e.role === 'employee')
+    const list = (employees || []).filter((e) => isRosterStaffMember(e))
     const q = search.trim().toLowerCase()
     if (!q) return list
     const haystack = (emp) => `${emp.name || ''} ${emp.employee_code || ''} ${emp.email || ''} ${emp.position || ''} ${emp.department || ''}`.toLowerCase()

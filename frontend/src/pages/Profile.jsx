@@ -69,6 +69,7 @@ import {
   sanitizePassword,
 } from '@/validation'
 import { formatScheduleLabel12h } from '@/lib/timeFormat'
+import { isRosterStaffMember } from '@/lib/rosterStaff'
 
 const ACCEPT_IMAGE = 'image/jpeg,image/jpg,image/png,image/gif,image/webp'
 const MAX_FILE_MB = 2
@@ -336,7 +337,7 @@ export default function Profile() {
 
   // Load face image for employees with registered face
   useEffect(() => {
-    if (!user?.has_face || user?.role !== 'employee') {
+    if (!user?.has_face || !isRosterStaffMember(user)) {
       setFaceImage(null)
       return
     }
@@ -348,7 +349,7 @@ export default function Profile() {
       })
       .catch(() => setFaceImage(null))
       .finally(() => setFaceLoading(false))
-  }, [user?.id, user?.has_face, user?.role])
+  }, [user?.id, user?.has_face, user?.role, user?.is_roster_staff])
 
   const initials = user?.name
     ? user.name.trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2)
@@ -1276,7 +1277,7 @@ export default function Profile() {
       </div>
 
       {/* Registered face (Employee only) */}
-      {activeTab === 'account' && user?.role === 'employee' && (
+      {activeTab === 'account' && isRosterStaffMember(user) && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">

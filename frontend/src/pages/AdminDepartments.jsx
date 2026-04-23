@@ -29,6 +29,7 @@ import { RoleBadge } from '@/components/RoleBadge'
 import { useToast } from '@/components/ui/use-toast'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { cn } from '@/lib/utils'
+import { isRosterStaffMember } from '@/lib/rosterStaff'
 import { FIELD_SELECT_CLASS_H8, FIELD_SELECT_CLASS_H10, FIELD_TEXTAREA_CLASS_SM } from '@/lib/fieldClasses'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
@@ -516,12 +517,12 @@ export default function AdminDepartments() {
   )
 
   const assignExcludedCount = useMemo(() => {
-    return assignList.filter((e) => e.role === 'employee').filter((emp) => isExcludedFromAssignPool(emp)).length
+    return assignList.filter((e) => isRosterStaffMember(e)).filter((emp) => isExcludedFromAssignPool(emp)).length
   }, [assignList, isExcludedFromAssignPool])
 
   const assignRows = useMemo(() => {
     return assignList
-      .filter((e) => e.role === 'employee')
+      .filter((e) => isRosterStaffMember(e))
       .filter((emp) => !isExcludedFromAssignPool(emp))
       .filter((emp) => {
         const q = assignSearchQuery.trim().toLowerCase()
@@ -602,7 +603,7 @@ export default function AdminDepartments() {
   const assignCounts = useMemo(() => {
     let available = 0, assigned = 0, unavailable = 0
     assignList
-      .filter((e) => e.role === 'employee')
+      .filter((e) => isRosterStaffMember(e))
       .filter((emp) => !isExcludedFromAssignPool(emp))
       .forEach((emp) => {
         const assignedToCurrent = String(emp.department_id ?? '') === String(assignDepartment?.id ?? '')
@@ -1640,7 +1641,7 @@ export default function AdminDepartments() {
               {(() => {
                 // Employees in this dept
                 const deptEmps = employees.filter(
-                  (e) => e.role === 'employee' && (
+                  (e) => isRosterStaffMember(e) && (
                     sameUserId(e.department_id, headDepartment?.id) ||
                     String(e.department || '').trim().toLowerCase() === String(headDepartment?.name || '').trim().toLowerCase()
                   )

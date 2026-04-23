@@ -52,6 +52,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { RoleBadge } from '@/components/RoleBadge'
 import { cn } from '@/lib/utils'
+import { isRosterStaffMember } from '@/lib/rosterStaff'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
   ADMIN_FORM_DIALOG_DESC_CLASS,
@@ -1652,7 +1653,7 @@ export default function AdminCompanies() {
   }
 
   // All employees eligible for the Company Head picker (all roles=employee; conflict detection done inside the dialog)
-  const assignableEmployees = useMemo(() => allEmployees.filter((e) => e.role === 'employee'), [allEmployees])
+  const assignableEmployees = useMemo(() => allEmployees.filter((e) => isRosterStaffMember(e)), [allEmployees])
 
   // Employees tab: grouped by role (Company Head → Branch Heads → Department Heads → Employees)
   const groupedEmployees = useMemo(() => {

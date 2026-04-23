@@ -50,6 +50,7 @@ import {
   getBranches,
   getDepartments,
   bulkUpdateAdminUserAccounts,
+  profileImageUrl,
 } from '@/api'
 
 const HR_ROLE_OPTIONS = [
@@ -212,9 +213,10 @@ function UserAvatar({ name, url }) {
       .join('')
       .slice(0, 2)
       .toUpperCase() || '?'
-  return url ? (
+  const src = url ? profileImageUrl(url) : undefined
+  return src ? (
     <img
-      src={url}
+      src={src}
       alt=""
       className="size-9 shrink-0 rounded-full border-2 border-border/80 object-cover shadow-sm"
     />

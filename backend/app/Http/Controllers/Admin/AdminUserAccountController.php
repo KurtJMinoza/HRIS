@@ -477,7 +477,7 @@ class AdminUserAccountController extends Controller
                 ->whereExists(fn ($q) => $q->select(DB::raw(1))
                     ->from('departments')
                     ->whereColumn('departments.department_head_id', 'users.id')),
-            'employee' => $query->where('role', User::ROLE_EMPLOYEE)
+            'employee' => $query->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
                 ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('companies')->whereColumn('companies.company_head_id', 'users.id'))
                 ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('branches')->whereColumn('branches.branch_manager_id', 'users.id'))
                 ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('departments')->whereColumn('departments.department_head_id', 'users.id')),

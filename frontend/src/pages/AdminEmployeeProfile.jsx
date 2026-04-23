@@ -744,7 +744,8 @@ export default function AdminEmployeeProfile() {
   const canEditProfile = isAdminOrHr || (isOwnProfile && hasSelfEditPermission)
   const canEditProfilePhoto = isAdminOrHr
     || (isOwnProfile && (permissions.includes('profile.picture.edit') || hasSelfEditPermission))
-  const canEditEmployeeRecord = isAdminOrHr || (isOwnProfile && permissions.includes('employees.edit'))
+  // Self-profile editing should honor profile-level permissions, not only employees.edit.
+  const canEditEmployeeRecord = isAdminOrHr || (isOwnProfile && hasSelfEditPermission)
   const canViewPayrollHistory = (user?.permissions ?? []).includes('payroll.view')
   /** Backend: `employees.sensitive` + `profile.salary.edit`; Laravel `admin` role bypasses checks server-side. */
   const canEditSalaryDetails =
@@ -3708,18 +3709,7 @@ export default function AdminEmployeeProfile() {
       hasText(form.city) ||
       hasText(form.province) ||
       hasText(form.postal_code)
-    if (hasPartialStructuredAddress) {
-      const missing =
-        !hasText(form.street_address) ||
-        !hasText(form.barangay) ||
-        !hasText(form.city) ||
-        !hasText(form.province) ||
-        !hasText(form.postal_code)
-      if (missing) {
-        toast.error('Complete home address is required (Street, Barangay, City, Province, Postal Code).')
-        return
-      }
-    }
+    // Allow partial structured address updates; do not hard-block profile save.
     setSaving(true)
     profileSaveRollbackRef.current = employee ? { ...employee } : null
     try {
@@ -5113,7 +5103,7 @@ export default function AdminEmployeeProfile() {
                     type="button"
                     className="bg-[#0A0A0A] text-white shadow-sm hover:bg-[#171717] focus-visible:ring-2 focus-visible:ring-[#0A0A0A]/35 focus-visible:ring-offset-2 dark:bg-[#0A0A0A] dark:text-white dark:hover:bg-neutral-800"
                     onClick={handleSave}
-                    disabled={saving || !canEditEmployeeRecord}
+                    disabled={saving || !canEditProfile}
                   >
                     {saving && saveStatus !== 'saved' ? 'Saving…' : saveStatus === 'saved' ? 'Saved' : 'Save Changes'}
                   </Button>
