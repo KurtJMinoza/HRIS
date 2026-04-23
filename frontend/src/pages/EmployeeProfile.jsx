@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Loader2, User, UserRound, Briefcase, Gift, IdCard, Users, ShieldCheck, MapPin, Calendar, Clock, FileText, Phone, Zap, Plus, Upload, Eye, Pencil, Trash2, CheckCircle2, X, Mail, Flag, Home, Hash, Heart, Folder, FileUp, FileDown, Archive, AlertTriangle, Award, Gavel, HeartPulse, LineChart, Camera, FilePenLine, CircleDollarSign, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -393,6 +394,38 @@ function getDocumentDisplayName(doc) {
 
 function FieldHint({ children }) {
   return <p className="text-xs text-muted-foreground">{children}</p>
+}
+
+function GovIdUploadProgress({ active, label }) {
+  return (
+    <AnimatePresence initial={false}>
+      {active ? (
+        <motion.div
+          key="gov-id-upload-progress"
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="overflow-hidden border-t border-border/50 bg-muted/15"
+        >
+          <div className="flex items-center gap-2 px-6 py-3 text-sm text-muted-foreground">
+            <Loader2 className="size-4 shrink-0 animate-spin text-primary" aria-hidden />
+            <span>{label}</span>
+          </div>
+          <div className="px-6 pb-3">
+            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <motion.div
+                className="absolute inset-y-0 w-[38%] rounded-full bg-primary"
+                initial={{ x: '-100%' }}
+                animate={{ x: ['-100%', '320%'] }}
+                transition={{ duration: 1.05, repeat: Infinity, ease: 'linear' }}
+              />
+            </div>
+          </div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  )
 }
 
 export default function EmployeeProfile() {
@@ -1923,7 +1956,7 @@ export default function EmployeeProfile() {
       const created = data?.government_id
       if (created?.id) setGovIdDocs((prev) => [created, ...prev])
       void queryClient.invalidateQueries({ queryKey: ['employee-profile-government-ids'] })
-      toast.success('Government ID uploaded.')
+      toast.success('Government ID uploaded and approved.')
       setGovAddOpen(false)
     } catch (e) {
       toast.error(e?.message || 'Failed to upload Government ID.')
@@ -1947,7 +1980,7 @@ export default function EmployeeProfile() {
       const updated = data?.government_id
       if (updated?.id) setGovIdDocs((prev) => prev.map((x) => (x.id === activeGovDoc.id ? updated : x)))
       void queryClient.invalidateQueries({ queryKey: ['employee-profile-government-ids'] })
-      toast.success('Government ID updated.')
+      toast.success('Government ID updated and approved.')
       setGovEditOpen(false)
     } catch (e) {
       toast.error(e?.message || 'Failed to update Government ID.')
@@ -3610,9 +3643,9 @@ export default function EmployeeProfile() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <CardTitle className="text-lg font-semibold text-[#0A0A0A] dark:text-white">Government IDs</CardTitle>
-                <CardDescription className="mt-1">Upload and manage your government-issued IDs for admin verification.</CardDescription>
+                <CardDescription className="mt-1">Upload and manage your government-issued IDs. New uploads are saved as approved on your profile.</CardDescription>
               </div>
-              <Button type="button" size="sm" onClick={openAddGovIdModal} className="gap-1.5">
+              <Button type="button" size="sm" onClick={openAddGovIdModal} className="gap-1.5" disabled={!canEdit}>
                 <Plus className="size-3.5" />
                 Upload ID
               </Button>
@@ -3630,8 +3663,8 @@ export default function EmployeeProfile() {
                   <IdCard className="size-8 text-muted-foreground/50" />
                 </div>
                 <p className="mt-4 text-sm font-medium text-[#0A0A0A] dark:text-white">No government IDs uploaded yet</p>
-                <p className="mt-1 text-xs text-muted-foreground">Upload your first government ID to get started with verification.</p>
-                <Button type="button" variant="outline" size="sm" className="mt-4 gap-1.5" onClick={openAddGovIdModal}>
+                <p className="mt-1 text-xs text-muted-foreground">Upload your first government ID to keep your profile complete.</p>
+                <Button type="button" variant="outline" size="sm" className="mt-4 gap-1.5" onClick={openAddGovIdModal} disabled={!canEdit}>
                   <Upload className="size-3.5" />
                   Upload your first ID
                 </Button>
@@ -3687,10 +3720,10 @@ export default function EmployeeProfile() {
                             <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-muted/60 hover:text-foreground" onClick={() => openPreviewGovIdModal(doc)} aria-label="Preview">
                               <Eye className="size-3.5" />
                             </Button>
-                            <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-muted/60 hover:text-foreground" onClick={() => openEditGovIdModal(doc)} aria-label="Edit" disabled={doc.status === 'approved'}>
+                            <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-muted/60 hover:text-foreground" onClick={() => openEditGovIdModal(doc)} aria-label="Edit" disabled={!canEdit || govIdDocsSaving}>
                               <Pencil className="size-3.5" />
                             </Button>
-                            <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-red-50 hover:text-rose-600 dark:hover:bg-rose-950/30" onClick={() => requestDeleteGovId(doc)} aria-label="Delete" disabled={doc.status === 'approved' || govIdDocsSaving}>
+                            <Button type="button" variant="ghost" size="icon" className="size-8 cursor-pointer text-muted-foreground hover:bg-red-50 hover:text-rose-600 dark:hover:bg-rose-950/30" onClick={() => requestDeleteGovId(doc)} aria-label="Delete" disabled={!canEdit || govIdDocsSaving}>
                               <Trash2 className="size-3.5" />
                             </Button>
                           </div>
@@ -4789,6 +4822,7 @@ export default function EmployeeProfile() {
       </Dialog>
 
       <Dialog open={govAddOpen} onOpenChange={(open) => {
+        if (!open && govIdDocsSaving) return
         setGovAddOpen(open)
         if (!open) {
           setActiveGovDoc(null)
@@ -4805,7 +4839,7 @@ export default function EmployeeProfile() {
             <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
               <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Upload Government ID</DialogTitle>
               <p id="emp-profile-gov-add-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Upload a clear scan or photo (PDF, JPG, or PNG, max 10 MB) for HR verification.
+                Upload a clear scan or photo (PDF, JPG, or PNG, max 10 MB). It will be saved as approved on your profile.
               </p>
             </DialogHeader>
           </div>
@@ -4917,8 +4951,12 @@ export default function EmployeeProfile() {
             </div>
           </div>
 
+          <GovIdUploadProgress active={govIdDocsSaving} label="Uploading your document…" />
+
           <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button type="button" variant="outline" onClick={() => setGovAddOpen(false)}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => setGovAddOpen(false)} disabled={govIdDocsSaving}>
+              Cancel
+            </Button>
             <Button
               type="button"
               className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}
@@ -4942,6 +4980,7 @@ export default function EmployeeProfile() {
       </Dialog>
 
       <Dialog open={govEditOpen} onOpenChange={(open) => {
+        if (!open && govIdDocsSaving) return
         setGovEditOpen(open)
         if (!open) {
           setActiveGovDoc(null)
@@ -4958,7 +4997,7 @@ export default function EmployeeProfile() {
             <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
               <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Edit Government ID</DialogTitle>
               <p id="emp-profile-gov-edit-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Edits resubmit the ID for verification. Approved IDs cannot be edited.
+                Update your details or replace the file. Changes are saved as approved on your profile.
               </p>
             </DialogHeader>
           </div>
@@ -5063,8 +5102,12 @@ export default function EmployeeProfile() {
             </div>
           </div>
 
+          <GovIdUploadProgress active={govIdDocsSaving} label="Saving your changes…" />
+
           <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button type="button" variant="outline" onClick={() => setGovEditOpen(false)}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => setGovEditOpen(false)} disabled={govIdDocsSaving}>
+              Cancel
+            </Button>
             <Button
               type="button"
               className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}

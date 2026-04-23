@@ -117,9 +117,9 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'document_path' => $path,
             'document_mime' => $mime,
             'document_size' => $size,
-            'status' => 'pending',
+            'status' => 'approved',
             'verified_by' => null,
-            'verified_at' => null,
+            'verified_at' => now(),
             'rejection_reason' => null,
         ]);
 
@@ -134,10 +134,6 @@ class EmployeeGovernmentIdDocumentController extends Controller
         /** @var User $user */
         $user = $request->user();
         $doc = EmployeeGovernmentIdDocument::where('id', $id)->where('user_id', $user->id)->firstOrFail();
-
-        if ($doc->status === 'approved') {
-            throw ValidationException::withMessages(['government_id' => ['Approved IDs cannot be edited.']]);
-        }
 
         $validated = $request->validate([
             'id_type' => ['required', 'string', 'max:60'],
@@ -173,10 +169,9 @@ class EmployeeGovernmentIdDocumentController extends Controller
         $doc->issuing_agency = trim((string) $validated['issuing_agency']);
         $doc->expiry_date = $validated['expiry_date'] ?? null;
 
-        // Employee edit re-submits to pending
-        $doc->status = 'pending';
+        $doc->status = 'approved';
         $doc->verified_by = null;
-        $doc->verified_at = null;
+        $doc->verified_at = now();
         $doc->rejection_reason = null;
         $doc->save();
 
@@ -191,10 +186,6 @@ class EmployeeGovernmentIdDocumentController extends Controller
         /** @var User $user */
         $user = $request->user();
         $doc = EmployeeGovernmentIdDocument::where('id', $id)->where('user_id', $user->id)->firstOrFail();
-
-        if ($doc->status === 'approved') {
-            throw ValidationException::withMessages(['government_id' => ['Approved IDs cannot be deleted.']]);
-        }
 
         if ($doc->document_path) {
             Storage::disk('public')->delete($doc->document_path);

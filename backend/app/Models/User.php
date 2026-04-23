@@ -119,6 +119,7 @@ class User extends Authenticatable
         'leave_credits',
         'leave_credits_reset_date',
         'last_login_at',
+        'employee_import_batch_id',
     ];
 
     /**

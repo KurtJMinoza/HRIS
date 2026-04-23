@@ -2361,6 +2361,69 @@ export async function exportAllEmployeesCsv() {
 }
 
 /**
+ * Bulk import employees via CSV/XLSX.
+ * @param {File} file
+ * @returns {Promise<{ message: string, imported: number, failed: number, total_rows: number, errors: Array<{row:number,email:string,name:string,message:string}> }>}
+ */
+export async function importEmployees(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await authenticatedFetch('/admin/employees/import', {
+    method: 'POST',
+    body: formData,
+    timeoutMs: 180000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(firstValidationMessage(data) || data.message || 'Failed to import employees')
+  }
+  clearCachesAfterAdminEmployeeDataChange()
+  return data
+}
+
+/**
+ * Server-side full-sheet preview (same PhpSpreadsheet bounds as import).
+ * @param {File} file
+ * @returns {Promise<{ headers: string[], rows: Record<string, unknown>[], row_count: number, column_count: number }>}
+ */
+export async function previewEmployeeImport(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await authenticatedFetch('/admin/employees/import/preview', {
+    method: 'POST',
+    body: formData,
+    timeoutMs: 120000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(firstValidationMessage(data) || data.message || 'Failed to preview import file')
+  }
+  return data
+}
+
+/**
+ * Remove all employees from a single bulk import (requires `employees.delete`).
+ * @param {string} importBatchId UUID returned from {@link importEmployees}
+ * @returns {Promise<{ message: string, deleted_count: number, deleted_user_ids: number[] }>}
+ */
+export async function rollbackEmployeeImport(importBatchId) {
+  const res = await authenticatedFetch('/admin/employees/import/rollback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ import_batch_id: importBatchId }),
+    timeoutMs: 120000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(firstValidationMessage(data) || data.message || 'Failed to remove imported employees')
+  }
+  clearCachesAfterAdminEmployeeDataChange()
+  return data
+}
+
+/**
  * Download self-service employee profile CSV.
  * @returns {Promise<{ blob: Blob, filename: string }>}
  */

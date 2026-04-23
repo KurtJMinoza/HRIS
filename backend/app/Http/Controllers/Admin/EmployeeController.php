@@ -2482,19 +2482,34 @@ class EmployeeController extends Controller
 
     private function buildLiteOrgMaps(Collection $users): array
     {
-        $companyIds = $users->pluck('company_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
-        $branchIds = $users->pluck('branch_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
         $departmentIds = $users->pluck('department_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
 
-        $companiesById = $companyIds->isEmpty()
-            ? collect()
-            : Company::query()->whereIn('id', $companyIds)->pluck('name', 'id');
-        $branchesById = $branchIds->isEmpty()
-            ? collect()
-            : Branch::query()->whereIn('id', $branchIds)->get(['id', 'name', 'company_id'])->keyBy('id');
         $departmentsById = $departmentIds->isEmpty()
             ? collect()
             : Department::query()->whereIn('id', $departmentIds)->get(['id', 'name', 'branch_id'])->keyBy('id');
+
+        // Branches: include IDs from the user row and from the assigned department (often employees only
+        // have department_id set; branch/company name columns were blank in lite mode when branch_id was null).
+        $branchIds = $users->pluck('branch_id')
+            ->merge($departmentsById->pluck('branch_id'))
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+        $branchesById = $branchIds->isEmpty()
+            ? collect()
+            : Branch::query()->whereIn('id', $branchIds)->get(['id', 'name', 'company_id'])->keyBy('id');
+
+        // Companies: from user.company_id and from every branch row we resolved (so company + branch columns match import).
+        $companyIds = $users->pluck('company_id')
+            ->merge($branchesById->pluck('company_id'))
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+        $companiesById = $companyIds->isEmpty()
+            ? collect()
+            : Company::query()->whereIn('id', $companyIds)->pluck('name', 'id');
 
         $userIds = $users->pluck('id')->map(fn ($id) => (int) $id)->unique()->values()->all();
         $headRoles = ['company' => [], 'branch' => [], 'dept' => []];

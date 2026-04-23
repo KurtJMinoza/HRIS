@@ -1010,6 +1010,7 @@ export default function AdminEmployeeProfile() {
     first_name: '',
     middle_name: '',
     last_name: '',
+    username: '',
     email: '',
     phone_number: '',
     date_of_birth: '',
@@ -1313,6 +1314,7 @@ export default function AdminEmployeeProfile() {
             first_name: found.first_name || firstName || '',
             middle_name: found.middle_name || '',
             last_name: found.last_name || restNames.join(' ') || '',
+            username: found.username || '',
             email: found.email || '',
             phone_number: found.phone_number || '',
             date_of_birth: found.date_of_birth || '',
@@ -1949,6 +1951,7 @@ export default function AdminEmployeeProfile() {
         fields: [
           { label: 'First Name', done: hasText(form.first_name) },
           { label: 'Last Name', done: hasText(form.last_name) },
+          { label: 'Username', done: hasText(form.username) },
           { label: 'Email Address', done: isValidEmailAddress(form.email) },
           { label: 'Phone Number', done: isValidPhMobile(form.phone_number) },
           { label: 'Date of Birth', done: hasText(form.date_of_birth) },
@@ -3727,6 +3730,7 @@ export default function AdminEmployeeProfile() {
         first_name: form.first_name || undefined,
         middle_name: form.middle_name || null,
         last_name: form.last_name || undefined,
+        username: form.username || undefined,
         email: form.email || undefined,
         phone_number: form.phone_number || undefined,
         date_of_birth: form.date_of_birth || null,
@@ -4180,6 +4184,15 @@ export default function AdminEmployeeProfile() {
                     <Input className="h-11" value={form.last_name} onChange={(e) => setForm((f) => ({ ...f, last_name: e.target.value }))} />
                   </div>
                   <div className="space-y-2">
+                  <Label className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <UserRound className="size-4 shrink-0 text-muted-foreground" />
+                    Username
+                    <span className="text-destructive" aria-hidden>*</span>
+                  </Label>
+                  <Input className="h-11" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} />
+                  <FieldHint>Used for login. For imports, this is generated from first name.</FieldHint>
+                </div>
+                <div className="space-y-2">
                     <Label className="flex items-center gap-2 text-sm font-medium text-foreground">
                       <Mail className="size-4 shrink-0 text-muted-foreground" />
                       Email

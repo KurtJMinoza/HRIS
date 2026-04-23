@@ -78,6 +78,7 @@ import {
 import ESignatureCard from '@/components/ESignatureCard'
 import SignaturePadDialog from '@/components/SignaturePadDialog'
 import { TableSkeleton } from '@/components/skeletons'
+import ImportEmployeesModal from '@/components/admin/ImportEmployeesModal'
 import { QRCodeCanvas } from 'qrcode.react'
 import { useToast } from '@/components/ui/use-toast'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
@@ -278,6 +279,7 @@ export default function AdminEmployees() {
   const [employees, setEmployees] = useState([])
   const [error, setError] = useState(null)
   const [exportingCsv, setExportingCsv] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ total: 0, perPage: 20, lastPage: 1 })
   const didInitialEmployeeLoadRef = useRef(false)
@@ -1700,6 +1702,17 @@ export default function AdminEmployees() {
                   />
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground opacity-90 dark:text-primary/65" />
                 </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9"
+                  onClick={() => setImportOpen(true)}
+                  disabled={!canCreateEmployees}
+                  title={canCreateEmployees ? 'Import employees from CSV/XLSX' : 'No create permission'}
+                >
+                  <Upload className="mr-1.5 size-4" />
+                  Import Employees
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -3643,6 +3656,14 @@ export default function AdminEmployees() {
           <QRCodeCanvas value={pendingQrDownload.token} size={256} level="H" includeMargin />
         </div>
       )}
+
+      <ImportEmployeesModal
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        toast={toast}
+        canUndoImport={canDeleteEmployees}
+        onImported={() => queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })}
+      />
 
       {/* Regenerate QR confirmation */}
       <Dialog

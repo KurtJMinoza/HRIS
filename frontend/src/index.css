@@ -142,8 +142,9 @@ html.light #root {
   color-scheme: light;
 }
 
-/* Keep common overlay/card surfaces white in light theme across modules/devices. */
-html.light [data-slot='dialog-content'],
+/* Keep common card/popover surfaces white in light theme across modules/devices.
+   IMPORTANT: do not target [data-slot='dialog-content'] because it is the full-screen
+   dialog container/portal layer; forcing it white washes the whole overlay. */
 html.light [data-slot='popover-content'],
 html.light .rdp,
 html.light .react-calendar {

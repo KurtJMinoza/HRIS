@@ -18,6 +18,7 @@ use App\Http\Controllers\Admin\EmployeeSkillController as AdminEmployeeSkillCont
 use App\Http\Controllers\Admin\EmployeeStatusController;
 use App\Http\Controllers\Admin\GovernmentContributionController;
 use App\Http\Controllers\Admin\HolidayController;
+use App\Http\Controllers\Admin\ImportEmployeeController;
 use App\Http\Controllers\Admin\LeaveController;
 use App\Http\Controllers\Admin\LoanRequestController;
 use App\Http\Controllers\Admin\OvertimeController;
@@ -47,8 +48,8 @@ use App\Http\Controllers\EmployeeProfileController;
 use App\Http\Controllers\EmployeeSkillController;
 use App\Http\Controllers\LivenessController;
 use App\Http\Controllers\MyScheduleController;
-use App\Http\Controllers\PayslipDownloadController;
 use App\Http\Controllers\PasswordResetController;
+use App\Http\Controllers\PayslipDownloadController;
 use App\Http\Controllers\PremiumReportController;
 use App\Http\Controllers\PresenceFilingController;
 use App\Http\Controllers\PublicMediaController;
@@ -234,7 +235,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/employees/{id}/profile', [EmployeeProfileController::class, 'showForViewer']);
             Route::get('/admin/employees/{id}/schedule-rate-preview', [EmployeeController::class, 'scheduleRatePreview']);
         });
-        Route::middleware('permission:employees.create')->post('/admin/employees', [EmployeeController::class, 'store']);
+        Route::middleware('permission:employees.create')->group(function () {
+            Route::post('/admin/employees', [EmployeeController::class, 'store']);
+            Route::post('/admin/employees/import/preview', [ImportEmployeeController::class, 'preview']);
+            Route::post('/admin/employees/import', [ImportEmployeeController::class, 'import']);
+        });
         Route::middleware('permission:employees.edit')->group(function () {
             Route::post('/admin/employees/{id}/qr/regenerate', [EmployeeController::class, 'regenerateQr']);
             Route::delete('/admin/employees/{id}/qr', [EmployeeController::class, 'clearQr']);
@@ -269,6 +274,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:manage-schedules|schedule.assign|employees.edit')->patch('/admin/employees/{id}/schedule', [EmployeeController::class, 'updateSchedule']);
         Route::middleware('permission:employees.delete')->delete('/admin/employees/{id}', [EmployeeController::class, 'destroy']);
+        Route::middleware('permission:employees.delete')->post('/admin/employees/import/rollback', [ImportEmployeeController::class, 'rollback']);
         Route::middleware('permission:employees.transfer')->post('/admin/employees/{id}/transfer', [EmployeeController::class, 'transfer']);
         Route::middleware('permission:employees.password_reset')->post('/admin/employees/{id}/reset-password', [EmployeeController::class, 'resetPassword']);
 
