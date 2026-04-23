@@ -332,8 +332,8 @@ export default function AdminEmployeeCompensationPage() {
   const pendingForActive = pendingAssignments.filter((item) => item.employeeId === activeEmployeeId)
 
   return (
-    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 text-[#0A0A0A] sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6 dark:bg-background dark:text-foreground">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-border dark:bg-card">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
@@ -377,7 +377,7 @@ export default function AdminEmployeeCompensationPage() {
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-border dark:bg-card">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Employees</h2>

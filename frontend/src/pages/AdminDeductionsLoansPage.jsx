@@ -66,7 +66,7 @@ const BTN_PRIMARY =
 const BTN_SECONDARY =
   'border border-border bg-background text-[#0A0A0A] shadow-sm hover:bg-muted/80 [&_svg]:text-[#0A0A0A] dark:border-white/15 dark:bg-card dark:text-slate-100 dark:[&_svg]:text-slate-100 dark:hover:bg-white/10'
 /** Muted supporting copy (still readable on white) */
-const TEXT_MUTED = 'text-[#0A0A0A]/65 dark:text-slate-400'
+const TEXT_MUTED = 'text-[#0A0A0A]/65 dark:text-slate-300'
 
 function daysFromToday(value) {
   const raw = String(value || '').trim()

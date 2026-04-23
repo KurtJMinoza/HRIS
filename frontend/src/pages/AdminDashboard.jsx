@@ -1023,7 +1023,7 @@ export default function AdminDashboard() {
 
       {/* ── Insight row: Today's Leaves · Half-Day Summary · Quick Actions ── */}
       <Motion.div
-        className="grid gap-6 gap-y-8 @sm:grid-cols-2 @xl:grid-cols-3"
+        className="grid items-start gap-6 gap-y-8 @sm:grid-cols-2 @xl:grid-cols-3"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1032,7 +1032,7 @@ export default function AdminDashboard() {
       >
         {/* 1. Today's Leaves */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-          <Card className="h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]">
+          <Card className="h-auto max-h-[620px] gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]">
             <CardHeader className="px-7 pb-6 pt-7">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -1048,7 +1048,7 @@ export default function AdminDashboard() {
                 <CalendarOff className="mt-1 size-4 shrink-0 text-muted-foreground" />
               </div>
             </CardHeader>
-            <CardContent className="space-y-4 px-7 pb-7 pt-0">
+            <CardContent className="min-h-0 space-y-4 overflow-y-auto px-7 pb-7 pt-0 pr-5">
               {todayLeaves.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-emerald-300/45 bg-emerald-500/5 p-5 text-center dark:border-emerald-500/40 dark:bg-emerald-900/20">
                   <p className="text-base font-normal leading-[1.55] text-foreground">No leaves today. Everyone is present.</p>
@@ -1237,7 +1237,7 @@ export default function AdminDashboard() {
 
         {/* 4. Required Actions Before Confirmation */}
         <Motion.div variants={itemVariants}>
-          <Card className="h-full w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]">
+          <Card className="h-auto max-h-[620px] w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]">
             <CardHeader className="px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5 lg:px-7 lg:pb-6 lg:pt-7">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div className="min-w-0">
@@ -1259,7 +1259,7 @@ export default function AdminDashboard() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-0 sm:gap-4 sm:px-5 sm:pb-5 lg:px-7 lg:pb-7">
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-0 pr-3 sm:gap-4 sm:px-5 sm:pb-5 sm:pr-4 lg:px-7 lg:pb-7 lg:pr-5">
               {loading && !data ? (
                 <div className="rounded-xl border border-border/70 bg-muted/15 p-4 text-xs font-normal leading-relaxed text-muted-foreground sm:rounded-2xl sm:p-5 sm:text-sm sm:leading-[1.55]">
                   Loading required actions...

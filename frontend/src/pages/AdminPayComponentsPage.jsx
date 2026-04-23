@@ -421,8 +421,8 @@ export default function AdminPayComponentsPage() {
   const categoryOptions = form.type === 'deduction' ? DEDUCTION_CATEGORY_OPTIONS : CATEGORY_OPTIONS
 
   return (
-    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 text-[#0A0A0A] sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6 dark:bg-background dark:text-foreground">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-border dark:bg-card">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
@@ -451,7 +451,7 @@ export default function AdminPayComponentsPage() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-border dark:bg-card">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Component List</h2>

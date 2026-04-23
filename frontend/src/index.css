@@ -364,6 +364,56 @@ html:not(.dark) :where(
   background-color: #09090d !important;
 }
 
+/* Global dark-theme neutralization for legacy blue/slate utility surfaces across modules.
+   Keeps dark mode charcoal/neutral instead of blue-tinted panels/gradients. */
+.dark [class*="dark:bg-slate-"],
+.dark [class*="dark:bg-blue-"],
+.dark [class*="dark:bg-indigo-"],
+.dark [class*="dark:bg-violet-"],
+.dark [class*="dark:bg-sky-"],
+.dark [class*="dark:bg-cyan-"] {
+  background-color: var(--card) !important;
+}
+
+.dark [class*="dark:bg-slate-"][class*="/"],
+.dark [class*="dark:bg-blue-"][class*="/"],
+.dark [class*="dark:bg-indigo-"][class*="/"],
+.dark [class*="dark:bg-violet-"][class*="/"],
+.dark [class*="dark:bg-sky-"][class*="/"],
+.dark [class*="dark:bg-cyan-"][class*="/"] {
+  background-color: color-mix(in oklab, var(--card) 88%, transparent) !important;
+}
+
+.dark [class*="dark:from-slate-"],
+.dark [class*="dark:from-blue-"],
+.dark [class*="dark:from-indigo-"],
+.dark [class*="dark:from-violet-"],
+.dark [class*="dark:from-sky-"],
+.dark [class*="dark:from-cyan-"] {
+  --tw-gradient-from: color-mix(in oklab, var(--background) 92%, #000 8%) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: color-mix(in oklab, var(--background) 92%, #000 8% / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+}
+
+.dark [class*="dark:via-slate-"],
+.dark [class*="dark:via-blue-"],
+.dark [class*="dark:via-indigo-"],
+.dark [class*="dark:via-violet-"],
+.dark [class*="dark:via-sky-"],
+.dark [class*="dark:via-cyan-"] {
+  --tw-gradient-via: color-mix(in oklab, var(--card) 94%, #000 6%) var(--tw-gradient-via-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-via), var(--tw-gradient-to) !important;
+}
+
+.dark [class*="dark:to-slate-"],
+.dark [class*="dark:to-blue-"],
+.dark [class*="dark:to-indigo-"],
+.dark [class*="dark:to-violet-"],
+.dark [class*="dark:to-sky-"],
+.dark [class*="dark:to-cyan-"] {
+  --tw-gradient-to: color-mix(in oklab, var(--background) 90%, #000 10%) var(--tw-gradient-to-position) !important;
+}
+
 /* Dark theme: legible placeholder text (fixes "secret message" contrast) */
 .dark input::placeholder,
 .dark textarea::placeholder {

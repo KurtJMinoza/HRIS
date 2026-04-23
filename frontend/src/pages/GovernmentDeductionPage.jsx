@@ -507,7 +507,7 @@ export default function AdminGovernmentContributions() {
   )
 
   return (
-    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6 3xl:text-[1.0625rem] 4xl:px-12 print:max-w-none print:bg-white">
+    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 text-[#0A0A0A] sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6 3xl:text-[1.0625rem] 4xl:px-12 print:max-w-none print:bg-white dark:bg-background dark:text-foreground">
       {/* Fluid inside layout outlet; mobile-first; 3xl/4xl scales type for TV / screen share. */}
       <div className="mb-1 flex flex-col gap-4 sm:mb-0 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
         <div className="min-w-0 flex-1">

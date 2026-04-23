@@ -59,10 +59,10 @@ import {
 
 /** Full-width shell aligned with Government Deduction / Pay Cycles */
 const PAYSLIP_MODULE_SHELL =
-  'w-full min-w-0 max-w-none bg-white px-3 py-4 sm:px-4 md:px-5 lg:px-6 lg:py-5'
+  'w-full min-w-0 max-w-none bg-white px-3 py-4 text-[#0A0A0A] sm:px-4 md:px-5 lg:px-6 lg:py-5 dark:bg-background dark:text-foreground'
 const PAYSLIP_STACK = 'space-y-5 sm:space-y-6 lg:space-y-8'
 const PAYSLIP_PREVIEW_DIALOG =
-  '!max-w-[min(88rem,calc(100vw-1.5rem))] w-full overflow-hidden border-slate-200/90 bg-white p-0 shadow-xl shadow-slate-900/[0.07] sm:!max-w-[min(88rem,calc(100vw-2rem))]'
+  '!max-w-[min(88rem,calc(100vw-1.5rem))] w-full overflow-hidden border-slate-200/90 bg-white p-0 shadow-xl shadow-slate-900/[0.07] sm:!max-w-[min(88rem,calc(100vw-2rem))] dark:border-border dark:bg-card dark:shadow-black/40'
 
 const CARD_SHELL =
   'rounded-2xl border border-slate-200/90 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-950 dark:hover:shadow-lg'
