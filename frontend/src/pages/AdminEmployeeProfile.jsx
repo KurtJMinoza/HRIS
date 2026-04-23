@@ -1952,7 +1952,7 @@ export default function AdminEmployeeProfile() {
           { label: 'First Name', done: hasText(form.first_name) },
           { label: 'Last Name', done: hasText(form.last_name) },
           { label: 'Username', done: hasText(form.username) },
-          { label: 'Email Address', done: isValidEmailAddress(form.email) },
+          { label: 'Email Address', done: !hasText(form.email) || isValidEmailAddress(form.email) },
           { label: 'Phone Number', done: isValidPhMobile(form.phone_number) },
           { label: 'Date of Birth', done: hasText(form.date_of_birth) },
           { label: 'Gender', done: hasText(form.gender) },
@@ -4196,11 +4196,15 @@ export default function AdminEmployeeProfile() {
                     <Label className="flex items-center gap-2 text-sm font-medium text-foreground">
                       <Mail className="size-4 shrink-0 text-muted-foreground" />
                       Email
-                      <span className="text-destructive" aria-hidden>*</span>
+                      <span className="text-xs font-normal text-muted-foreground">(optional)</span>
                     </Label>
                     <Input className="h-11" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
-                    <FieldHint>Login and notifications. Must be unique across employees.</FieldHint>
-                    <p className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Circle className="size-2 fill-current" />Email is verified and active</p>
+                    <FieldHint>Optional. If provided, it must be unique across employees.</FieldHint>
+                    {hasText(form.email) ? (
+                      <p className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Circle className="size-2 fill-current" />Email is verified and active</p>
+                    ) : (
+                      <p className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Circle className="size-2 fill-current" />No email on file</p>
+                    )}
                   </div>
                   <div className="space-y-2 @sm:col-span-2">
                     <Label className="flex items-center gap-2 text-sm font-medium text-foreground">
