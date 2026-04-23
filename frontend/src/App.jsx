@@ -909,6 +909,18 @@ function SmartDTRPreview({ className }) {
             ))}
           </div>
 
+          <p className="pb-4 text-center text-[11px] text-white/45">
+            Developed by{' '}
+            <a
+              href="https://www.facebook.com/kurtjerelle"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-teal-300 transition-colors hover:text-teal-200"
+            >
+              Kurt Jerelle Minoza
+            </a>
+          </p>
+
         </div>
       </div>{/* end scrollable body */}
 
