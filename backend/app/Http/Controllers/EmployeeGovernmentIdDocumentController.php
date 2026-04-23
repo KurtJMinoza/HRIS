@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\User;
+use App\Services\GovernmentIdFormatter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -34,8 +35,22 @@ class EmployeeGovernmentIdDocumentController extends Controller
         ];
     }
 
-    private function normalizeIdNumber(string $value): string
+    /**
+     * For SSS / PhilHealth / Pag-IBIG / TIN we auto-format raw input (digits,
+     * extra dashes, spaces) into the canonical dashed form before persisting,
+     * so the stored value always matches the masks the UI displays.
+     * Other ID types (Passport, PRC, etc.) are stored as typed.
+     */
+    private function normalizeIdNumber(string $type, string $value): string
     {
+        $canon = GovernmentIdFormatter::canonicalType($type);
+        if ($canon !== null) {
+            $formatted = GovernmentIdFormatter::format($canon, $value);
+            if ($formatted !== null) {
+                return $formatted;
+            }
+        }
+
         return trim($value);
     }
 
@@ -46,24 +61,11 @@ class EmployeeGovernmentIdDocumentController extends Controller
             throw ValidationException::withMessages(['id_number' => ['ID number is required.']]);
         }
 
-        $t = mb_strtolower(trim($type));
-        $patterns = [
-            'sss' => '/^\d{2}-\d{7}-\d$/u',               // 00-0000000-0
-            'tin' => '/^\d{3}-\d{3}-\d{3}$/u',            // 000-000-000
-            'philhealth' => '/^\d{4}-\d{4}-\d{4}$/u',     // 0000-0000-0000
-            'pag-ibig' => '/^\d{4}-\d{4}-\d{4}$/u',       // 0000-0000-0000
-            'pagibig' => '/^\d{4}-\d{4}-\d{4}$/u',
-        ];
-
-        if (array_key_exists($t, $patterns) && ! preg_match($patterns[$t], $v)) {
-            $msg = match ($t) {
-                'sss' => 'SSS format must be 00-0000000-0.',
-                'tin' => 'TIN format must be 000-000-000.',
-                'philhealth' => 'PhilHealth format must be 0000-0000-0000.',
-                'pag-ibig', 'pagibig' => 'Pag-IBIG format must be 0000-0000-0000.',
-                default => 'Invalid ID number format.',
-            };
-            throw ValidationException::withMessages(['id_number' => [$msg]]);
+        $canon = GovernmentIdFormatter::canonicalType($type);
+        if ($canon !== null && ! GovernmentIdFormatter::isValidFormatted($canon, $v)) {
+            throw ValidationException::withMessages([
+                'id_number' => [GovernmentIdFormatter::formatHint($canon) ?? 'Invalid ID number format.'],
+            ]);
         }
     }
 
@@ -95,9 +97,11 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'document_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
-        $this->validateIdNumberByType($validated['id_type'], $validated['id_number']);
-
-        $idNumber = $this->normalizeIdNumber((string) $validated['id_number']);
+        // Canonicalize before validating so "09-1234567-8" and "0912345678"
+        // both pass the SSS/PhilHealth/Pag-IBIG/TIN masks.
+        $idType = trim((string) $validated['id_type']);
+        $idNumber = $this->normalizeIdNumber($idType, (string) $validated['id_number']);
+        $this->validateIdNumberByType($idType, $idNumber);
         $exists = EmployeeGovernmentIdDocument::where('user_id', $user->id)->whereRaw('LOWER(id_number) = ?', [mb_strtolower($idNumber)])->exists();
         if ($exists) {
             throw ValidationException::withMessages(['id_number' => ['Duplicate ID number for this employee.']]);
@@ -110,7 +114,7 @@ class EmployeeGovernmentIdDocumentController extends Controller
 
         $doc = EmployeeGovernmentIdDocument::create([
             'user_id' => $user->id,
-            'id_type' => trim((string) $validated['id_type']),
+            'id_type' => $idType,
             'id_number' => $idNumber,
             'issuing_agency' => trim((string) $validated['issuing_agency']),
             'expiry_date' => $validated['expiry_date'] ?? null,
@@ -143,9 +147,10 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'document_file' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
-        $this->validateIdNumberByType($validated['id_type'], $validated['id_number']);
+        $idType = trim((string) $validated['id_type']);
+        $idNumber = $this->normalizeIdNumber($idType, (string) $validated['id_number']);
+        $this->validateIdNumberByType($idType, $idNumber);
 
-        $idNumber = $this->normalizeIdNumber((string) $validated['id_number']);
         $exists = EmployeeGovernmentIdDocument::where('user_id', $user->id)
             ->where('id', '!=', $doc->id)
             ->whereRaw('LOWER(id_number) = ?', [mb_strtolower($idNumber)])
@@ -164,7 +169,7 @@ class EmployeeGovernmentIdDocumentController extends Controller
             $doc->document_size = (int) $file->getSize();
         }
 
-        $doc->id_type = trim((string) $validated['id_type']);
+        $doc->id_type = $idType;
         $doc->id_number = $idNumber;
         $doc->issuing_agency = trim((string) $validated['issuing_agency']);
         $doc->expiry_date = $validated['expiry_date'] ?? null;

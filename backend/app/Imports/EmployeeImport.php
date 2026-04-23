@@ -7,11 +7,13 @@ use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
 use App\Models\EmployeeGovernmentId;
+use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\EmployeeTaxInfo;
 use App\Models\PayCycle;
 use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Services\DataScopeService;
+use App\Services\GovernmentIdFormatter;
 use Carbon\Carbon;
 use DateTimeInterface;
 use Illuminate\Support\Collection;
@@ -344,10 +346,25 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'rice_allowance' => $this->parseDecimal($this->value($row, ['rice_allowance'])),
             'transport_allowance' => $this->parseDecimal($this->value($row, ['transportation_allowance', 'transport_allowance'])),
             'other_pay_components' => $this->clean($this->value($row, ['other_pay_components'])),
-            'sss_number' => $this->clean($this->value($row, ['sss_number', 'sss'])),
-            'philhealth_number' => $this->clean($this->value($row, ['philhealth_number', 'philhealth'])),
-            'pagibig_number' => $this->clean($this->value($row, ['pag_ibig_number', 'pagibig_number', 'pagibig'])),
-            'tin_number' => $this->clean($this->value($row, ['tin_number', 'tin'])),
+            // Canonicalize to the dashed form the UI / validators expect (see GovernmentIdFormatter).
+            // `format()` returns null when the digit count does not match any supported pattern,
+            // so unreadable cells fall through without polluting the profile.
+            'sss_number' => GovernmentIdFormatter::format(
+                GovernmentIdFormatter::TYPE_SSS,
+                $this->clean($this->value($row, ['sss_number', 'sss']))
+            ),
+            'philhealth_number' => GovernmentIdFormatter::format(
+                GovernmentIdFormatter::TYPE_PHILHEALTH,
+                $this->clean($this->value($row, ['philhealth_number', 'philhealth']))
+            ),
+            'pagibig_number' => GovernmentIdFormatter::format(
+                GovernmentIdFormatter::TYPE_PAGIBIG,
+                $this->clean($this->value($row, ['pag_ibig_number', 'pagibig_number', 'pagibig']))
+            ),
+            'tin_number' => GovernmentIdFormatter::format(
+                GovernmentIdFormatter::TYPE_TIN,
+                $this->clean($this->value($row, ['tin_number', 'tin']))
+            ),
             // Keep these non-null even when import columns are blank.
             'tax_regime' => $this->normalizeTaxRegime($this->value($row, ['tax_regime'])),
             'withholding_method' => $this->normalizeWithholdingMethod($this->value($row, ['withholding_method'])),
@@ -452,6 +469,12 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             ]
         );
 
+        // Mirror each ID into the reviewable government-ID-documents tab as an admin
+        // auto-approved entry. No document file is attached (imports never carry
+        // scans) — the row exists purely so the employee's Gov IDs tab reflects
+        // the imported numbers without requiring a manual admin verify step.
+        $this->autoApproveGovernmentIdDocumentsFromImport($user, $payload);
+
         EmployeeTaxInfo::query()->updateOrCreate(
             ['user_id' => $user->id],
             [
@@ -463,6 +486,67 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 'tax_table_version' => 'train_2018',
             ]
         );
+    }
+
+    /**
+     * Create one admin-approved {@see EmployeeGovernmentIdDocument} per supplied
+     * ID (SSS, PhilHealth, Pag-IBIG, TIN) so the Gov IDs tab no longer shows
+     * them as “Pending verification” right after a bulk import.
+     *
+     * Keyed by (user_id, id_type) via updateOrCreate so re-importing the same
+     * row (or a correction) just updates the existing entry — and still
+     * respects the DB's `(user_id, id_number)` unique key.
+     */
+    private function autoApproveGovernmentIdDocumentsFromImport(User $user, array $payload): void
+    {
+        $mapping = [
+            GovernmentIdFormatter::TYPE_SSS => $payload['sss_number'] ?? null,
+            GovernmentIdFormatter::TYPE_PHILHEALTH => $payload['philhealth_number'] ?? null,
+            GovernmentIdFormatter::TYPE_PAGIBIG => $payload['pagibig_number'] ?? null,
+            GovernmentIdFormatter::TYPE_TIN => $payload['tin_number'] ?? null,
+        ];
+
+        foreach ($mapping as $idType => $idNumber) {
+            $idNumber = is_string($idNumber) ? trim($idNumber) : null;
+            if ($idNumber === null || $idNumber === '') {
+                continue;
+            }
+            if (! GovernmentIdFormatter::isValidFormatted($idType, $idNumber)) {
+                continue;
+            }
+
+            try {
+                EmployeeGovernmentIdDocument::query()->updateOrCreate(
+                    [
+                        'user_id' => (int) $user->id,
+                        'id_type' => $idType,
+                    ],
+                    [
+                        'id_number' => $idNumber,
+                        'issuing_agency' => GovernmentIdFormatter::agencyFor($idType) ?? '—',
+                        'expiry_date' => null,
+                        // No scanned document is attached during bulk import; the
+                        // numbers came from the spreadsheet, not a file upload.
+                        'document_path' => null,
+                        'document_mime' => null,
+                        'document_size' => 0,
+                        'status' => 'approved',
+                        'verified_by' => (int) $this->actor->id,
+                        'verified_at' => now(),
+                        'rejection_reason' => null,
+                    ]
+                );
+            } catch (\Throwable $e) {
+                // A prior row may already own this id_number for this user under a
+                // different type. Log and continue — the core user creation has
+                // already succeeded.
+                Log::warning('Employee import: auto-approve government ID document skipped', [
+                    'user_id' => $user->id,
+                    'id_type' => $idType,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     private function value(array $row, array $aliases): mixed

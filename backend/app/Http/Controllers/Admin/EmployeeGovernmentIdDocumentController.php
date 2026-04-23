@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\Concerns\AssertsEmployeeOrgScope;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\User;
+use App\Services\GovernmentIdFormatter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -39,6 +40,39 @@ class EmployeeGovernmentIdDocumentController extends Controller
         ];
     }
 
+    /**
+     * Auto-format SSS / PhilHealth / Pag-IBIG / TIN input into the canonical
+     * dashed form ({@see GovernmentIdFormatter}) so manual uploads match the
+     * display mask used in the Gov IDs tab and in bulk imports.
+     */
+    private function normalizeIdNumberForType(string $type, string $value): string
+    {
+        $canon = GovernmentIdFormatter::canonicalType($type);
+        if ($canon !== null) {
+            $formatted = GovernmentIdFormatter::format($canon, $value);
+            if ($formatted !== null) {
+                return $formatted;
+            }
+        }
+
+        return trim($value);
+    }
+
+    private function validateIdNumberByType(string $type, ?string $value): void
+    {
+        $v = $value ? trim($value) : '';
+        if ($v === '') {
+            throw ValidationException::withMessages(['id_number' => ['ID number is required.']]);
+        }
+
+        $canon = GovernmentIdFormatter::canonicalType($type);
+        if ($canon !== null && ! GovernmentIdFormatter::isValidFormatted($canon, $v)) {
+            throw ValidationException::withMessages([
+                'id_number' => [GovernmentIdFormatter::formatHint($canon) ?? 'Invalid ID number format.'],
+            ]);
+        }
+    }
+
     public function index(Request $request, int $userId): JsonResponse
     {
         $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
@@ -67,7 +101,10 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'document_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
-        $idNumber = trim((string) $validated['id_number']);
+        $idType = trim((string) $validated['id_type']);
+        $idNumber = $this->normalizeIdNumberForType($idType, (string) $validated['id_number']);
+        $this->validateIdNumberByType($idType, $idNumber);
+
         $exists = EmployeeGovernmentIdDocument::where('user_id', $employee->id)->whereRaw('LOWER(id_number) = ?', [mb_strtolower($idNumber)])->exists();
         if ($exists) {
             throw ValidationException::withMessages(['id_number' => ['Duplicate ID number for this employee.']]);
@@ -78,18 +115,19 @@ class EmployeeGovernmentIdDocumentController extends Controller
         $mime = $file->getClientMimeType() ?: $file->getMimeType();
         $size = (int) $file->getSize();
 
+        // Admin-submitted uploads are auto-approved on create; the admin is the verifier.
         $doc = EmployeeGovernmentIdDocument::create([
             'user_id' => $employee->id,
-            'id_type' => trim((string) $validated['id_type']),
+            'id_type' => $idType,
             'id_number' => $idNumber,
             'issuing_agency' => trim((string) $validated['issuing_agency']),
             'expiry_date' => $validated['expiry_date'] ?? null,
             'document_path' => $path,
             'document_mime' => $mime,
             'document_size' => $size,
-            'status' => 'pending',
-            'verified_by' => null,
-            'verified_at' => null,
+            'status' => 'approved',
+            'verified_by' => (int) $request->user()->id,
+            'verified_at' => now(),
             'rejection_reason' => null,
         ]);
 
@@ -113,7 +151,10 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'document_file' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
-        $idNumber = trim((string) $validated['id_number']);
+        $idType = trim((string) $validated['id_type']);
+        $idNumber = $this->normalizeIdNumberForType($idType, (string) $validated['id_number']);
+        $this->validateIdNumberByType($idType, $idNumber);
+
         $exists = EmployeeGovernmentIdDocument::where('user_id', $employee->id)
             ->where('id', '!=', $doc->id)
             ->whereRaw('LOWER(id_number) = ?', [mb_strtolower($idNumber)])
@@ -132,15 +173,15 @@ class EmployeeGovernmentIdDocumentController extends Controller
             $doc->document_size = (int) $file->getSize();
         }
 
-        $doc->id_type = trim((string) $validated['id_type']);
+        $doc->id_type = $idType;
         $doc->id_number = $idNumber;
         $doc->issuing_agency = trim((string) $validated['issuing_agency']);
         $doc->expiry_date = $validated['expiry_date'] ?? null;
 
-        // Admin edit resets to pending unless later verified.
-        $doc->status = 'pending';
-        $doc->verified_by = null;
-        $doc->verified_at = null;
+        // Admin edits stay auto-approved; the editing admin is the new verifier.
+        $doc->status = 'approved';
+        $doc->verified_by = (int) $request->user()->id;
+        $doc->verified_at = now();
         $doc->rejection_reason = null;
         $doc->save();
 
