@@ -745,13 +745,13 @@ export default function AdminDashboard() {
 
   return (
     <Motion.div
-      className="space-y-1.5 text-foreground dark:text-zinc-50 @md:space-y-2"
+      className="space-y-1 text-foreground dark:text-zinc-50 @md:space-y-1.5"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
     >
       <Motion.div
-        className="mb-0 flex flex-col gap-1 pt-0 @md:flex-row @md:items-start @md:justify-between"
+        className="mb-0 flex flex-col gap-0.5 pt-0 @md:flex-row @md:items-start @md:justify-between"
         variants={itemVariants}
       >
         <div className="space-y-0.5 @md:space-y-1">
@@ -775,7 +775,7 @@ export default function AdminDashboard() {
               <RoleBadge user={user} size="md" className="shrink-0" />
             ) : null}
           </div>
-          <p className="max-w-2xl text-[15px] font-normal leading-[1.55] text-muted-foreground">
+          <p className="max-w-2xl text-sm font-normal leading-snug text-muted-foreground">
             {isHrAdmin
               ? 'Real-time insight into employees, attendance, and daily workforce activity.'
               : hrRole === 'department_head'
@@ -1031,8 +1031,11 @@ export default function AdminDashboard() {
         transition={scrollRevealTransition}
       >
         {/* 1. Today's Leaves */}
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-          <Card className="h-auto max-h-[620px] gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="self-start">
+          <Card className={cn(
+            'h-auto gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]',
+            todayLeaves.length > 0 ? 'max-h-[620px]' : 'max-h-none',
+          )}>
             <CardHeader className="px-7 pb-6 pt-7">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -1048,7 +1051,10 @@ export default function AdminDashboard() {
                 <CalendarOff className="mt-1 size-4 shrink-0 text-muted-foreground" />
               </div>
             </CardHeader>
-            <CardContent className="min-h-0 space-y-4 overflow-y-auto px-7 pb-7 pt-0 pr-5">
+            <CardContent className={cn(
+              'min-h-0 space-y-4 px-7 pb-7 pt-0 pr-5',
+              todayLeaves.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
+            )}>
               {todayLeaves.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-emerald-300/45 bg-emerald-500/5 p-5 text-center dark:border-emerald-500/40 dark:bg-emerald-900/20">
                   <p className="text-base font-normal leading-[1.55] text-foreground">No leaves today. Everyone is present.</p>
@@ -1225,7 +1231,7 @@ export default function AdminDashboard() {
         </Motion.div>
 
         {/* 3. Expiring Contracts */}
-        <Motion.div variants={itemVariants}>
+        <Motion.div variants={itemVariants} className="self-start">
           <ExpiringContractsCard
             loading={loading && !data}
             contracts={expiringContracts}
@@ -1236,8 +1242,11 @@ export default function AdminDashboard() {
         </Motion.div>
 
         {/* 4. Required Actions Before Confirmation */}
-        <Motion.div variants={itemVariants}>
-          <Card className="h-auto max-h-[620px] w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]">
+        <Motion.div variants={itemVariants} className="self-start">
+          <Card className={cn(
+            'h-auto w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]',
+            requiredConfirmationActions.length > 0 ? 'max-h-[620px]' : 'max-h-none',
+          )}>
             <CardHeader className="px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5 lg:px-7 lg:pb-6 lg:pt-7">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div className="min-w-0">
@@ -1259,7 +1268,10 @@ export default function AdminDashboard() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-0 pr-3 sm:gap-4 sm:px-5 sm:pb-5 sm:pr-4 lg:px-7 lg:pb-7 lg:pr-5">
+            <CardContent className={cn(
+              'flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 pt-0 pr-3 sm:gap-4 sm:px-5 sm:pb-5 sm:pr-4 lg:px-7 lg:pb-7 lg:pr-5',
+              requiredConfirmationActions.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
+            )}>
               {loading && !data ? (
                 <div className="rounded-xl border border-border/70 bg-muted/15 p-4 text-xs font-normal leading-relaxed text-muted-foreground sm:rounded-2xl sm:p-5 sm:text-sm sm:leading-[1.55]">
                   Loading required actions...
