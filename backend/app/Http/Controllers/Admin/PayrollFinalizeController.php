@@ -46,6 +46,9 @@ class PayrollFinalizeController extends Controller
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
             'refresh_token' => ['nullable', 'string', 'max:120'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'search' => ['nullable', 'string', 'max:120'],
         ]);
 
         $v = $this->applyCompanyHeadDefaultScope($request, $v);
@@ -89,6 +92,9 @@ class PayrollFinalizeController extends Controller
                 isset($v['employee_id']) ? (int) $v['employee_id'] : null,
                 $periodInput,
                 $request->user(),
+                isset($v['page']) ? (int) $v['page'] : 1,
+                isset($v['per_page']) ? (int) $v['per_page'] : 12,
+                isset($v['search']) ? (string) $v['search'] : null,
             );
 
             Log::info('Payroll finalize preview: response ready', [

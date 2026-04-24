@@ -373,6 +373,9 @@ export default function AdminFinalizePayrollPage() {
           const data = await adminPreviewFinalizePayroll({
             ...effectivePayload,
             refresh_token: refreshToken,
+            page,
+            per_page: pageSize,
+            search: search.trim() || undefined,
           })
           if (cancelled) return
           setPreview(data)
@@ -393,7 +396,7 @@ export default function AdminFinalizePayrollPage() {
       cancelled = true
     }
     // previewScopeKey covers all finalize preview inputs; avoids effect churn from object identity.
-  }, [canFinalizePayroll, isAdmin, previewScopeKey])
+  }, [canFinalizePayroll, isAdmin, previewScopeKey, page, pageSize, search])
 
   // Real-time sync: when attendance logs/corrections change, the preview must recompute.
   // Finalize payroll already supports a cache-busting `refresh_token`; we auto-rotate it
@@ -434,26 +437,19 @@ export default function AdminFinalizePayrollPage() {
   )
   const selectedCompanyLogo = companyLogoUrl(selectedCompany)
 
-  const filtered = useMemo(() => {
-    const ordered = [...employees].sort((a, b) => {
+  const pageRows = useMemo(() => {
+    return [...employees].sort((a, b) => {
       const byRole = roleRank(employeeCompanyPosition(a)) - roleRank(employeeCompanyPosition(b))
       if (byRole !== 0) return byRole
       return String(a?.name || '').localeCompare(String(b?.name || ''))
     })
-    const q = search.trim().toLowerCase()
-    if (!q) return ordered
-    return ordered.filter((r) => `${r.name || ''} ${r.employee_code || ''} ${r.department || ''}`.toLowerCase().includes(q))
-  }, [employees, search])
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
-  const pageRows = useMemo(() => {
-    const start = (page - 1) * pageSize
-    return filtered.slice(start, start + pageSize)
-  }, [filtered, page])
+  }, [employees])
+  const pagination = preview?.pagination ?? { page: 1, per_page: pageSize, total: pageRows.length, last_page: 1 }
+  const pageCount = Math.max(1, Number(pagination.last_page || 1))
 
   useEffect(() => {
     setPage(1)
-  }, [search, employees.length])
+  }, [search])
 
   const handleFinalize = async () => {
     if (!canFinalizePayroll || !reviewConfirmed || periodFinalized) return
@@ -1049,7 +1045,7 @@ export default function AdminFinalizePayrollPage() {
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 Loading employees…
               </div>
-            ) : filtered.length === 0 ? (
+            ) : Number(pagination.total || 0) === 0 ? (
               <div className="px-4 py-10 text-center text-sm text-[#0A0A0A]/65 @md:px-5">
                 No employees found in the selected scope.
               </div>
@@ -1226,7 +1222,7 @@ export default function AdminFinalizePayrollPage() {
 
                 <div className="mt-3 flex flex-col gap-2 px-4 @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5 text-sm text-[#0A0A0A]/70">
                   <span>
-                    Page {page} of {pageCount} · {filtered.length} employee{filtered.length === 1 ? '' : 's'}
+                    Page {page} of {pageCount} · {Number(pagination.total || 0)} employee{Number(pagination.total || 0) === 1 ? '' : 's'}
                   </span>
                   <div className="flex gap-2">
                     <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
