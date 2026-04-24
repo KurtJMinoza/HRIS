@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -1472,10 +1473,10 @@ export default function EmployeeProfile() {
   }
 
   function updatePersonalField(field, value) {
-    setPersonal((prev) => {
-      const next = { ...prev, [field]: value }
-      setPersonalErrors(validatePersonal(next))
-      return next
+    setPersonal((prev) => ({ ...prev, [field]: value }))
+    setPersonalErrors((prevErr) => {
+      const { [field]: _removed, ...rest } = prevErr
+      return rest
     })
   }
 
@@ -1483,8 +1484,11 @@ export default function EmployeeProfile() {
     setPersonal((prev) => {
       const next = { ...prev, [field]: value }
       next.home_address = composeHomeAddress(next) || next.home_address
-      setPersonalErrors(validatePersonal(next))
       return next
+    })
+    setPersonalErrors((prevErr) => {
+      const { home_address: _h, ...rest } = prevErr
+      return rest
     })
   }
 
@@ -4299,9 +4303,8 @@ export default function EmployeeProfile() {
                 <p className="text-sm font-semibold">Change Password</p>
                 <div className="space-y-2">
                   <Label htmlFor="acc_current">Current Password</Label>
-                  <Input
+                  <PasswordInput
                     id="acc_current"
-                    type="password"
                     value={currentPassword}
                     onChange={(e) => {
                       const next = e.target.value
@@ -4314,9 +4317,8 @@ export default function EmployeeProfile() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="acc_new">New Password</Label>
-                  <Input
+                  <PasswordInput
                     id="acc_new"
-                    type="password"
                     value={newPassword}
                     onChange={(e) => {
                       const next = sanitizePassword(e.target.value)
@@ -4333,9 +4335,8 @@ export default function EmployeeProfile() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="acc_confirm">Confirm New Password</Label>
-                  <Input
+                  <PasswordInput
                     id="acc_confirm"
-                    type="password"
                     value={confirmPassword}
                     onChange={(e) => {
                       const next = sanitizePassword(e.target.value)

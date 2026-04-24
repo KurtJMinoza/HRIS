@@ -8,6 +8,7 @@ import { RoleBadge } from '@/components/RoleBadge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -4136,6 +4137,7 @@ export default function AdminEmployeeProfile() {
           ))}
         </TabsList>
 
+        {activeTab === 'personal-info' && (
         <TabsContent value="personal-info">
           <Motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
           <div className="grid gap-8 @lg:grid-cols-3">
@@ -4646,7 +4648,9 @@ export default function AdminEmployeeProfile() {
           </div>
           </Motion.div>
         </TabsContent>
+        )}
 
+        {activeTab === 'employment' && (
         <TabsContent value="employment">
           <Card className="border border-border/60 shadow-sm dark:border-white/8 dark:bg-[#111827]">
             <CardHeader className="pb-4">
@@ -4934,6 +4938,9 @@ export default function AdminEmployeeProfile() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
+
+        {activeTab === 'salary' && (
         <TabsContent value="salary">
           <div className="rounded-2xl border border-slate-200/90 bg-slate-50/60 p-4 shadow-sm sm:p-6 dark:border-white/10 dark:bg-slate-950/40">
             {deferredSectionLoading.salary && (
@@ -5146,6 +5153,9 @@ export default function AdminEmployeeProfile() {
             </SalaryTabShell>
           </div>
         </TabsContent>
+        )}
+
+        {activeTab === 'benefits' && (
         <TabsContent value="benefits">
           <Motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
             <div className="grid gap-4 @lg:grid-cols-3">
@@ -5366,6 +5376,9 @@ export default function AdminEmployeeProfile() {
 
           </Motion.div>
         </TabsContent>
+        )}
+
+        {activeTab === 'documents' && (
         <TabsContent value="documents">
           <Motion.div
             initial={{ opacity: 0, y: 12 }}
@@ -5652,6 +5665,9 @@ export default function AdminEmployeeProfile() {
             </Motion.div>
           </Motion.div>
         </TabsContent>
+        )}
+
+        {activeTab === 'government-ids' && (
         <TabsContent value="government-ids">
           <Motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="space-y-5">
             {deferredSectionLoading.government && (
@@ -5760,6 +5776,9 @@ export default function AdminEmployeeProfile() {
             </div>
           </Motion.div>
         </TabsContent>
+        )}
+
+        {activeTab === 'emergency-contacts' && (
         <TabsContent value="emergency-contacts">
           <Motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="space-y-4">
             {deferredSectionLoading.emergency && (
@@ -5937,6 +5956,9 @@ export default function AdminEmployeeProfile() {
             </Card>
           </Motion.div>
         </TabsContent>
+        )}
+
+        {activeTab === 'skills' && (
         <TabsContent value="skills">
           <Motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
             <div className="space-y-4">
@@ -6258,6 +6280,7 @@ export default function AdminEmployeeProfile() {
             </div>
           </Motion.div>
         </TabsContent>
+        )}
       </Tabs>
 
       {isDirty && (
@@ -7417,9 +7440,8 @@ export default function AdminEmployeeProfile() {
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="reset-password-input">Temporary password</Label>
-            <Input
+            <PasswordInput
               id="reset-password-input"
-              type="password"
               value={resetPasswordValue}
               onChange={(e) => setResetPasswordValue(e.target.value)}
               placeholder="Minimum 8 characters"

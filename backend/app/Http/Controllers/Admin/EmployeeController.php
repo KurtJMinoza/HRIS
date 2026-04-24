@@ -707,7 +707,7 @@ class EmployeeController extends Controller
             'city' => ['nullable', 'string', 'max:255'],
             'province' => ['nullable', 'string', 'max:255'],
             'postal_code' => ['nullable', 'string', 'max:32'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'email' => ['nullable', 'string', 'email', 'max:255', Rule::unique('users', 'email')],
             'username' => ['required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username'],
             'password' => ['required', 'string', 'min:8'],
             'phone_number' => $phoneRules,
@@ -801,7 +801,9 @@ class EmployeeController extends Controller
             'city' => isset($validated['city']) && trim((string) $validated['city']) !== '' ? trim((string) $validated['city']) : null,
             'province' => isset($validated['province']) && trim((string) $validated['province']) !== '' ? trim((string) $validated['province']) : null,
             'postal_code' => isset($validated['postal_code']) && trim((string) $validated['postal_code']) !== '' ? trim((string) $validated['postal_code']) : null,
-            'email' => $validated['email'],
+            'email' => isset($validated['email']) && is_string($validated['email']) && trim($validated['email']) !== ''
+                ? trim($validated['email'])
+                : null,
             'username' => trim((string) $validated['username']),
             'phone_number' => $phone,
             'password' => Hash::make($validated['password']),
