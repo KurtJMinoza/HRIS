@@ -78,6 +78,11 @@ class FinalizePayrollService
         ) {
             $scopedEmployeesQuery = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor, $search);
             $scopedCount = (int) (clone $scopedEmployeesQuery)->count();
+            $scopedEmployeeIds = (clone $scopedEmployeesQuery)
+                ->orderBy('id')
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
             $currentPage = max(1, $page);
             $limit = max(1, min(100, $perPage));
             $offset = ($currentPage - 1) * $limit;
@@ -140,7 +145,7 @@ class FinalizePayrollService
             $payslipByUser = $payslips->keyBy('user_id');
             $periodFromPayslip = $payslips->first();
 
-            $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
+            $pageTotals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
             $rows = [];
             $lockingStatuses = array_map('strtolower', Payslip::lockingStatuses());
             // Ensure relations required by computation are available without N+1.
@@ -343,10 +348,32 @@ class FinalizePayrollService
                     ];
                 }
 
-                $totals['gross'] += $gross;
-                $totals['ded'] += $ded;
-                $totals['net'] += $net;
+                $pageTotals['gross'] += $gross;
+                $pageTotals['ded'] += $ded;
+                $pageTotals['net'] += $net;
             }
+
+            $fullTotals = null;
+            if (count($scopedEmployeeIds) > 0) {
+                $aggregateQuery = Payslip::query()->whereIn('user_id', $scopedEmployeeIds);
+                $this->applyPreviewPeriodFiltersEloquent($aggregateQuery, $periodInput);
+                $aggregateRows = (clone $aggregateQuery)
+                    ->selectRaw('COUNT(*) as rows_count, SUM(gross_pay) as gross_sum, SUM(total_deductions) as deductions_sum, SUM(net_pay) as net_sum')
+                    ->first();
+                $aggregateCount = (int) ($aggregateRows?->rows_count ?? 0);
+                if ($aggregateCount === $scopedCount && $scopedCount > 0) {
+                    $fullTotals = [
+                        'gross' => round((float) ($aggregateRows?->gross_sum ?? 0), 2),
+                        'ded' => round((float) ($aggregateRows?->deductions_sum ?? 0), 2),
+                        'net' => round((float) ($aggregateRows?->net_sum ?? 0), 2),
+                    ];
+                }
+            }
+            $resolvedTotals = $fullTotals ?? [
+                'gross' => round((float) $pageTotals['gross'], 2),
+                'ded' => round((float) $pageTotals['ded'], 2),
+                'net' => round((float) $pageTotals['net'], 2),
+            ];
 
             $periodPreview = null;
             if ($periodFromPayslip instanceof Payslip) {
@@ -403,9 +430,9 @@ class FinalizePayrollService
 
             return [
                 'totals' => [
-                    'total_gross' => round((float) $totals['gross'], 2),
-                    'total_deductions' => round((float) $totals['ded'], 2),
-                    'total_net' => round((float) $totals['net'], 2),
+                    'total_gross' => $resolvedTotals['gross'],
+                    'total_deductions' => $resolvedTotals['ded'],
+                    'total_net' => $resolvedTotals['net'],
                     'employee_count' => $scopedCount,
                 ],
                 'period_preview' => $periodPreview,
@@ -759,6 +786,8 @@ class FinalizePayrollService
 
         $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
         $payslipIds = [];
+        $fromDate = $periodStart->toDateString();
+        $toDate = $periodEnd->toDateString();
 
         try {
             DB::transaction(function () use (
@@ -774,11 +803,38 @@ class FinalizePayrollService
                 $adminUserId,
                 $existingBatchRunId,
                 &$payslipIds,
-                &$totals
+                &$totals,
+                $fromDate,
+                $toDate
             ) {
                 $employeeIds = $employees->pluck('id')->map(fn ($id) => (int) $id)->all();
                 $periodIds = [];
+                $existingPayslipsByUser = Payslip::query()
+                    ->whereIn('user_id', $employeeIds)
+                    ->whereDate('pay_period_start', $fromDate)
+                    ->whereDate('pay_period_end', $toDate)
+                    ->orderByDesc('id')
+                    ->get()
+                    ->unique('user_id')
+                    ->keyBy('user_id');
+
                 foreach ($employees as $user) {
+                    $existingPayslip = $existingPayslipsByUser->get((int) $user->id);
+                    if ($existingPayslip instanceof Payslip && $this->canReuseExistingPayslipForFinalize($existingPayslip)) {
+                        $totals['gross'] += round((float) ($existingPayslip->gross_pay ?? 0), 2);
+                        $totals['ded'] += round((float) ($existingPayslip->total_deductions ?? 0), 2);
+                        $totals['net'] += round((float) ($existingPayslip->net_pay ?? 0), 2);
+
+                        $existingPayslip->update([
+                            'status' => Payslip::STATUS_FINALIZED,
+                            'finalized_at' => now(),
+                            'finalized_by_user_id' => $adminUserId,
+                        ]);
+                        $payslipIds[] = (int) $existingPayslip->id;
+
+                        continue;
+                    }
+
                     [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($user, $periodInput);
                     $computed = $this->payrollComputation->computeEmployeePayroll(
                         $user,
@@ -1532,7 +1588,8 @@ class FinalizePayrollService
      */
     private function generatePayslipForFinalize(User $user, array $payslipInput, array $computedSummary = []): Payslip
     {
-        Log::info('Finalize payroll: calling PayslipService::generatePayslip', [
+        $verboseDiagnostics = (bool) env('PAYROLL_FINALIZE_VERBOSE_LOGS', false) || (bool) config('app.debug');
+        $baseLogContext = [
             'user_id' => (int) $user->id,
             'payslip_input' => [
                 'from_date' => $payslipInput['from_date'] ?? null,
@@ -1544,7 +1601,6 @@ class FinalizePayrollService
                 'password_protect' => $payslipInput['password_protect'] ?? null,
                 'use_company_default' => $payslipInput['use_company_default'] ?? null,
             ],
-            'payslip_finalize_diagnostics' => $this->buildPayslipFinalizeSendDiagnostics($payslipInput, $computedSummary),
             'computed_summary_line_counts' => [
                 'payslip_earning_lines' => count(is_array($computedSummary['payslip_earning_lines'] ?? null) ? $computedSummary['payslip_earning_lines'] : []),
                 'daily_computation_earning_lines' => count(is_array($computedSummary['daily_computation_earning_lines'] ?? null) ? $computedSummary['daily_computation_earning_lines'] : []),
@@ -1552,20 +1608,51 @@ class FinalizePayrollService
                 'payslip_custom_deduction_lines' => count(is_array($computedSummary['payslip_custom_deduction_lines'] ?? null) ? $computedSummary['payslip_custom_deduction_lines'] : []),
                 'holiday_premium_breakdown' => count(is_array($computedSummary['holiday_premium_breakdown'] ?? null) ? $computedSummary['holiday_premium_breakdown'] : []),
             ],
-            'computed_summary_table_diagnostics' => $this->summarizeComputedSummaryTableArrays($computedSummary),
+        ];
+        Log::info('Finalize payroll: calling PayslipService::generatePayslip', [
+            ...$baseLogContext,
+            ...($verboseDiagnostics ? [
+                'payslip_finalize_diagnostics' => $this->buildPayslipFinalizeSendDiagnostics($payslipInput, $computedSummary),
+                'computed_summary_table_diagnostics' => $this->summarizeComputedSummaryTableArrays($computedSummary),
+            ] : []),
         ]);
         try {
             return $this->payslipService->generatePayslip($user, $payslipInput)['payslip'];
         } catch (Throwable $e) {
             Log::error('Finalize payroll: PayslipService::generatePayslip failed', [
-                'user_id' => (int) $user->id,
-                'payslip_input' => $payslipInput,
-                'payslip_finalize_diagnostics' => $this->buildPayslipFinalizeSendDiagnostics($payslipInput, $computedSummary),
+                ...$baseLogContext,
+                ...($verboseDiagnostics ? [
+                    'payslip_finalize_diagnostics' => $this->buildPayslipFinalizeSendDiagnostics($payslipInput, $computedSummary),
+                ] : []),
                 'message' => $e->getMessage(),
                 'exception_class' => $e::class,
             ]);
             throw $e;
         }
+    }
+
+    private function canReuseExistingPayslipForFinalize(Payslip $payslip): bool
+    {
+        $snapshot = is_array($payslip->snapshot ?? null) ? $payslip->snapshot : [];
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $hasSnapshotSummary = count($summary) > 0;
+        if (! $hasSnapshotSummary) {
+            return false;
+        }
+
+        $hasRequiredTotals = is_numeric($payslip->gross_pay)
+            && is_numeric($payslip->total_deductions)
+            && is_numeric($payslip->net_pay);
+        if (! $hasRequiredTotals) {
+            return false;
+        }
+
+        $relativePdfPath = trim((string) ($payslip->pdf_path ?? ''));
+        if ($relativePdfPath === '') {
+            return false;
+        }
+
+        return Storage::disk('local')->exists('private/'.$relativePdfPath);
     }
 
     /**
