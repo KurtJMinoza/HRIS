@@ -745,16 +745,16 @@ export default function AdminDashboard() {
 
   return (
     <Motion.div
-      className="space-y-5 text-foreground dark:text-zinc-50 @md:space-y-6"
+      className="space-y-1.5 text-foreground dark:text-zinc-50 @md:space-y-2"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
     >
       <Motion.div
-        className="mb-0 flex flex-col gap-3 pt-1 @md:flex-row @md:items-start @md:justify-between"
+        className="mb-0 flex flex-col gap-1 pt-0 @md:flex-row @md:items-start @md:justify-between"
         variants={itemVariants}
       >
-        <div className="space-y-1.5 @md:space-y-2">
+        <div className="space-y-0.5 @md:space-y-1">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {getGreeting()}
             {isHrAdmin ? ', Admin' : dashboardScopeLabel ? `, ${dashboardScopeLabel} lead` : ''}
@@ -855,7 +855,7 @@ export default function AdminDashboard() {
 
       {/* Top stats cards */}
       <Motion.div
-        className="mt-0 grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-5"
+        className="mt-0 grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-5"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1023,7 +1023,7 @@ export default function AdminDashboard() {
 
       {/* ── Insight row: Today's Leaves · Half-Day Summary · Quick Actions ── */}
       <Motion.div
-        className="grid items-start gap-6 gap-y-8 @sm:grid-cols-2 @xl:grid-cols-3"
+        className="mt-2 grid items-start gap-6 gap-y-8 @sm:grid-cols-2 @xl:grid-cols-3"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
