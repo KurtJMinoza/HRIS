@@ -9,13 +9,15 @@ use Illuminate\Support\Facades\DB;
 class DeleteImportedEmployeesCommand extends Command
 {
     protected $signature = 'hr:delete-imported-employees
+                            {--all : Delete every employee created via bulk import (employee_import_batch_id is set)}
                             {--batch= : UUID stored in users.employee_import_batch_id}
                             {--since= : Delete employees with created_at >= this datetime (Y-m-d or Y-m-d H:i:s)}
                             {--until= : Only when using --since: created_at <= this datetime (default: now)}
                             {--except= : Comma-separated user IDs to never delete}
+                            {--force : Skip the confirmation prompt}
                             {--dry-run : Show counts and sample IDs only}';
 
-    protected $description = 'Delete employee users from a bulk import (by import batch UUID or created_at window).';
+    protected $description = 'Delete employee users from a bulk import (by batch UUID, created_at window, or --all).';
 
     public function handle(): int
     {
@@ -34,8 +36,12 @@ class DeleteImportedEmployeesCommand extends Command
                 ->where('role', User::ROLE_EMPLOYEE)
                 ->where('created_at', '>=', $since)
                 ->where('created_at', '<=', $until);
+        } elseif ($this->option('all')) {
+            $q = User::query()
+                ->where('role', User::ROLE_EMPLOYEE)
+                ->whereNotNull('employee_import_batch_id');
         } else {
-            $this->error('Provide --batch=UUID or --since=datetime (optionally with --until=).');
+            $this->error('Provide --all, --batch=UUID, or --since=datetime (optionally with --until=).');
 
             return self::FAILURE;
         }
@@ -61,7 +67,7 @@ class DeleteImportedEmployeesCommand extends Command
             return self::SUCCESS;
         }
 
-        if (! $this->confirm("Permanently delete {$n} employee user(s)?", false)) {
+        if (! $this->option('force') && ! $this->confirm("Permanently delete {$n} employee user(s)?", false)) {
             $this->warn('Aborted.');
 
             return self::FAILURE;

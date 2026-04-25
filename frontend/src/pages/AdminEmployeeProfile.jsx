@@ -47,8 +47,6 @@ import {
   resolveTinForSalaryDisplay,
 } from '@/components/salary/EmployeeSalaryTab'
 
-/** Admin Edit Employee — employment anchor 08/05/2025 (ISO). Applied to hire + related date fields below. */
-const EMPLOYMENT_ANCHOR_DATE_ISO = '2025-08-05'
 
 function field(value) {
   return value || '—'
@@ -1336,12 +1334,12 @@ export default function AdminEmployeeProfile() {
             branch_id: found.branch_id != null ? String(found.branch_id) : '',
             position: found.position || '',
             employment_status: normalizedEmploymentStatus,
-            employment_status_effective_date: found.employment_status_effective_date || EMPLOYMENT_ANCHOR_DATE_ISO,
+            employment_status_effective_date: found.employment_status_effective_date || '',
             employment_type: normalizedEmploymentType,
             branch_office_location: found.branch_name || found.branch_office_location || '',
-            hire_date: found.hire_date || EMPLOYMENT_ANCHOR_DATE_ISO,
-            contract_start_date: found.contract_start_date || EMPLOYMENT_ANCHOR_DATE_ISO,
-            contract_end_date: found.contract_end_date || EMPLOYMENT_ANCHOR_DATE_ISO,
+            hire_date: found.hire_date || '',
+            contract_start_date: found.contract_start_date || '',
+            contract_end_date: found.contract_end_date || '',
             supervisor_id: found.supervisor_id != null ? String(found.supervisor_id) : '',
             working_schedule_id: found.working_schedule_id != null ? String(found.working_schedule_id) : '',
             monthly_salary: found.monthly_salary != null && found.monthly_salary !== '' ? String(found.monthly_salary) : '',

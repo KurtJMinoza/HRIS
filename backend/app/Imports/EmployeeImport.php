@@ -66,6 +66,18 @@ class EmployeeImport implements ToCollection, WithHeadingRow
      */
     private ?array $workingScheduleExactNameIndex = null;
 
+    /** @var array<string, Company>|null */
+    private ?array $companyImportLookup = null;
+
+    /** @var array<string, Department>|null */
+    private ?array $departmentImportLookup = null;
+
+    /** @var array<string, list<Branch>>|null */
+    private ?array $branchImportLookup = null;
+
+    /** @var array<int, Branch>|null */
+    private ?array $branchImportIdLookup = null;
+
     public function __construct(
         private readonly User $actor,
         private readonly DataScopeService $dataScopeService,
@@ -226,12 +238,22 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             : null;
 
         $companyName = $this->clean($this->value($row, ['company', 'company_name']));
-        $branchName = $this->clean($this->value($row, ['branch', 'branch_name']));
+        $branchName = $this->clean($this->value($row, [
+            'branch',
+            'branch_name',
+            'branch_office',
+            'branch_office_name',
+            'assigned_branch',
+        ]));
         $departmentName = $this->clean($this->value($row, ['department', 'department_name']));
 
-        $company = $companyName ? Company::query()->whereRaw('LOWER(name)=?', [Str::lower($companyName)])->first() : null;
-        $branch = $branchName ? Branch::query()->whereRaw('LOWER(name)=?', [Str::lower($branchName)])->first() : null;
-        $department = $departmentName ? Department::query()->whereRaw('LOWER(name)=?', [Str::lower($departmentName)])->first() : null;
+        $company = $this->findCompanyByImportedName($companyName);
+        $department = $this->findDepartmentByImportedName($departmentName);
+        $branch = $this->findBranchByImportedName(
+            $branchName,
+            $company?->id,
+            $department?->branch_id
+        );
 
         $companyId = $company?->id ?? $branch?->company_id;
         $branchId = $branch?->id ?? $department?->branch_id;
@@ -255,7 +277,10 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'first_name' => $first,
             'middle_name' => $middle,
             'last_name' => $last,
-            'date_of_birth' => $this->parseDate($this->value($row, ['date_of_birth', 'dob', 'birth_date'])),
+            'date_of_birth' => $this->parseImportDate(
+                $this->value($row, ['date_of_birth', 'dob', 'birth_date']),
+                strictCalendarString: true
+            ),
             'gender' => $this->normalizeImportedGender($this->importGenderFromRow($row)),
             // DB column is `civil_status` (UI: Civil Status). Spreadsheet "Marital Status" maps here — not `marital_status`.
             'civil_status' => $this->normalizeImportedCivilStatus($this->importCivilStatusFromRow($row)),
@@ -282,14 +307,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 'work_arrangement_type',
             ])),
             'employment_status' => $this->normalizeEmploymentStatus($this->importEmploymentStatusFromRow($row)),
-            'employment_status_effective_date' => $this->parseDate($this->value($row, [
-                'employment_status_effective_date',
-                'employment_status_effectivity_date',
-                'employment_status_effective',
-                'status_effective_date',
-                'effectivity_of_employment_status',
-            ])),
-            'hire_date' => $this->parseDate($this->value($row, [
+            'hire_date' => $this->parseImportDate($this->value($row, [
                 'date_hired',
                 'hire_date',
                 'date_of_hire',
@@ -298,9 +316,39 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 'start_date',
                 'commencement_date',
                 'employment_start_date',
-            ])),
-            'contract_start_date' => $this->parseDate($this->value($row, ['contract_start_date'])),
-            'contract_end_date' => $this->parseDate($this->value($row, ['contract_end_date'])),
+            ]), strictCalendarString: true),
+            'employment_status_effective_date' => $this->resolveEmploymentStatusEffectiveDate(
+                $this->parseImportDate(
+                    $this->importEmploymentStatusEffectiveDateFromRow($row),
+                    strictCalendarString: true
+                ),
+                $this->parseImportDate($this->value($row, [
+                    'date_hired',
+                    'hire_date',
+                    'date_of_hire',
+                    'date_joined',
+                    'joining_date',
+                    'start_date',
+                    'commencement_date',
+                    'employment_start_date',
+                ]), strictCalendarString: true)
+            ),
+            'contract_start_date' => $this->parseImportDate(
+                $this->value($row, [
+                    'contract_start_date',
+                    'contract_start',
+                    'start_of_contract',
+                ]),
+                strictCalendarString: true
+            ),
+            'contract_end_date' => $this->parseImportDate(
+                $this->value($row, [
+                    'contract_end_date',
+                    'contract_end',
+                    'end_of_contract',
+                ]),
+                strictCalendarString: true
+            ),
             'position' => $this->clean($this->value($row, ['position', 'job_title'])),
             'department' => $department?->name ?? $departmentName,
             'department_id' => $department?->id,
@@ -313,6 +361,9 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 'schedule_name',
                 'shift',
                 'shift_name',
+                'working_shift',
+                'duty_schedule',
+                'employee_schedule',
                 'working_hours',
                 'working_hours_description',
             ]))),
@@ -322,6 +373,8 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 'clock_in',
                 'shift_start',
                 'work_time_in',
+                'office_time_in',
+                'scheduled_time_in',
             ]))),
             'working_time_out' => $this->parseWorkingTime($this->clean($this->value($row, [
                 'working_time_out',
@@ -329,6 +382,8 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 'clock_out',
                 'shift_end',
                 'work_time_out',
+                'office_time_out',
+                'scheduled_time_out',
             ]))),
             'rest_days' => $this->normalizeRestDayKeys($this->clean($this->value($row, [
                 'rest_days',
@@ -342,28 +397,61 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'monthly_rate' => $this->parseDecimal($this->value($row, ['monthly_rate'])),
             'daily_rate' => $this->parseDecimal($this->value($row, ['daily_rate'])),
             'hourly_rate' => $this->parseDecimal($this->value($row, ['hourly_rate'])),
-            'salary_effectivity_date' => $this->parseDate($this->value($row, ['salary_effectivity_date'])),
+            'salary_effectivity_date' => $this->parseImportDate($this->value($row, [
+                'salary_effectivity_date',
+                'salary_effective_date',
+                'salary_effectivity',
+            ]), strictCalendarString: true),
             'rice_allowance' => $this->parseDecimal($this->value($row, ['rice_allowance'])),
             'transport_allowance' => $this->parseDecimal($this->value($row, ['transportation_allowance', 'transport_allowance'])),
             'other_pay_components' => $this->clean($this->value($row, ['other_pay_components'])),
             // Canonicalize to the dashed form the UI / validators expect (see GovernmentIdFormatter).
-            // `format()` returns null when the digit count does not match any supported pattern,
-            // so unreadable cells fall through without polluting the profile.
-            'sss_number' => GovernmentIdFormatter::format(
+            // `format()` strips non-digits; null when empty or digit count does not match.
+            'sss_number' => $this->formatGovernmentIdFromImport(
                 GovernmentIdFormatter::TYPE_SSS,
-                $this->clean($this->value($row, ['sss_number', 'sss']))
+                $this->value($row, [
+                    'sss_number',
+                    'sss',
+                    'sss_no',
+                    'sss_id',
+                    'sss_umid',
+                    'social_security_number',
+                    'social_security_system_number',
+                ])
             ),
-            'philhealth_number' => GovernmentIdFormatter::format(
+            'philhealth_number' => $this->formatGovernmentIdFromImport(
                 GovernmentIdFormatter::TYPE_PHILHEALTH,
-                $this->clean($this->value($row, ['philhealth_number', 'philhealth']))
+                $this->value($row, [
+                    'philhealth_number',
+                    'philhealth',
+                    'philhealth_no',
+                    'philhealth_id',
+                    'phic_number',
+                    'phic_id',
+                ])
             ),
-            'pagibig_number' => GovernmentIdFormatter::format(
+            'pagibig_number' => $this->formatGovernmentIdFromImport(
                 GovernmentIdFormatter::TYPE_PAGIBIG,
-                $this->clean($this->value($row, ['pag_ibig_number', 'pagibig_number', 'pagibig']))
+                $this->value($row, [
+                    'pag_ibig_number',
+                    'pagibig_number',
+                    'pagibig',
+                    'pag_ibig',
+                    'pag_ibig_no',
+                    'pagibig_no',
+                    'hdmf_number',
+                    'hdmf_id',
+                ])
             ),
-            'tin_number' => GovernmentIdFormatter::format(
+            'tin_number' => $this->formatGovernmentIdFromImport(
                 GovernmentIdFormatter::TYPE_TIN,
-                $this->clean($this->value($row, ['tin_number', 'tin']))
+                $this->value($row, [
+                    'tin_number',
+                    'tin',
+                    'tin_id',
+                    'bir_tin',
+                    'bir_tin_number',
+                ])
             ),
             // Keep these non-null even when import columns are blank.
             'tax_regime' => $this->normalizeTaxRegime($this->value($row, ['tax_regime'])),
@@ -403,7 +491,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'password' => Hash::make(self::DEFAULT_IMPORT_PASSWORD),
             'role' => User::ROLE_EMPLOYEE,
             'employee_import_batch_id' => $this->importBatchId,
-            'date_of_birth' => $payload['date_of_birth'],
+            'date_of_birth' => $this->nullUnlessYmdDateString($payload['date_of_birth'] ?? null),
             'gender' => $payload['gender'],
             'civil_status' => $payload['civil_status'],
             'nationality' => $payload['nationality'],
@@ -416,10 +504,10 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'province' => $payload['province'],
             'postal_code' => $payload['postal_code'],
             'employment_type' => $payload['employment_type'],
-            'employment_status_effective_date' => $payload['employment_status_effective_date'],
-            'hire_date' => $payload['hire_date'],
-            'contract_start_date' => $payload['contract_start_date'],
-            'contract_end_date' => $payload['contract_end_date'],
+            'employment_status_effective_date' => $this->nullUnlessYmdDateString($payload['employment_status_effective_date'] ?? null),
+            'hire_date' => $this->nullUnlessYmdDateString($payload['hire_date'] ?? null),
+            'contract_start_date' => $this->nullUnlessYmdDateString($payload['contract_start_date'] ?? null),
+            'contract_end_date' => $this->nullUnlessYmdDateString($payload['contract_end_date'] ?? null),
             'position' => $payload['position'],
             'department' => $payload['department'],
             'department_id' => $payload['department_id'],
@@ -432,7 +520,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'monthly_rate' => $payload['monthly_rate'],
             'daily_rate' => $payload['daily_rate'],
             'hourly_rate' => $payload['hourly_rate'],
-            'salary_effectivity_date' => $payload['salary_effectivity_date'],
+            'salary_effectivity_date' => $this->nullUnlessYmdDateString($payload['salary_effectivity_date'] ?? null),
             'is_active' => $payload['is_active'],
         ];
 
@@ -564,11 +652,212 @@ class EmployeeImport implements ToCollection, WithHeadingRow
     }
 
     /**
-     * Read the Employment Status cell: exact header aliases first, then the most specific matching column key
-     * (prefer `employment_status` over shorter keys like `emp_status` so "Regular" is not taken from the wrong column).
+     * Resolve the employment-status effectivity cell using strict header keys first
+     * (including suffixed duplicates from {@see normalizeHeadingRowData()}), then a narrow
+     * header substring match so generic columns like status_effective_date never
+     * steal unrelated values from generic columns.
      *
-     * @param  array<string, mixed>  $row  Keys already normalized via {@see normalizeHeadingRowData()}.
+     * @param  array<string, mixed>  $row
      */
+    private function importEmploymentStatusEffectiveDateFromRow(array $row): mixed
+    {
+        $hit = $this->rowMatchByNormalizedHeader($row, [
+            'employment_status_effective_date',
+            'employment_status_effectivity_date',
+            'employment_status_effective',
+            'employment_status_effectivity',
+            'effectivity_of_employment_status',
+        ]);
+        if ($hit['matched']) {
+            return $hit['value'];
+        }
+
+        // No fuzzy header scan: it could bind a date from the wrong column when the
+        // effectivity column is blank. Unknown headers → null (add aliases in rowMatch list if needed).
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @param  list<string>  $aliases  Logical header names before normalization
+     * @return array{matched: bool, value: mixed}
+     */
+    private function rowMatchByNormalizedHeader(array $row, array $aliases): array
+    {
+        foreach ($aliases as $alias) {
+            $want = $this->normalizeHeaderKey($alias);
+            foreach ($row as $key => $value) {
+                $k = $this->normalizeHeaderKey($this->sanitizeSpreadsheetHeaderKey((string) $key));
+                if ($k === $want || str_starts_with($k, $want.'__')) {
+                    return ['matched' => true, 'value' => $value];
+                }
+            }
+        }
+
+        return ['matched' => false, 'value' => null];
+    }
+
+    private function findCompanyByImportedName(?string $name): ?Company
+    {
+        $normalized = $this->normalizeImportedOrgLookupName($name);
+        if ($normalized === null) {
+            return null;
+        }
+
+        return $this->companyImportLookup()[$normalized] ?? null;
+    }
+
+    private function findBranchByImportedName(?string $name, ?int $companyId = null, ?int $preferredBranchId = null): ?Branch
+    {
+        if ($preferredBranchId !== null) {
+            $preferredBranch = $this->branchImportIdLookup()[$preferredBranchId] ?? null;
+            if ($preferredBranch !== null) {
+                $preferredName = $this->normalizeImportedOrgLookupName($preferredBranch->name);
+                $wantedName = $this->normalizeImportedOrgLookupName($name);
+                if ($preferredName !== null && $wantedName !== null && $preferredName === $wantedName) {
+                    return $preferredBranch;
+                }
+            }
+        }
+
+        $normalized = $this->normalizeImportedOrgLookupName($name);
+        if ($normalized === null) {
+            return $preferredBranchId !== null ? ($this->branchImportIdLookup()[$preferredBranchId] ?? null) : null;
+        }
+
+        $branches = $this->branchImportLookup()[$normalized] ?? [];
+        if ($companyId !== null) {
+            foreach ($branches as $branch) {
+                if ((int) $branch->company_id === $companyId) {
+                    return $branch;
+                }
+            }
+        }
+        if ($branches !== []) {
+            return $branches[0];
+        }
+
+        return $preferredBranchId !== null ? ($this->branchImportIdLookup()[$preferredBranchId] ?? null) : null;
+    }
+
+    private function findDepartmentByImportedName(?string $name): ?Department
+    {
+        $normalized = $this->normalizeImportedOrgLookupName($name);
+        if ($normalized === null) {
+            return null;
+        }
+
+        return $this->departmentImportLookup()[$normalized] ?? null;
+    }
+
+    private function normalizeImportedOrgLookupName(?string $value): ?string
+    {
+        $cleaned = $this->clean($value);
+        if ($cleaned === null) {
+            return null;
+        }
+
+        $ascii = Str::ascii($cleaned);
+        $normalized = Str::lower($ascii);
+        $normalized = preg_replace('/[^a-z0-9]+/', ' ', $normalized) ?? $normalized;
+        $normalized = preg_replace('/\s+/', ' ', trim($normalized)) ?? trim($normalized);
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    /**
+     * @return array<string, Company>
+     */
+    private function companyImportLookup(): array
+    {
+        if ($this->companyImportLookup === null) {
+            $index = [];
+            foreach (Company::query()->get(['id', 'name']) as $company) {
+                $key = $this->normalizeImportedOrgLookupName($company->name);
+                if ($key !== null && ! isset($index[$key])) {
+                    $index[$key] = $company;
+                }
+            }
+            $this->companyImportLookup = $index;
+        }
+
+        return $this->companyImportLookup;
+    }
+
+    /**
+     * @return array<string, Department>
+     */
+    private function departmentImportLookup(): array
+    {
+        if ($this->departmentImportLookup === null) {
+            $index = [];
+            foreach (Department::query()->get(['id', 'name', 'branch_id']) as $department) {
+                $key = $this->normalizeImportedOrgLookupName($department->name);
+                if ($key !== null && ! isset($index[$key])) {
+                    $index[$key] = $department;
+                }
+            }
+            $this->departmentImportLookup = $index;
+        }
+
+        return $this->departmentImportLookup;
+    }
+
+    /**
+     * @return array<string, list<Branch>>
+     */
+    private function branchImportLookup(): array
+    {
+        if ($this->branchImportLookup === null) {
+            $index = [];
+            foreach (Branch::query()->get(['id', 'name', 'company_id']) as $branch) {
+                $key = $this->normalizeImportedOrgLookupName($branch->name);
+                if ($key === null) {
+                    continue;
+                }
+                $index[$key] ??= [];
+                $index[$key][] = $branch;
+            }
+            $this->branchImportLookup = $index;
+        }
+
+        return $this->branchImportLookup;
+    }
+
+    /**
+     * @return array<int, Branch>
+     */
+    private function branchImportIdLookup(): array
+    {
+        if ($this->branchImportIdLookup === null) {
+            $index = [];
+            foreach (Branch::query()->get(['id', 'name', 'company_id']) as $branch) {
+                $index[(int) $branch->id] = $branch;
+            }
+            $this->branchImportIdLookup = $index;
+        }
+
+        return $this->branchImportIdLookup;
+    }
+
+    /**
+     * @param  mixed  $raw
+     */
+    private function formatGovernmentIdFromImport(string $type, mixed $raw): ?string
+    {
+        $s = $this->clean($raw);
+        if ($s === null) {
+            return null;
+        }
+
+        $digits = preg_replace('/\D+/', '', $s) ?? '';
+        if ($digits === '') {
+            return null;
+        }
+
+        return GovernmentIdFormatter::format($type, $digits);
+    }
+
     private function importEmploymentStatusFromRow(array $row): ?string
     {
         $direct = $this->clean($this->value($row, [
@@ -1025,12 +1314,28 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         return $key;
     }
 
+    /**
+     * Normalize header labels to snake_case keys. When two columns normalize to the same key
+     * (blank headers, duplicate titles), suffix __2, __3, … so values never
+     * overwrite each other and column alignment stays stable.
+     *
+     * @param  array<string|int, mixed>  $row
+     * @return array<string, mixed>
+     */
     private function normalizeHeadingRowData(array $row): array
     {
         $normalized = [];
+        $seenCount = [];
         foreach ($row as $key => $value) {
             $label = $this->sanitizeSpreadsheetHeaderKey((string) $key);
-            $normalized[$this->normalizeHeaderKey($label)] = $value;
+            $base = $this->normalizeHeaderKey($label);
+            if ($base === '') {
+                $base = 'unnamed_column';
+            }
+            $n = ($seenCount[$base] ?? 0) + 1;
+            $seenCount[$base] = $n;
+            $nk = $n === 1 ? $base : $base.'__'.$n;
+            $normalized[$nk] = $value;
         }
 
         return $normalized;
@@ -1072,16 +1377,28 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         return $collapsed === '' ? null : $collapsed;
     }
 
-    private function parseDate(mixed $value): ?string
+    /**
+     * Parse a spreadsheet date for persistence as Y-m-d or null.
+     * Empty / placeholder / invalid values stay null — never coerce Excel serial 0,
+     * time fractions, or stray integers into calendar dates.
+     *
+     * When $strictCalendarString is true, free-text strings must look like a real
+     * calendar value before Carbon::parse() runs. That blocks status tokens ("ACTIVE"),
+     * relative words ("today", "Saturday"), bare years ("2025"), and other values Carbon would
+     * otherwise reinterpret as dates.
+     *
+     * Import dates never use Carbon::now() or any default "today" fill — unknown or invalid
+     * inputs always become null.
+     */
+    private function parseImportDate(mixed $value, bool $strictCalendarString = false): ?string
     {
-        if ($value === null || $value === '') {
+        if ($value === null || $value === false || $value === '') {
             return null;
         }
         if ($value instanceof RichText) {
-            $value = trim($value->getPlainText());
-            if ($value === '') {
-                return null;
-            }
+            $plain = trim($value->getPlainText());
+
+            return $plain === '' ? null : $this->parseImportDate($plain, $strictCalendarString);
         }
         if ($value instanceof Carbon) {
             return $value->toDateString();
@@ -1089,14 +1406,134 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         if ($value instanceof DateTimeInterface) {
             return Carbon::instance(\DateTimeImmutable::createFromInterface($value))->toDateString();
         }
-        if (is_numeric($value)) {
-            return ExcelDate::excelToDateTimeObject((float) $value)->format('Y-m-d');
+        if (is_string($value)) {
+            $value = trim($value);
+            if ($value === '' || $this->isImportDatePlaceholderString($value)) {
+                return null;
+            }
+            if ($this->isImportDateEmploymentOrStatusNoiseString($value)) {
+                return null;
+            }
+            if (is_numeric($value)) {
+                return $this->parseImportDateFromExcelSerial((float) $value);
+            }
+            if ($strictCalendarString && ! $this->looksLikeCalendarDateString($value)) {
+                return null;
+            }
+            try {
+                $dt = Carbon::parse($value);
+                $y = (int) $dt->year;
+                if ($strictCalendarString && ($y < 1900 || $y > 2100)) {
+                    return null;
+                }
+
+                return $dt->toDateString();
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+        if (is_int($value) || is_float($value)) {
+            return $this->parseImportDateFromExcelSerial((float) $value);
+        }
+
+        return null;
+    }
+
+    /**
+     * True when a trimmed string resembles an explicit calendar date (not a status label,
+     * not a bare year, not a relative English datetime token Carbon would invent).
+     */
+    private function looksLikeCalendarDateString(string $value): bool
+    {
+        $v = trim($value);
+        if ($v === '' || ! preg_match('/\d/', $v)) {
+            return false;
+        }
+        if (preg_match('/^\d{1,4}$/', $v)) {
+            return false;
+        }
+        if (preg_match('/\b\d{4}-\d{1,2}-\d{1,2}\b/', $v)) {
+            return true;
+        }
+        if (preg_match('/^\d{8}$/', $v)) {
+            return true;
+        }
+        if (preg_match('#\d{1,2}\s*[-/.]\s*\d{1,2}(?:\s*[-/.]\s*\d{2,4})?#', $v)) {
+            return true;
+        }
+        if (preg_match('/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/i', $v)
+            && preg_match('/\b\d{4}\b/', $v)) {
+            return true;
+        }
+        if (preg_match('/\b\d{1,2}(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/i', $v)
+            && preg_match('/\b\d{4}\b/', $v)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Employment / roster tokens sometimes land in a date column; never treat them as dates.
+     */
+    private function isImportDateEmploymentOrStatusNoiseString(string $value): bool
+    {
+        $l = Str::lower(trim($value));
+        $compact = preg_replace('/[^a-z]+/i', '', $l) ?? '';
+
+        $tokens = [
+            'active', 'inactive', 'regular', 'probation', 'probationary', 'contractual',
+            'fulltime', 'parttime', 'terminated', 'resigned', 'suspended', 'retired',
+            'separated', 'awol', 'pending', 'regularized',
+        ];
+        if (in_array($compact, $tokens, true)) {
+            return true;
+        }
+
+        if (strlen($l) <= 48 && ! preg_match('/\d/', $l)) {
+            if (str_contains($l, 'active') || str_contains($l, 'regular') || str_contains($l, 'inactive')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function parseImportDateFromExcelSerial(float $f): ?string
+    {
+        if (! is_finite($f)) {
+            return null;
+        }
+        // Time-only cells (fraction of day) or "empty" zeros must not become dates.
+        if ($f <= 0.0 || $f < 1.0) {
+            return null;
+        }
+        // Typical 1900-system calendar serials used for HR (~1930–2100). Outside → treat as invalid.
+        if ($f < 1000.0 || $f > 55000.0) {
+            return null;
         }
         try {
-            return Carbon::parse((string) $value)->toDateString();
+            $dt = ExcelDate::excelToDateTimeObject($f);
+            $y = (int) $dt->format('Y');
+            if ($y < 1900 || $y > 2100) {
+                return null;
+            }
+
+            return $dt->format('Y-m-d');
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function isImportDatePlaceholderString(string $value): bool
+    {
+        $l = Str::lower(trim($value));
+
+        return in_array($l, [
+            'n/a', '#n/a', '#na', '-', '—', '--', 'none', 'null', '(none)',
+            'tbd', 'tba', 'na', '..', '.', '?',
+            'active', 'inactive',
+        ], true);
     }
 
     /**
@@ -1349,6 +1786,29 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         $text = trim((string) $value);
 
         return $text === '' ? null : $text;
+    }
+
+    /**
+     * Only persisted calendar values from import are strict Y-m-d strings; anything else → null
+     * (never pass stray text or blanks through to the model / DB as a date).
+     */
+    private function nullUnlessYmdDateString(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (! is_string($value)) {
+            return null;
+        }
+        $t = trim($value);
+        if ($t === '' || Str::lower($t) === 'null') {
+            return null;
+        }
+        if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $t)) {
+            return null;
+        }
+
+        return $t;
     }
 
     private function parseDecimal(mixed $value): ?float
@@ -1968,5 +2428,18 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         }
 
         return $query->whereNull('company_id')->value('id') ?: $query->value('id');
+    }
+
+    /**
+     * If employment status effective date is empty or invalid, default to hire date.
+     * Otherwise, use the provided effective date.
+     */
+    private function resolveEmploymentStatusEffectiveDate(?string $effectiveDate, ?string $hireDate): ?string
+    {
+        if ($effectiveDate === null || $effectiveDate === '') {
+            return $hireDate;
+        }
+
+        return $effectiveDate;
     }
 }

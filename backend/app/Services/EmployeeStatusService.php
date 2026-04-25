@@ -170,13 +170,14 @@ class EmployeeStatusService
         ?string $remarks = null,
         ?Carbon $effectiveDate = null
     ): EmployeeStatusHistory {
-        $effectiveDate = $effectiveDate ?? Carbon::now(config('attendance.timezone', 'Asia/Manila'));
 
         return DB::transaction(function () use ($employee, $newStatus, $triggerType, $actor, $remarks, $effectiveDate) {
             $previousStatus = $employee->employment_status;
 
             $employee->employment_status = $newStatus->value;
-            $employee->employment_status_effective_date = $effectiveDate;
+            if ($effectiveDate !== null) {
+                $employee->employment_status_effective_date = $effectiveDate;
+            }
             $employee->save();
 
             $history = EmployeeStatusHistory::create([
