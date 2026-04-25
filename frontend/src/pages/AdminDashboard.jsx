@@ -342,6 +342,7 @@ export default function AdminDashboard() {
     queryFn: getDashboardData,
     enabled: !authLoading,
     refetchInterval: 15000,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: true,
   })
 
