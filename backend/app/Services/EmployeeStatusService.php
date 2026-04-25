@@ -173,12 +173,19 @@ class EmployeeStatusService
 
         return DB::transaction(function () use ($employee, $newStatus, $triggerType, $actor, $remarks, $effectiveDate) {
             $previousStatus = $employee->employment_status;
+            $previousStatusEnum = EmploymentStatus::tryFromStored($previousStatus);
 
             $employee->employment_status = $newStatus->value;
             if ($effectiveDate !== null) {
                 $employee->employment_status_effective_date = $effectiveDate;
             }
             $employee->save();
+
+            // Moving an employee back into probationary should reopen confirmation requirements.
+            if ($newStatus === EmploymentStatus::Probationary
+                && $previousStatusEnum !== EmploymentStatus::Probationary) {
+                $this->resetRegularizationRequirementsForProbation($employee, $actor);
+            }
 
             $history = EmployeeStatusHistory::create([
                 'user_id' => $employee->id,
@@ -200,6 +207,64 @@ class EmployeeStatusService
 
             return $history;
         });
+    }
+
+    private function resetRegularizationRequirementsForProbation(User $employee, ?User $actor): void
+    {
+        if (! Schema::hasTable('regularization_requirements')) {
+            return;
+        }
+
+        $payload = [
+            'performance_review_completed' => false,
+            'performance_review_notes' => null,
+            'performance_review_completed_at' => null,
+            'checklist_completed' => false,
+            'checklist_notes' => null,
+            'checklist_completed_at' => null,
+        ];
+
+        if (Schema::hasColumn('regularization_requirements', 'performance_review_completed_by')) {
+            $payload['performance_review_completed_by'] = null;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'checklist_completed_by')) {
+            $payload['checklist_completed_by'] = null;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'training_completed')) {
+            $payload['training_completed'] = false;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'training_completed_at')) {
+            $payload['training_completed_at'] = null;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'training_completed_by')) {
+            $payload['training_completed_by'] = null;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'documents_submitted')) {
+            $payload['documents_submitted'] = false;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'documents_submitted_at')) {
+            $payload['documents_submitted_at'] = null;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'documents_submitted_by')) {
+            $payload['documents_submitted_by'] = null;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'manager_recommendation_received')) {
+            $payload['manager_recommendation_received'] = false;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'manager_recommendation_received_at')) {
+            $payload['manager_recommendation_received_at'] = null;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'manager_recommendation_received_by')) {
+            $payload['manager_recommendation_received_by'] = null;
+        }
+        if (Schema::hasColumn('regularization_requirements', 'updated_by')) {
+            $payload['updated_by'] = $actor?->id;
+        }
+
+        RegularizationRequirement::query()->updateOrCreate(
+            ['user_id' => $employee->id],
+            $payload
+        );
     }
 
     /**
