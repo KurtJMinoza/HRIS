@@ -364,6 +364,31 @@ class PayrollFinalizeController extends Controller
         ]);
     }
 
+    /**
+     * Send all payslips for one finalized payroll batch run.
+     */
+    public function bulkSendPayslips(Request $request, int $batchId): JsonResponse
+    {
+        $this->ensurePayrollFinalizeAccess($request);
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        try {
+            $result = $this->payslipDeliveryService->deliverFinalizedBatchPayslips($batchId, $actor);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Payslips sent for finalized batch.',
+            'batch_id' => $result['batch_id'],
+            'targeted' => $result['targeted'],
+            'delivered' => $result['delivered'],
+            'skipped' => $result['skipped'],
+            'errors' => $result['errors'],
+        ]);
+    }
+
     private function ensurePayrollFinalizeAccess(Request $request): void
     {
         $u = $request->user();

@@ -2,6 +2,7 @@
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   adminBulkDownloadPayrollBatchPdfZip,
+  adminBulkSendFinalizedBatchPayslips,
   adminDeleteFinalizedPayrollBatch,
   adminDeliverFinalizePayslips,
   adminExecuteFinalizePayroll,
@@ -280,6 +281,8 @@ export default function AdminFinalizePayrollPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deletingBatch, setDeletingBatch] = useState(false)
   const [bulkDownloadingZip, setBulkDownloadingZip] = useState(false)
+  const [sendBatchDialogOpen, setSendBatchDialogOpen] = useState(false)
+  const [sendingBatchPayslips, setSendingBatchPayslips] = useState(false)
 
   const periodFinalized = useMemo(() => {
     if (done || localFinalizeLocked) return true
@@ -769,6 +772,40 @@ export default function AdminFinalizePayrollPage() {
     })
   }
 
+  const finalizedBatchEmployeeCount = useMemo(
+    () =>
+      Math.max(
+        Number(totals?.employee_count || 0),
+        Number(preview?.batch_run?.employee_count || 0),
+        Number(preview?.pagination?.total || 0),
+      ),
+    [totals?.employee_count, preview?.batch_run?.employee_count, preview?.pagination?.total],
+  )
+
+  const handleBulkSendBatchPayslips = async () => {
+    const batchRunId = Number(preview?.batch_run?.payroll_batch_run_id || 0)
+    if (!periodFinalized || batchRunId <= 0 || sendingBatchPayslips) return
+    setSendingBatchPayslips(true)
+    try {
+      const result = await adminBulkSendFinalizedBatchPayslips(batchRunId)
+      setSendBatchDialogOpen(false)
+      setSelectedPayslipIds(new Set())
+      setRefreshToken(String(Date.now()))
+      toastRef.current({
+        title: 'Batch payslips sent',
+        description: `${Number(result?.delivered || 0)} of ${Number(result?.targeted || finalizedBatchEmployeeCount || 0)} employees were sent.`,
+      })
+    } catch (e) {
+      toastRef.current({
+        title: 'Bulk send failed',
+        description: e.message || 'Could not send payslips for this finalized batch.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSendingBatchPayslips(false)
+    }
+  }
+
   useEffect(
     () => () => {
       if (tickRef.current) clearInterval(tickRef.current)
@@ -1028,6 +1065,17 @@ export default function AdminFinalizePayrollPage() {
 
             {periodFinalized ? (
               <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 @md:flex-row @md:flex-wrap @md:items-center @md:justify-end @md:px-5">
+                {Number(preview?.batch_run?.payroll_batch_run_id || 0) > 0 ? (
+                  <Button
+                    type="button"
+                    disabled={sendingBatchPayslips || loading}
+                    className="h-9 gap-2 bg-indigo-600 font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:bg-indigo-600/40"
+                    onClick={() => setSendBatchDialogOpen(true)}
+                  >
+                    {sendingBatchPayslips ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    Bulk Send Payslip ({finalizedBatchEmployeeCount})
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   disabled={deliveringBulk || selectedPayslipIds.size === 0}
@@ -1393,6 +1441,31 @@ export default function AdminFinalizePayrollPage() {
                   Open payslip
                 </Button>
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={sendBatchDialogOpen}
+          onOpenChange={(open) => {
+            if (!sendingBatchPayslips) setSendBatchDialogOpen(open)
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className={cn('text-xl font-bold', TEXT)}>Bulk Send Payslip</DialogTitle>
+              <DialogDescription className="text-sm text-[#0A0A0A]/70">
+                Send payslips to all {finalizedBatchEmployeeCount} employees in this batch?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setSendBatchDialogOpen(false)} disabled={sendingBatchPayslips}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={() => handleBulkSendBatchPayslips()} disabled={sendingBatchPayslips || finalizedBatchEmployeeCount <= 0}>
+                {sendingBatchPayslips ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                Send all payslips
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

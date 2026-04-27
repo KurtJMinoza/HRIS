@@ -1600,6 +1600,21 @@ export async function adminDeliverFinalizePayslips(payload) {
 }
 
 /**
+ * Finalized batch: send payslips for all employees in the batch (not page-limited).
+ * @param {number|string} batchRunId
+ */
+export async function adminBulkSendFinalizedBatchPayslips(batchRunId) {
+  const res = await authenticatedFetch(`/admin/payroll-batches/${encodeURIComponent(String(batchRunId))}/bulk-send-payslips`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    timeoutMs: 180000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to send batch payslips')
+  return data
+}
+
+/**
  * Admin payslip list (Laravel admin role only).
  * @param {{ company_id?: number, branch_id?: number, department_id?: number, from_date?: string, to_date?: string, per_page?: number }} params
  */

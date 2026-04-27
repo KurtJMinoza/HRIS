@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\PayrollBatchRun;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
 
@@ -56,5 +57,35 @@ final class PayslipDeliveryService
         ]);
 
         return $out;
+    }
+
+    /**
+     * Deliver all payslips for one finalized payroll batch run.
+     *
+     * @return array{batch_id:int,targeted:int,delivered:int,skipped:list<array{id:int,reason:string}>,errors:list<array{id:int,message:string}>}
+     */
+    public function deliverFinalizedBatchPayslips(int $batchId, User $actor): array
+    {
+        $run = PayrollBatchRun::query()->findOrFail($batchId);
+        if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
+            throw new \RuntimeException('Bulk send is only available when the payroll batch status is finalized.');
+        }
+
+        $agg = $this->payslipService->aggregateForBatchRun($run);
+        /** @var list<int> $payslipIds */
+        $payslipIds = $agg['payslip_ids'] ?? [];
+        if ($payslipIds === []) {
+            throw new \RuntimeException('No payslips found for this finalized batch.');
+        }
+
+        $result = $this->deliverPayslips($payslipIds, null, null, null, $actor);
+
+        return [
+            'batch_id' => (int) $run->id,
+            'targeted' => count($payslipIds),
+            'delivered' => (int) ($result['delivered'] ?? 0),
+            'skipped' => $result['skipped'] ?? [],
+            'errors' => $result['errors'] ?? [],
+        ];
     }
 }

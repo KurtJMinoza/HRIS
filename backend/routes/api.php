@@ -345,6 +345,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/payroll/finalize/execute', [PayrollFinalizeController::class, 'execute']);
             Route::post('/admin/payroll/finalize/employee', [PayrollFinalizeController::class, 'finalizeEmployee']);
             Route::post('/admin/payroll/finalize/deliver-payslips', [PayrollFinalizeController::class, 'deliverPayslips']);
+            Route::post('/admin/payroll-batches/{batchId}/bulk-send-payslips', [PayrollFinalizeController::class, 'bulkSendPayslips'])->whereNumber('batchId');
             Route::get('/admin/payroll/finalize/status/{batchRunId}', [PayrollFinalizeController::class, 'executeStatus']);
             Route::delete('/admin/payroll/finalize/batch/{batchRunId}', [PayrollFinalizeController::class, 'deleteBatch']);
         });
