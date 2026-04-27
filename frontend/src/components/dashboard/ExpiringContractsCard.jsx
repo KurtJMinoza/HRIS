@@ -1,4 +1,4 @@
-import { ArrowRight, RefreshCw, WalletCards } from 'lucide-react'
+import { ArrowRight, Building2, RefreshCw, WalletCards } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -31,15 +31,16 @@ export function ExpiringContractsCard({
   return (
     <Card
       className={cn(
-        'h-auto gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]',
+        'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[620px]',
         rows.length > 0 ? 'max-h-[620px]' : 'max-h-none',
       )}
     >
       <CardHeader className="px-7 pb-6 pt-7">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <CardTitle className="mb-5 truncate text-xl font-semibold leading-snug tracking-tight text-foreground">
-              Expiring Contracts
+            <CardTitle className="mb-4 flex items-center gap-2 truncate text-xl font-bold leading-snug tracking-tight text-foreground">
+              <Building2 className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="truncate">Expiring Contracts</span>
             </CardTitle>
             <CardDescription className="mt-0 text-sm font-normal leading-[1.55] text-muted-foreground">
               Contracts ending soon in your scope.
@@ -76,7 +77,7 @@ export function ExpiringContractsCard({
             Loading expiring contracts...
           </div>
         ) : rows.length === 0 ? (
-          <div className="rounded-2xl border border-border/70 bg-muted/15 p-5 text-base font-normal leading-[1.55] text-muted-foreground">
+          <div className="rounded-2xl border border-border/70 bg-muted/15 p-6 text-center text-base font-medium leading-[1.55] text-foreground/90">
             No expiring contracts.
           </div>
         ) : (

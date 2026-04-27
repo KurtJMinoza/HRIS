@@ -1024,7 +1024,7 @@ export default function AdminDashboard() {
 
       {/* ── Insight row: Today's Leaves · Half-Day Summary · Quick Actions ── */}
       <Motion.div
-        className="mt-2 grid items-start gap-6 gap-y-8 @sm:grid-cols-2 @xl:grid-cols-3"
+        className="mt-2 grid items-stretch gap-6 gap-y-8 @sm:grid-cols-2 @xl:grid-cols-3"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1032,24 +1032,24 @@ export default function AdminDashboard() {
         transition={scrollRevealTransition}
       >
         {/* 1. Today's Leaves */}
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="self-start">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="self-stretch">
           <Card className={cn(
-            'h-auto gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]',
+            'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[620px]',
             todayLeaves.length > 0 ? 'max-h-[620px]' : 'max-h-none',
           )}>
             <CardHeader className="px-7 pb-6 pt-7">
               <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle className="mb-5 text-xl font-semibold leading-snug tracking-tight text-foreground">
-                    Today&apos;s Leaves
+                <div className="min-w-0">
+                  <CardTitle className="mb-4 flex items-center gap-2 text-xl font-bold leading-snug tracking-tight text-foreground">
+                    <CalendarDays className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <span className="truncate">Today&apos;s Leaves</span>
                   </CardTitle>
                   <CardDescription className="mt-0 text-sm font-normal leading-[1.55] text-muted-foreground">
                     {todayLeaves.length > 0
                       ? `${todayLeaves.length} employee${todayLeaves.length !== 1 ? 's are' : ' is'} on leave today`
-                      : 'No approved leaves scheduled for today'}
+                      : 'Updates automatically from approved leave requests.'}
                   </CardDescription>
                 </div>
-                <CalendarOff className="mt-1 size-4 shrink-0 text-muted-foreground" />
               </div>
             </CardHeader>
             <CardContent className={cn(
@@ -1232,7 +1232,7 @@ export default function AdminDashboard() {
         </Motion.div>
 
         {/* 3. Expiring Contracts */}
-        <Motion.div variants={itemVariants} className="self-start">
+        <Motion.div variants={itemVariants} className="self-stretch">
           <ExpiringContractsCard
             loading={loading && !data}
             contracts={expiringContracts}
@@ -1243,16 +1243,22 @@ export default function AdminDashboard() {
         </Motion.div>
 
         {/* 4. Required Actions Before Confirmation */}
-        <Motion.div variants={itemVariants} className="self-start">
+        <Motion.div variants={itemVariants} className="self-stretch">
           <Card className={cn(
-            'h-auto w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)]',
+            'h-full w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[620px]',
             requiredConfirmationActions.length > 0 ? 'max-h-[620px]' : 'max-h-none',
           )}>
             <CardHeader className="px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5 lg:px-7 lg:pb-6 lg:pt-7">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div className="min-w-0">
-                  <CardTitle className="mb-2 text-base font-semibold leading-snug tracking-tight text-foreground sm:text-lg lg:mb-3 lg:text-xl">
-                    Required Actions Before Confirmation
+                  <CardTitle className="mb-2 flex items-center gap-2 text-base font-bold leading-snug tracking-tight text-foreground sm:text-lg lg:mb-3 lg:text-xl">
+                    <LayoutList className="size-4 shrink-0 text-muted-foreground sm:size-5" aria-hidden="true" />
+                    <span className="truncate">Required Actions Before Confirmation</span>
+                    {requiredConfirmationActions.length > 0 ? (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                        {requiredConfirmationActions.length}
+                      </span>
+                    ) : null}
                   </CardTitle>
                   <CardDescription className="mt-0 text-xs font-normal leading-relaxed text-muted-foreground sm:text-sm sm:leading-[1.55]">
                     Pending performance reviews and checklist items.
@@ -1288,55 +1294,52 @@ export default function AdminDashboard() {
                       key={emp.id}
                       className="group rounded-xl border border-border/70 bg-background/45 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_1px_2px_rgba(15,23,42,0.05)] transition-[transform,box-shadow,background-color,border-color] duration-250 hover:-translate-y-px hover:border-border hover:bg-accent/30 hover:shadow-[0_1px_0_rgba(15,23,42,0.03),0_16px_34px_rgba(15,23,42,0.08)] sm:rounded-2xl sm:p-4"
                     >
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-                        <div className="flex min-w-0 items-start gap-2.5 sm:gap-3">
-                        <Avatar className="h-10 w-10 border border-border/70 shadow-md shadow-black/10 ring-1 ring-border/60 sm:h-11 sm:w-11">
-                          <AvatarImage src={profileImageUrl(emp.profile_image_url)} alt="" className="object-cover" />
-                          <AvatarFallback>{String(emp.name || 'U').slice(0, 1)}</AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <p className="wrap-break-word text-sm font-semibold tracking-[-0.012em] text-foreground">{emp.name}</p>
-                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                            Department: {emp.department || 'Unassigned'}{emp.branch ? ` / ${emp.branch}` : ''}
-                          </p>
-                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                            Hired: {formatDate(emp.hire_date)} • Probation end: {formatDate(emp.probation_end_date)}
-                          </p>
-                          <div className="mt-2 flex flex-wrap gap-1.5">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                        <div className="flex min-w-0 flex-1 items-start gap-2.5 sm:gap-3">
+                          <Avatar className="h-10 w-10 border border-border/70 shadow-md shadow-black/10 ring-1 ring-border/60 sm:h-11 sm:w-11">
+                            <AvatarImage src={profileImageUrl(emp.profile_image_url)} alt="" className="object-cover" />
+                            <AvatarFallback>{String(emp.name || 'U').slice(0, 1)}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-semibold tracking-[-0.012em] text-foreground">{emp.name}</p>
+                              <span className="inline-flex rounded-full border border-rose-500/20 bg-rose-500/10 px-2.5 py-1 text-[11px] font-semibold tracking-[-0.01em] text-rose-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200">
+                                {formatDaysLabel(emp.days_remaining_label) || 'Pending timeline'}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+                              {emp.department || 'Unassigned'}{emp.branch ? ` / ${emp.branch}` : ''}
+                            </p>
+                            <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+                              Hired {formatDate(emp.hire_date)} • Probation end {formatDate(emp.probation_end_date)}
+                            </p>
+                            <div className="mt-2.5 flex flex-wrap gap-2">
+                              {!emp.performance_review_completed && (
                             <span
-                              className={cn(
-                                'inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200',
-                                emp.performance_review_completed
-                                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 dark:border-emerald-400/20'
-                                  : ''
-                              )}
+                              className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200"
                             >
-                              Performance Review: {emp.performance_review_completed ? 'Completed' : 'Pending'}
+                              Performance Review Pending
                             </span>
+                              )}
+                              {!emp.checklist_completed && (
                             <span
-                              className={cn(
-                                'inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200',
-                                emp.checklist_completed
-                                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 dark:border-emerald-400/20'
-                                  : ''
-                              )}
+                              className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200"
                             >
-                              Checklist: {emp.checklist_completed ? 'Completed' : 'Pending'}
+                              Checklist Pending
                             </span>
+                              )}
+                              {emp.performance_review_completed && emp.checklist_completed ? (
+                                <span className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:border-emerald-400/20 dark:text-emerald-300">
+                                  All required checks completed
+                                </span>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
-                        </div>
-                        <span className="w-fit self-start rounded-full border border-rose-500/20 bg-rose-500/10 px-2.5 py-1 text-[11px] font-semibold tracking-[-0.01em] text-rose-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200 sm:shrink-0 sm:self-auto">
-                          {formatDaysLabel(emp.days_remaining_label) || 'Pending timeline'}
-                        </span>
-                      </div>
-                      <div className="mt-3 flex flex-col gap-2 sm:mt-4 sm:flex-row sm:items-center sm:justify-between">
-                        <span className="text-xs leading-relaxed text-muted-foreground">Pending performance reviews and checklist items.</span>
                         <Button
                           type="button"
                           size="sm"
-                          variant="outline"
-                          className="h-8 w-full rounded-xl border-border/70 bg-background/80 px-3 text-xs font-medium tracking-[-0.01em] text-foreground/90 shadow-sm shadow-black/5 transition-[background-color,box-shadow,transform] duration-200 hover:bg-accent/50 hover:shadow-black/10 active:translate-y-px sm:h-9 sm:w-auto sm:px-4"
+                          className="h-9 w-full rounded-xl border border-amber-500/30 bg-amber-500/90 px-4 text-xs font-semibold tracking-[-0.01em] text-white shadow-[0_10px_24px_rgba(217,119,6,0.28)] transition-[background-color,box-shadow,transform] duration-200 hover:bg-amber-500 hover:shadow-[0_16px_30px_rgba(217,119,6,0.34)] active:translate-y-px sm:w-auto"
                           onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
                         >
                           Review Actions
