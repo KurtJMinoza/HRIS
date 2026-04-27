@@ -857,19 +857,19 @@ export default function EmployeeDashboard() {
             </p>
           </div>
           {currentStatus && (
-            <div className="inline-flex flex-wrap items-center gap-2 rounded-md border border-border/80 bg-card/80 px-3 py-2.5 text-sm shadow-sm transition-opacity duration-200">
-              <div className="flex items-center gap-2">
+            <div className="inline-flex w-full flex-wrap items-start gap-2 rounded-md border border-border/80 bg-card/80 px-3 py-2.5 text-sm shadow-sm transition-opacity duration-200 @sm:w-auto">
+              <div className="flex w-full flex-wrap items-center gap-2 @sm:w-auto">
                 <span className={`inline-flex h-2 w-2 shrink-0 rounded-full ${currentStatus.dotClass}`} />
                 <span className="font-medium text-foreground">{currentStatus.label}</span>
                 {currentStatus.detail && (
-                  <span className="text-muted-foreground">• {currentStatus.detail}</span>
+                  <span className="w-full text-muted-foreground @sm:w-auto @sm:pl-1">• {currentStatus.detail}</span>
                 )}
               </div>
               {(currentStatus.label === 'Not started' || currentStatus.label === 'No activity yet today') && scheduleAssigned && (
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex w-full flex-wrap items-center gap-2">
                   <Button
                     size="sm"
-                    className="h-8 gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                    className="h-8 w-full gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] @sm:w-auto"
                     onClick={() => navigate('/employee/attendance?action=clock_in')}
                   >
                     <QrCode className="size-3.5" />
@@ -879,7 +879,7 @@ export default function EmployeeDashboard() {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-8 gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                      className="h-8 w-full gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] @sm:w-auto"
                       onClick={() => navigate('/employee/qr')}
                     >
                       <ScanFace className="size-3.5" />
@@ -891,7 +891,7 @@ export default function EmployeeDashboard() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex w-full items-center justify-between gap-3 @sm:w-auto @sm:justify-end @sm:gap-4">
           {user?.has_face && (
             <div className="hidden @sm:flex flex-col items-center gap-1.5 rounded-md border border-border/80 bg-muted/30 px-4 py-3">
               <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Registered Face</span>
@@ -1177,10 +1177,10 @@ export default function EmployeeDashboard() {
         <p className="text-muted-foreground">
           Need to take action? Jump straight from your dashboard.
         </p>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full flex-col gap-2 @sm:w-auto @sm:flex-row @sm:flex-wrap">
           <Button
             size="sm"
-            className="h-9 px-3 text-sm"
+            className="h-9 w-full px-3 text-sm @sm:w-auto"
             onClick={() => navigate('/employee/requests')}
           >
             Request leave
@@ -1188,7 +1188,7 @@ export default function EmployeeDashboard() {
           <Button
             size="sm"
             variant="outline"
-            className="h-9 px-3 text-sm"
+            className="h-9 w-full px-3 text-sm @sm:w-auto"
             onClick={() => navigate('/employee/attendance')}
           >
             View full attendance
@@ -1196,7 +1196,7 @@ export default function EmployeeDashboard() {
           <Button
             size="sm"
             variant="outline"
-            className="h-9 px-3 text-sm"
+            className="h-9 w-full px-3 text-sm @sm:w-auto"
             onClick={() => navigate('/employee/overtime')}
           >
             File overtime

@@ -1985,26 +1985,26 @@ export default function AdminDashboard() {
             )}
           </div>
           {/* Filters: Date range + Company multi-select */}
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
+          <div className="mt-5 flex flex-col gap-3 @md:flex-row @md:flex-wrap @md:items-center">
+            <div className="flex w-full flex-wrap items-center gap-2 @md:w-auto">
               <span className="text-[11px] font-normal uppercase tracking-wide text-muted-foreground">Date</span>
               <input
                 type="date"
                 value={companyDateFrom}
                 onChange={(e) => setCompanyDateFrom(e.target.value)}
-                className="rounded-md border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground"
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground @md:w-auto @md:flex-none"
               />
               <span className="text-xs text-muted-foreground">→</span>
               <input
                 type="date"
                 value={companyDateTo}
                 onChange={(e) => setCompanyDateTo(e.target.value)}
-                className="rounded-md border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground"
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground @md:w-auto @md:flex-none"
               />
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 px-2 text-xs font-semibold text-foreground"
+                className="h-7 px-2 text-xs font-semibold text-foreground @md:ml-1"
                 onClick={() => {
                   const today = toLocalDateString(new Date())
                   setCompanyDateFrom(today)
@@ -2014,7 +2014,7 @@ export default function AdminDashboard() {
                 Today
               </Button>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-col gap-2 @md:w-auto @md:flex-row @md:items-center">
               <span className="text-[11px] font-normal uppercase tracking-wide text-muted-foreground">Companies</span>
               <div className="flex flex-wrap gap-1.5">
                 <button
@@ -2096,7 +2096,7 @@ export default function AdminDashboard() {
           )}
         </CardHeader>
         <CardContent className="pt-0">
-          <div className="h-[300px] w-full rounded-xl bg-linear-to-r from-emerald-500/8 via-card to-card px-2 pt-2">
+          <div className="h-[260px] w-full rounded-xl bg-linear-to-r from-emerald-500/8 via-card to-card px-1.5 pt-2 @sm:h-[280px] @md:h-[300px] @md:px-2">
             {companyChartLoading ? (
               <div className="flex h-full items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
                 Loading…
@@ -2106,7 +2106,7 @@ export default function AdminDashboard() {
                 <BarChart
                   layout="vertical"
                   data={companyData}
-                  margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
+                    margin={{ top: 8, right: 10, left: 4, bottom: 8 }}
                 >
                   <CartesianGrid
                     strokeDasharray="2 4"
@@ -2126,7 +2126,7 @@ export default function AdminDashboard() {
                     tick={{ fontSize: 12, fill: 'var(--muted-foreground)', fontWeight: 400 }}
                     axisLine={false}
                     tickLine={false}
-                    width={140}
+                    width={96}
                     tickFormatter={(value, index) => {
                       const item = companyData[index]
                       if (item?.headcount) {
