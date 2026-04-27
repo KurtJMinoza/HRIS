@@ -27,12 +27,13 @@ export function ExpiringContractsCard({
   profileImageUrl,
 }) {
   const rows = Array.isArray(contracts) ? contracts : []
+  const previewRows = rows.slice(0, 1)
 
   return (
     <Card
       className={cn(
-        'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[620px]',
-        rows.length > 0 ? 'max-h-[620px]' : 'max-h-none',
+        'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[420px]',
+        rows.length > 0 ? 'max-h-[420px]' : 'max-h-none',
       )}
     >
       <CardHeader className="px-7 pb-7 pt-8">
@@ -69,7 +70,7 @@ export function ExpiringContractsCard({
       <CardContent
         className={cn(
           'min-h-0 space-y-5 px-7 pb-8 pt-0 pr-5',
-          rows.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
+          rows.length > 0 ? 'overflow-hidden' : 'overflow-visible',
         )}
       >
         {loading ? (
@@ -82,7 +83,7 @@ export function ExpiringContractsCard({
           </div>
         ) : (
           <div className="space-y-5">
-            {rows.map((c) => {
+            {previewRows.map((c) => {
               const name = c?.name || '—'
               const type = c?.contract_type || 'Contractual'
               const org = `${c?.department || 'Unassigned'}${c?.branch ? ` / ${c.branch}` : ''}`

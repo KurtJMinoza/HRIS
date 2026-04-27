@@ -606,13 +606,19 @@ export default function AdminDashboard() {
       ? data.company_distribution
       : (companyAttendanceData?.companies ?? [])
   const companyData = companyRows.map((c, idx) => ({
+    present: Number(c.present ?? 0),
+    headcount: Number(c.headcount ?? 0),
+    late: Number(c.late ?? 0),
+    absent: Number(c.absent ?? 0),
+    on_leave: Number(c.on_leave ?? 0),
+    // Attendance formula: (present employees / total company employees) * 100.
+    attendance_pct:
+      Number(c.headcount ?? 0) > 0
+        ? Number(((Number(c.present ?? 0) / Number(c.headcount ?? 0)) * 100).toFixed(2))
+        : 0,
     company: c.company ?? 'Unassigned',
     company_id: c.company_id,
-    present: c.present ?? 0,
-    late: c.late ?? 0,
-    absent: c.absent ?? 0,
-    on_leave: c.on_leave ?? 0,
-    headcount: c.headcount ?? 0,
+    // Keep backend percentage for reference/debug; UI uses computed attendance_pct above.
     present_pct: c.present_pct ?? 0,
     color: CHART.deptBars[idx % CHART.deptBars.length],
     logo_url: c.logo_url ?? (c.company_id != null ? companyLogoMap[c.company_id] : null),
@@ -638,6 +644,7 @@ export default function AdminDashboard() {
   const requiredConfirmationActions = Array.isArray(data?.required_confirmation_actions)
     ? data.required_confirmation_actions
     : []
+  const todayLeavesPreview = todayLeaves.slice(0, 1)
   // Used by other dashboard sections; keep available for future copy changes.
   // eslint-disable-next-line no-unused-vars
   const autoRegularizationMonths = Number(data?.employment_settings?.auto_regularization_months || 6)
@@ -1034,8 +1041,8 @@ export default function AdminDashboard() {
         {/* 1. Today's Leaves */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="self-stretch">
           <Card className={cn(
-            'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[620px]',
-            todayLeaves.length > 0 ? 'max-h-[620px]' : 'max-h-none',
+            'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[420px]',
+            todayLeaves.length > 0 ? 'max-h-[420px]' : 'max-h-none',
           )}>
             <CardHeader className="px-7 pb-7 pt-8">
               <div className="flex items-start justify-between gap-4">
@@ -1054,7 +1061,7 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent className={cn(
               'min-h-0 space-y-5 px-7 pb-8 pt-0 pr-5',
-              todayLeaves.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
+              todayLeaves.length > 0 ? 'overflow-hidden' : 'overflow-visible',
             )}>
               {todayLeaves.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-emerald-300/45 bg-emerald-500/5 p-5 text-center dark:border-emerald-500/40 dark:bg-emerald-900/20">
@@ -1064,8 +1071,8 @@ export default function AdminDashboard() {
                   </p>
                 </div>
               ) : (
-                <div className="flex gap-3 overflow-x-auto pb-1 pr-1 @xl:grid @xl:grid-cols-2 @xl:overflow-visible">
-                  {todayLeaves.map((leave) => {
+                <div className="flex gap-3 overflow-x-auto pb-1 pr-1 @xl:overflow-visible">
+                  {todayLeavesPreview.map((leave) => {
                     const profileSrc = leave.profile_image_url || profileImageUrl(leave.profile_image) || undefined
                     const secondary = [leave.department, leave.position].filter(Boolean).join(' / ') || 'Unassigned'
                     return (
@@ -1245,8 +1252,8 @@ export default function AdminDashboard() {
         {/* 4. Required Actions Before Confirmation */}
         <Motion.div variants={itemVariants} className="self-stretch">
           <Card className={cn(
-            'h-full w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[620px]',
-            requiredConfirmationActions.length > 0 ? 'max-h-[620px]' : 'max-h-none',
+            'h-full w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[420px]',
+            requiredConfirmationActions.length > 0 ? 'max-h-[420px]' : 'max-h-none',
           )}>
             <CardHeader className="px-4 pb-5 pt-5 sm:px-5 sm:pb-6 sm:pt-6 lg:px-7 lg:pb-7 lg:pt-8">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
@@ -2061,7 +2068,7 @@ export default function AdminDashboard() {
           )}
           {isSingleCompany && companyData[0] && (
             <p className="mt-1.5 text-[11px] text-muted-foreground">
-              {companyData[0].company}: {companyData[0].present ?? 0} present ({companyData[0].present_pct ?? 0}%)
+              {companyData[0].company}: {companyData[0].present ?? 0} present ({companyData[0].attendance_pct ?? 0}%)
               {(companyData[0].headcount ?? 0) > 0 && ` · ${companyData[0].headcount} total staff`}
             </p>
           )}
@@ -2154,7 +2161,7 @@ export default function AdminDashboard() {
                           <p className="mt-0.5 tabular-nums" style={{ color: 'var(--muted-foreground)' }}>
                             Present: <span className="font-semibold" style={{ color: 'var(--foreground)' }}>{present}</span>
                             {headcount > 0 && (
-                              <span className="ml-1 text-xs">({row.present_pct}%)</span>
+                              <span className="ml-1 text-xs">({row.attendance_pct}%)</span>
                             )}
                           </p>
                           {headcount !== null && headcount > 0 && (
@@ -2186,9 +2193,9 @@ export default function AdminDashboard() {
                       position: 'right',
                       fill: 'var(--foreground)',
                       fontSize: 12,
-                      formatter: (v) => {
-                        if (!totalCompanyPresent) return `${v}`
-                        const pct = Math.round((v / totalCompanyPresent) * 100)
+                      formatter: (v, entry) => {
+                        const pct = Number(entry?.payload?.attendance_pct ?? 0)
+                        if (pct <= 0) return `${v}`
                         return `${v} (${pct}%)`
                       },
                     }}
