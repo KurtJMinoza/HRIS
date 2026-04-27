@@ -35,7 +35,7 @@ export function ExpiringContractsCard({
         rows.length > 0 ? 'max-h-[620px]' : 'max-h-none',
       )}
     >
-      <CardHeader className="px-7 pb-6 pt-7">
+      <CardHeader className="px-7 pb-7 pt-8">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <CardTitle className="mb-4 flex items-center gap-2 truncate text-xl font-bold leading-snug tracking-tight text-foreground">
@@ -68,7 +68,7 @@ export function ExpiringContractsCard({
 
       <CardContent
         className={cn(
-          'min-h-0 space-y-4 px-7 pb-7 pt-0 pr-5',
+          'min-h-0 space-y-5 px-7 pb-8 pt-0 pr-5',
           rows.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
         )}
       >
@@ -81,7 +81,7 @@ export function ExpiringContractsCard({
             No expiring contracts.
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {rows.map((c) => {
               const name = c?.name || '—'
               const type = c?.contract_type || 'Contractual'

@@ -1024,7 +1024,7 @@ export default function AdminDashboard() {
 
       {/* ── Insight row: Today's Leaves · Half-Day Summary · Quick Actions ── */}
       <Motion.div
-        className="mt-2 grid items-stretch gap-6 gap-y-8 @sm:grid-cols-2 @xl:grid-cols-3"
+        className="mt-4 grid items-stretch gap-7 gap-y-10 @sm:grid-cols-2 @xl:grid-cols-3"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1037,7 +1037,7 @@ export default function AdminDashboard() {
             'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[620px]',
             todayLeaves.length > 0 ? 'max-h-[620px]' : 'max-h-none',
           )}>
-            <CardHeader className="px-7 pb-6 pt-7">
+            <CardHeader className="px-7 pb-7 pt-8">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <CardTitle className="mb-4 flex items-center gap-2 text-xl font-bold leading-snug tracking-tight text-foreground">
@@ -1053,7 +1053,7 @@ export default function AdminDashboard() {
               </div>
             </CardHeader>
             <CardContent className={cn(
-              'min-h-0 space-y-4 px-7 pb-7 pt-0 pr-5',
+              'min-h-0 space-y-5 px-7 pb-8 pt-0 pr-5',
               todayLeaves.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
             )}>
               {todayLeaves.length === 0 ? (
@@ -1248,7 +1248,7 @@ export default function AdminDashboard() {
             'h-full w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[620px]',
             requiredConfirmationActions.length > 0 ? 'max-h-[620px]' : 'max-h-none',
           )}>
-            <CardHeader className="px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5 lg:px-7 lg:pb-6 lg:pt-7">
+            <CardHeader className="px-4 pb-5 pt-5 sm:px-5 sm:pb-6 sm:pt-6 lg:px-7 lg:pb-7 lg:pt-8">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div className="min-w-0">
                   <CardTitle className="mb-2 flex items-center gap-2 text-base font-bold leading-snug tracking-tight text-foreground sm:text-lg lg:mb-3 lg:text-xl">
@@ -1276,7 +1276,7 @@ export default function AdminDashboard() {
               </div>
             </CardHeader>
             <CardContent className={cn(
-              'flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 pt-0 pr-3 sm:gap-4 sm:px-5 sm:pb-5 sm:pr-4 lg:px-7 lg:pb-7 lg:pr-5',
+              'flex min-h-0 flex-1 flex-col gap-4 px-4 pb-5 pt-0 pr-3 sm:gap-5 sm:px-5 sm:pb-6 sm:pr-4 lg:px-7 lg:pb-8 lg:pr-5',
               requiredConfirmationActions.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
             )}>
               {loading && !data ? (
@@ -1288,7 +1288,7 @@ export default function AdminDashboard() {
                   No required actions pending.
                 </div>
               ) : (
-                <div className="space-y-3 sm:space-y-4">
+                <div className="space-y-4 sm:space-y-5">
                   {requiredConfirmationActions.map((emp) => (
                     <div
                       key={emp.id}
@@ -1737,7 +1737,7 @@ export default function AdminDashboard() {
 
       {/* Charts row – redesigned UI */}
       <Motion.div
-        className="grid gap-8 @lg:grid-cols-2"
+        className="mt-6 grid gap-8 @lg:grid-cols-2"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
