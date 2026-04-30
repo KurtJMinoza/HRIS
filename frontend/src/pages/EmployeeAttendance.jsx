@@ -789,7 +789,7 @@ export default function EmployeeAttendance() {
                 {modalType === 'clock_in' ? 'Clock In' : 'Clock Out'}
               </DialogTitle>
               <p id="emp-attendance-scan-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Scan your personal QR code using the barcode scanner. Your attendance will be recorded automatically — no button press required.
+                Scan your personal QR code using the QR code scanner. Your attendance will be recorded automatically — no button press required.
               </p>
             </DialogHeader>
           </div>

@@ -1,5 +1,4 @@
 import { Suspense, lazy, useState, useEffect, useRef, useCallback } from 'react'
-import { motion } from 'framer-motion'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
 
 /** Matches Vite `base` (e.g. `/HR/` → `/HR`) so routes work when deployed under a subpath */
@@ -91,8 +90,8 @@ function RealTimeClock() {
 }
 
 const FEATURES = [
-  'Barcode Scanner',
   'Face Recognition',
+  'QR Code Scanner',
   'Real-Time Reports',
   'Role-Based Dashboard',
 ]
@@ -146,8 +145,8 @@ function captureResizedFrameBase64(webcamRef, {
 }
 
 const ATTENDANCE_MODES = [
-  { value: 'qr_code', label: 'Barcode Scanner', icon: Scan },
   { value: 'face_recognition', label: 'Face Recognition', icon: ScanFace },
+  { value: 'qr_code', label: 'QR Code Scanner', icon: Scan },
 ]
 
 // —— Face Recognition: kiosk (attendance only) or login (auth + attendance) ——
@@ -382,7 +381,7 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
 
 function SmartDTRPreview({ className }) {
   const navigate = useNavigate()
-  const [attendanceMode, setAttendanceMode] = useState('qr_code')
+  const [attendanceMode, setAttendanceMode] = useState('face_recognition')
   // null = auto-detect (scanner reads clock_in vs clock_out from backend context)
   // 'clock_in' | 'clock_out' = explicit override (optional for scanner, required for face)
   const [kioskType, setKioskType] = useState(null)
@@ -671,7 +670,7 @@ function SmartDTRPreview({ className }) {
 
           {/* ── Action area ── */}
           {attendanceMode === 'qr_code' ? (
-            /* ── Barcode scanner mode ── */
+            /* ── QR code scanner mode ── */
             <div className="space-y-3">
               {/* Clock In / Clock Out — explicit action required before scanning */}
               <div className="grid grid-cols-2 gap-3">
@@ -997,12 +996,9 @@ function SmartDTRPreview({ className }) {
             'hover:bg-white/22 hover:text-white focus-visible:ring-2 focus-visible:ring-emerald-400/50 focus-visible:ring-offset-0',
           )}
         >
-          <motion.div
+          <div
             role="document"
             aria-label="Attendance confirmation"
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
             className="relative px-7 pb-9 pt-14 text-center text-white sm:px-12 sm:pb-10 sm:pt-16"
           >
             {/* Soft glow + particles — green for clock-in, cool neutral for clock-out */}
@@ -1200,7 +1196,7 @@ function SmartDTRPreview({ className }) {
                 </Button>
               </DialogFooter>
             </div>
-          </motion.div>
+          </div>
         </DialogContent>
       </Dialog>
 
