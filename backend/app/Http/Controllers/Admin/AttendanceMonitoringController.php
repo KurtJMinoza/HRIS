@@ -446,8 +446,18 @@ class AttendanceMonitoringController extends Controller
                             $outCarbon = $effectiveTimeOut instanceof Carbon
                                 ? $effectiveTimeOut
                                 : Carbon::parse($effectiveTimeOut);
+                            $inCarbon = $effectiveTimeIn instanceof Carbon
+                                ? $effectiveTimeIn
+                                : Carbon::parse($effectiveTimeIn);
                             $earlyTimeout = isset($todaySchedule['early_timeout_minutes']) ? (int) $todaySchedule['early_timeout_minutes'] : null;
-                            $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $outCarbon, $earlyTimeout);
+                            $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                                $dateKey,
+                                $todaySchedule,
+                                $inCarbon,
+                                $outCarbon,
+                                $tz,
+                                $earlyTimeout
+                            );
 
                             $overtimeBuffer = isset($todaySchedule['overtime_buffer_minutes'])
                                 ? (int) $todaySchedule['overtime_buffer_minutes']

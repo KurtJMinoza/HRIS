@@ -4392,8 +4392,15 @@ export const NO_SCHEDULE_MESSAGE = 'No schedule assigned. Please contact the adm
 export async function recordAttendanceScan(type, qrToken, options = {}) {
   const { authenticated = false } = options
   const body = JSON.stringify({ type, qr_token: qrToken })
+  const kioskHeaders = authenticated ? {} : { 'X-Kiosk-Attendance': '1' }
   const res = await wrapNetworkError(
-    authenticated ? authenticatedFetch('/attendance/scan', { method: 'POST', body }) : fetchWithSanctumCsrf('/attendance/scan', { method: 'POST', body })
+    authenticated
+      ? authenticatedFetch('/attendance/scan', { method: 'POST', body })
+      : fetchWithSanctumCsrf('/attendance/scan', {
+          method: 'POST',
+          body,
+          headers: kioskHeaders,
+        })
   )
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -4405,7 +4412,10 @@ export async function recordAttendanceScan(type, qrToken, options = {}) {
       data.errors?.type?.[0] ||
       data.message ||
       'Failed to record attendance'
-    throw new Error(msg)
+    const err = new Error(msg)
+    err.errorCode = data.error_code || null
+    err.kioskCorrection = data.kiosk_correction || null
+    throw err
   }
   return data
 }
@@ -4638,11 +4648,15 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
     const res = await fetchWithSanctumCsrf('/attendance/kiosk', {
       method: 'POST',
       body: JSON.stringify({ type, login: qrTokenOrLogin }),
+      headers: { 'X-Kiosk-Attendance': '1' },
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       const msg = data.errors?.login?.[0] || data.errors?.type?.[0] || data.message || 'Attendance failed'
-      throw new Error(msg)
+      const err = new Error(msg)
+      err.errorCode = data.error_code || null
+      err.kioskCorrection = data.kiosk_correction || null
+      throw err
     }
     return data
   }
@@ -4668,12 +4682,14 @@ export async function recordAttendanceKioskFace(type, payload) {
   const res = await fetchWithSanctumCsrf('/attendance/kiosk/face', {
     method: 'POST',
     body: JSON.stringify(body),
+    headers: { 'X-Kiosk-Attendance': '1' },
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     const msg = data.errors?.face?.[0] || data.errors?.type?.[0] || data.message || 'Face verification failed'
     const err = new Error(msg)
     err.errorCode = data.error_code || null
+    err.kioskCorrection = data.kiosk_correction || null
     throw err
   }
   return data

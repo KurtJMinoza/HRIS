@@ -603,17 +603,28 @@ class ReportsController extends Controller
                     }
 
                     if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
-                        $scheduledStart = Carbon::parse($dateKey.' '.$todaySchedule['in'], $attendanceTz);
                         $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $todaySchedule, $attendanceTz);
                         $requiredMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
 
-                        if ($workedMinutes !== null && $status !== 'halfday' && $scheduledEnd) {
+                        if ($workedMinutes !== null && $status !== 'halfday' && $scheduledEnd && $requiredMinutes > 0) {
                             $outCarbon = $timeOut instanceof Carbon ? $timeOut : ($timeOut ? Carbon::parse($timeOut) : null);
                             $earlyTimeout = isset($todaySchedule['early_timeout_minutes']) ? (int) $todaySchedule['early_timeout_minutes'] : null;
-                            $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $outCarbon, $earlyTimeout);
-                            if ($undertimeMinutes > 0 || $workedMinutes < $requiredMinutes - $undertimeThresholdMinutes) {
+                            /** Early leave vs scheduled end (AttendanceController / kiosk parity). */
+                            $undertimeFromEarlyOut = $outCarbon
+                                ? AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $outCarbon, $earlyTimeout)
+                                : 0;
+                            /**
+                             * Net shortfall vs required shift minutes after break netting (Attendance summary parity).
+                             * Catches gaps not expressed by scheduled-end − clock-out alone (e.g. within early-timeout tolerance).
+                             */
+                            $undertimeFromNetShortfall = max(0, $requiredMinutes - (int) $workedMinutes);
+                            $effectiveUndertime = max((int) $undertimeFromEarlyOut, $undertimeFromNetShortfall);
+                            if (
+                                $effectiveUndertime > 0
+                                || $undertimeFromNetShortfall > $undertimeThresholdMinutes
+                            ) {
                                 $dayUndertimeCount = 1;
-                                $dayUndertimeMinutes = max(0, $undertimeMinutes);
+                                $dayUndertimeMinutes = $effectiveUndertime;
                                 $status = 'undertime';
                             }
 
@@ -624,21 +635,26 @@ class ReportsController extends Controller
                             }
                         }
 
-                        // If there is a clock-in but no clock-out after the shift window has ended,
-                        // treat the day as Absent for reporting purposes so metrics and payroll
-                        // do not consider it as a clean "present" day.
-                        if ($timeIn && ! $timeOut && $scheduledEnd) {
+                        // Clock-in but no clock-out after shift end ⇒ incomplete record — same semantics as Employee Attendance /
+                        // {@see AttendancePresenceDisplayService} (Absent was wrong here and wiped undertime in reports).
+                        if ($timeIn && ! $timeOut && $scheduledEnd && isset($requiredMinutes) && $requiredMinutes > 0 && $status !== 'halfday') {
                             $nowTz = Carbon::now($attendanceTz);
                             $todayDate = $nowTz->toDateString();
                             $pastShiftEnd = $dateKey < $todayDate || ($dateKey === $todayDate && $nowTz->greaterThan($scheduledEnd));
                             if ($pastShiftEnd) {
-                                $status = 'absent';
-                                $dayAbsent = 1;
+                                // No paired clock-out → no countable rendered shift minutes toward the day's requirement.
+                                $actualRenderedTowardRequired = ($workedMinutes !== null && $workedMinutes > 0) ? (int) $workedMinutes : 0;
+                                $missingMinutes = max(0, $requiredMinutes - $actualRenderedTowardRequired);
+                                $status = 'incomplete';
+                                if ($missingMinutes > 0) {
+                                    $dayUndertimeCount = 1;
+                                    $dayUndertimeMinutes = $missingMinutes;
+                                }
+                                $dayAbsent = 0;
+                                // Final day label is Incomplete, not Late — mirrors employee summary rollups.
                                 $dayLate = 0;
                                 $dayLateMinutes = 0;
-                                $dayUndertimeCount = 0;
-                                $dayUndertimeMinutes = 0;
-                                $dayPresentIncrement = 0;
+                                $dayLateCountForDept = 0;
                             }
                         }
                     }
@@ -701,7 +717,9 @@ class ReportsController extends Controller
                     $departmentAggregates[$deptKey]['present_days'] += $dayPresentIncrement;
                 }
 
-                if ($status === 'present') {
+                // Employee-facing summary collapses incomplete to "present" for counts; mirrors that here so monthly reports
+                // agree with Employee Attendance.
+                if ($status === 'present' || $status === 'incomplete') {
                     $metrics['present_count']++;
                 }
 
@@ -1206,6 +1224,8 @@ class ReportsController extends Controller
                 $effectiveTimeOut = $timeOut;
                 $effectiveWorkedMinutes = $workedMinutes;
 
+                $isHalfday = false;
+
                 $status = '—';
                 $lateMinutes = null;
                 $lateLabel = null;
@@ -1221,6 +1241,7 @@ class ReportsController extends Controller
                         // Half-day leave uses strict attendance: status is Half Day,
                         // but total hours come only from actual clock-in/out logs.
                         $status = 'halfday';
+                        $isHalfday = true;
                     } elseif ($leaveTypeApproved === 'undertime') {
                         $status = 'undertime';
                         if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
@@ -1281,12 +1302,26 @@ class ReportsController extends Controller
                             $lateLabel = $clockInResult['late_label'] ?? null;
                         }
 
+                        /** Required net shift minutes after breaks — used for undertime-from-shortfall parity with Attendance. */
+                        $requiredMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
+
                         if ($scheduledEnd && $effectiveTimeOut) {
                             $outCarbon = $effectiveTimeOut instanceof Carbon
                                 ? $effectiveTimeOut
                                 : Carbon::parse($effectiveTimeOut);
+                            $inCarbon = $effectiveTimeIn instanceof Carbon
+                                ? $effectiveTimeIn
+                                : Carbon::parse($effectiveTimeIn);
                             $earlyTimeout = isset($todaySchedule['early_timeout_minutes']) ? (int) $todaySchedule['early_timeout_minutes'] : null;
-                            $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $outCarbon, $earlyTimeout);
+
+                            $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                                $dateKey,
+                                $todaySchedule,
+                                $inCarbon,
+                                $outCarbon,
+                                $attendanceTz,
+                                $earlyTimeout
+                            );
 
                             $overtimeBuffer = isset($todaySchedule['overtime_buffer_minutes']) ? (int) $todaySchedule['overtime_buffer_minutes'] : (int) config('attendance.overtime_buffer_minutes', 15);
                             $otStart = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
@@ -1294,11 +1329,27 @@ class ReportsController extends Controller
                                 // Carbon: diff from later→earlier is negative; measure from OT start to clock-out.
                                 $overtimeMinutes = (int) $otStart->diffInMinutes($outCarbon);
                             }
+                        } elseif ($scheduledEnd && $effectiveTimeIn && ! $effectiveTimeOut && ! $isHalfday && $requiredMinutes > 0) {
+                            // Missing time-out past shift end: {@see AttendancePresenceDisplayService incomplete_pair}.
+                            // Undertime displayed as required net minutes − actual rendered toward that requirement (typically 0 when no pairing).
+                            $nowTzIncomplete = Carbon::now($attendanceTz);
+                            $todayDateIncomplete = $nowTzIncomplete->toDateString();
+                            $pastShiftEndIncomplete = $dateKey < $todayDateIncomplete || ($dateKey === $todayDateIncomplete && $nowTzIncomplete->greaterThan($scheduledEnd));
+                            if ($pastShiftEndIncomplete) {
+                                $basisRendered = (
+                                    $effectiveWorkedMinutes !== null && $effectiveWorkedMinutes > 0
+                                )
+                                    ? (int) $effectiveWorkedMinutes : 0;
+                                $undertimeMinutes = max(0, $requiredMinutes - $basisRendered);
+                            }
                         }
 
-                        $requiredMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
-
-                        $isUndertime = $undertimeMinutes !== null && $undertimeMinutes > 0;
+                        // Do not classify missing time-out rows as literal "undertime" — parity with Employee Attendance
+                        // ({@see AttendanceController::summary} incomplete + presence_label), but undertime MINUTES remain populated.
+                        $isUndertime = $effectiveTimeOut
+                            && $undertimeMinutes !== null
+                            && (int) $undertimeMinutes > 0
+                            && ! $isHalfday;
 
                         // Status precedence for detailed attendance:
                         // - Leave-based statuses are handled above.
@@ -1418,19 +1469,33 @@ class ReportsController extends Controller
                     if ($utTime) {
                         $earlyOutTime = substr((string) $utTime, 0, 5);
                     }
-                } elseif ($status === 'undertime' && $effectiveTimeOut) {
+                    /** Covered by approved undertaking leave filing — payroll impact travels with leave elsewhere. */
+                } elseif ($effectiveTimeOut && ($undertimeMinutes ?? 0) > 0 && ! $isHalfday) {
+                    // Clock-out-derived undertime: show employee's actual punch as "early out" anchor (status may become present after qualification).
                     $earlyOutTime = $this->formatTimeInAttendanceTz($effectiveTimeOut);
                 }
 
-                $isAutoGenerated = $status === 'undertime'
+                $isAutoGenerated = $effectiveTimeOut
+                    && ($undertimeMinutes ?? 0) > 0
+                    && ! $isHalfday
                     && ! ($leaveTypeApproved === 'undertime' && $isOnLeaveApproved);
 
-                $payrollImpactMinutes = $status === 'undertime' && $undertimeMinutes !== null
-                    ? $undertimeMinutes
+                $payrollImpactMinutes = (! $isHalfday && ($undertimeMinutes ?? 0) > 0)
+                    ? (int) $undertimeMinutes
                     : 0;
 
-                $payrollImpactHours = $payrollImpactMinutes > 0
-                    ? round($payrollImpactMinutes / 60, 2)
+                /** Undertime filing column: distinguishes approved leave-vs-schedule filings from log-only shortfalls/missing punches. */
+                $undertimeFilingStatus = null;
+                if (! $isHalfday && ($undertimeMinutes ?? 0) > 0) {
+                    if ($leaveTypeApproved === 'undertime' && $isOnLeaveApproved) {
+                        $undertimeFilingStatus = 'approved';
+                    } else {
+                        $undertimeFilingStatus = 'unfiled';
+                    }
+                }
+
+                $payrollImpactHours = ($effectiveWorkedMinutes !== null && $effectiveWorkedMinutes > 0)
+                    ? round($effectiveWorkedMinutes / 60, 2)
                     : 0;
 
                 $scheduledDurationHours = null;
@@ -1488,9 +1553,7 @@ class ReportsController extends Controller
                     'presence_issue' => $presenceIssue,
                     'leave_type' => $leaveInfo['type'] ?? null,
                     'leave_status' => $leaveInfo['status'] ?? null,
-                    'undertime_filing_status' => $status === 'undertime'
-                        ? (($leaveTypeApproved === 'undertime' && $isOnLeaveApproved) ? 'approved' : 'unfiled')
-                        : null,
+                    'undertime_filing_status' => $undertimeFilingStatus,
                     'leave_start_date' => $leaveInfo['start_date'] ?? null,
                     'leave_end_date' => $leaveInfo['end_date'] ?? null,
                     'leave_duration_days' => $leaveDurationDays,

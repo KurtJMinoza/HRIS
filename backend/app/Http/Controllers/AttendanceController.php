@@ -52,6 +52,49 @@ class AttendanceController extends Controller
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
     }
 
+    /**
+     * SmartDTR kiosk sends X-Kiosk-Attendance: 1 so we do not treat the request as the employee app
+     * when a Sanctum session exists but no Bearer token is sent (same browser logged in elsewhere).
+     */
+    private function isKioskAttendanceClient(Request $request): bool
+    {
+        return strtoupper((string) $request->header('X-Kiosk-Attendance', '')) === '1';
+    }
+
+    /**
+     * Kiosk duplicate clock-in (or similar): employee should use Presence / Attendance Correction workflow instead.
+     */
+    private function kioskAttendanceCorrectionConflictResponse(User $user, string $reason, string $message): JsonResponse
+    {
+        return response()->json([
+            'message' => $message,
+            'errors' => ['type' => [$message]],
+            'error_code' => 'kiosk_attendance_correction',
+            'kiosk_correction' => [
+                'reason' => $reason,
+                'employee_id' => $user->id,
+                'employee_name' => $user->name,
+                'employee_profile_image_url' => $user->profile_image_url,
+                'employee_profile_image' => $user->profile_image,
+            ],
+        ], 422);
+    }
+
+    /**
+     * After kiosk clock-out with no recorded clock-in for the day, prompt correction filing so Daily Computation / DTR stay coherent.
+     */
+    private function appendKioskClockOutWithoutClockInHint(array &$payload, User $user): void
+    {
+        $payload['kiosk_correction'] = [
+            'suggested' => true,
+            'reason' => 'clock_out_without_clock_in',
+            'employee_id' => $user->id,
+            'employee_name' => $user->name,
+            'employee_profile_image_url' => $user->profile_image_url,
+            'employee_profile_image' => $user->profile_image,
+        ];
+    }
+
     /** Format a Carbon as time (H:i) in attendance timezone for consistent display. */
     private function formatTimeInAttendanceTz($value): ?string
     {
@@ -681,16 +724,29 @@ class AttendanceController extends Controller
                 'type' => ['Your attendance for today is already completed.'],
             ]);
         }
+        // Kiosk-only endpoint: duplicate clock-in → structured response so SmartDTR can offer Attendance Correction filing.
         if ($type === AttendanceLog::TYPE_CLOCK_IN && $user->hasTimedInToday()) {
-            throw ValidationException::withMessages([
-                'type' => ['You have already timed in today.'],
-            ]);
+            $this->recordFailedAttempt($user->id, $request, false, 'already_timed_in');
+
+            return $this->kioskAttendanceCorrectionConflictResponse(
+                $user,
+                'already_timed_in',
+                'You have already timed in today. File an attendance correction if your DTR needs fixing.'
+            );
         }
+        // Allow one clock-out without a same-day clock-in (missing punch); block repeat orphan outs — aligns with Daily Computation / correction flows.
         if ($type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->canClockOutToday()) {
-            throw ValidationException::withMessages([
-                'type' => ['Cannot clock out without clocking in first.'],
-            ]);
+            $hasTimedInToday = $user->hasTimedInToday();
+            $hasClockedOutToday = $user->hasClockOutToday();
+            $allowKioskOrphanOut = ! $hasTimedInToday && ! $hasClockedOutToday;
+            if (! $allowKioskOrphanOut) {
+                throw ValidationException::withMessages([
+                    'type' => [$hasClockedOutToday ? 'You have already clocked out today.' : 'Cannot clock out without clocking in first.'],
+                ]);
+            }
         }
+
+        $suggestCorrectionAfterClockOut = $type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->hasTimedInToday();
 
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
             'authentication_method' => $qrToken !== '' ? AttendanceLog::AUTH_METHOD_QR : AttendanceLog::AUTH_METHOD_CREDENTIALS,
@@ -782,17 +838,11 @@ class AttendanceController extends Controller
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
             $dateKey = $log->created_at->toDateString();
             if ($daySchedule && ! empty($daySchedule['out'])) {
-                $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule);
                 $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-                $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $log->created_at, $earlyTimeout);
-                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
 
                 // Derive final status from the day's first clock-in classification,
                 // not only from undertime. This prevents "On time" when the day started late.
                 $status = 'present';
-                // Use same UTC range as hasCompletedAttendanceToday / summaries.
-                // Use the same "today" range logic as User::attendanceTodayRangeUtc(), but duplicated here
-                // because the model method is protected.
                 $tzToday = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
                 $todayStartTz = Carbon::now($tzToday)->startOfDay();
                 $startUtc = $todayStartTz->copy()->setTimezone('UTC');
@@ -804,6 +854,16 @@ class AttendanceController extends Controller
                     ->orderBy('created_at')
                     ->first();
 
+                $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                    $dateKey,
+                    $daySchedule,
+                    $firstIn?->created_at,
+                    $log->created_at,
+                    $tzToday,
+                    $earlyTimeout
+                );
+                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
+
                 if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
                     $tz = $this->attendanceTimezone();
                     $firstInDateKey = $firstIn->created_at->copy()->timezone($tz)->toDateString();
@@ -812,7 +872,6 @@ class AttendanceController extends Controller
                         $firstInDateKey,
                         $firstIn->created_at
                     );
-                    // Map clock-in status directly; UI can combine late + undertime if needed.
                     $status = $clockInResult['status'];
                     $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
                     $payload['attendance']['late_label'] = $clockInResult['late_label'];
@@ -822,6 +881,10 @@ class AttendanceController extends Controller
 
                 $payload['attendance']['status'] = $status;
             }
+        }
+
+        if ($suggestCorrectionAfterClockOut) {
+            $this->appendKioskClockOutWithoutClockInHint($payload, $user);
         }
 
         return response()->json($payload, 201);
@@ -1056,9 +1119,10 @@ class AttendanceController extends Controller
      * - No schedule assigned → "No schedule assigned. Please contact the administrator."
      * - Not scheduled today → "You are not scheduled to work today."
      * - Outside clock-in window → "Clock-in is not allowed at this time."
-     * - Already timed in = Cannot time in again → "You have already timed in today."
+     * - Already timed in = Cannot time in again → "You have already timed in today." (employee app).
+     * - SmartDTR kiosk (header X-Kiosk-Attendance): duplicate clock-in returns kiosk_attendance_correction; orphan clock-out allowed once without clock-in.
      * - Completed attendance = Cannot scan again → "Your attendance for today is already completed."
-     * - Clock out without clock-in → "Cannot clock out without clocking in first."
+     * - Clock out without clock-in → blocked unless kiosk orphan rule applies (see above).
      * Late status and Half Day are computed automatically when recording clock-in.
      */
     public function scan(Request $request): JsonResponse
@@ -1082,6 +1146,8 @@ class AttendanceController extends Controller
 
         $user = $this->refreshUserForScheduleCheck($user);
         $type = $validated['type'];
+        $isKioskFlow = $this->isKioskAttendanceClient($request);
+
         $this->enforceLeaveRestrictionsForToday($user, $type);
         $this->ensureUserHasScheduleForToday($user);
         $this->ensureNotHolidayForAttendance();
@@ -1092,15 +1158,31 @@ class AttendanceController extends Controller
             ]);
         }
         if ($type === AttendanceLog::TYPE_CLOCK_IN && $user->hasTimedInToday()) {
+            if ($isKioskFlow) {
+                $this->recordFailedAttempt($user->id, $request, false, 'already_timed_in');
+
+                return $this->kioskAttendanceCorrectionConflictResponse(
+                    $user,
+                    'already_timed_in',
+                    'You have already timed in today. File an attendance correction if your DTR needs fixing.'
+                );
+            }
             throw ValidationException::withMessages([
                 'type' => ['You have already timed in today.'],
             ]);
         }
         if ($type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->canClockOutToday()) {
-            throw ValidationException::withMessages([
-                'type' => ['Cannot clock out without clocking in first.'],
-            ]);
+            $hasTimedInToday = $user->hasTimedInToday();
+            $hasClockedOutToday = $user->hasClockOutToday();
+            $allowKioskOrphanOut = $isKioskFlow && ! $hasTimedInToday && ! $hasClockedOutToday;
+            if (! $allowKioskOrphanOut) {
+                throw ValidationException::withMessages([
+                    'type' => [$hasClockedOutToday ? 'You have already clocked out today.' : 'Cannot clock out without clocking in first.'],
+                ]);
+            }
         }
+
+        $suggestCorrectionAfterClockOut = $isKioskFlow && $type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->hasTimedInToday();
 
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
             'authentication_method' => AttendanceLog::AUTH_METHOD_QR,
@@ -1181,13 +1263,8 @@ class AttendanceController extends Controller
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
             $dateKey = $log->created_at->toDateString();
             if ($daySchedule && ! empty($daySchedule['out'])) {
-                $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule);
                 $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-                $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $log->created_at, $earlyTimeout);
-                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
 
-                // Derive final status from the day's first clock-in classification,
-                // not only from undertime, so a late day is never labeled "on time".
                 $status = 'present';
                 $tzToday = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
                 $todayStartTz = Carbon::now($tzToday)->startOfDay();
@@ -1199,6 +1276,16 @@ class AttendanceController extends Controller
                     ->where('type', AttendanceLog::TYPE_CLOCK_IN)
                     ->orderBy('created_at')
                     ->first();
+
+                $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                    $dateKey,
+                    $daySchedule,
+                    $firstIn?->created_at,
+                    $log->created_at,
+                    $tzToday,
+                    $earlyTimeout
+                );
+                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
 
                 if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
                     $tz = $this->attendanceTimezone();
@@ -1217,6 +1304,10 @@ class AttendanceController extends Controller
 
                 $payload['attendance']['status'] = $status;
             }
+        }
+
+        if ($suggestCorrectionAfterClockOut) {
+            $this->appendKioskClockOutWithoutClockInHint($payload, $user);
         }
 
         return response()->json($payload, 201);
@@ -1509,16 +1600,26 @@ class AttendanceController extends Controller
         }
         if ($type === AttendanceLog::TYPE_CLOCK_IN && $user->hasTimedInToday()) {
             $this->recordFailedAttempt($user->id, $request, false, 'already_timed_in');
-            throw ValidationException::withMessages([
-                'type' => ['You have already timed in today.'],
-            ]);
+
+            return $this->kioskAttendanceCorrectionConflictResponse(
+                $user,
+                'already_timed_in',
+                'You have already timed in today. File an attendance correction if your DTR needs fixing.'
+            );
         }
         if ($type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->canClockOutToday()) {
-            $this->recordFailedAttempt($user->id, $request, false, 'cannot_clock_out');
-            throw ValidationException::withMessages([
-                'type' => ['Cannot clock out without clocking in first.'],
-            ]);
+            $hasTimedInToday = $user->hasTimedInToday();
+            $hasClockedOutToday = $user->hasClockOutToday();
+            $allowKioskOrphanOut = ! $hasTimedInToday && ! $hasClockedOutToday;
+            if (! $allowKioskOrphanOut) {
+                $this->recordFailedAttempt($user->id, $request, false, 'cannot_clock_out');
+                throw ValidationException::withMessages([
+                    'type' => [$hasClockedOutToday ? 'You have already clocked out today.' : 'Cannot clock out without clocking in first.'],
+                ]);
+            }
         }
+
+        $suggestCorrectionAfterClockOut = $type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->hasTimedInToday();
 
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
 
@@ -1595,13 +1696,8 @@ class AttendanceController extends Controller
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
             $dateKey = $log->created_at->toDateString();
             if ($daySchedule && ! empty($daySchedule['out'])) {
-                $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule);
                 $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-                $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $log->created_at, $earlyTimeout);
-                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
 
-                // Derive final status from the day's first clock-in classification,
-                // not only from undertime.
                 $status = 'present';
                 $tzToday = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
                 $todayStartTz = Carbon::now($tzToday)->startOfDay();
@@ -1613,6 +1709,16 @@ class AttendanceController extends Controller
                     ->where('type', AttendanceLog::TYPE_CLOCK_IN)
                     ->orderBy('created_at')
                     ->first();
+
+                $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                    $dateKey,
+                    $daySchedule,
+                    $firstIn?->created_at,
+                    $log->created_at,
+                    $tzToday,
+                    $earlyTimeout
+                );
+                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
 
                 if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
                     $tz = $this->attendanceTimezone();
@@ -1631,6 +1737,10 @@ class AttendanceController extends Controller
 
                 $payload['attendance']['status'] = $status;
             }
+        }
+
+        if ($suggestCorrectionAfterClockOut) {
+            $this->appendKioskClockOutWithoutClockInHint($payload, $user);
         }
 
         $payload['performance'] = [
@@ -1978,8 +2088,18 @@ class AttendanceController extends Controller
                         $outCarbon = $effectiveTimeOut instanceof Carbon
                             ? $effectiveTimeOut
                             : ($effectiveTimeOut ? Carbon::parse($effectiveTimeOut) : null);
+                        $inCarbon = $effectiveTimeIn instanceof Carbon
+                            ? $effectiveTimeIn
+                            : ($effectiveTimeIn ? Carbon::parse($effectiveTimeIn) : null);
                         $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-                        $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $outCarbon, $earlyTimeout);
+                        $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                            $dateKey,
+                            $daySchedule,
+                            $inCarbon,
+                            $outCarbon,
+                            $attendanceTz,
+                            $earlyTimeout
+                        );
                         $dayUndertimeMinutes = $undertimeMinutes > 0 ? $undertimeMinutes : null;
                         if ($undertimeMinutes > 0 || $effectiveWorkedMinutes < $requiredMinutes - $undertimeThresholdMinutes) {
                             $metrics['undertime_count']++;
@@ -2277,13 +2397,17 @@ class AttendanceController extends Controller
     /**
      * Kiosk: list recent attendance logs (for display on login page DTR panel).
      * Public, no auth. Returns merged logs + manual corrections (newest first) with employee name, time, status, and late_label.
+     * 
+     * NOTE: Approved corrections are automatically synced to attendance_logs with authentication_method='hr_approved_correction',
+     * so they appear in the main query. We still include recent manual corrections separately for immediate visibility
+     * after admin saves them, but we deduplicate by employee+date+type to avoid showing the same punch twice.
      */
     public function recentKiosk(Request $request): JsonResponse
     {
         $tz = $this->attendanceTimezone();
         $todayDate = Carbon::now($tz)->toDateString();
 
-        // Regular attendance logs (fetch enough rows to merge with manual rows before take()).
+        // Regular attendance logs (includes HR-approved corrections synced via PresenceFilingAttendanceLogSyncService)
         $logEntries = AttendanceLog::query()
             ->with([
                 'user:id,name,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
@@ -2299,7 +2423,7 @@ class AttendanceController extends Controller
             ->orderByDesc('created_at')
             ->limit(40)
             ->get()
-            ->map(function (AttendanceLog $log) {
+            ->map(function (AttendanceLog $log) use ($tz) {
                 $info = $this->kioskLogStatus($log);
                 $user = $log->user;
                 $company = $user?->companyHeadships->first() ?? $user?->company ?? $user?->branch?->company ?? $user?->departmentRelation?->branch?->company;
@@ -2320,19 +2444,21 @@ class AttendanceController extends Controller
                     'late_minutes' => $info['late_minutes'] ?? null,
                     'late_label' => $info['late_label'] ?? null,
                     '_ts' => $log->created_at->timestamp,
+                    '_dedup_key' => ((int)($user?->id ?? 0)).'|'.$log->created_at->copy()->timezone($tz)->toDateString().'|'.$log->type,
                 ];
             });
 
-        // Manual corrections as synthetic feed rows. Sort key uses updated_at (when saved) so
-        // backdated times still surface as "recent" after admin entry; punch times stay in created_at for display.
+        // Approved corrections for immediate visibility in kiosk Recent Activity.
+        // Even when already synced to attendance_logs, we still project them as recent events
+        // (sorted by approval/update timestamp) and deduplicate by employee+date+type.
         $correctionRecentCutoff = Carbon::now('UTC')->subHours(48);
         $correctionEntries = AttendanceCorrection::query()
             ->where(function ($q) use ($todayDate, $correctionRecentCutoff) {
                 $q->whereDate('date', $todayDate)
+                    ->orWhere('approved_at', '>=', $correctionRecentCutoff)
                     ->orWhere('updated_at', '>=', $correctionRecentCutoff);
             })
-            // Critical integrity rule: kiosk should only reflect fully approved (HR-final) corrections.
-            // Pending or partially approved filings must NOT appear here.
+            // Only show fully approved corrections (HR-final approval)
             ->where('approved', true)
             ->orderByDesc('updated_at')
             ->limit(50)
@@ -2354,7 +2480,7 @@ class AttendanceController extends Controller
                 $companyLogoUrl = $company && is_string($company->logo) && trim($company->logo) !== ''
                     ? $this->publicMediaUrl($company->logo)
                     : null;
-                $sortTs = ($corr->updated_at ?? $corr->created_at ?? Carbon::now('UTC'))->timestamp;
+                $sortTs = ($corr->approved_at ?? $corr->updated_at ?? $corr->created_at ?? Carbon::now('UTC'))->timestamp;
                 $inStatus = null;
                 if ($user && $corr->time_in) {
                     $inStatus = $this->kioskClockInDisplayStatus($user, $corr->time_in);
@@ -2367,6 +2493,7 @@ class AttendanceController extends Controller
                     'company' => ['name' => $company?->name, 'logo_url' => $companyLogoUrl],
                 ];
                 $entries = collect();
+                $dateKey = $corr->date->toDateString();
                 if ($corr->time_in) {
                     $entries->push(array_merge($baseCommon, [
                         'id' => 'manual-in-'.$corr->id,
@@ -2376,6 +2503,7 @@ class AttendanceController extends Controller
                         'status' => $inStatus['status'] ?? 'manual',
                         'late_minutes' => $inStatus['late_minutes'] ?? null,
                         'late_label' => $inStatus['late_label'] ?? null,
+                        '_dedup_key' => ((int)($user?->id ?? 0)).'|'.$dateKey.'|'.AttendanceLog::TYPE_CLOCK_IN,
                     ]));
                 }
                 if ($corr->time_out) {
@@ -2387,28 +2515,20 @@ class AttendanceController extends Controller
                         'status' => null,
                         'late_minutes' => null,
                         'late_label' => null,
+                        '_dedup_key' => ((int)($user?->id ?? 0)).'|'.$dateKey.'|'.AttendanceLog::TYPE_CLOCK_OUT,
                     ]));
                 }
 
                 return $entries;
             });
 
-        // Merge both sources, sort newest first, keep top 25, strip internal sort key.
+        // Merge both sources, sort newest first, deduplicate by employee+date+type, keep top 25
         $merged = $logEntries->concat($correctionEntries)
             ->sortByDesc('_ts')
-            ->unique(function (array $e) use ($tz) {
-                $employeeId = (int) ($e['employee_id'] ?? 0);
-                $type = (string) ($e['type'] ?? '');
-                $dateKey = Carbon::parse((string) ($e['created_at'] ?? now()->toIso8601String()))
-                    ->timezone($tz)
-                    ->toDateString();
-
-                return $employeeId.'|'.$dateKey.'|'.$type;
-            })
+            ->unique('_dedup_key')
             ->take(25)
             ->map(function (array $e) {
-                unset($e['_ts']);
-
+                unset($e['_ts'], $e['_dedup_key']);
                 return $e;
             })
             ->values();

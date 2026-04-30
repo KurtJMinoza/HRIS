@@ -408,7 +408,29 @@ class AttendanceCorrectionController extends Controller
             $scheduledRegularMinutes = AttendanceStatusService::getRequiredWorkingMinutes($date, $daySchedule, $tz);
         }
 
-        if ($timeOut) {
+        if ($timeIn && $timeOut) {
+            $tz = $this->attendanceTimezone();
+            $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
+            $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                $date,
+                $daySchedule,
+                $timeIn->copy()->timezone($tz),
+                $timeOut->copy()->timezone($tz),
+                $tz,
+                $earlyTimeout
+            );
+
+            $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($date, $daySchedule, $tz);
+            if ($scheduledEnd instanceof Carbon) {
+                $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
+                    ? (int) $daySchedule['overtime_buffer_minutes']
+                    : (int) config('attendance.overtime_buffer_minutes', 15);
+                $otStart = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
+                if ($timeOut->greaterThan($otStart)) {
+                    $overtimeMinutes = (int) $otStart->diffInMinutes($timeOut);
+                }
+            }
+        } elseif ($timeOut) {
             $tz = $this->attendanceTimezone();
             $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($date, $daySchedule, $tz);
             if ($scheduledEnd instanceof Carbon) {

@@ -23,13 +23,16 @@ import { CheckCircle2, AlertCircle, Loader2, LogIn, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
+import { Button } from '@/components/ui/button'
 
 export function ScannerInput({
   onScan,
   submitting = false,
   error = null,
-  /** { employeeName?, employeeProfileImageUrl?, employeeId?, type, recordedAt, status, lateMinutes, lateLabel, undertimeMinutes } */
+  /** { employeeName?, employeeProfileImageUrl?, employeeId?, type, recordedAt, status, lateMinutes, lateLabel, undertimeMinutes, correctionSuggested?, correctionReason? } */
   successResult = null,
+  /** SmartDTR: clock-out without clock-in hint → employee portal correction filing */
+  onFileAttendanceCorrection,
   theme = 'light',
   className,
 }) {
@@ -226,6 +229,36 @@ export function ScannerInput({
             'rounded-full border px-2.5 py-0.5 text-xs font-medium',
             isDark ? 'border-orange-400/25 bg-orange-500/15 text-orange-300' : 'border-orange-200 bg-orange-50 text-orange-700'
           )}>Undertime — {successResult.undertimeMinutes} min</span>
+        )}
+
+        {!isIn && successResult.correctionSuggested && onFileAttendanceCorrection && (
+          <div className="mt-3 flex w-full max-w-[280px] flex-col gap-2">
+            <p
+              className={cn(
+                'rounded-lg border px-3 py-2 text-center text-[11px] leading-snug',
+                isDark
+                  ? 'border-amber-400/25 bg-amber-500/10 text-amber-100/95'
+                  : 'border-amber-200 bg-amber-50 text-amber-950',
+              )}
+            >
+              This clock-out was recorded without a same-day clock-in. Use Attendance Correction if your official DTR needs
+              fixing (Presence filing / approvals).
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn(
+                'w-full rounded-xl border font-semibold',
+                isDark
+                  ? 'border-amber-400/35 bg-amber-500/15 text-amber-50 hover:bg-amber-500/25'
+                  : 'border-amber-300 bg-background text-amber-950 hover:bg-amber-50',
+              )}
+              onClick={onFileAttendanceCorrection}
+            >
+              File correction
+            </Button>
+          </div>
         )}
 
         {/* Reset hint */}

@@ -524,7 +524,11 @@ class PresenceFilingController extends Controller
 
         $timeIn = $correction->time_in ? $correction->time_in->copy()->timezone($tz) : null;
         $timeOut = $correction->time_out ? $correction->time_out->copy()->timezone($tz) : null;
+        
+        // Ensure issue_kind is properly set for sync service
         $issueKind = $this->normalizeIssueKind($correction);
+        
+        // Validate that required times are present based on issue kind
         if ($issueKind === 'missing_in' && $timeIn === null) {
             throw ValidationException::withMessages([
                 'time_in' => ['Missing clock-in request requires a clock-in time.'],
@@ -557,6 +561,7 @@ class PresenceFilingController extends Controller
         }
 
         DB::transaction(function () use ($correction, $actor, $validated, $employee, $dateKey, $timeIn, $timeOut, $previousIn, $previousOut, $roleLabel, $issueKind) {
+            // Update correction record with approved times (convert to UTC for storage)
             $correction->time_in = $timeIn?->copy()->setTimezone('UTC');
             $correction->time_out = $timeOut?->copy()->setTimezone('UTC');
             $correction->pending_approval = false;
@@ -591,6 +596,7 @@ class PresenceFilingController extends Controller
                 'acted_at' => now(),
             ]);
 
+            // Sync approved correction times to attendance_logs so kiosk/recent views show corrected times
             $syncResult = $this->attendanceLogSyncService->syncApprovedCorrectionToLogs(
                 $employee,
                 $dateKey,
@@ -602,6 +608,7 @@ class PresenceFilingController extends Controller
                 $issueKind
             );
 
+            // Mark sync as complete so deduplication logic in kiosk view works correctly
             $correction->is_incomplete_record = ! ($syncResult['applied_time_in'] && $syncResult['applied_time_out']);
             $correction->attendance_logs_synced_at = now();
             $correction->attendance_logs_synced_by = $actor->id;

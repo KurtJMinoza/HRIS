@@ -19,6 +19,16 @@ class PresenceFilingAttendanceLogSyncService
         private readonly PresenceFilingService $presenceFilingService,
     ) {}
 
+    private function effectiveStamp(AttendanceLog $log): ?Carbon
+    {
+        $stamp = $log->verified_at ?? $log->created_at;
+        if ($stamp === null) {
+            return null;
+        }
+
+        return $stamp instanceof Carbon ? $stamp->copy() : Carbon::parse($stamp);
+    }
+
     /**
      * Apply HR-approved correction to same-day attendance punches (UTC).
      * Only requested punch types are changed; the opposite punch is preserved as-is.
@@ -49,12 +59,17 @@ class PresenceFilingAttendanceLogSyncService
 
         $existingLogs = AttendanceLog::query()
             ->where('user_id', $employee->id)
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
+            ->where(function ($q) use ($rangeStart, $rangeEnd) {
+                $q->whereBetween('verified_at', [$rangeStart, $rangeEnd])
+                    ->orWhereBetween('created_at', [$rangeStart, $rangeEnd]);
+            })
             ->orderBy('created_at')
             ->get();
 
-        $existingIn = $existingLogs->firstWhere('type', AttendanceLog::TYPE_CLOCK_IN)?->created_at;
-        $existingOut = $existingLogs->firstWhere('type', AttendanceLog::TYPE_CLOCK_OUT)?->created_at;
+        $existingIn = $existingLogs
+            ->first(fn (AttendanceLog $log) => $log->type === AttendanceLog::TYPE_CLOCK_IN && $this->effectiveStamp($log) !== null);
+        $existingOut = $existingLogs
+            ->first(fn (AttendanceLog $log) => $log->type === AttendanceLog::TYPE_CLOCK_OUT && $this->effectiveStamp($log) !== null);
 
         $applyIn = in_array($effectiveIssueKind, ['missing_in', 'both'], true);
         $applyOut = in_array($effectiveIssueKind, ['missing_out', 'both'], true);
@@ -64,14 +79,14 @@ class PresenceFilingAttendanceLogSyncService
             $applyOut = $timeOutUtc !== null;
         }
 
-        $finalIn = $applyIn ? $timeInUtc : ($existingIn ? Carbon::parse($existingIn) : null);
-        $finalOut = $applyOut ? $timeOutUtc : ($existingOut ? Carbon::parse($existingOut) : null);
+        $finalIn = $applyIn ? $timeInUtc : ($existingIn ? $this->effectiveStamp($existingIn) : null);
+        $finalOut = $applyOut ? $timeOutUtc : ($existingOut ? $this->effectiveStamp($existingOut) : null);
 
         if ($finalIn && $finalOut && $finalIn->greaterThanOrEqualTo($finalOut)) {
             // Keep existing data if applying requested timestamps would violate basic order.
             // Caller validation should prevent this, but we fail-safe for data integrity.
-            $finalIn = $existingIn ? Carbon::parse($existingIn) : null;
-            $finalOut = $existingOut ? Carbon::parse($existingOut) : null;
+            $finalIn = $existingIn ? $this->effectiveStamp($existingIn) : null;
+            $finalOut = $existingOut ? $this->effectiveStamp($existingOut) : null;
         }
 
         $now = now();
@@ -153,7 +168,9 @@ class PresenceFilingAttendanceLogSyncService
         array $base,
         Carbon $now
     ): void {
-        $ordered = $typeLogs->sortBy('created_at')->values();
+        $ordered = $typeLogs
+            ->sortBy(fn (AttendanceLog $log) => $this->effectiveStamp($log)?->timestamp ?? 0)
+            ->values();
         $canonical = null;
         if ($ordered->isNotEmpty()) {
             // Keep earliest clock-in and latest clock-out as canonical before updating.
@@ -172,6 +189,7 @@ class PresenceFilingAttendanceLogSyncService
         if ($canonical instanceof AttendanceLog) {
             AttendanceLog::query()->whereKey($canonical->id)->update([
                 'authentication_method' => AttendanceLog::AUTH_METHOD_HR_APPROVED_CORRECTION,
+                'verified_at' => $targetUtc,
                 'created_at' => $targetUtc,
                 'updated_at' => $now,
             ]);
@@ -189,6 +207,7 @@ class PresenceFilingAttendanceLogSyncService
 
         AttendanceLog::query()->create(array_merge($base, [
             'type' => $type,
+            'verified_at' => $targetUtc,
             'authentication_method' => AttendanceLog::AUTH_METHOD_HR_APPROVED_CORRECTION,
             'created_at' => $targetUtc,
             'updated_at' => $now,

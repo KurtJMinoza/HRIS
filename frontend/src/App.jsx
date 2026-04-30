@@ -5,7 +5,7 @@ import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from
 /** Matches Vite `base` (e.g. `/HR/` → `/HR`) so routes work when deployed under a subpath */
 const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, '') || undefined
 import { Toaster, toast } from 'sonner'
-import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, CheckCircle2, Home, Eye, EyeOff } from 'lucide-react'
+import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, CheckCircle2, Home, Eye, EyeOff, ClipboardList } from 'lucide-react'
 import {
   login,
   loginWithFace,
@@ -229,6 +229,12 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
     setFaceSubmitting(true)
     setFaceErrorCode(null)
     try {
+      if (kioskMode && !kioskType) {
+        toast.error('Select attendance action', {
+          description: 'Please choose Clock In or Clock Out before scanning your face.',
+        })
+        return
+      }
       if (kioskMode && kioskType && onKioskSuccess) {
         const data = await recordAttendanceKioskFace(kioskType, {
           image_base64: base64,
@@ -397,6 +403,17 @@ function SmartDTRPreview({ className }) {
     lateMinutes: null,
     lateLabel: null,
     undertimeMinutes: null,
+    correctionSuggested: false,
+    correctionReason: null,
+  })
+  /** Duplicate clock-in at kiosk → offer Presence / Attendance Correction filing (employee portal after login). */
+  const [kioskCorrectionModal, setKioskCorrectionModal] = useState({
+    open: false,
+    reason: null,
+    employeeId: null,
+    employeeName: null,
+    employeeProfileImageUrl: null,
+    employeeProfileImage: null,
   })
   const [kioskFaceInError, setKioskFaceInError] = useState(false)
   const lastScanRef = useRef({ text: null, at: 0 })
@@ -415,16 +432,23 @@ function SmartDTRPreview({ className }) {
     }
   }, [])
 
+  const goFileAttendanceCorrectionPortal = useCallback(() => {
+    navigate('/login', {
+      state: { from: { pathname: '/employee/correction-requests' } },
+    })
+  }, [navigate])
+
   useEffect(() => {
     fetchRecent()
     const t = setInterval(fetchRecent, 30000)
     return () => clearInterval(t)
   }, [fetchRecent])
 
-  // Auto-clear inline scan result after 6 s (kiosk resets to idle)
+  // Auto-clear inline scan result (longer when orphan clock-out hint is shown so user can tap File correction)
   useEffect(() => {
     if (!scanResult) return
-    const t = setTimeout(() => setScanResult(null), 6000)
+    const ms = scanResult.correctionSuggested ? 14000 : 6000
+    const t = setTimeout(() => setScanResult(null), ms)
     return () => clearTimeout(t)
   }, [scanResult])
 
@@ -447,52 +471,50 @@ function SmartDTRPreview({ className }) {
     setSubmitting(true)
 
     let data = null
-    let usedType = kioskType // may be null for auto-detect
+    let usedType = kioskType
 
     try {
-      if (kioskType) {
-        // User explicitly selected clock_in or clock_out — use it directly
-        data = await recordAttendanceKiosk(kioskType, qrText)
-        usedType = kioskType
-      } else {
-        // Auto-detect: try clock_in first; if already clocked in, fall back to clock_out
-        try {
-          data = await recordAttendanceKiosk('clock_in', qrText)
-          usedType = 'clock_in'
-        } catch (clockInErr) {
-          const msg = String(clockInErr.message || '').toLowerCase()
-          if (
-            msg.includes('already') ||
-            msg.includes('clocked in') ||
-            msg.includes('checked in') ||
-            msg.includes('already recorded')
-          ) {
-            data = await recordAttendanceKiosk('clock_out', qrText)
-            usedType = 'clock_out'
-          } else {
-            throw clockInErr
-          }
-        }
+      if (!kioskType) {
+        throw new Error('Please select Clock In or Clock Out before scanning.')
       }
+      // Always submit the explicitly selected action to avoid unintended dual punches.
+      data = await recordAttendanceKiosk(kioskType, qrText)
+      usedType = kioskType
 
       playSuccess(SOUND_FEEDBACK_ENABLED)
+      const kc = data.kiosk_correction
       setScanResult({
         employeeId: data.employee_id ?? null,
         employeeName: data.employee_name ?? null,
         employeeProfileImageUrl: data.employee_profile_image_url ?? null,
         employeeProfileImage: data.employee_profile_image ?? null,
         type: usedType,
-        recordedAt: new Date().toISOString(),
+        recordedAt: data.attendance?.created_at ?? new Date().toISOString(),
         status: data.attendance?.status ?? null,
         lateMinutes: data.attendance?.late_minutes ?? null,
         lateLabel: data.attendance?.late_label ?? null,
         undertimeMinutes: data.attendance?.undertime_minutes ?? null,
+        correctionSuggested: Boolean(kc?.suggested),
+        correctionReason: kc?.reason ?? null,
       })
       setKioskType(null)
       fetchRecent()
     } catch (e) {
-      setError(e.message)
-      playError(SOUND_FEEDBACK_ENABLED)
+      if (e?.errorCode === 'kiosk_attendance_correction' && e?.kioskCorrection) {
+        const k = e.kioskCorrection
+        setKioskCorrectionModal({
+          open: true,
+          reason: k.reason ?? 'already_timed_in',
+          employeeId: k.employee_id ?? null,
+          employeeName: k.employee_name ?? null,
+          employeeProfileImageUrl: k.employee_profile_image_url ?? null,
+          employeeProfileImage: k.employee_profile_image ?? null,
+        })
+        playError(SOUND_FEEDBACK_ENABLED)
+      } else {
+        setError(e.message)
+        playError(SOUND_FEEDBACK_ENABLED)
+      }
     } finally {
       setSubmitting(false)
     }
@@ -512,7 +534,16 @@ function SmartDTRPreview({ className }) {
   }
 
   const closeSummaryModal = useCallback(() => {
-    setSummaryModal((s) => ({ ...s, open: false }))
+    setSummaryModal((s) => ({
+      ...s,
+      open: false,
+      correctionSuggested: false,
+      correctionReason: null,
+    }))
+  }, [])
+
+  const closeKioskCorrectionModal = useCallback(() => {
+    setKioskCorrectionModal((s) => ({ ...s, open: false }))
   }, [])
 
   function goToDashboard() {
@@ -520,10 +551,14 @@ function SmartDTRPreview({ className }) {
     navigate('/')
   }
 
-  /** 2s auto-close: show 2 → 1, then dismiss (matches “Closing in 2 seconds…”). */
+  /** Auto-close face summary unless orphan clock-out hint is shown (employee may need time to read / tap File correction). */
   const [kioskAutoCloseSeconds, setKioskAutoCloseSeconds] = useState(2)
   useEffect(() => {
     if (!summaryModal.open) return
+    if (summaryModal.correctionSuggested) {
+      setKioskAutoCloseSeconds(0)
+      return undefined
+    }
     setKioskAutoCloseSeconds(2)
     const after1s = setTimeout(() => setKioskAutoCloseSeconds(1), 1000)
     const after2s = setTimeout(() => closeSummaryModal(), 2000)
@@ -531,7 +566,7 @@ function SmartDTRPreview({ className }) {
       clearTimeout(after1s)
       clearTimeout(after2s)
     }
-  }, [summaryModal.open, closeSummaryModal])
+  }, [summaryModal.open, summaryModal.correctionSuggested, closeSummaryModal])
 
   const kioskSummaryName = (summaryModal.employeeName || '').trim() || 'Employee'
   const kioskSummaryIsClockOut = summaryModal.type === 'clock_out'
@@ -539,6 +574,16 @@ function SmartDTRPreview({ className }) {
     ? `Goodbye, ${kioskSummaryName}`
     : `Welcome, ${kioskSummaryName}`
   const kioskSummaryPhotoSrc = kioskAttendanceAvatarSrc(summaryModal)
+
+  const kioskCorrectionConflictTitle =
+    kioskCorrectionModal.reason === 'already_timed_in'
+      ? 'Already clocked in'
+      : 'File attendance correction'
+
+  const kioskCorrectionConflictBody =
+    kioskCorrectionModal.reason === 'already_timed_in'
+      ? 'You already have a clock-in today. Use Attendance Correction after signing in if your punches are wrong or incomplete.'
+      : 'Sign in to the employee portal to submit an attendance correction (Presence filing / approvals).'
 
   return (
     <div
@@ -628,7 +673,7 @@ function SmartDTRPreview({ className }) {
           {attendanceMode === 'qr_code' ? (
             /* ── Barcode scanner mode ── */
             <div className="space-y-3">
-              {/* Clock In / Clock Out — primary vs secondary, auto-detect emphasized */}
+              {/* Clock In / Clock Out — explicit action required before scanning */}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -683,10 +728,9 @@ function SmartDTRPreview({ className }) {
                 </button>
               </div>
 
-              {/* Auto-detect primary — scan = system decides */}
               {!kioskType && (
                 <p className="text-center text-xs font-medium text-teal-300/90">
-                  Scan directly — system auto-detects Clock In / Clock Out
+                  Select Clock In or Clock Out first, then scan.
                 </p>
               )}
 
@@ -695,6 +739,7 @@ function SmartDTRPreview({ className }) {
                 submitting={submitting}
                 error={error}
                 successResult={scanResult}
+                onFileAttendanceCorrection={goFileAttendanceCorrectionPortal}
                 theme="dark"
               />
             </div>
@@ -742,7 +787,18 @@ function SmartDTRPreview({ className }) {
               <FaceRekognitionLiveness
                 kioskMode
                 kioskType={kioskType}
+                onKioskAttendanceCorrection={(kc) => {
+                  setKioskCorrectionModal({
+                    open: true,
+                    reason: kc?.reason ?? 'already_timed_in',
+                    employeeId: kc?.employee_id ?? null,
+                    employeeName: kc?.employee_name ?? null,
+                    employeeProfileImageUrl: kc?.employee_profile_image_url ?? null,
+                    employeeProfileImage: kc?.employee_profile_image ?? null,
+                  })
+                }}
                 onKioskSuccess={(data) => {
+                  const kc = data?.kiosk_correction
                   setSummaryModal({
                     open: true,
                     employeeId: data.employee_id ?? null,
@@ -755,6 +811,8 @@ function SmartDTRPreview({ className }) {
                     lateMinutes: data.attendance?.late_minutes ?? null,
                     lateLabel: data.attendance?.late_label ?? null,
                     undertimeMinutes: data.attendance?.undertime_minutes ?? null,
+                    correctionSuggested: Boolean(kc?.suggested),
+                    correctionReason: kc?.reason ?? null,
                   })
                   setKioskType(null)
                   fetchRecent()
@@ -1084,7 +1142,30 @@ function SmartDTRPreview({ className }) {
                 </div>
               </div>
 
-              {kioskAutoCloseSeconds > 0 && summaryModal.open && (
+              {summaryModal.correctionSuggested && (
+                <div className="mt-5 w-full max-w-sm rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-left shadow-inner shadow-black/10">
+                  <p className="flex items-start gap-2 text-[13px] font-medium leading-snug text-amber-50">
+                    <ClipboardList className="mt-0.5 size-4 shrink-0 text-amber-200" aria-hidden />
+                    <span>
+                      Clock-out was saved without a recorded clock-in today. File an attendance correction after signing in so
+                      your official record matches Daily Computation.
+                    </span>
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 h-11 w-full rounded-xl border-amber-400/40 bg-amber-500/15 text-[15px] font-semibold text-white hover:bg-amber-500/25"
+                    onClick={() => {
+                      closeSummaryModal()
+                      goFileAttendanceCorrectionPortal()
+                    }}
+                  >
+                    File correction
+                  </Button>
+                </div>
+              )}
+
+              {kioskAutoCloseSeconds > 0 && summaryModal.open && !summaryModal.correctionSuggested && (
                 <p
                   className="mt-6 text-sm font-medium text-white/70"
                   role="status"
@@ -1120,6 +1201,54 @@ function SmartDTRPreview({ className }) {
               </DialogFooter>
             </div>
           </motion.div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Kiosk: duplicate clock-in (face / QR) → correction filing instead of forcing another punch */}
+      <Dialog open={kioskCorrectionModal.open} onOpenChange={(open) => !open && closeKioskCorrectionModal()}>
+        <DialogContent
+          overlayClassName="bg-black/40 backdrop-blur-md"
+          className={cn(
+            'max-w-[min(100%,440px)] overflow-hidden rounded-[20px] border border-amber-400/25',
+            'bg-white/8 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_24px_48px_rgba(0,0,0,0.35)]',
+            'backdrop-blur-2xl sm:max-w-[440px]',
+          )}
+          innerClassName="gap-0 overflow-x-hidden p-0 sm:p-0"
+          closeButtonClassName={cn(
+            'rounded-lg border border-white/25 bg-white/15 text-white shadow-md backdrop-blur-sm',
+            'hover:bg-white/22 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-400/50 focus-visible:ring-offset-0',
+          )}
+        >
+          <div className="px-7 pb-8 pt-12 text-center text-white sm:px-10">
+            <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-full border border-amber-400/35 bg-amber-500/15">
+              <ClipboardList className="size-7 text-amber-200" aria-hidden />
+            </div>
+            {(kioskCorrectionModal.employeeName || '').trim() && (
+              <p className="mb-1 text-sm font-medium text-white/70">{kioskCorrectionModal.employeeName.trim()}</p>
+            )}
+            <h2 className="mb-3 text-xl font-bold tracking-tight text-white">{kioskCorrectionConflictTitle}</h2>
+            <p className="text-sm leading-relaxed text-white/75">{kioskCorrectionConflictBody}</p>
+            <DialogFooter className="mt-8 flex-col gap-3 border-0 p-0 sm:flex-row sm:justify-stretch">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={closeKioskCorrectionModal}
+                className="h-12 w-full rounded-xl border border-white/15 bg-white/10 text-[15px] font-semibold text-white hover:bg-white/14"
+              >
+                Scan again
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  closeKioskCorrectionModal()
+                  goFileAttendanceCorrectionPortal()
+                }}
+                className="h-12 w-full rounded-xl border border-amber-400/35 bg-amber-600 text-[15px] font-semibold text-white hover:bg-amber-500"
+              >
+                File correction
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

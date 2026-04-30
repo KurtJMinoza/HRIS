@@ -455,8 +455,12 @@ export default function AdminReports() {
       const txt = (minW = 100, align = 'left') => ({ minW, align })
       const detailedStatusCol = {
         label: 'Status',
-        accessor: (row) =>
-          row.status === 'undertime'
+        accessor: (row) => {
+          /** Align with Employee Attendance: backend sets presence_label (e.g. Present (Incomplete Records)). */
+          if (row.presence_label != null && String(row.presence_label).trim() !== '') {
+            return row.presence_label
+          }
+          return row.status === 'undertime'
             ? row.undertime_filing_status === 'approved' ||
               (row.leave_type === 'undertime' && row.leave_status === 'approved')
               ? 'Undertime (Approved)'
@@ -477,7 +481,8 @@ export default function AdminReports() {
                         ? 'Absent'
                         : row.status === 'leave'
                           ? 'Leave'
-                          : row.status || '—',
+                          : row.status || '—'
+        },
         minW: 100,
         align: 'center',
       }
@@ -517,7 +522,12 @@ export default function AdminReports() {
         { label: 'Time Out', accessor: (row) => (row.time_out ? formatTimeTo12Hour(row.time_out) : '—'), minW: 90, align: 'center' },
         { label: 'Total Hours', accessor: (row) => (row.total_hours != null ? row.total_hours.toFixed(2) : '—'), ...num() },
         { label: 'Late (min)', accessor: (row) => (row.late_minutes != null ? String(row.late_minutes) : '0'), ...num() },
-        { label: 'Undertime (min)', accessor: (row) => (row.undertime_minutes != null ? String(row.undertime_minutes) : '0'), ...num() },
+        {
+          label: 'Undertime (min)',
+          accessor: (row) =>
+            row.undertime_minutes != null && row.undertime_minutes !== '' ? String(row.undertime_minutes) : '—',
+          ...num(),
+        },
         { label: 'Overtime (min)', accessor: (row) => (row.overtime_minutes != null ? String(row.overtime_minutes) : '—'), ...num() },
         {
           label: 'Unapproved OT (hrs)',
@@ -556,7 +566,12 @@ export default function AdminReports() {
         },
         { label: 'Total Hours', accessor: (row) => (row.total_hours != null ? row.total_hours.toFixed(2) : '—'), ...num() },
         { label: 'Late (min)', accessor: (row) => (row.late_minutes != null ? String(row.late_minutes) : '0'), ...num() },
-        { label: 'Undertime (min)', accessor: (row) => (row.undertime_minutes != null ? String(row.undertime_minutes) : '0'), ...num() },
+        {
+          label: 'Undertime (min)',
+          accessor: (row) =>
+            row.undertime_minutes != null && row.undertime_minutes !== '' ? String(row.undertime_minutes) : '—',
+          ...num(),
+        },
         { label: 'Overtime (min)', accessor: (row) => (row.overtime_minutes != null ? String(row.overtime_minutes) : '—'), ...num() },
         {
           label: 'Unapproved OT (hrs)',
@@ -1437,7 +1452,11 @@ export default function AdminReports() {
                                       </div>
                                     </div>
                                   ) : isStatusCol ? (
-                                    <AttendanceStatusBadge status={row.status} label={value} />
+                                    <AttendanceStatusBadge
+                                      status={row.status}
+                                      label={value}
+                                      presenceIssue={row.presence_issue}
+                                    />
                                   ) : (
                                     <span className="whitespace-nowrap text-xs @md:text-sm">
                                       {value}

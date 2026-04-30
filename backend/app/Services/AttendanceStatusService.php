@@ -448,6 +448,56 @@ class AttendanceStatusService
     }
 
     /**
+     * Schedule-aware undertime: required_working_minutes − net_worked_minutes.
+     *
+     * Unlike {@see getUndertimeMinutes} (scheduledEnd − clockOut), this method
+     * subtracts unpaid break time so the shortfall reflects actual missed paid
+     * hours only.  Example: 08:00–09:42 on an 08:00–17:00 schedule with 1 h
+     * break → required 480 − worked 102 = 378 min (not 438).
+     *
+     * @param  int|null  $earlyTimeoutMinutes  Grace window before scheduled end (no undertime within this buffer).
+     */
+    public static function getScheduleAwareUndertimeMinutes(
+        string $dateKey,
+        array $daySchedule,
+        ?Carbon $timeIn,
+        ?Carbon $timeOut,
+        ?string $tz = null,
+        ?int $earlyTimeoutMinutes = null
+    ): int {
+        if (! $timeIn || ! $timeOut) {
+            return 0;
+        }
+
+        $scheduledEnd = self::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+        if (! $scheduledEnd) {
+            return 0;
+        }
+
+        $out = $timeOut instanceof Carbon ? $timeOut->copy() : Carbon::parse($timeOut);
+
+        if ($out->greaterThanOrEqualTo($scheduledEnd)) {
+            return 0;
+        }
+
+        if ($earlyTimeoutMinutes !== null && $earlyTimeoutMinutes > 0) {
+            $effectiveEnd = $scheduledEnd->copy()->subMinutes($earlyTimeoutMinutes);
+            if ($out->greaterThanOrEqualTo($effectiveEnd)) {
+                return 0;
+            }
+        }
+
+        $requiredMinutes = self::getRequiredWorkingMinutes($dateKey, $daySchedule, $tz);
+        if ($requiredMinutes <= 0) {
+            return 0;
+        }
+
+        $netWorked = self::getNetWorkedMinutes($timeIn, $timeOut, $daySchedule, $dateKey, $tz);
+
+        return max(0, $requiredMinutes - $netWorked);
+    }
+
+    /**
      * Human-readable premium flag for display (e.g. "OT + ND on Rest Day").
      * Used in Employee dashboard and Admin attendance views.
      *

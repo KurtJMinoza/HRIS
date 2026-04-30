@@ -42,6 +42,8 @@ export function FaceRekognitionLiveness({
   kioskMode = false,
   kioskType = null,
   onKioskSuccess,
+  /** Duplicate kiosk clock-in after successful face match → parent opens correction modal */
+  onKioskAttendanceCorrection,
   onKioskCancel,
   onKioskErrorStateChange,
   instructionText,
@@ -156,6 +158,13 @@ export function FaceRekognitionLiveness({
         faceMatchAttemptRef.current = 0
         playSuccess(SOUND_FEEDBACK_ENABLED)
         onSuccess?.()
+        return
+      }
+      if (kioskMode && !kioskType) {
+        const msg = 'Please choose Clock In or Clock Out before scanning your face.'
+        toast.error('Select attendance action', { description: msg })
+        setApiError(msg)
+        setApiErrorCode('kiosk_type_required')
         return
       }
       if (kioskMode && kioskType && onKioskSuccess) {
@@ -273,6 +282,14 @@ export function FaceRekognitionLiveness({
           setApiError('Face not clear. Please face the camera straight with good lighting and hold still.')
           setApiErrorCode(code)
         }
+      } else if (code === 'kiosk_attendance_correction') {
+        toast.warning('Attendance correction', { description: msg })
+        if (kioskMode && err?.kioskCorrection && onKioskAttendanceCorrection) {
+          onKioskAttendanceCorrection(err.kioskCorrection)
+        } else if (kioskMode) {
+          setApiError(msg || 'Attendance correction may be required.')
+          setApiErrorCode(code)
+        }
       } else {
         toast.error(kioskMode ? 'Face verification failed' : 'Face login failed', { description: msg })
         if (kioskMode) {
@@ -286,7 +303,7 @@ export function FaceRekognitionLiveness({
     } finally {
       setSubmitting(false)
     }
-  }, [session, submitting, kioskMode, kioskType, onKioskSuccess, onVerified, onSuccess, fetchSession])
+  }, [session, submitting, kioskMode, kioskType, onKioskSuccess, onKioskAttendanceCorrection, onVerified, onSuccess, fetchSession])
 
   const handleError = useCallback(async (err) => {
     console.error('Liveness error:', err)

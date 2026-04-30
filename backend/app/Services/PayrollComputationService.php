@@ -385,7 +385,9 @@ class PayrollComputationService
             $clockInResult = AttendanceStatusService::getClockInStatus($daySchedule, $dateKey, $timeInTz);
             $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
             $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-            $undertimeDeductionMinutes = $scheduledEnd ? AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $timeOutTz, $earlyTimeout) : 0;
+            $undertimeDeductionMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                $dateKey, $daySchedule, $timeInTz, $timeOutTz, $tz, $earlyTimeout
+            );
         }
 
         // Tardiness / half-day: cap paid regular minutes (net of segmentation) before pay; OT after scheduled end unchanged.

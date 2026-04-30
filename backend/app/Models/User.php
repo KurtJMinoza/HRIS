@@ -268,6 +268,20 @@ class User extends Authenticatable
     }
 
     /**
+     * True if any clock_out attendance log exists today (business-day UTC window).
+     * Used by kiosk rules to allow at most one “orphan” clock-out without a same-day clock-in.
+     */
+    public function hasClockOutToday(): bool
+    {
+        [$start, $end] = $this->attendanceTodayRangeUtc();
+
+        return AttendanceLog::where('user_id', $this->id)
+            ->whereBetween('created_at', [$start, $end])
+            ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
+            ->exists();
+    }
+
+    /**
      * True if the user has both clock_in and clock_out for today (attendance completed).
      * Uses attendance timezone so "today" is the business day.
      * Also considers approved manual attendance corrections that have both time_in and time_out set.
