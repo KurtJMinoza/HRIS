@@ -3,19 +3,21 @@
 ;
 ; Worker --timeout must be greater than ProcessFaceRegistrationJob::$timeout (60s default).
 ; queue:work --tries should be >= the job's $tries (3) so backoff/retries behave as intended.
+; Scale concurrency by increasing numprocs (example: 8, 20, 50).
+; One worker can process one job at a time, so queued face jobs run in parallel up to numprocs.
 ;
 ; If QUEUE_CONNECTION=database, use the same command with `database` instead of `redis`
 ; and ensure php artisan queue:table is migrated.
 
 [program:laravel-worker-face-registration]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/HR/backend/artisan queue:work redis --sleep=3 --tries=3 --max-time=3600 --queue=face-registration,default --timeout=90
+command=php /var/www/HR/backend/artisan queue:work redis --sleep=1 --tries=3 --max-time=3600 --queue=face-registration,default --timeout=90
 autostart=true
 autorestart=true
 stopasgroup=true
 killasgroup=true
 user=www-data
-numprocs=1
+numprocs=8
 redirect_stderr=true
 stdout_logfile=/var/www/HR/backend/storage/logs/worker-face-registration.log
 stopwaitsecs=3700

@@ -141,6 +141,25 @@ cd backend
 php artisan queue:work database --queue=face-registration,default --timeout=90
 ```
 
+For concurrency bursts (e.g. 20+ employees clocking in with face recognition), do **not** open 20 terminals manually.
+Run multiple worker processes under a supervisor (Linux) or process manager:
+
+```bash
+# Linux (Supervisor): use backend/deployment/supervisor-face-registration.conf.example
+# Increase numprocs (e.g. 8, 20, 50) and reload supervisor.
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl restart laravel-worker-face-registration:*
+```
+
+Windows local quick scale example (PowerShell):
+
+```powershell
+1..8 | ForEach-Object { Start-Process php -ArgumentList "artisan queue:work database --queue=face-registration,default --timeout=150 --sleep=1 --tries=3" -WorkingDirectory ".\backend" }
+```
+
+Rule of thumb: you do **not** need one worker per employee. Start with 6-10 workers, monitor queue delay, then scale up if needed.
+
 ### 4. Frontend
 
 ```bash
