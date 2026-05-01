@@ -88,6 +88,22 @@ class AttendanceSessionService
         }
 
         if ($timeIn !== null && $timeOut === null) {
+            // Missing-in corrections often provide only the approved time-in while the actual
+            // device clock-out remains in attendance_logs. Payroll must merge those sources so
+            // undertime days (e.g. 08:00 correction + 09:42 clock-out) pay actual worked time.
+            $clockOut = AttendanceLog::query()
+                ->where('user_id', $user->id)
+                ->where('verified_at', '>=', $timeIn->copy()->setTimezone('UTC'))
+                ->where('verified_at', '<=', Carbon::parse($dateKey, $tz)->addDay()->endOfDay()->setTimezone('UTC'))
+                ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
+                ->orderBy('verified_at')
+                ->first();
+            if ($clockOut) {
+                $timeOut = $clockOut->verified_at->copy()->timezone($tz);
+            }
+        }
+
+        if ($timeIn !== null && $timeOut === null) {
             $timeOut = $this->virtualTimeOutFromApprovedOvertime($user, $dateKey, $tz);
         }
 

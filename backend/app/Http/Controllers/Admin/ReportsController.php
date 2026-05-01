@@ -1513,10 +1513,6 @@ class ReportsController extends Controller
                     && ! $isHalfday
                     && ! ($leaveTypeApproved === 'undertime' && $isOnLeaveApproved);
 
-                $payrollImpactMinutes = (! $isHalfday && ($undertimeMinutes ?? 0) > 0)
-                    ? (int) $undertimeMinutes
-                    : 0;
-
                 /** Undertime filing column: distinguishes approved leave-vs-schedule filings from log-only shortfalls/missing punches. */
                 $undertimeFilingStatus = null;
                 if (! $isHalfday && ($undertimeMinutes ?? 0) > 0) {
@@ -1545,12 +1541,15 @@ class ReportsController extends Controller
 
                 // Payroll Impact = Regular hours (capped at schedule) + Approved OT hours only.
                 // Unapproved OT is excluded — employee must file and get OT approved for it to count.
+                // For undertime days this uses actual worked minutes, not scheduled minutes or the undertime shortfall.
+                $payrollImpactMinutes = 0;
                 if ($effectiveWorkedMinutes !== null && $effectiveWorkedMinutes > 0) {
                     $regularForImpact = $requiredMinutesForImpact > 0
                         ? min((int) $effectiveWorkedMinutes, $requiredMinutesForImpact)
                         : (int) $effectiveWorkedMinutes;
                     $approvedOtMinutesForImpact = (int) round($approvedFromFiling * 60);
-                    $payrollImpactHours = round(($regularForImpact + $approvedOtMinutesForImpact) / 60, 2);
+                    $payrollImpactMinutes = $regularForImpact + $approvedOtMinutesForImpact;
+                    $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
                 } else {
                     $payrollImpactHours = 0;
                 }

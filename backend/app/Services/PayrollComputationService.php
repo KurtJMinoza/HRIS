@@ -602,11 +602,13 @@ class PayrollComputationService
             ];
         }
 
-        $undertimeDeductionAmount = 0.0;
         if ($undertimeDeductionMinutes > 0) {
-            $undertimeDeductionAmount = ($undertimeDeductionMinutes / 60.0) * $hourlyRate * $payFirst8Multiplier;
-            $totalPay = max(0, $totalPay - $undertimeDeductionAmount);
-            $breakdown[] = ['component' => 'undertime_deduction', 'minutes' => $undertimeDeductionMinutes, 'amount' => -round($undertimeDeductionAmount, 2)];
+            $breakdown[] = [
+                'component' => 'undertime_deduction',
+                'minutes' => $undertimeDeductionMinutes,
+                'amount' => 0.0,
+                'note' => 'Regular pay is based on actual worked regular minutes; undertime minutes are the unpaid scheduled shortfall and are not deducted a second time.',
+            ];
         }
 
         $policySnapshot = $this->policyResolver->buildPolicySnapshot($policy, $ruleCode);
@@ -1017,13 +1019,10 @@ class PayrollComputationService
                 });
             $regularBasePay = round(max(0.0, $regularBasePay), 2);
 
-            // Undertime deduction reduces regular pay for payslip purposes.
-            // The day's total_pay already accounts for this, but basicPayThisPeriod must also reflect it
-            // so the payslip regular-pay earning line and gross are not over-stated.
-            $undertimeDeductionForDay = collect($dayBreakdown)
-                ->filter(fn ($entry) => strtolower(trim((string) ($entry['component'] ?? ''))) === 'undertime_deduction')
-                ->sum(fn ($entry) => abs((float) ($entry['amount'] ?? 0)));
-            $netRegularBasePay = round(max(0.0, $regularBasePay - $undertimeDeductionForDay), 2);
+            // Undertime is deducted by paying only actual worked regular minutes.
+            // Do not subtract undertime again here: a 102-minute workday on an 8-hour schedule
+            // should pay 102 minutes, while the 378-minute shortfall remains audit metadata.
+            $netRegularBasePay = $regularBasePay;
 
             $dayPremium = round(max(0.0, $dayTotalPay - $netRegularBasePay), 2);
 
@@ -1046,23 +1045,6 @@ class PayrollComputationService
                 }
                 // Regular-pay line is ordinary worked non-rest-day only.
                 if ($component === 'regular_pay' && ($dayStatus !== 'worked' || $dayIsRest)) {
-                    continue;
-                }
-                // For regular_pay: use the net amount (after undertime deduction) so the payslip
-                // earning line reflects actual paid regular hours, not gross before deduction.
-                if ($component === 'regular_pay' && $undertimeDeductionForDay > 0) {
-                    $netAmount = max(0.0, $amount - $undertimeDeductionForDay);
-                    if ($netAmount <= 0) {
-                        continue;
-                    }
-                    $dailyBreakdownTotals[$component] = (float) ($dailyBreakdownTotals[$component] ?? 0) + $netAmount;
-                    $mins = (int) ($entry['minutes'] ?? 0);
-                    $netMins = $mins > 0 ? (int) round($mins * ($netAmount / max(0.01, $amount))) : 0;
-                    $dailyBreakdownMinutes[$component] = ($dailyBreakdownMinutes[$component] ?? 0) + $netMins;
-                    if ($netMins > 0) {
-                        $dailyBreakdownDays[$component] = ($dailyBreakdownDays[$component] ?? 0) + 1;
-                    }
-
                     continue;
                 }
                 // Accumulate exact (unrounded) amounts to avoid compounding rounding errors across days.

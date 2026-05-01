@@ -713,8 +713,7 @@ class PayslipService
         $employee->loadMissing(['company', 'branch', 'departmentRelation', 'governmentIds']);
         $company = $employee->company ?? ($payslip->company_id ? Company::query()->find($payslip->company_id) : null);
 
-        $snapshotRaw = $payslip->snapshot ?? [];
-        $snapshotForView = $this->normalizeSnapshotForPayslipPdf(is_array($snapshotRaw) ? $snapshotRaw : []);
+        $snapshotForView = $this->snapshotForPayslipRender($payslip, $employee);
         $this->logPayslipPdfContext($payslip, $employee, $snapshotForView, 'generatePdf');
 
         $html = view('payslips.pdf', [
@@ -777,8 +776,7 @@ class PayslipService
         $employee->loadMissing(['company', 'branch', 'departmentRelation', 'governmentIds']);
         $company = $employee->company ?? ($payslip->company_id ? Company::query()->find($payslip->company_id) : null);
 
-        $snapshotRaw = $payslip->snapshot ?? [];
-        $snapshotForView = $this->normalizeSnapshotForPayslipPdf(is_array($snapshotRaw) ? $snapshotRaw : []);
+        $snapshotForView = $this->snapshotForPayslipRender($payslip, $employee);
         $this->logPayslipPdfContext($payslip, $employee, $snapshotForView, 'generatePrintPdf');
 
         $html = view('payslips.pdf', [
@@ -895,6 +893,67 @@ class PayslipService
     }
 
     /**
+     * Normalize a stored/generated payslip snapshot before returning it to UI or PDF rendering.
+     *
+     * Stored snapshots can outlive payroll logic fixes, so this view-layer normalization also repairs
+     * Regular Pay from daily computation days when the saved line still says full scheduled days.
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    public function normalizeSnapshotForPayslipView(array $snapshot): array
+    {
+        return $this->normalizeSnapshotForPayslipPdf($snapshot);
+    }
+
+    /**
+     * Recompute a stored payslip's snapshot for rendering when possible.
+     *
+     * This is intentionally used for preview/download rendering so stale generated snapshots
+     * (for example a saved "2 days" Regular Pay line) are corrected from the current attendance
+     * and daily-computation logic for the same pay period.
+     *
+     * @return array<string, mixed>
+     */
+    public function snapshotForPayslipRender(Payslip $payslip, User $employee): array
+    {
+        try {
+            $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
+            $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
+            if ($snapshot !== []) {
+                return $this->normalizeSnapshotForPayslipView($snapshot);
+            }
+        } catch (Throwable $e) {
+            Log::warning('Payslip render: live recomputation failed, falling back to stored snapshot', [
+                'payslip_id' => (int) $payslip->id,
+                'user_id' => (int) $employee->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        $snapshotRaw = $payslip->snapshot ?? [];
+
+        return $this->normalizeSnapshotForPayslipView(is_array($snapshotRaw) ? $snapshotRaw : []);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function periodInputFromPayslip(Payslip $payslip): array
+    {
+        return [
+            'from_date' => $payslip->pay_period_start?->toDateString(),
+            'to_date' => $payslip->pay_period_end?->toDateString(),
+            'pay_cycle_id' => $payslip->pay_cycle_id !== null ? (int) $payslip->pay_cycle_id : null,
+            'reference_date' => $payslip->pay_date?->toDateString(),
+            'use_company_default' => $payslip->pay_cycle_id === null,
+            'payroll_period_id' => $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
+            'is_final_pay' => (bool) $payslip->is_final_pay,
+            'password_protect' => false,
+        ];
+    }
+
+    /**
      * Coerce payslip snapshot.summary line arrays for mPDF: 0-based lists, scalar fields only, no junk rows.
      * Stored DB snapshot is unchanged; this is used only when rendering the Blade PDF template.
      *
@@ -908,22 +967,25 @@ class PayslipService
 
         $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
         $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
+        $dailyComputationDays = $this->cleanDailyComputationDays($snapshot['daily_computation_days'] ?? null);
+        if ($dailyComputationDays !== []) {
+            $out['daily_computation_days'] = $dailyComputationDays;
+            $summary = $this->repairRegularPayLineFromDailyComputationDays($summary, $dailyComputationDays, $regularHourlyRate);
+        }
 
         $summary['payslip_earning_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_earning_lines'] ?? [],
             'Earning',
             false,
             false,
-            $regularHourlyRate,
-            $dailyRate
+            $regularHourlyRate
         );
         $summary['daily_computation_earning_lines'] = $this->normalizePayslipLineList(
             $summary['daily_computation_earning_lines'] ?? [],
             'Daily computation earning',
             false,
             false,
-            $regularHourlyRate,
-            $dailyRate
+            $regularHourlyRate
         );
         $summary['payslip_deduction_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_deduction_lines'] ?? [],
@@ -971,19 +1033,137 @@ class PayslipService
 
         $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
 
-        if (isset($out['daily_computation_days']) && is_array($out['daily_computation_days'])) {
-            $days = [];
-            foreach ($out['daily_computation_days'] as $day) {
-                if (is_array($day)) {
-                    $days[] = $day;
-                }
-            }
-            $out['daily_computation_days'] = array_values($days);
-        }
-
         $out['summary'] = $summary;
 
         return $out;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function cleanDailyComputationDays(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $days = [];
+        foreach ($raw as $day) {
+            if (is_array($day)) {
+                $days[] = $day;
+            }
+        }
+
+        return array_values($days);
+    }
+
+    /**
+     * Rebuild the Regular Pay row from actual daily computation minutes.
+     *
+     * This repairs generated/stored snapshots where the row was saved as scheduled day units
+     * (for example, "2 days, 0 hrs 0 mins") even though attendance only rendered 102 minutes
+     * with 378 minutes undertime. The payable minutes come from regular_day_minutes +
+     * regular_night_minutes on worked, non-rest days and the amount is recomputed from
+     * actual minutes x hourly rate.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  list<array<string, mixed>>  $days
+     * @return array<string, mixed>
+     */
+    private function repairRegularPayLineFromDailyComputationDays(array $summary, array $days, ?float $regularHourlyRate): array
+    {
+        $actualRegularMinutes = 0;
+        $fallbackAmountFromDays = 0.0;
+        $fallbackHourlyRate = null;
+
+        foreach ($days as $day) {
+            $status = strtolower(trim((string) ($day['status'] ?? '')));
+            if ($status !== 'worked' || (bool) ($day['is_rest_day'] ?? false)) {
+                continue;
+            }
+
+            $dayRegularMinutes = max(0, (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0));
+            $breakdown = is_array($day['breakdown'] ?? null) ? $day['breakdown'] : [];
+            $hasRegularPayComponent = false;
+            $componentMinutes = 0;
+            $componentAmount = 0.0;
+            foreach ($breakdown as $entry) {
+                if (! is_array($entry) || strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                    continue;
+                }
+
+                $hasRegularPayComponent = true;
+                $componentMinutes += max(0, (int) ($entry['minutes'] ?? 0));
+                $componentAmount += max(0.0, (float) ($entry['amount'] ?? 0));
+                $rate = $entry['rate'] ?? null;
+                if ($fallbackHourlyRate === null && is_numeric($rate) && (float) $rate > 0) {
+                    $fallbackHourlyRate = (float) $rate;
+                }
+            }
+
+            if (! $hasRegularPayComponent) {
+                $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+                if ($dayRegularMinutes <= 0 || $holidayPremiumPay > 0) {
+                    continue;
+                }
+            }
+
+            $actualMinutesForDay = $componentMinutes > 0
+                ? min($componentMinutes, $dayRegularMinutes > 0 ? $dayRegularMinutes : $componentMinutes)
+                : $dayRegularMinutes;
+
+            $actualRegularMinutes += $actualMinutesForDay;
+            $fallbackAmountFromDays += $componentAmount;
+        }
+
+        if ($actualRegularMinutes <= 0) {
+            return $summary;
+        }
+
+        $hourlyRate = ($regularHourlyRate !== null && is_finite($regularHourlyRate) && $regularHourlyRate > 0)
+            ? $regularHourlyRate
+            : $fallbackHourlyRate;
+        $amount = ($hourlyRate !== null && is_finite($hourlyRate) && $hourlyRate > 0)
+            ? round(($actualRegularMinutes / 60.0) * $hourlyRate, 2)
+            : round($fallbackAmountFromDays, 2);
+
+        if ($amount <= 0) {
+            return $summary;
+        }
+
+        $regularPayLine = [
+            'key' => 'daily:regular_pay',
+            'label' => 'Regular pay',
+            'amount' => $amount,
+            'units' => null,
+            'minutes_worked' => $actualRegularMinutes,
+            'hourly_rate' => $hourlyRate,
+        ];
+
+        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? array_values($summary['daily_computation_earning_lines'])
+            : [];
+        $replaced = false;
+        foreach ($lines as $idx => $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+
+            $key = strtolower(trim((string) ($line['key'] ?? '')));
+            $label = strtolower(trim((string) ($line['label'] ?? '')));
+            if (str_contains($key, 'regular_pay') || $label === 'regular pay') {
+                $lines[$idx] = $regularPayLine;
+                $replaced = true;
+                break;
+            }
+        }
+        if (! $replaced) {
+            array_unshift($lines, $regularPayLine);
+        }
+
+        $summary['daily_computation_earning_lines'] = array_values($lines);
+
+        return $summary;
     }
 
     /**
@@ -1046,8 +1226,7 @@ class PayslipService
         string $defaultLabel,
         bool $keepWithholdingWhenZero = false,
         bool $keepAllAmounts = false,
-        ?float $defaultRegularHourlyRate = null,
-        ?float $defaultDailyRate = null
+        ?float $defaultRegularHourlyRate = null
     ): array
     {
         $rows = is_array($raw) ? $raw : [];
@@ -1095,20 +1274,9 @@ class PayslipService
                 : $formatted['units'];
             $amountFromMinutes = $formatted['amount'];
 
-            // Regular pay must reconcile against the daily rate from payroll computation:
-            // amount = (totalMinutes / 480) * dailyRate, rounded once at the end.
-            // This avoids cent-loss on whole-day amounts (e.g. 6 * 961.54 = 5769.24).
-            if (
-                $usesDaySplitUnits
-                && $minutesWorked !== null
-                && $minutesWorked > 0
-                && $defaultDailyRate !== null
-                && is_finite($defaultDailyRate)
-                && $defaultDailyRate > 0
-            ) {
-                $dayUnits = $minutesWorked / 480.0;
-                $amountFromMinutes = round($dayUnits * $defaultDailyRate, 2);
-            }
+            // Amounts are minute-based for parity with Daily Computation:
+            // amount = (actual worked minutes / 60) * hourly rate, rounded once.
+            // For regular pay, the hourly rate is backfilled from daily_rate / 8 when needed.
             $lineLabel = strtolower($label);
             $isWithholdingLine = str_contains($lineKey, 'withholding')
                 || str_contains($lineKey, 'wht')
@@ -1196,7 +1364,7 @@ class PayslipService
 
     /**
      * Convert minutes to "X days, Y hrs Z mins" using 8 hours/day.
-     * Omits zero-valued day/hour segments for cleaner display.
+     * Regular pay intentionally keeps zero segments visible (for example, "0 days, 1 hr 42 mins").
      */
     private function formatPayslipUnitsFromMinutes(?int $minutesWorked): ?string
     {
@@ -1209,7 +1377,21 @@ class PayslipService
         $hours = intdiv($remaining, 60);
         $minutes = $remaining % 60;
 
-        $dayPart = $days > 0 ? $days.' '.($days === 1 ? 'day' : 'days') : null;
+        $dayPart = $days.' '.($days === 1 ? 'day' : 'days');
+        $hourPart = $hours.' '.($hours === 1 ? 'hr' : 'hrs');
+        $minutePart = $minutes.' '.($minutes === 1 ? 'min' : 'mins');
+
+        return $dayPart.', '.$hourPart.' '.$minutePart;
+    }
+
+    private function formatDurationUnitsFromMinutes(?int $minutesWorked): ?string
+    {
+        if ($minutesWorked === null || $minutesWorked <= 0) {
+            return null;
+        }
+
+        $hours = (int) floor($minutesWorked / 60);
+        $minutes = $minutesWorked % 60;
         $minLabel = $minutes === 1 ? 'min' : 'mins';
         $timePart = null;
         if ($hours > 0 && $minutes > 0) {
@@ -1220,11 +1402,7 @@ class PayslipService
             $timePart = $minutes.' '.$minLabel;
         }
 
-        if ($dayPart !== null && $timePart !== null) {
-            return $dayPart.', '.$timePart;
-        }
-
-        return $dayPart ?? $timePart;
+        return $timePart;
     }
 
     /**
@@ -1265,7 +1443,7 @@ class PayslipService
         $amount = round(($totalMinutes / 60.0) * $hourlyRate, 2);
 
         return [
-            'units' => $units,
+            'units' => $this->formatDurationUnitsFromMinutes($totalMinutes) ?? $units,
             'amount' => $amount,
         ];
     }
@@ -1274,10 +1452,11 @@ class PayslipService
      * Parse legacy unit strings into total minutes.
      *
      * Supported formats:
-     *  - "1.2 days" → 1.2 × 8 × 60
-     *  - "2 hrs 30 mins" / "2 hr 30 min" → 2×60 + 30
-     *  - "45 mins" / "45 min" → 45
-     *  - "3 hrs" / "3 hr" → 180
+     *  - "1.2 days" → 1.2 × 8 × 60 = 576 minutes
+     *  - "1.70 hrs" / "1.70 hr" → 1.70 × 60 = 102 minutes (decimal hours)
+     *  - "2 hrs 30 mins" / "2 hr 30 min" → 2×60 + 30 = 150 minutes
+     *  - "45 mins" / "45 min" → 45 minutes
+     *  - "3 hrs" / "3 hr" → 180 minutes
      */
     private function parseLegacyUnitsToMinutes(string $units): ?int
     {
@@ -1295,8 +1474,9 @@ class PayslipService
         $hours = 0;
         $mins = 0;
         $matched = false;
-        if (preg_match('/(\d+)\s*hrs?/i', $raw, $hm)) {
-            $hours = (int) $hm[1];
+        // Match decimal hours (e.g., "1.70 hrs", "2.5 hr")
+        if (preg_match('/(\d+(?:\.\d+)?)\s*hrs?/i', $raw, $hm)) {
+            $hours = (float) $hm[1];
             $matched = true;
         }
         if (preg_match('/(\d+)\s*mins?/i', $raw, $mm)) {
@@ -1304,7 +1484,8 @@ class PayslipService
             $matched = true;
         }
         if ($matched) {
-            $total = $hours * 60 + $mins;
+            // Convert decimal hours to minutes: round(hours * 60) + mins
+            $total = (int) round($hours * 60) + $mins;
 
             return $total > 0 ? $total : null;
         }

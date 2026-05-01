@@ -198,8 +198,12 @@ class FinalizePayrollService
                             'total_presence_regular_hours' => 0.0,
                         ];
 
-                    // Fallback recompute only when draft snapshot is incomplete.
-                    if (($baseMonthly <= 0 && $gross <= 0 && $net <= 0) || empty($dailyEarningLines)) {
+                    // Always recompute preview rows from attendance/daily computation, even when a
+                    // payslip already exists. Stored snapshots can contain stale Regular Pay units
+                    // (for example "2 days") after undertime corrections; preview must show actual
+                    // worked minutes for the selected pay period.
+                    $shouldRecomputeStoredPreview = true;
+                    if ($shouldRecomputeStoredPreview || (($baseMonthly <= 0 && $gross <= 0 && $net <= 0) || empty($dailyEarningLines))) {
                         [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($employee, $periodInput);
                         $computed = $this->payrollComputation->computeEmployeePayroll(
                             $employee,
@@ -1654,6 +1658,23 @@ class FinalizePayrollService
         $hasSnapshotSummary = count($summary) > 0;
         if (! $hasSnapshotSummary) {
             return false;
+        }
+
+        $dailyLines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? $summary['daily_computation_earning_lines']
+            : [];
+        foreach ($dailyLines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+
+            $key = strtolower(trim((string) ($line['key'] ?? '')));
+            $label = strtolower(trim((string) ($line['label'] ?? '')));
+            if (str_contains($key, 'regular_pay') || $label === 'regular pay') {
+                // Regular Pay is attendance-sensitive. Recompute existing payslips instead of
+                // reusing a PDF/snapshot that may still contain scheduled-day units after undertime.
+                return false;
+            }
         }
 
         $hasRequiredTotals = is_numeric($payslip->gross_pay)

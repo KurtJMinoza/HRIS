@@ -20,7 +20,35 @@ final class PayslipStoredSnapshotViewPayload
         PayslipService $payslipService,
         ?string $companyLogoPublicUrl
     ): array {
-        $snapshot = is_array($payslip->snapshot ?? null) ? $payslip->snapshot : [];
+        try {
+            $live = $payslipService->previewDataForEmployee($employee, $payslipService->periodInputFromPayslip($payslip));
+            if (is_array($live) && is_array($live['summary'] ?? null)) {
+                $live['payslip_id'] = (int) $payslip->id;
+                $live['batch_scope'] = [
+                    'company_id' => $payslip->company_id !== null ? (int) $payslip->company_id : null,
+                    'branch_id' => $payslip->branch_id !== null ? (int) $payslip->branch_id : null,
+                    'department_id' => $payslip->department_id !== null ? (int) $payslip->department_id : null,
+                ];
+                if (isset($live['company']) && is_array($live['company'])) {
+                    $live['company']['logo_url'] = $companyLogoPublicUrl;
+                }
+                if (isset($live['employee']) && is_array($live['employee'])) {
+                    $live['employee']['profile_image_url'] = $employee->profile_image_url;
+                }
+                if (! isset($live['payroll']) || ! is_array($live['payroll'])) {
+                    $live['payroll'] = [];
+                }
+                $live['payroll']['status'] = (string) $payslip->status;
+                $live['payroll']['cycle_label'] = $payslip->cycle_label ?: ($live['payroll']['cycle_label'] ?? null);
+
+                return $live;
+            }
+        } catch (\Throwable) {
+            // Fall back to the stored snapshot below if current attendance recomputation is unavailable.
+        }
+
+        $snapshotRaw = is_array($payslip->snapshot ?? null) ? $payslip->snapshot : [];
+        $snapshot = $payslipService->normalizeSnapshotForPayslipView($snapshotRaw);
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
             ? array_values($summary['daily_computation_earning_lines'])

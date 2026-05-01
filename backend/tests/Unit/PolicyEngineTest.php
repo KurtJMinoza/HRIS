@@ -3,12 +3,15 @@
 namespace Tests\Unit;
 
 use App\Enums\PolicyConditionKey;
+use App\Models\AttendanceCorrection;
+use App\Models\AttendanceLog;
 use App\Models\Company;
 use App\Models\Policy;
 use App\Models\PolicyMultiplier;
 use App\Models\PolicyNdSetting;
 use App\Models\User;
 use App\Services\PayrollComputationService;
+use App\Services\PayslipService;
 use App\Services\PolicyResolverService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Config;
@@ -329,6 +332,130 @@ class PolicyEngineTest extends TestCase
         $this->assertSame($policyB->id, $activeB->id);
         $multB = $resolver->getMultipliersForRule($activeB, 'ORD');
         $this->assertSame(1.50, $multB['ot']);
+    }
+
+    public function test_regular_pay_uses_actual_worked_minutes_when_undertime(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $user = User::factory()->create([
+            'company_id' => null,
+            'daily_rate' => 800,
+        ]);
+        $effectiveSchedule = [
+            'sun' => null,
+            'mon' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'tue' => null,
+            'wed' => null,
+            'thu' => null,
+            'fri' => null,
+            'sat' => null,
+        ];
+
+        $dateKey = '2026-03-16'; // Monday, 8 scheduled paid hours after lunch break.
+        $timeIn = Carbon::parse("{$dateKey} 08:00", 'Asia/Manila');
+        $timeOut = Carbon::parse("{$dateKey} 09:42", 'Asia/Manila');
+
+        $result = app(PayrollComputationService::class)
+            ->computeDayPayroll($user, $dateKey, $timeIn, $timeOut, $effectiveSchedule, 800, 'Asia/Manila');
+
+        $regularLine = collect($result['breakdown'])
+            ->first(fn ($line) => ($line['component'] ?? null) === 'regular_pay');
+        $undertimeLine = collect($result['breakdown'])
+            ->first(fn ($line) => ($line['component'] ?? null) === 'undertime_deduction');
+
+        $this->assertSame(102, $result['worked_minutes']);
+        $this->assertSame(102, $result['regular_day_minutes']);
+        $this->assertSame(378, $result['undertime_deduction_minutes']);
+        $this->assertSame(170.0, $result['regular_pay']);
+        $this->assertSame(170.0, $result['total_pay']);
+        $this->assertSame(102, $regularLine['minutes']);
+        $this->assertSame(170.0, $regularLine['amount']);
+        $this->assertSame(378, $undertimeLine['minutes']);
+        $this->assertSame(0.0, $undertimeLine['amount']);
+    }
+
+    public function test_regular_pay_units_show_zero_days_for_partial_work(): void
+    {
+        $service = app(PayslipService::class);
+        $method = new \ReflectionMethod($service, 'formatPayslipUnitsFromMinutes');
+        $method->setAccessible(true);
+
+        $this->assertSame('0 days, 1 hr 42 mins', $method->invoke($service, 102));
+        $this->assertSame('1 day, 0 hrs 0 mins', $method->invoke($service, 480));
+    }
+
+    public function test_stored_payslip_snapshot_repairs_regular_pay_from_actual_daily_minutes(): void
+    {
+        $snapshot = [
+            'daily_rate' => 800,
+            'summary' => [
+                'daily_rate' => 800,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'units' => '2 days, 0 hrs 0 mins',
+                    'amount' => 1600,
+                ]],
+            ],
+            'daily_computation_days' => [[
+                'date' => '2026-04-29',
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'regular_day_minutes' => 102,
+                'regular_night_minutes' => 0,
+                'undertime_deduction_minutes' => 378,
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 102,
+                    'rate' => 100,
+                    'amount' => 170,
+                ]],
+            ]],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame('Regular pay', $line['label'] ?? null);
+        $this->assertSame('0 days, 1 hr 42 mins', $line['units'] ?? null);
+        $this->assertSame(170.0, $line['amount'] ?? null);
+        $this->assertSame(102, $line['minutes_worked'] ?? null);
+    }
+
+    public function test_payroll_attendance_session_merges_missing_in_correction_with_clock_out(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $user = User::factory()->create();
+        $dateKey = '2026-04-30';
+        AttendanceCorrection::create([
+            'user_id' => $user->id,
+            'date' => $dateKey,
+            'time_in' => Carbon::parse("{$dateKey} 08:00", 'Asia/Manila')->utc(),
+            'time_out' => null,
+            'remarks' => 'Approved missing clock-in',
+            'issue_kind' => 'missing_in',
+            'approved' => true,
+            'pending_approval' => false,
+            'approval_stage' => 'approved',
+            'approved_at' => Carbon::parse("{$dateKey} 09:48", 'Asia/Manila')->utc(),
+        ]);
+        AttendanceLog::create([
+            'user_id' => $user->id,
+            'type' => AttendanceLog::TYPE_CLOCK_OUT,
+            'verified_at' => Carbon::parse("{$dateKey} 09:42", 'Asia/Manila')->utc(),
+        ]);
+
+        [$timeIn, $timeOut] = app(\App\Services\AttendanceSessionService::class)
+            ->getTimesForDate($user, $dateKey, 'Asia/Manila');
+
+        $this->assertSame('08:00', $timeIn?->format('H:i'));
+        $this->assertSame('09:42', $timeOut?->format('H:i'));
     }
 
     private function tablesExist(): bool
