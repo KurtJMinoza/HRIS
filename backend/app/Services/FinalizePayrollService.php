@@ -372,14 +372,17 @@ class FinalizePayrollService
                 $aggregateQuery = Payslip::query()->whereIn('user_id', $scopedEmployeeIds);
                 $this->applyPreviewPeriodFiltersEloquent($aggregateQuery, $periodInput);
                 $aggregateRows = (clone $aggregateQuery)
-                    ->selectRaw('COUNT(*) as rows_count, SUM(gross_pay) as gross_sum, SUM(total_deductions) as deductions_sum, SUM(net_pay) as net_sum')
+                    ->selectRaw('COUNT(*) as rows_count, SUM(gross_pay) as gross_sum, SUM(total_deductions) as deductions_sum')
                     ->first();
                 $aggregateCount = (int) ($aggregateRows?->rows_count ?? 0);
                 if ($aggregateCount === $scopedCount && $scopedCount > 0) {
+                    $grossSum = round((float) ($aggregateRows?->gross_sum ?? 0), 2);
+                    $deductionsSum = round((float) ($aggregateRows?->deductions_sum ?? 0), 2);
                     $fullTotals = [
-                        'gross' => round((float) ($aggregateRows?->gross_sum ?? 0), 2),
-                        'ded' => round((float) ($aggregateRows?->deductions_sum ?? 0), 2),
-                        'net' => round((float) ($aggregateRows?->net_sum ?? 0), 2),
+                        'gross' => $grossSum,
+                        'ded' => $deductionsSum,
+                        // Keep preview totals real-time even when persisted net_pay has not been synchronized yet.
+                        'net' => round($grossSum - $deductionsSum, 2),
                     ];
                 }
             }

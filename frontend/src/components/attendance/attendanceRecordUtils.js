@@ -100,6 +100,20 @@ export function tableOvertimeMinutes(row) {
   return null
 }
 
+/** OT hours (Reports detailed parity): fixed two decimals, em dash when none or ≤ 0. */
+export function tableOtHoursHrs(value) {
+  if (value == null || value === '') return '—'
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return '—'
+  return n.toFixed(2)
+}
+
+/** Approved OT from filing — admin rows may use legacy `overtime_hours` alias. */
+export function tableApprovedOtHours(row) {
+  const v = row?.approved_overtime_hours ?? row?.overtime_hours
+  return tableOtHoursHrs(v)
+}
+
 export function minutesCellText(n) {
   if (n == null || typeof n !== 'number' || n <= 0) return '—'
   return String(Math.round(n))

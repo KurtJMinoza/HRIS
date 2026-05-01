@@ -24,6 +24,8 @@ import {
   tableLateMinutes,
   tableUndertimeMinutes,
   tableOvertimeMinutes,
+  tableApprovedOtHours,
+  tableOtHoursHrs,
   minutesCellText,
 } from '@/components/attendance/attendanceRecordUtils'
 import { AttendanceStatusPill } from '@/components/attendance/AttendanceStatusPill'
@@ -278,6 +280,22 @@ export function AttendanceRecordsDataTable({
         },
       },
       {
+        id: 'unapproved_ot_hrs',
+        header: 'Unapproved OT (hrs)',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm tabular-nums text-foreground">{tableOtHoursHrs(row.original.unapproved_overtime_hours)}</span>
+        ),
+      },
+      {
+        id: 'approved_ot_hrs',
+        header: 'Approved OT (hrs)',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm tabular-nums text-foreground">{tableApprovedOtHours(row.original)}</span>
+        ),
+      },
+      {
         id: 'status',
         header: ({ column }) => <SortableHeader column={column} label="Status" />,
         accessorFn: (row) =>
@@ -483,6 +501,12 @@ export function AttendanceRecordsDataTable({
                   <p className="tabular-nums text-[11px] leading-relaxed">
                     {minutesCellText(tableLateMinutes(r))} / {minutesCellText(tableUndertimeMinutes(r))} /{' '}
                     {minutesCellText(tableOvertimeMinutes(r))}
+                  </p>
+                </div>
+                <div className="col-span-2">
+                  <p className="font-semibold uppercase tracking-wide text-muted-foreground">Approved / Unapproved OT (hrs)</p>
+                  <p className="tabular-nums text-[11px]">
+                    {tableApprovedOtHours(r)} / {tableOtHoursHrs(r.unapproved_overtime_hours)}
                   </p>
                 </div>
               </div>

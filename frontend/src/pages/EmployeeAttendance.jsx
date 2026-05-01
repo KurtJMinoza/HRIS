@@ -132,6 +132,7 @@ export default function EmployeeAttendance() {
             overtime_minutes: isFuture ? null : d.overtime_minutes,
             rendered_overtime_hours: isFuture ? null : d.rendered_overtime_hours,
             approved_overtime_hours: isFuture ? null : d.approved_overtime_hours,
+            unapproved_overtime_hours: isFuture ? null : d.unapproved_overtime_hours,
             overtime_hours: isFuture ? null : d.overtime_hours,
             presence_filing: d.presence_filing ?? null,
             presence_label: d.presence_label ?? null,

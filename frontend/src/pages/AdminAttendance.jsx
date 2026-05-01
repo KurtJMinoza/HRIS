@@ -26,6 +26,8 @@ import { AttendanceRecordDetailSheet } from '@/components/attendance/AttendanceR
 import {
   attendanceRecordRef,
   resolveAdminStatusLabel,
+  tableApprovedOtHours,
+  tableOtHoursHrs,
 } from '@/components/attendance/attendanceRecordUtils'
 import {
   DropdownMenu,
@@ -596,7 +598,11 @@ export default function AdminAttendance() {
       },
       {
         label: 'OT hrs (approved)',
-        accessor: (row) => (row.overtime_hours != null ? String(row.overtime_hours) : '—'),
+        accessor: (row) => tableApprovedOtHours(row),
+      },
+      {
+        label: 'Unapproved OT (hrs)',
+        accessor: (row) => tableOtHoursHrs(row.unapproved_overtime_hours),
       },
     ]
     const payroll = [
@@ -691,7 +697,8 @@ export default function AdminAttendance() {
       'Time In',
       'Time Out',
       'Status',
-      'Overtime Hours',
+      'Approved OT (hrs)',
+      'Unapproved OT (hrs)',
       'Rendered Overtime Hours',
       'Night Hours',
       'Total Hours Worked',
@@ -709,6 +716,7 @@ export default function AdminAttendance() {
       r.time_out ?? '',
       resolveAdminStatusLabel(r),
       r.approved_overtime_hours ?? r.overtime_hours ?? '',
+      r.unapproved_overtime_hours ?? '',
       r.rendered_overtime_hours ?? '',
       r.night_hours ?? '',
       r.total_rendered_hours ?? r.total_hours ?? '',

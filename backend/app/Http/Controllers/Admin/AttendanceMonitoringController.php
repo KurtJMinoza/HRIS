@@ -167,6 +167,7 @@ class AttendanceMonitoringController extends Controller
                 'Scheduled Regular Hours',
                 'Total Worked Hours',
                 'Overtime Hours (Approved)',
+                'Unapproved OT (hrs)',
                 'Overtime Hours (Rendered)',
                 'Night Differential Hours',
                 'Premium Type',
@@ -193,6 +194,7 @@ class AttendanceMonitoringController extends Controller
                     $r['scheduled_regular_hours'] ?? null,
                     $r['total_rendered_hours'] ?? ($r['total_hours'] ?? null),
                     $r['approved_overtime_hours'] ?? ($r['overtime_hours'] ?? null),
+                    $r['unapproved_overtime_hours'] ?? null,
                     $r['rendered_overtime_hours'] ?? null,
                     $r['night_hours'] ?? null,
                     $r['premium_type'] ?? null,
@@ -575,6 +577,17 @@ class AttendanceMonitoringController extends Controller
                     }
                 }
                 $approvedOvertimeHours = $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : null;
+                // Match Reports detailed: rendered clock OT vs approved filing hours.
+                $clockOtHours = $hasClockOut
+                    ? round((float) ($renderedOvertimeHours ?? 0), 2)
+                    : null;
+                $clockVal = $clockOtHours ?? 0.0;
+                $approvedFromFiling = $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : 0.0;
+                $unapprovedOvertimeHours = max(0.0, round($clockVal - min($approvedFromFiling, $clockVal), 2));
+                if ($clockVal <= 0.0001 && $approvedFromFiling > 0) {
+                    $unapprovedOvertimeHours = 0.0;
+                }
+                $unapprovedOvertimeHours = $unapprovedOvertimeHours > 0.0001 ? round($unapprovedOvertimeHours, 2) : null;
 
                 $scheduledRegularMinutes = null;
                 if (is_array($todaySchedule) && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
@@ -624,6 +637,7 @@ class AttendanceMonitoringController extends Controller
                     'overtime_hours' => $hasClockOut ? $approvedOvertimeHours : null,
                     'rendered_overtime_hours' => $hasClockOut ? $renderedOvertimeHours : null,
                     'approved_overtime_hours' => $approvedOvertimeHours,
+                    'unapproved_overtime_hours' => $unapprovedOvertimeHours,
                     'night_hours' => $hasClockOut ? $clockOutLog?->night_hours : null,
                     'premium_type' => $hasClockOut ? $clockOutLog?->premium_type : null,
                     'premium_description' => $hasClockOut

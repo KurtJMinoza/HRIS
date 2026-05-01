@@ -1885,34 +1885,19 @@ class PayslipService
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
             ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
 
-        $scopedRun = (bool) ($run->company_id || $run->branch_id || $run->department_id || $run->employee_id);
-        $scopeUserIds = $scopedRun ? $this->employeeIdsForBatchScope($run) : [];
-
-        if ($scopedRun) {
-            if (count($scopeUserIds) > 0) {
-                $q->whereIn('user_id', $scopeUserIds);
-            } else {
-                $q->whereRaw('1 = 0');
-            }
-        } else {
-            if ($run->company_id) {
-                $q->where('company_id', (int) $run->company_id);
-            }
-            if ($run->branch_id) {
-                $q->where('branch_id', (int) $run->branch_id);
-            }
-            if ($run->department_id) {
-                $q->where('department_id', (int) $run->department_id);
-            }
-            if ($run->employee_id) {
-                $q->where('user_id', (int) $run->employee_id);
-            }
-            if (! $run->company_id && ! $run->employee_id) {
-                $legacyIds = $this->employeeIdsForBatchScope($run);
-                if (count($legacyIds) > 0) {
-                    $q->whereIn('user_id', $legacyIds);
-                }
-            }
+        // Aggregate from persisted payslip scope fields, not current employee roster scope.
+        // This keeps Recent Payslips totals correct after edits, transfers, or deactivation.
+        if ($run->company_id) {
+            $q->where('company_id', (int) $run->company_id);
+        }
+        if ($run->branch_id) {
+            $q->where('branch_id', (int) $run->branch_id);
+        }
+        if ($run->department_id) {
+            $q->where('department_id', (int) $run->department_id);
+        }
+        if ($run->employee_id) {
+            $q->where('user_id', (int) $run->employee_id);
         }
 
         $rows = $q->get(['id', 'user_id', 'company_id', 'gross_pay', 'total_deductions', 'net_pay', 'status', 'created_at']);
@@ -1935,12 +1920,16 @@ class PayslipService
         $resolvedCompanyId = $run->company_id !== null
             ? (int) $run->company_id
             : $rows->pluck('company_id')->filter(fn ($id) => $id !== null)->map(fn ($id) => (int) $id)->first();
+        $totalGrossPay = round((float) $rows->sum('gross_pay'), 2);
+        $totalDeductions = round((float) $rows->sum('total_deductions'), 2);
 
         return [
             'payslip_count' => $rows->count(),
-            'total_net_pay' => round((float) $rows->sum('net_pay'), 2),
-            'total_gross_pay' => round((float) $rows->sum('gross_pay'), 2),
-            'total_deductions' => round((float) $rows->sum('total_deductions'), 2),
+            // Derive net from gross-deductions so Recent Payslips reflects latest edits immediately
+            // even when persisted net_pay is temporarily stale.
+            'total_net_pay' => round($totalGrossPay - $totalDeductions, 2),
+            'total_gross_pay' => $totalGrossPay,
+            'total_deductions' => $totalDeductions,
             'generated_at' => $rows->max('created_at'),
             'finalized_count' => $finalized,
             'payslip_ids' => $rows->pluck('id')->values()->all(),
