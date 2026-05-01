@@ -63,7 +63,17 @@ class FinalizePayrollService
         ?string $search = null
     ): array {
         $previewStartedAt = microtime(true);
-        $cacheKey = $this->previewCacheKey($companyId, $branchId, $departmentId, $singleEmployeeId, $periodInput, $actor);
+        $cacheKey = $this->previewCacheKey(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $singleEmployeeId,
+            $periodInput,
+            $actor,
+            $page,
+            $perPage,
+            $search
+        );
 
         $cached = Cache::remember($cacheKey, now()->addSeconds(self::PREVIEW_CACHE_TTL_SECONDS), function () use (
             $companyId,
@@ -79,7 +89,7 @@ class FinalizePayrollService
             $scopedEmployeesQuery = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor, $search);
             $scopedCount = (int) (clone $scopedEmployeesQuery)->count();
             $scopedEmployeeIds = (clone $scopedEmployeesQuery)
-                ->orderBy('id')
+                ->orderBy('name', 'asc')
                 ->pluck('id')
                 ->map(fn ($id) => (int) $id)
                 ->all();
@@ -110,7 +120,7 @@ class FinalizePayrollService
                     'is_active',
                     'role',
                 ])
-                ->orderBy('id')
+                ->orderBy('name', 'asc')
                 ->offset($offset)
                 ->limit($limit)
                 ->get();
@@ -669,7 +679,10 @@ class FinalizePayrollService
         ?int $departmentId,
         ?int $singleEmployeeId,
         array $periodInput,
-        ?User $actor
+        ?User $actor,
+        int $page = 1,
+        int $perPage = 25,
+        ?string $search = null
     ): string {
         $normalizedPeriodInput = [
             'from_date' => $periodInput['from_date'] ?? null,
@@ -689,6 +702,9 @@ class FinalizePayrollService
             'employee_id' => $singleEmployeeId,
             'actor_id' => $actor?->id,
             'period' => $normalizedPeriodInput,
+            'page' => max(1, $page),
+            'per_page' => max(1, min(100, $perPage)),
+            'search' => $search !== null ? trim((string) $search) : null,
         ]));
     }
 

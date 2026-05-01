@@ -345,24 +345,59 @@ class PayrollComputationService
                 }
             }
 
+            // Section 12: Approved OT without actual clock logs.
+            // Default = not payable. Exception: rest day, holiday, or no schedule (special policy).
+            $noPunchApprovedOtHours = 0.0;
+            $noPunchOtPay = 0.0;
+            $noPunchOtApplied = 0.0;
+            $noPunchHasOtRequest = false;
+            $isPolicyException = $isRestDay || $holiday !== null || $daySchedule === null;
+
+            if ($isPolicyException) {
+                $noPunchApprovedOtHours = (float) Overtime::query()
+                    ->where('user_id', $user->id)
+                    ->where('status', Overtime::STATUS_APPROVED)
+                    ->whereDate('date', $dateKey)
+                    ->sum('computed_hours');
+                $noPunchHasOtRequest = $noPunchApprovedOtHours > 0.0001
+                    || Overtime::query()
+                        ->where('user_id', $user->id)
+                        ->whereDate('date', $dateKey)
+                        ->exists();
+
+                if ($noPunchApprovedOtHours > 0.0001) {
+                    $noPunchOtApplied = $noPunchApprovedOtHours;
+                    $noPunchOtPay = round($noPunchApprovedOtHours * $hourlyRate * $otMult, 2);
+                    $totalPay += $noPunchOtPay;
+                    $breakdown[] = [
+                        'component' => 'ot_pay_no_clock',
+                        'hours' => $noPunchApprovedOtHours,
+                        'rate' => $hourlyRate,
+                        'multiplier' => $otMult,
+                        'amount' => $noPunchOtPay,
+                        'note' => 'Approved OT on rest day/holiday/no-schedule without clock logs (policy exception).',
+                    ];
+                }
+            }
+
             $base = $this->buildDayResult($dateKey, $isRestDay, $holiday, $status, $conditions, $breakdown, $totalPay, $workedMinutes, $regularDayMinutes, $regularNightMinutes, 0, 0, $requiredMinutes, $lateDeductionMinutes, $undertimeDeductionMinutes);
 
             $leaveRegularPay = ($holidayPremiumPayForLeave > 0.0001)
-                ? round($totalPay - $holidayPremiumPayForLeave, 2)
-                : round($totalPay, 2);
+                ? round($totalPay - $holidayPremiumPayForLeave - $noPunchOtPay, 2)
+                : round($totalPay - $noPunchOtPay, 2);
 
             return array_merge($base, [
                 'policy_id' => $policy?->id,
                 'policy_snapshot' => $this->policyResolver->buildPolicySnapshot($policy, $ruleCode),
                 'regular_pay' => max(0.0, $leaveRegularPay),
-                'ot_pay' => 0.0,
+                'ot_pay' => $noPunchOtPay,
                 'nd_pay' => 0.0,
                 'holiday_premium_pay' => round($holidayPremiumPayForLeave, 2),
-                'approved_ot_hours' => 0.0,
+                'approved_ot_hours' => $noPunchApprovedOtHours,
                 'pending_ot_hours' => 0.0,
                 'unapproved_ot_hours' => 0.0,
-                'has_overtime_request' => false,
-                'ot_premium_applied_hours' => 0.0,
+                'has_overtime_request' => $noPunchHasOtRequest,
+                'ot_premium_applied_hours' => round($noPunchOtApplied, 2),
                 'ot_premium_ratio' => 0.0,
                 'uncovered_ot_hours' => 0.0,
                 'nd_premium_applied' => false,
@@ -490,9 +525,9 @@ class PayrollComputationService
         $payFirst8Multiplier = $qualifiesStatutoryHolidayPremium ? $first8 : 1.0;
 
         $first8Pay = ($paidReg / 60.0) * $hourlyRate * $payFirst8Multiplier;
-        $otPay = ($renderedOtMinutes / 60.0) * $hourlyRate * $otMult * $otPremiumRatio;
+        $otPay = ($paidOtMinutes / 60.0) * $hourlyRate * $otMult;
         $ndPayRegular = ($ndRegPaid / 60.0) * $hourlyRate * $ndBase * $ndPremium;
-        $ndPayOt = ($ndOvertimeMinutesRaw / 60.0) * $hourlyRate * $otMult * $ndPremium * $otPremiumRatio;
+        $ndPayOt = ($effectiveNdOvertimeMinutes / 60.0) * $hourlyRate * $otMult * $ndPremium;
         $ndPay = $allowNdPremium ? ($ndPayRegular + $ndPayOt) : 0.0;
 
         $totalPay = $first8Pay + $otPay + $ndPay;
@@ -577,7 +612,15 @@ class PayrollComputationService
         $policySnapshot = $this->policyResolver->buildPolicySnapshot($policy, $ruleCode);
 
         // Phase 6: Ledger structure
-        return array_merge($this->buildDayResult($dateKey, $isRestDay, $holiday, 'worked', $conditions, $breakdown, round($totalPay, 2), $workedMinutes, $regularDayMinutes, $regularNightMinutes, $otDayMinutes, $otNightMinutes, $requiredMinutes, $lateDeductionMinutes, $undertimeDeductionMinutes), [
+        // Display OT minutes = approved (paid) OT only. Raw rendered OT is kept for audit.
+        $paidOtDayMinutes = (int) round($otDayMinutes * $otPremiumRatio);
+        $paidOtNightMinutes = (int) round($otNightMinutes * $otPremiumRatio);
+        $deltaOtPaid = $paidOtMinutes - ($paidOtDayMinutes + $paidOtNightMinutes);
+        if ($deltaOtPaid !== 0) {
+            $paidOtDayMinutes += $deltaOtPaid;
+        }
+
+        return array_merge($this->buildDayResult($dateKey, $isRestDay, $holiday, 'worked', $conditions, $breakdown, round($totalPay, 2), $workedMinutes, $regularDayMinutes, $regularNightMinutes, $paidOtDayMinutes, $paidOtNightMinutes, $requiredMinutes, $lateDeductionMinutes, $undertimeDeductionMinutes), [
             'regular_pay' => round($regularBasePayOnly, 2),
             'ot_pay' => round($otPay, 2),
             'nd_pay' => round($ndPay, 2),
@@ -589,6 +632,8 @@ class PayrollComputationService
             'ot_premium_applied_hours' => round($paidOtMinutes / 60.0, 2),
             'ot_premium_ratio' => $otPremiumRatio,
             'uncovered_ot_hours' => round($uncoveredOtHours, 2),
+            'rendered_ot_day_minutes' => $otDayMinutes,
+            'rendered_ot_night_minutes' => $otNightMinutes,
             'nd_premium_applied' => $allowNdPremium,
             'policy_id' => $policy?->id,
             'policy_snapshot' => $policySnapshot,
@@ -602,7 +647,8 @@ class PayrollComputationService
 
     /**
      * Sum OT request hours for the workday. Matches primary payroll date first; if none, matches the
-     * previous calendar day when clock-in is before noon (graveyard / night shift filed on prior date).
+     * previous calendar day ONLY when the clock-in is actually from a different calendar day
+     * (true overnight/graveyard shift where OT was filed on the prior date).
      */
     private function sumOvertimeHoursForWorkday(User $user, string $dateKey, Carbon $timeInTz, string $status): float
     {
@@ -619,7 +665,8 @@ class PayrollComputationService
             return $primary;
         }
 
-        if ((int) $timeInTz->format('G') < 12) {
+        $clockInDate = $timeInTz->toDateString();
+        if ($clockInDate !== $dateKey && (int) $timeInTz->format('G') < 12) {
             $prevDay = Carbon::parse($dateKey, $timeInTz->timezone)->subDay()->toDateString();
 
             return $sumForDate($prevDay);
@@ -630,7 +677,8 @@ class PayrollComputationService
 
     /**
      * True if any Overtime module row exists for this workday (any status).
-     * Uses the same date fallback as {@see sumOvertimeHoursForWorkday} (primary date; previous calendar day when clock-in is before noon).
+     * Uses the same date fallback as {@see sumOvertimeHoursForWorkday}: previous calendar day
+     * only when the clock-in is from a different calendar day (true overnight shift).
      */
     private function hasOvertimeRequestForWorkday(User $user, string $dateKey, Carbon $timeInTz): bool
     {
@@ -645,7 +693,8 @@ class PayrollComputationService
             return true;
         }
 
-        if ((int) $timeInTz->format('G') < 12) {
+        $clockInDate = $timeInTz->toDateString();
+        if ($clockInDate !== $dateKey && (int) $timeInTz->format('G') < 12) {
             $prevDay = Carbon::parse($dateKey, $timeInTz->timezone)->subDay()->toDateString();
 
             return $existsOn($prevDay);
@@ -954,7 +1003,8 @@ class PayrollComputationService
             // ordinary regular-pay day counts in payslip preview/generate/finalize.
             $dayStatus = strtolower(trim((string) ($d['status'] ?? '')));
             $dayIsRest = (bool) ($d['is_rest_day'] ?? false);
-            $regularBasePay = collect((array) ($d['breakdown'] ?? []))
+            $dayBreakdown = (array) ($d['breakdown'] ?? []);
+            $regularBasePay = collect($dayBreakdown)
                 ->filter(function ($entry) use ($dayStatus, $dayIsRest): bool {
                     if ($dayStatus !== 'worked' || $dayIsRest) {
                         return false;
@@ -966,10 +1016,19 @@ class PayrollComputationService
                     return (float) ($entry['amount'] ?? 0);
                 });
             $regularBasePay = round(max(0.0, $regularBasePay), 2);
-            $dayPremium = round(max(0.0, $dayTotalPay - $regularBasePay), 2);
+
+            // Undertime deduction reduces regular pay for payslip purposes.
+            // The day's total_pay already accounts for this, but basicPayThisPeriod must also reflect it
+            // so the payslip regular-pay earning line and gross are not over-stated.
+            $undertimeDeductionForDay = collect($dayBreakdown)
+                ->filter(fn ($entry) => strtolower(trim((string) ($entry['component'] ?? ''))) === 'undertime_deduction')
+                ->sum(fn ($entry) => abs((float) ($entry['amount'] ?? 0)));
+            $netRegularBasePay = round(max(0.0, $regularBasePay - $undertimeDeductionForDay), 2);
+
+            $dayPremium = round(max(0.0, $dayTotalPay - $netRegularBasePay), 2);
 
             $totalPay += $dayTotalPay;
-            $basicPayThisPeriod += $regularBasePay;
+            $basicPayThisPeriod += $netRegularBasePay;
             $attendancePremiumPayThisPeriod += $dayPremium;
             $totalWorkedMinutes += $d['worked_minutes'];
             $totalRegularDay += $d['regular_day_minutes'];
@@ -979,7 +1038,7 @@ class PayrollComputationService
             if ($requiredMinutes > 0 && $dayStatus === 'worked' && ! $dayIsRest) {
                 $actualWorkedDayUnits += min(1.0, $regularPaidMinutes / $requiredMinutes);
             }
-            foreach ((array) ($d['breakdown'] ?? []) as $entry) {
+            foreach ($dayBreakdown as $entry) {
                 $component = strtolower(trim((string) ($entry['component'] ?? '')));
                 $amount = (float) ($entry['amount'] ?? 0);
                 if ($component === '' || $amount <= 0) {
@@ -987,6 +1046,23 @@ class PayrollComputationService
                 }
                 // Regular-pay line is ordinary worked non-rest-day only.
                 if ($component === 'regular_pay' && ($dayStatus !== 'worked' || $dayIsRest)) {
+                    continue;
+                }
+                // For regular_pay: use the net amount (after undertime deduction) so the payslip
+                // earning line reflects actual paid regular hours, not gross before deduction.
+                if ($component === 'regular_pay' && $undertimeDeductionForDay > 0) {
+                    $netAmount = max(0.0, $amount - $undertimeDeductionForDay);
+                    if ($netAmount <= 0) {
+                        continue;
+                    }
+                    $dailyBreakdownTotals[$component] = (float) ($dailyBreakdownTotals[$component] ?? 0) + $netAmount;
+                    $mins = (int) ($entry['minutes'] ?? 0);
+                    $netMins = $mins > 0 ? (int) round($mins * ($netAmount / max(0.01, $amount))) : 0;
+                    $dailyBreakdownMinutes[$component] = ($dailyBreakdownMinutes[$component] ?? 0) + $netMins;
+                    if ($netMins > 0) {
+                        $dailyBreakdownDays[$component] = ($dailyBreakdownDays[$component] ?? 0) + 1;
+                    }
+
                     continue;
                 }
                 // Accumulate exact (unrounded) amounts to avoid compounding rounding errors across days.
@@ -1016,9 +1092,11 @@ class PayrollComputationService
             'paid_leave_daily_flat' => 'Leave adjustments',
             'attendance_correction' => 'Attendance corrections',
             'unpaid_leave' => 'Unpaid leave',
+            'undertime_deduction' => 'Undertime',
         ];
         $componentSortRank = [
             'regular_pay' => 5,
+            'undertime_deduction' => 6,
             'ot_pay' => 10,
             'overtime_premium' => 10,
             'nd_pay' => 20,
@@ -1719,10 +1797,12 @@ class PayrollComputationService
         string $tz
     ): array {
         $regularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
-        $otMinutes = (int) (($day['ot_day_minutes'] ?? 0) + ($day['ot_night_minutes'] ?? 0));
+        $paidOtMinutes = (int) (($day['ot_day_minutes'] ?? 0) + ($day['ot_night_minutes'] ?? 0));
         $ndMinutes = (int) (($day['regular_night_minutes'] ?? 0) + ($day['ot_night_minutes'] ?? 0));
-        $renderedMinutes = $regularMinutes + $otMinutes;
-        $renderedOtHours = round($otMinutes / 60, 2);
+        $rawRenderedOtMinutes = (int) (($day['rendered_ot_day_minutes'] ?? $day['ot_day_minutes'] ?? 0) + ($day['rendered_ot_night_minutes'] ?? $day['ot_night_minutes'] ?? 0));
+        $renderedMinutes = $regularMinutes + $rawRenderedOtMinutes;
+        $paidOtHours = round($paidOtMinutes / 60, 2);
+        $rawRenderedOtHours = round($rawRenderedOtMinutes / 60, 2);
         $approvedOtHours = round((float) ($day['approved_ot_hours'] ?? 0), 2);
         $pendingOtHours = round((float) ($day['pending_ot_hours'] ?? 0), 2);
         $unapprovedOtHours = round((float) ($day['unapproved_ot_hours'] ?? 0), 2);
@@ -1746,6 +1826,10 @@ class PayrollComputationService
         $dayStatus = (string) ($day['status'] ?? '');
         if ((! $timeIn || ! $timeOut) && $dayStatus !== 'leave' && ! ($day['is_rest_day'] ?? false)) {
             $flags[] = 'MISSING_TIME';
+        }
+        $hasNoPunchOtPay = (! $timeIn || ! $timeOut) && $approvedOtHours > 0.01;
+        if ($hasNoPunchOtPay) {
+            $flags[] = 'APPROVED_OT_NO_CLOCK';
         }
 
         $totalPay = (float) ($day['total_pay'] ?? 0);
@@ -1790,10 +1874,11 @@ class PayrollComputationService
             'ot_basis' => (string) config('payroll.ot_basis', 'schedule_end'),
             'totalHrs' => $this->floatHoursToHhMm($renderedMinutes / 60),
             'regular' => $this->floatHoursToHhMm($regularMinutes / 60),
-            'ot' => $this->floatHoursToHhMm($renderedOtHours),
-            'rendered_ot_hours' => $renderedOtHours,
+            'ot' => $this->floatHoursToHhMm($paidOtHours),
+            'rendered_ot_hours' => $paidOtHours,
+            'raw_rendered_ot_hours' => $rawRenderedOtHours,
             'ot_status' => $this->otWorkflowStatus(
-                $renderedOtHours,
+                $rawRenderedOtHours,
                 $approvedOtHours,
                 $pendingOtHours,
                 (bool) ($day['has_overtime_request'] ?? false)
@@ -1895,11 +1980,11 @@ class PayrollComputationService
                 $anomaly++;
             }
             $totalOtMin += (int) ($day['ot_day_minutes'] ?? 0) + (int) ($day['ot_night_minutes'] ?? 0);
+            $rawRenderedOt = (int) ($day['rendered_ot_day_minutes'] ?? $day['ot_day_minutes'] ?? 0) + (int) ($day['rendered_ot_night_minutes'] ?? $day['ot_night_minutes'] ?? 0);
             $totalNdMin += (int) ($day['regular_night_minutes'] ?? 0) + (int) ($day['ot_night_minutes'] ?? 0);
             $reg = (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0);
-            $ot = (int) ($day['ot_day_minutes'] ?? 0) + (int) ($day['ot_night_minutes'] ?? 0);
             $totalRegularMin += $reg;
-            $totalRenderedMin += $reg + $ot;
+            $totalRenderedMin += $reg + $rawRenderedOt;
         }
 
         $totalOtHours = round($totalOtMin / 60, 2);

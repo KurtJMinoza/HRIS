@@ -1,14 +1,21 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
-import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, QrCode, ScanFace, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, QrCode, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { EmployeeDashboardSkeleton } from '@/components/skeletons'
 import { useAuth } from '@/contexts/AuthContext'
-import { getMyAttendanceSummary, getMyLeaveSummary, getMyFace } from '@/api'
-import { formatClockTimeDisplay, formatScheduleLabel12h } from '@/lib/timeFormat'
+import { getMyAttendanceSummary, getMyLeaveSummary, getMyFace, getAllMyOvertimeRequestsInRange } from '@/api'
+import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
 import { cn } from '@/lib/utils'
 
 const DEFAULT_CALENDAR_VALUE = null
@@ -73,6 +80,77 @@ function formatLocalDateKey(date) {
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+function roundHours1(n) {
+  const x = typeof n === 'number' && Number.isFinite(n) ? n : 0
+  return Math.round(x * 10) / 10
+}
+
+/** "6:00 AM - 8:00 AM" from API H:i strings. */
+function formatHhMmRange12h(startHm, endHm) {
+  const a = formatHHmmTo12h(toHhMm(startHm))
+  const b = formatHHmmTo12h(toHhMm(endHm))
+  if (!a || !b) return null
+  return `${a} - ${b}`
+}
+
+/** Unfiled clock OT: pre/post segments in 12h + hours; mirrors Admin Reports windows. */
+function formatUnfiledOtClockSummary12h(preSeg, postSeg, totalHours) {
+  const parts = []
+  if (preSeg?.start && preSeg?.end) {
+    const range = formatHhMmRange12h(preSeg.start, preSeg.end)
+    const h = typeof preSeg.hours === 'number' ? preSeg.hours : roundHours1((preSeg.minutes || 0) / 60)
+    if (range) parts.push(`${range} (${roundHours1(h)}h)`)
+  }
+  if (postSeg?.start && postSeg?.end) {
+    const range = formatHhMmRange12h(postSeg.start, postSeg.end)
+    const h = typeof postSeg.hours === 'number' ? postSeg.hours : roundHours1((postSeg.minutes || 0) / 60)
+    if (range) parts.push(`${range} (${roundHours1(h)}h)`)
+  }
+  if (!parts.length) return null
+  if (parts.length === 1) return parts[0]
+  return `${parts.join(' + ')} = ${roundHours1(totalHours)}h`
+}
+
+function formatOtRequestRange12h(startRaw, endRaw, hours) {
+  const range = formatHhMmRange12h(toHhMm(startRaw || ''), toHhMm(endRaw || ''))
+  if (!range) return null
+  return `${range} (${roundHours1(hours)}h)`
+}
+
+function timeToMinutes(t) {
+  if (!t) return null
+  const s = String(t).trim()
+  const m = s.match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return null
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+}
+
+function segmentCoveredByRequest(seg, request) {
+  if (!seg?.start || !seg?.end || !request) return false
+  const segStart = timeToMinutes(seg.start)
+  const reqStart = timeToMinutes(request.start_time || request.schedule_end)
+  const reqEnd = timeToMinutes(request.end_time || request.expected_end_time)
+  if (segStart == null || reqStart == null || reqEnd == null) return false
+  const segEnd = timeToMinutes(seg.end)
+  if (segEnd == null) return false
+  const overlapStart = Math.max(segStart, reqStart)
+  const overlapEnd = Math.min(segEnd, reqEnd)
+  const overlap = overlapEnd - overlapStart
+  const segDuration = segEnd - segStart
+  return segDuration > 0 && overlap >= segDuration * 0.5
+}
+
+function formatYmdShort(dateStr) {
+  if (!dateStr) return '—'
+  try {
+    const d = new Date(`${dateStr}T12:00:00`)
+    if (Number.isNaN(d.getTime())) return String(dateStr)
+    return d.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+  } catch {
+    return String(dateStr)
+  }
 }
 
 /**
@@ -323,6 +401,9 @@ export default function EmployeeDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [prevSummary, setPrevSummary] = useState(null)
+  const [monthOtRequests, setMonthOtRequests] = useState([])
+  const [otDetailsOpen, setOtDetailsOpen] = useState(false)
+  const [otNoticeDismissed, setOtNoticeDismissed] = useState(false)
   const [selectedDay, setSelectedDay] = useState(DEFAULT_CALENDAR_VALUE)
   const [faceImage, setFaceImage] = useState(null)
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear())
@@ -343,22 +424,25 @@ export default function EmployeeDashboard() {
       const prevFrom = formatLocalDateKey(new Date(prevMonthEnd.getFullYear(), prevMonthEnd.getMonth(), 1))
       const prevTo = formatLocalDateKey(prevMonthEnd)
 
-      const [attendanceData, prevAttendanceData, leaveData] = await Promise.all([
+      const [attendanceData, prevAttendanceData, leaveData, otList] = await Promise.all([
         getMyAttendanceSummary({ from_date: from, to_date: to }),
         getMyAttendanceSummary({ from_date: prevFrom, to_date: prevTo }),
         getMyLeaveSummary({ from_date: from, to_date: to }),
+        getAllMyOvertimeRequestsInRange(from, to).catch(() => []),
       ])
       setSummary(attendanceData.summary || null)
       setDays(Array.isArray(attendanceData.days) ? attendanceData.days : [])
       setPrevSummary(prevAttendanceData.summary || null)
       setLeaveSummary(leaveData.summary || null)
       setLeaveRequests(Array.isArray(leaveData.leave_requests) ? leaveData.leave_requests : [])
+      setMonthOtRequests(Array.isArray(otList) ? otList : [])
     } catch (e) {
       if (!soft) setError(e.message)
       setSummary(null)
       setDays([])
       setLeaveSummary(null)
       setLeaveRequests([])
+      setMonthOtRequests([])
     } finally {
       if (!soft) setLoading(false)
     }
@@ -626,6 +710,21 @@ export default function EmployeeDashboard() {
     [calendarYear, calendarMonth],
   )
 
+  /** True when the calendar / stats month is before the current calendar month (local). */
+  const canGoNextMonth = useMemo(() => {
+    const t = new Date()
+    const y = t.getFullYear()
+    const m = t.getMonth()
+    if (calendarYear < y) return true
+    if (calendarYear > y) return false
+    return calendarMonth < m
+  }, [calendarYear, calendarMonth])
+
+  const isViewingCurrentMonth = useMemo(() => {
+    const t = new Date()
+    return calendarYear === t.getFullYear() && calendarMonth === t.getMonth()
+  }, [calendarYear, calendarMonth])
+
   function goPrevCalendarMonth() {
     if (calendarMonth === 0) {
       setCalendarMonth(11)
@@ -634,6 +733,7 @@ export default function EmployeeDashboard() {
   }
 
   function goNextCalendarMonth() {
+    if (!canGoNextMonth) return
     if (calendarMonth === 11) {
       setCalendarMonth(0)
       setCalendarYear((y) => y + 1)
@@ -664,6 +764,111 @@ export default function EmployeeDashboard() {
       (stats.upcoming ?? 0) > 0
     return hasCounts || leaveRequests.length > 0
   }, [loading, leaveSummary, leaveRequests])
+
+  const otMonthBreakdown = useMemo(() => {
+    const pendingH = monthOtRequests
+      .filter((o) => o && o.status === 'pending')
+      .reduce((s, o) => s + (Number(o.computed_hours) || 0), 0)
+    const approvedH = monthOtRequests
+      .filter((o) => o && o.status === 'approved')
+      .reduce((s, o) => s + (Number(o.computed_hours) || 0), 0)
+
+    const requestsByDate = {}
+    for (const o of monthOtRequests) {
+      if (!o?.date || (o.status !== 'pending' && o.status !== 'approved')) continue
+      if (!requestsByDate[o.date]) requestsByDate[o.date] = []
+      requestsByDate[o.date].push(o)
+    }
+
+    const unfiledEntries = []
+    if (Array.isArray(days)) {
+      for (const d of days) {
+        if (!d?.date) continue
+        const preSeg = d.raw_pre_ot ?? null
+        const postSeg = d.raw_post_ot ?? null
+        if (!preSeg && !postSeg) continue
+
+        const dateRequests = requestsByDate[d.date] || []
+        const preIsCovered = preSeg && dateRequests.some((r) => segmentCoveredByRequest(preSeg, r))
+        const postIsCovered = postSeg && dateRequests.some((r) => segmentCoveredByRequest(postSeg, r))
+
+        const unfiledPre = preSeg && !preIsCovered ? preSeg : null
+        const unfiledPost = postSeg && !postIsCovered ? postSeg : null
+
+        if (!unfiledPre && !unfiledPost) continue
+
+        const unfiledH =
+          (unfiledPre ? (typeof unfiledPre.hours === 'number' ? unfiledPre.hours : (unfiledPre.minutes || 0) / 60) : 0) +
+          (unfiledPost ? (typeof unfiledPost.hours === 'number' ? unfiledPost.hours : (unfiledPost.minutes || 0) / 60) : 0)
+
+        if (unfiledH <= 0.001) continue
+
+        unfiledEntries.push({
+          date: d.date,
+          hours: roundHours1(unfiledH),
+          rawPreOt: unfiledPre,
+          rawPostOt: unfiledPost,
+        })
+      }
+    }
+    const unfiledH = unfiledEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0)
+
+    return {
+      pendingH: roundHours1(pendingH),
+      approvedH: roundHours1(approvedH),
+      unfiledH: roundHours1(unfiledH),
+      unfiledEntries,
+    }
+  }, [monthOtRequests, days])
+
+  const otModalRows = useMemo(() => {
+    const rows = []
+    for (const o of monthOtRequests) {
+      if (!o?.date) continue
+      const ch = Number(o.computed_hours) || 0
+      const otSummaryLine = formatOtRequestRange12h(
+        o.start_time || o.schedule_end,
+        o.end_time || o.expected_end_time,
+        ch,
+      )
+      rows.push({
+        key: `req-${o.id}`,
+        date: o.date,
+        hours: ch,
+        status: o.status,
+        label: o.status === 'approved' ? 'Approved OT' : (o.display_status || o.status || '—'),
+        rowKind: 'request',
+        otSummaryLine,
+      })
+    }
+    for (const u of otMonthBreakdown.unfiledEntries) {
+      const otSummaryLine = formatUnfiledOtClockSummary12h(u.rawPreOt, u.rawPostOt, u.hours)
+      rows.push({
+        key: `unfiled-${u.date}`,
+        date: u.date,
+        hours: u.hours,
+        status: 'unfiled',
+        label: 'Unfiled OT (clock)',
+        rowKind: 'unfiled',
+        otSummaryLine,
+      })
+    }
+    rows.sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    return rows
+  }, [monthOtRequests, otMonthBreakdown.unfiledEntries])
+
+  const unfiledDatesLabel = useMemo(() => {
+    const entries = otMonthBreakdown.unfiledEntries
+    if (!entries.length) return ''
+    const labels = entries.slice(0, 4).map((e) => formatYmdShort(e.date))
+    const extra = entries.length > 4 ? ` +${entries.length - 4} more` : ''
+    return labels.join(' · ') + extra
+  }, [otMonthBreakdown.unfiledEntries])
+
+  const otModalTotalHours = useMemo(
+    () => roundHours1(otMonthBreakdown.pendingH + otMonthBreakdown.approvedH + otMonthBreakdown.unfiledH),
+    [otMonthBreakdown.pendingH, otMonthBreakdown.approvedH, otMonthBreakdown.unfiledH],
+  )
 
   const monthTrend = useMemo(() => {
     if (!summary || !prevSummary) return null
@@ -782,7 +987,7 @@ export default function EmployeeDashboard() {
       label: 'Not started',
       detail: 'Once you clock in, your live status will appear here.',
     }
-  }, [summary, scheduleAssigned])
+  }, [summary, scheduleAssigned, isRestDay])
 
   function getDisplayStatus(status, dateKey, lateLabel, lateMinutes) {
     if (!dateKey) return status
@@ -1029,50 +1234,144 @@ export default function EmployeeDashboard() {
         </Motion.div>
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
         <Card className="overflow-hidden border-border/80 bg-card/95 shadow-sm transition-all duration-200 hover:shadow-md hover:shadow-primary/10">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-              This Month
-            </CardTitle>
-            <div className="rounded-lg bg-primary/5 p-2">
-              <User className="size-4 text-primary" />
+          <CardHeader className="space-y-3 pb-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                <CardTitle className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+                  Monthly overview
+                </CardTitle>
+                <p className="text-xs leading-snug text-muted-foreground">
+                  {isViewingCurrentMonth
+                    ? 'Use ← to open past months (future months are hidden).'
+                    : 'Tap the month name to return to this month, or → to move forward.'}
+                </p>
+              </div>
+              <div className="shrink-0 rounded-lg bg-primary/5 p-2">
+                <User className="size-4 text-primary" aria-hidden />
+              </div>
             </div>
+            <div className="flex min-w-0 items-center gap-0.5 rounded-xl border border-border/60 bg-muted/30 p-1 dark:bg-muted/25">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-9 shrink-0 rounded-lg hover:bg-background/80"
+                onClick={goPrevCalendarMonth}
+                aria-label="Previous month"
+              >
+                <ChevronLeft className="size-4" />
+              </Button>
+              <button
+                type="button"
+                onClick={goCalendarToday}
+                className="min-w-0 flex-1 truncate rounded-md px-2 py-2 text-center text-sm font-semibold tabular-nums tracking-tight text-foreground transition-colors hover:bg-background/70 dark:hover:bg-background/10"
+              >
+                {MONTHS[calendarMonth]} {calendarYear}
+              </button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-9 shrink-0 rounded-lg hover:bg-background/80 disabled:opacity-40"
+                onClick={goNextCalendarMonth}
+                disabled={!canGoNextMonth || loading}
+                aria-label="Next month"
+              >
+                <ChevronRight className="size-4" />
+              </Button>
+            </div>
+            {isViewingCurrentMonth && (
+              <Badge variant="secondary" className="w-fit border-primary/20 bg-primary/10 text-xs font-medium text-primary">
+                Current month
+              </Badge>
+            )}
           </CardHeader>
           <CardContent>
-            <p className="mb-2 text-sm font-medium text-foreground">
-              {getMonthLabel()}
-            </p>
-            <div className="grid grid-cols-2 gap-3 text-base">
-              <div>
-                <div className="text-sm text-muted-foreground">Late days</div>
-                <div className="mt-0.5 text-lg font-medium">
-                  {loading ? '—' : <AnimatedNumber value={summary?.late_count ?? 0} />}
+            <Motion.div
+              key={`month-stats-${calendarYear}-${calendarMonth}`}
+              initial={{ opacity: 0.5, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: [0.25, 0.1, 0.25, 1] }}
+              className="space-y-3"
+            >
+              <div className="grid grid-cols-2 gap-3 text-base">
+                <div>
+                  <div className="text-sm text-muted-foreground">Late days</div>
+                  <div className="mt-0.5 text-lg font-medium">
+                    {loading ? '—' : <AnimatedNumber value={summary?.late_count ?? 0} />}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">Late (min)</div>
+                  <div className="mt-0.5 text-lg font-medium">
+                    {loading ? '—' : <AnimatedNumber value={summary?.late_minutes ?? 0} />}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">Undertime days</div>
+                  <div className="mt-0.5 text-lg font-medium">
+                    {loading ? '—' : <AnimatedNumber value={summary?.undertime_count ?? 0} />}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">Total hours</div>
+                  <div className="mt-0.5 text-lg font-medium">
+                    {loading ? '—' : <><AnimatedNumber value={summary?.total_hours ?? 0} duration={700} />h</>}
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Late (min)</div>
-                <div className="mt-0.5 text-lg font-medium">
-                  {loading ? '—' : <AnimatedNumber value={summary?.late_minutes ?? 0} />}
+              <div className="rounded-xl border border-border/60 bg-muted/20 p-3 dark:bg-muted/15">
+                <p className="mb-2.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Overtime (selected month)
+                </p>
+                <div className="grid grid-cols-3 gap-2 divide-x divide-border/50 text-center">
+                  <div className="px-1">
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-amber-800 dark:text-amber-300/90">
+                      Pending
+                    </div>
+                    <div className="mt-1 text-base font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                      {loading ? '—' : `${otMonthBreakdown.pendingH}h`}
+                    </div>
+                  </div>
+                  <div className="px-1">
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-800 dark:text-emerald-300/90">
+                      Approved
+                    </div>
+                    <div className="mt-1 text-base font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                      {loading ? '—' : `${otMonthBreakdown.approvedH}h`}
+                    </div>
+                  </div>
+                  <div className="px-1">
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-slate-600 dark:text-slate-400">
+                      Unfiled
+                    </div>
+                    <div className="mt-1 text-base font-semibold tabular-nums text-slate-700 dark:text-slate-300">
+                      {loading ? '—' : `${otMonthBreakdown.unfiledH}h`}
+                    </div>
+                  </div>
                 </div>
+                <p className="mt-2 text-center text-[10px] text-muted-foreground">Requests sync when you change month</p>
               </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Undertime days</div>
-                <div className="mt-0.5 text-lg font-medium">
-                  {loading ? '—' : <AnimatedNumber value={summary?.undertime_count ?? 0} />}
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Total hours</div>
-                <div className="mt-0.5 text-lg font-medium">
-                  {loading ? '—' : <><AnimatedNumber value={summary?.total_hours ?? 0} duration={700} />h</>}
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Overtime hours</div>
-                <div className="mt-0.5 text-lg font-medium">
-                  {loading ? '—' : <><AnimatedNumber value={summary?.overtime_hours ?? 0} duration={700} />h</>}
-                </div>
-              </div>
-            </div>
+              {!loading && unfiledDatesLabel && (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  <span className="font-medium text-foreground/80">Unfiled clock OT:</span> {unfiledDatesLabel}
+                </p>
+              )}
+              {!loading && !unfiledDatesLabel && otMonthBreakdown.unfiledH <= 0 && (
+                <p className="text-xs text-muted-foreground">No clock-detected OT without an active filing this month.</p>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 w-full gap-2 border-border/80 text-sm font-medium"
+                onClick={() => setOtDetailsOpen(true)}
+                disabled={loading}
+              >
+                <ListTree className="size-4 shrink-0 opacity-70" aria-hidden />
+                View OT details
+              </Button>
+            </Motion.div>
             {monthTrend && (
               <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground">
                 <span className={`inline-flex items-center gap-1 font-medium ${monthTrend.colorClass}`}>
@@ -1166,6 +1465,94 @@ export default function EmployeeDashboard() {
         </Motion.div>
       </Motion.div>
 
+      {!loading && summary?.today?.ot_detection && summary.today.ot_detection.can_file && !otNoticeDismissed && (
+        <Motion.div
+          className="relative overflow-hidden rounded-lg border border-amber-500/40 bg-amber-50/80 px-4 py-3.5 dark:border-amber-400/30 dark:bg-amber-950/30"
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+        >
+          <button
+            type="button"
+            className="absolute right-2.5 top-2.5 rounded-md p-1 text-amber-600/60 hover:bg-amber-200/40 hover:text-amber-700 dark:text-amber-400/60 dark:hover:bg-amber-800/30 dark:hover:text-amber-300"
+            onClick={() => setOtNoticeDismissed(true)}
+            aria-label="Dismiss"
+          >
+            <X className="size-4" />
+          </button>
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 rounded-lg bg-amber-500/15 p-2 dark:bg-amber-400/15">
+              <Timer className="size-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div className="flex-1 pr-6">
+              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                {summary.today.ot_detection.pre_shift && !summary.today.ot_detection.post_shift
+                  ? 'You clocked in before your scheduled shift. Would you like to file a pre-shift overtime request?'
+                  : !summary.today.ot_detection.pre_shift && summary.today.ot_detection.post_shift
+                    ? 'You worked beyond your scheduled shift. Would you like to file an overtime request?'
+                    : 'You have possible pre-shift and post-shift overtime. Would you like to file an overtime request?'}
+              </p>
+              <div className="mt-1 space-y-0.5 text-sm text-amber-800/80 dark:text-amber-300/70">
+                {summary.today.ot_detection.pre_shift && (
+                  <p>
+                    Pre-shift: {formatTime(summary.today.ot_detection.pre_shift.clock_in)}
+                    {' – '}
+                    {formatTime(summary.today.ot_detection.schedule_start)}
+                    {' '}({summary.today.ot_detection.pre_shift.label})
+                  </p>
+                )}
+                {summary.today.ot_detection.post_shift && (
+                  <p>
+                    Post-shift: {formatTime(summary.today.ot_detection.schedule_end)}
+                    {' – '}
+                    {formatTime(summary.today.ot_detection.post_shift.work_end)}
+                    {' '}({summary.today.ot_detection.post_shift.label})
+                  </p>
+                )}
+                <p className="pt-0.5">Total detected OT: {summary.today.ot_detection.total_extra_label}.</p>
+              </div>
+              <div className="mt-2.5 flex gap-2">
+                <Button
+                  size="sm"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => navigate('/employee/overtime')}
+                >
+                  File OT
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 px-3 text-xs text-amber-700 hover:bg-amber-200/40 hover:text-amber-800 dark:text-amber-400 dark:hover:bg-amber-800/30"
+                  onClick={() => setOtNoticeDismissed(true)}
+                >
+                  Ignore
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Motion.div>
+      )}
+
+      {!loading && summary?.today?.ot_detection && summary.today.ot_detection.has_filed_ot && (
+        <Motion.div
+          className="rounded-lg border border-emerald-500/30 bg-emerald-50/60 px-4 py-3 dark:border-emerald-400/20 dark:bg-emerald-950/20"
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-emerald-500/15 p-2 dark:bg-emerald-400/15">
+              <Timer className="size-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <p className="text-sm text-emerald-800 dark:text-emerald-300">
+              OT filed for today — status:{' '}
+              <span className="font-semibold capitalize">{summary.today.ot_detection.filed_ot_status}</span>
+              {' '}({summary.today.ot_detection.total_extra_label})
+            </p>
+          </div>
+        </Motion.div>
+      )}
+
       <Motion.div
         className="flex flex-col gap-2 rounded-md border border-border/80 bg-card/95 px-3 py-3 text-base @sm:flex-row @sm:items-center @sm:justify-between"
         variants={itemVariants}
@@ -1248,8 +1635,9 @@ export default function EmployeeDashboard() {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-9 shrink-0 rounded-lg hover:bg-background/80 @sm:size-10"
+                    className="size-9 shrink-0 rounded-lg hover:bg-background/80 disabled:opacity-40 @sm:size-10"
                     onClick={goNextCalendarMonth}
+                    disabled={!canGoNextMonth || loading}
                     aria-label="Next month"
                   >
                     <ChevronRight className="size-4 @sm:size-[18px]" />
@@ -1408,6 +1796,144 @@ export default function EmployeeDashboard() {
           </Card>
         </Motion.div>
       </Motion.div>
+
+      <Dialog open={otDetailsOpen} onOpenChange={setOtDetailsOpen}>
+        <DialogContent className="max-w-lg sm:max-w-2xl" innerClassName="gap-0">
+          <DialogHeader className="pb-2 pr-2">
+            <DialogTitle className="text-lg font-semibold tracking-tight">Overtime — {getMonthLabel()}</DialogTitle>
+            <DialogDescription>
+              Hours from your OT requests and clock-detected overtime without an active filing for the month you
+              selected above. Times are shown in 12-hour form (your attendance timezone).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-2 grid grid-cols-3 gap-2 rounded-xl border border-border/60 bg-muted/20 p-3 text-center">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300/90">
+                Pending
+              </p>
+              <p className="mt-1 text-lg font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                {loading ? '—' : `${otMonthBreakdown.pendingH}h`}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300/90">
+                Approved
+              </p>
+              <p className="mt-1 text-lg font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                {loading ? '—' : `${otMonthBreakdown.approvedH}h`}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                Unfiled
+              </p>
+              <p className="mt-1 text-lg font-bold tabular-nums text-slate-700 dark:text-slate-300">
+                {loading ? '—' : `${otMonthBreakdown.unfiledH}h`}
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-center text-sm text-muted-foreground">
+            Combined total <span className="font-semibold text-foreground">{loading ? '—' : `${otModalTotalHours}h`}</span>
+            {' · '}
+            Payroll uses <span className="font-medium text-foreground">approved</span> OT for pay.
+          </p>
+          <div className="mt-4 max-h-[min(52vh,420px)] overflow-y-auto rounded-xl border border-border/60">
+            {loading ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
+            ) : otModalRows.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                No overtime rows for this month. File a request if you worked beyond schedule.
+              </div>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {otModalRows.map((row) => {
+                  const badgePending =
+                    'border-amber-500/35 bg-amber-500/12 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200'
+                  const badgeApproved =
+                    'border-emerald-500/35 bg-emerald-500/12 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-200'
+                  const badgeUnfiled =
+                    'border-slate-500/30 bg-slate-500/10 text-slate-800 dark:bg-slate-500/15 dark:text-slate-200'
+                  const badgeRejected =
+                    'border-red-500/30 bg-red-500/10 text-red-900 dark:bg-red-500/15 dark:text-red-200'
+                  const badgeClass =
+                    row.status === 'pending'
+                      ? badgePending
+                      : row.status === 'approved'
+                        ? badgeApproved
+                        : row.status === 'unfiled'
+                          ? badgeUnfiled
+                          : row.status === 'rejected'
+                            ? badgeRejected
+                            : 'border-border bg-muted/50 text-foreground'
+                  const showStatusBadge = row.rowKind === 'request'
+                  return (
+                    <li key={row.key} className="px-4 py-4 @sm:px-5">
+                      <div className="flex flex-col gap-3 @sm:flex-row @sm:items-start @sm:justify-between @sm:gap-4">
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <p className="text-base font-semibold leading-snug tracking-tight text-foreground">
+                            {formatYmdShort(row.date)}
+                          </p>
+                          <p className="text-sm font-medium text-muted-foreground">{row.label}</p>
+                          {row.otSummaryLine ? (
+                            <p className="text-sm leading-relaxed text-foreground tabular-nums">{row.otSummaryLine}</p>
+                          ) : row.rowKind === 'unfiled' ? (
+                            <p className="text-sm text-muted-foreground">
+                              Time range unavailable — check schedule and punches for this date.
+                            </p>
+                          ) : null}
+                          {row.rowKind === 'unfiled' && row.otSummaryLine && (
+                            <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-3 dark:bg-muted/15">
+                              <p className="text-xs leading-relaxed text-muted-foreground">
+                                File OT with the same windows when filing pre-shift or post-shift overtime.
+                              </p>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                className="h-9 w-full font-semibold @sm:w-auto"
+                                onClick={() => {
+                                  setOtDetailsOpen(false)
+                                  navigate(`/employee/overtime?date=${encodeURIComponent(row.date)}`)
+                                }}
+                              >
+                                File OT
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                        {showStatusBadge && (
+                          <div className="flex shrink-0 flex-col items-stretch gap-2 @sm:items-end">
+                            <Badge variant="outline" className={cn('w-fit shrink-0 border font-normal', badgeClass)}>
+                              {row.status === 'pending'
+                                ? 'Pending'
+                                : row.status === 'approved'
+                                  ? 'Approved'
+                                  : row.status === 'rejected'
+                                    ? 'Rejected'
+                                    : String(row.status || '—')}
+                            </Badge>
+                            <span className="text-right text-sm font-semibold tabular-nums text-muted-foreground">
+                              {roundHours1(row.hours)}h
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+          <div className="mt-4 flex flex-col gap-2 border-t border-border/60 pt-4 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={() => setOtDetailsOpen(false)}>
+              Close
+            </Button>
+            <Button type="button" onClick={() => { setOtDetailsOpen(false); navigate('/employee/overtime') }}>
+              File or manage OT
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Motion.div>
   )
 }

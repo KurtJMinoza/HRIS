@@ -4,10 +4,13 @@ import {
   AlertTriangle,
   Calendar,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   ExternalLink,
   Eye,
   FileDown,
+  Info,
   Loader2,
   Plus,
   RefreshCw,
@@ -27,9 +30,10 @@ import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
+import { formatHHmmTo12h, toHhMm } from '@/lib/timeFormat'
 import {
   Dialog,
   DialogContent,
@@ -53,6 +57,7 @@ import {
   getMyOvertimeRequestContext,
   getMyOvertimeRequests,
   getMyOvertimeDetail,
+  getMyAttendanceSummary,
   updateMyOvertimeRequest,
   getAdminOvertime,
   getAdminOvertimeDetail,
@@ -86,22 +91,6 @@ function otTypeLabel(v) {
   return OT_TYPE_LABEL[v] || v || '—'
 }
 
-function formatMinutesToLabel(minutes) {
-  if (!minutes || minutes <= 0) return '0 minutes'
-  const hrs = Math.floor(minutes / 60)
-  const mins = minutes % 60
-  const parts = []
-  if (hrs > 0) parts.push(`${hrs} hour${hrs === 1 ? '' : 's'}`)
-  if (mins > 0) parts.push(`${mins} minute${mins === 1 ? '' : 's'}`)
-  return parts.join(' ')
-}
-
-function localDateTime(dateYmd, hm) {
-  if (!dateYmd || !hm) return null
-  const d = new Date(`${dateYmd}T${hm.length === 5 ? `${hm}:00` : hm}`)
-  return Number.isNaN(d.getTime()) ? null : d
-}
-
 function formatDateShort(dateStr) {
   if (!dateStr) return '—'
   try {
@@ -121,6 +110,58 @@ function formatTimeHm(t) {
   if (!t) return '—'
   const s = String(t)
   return s.length >= 5 ? s.slice(0, 5) : s
+}
+
+function formatOtRange12h(startHm, endHm) {
+  const a = formatHHmmTo12h(toHhMm(startHm))
+  const b = formatHHmmTo12h(toHhMm(endHm))
+  if (!a || !b) return null
+  return `${a} - ${b}`
+}
+
+function roundHours1(n) {
+  const x = typeof n === 'number' && Number.isFinite(n) ? n : 0
+  return Math.round(x * 10) / 10
+}
+
+function formatUnfiledOtClockSummary12h(preSeg, postSeg, totalHours) {
+  const parts = []
+  if (preSeg?.start && preSeg?.end) {
+    const range = formatOtRange12h(preSeg.start, preSeg.end)
+    const h = typeof preSeg.hours === 'number' ? preSeg.hours : (preSeg.minutes || 0) / 60
+    if (range) parts.push(`${range} (${roundHours1(h)}h)`)
+  }
+  if (postSeg?.start && postSeg?.end) {
+    const range = formatOtRange12h(postSeg.start, postSeg.end)
+    const h = typeof postSeg.hours === 'number' ? postSeg.hours : (postSeg.minutes || 0) / 60
+    if (range) parts.push(`${range} (${roundHours1(h)}h)`)
+  }
+  if (!parts.length) return null
+  if (parts.length === 1) return parts[0]
+  return `${parts.join(' + ')} = ${roundHours1(totalHours)}h`
+}
+
+function timeToMinutes(t) {
+  if (!t) return null
+  const s = String(t).trim()
+  const m = s.match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return null
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+}
+
+function segmentCoveredByRequest(seg, request) {
+  if (!seg?.start || !seg?.end || !request) return false
+  const segStart = timeToMinutes(seg.start)
+  const reqStart = timeToMinutes(request.start_time || request.schedule_end)
+  const reqEnd = timeToMinutes(request.end_time || request.expected_end_time)
+  if (segStart == null || reqStart == null || reqEnd == null) return false
+  const segEnd = timeToMinutes(seg.end)
+  if (segEnd == null) return false
+  const overlapStart = Math.max(segStart, reqStart)
+  const overlapEnd = Math.min(segEnd, reqEnd)
+  const overlap = overlapEnd - overlapStart
+  const segDuration = segEnd - segStart
+  return segDuration > 0 && overlap >= segDuration * 0.5
 }
 
 function getInitials(name) {
@@ -304,6 +345,7 @@ function DetailSection({ title, children, className }) {
 export default function OvertimeRequests({ variant = 'employee' }) {
   const { toast } = useToast()
   const { user } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
   const hrBase = useHrBasePath()
   const perms = new Set(user?.permissions ?? [])
   const isHr = variant === 'hr'
@@ -313,12 +355,35 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const canExport = isHr && perms.has('overtime.export')
   const canApproveOvertime = perms.has('overtime.approve')
 
+  const [monthYear, setMonthYear] = useState(() => new Date().getFullYear())
+  const [monthIndex, setMonthIndex] = useState(() => new Date().getMonth()) // 0-based
+  const monthFrom = useMemo(() => `${monthYear}-${String(monthIndex + 1).padStart(2, '0')}-01`, [monthYear, monthIndex])
+  const monthTo = useMemo(() => {
+    const last = new Date(monthYear, monthIndex + 1, 0)
+    return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`
+  }, [monthYear, monthIndex])
+
+  function goPrevMonth() {
+    if (monthIndex === 0) {
+      setMonthIndex(11)
+      setMonthYear((y) => y - 1)
+    } else setMonthIndex((m) => m - 1)
+  }
+
+  function goThisMonth() {
+    const t = new Date()
+    setMonthYear(t.getFullYear())
+    setMonthIndex(t.getMonth())
+  }
+
   const [tab, setTab] = useState('mine')
 
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
   const [loadingMine, setLoadingMine] = useState(true)
   const [loadingAll, setLoadingAll] = useState(false)
+  const [unfiledLoading, setUnfiledLoading] = useState(false)
+  const [unfiledRows, setUnfiledRows] = useState([])
 
   const [allStatus, setAllStatus] = useState('all')
   const [allFrom, setAllFrom] = useState('')
@@ -328,7 +393,18 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   const [fileOpen, setFileOpen] = useState(false)
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
-  const [expectedEndTime, setExpectedEndTime] = useState('')
+
+  /** Dashboard "File OT" deep-link: /employee/overtime?date=YYYY-MM-DD */
+  const dateFromUrl = searchParams.get('date')
+  useEffect(() => {
+    if (isHr || !dateFromUrl || !/^\d{4}-\d{2}-\d{2}$/.test(dateFromUrl)) return
+    setDate(dateFromUrl)
+    const next = new URLSearchParams(searchParams.toString())
+    next.delete('date')
+    setSearchParams(next, { replace: true })
+  }, [isHr, dateFromUrl, searchParams, setSearchParams])
+  const [startTime, setStartTime] = useState('')
+  const [endTime, setEndTime] = useState('')
   const [category, setCategory] = useState('regular')
   const [phOtRule, setPhOtRule] = useState('ORD')
   const [reason, setReason] = useState('')
@@ -338,8 +414,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [otContext, setOtContext] = useState(null)
   const [contextLoading, setContextLoading] = useState(false)
   const [contextError, setContextError] = useState(null)
-  const [estimatedMinutes, setEstimatedMinutes] = useState(0)
-
   const [viewOpen, setViewOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detail, setDetail] = useState(null)
@@ -351,6 +425,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [actionSubmitting, setActionSubmitting] = useState(false)
 
   const [exportingCsv, setExportingCsv] = useState(false)
+  const [approvalInfoOpen, setApprovalInfoOpen] = useState(false)
 
   const viewOpenRef = useRef(false)
   useEffect(() => {
@@ -379,7 +454,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState(null)
-  const [editExpectedEnd, setEditExpectedEnd] = useState('')
+  const [editStartTime, setEditStartTime] = useState('')
+  const [editEndTime, setEditEndTime] = useState('')
   const [editCategory, setEditCategory] = useState('regular')
   const [editReason, setEditReason] = useState('')
   const [editPhOtRule, setEditPhOtRule] = useState('ORD')
@@ -388,12 +464,13 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [editSubmitting, setEditSubmitting] = useState(false)
   const [editError, setEditError] = useState(null)
 
-  const todayIso = new Date().toISOString().slice(0, 10)
-
   const loadMine = useCallback(async () => {
     setLoadingMine(true)
     try {
-      const res = await getMyOvertimeRequests({ per_page: 50 })
+      const res =
+        !isHr
+          ? await getMyOvertimeRequests({ per_page: 50, from_date: monthFrom, to_date: monthTo })
+          : await getMyOvertimeRequests({ per_page: 50 })
       setMineItems(Array.isArray(res.overtimes) ? res.overtimes : [])
     } catch (e) {
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
@@ -401,7 +478,63 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     } finally {
       setLoadingMine(false)
     }
-  }, [toast])
+  }, [toast, isHr, monthFrom, monthTo])
+
+  const loadUnfiledForMonth = useCallback(async () => {
+    if (isHr) return
+    setUnfiledLoading(true)
+    try {
+      const attendance = await getMyAttendanceSummary({ from_date: monthFrom, to_date: monthTo })
+      const days = Array.isArray(attendance?.days) ? attendance.days : []
+      const requests = Array.isArray(mineItems) ? mineItems : []
+
+      const requestsByDate = {}
+      for (const r of requests) {
+        if (!r?.date || (r.status !== 'pending' && r.status !== 'approved')) continue
+        if (!requestsByDate[r.date]) requestsByDate[r.date] = []
+        requestsByDate[r.date].push(r)
+      }
+
+      const rows = []
+      for (const d of days) {
+        if (!d?.date) continue
+        const preSeg = d.raw_pre_ot ?? null
+        const postSeg = d.raw_post_ot ?? null
+        if (!preSeg && !postSeg) continue
+
+        const dateRequests = requestsByDate[d.date] || []
+        const preIsCovered = preSeg && dateRequests.some((r) => segmentCoveredByRequest(preSeg, r))
+        const postIsCovered = postSeg && dateRequests.some((r) => segmentCoveredByRequest(postSeg, r))
+
+        const unfiledPre = preSeg && !preIsCovered ? preSeg : null
+        const unfiledPost = postSeg && !postIsCovered ? postSeg : null
+
+        if (!unfiledPre && !unfiledPost) continue
+
+        const unfiledH =
+          (unfiledPre ? (typeof unfiledPre.hours === 'number' ? unfiledPre.hours : (unfiledPre.minutes || 0) / 60) : 0) +
+          (unfiledPost ? (typeof unfiledPost.hours === 'number' ? unfiledPost.hours : (unfiledPost.minutes || 0) / 60) : 0)
+
+        if (unfiledH <= 0.001) continue
+
+        const summary = formatUnfiledOtClockSummary12h(unfiledPre, unfiledPost, unfiledH)
+        if (!summary) continue
+        rows.push({
+          date: d.date,
+          rawHours: roundHours1(unfiledH),
+          pre: unfiledPre,
+          post: unfiledPost,
+          summary,
+        })
+      }
+      rows.sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      setUnfiledRows(rows)
+    } catch {
+      setUnfiledRows([])
+    } finally {
+      setUnfiledLoading(false)
+    }
+  }, [isHr, monthFrom, monthTo, mineItems])
 
   const loadAll = useCallback(async () => {
     setLoadingAll(true)
@@ -426,6 +559,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   useEffect(() => {
     loadMine()
   }, [loadMine])
+
+  useEffect(() => {
+    void loadUnfiledForMonth()
+  }, [loadUnfiledForMonth])
 
   useEffect(() => {
     if (tab === 'all' && canSeeAllTab) {
@@ -462,25 +599,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setPhOtRule(String(otContext.default_ph_ot_rule))
   }, [otContext])
 
-  useEffect(() => {
-    if (!expectedEndTime || !otContext?.schedule_end || !otContext?.is_workday) {
-      setEstimatedMinutes(0)
-      return
-    }
-    if (otContext.overnight_shift) {
-      setEstimatedMinutes(0)
-      return
-    }
-    const endSched = localDateTime(date, otContext.schedule_end)
-    const expected = localDateTime(date, expectedEndTime)
-    if (!endSched || !expected) {
-      setEstimatedMinutes(0)
-      return
-    }
-    const diffMs = expected.getTime() - endSched.getTime()
-    setEstimatedMinutes(diffMs > 0 ? Math.round(diffMs / 60000) : 0)
-  }, [date, expectedEndTime, otContext])
-
   const phRuleSelectOptions = useMemo(() => {
     const opts = otContext?.ph_ot_rule_options
     if (Array.isArray(opts) && opts.length > 0) return opts
@@ -494,39 +612,32 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     ]
   }, [otContext])
 
-  const formReady = useMemo(() => {
-    if (!otContext) return false
-    return (
-      otContext.has_assigned_schedule &&
-      otContext.is_workday &&
-      (otContext.mode === 'pre_ot' || otContext.mode === 'post_ot')
-    )
-  }, [otContext])
-
   const canSubmitFile = useMemo(() => {
     return (
-      formReady &&
       date &&
-      expectedEndTime &&
-      category &&
-      phOtRule &&
-      reason.trim().length >= 10 &&
+      startTime &&
+      endTime &&
+      reason.trim().length >= 2 &&
       !submitting &&
       !contextLoading
     )
-  }, [formReady, date, expectedEndTime, category, phOtRule, reason, submitting, contextLoading])
+  }, [date, startTime, endTime, reason, submitting, contextLoading])
 
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine' ? loadingMine : loadingAll
 
   const totalAllPages = allPagination?.last_page || 1
 
-  function openFile() {
+  function openFile(opts = {}) {
+    const initialDate = opts.date || null
+    const initialStart = opts.start_time || ''
+    const initialEnd = opts.end_time || ''
     setSubmitError(null)
     setReason('')
     setAttachment(null)
-    setExpectedEndTime('')
-    setDate(new Date().toISOString().slice(0, 10))
+    setStartTime(initialStart)
+    setEndTime(initialEnd)
+    setDate(initialDate || new Date().toISOString().slice(0, 10))
     setCategory('regular')
     setFileOpen(true)
   }
@@ -539,7 +650,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     try {
       await createMyOvertimeRequest({
         date,
-        expected_end_time: expectedEndTime,
+        start_time: startTime,
+        end_time: endTime,
         category,
         ph_ot_rule: phOtRule,
         reason: reason.trim(),
@@ -668,7 +780,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   async function openEdit(row) {
     if (!canEditPendingOvertime(row)) return
     setEditId(row.id)
-    setEditExpectedEnd(formatTimeHm(row.expected_end_time))
+    setEditStartTime(formatTimeHm(row.start_time || row.schedule_end))
+    setEditEndTime(formatTimeHm(row.end_time || row.expected_end_time))
     setEditCategory(row.ot_type || 'regular')
     setEditReason(row.reason || '')
     setEditPhOtRule(row.ph_ot_rule || 'ORD')
@@ -697,7 +810,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setEditError(null)
     try {
       await updateMyOvertimeRequest(editId, {
-        expected_end_time: editExpectedEnd,
+        start_time: editStartTime,
+        end_time: editEndTime,
         category: editCategory,
         ph_ot_rule: editPhOtRule,
         reason: editReason.trim(),
@@ -738,20 +852,52 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
     >
       <div className="mx-auto w-full max-w-full space-y-8 px-1 @sm:px-0">
-        <header className="flex flex-col gap-6 border-b border-slate-200/80 pb-8 dark:border-slate-800 @lg:flex-row @lg:items-end @lg:justify-between">
+        <header className="flex flex-col gap-6 rounded-2xl border border-border/70 bg-card/80 p-5 shadow-sm @sm:p-6 @lg:flex-row @lg:items-end @lg:justify-between">
           <div className="max-w-2xl space-y-3">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+            <p className="hr-helper font-semibold uppercase tracking-[0.2em]">
               {isHr ? 'HR' : 'My workspace'}
             </p>
-            <h1 className="hr-page-title text-slate-900 dark:text-slate-50">{title}</h1>
-            <p className="text-base leading-relaxed text-slate-600 dark:text-slate-400">{subtitle}</p>
-            <p className="text-sm leading-relaxed text-muted-foreground">{APPROVAL_INFO}</p>
+            <h1 className="hr-page-title !mb-0 text-foreground">{title}</h1>
+            <p className="hr-body text-muted-foreground">{subtitle}</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 w-fit gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+              onClick={() => setApprovalInfoOpen(true)}
+              aria-label="View approval chain information"
+            >
+              <Info className="size-4" />
+              Approval chain info
+            </Button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-3 @lg:w-auto @lg:justify-end">
+            {!isHr && (
+              <div className="flex w-full items-center justify-center gap-0.5 rounded-xl border border-border/60 bg-muted/30 p-1 @lg:w-auto">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-9 shrink-0 rounded-lg hover:bg-background/80"
+                  onClick={goPrevMonth}
+                  aria-label="Previous month"
+                >
+                  <ChevronLeft className="size-4 opacity-70" />
+                </Button>
+                <button
+                  type="button"
+                  onClick={goThisMonth}
+                  className="min-w-0 flex-1 truncate rounded-md px-3 py-2 text-center text-sm font-semibold tabular-nums tracking-tight text-foreground transition-colors hover:bg-background/70 @lg:w-[11rem]"
+                  aria-label="Jump to current month"
+                >
+                  {new Date(`${monthFrom}T12:00:00`).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
+                </button>
+              </div>
+            )}
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl border-slate-200 bg-white @lg:flex-initial dark:border-slate-700 dark:bg-slate-950"
+              className="h-11 gap-2 rounded-xl border-border bg-card text-foreground hover:bg-muted @lg:flex-initial"
               onClick={() => loadMine()}
               disabled={loadingMine}
             >
@@ -760,7 +906,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             </Button>
             <Button
               type="button"
-              className="h-11 gap-2 rounded-xl bg-black px-5 text-white shadow-lg shadow-black/20 ring-1 ring-black/20 @lg:flex-initial dark:bg-black dark:text-white dark:ring-white/15"
+              className="h-11 gap-2 rounded-xl bg-primary px-5 text-primary-foreground shadow-sm ring-1 ring-border/40 transition hover:brightness-95 @lg:flex-initial"
               onClick={openFile}
             >
               <Plus className="size-4" />
@@ -769,10 +915,68 @@ export default function OvertimeRequests({ variant = 'employee' }) {
           </div>
         </header>
 
+        {!isHr && tab === 'mine' && (
+          <Card className="overflow-hidden border-border/70 bg-card shadow-sm @md:rounded-2xl">
+            <CardHeader className="border-b border-border/60 bg-muted/20 px-4 py-5 @sm:px-6 md:px-8">
+              <CardTitle className="hr-section-title hr-section-title--tight !mb-0">Unfiled OT (clock)</CardTitle>
+              <CardDescription className="hr-helper">
+                Detected from your clock logs for the current month. Use the same windows when filing pre-shift or post-shift overtime.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 px-4 py-5 @sm:px-6 md:px-8">
+              {unfiledLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Detecting unfiled OT…
+                </div>
+              ) : unfiledRows.length === 0 ? (
+                <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                  No unfiled clock OT detected for this month.
+                </div>
+              ) : (
+                <div className="grid gap-3 @lg:grid-cols-2">
+                  {unfiledRows.map((r) => {
+                    const preferred = r.post?.start && r.post?.end ? r.post : r.pre
+                    const startPrefill = preferred?.start || ''
+                    const endPrefill = preferred?.end || ''
+                    return (
+                      <div key={r.date} className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+                        <p className="text-base font-semibold tracking-tight text-foreground">{formatDateShort(`${r.date}T12:00:00`)}</p>
+                        <p className="mt-1 text-sm font-medium text-muted-foreground">Unfiled OT (clock)</p>
+                        <p className="mt-2 text-sm leading-relaxed text-foreground tabular-nums">{r.summary}</p>
+                        <div className="mt-3 flex flex-col gap-2">
+                          <p className="text-xs leading-relaxed text-muted-foreground">
+                            File OT with the same windows when filing pre-shift or post-shift overtime.
+                          </p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="h-9 w-full font-semibold @sm:w-auto"
+                            onClick={() =>
+                              openFile({
+                                date: r.date,
+                                start_time: startPrefill,
+                                end_time: endPrefill,
+                              })
+                            }
+                          >
+                            File OT
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {canSeeAllTab && (
           <div className="flex flex-wrap gap-2">
             <div
-              className="inline-flex min-w-0 flex-wrap gap-2 rounded-2xl border border-slate-200/80 bg-white p-1 shadow-inner dark:border-slate-700 dark:bg-slate-900/40"
+              className="inline-flex min-w-0 flex-wrap gap-2 rounded-2xl border border-border/70 bg-muted/30 p-1 shadow-inner"
               role="tablist"
               aria-label="Overtime views"
             >
@@ -784,8 +988,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 className={cn(
                   'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
                   tab === 'mine'
-                    ? 'bg-slate-900 text-white shadow-md dark:bg-white dark:text-slate-900'
-                    : 'text-muted-foreground hover:bg-slate-50 hover:text-foreground dark:hover:bg-slate-800/80'
+                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
                 )}
               >
                 My Requests
@@ -801,8 +1005,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 className={cn(
                   'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
                   tab === 'all'
-                    ? 'bg-slate-900 text-white shadow-md dark:bg-white dark:text-slate-900'
-                    : 'text-muted-foreground hover:bg-slate-50 hover:text-foreground dark:hover:bg-slate-800/80'
+                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
                 )}
               >
                 All Requests
@@ -1081,8 +1285,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
               <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>File New Overtime</DialogTitle>
               <p id="ot-file-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Request overtime for yourself. Expected end must be after your scheduled shift end. PH pay rule applies to
-                payroll.
+                {
+                  'Flexible OT filing. Example format: 6:00 AM - 8:00 AM -> FOR OT, 5:00 PM - 12:00 MIDNIGHT -> FOR OT.'
+                }
               </p>
             </DialogHeader>
           </div>
@@ -1104,24 +1309,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   {contextError}
                 </div>
               )}
-              {otContext && otContext.mode === 'pre_ot' && (
-                <div className="rounded-md border border-emerald-500/35 bg-emerald-50/80 px-3 py-2 text-sm text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
-                  <p className="font-medium">{otContext.mode_label}</p>
-                  <p className="mt-0.5 opacity-90">{otContext.help}</p>
-                </div>
-              )}
-              {otContext && otContext.mode === 'post_ot' && (
-                <div className="rounded-md border border-sky-500/35 bg-sky-500/10 px-3 py-2 text-sm text-sky-950 dark:text-sky-100">
-                  <p className="font-medium">{otContext.mode_label}</p>
-                  <p className="mt-0.5 opacity-90">{otContext.help}</p>
-                </div>
-              )}
-              {otContext && otContext.mode === 'unavailable' && !contextError && (
-                <div className="rounded-md border border-amber-500/40 bg-amber-50/80 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-                  <p className="font-medium">{otContext.mode_label}</p>
-                  <p className="mt-0.5 opacity-90">{otContext.help}</p>
-                </div>
-              )}
+              <div className="rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-sm text-primary/90">
+                You can file OT anytime (before, during, or after the date), including rest day, holiday, and night shift.
+              </div>
               <div className="grid gap-4 @md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="otm-date">Date</Label>
@@ -1131,8 +1321,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       id="otm-date"
                       type="date"
                       value={date}
-                      min={otContext?.earliest_allowed_date || undefined}
-                      max={todayIso}
                       onChange={(e) => setDate(e.target.value)}
                       className="h-11 pl-9"
                       required
@@ -1140,43 +1328,42 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="otm-end">Expected end time</Label>
+                  <Label htmlFor="otm-start">Start time</Label>
                   <div className="relative">
                     <Clock className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
-                      id="otm-end"
+                      id="otm-start"
                       type="time"
-                      value={expectedEndTime}
-                      onChange={(e) => setExpectedEndTime(e.target.value)}
+                      value={startTime}
+                      onChange={(e) => setStartTime(e.target.value)}
                       className="h-11 pl-9"
                       required
                     />
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Category</Label>
-                  <Select value={category} onValueChange={setCategory}>
-                    <SelectTrigger className="h-11 rounded-lg">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="regular">Regular Day OT</SelectItem>
-                      <SelectItem value="rest_day">Rest Day OT</SelectItem>
-                      <SelectItem value="holiday">Holiday OT</SelectItem>
-                      <SelectItem value="emergency">Emergency OT</SelectItem>
-                      <SelectItem value="project">Project-Based OT</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="otm-end">End time</Label>
+                  <div className="relative">
+                    <Clock className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="otm-end"
+                      type="time"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      className="h-11 pl-9"
+                      required
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2 @md:col-span-2">
-                  <Label>PH pay condition (OT rule)</Label>
+                  <Label>PH pay condition</Label>
                   <Select value={phOtRule} onValueChange={setPhOtRule}>
-                    <SelectTrigger className="h-11 rounded-lg">
+                    <SelectTrigger className="h-11">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       {phRuleSelectOptions.map((opt) => (
-                        <SelectItem key={opt.code} value={opt.code}>
+                        <SelectItem key={opt.code} value={String(opt.code)}>
                           {opt.day_type_label} — 1st 8h ×{opt.first_8_multiplier} · OT ×{opt.ot_multiplier}
                         </SelectItem>
                       ))}
@@ -1192,32 +1379,14 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     onChange={(e) => setReason(e.target.value)}
                     className="min-h-[96px] resize-none"
                     required
-                    minLength={10}
+                    minLength={2}
                   />
-                  <p className="text-xs text-muted-foreground">Minimum 10 characters.</p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="otm-att">Attachment (optional)</Label>
-                  <Input
-                    id="otm-att"
-                    type="file"
-                    accept=".pdf,.jpg,.jpeg,.png"
-                    onChange={(e) => setAttachment(e.target.files?.[0] || null)}
-                    className="cursor-pointer"
-                  />
+                  <p className="text-xs text-muted-foreground">Example: FOR OT</p>
                 </div>
                 <div className="rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-4 py-3 text-sm text-muted-foreground @md:col-span-2">
-                  {otContext?.overnight_shift ? (
-                    <span>Night shift: preview not shown. Server validates against your schedule.</span>
-                  ) : expectedEndTime && otContext?.schedule_end ? (
-                    <span>
-                      Estimated OT:{' '}
-                      <span className="font-medium text-foreground">{formatMinutesToLabel(estimatedMinutes)}</span>
-                      <span className="ml-1">(scheduled end {otContext.schedule_end})</span>
-                    </span>
-                  ) : (
-                    <span>Select a valid work date and expected end time.</span>
-                  )}
+                  <span>
+                    Format preview: {startTime || '06:00'} - {endTime || '08:00'} {'->'} FOR OT
+                  </span>
                 </div>
               </div>
             </div>
@@ -1370,19 +1539,21 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       </div>
                     ) : null}
                     <div className="@sm:col-span-2">
-                      <p className="text-xs font-medium text-muted-foreground">Schedule end → expected end</p>
+                      <p className="text-xs font-medium text-muted-foreground">Requested time range</p>
                       <p className="mt-1 font-mono text-sm font-medium text-foreground">
-                        {formatTimeHm(detail.schedule_end)} – {formatTimeHm(detail.expected_end_time)}
+                        {formatTimeHm(detail.start_time || detail.schedule_end)} – {formatTimeHm(detail.end_time || detail.expected_end_time)}
                       </p>
                     </div>
-                    {detail.status === 'approved' && detail.expected_end_time ? (
+                    {detail.status === 'approved' && (detail.end_time || detail.expected_end_time) ? (
                       <div className="@sm:col-span-4 rounded-lg border border-emerald-500/30 bg-emerald-50/60 px-4 py-3 dark:bg-emerald-950/20">
                         <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                          Extended clock-out
+                          Approved OT range
                         </p>
                         <p className="mt-1 text-sm text-emerald-800 dark:text-emerald-300">
-                          Clock-out extended to <span className="font-mono font-bold">{formatTimeHm(detail.expected_end_time)}</span> (regular shift ends at {formatTimeHm(detail.schedule_end)}).
-                          Regular hours count up to {formatTimeHm(detail.schedule_end)}, overtime hours apply after.
+                          Approved from{' '}
+                          <span className="font-mono font-bold">{formatTimeHm(detail.start_time || detail.schedule_end)}</span>
+                          {' '}to{' '}
+                          <span className="font-mono font-bold">{formatTimeHm(detail.end_time || detail.expected_end_time)}</span>.
                         </p>
                       </div>
                     ) : null}
@@ -1499,6 +1670,21 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       </Dialog>
 
       {/* Approve */}
+      <Dialog open={approvalInfoOpen} onOpenChange={setApprovalInfoOpen}>
+        <DialogContent className={adminFormDialogContentClass('max-w-xl')}>
+          <DialogHeader>
+            <DialogTitle>Approval Chain</DialogTitle>
+            <DialogDescription className="leading-relaxed text-muted-foreground">{APPROVAL_INFO}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" onClick={() => setApprovalInfoOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Approve */}
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
         <DialogContent className={adminFormDialogContentClass('max-w-md')}>
           <DialogHeader>
@@ -1579,30 +1765,26 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               )}
               <div className="grid gap-4 @md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="ed-ee">Expected end time</Label>
+                  <Label htmlFor="ed-st">Start time</Label>
                   <Input
-                    id="ed-ee"
+                    id="ed-st"
                     type="time"
-                    value={editExpectedEnd}
-                    onChange={(e) => setEditExpectedEnd(e.target.value)}
+                    value={editStartTime}
+                    onChange={(e) => setEditStartTime(e.target.value)}
                     className="h-10"
                     required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Category</Label>
-                  <Select value={editCategory} onValueChange={setEditCategory}>
-                    <SelectTrigger className="h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="regular">Regular Day OT</SelectItem>
-                      <SelectItem value="rest_day">Rest Day OT</SelectItem>
-                      <SelectItem value="holiday">Holiday OT</SelectItem>
-                      <SelectItem value="emergency">Emergency OT</SelectItem>
-                      <SelectItem value="project">Project-Based OT</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="ed-et">End time</Label>
+                  <Input
+                    id="ed-et"
+                    type="time"
+                    value={editEndTime}
+                    onChange={(e) => setEditEndTime(e.target.value)}
+                    className="h-10"
+                    required
+                  />
                 </div>
                 <div className="space-y-2 @md:col-span-2">
                   <Label>PH pay condition</Label>

@@ -8,9 +8,8 @@ use Carbon\Carbon;
  * Time Segmentation — regular vs rendered OT vs ND (10PM–6AM).
  *
  * Default OT basis (config `payroll.ot_basis` = schedule_end):
- * - Rendered OT = net work minutes at/after scheduled shift end (not "net minus 8 hours").
- * - Regular bucket = net work between effective start/end only: max(timeIn, scheduleStart) through
- *   min(timeOut, scheduleEnd), minus break — early clock-in before schedule start does not add to regular.
+ * - Rendered OT = work minutes before scheduled start (pre-shift) and at/after scheduled shift end (post-shift).
+ * - Regular bucket = work between scheduled start and end only, minus break.
  *
  * Legacy `eight_hour_net`: OT = max(0, net − 8h) when no schedule end or when explicitly configured.
  *
@@ -101,7 +100,8 @@ class TimeSegmentationService
     }
 
     /**
-     * OT = work at/after scheduled end; no meal break in path.
+     * OT = work before scheduled start (pre-shift) and at/after scheduled end (post-shift);
+     * no meal break in path.
      */
     private function segmentByScheduleEndGross(Carbon $in, Carbon $out, string $tz, Carbon $scheduledEnd, ?Carbon $scheduledStart = null, int $ndStart = 22, int $ndEnd = 6): array
     {
@@ -117,12 +117,8 @@ class TimeSegmentationService
 
         for ($m = 0; $m < $totalMinutes; $m += $stepMinutes) {
             $minStep = min($stepMinutes, $totalMinutes - $m);
-            if ($scheduledStart !== null && $cursor->lessThan($scheduledStart)) {
-                $cursor->addMinutes($minStep);
-
-                continue;
-            }
-            $isOtMinute = $cursor->greaterThanOrEqualTo($scheduledEnd);
+            $isOtMinute = ($scheduledStart !== null && $cursor->lessThan($scheduledStart))
+                || $cursor->greaterThanOrEqualTo($scheduledEnd);
             $hour = (int) $cursor->format('G');
             $isNight = $hour >= $ndStart || $hour < $ndEnd;
             if ($isNight) {
@@ -152,7 +148,8 @@ class TimeSegmentationService
     }
 
     /**
-     * OT = net work at/after scheduled end; meal break excluded from work minutes.
+     * OT = work before scheduled start (pre-shift) and at/after scheduled end (post-shift);
+     * meal break excluded from regular/post-shift work minutes only.
      */
     private function segmentByScheduleEndWithBreak(
         Carbon $in,
@@ -175,13 +172,11 @@ class TimeSegmentationService
 
         for ($m = 0; $m < $grossMinutes; $m++) {
             $cursor = $in->copy()->addMinutes($m);
-            if ($scheduledStart !== null && $cursor->lessThan($scheduledStart)) {
+            $isPreShift = $scheduledStart !== null && $cursor->lessThan($scheduledStart);
+            if (! $isPreShift && $this->clockMinuteOverlapsBreak($cursor, $breakStart, $breakEnd)) {
                 continue;
             }
-            if ($this->clockMinuteOverlapsBreak($cursor, $breakStart, $breakEnd)) {
-                continue;
-            }
-            $isOtMinute = $cursor->greaterThanOrEqualTo($scheduledEnd);
+            $isOtMinute = $isPreShift || $cursor->greaterThanOrEqualTo($scheduledEnd);
             $hour = (int) $cursor->format('G');
             $isNight = $hour >= $ndStart || $hour < $ndEnd;
             if ($isNight) {
@@ -382,5 +377,56 @@ class TimeSegmentationService
             'nd_overtime_hours' => 0.0,
             'total_hours' => 0.0,
         ];
+    }
+
+    /**
+     * Split a multi-day time range (IN on Day 1, OUT on Day N) into per-calendar-day
+     * segments and classify each independently against its day's schedule.
+     *
+     * Each calendar day's work is bounded by midnight boundaries, then classified
+     * using the schedule for that specific day (regular, OT, ND).
+     *
+     * @param  callable|null  $scheduleResolver  fn(string $dateKey): ?array — returns the
+     *         day schedule for a given date. If null, all days use $daySchedule.
+     * @return array<string, array>  Keyed by Y-m-d date string, each value is a segment() result.
+     */
+    public function segmentMultiDay(
+        Carbon $timeIn,
+        Carbon $timeOut,
+        ?string $tz = null,
+        ?array $daySchedule = null,
+        ?callable $scheduleResolver = null
+    ): array {
+        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+
+        $in = $timeIn->copy()->timezone($tz);
+        $out = $timeOut->copy()->timezone($tz);
+
+        if ($in->toDateString() === $out->toDateString()) {
+            $dateKey = $in->toDateString();
+            $sched = $scheduleResolver ? $scheduleResolver($dateKey) : $daySchedule;
+
+            return [
+                $dateKey => $this->segment($in, $out, $tz, $sched, $dateKey),
+            ];
+        }
+
+        $results = [];
+        $cursor = $in->copy();
+
+        while ($cursor->lessThan($out)) {
+            $dateKey = $cursor->toDateString();
+            $nextMidnight = $cursor->copy()->addDay()->startOfDay();
+
+            $segmentStart = $cursor->copy();
+            $segmentEnd = $out->lessThan($nextMidnight) ? $out->copy() : $nextMidnight->copy();
+
+            $sched = $scheduleResolver ? $scheduleResolver($dateKey) : $daySchedule;
+            $results[$dateKey] = $this->segment($segmentStart, $segmentEnd, $tz, $sched, $dateKey);
+
+            $cursor = $nextMidnight->copy();
+        }
+
+        return $results;
     }
 }

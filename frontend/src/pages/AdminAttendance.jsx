@@ -26,7 +26,6 @@ import { AttendanceRecordDetailSheet } from '@/components/attendance/AttendanceR
 import {
   attendanceRecordRef,
   resolveAdminStatusLabel,
-  isPendingAttentionRow,
 } from '@/components/attendance/attendanceRecordUtils'
 import {
   DropdownMenu,
@@ -40,10 +39,12 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   getAdminAttendance,
+  fetchAllAdminAttendanceRows,
   exportAdminAttendance,
   saveAttendanceCorrection,
   getEmployees,
   profileImageUrl,
+  REPORTS_AND_ATTENDANCE_PAGE_SIZE,
 } from '@/api'
 import ReportPdfDocument from '@/components/reports/ReportPdfDocument'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
@@ -136,8 +137,15 @@ export default function AdminAttendance() {
   const [detailRow, setDetailRow] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [scopeSegment, setScopeSegment] = useState('all')
+  const [attendancePage, setAttendancePage] = useState(1)
+  const [debouncedAttendanceSearch, setDebouncedAttendanceSearch] = useState('')
   const [lastRefresh, setLastRefresh] = useState(() => new Date())
   const [, forceTickUpdate] = useState(0)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedAttendanceSearch(searchQuery.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   /** Department name sent to API (scoped managers: fixed org; others: dropdown). */
   function resolveDepartmentForApi(overrides = {}) {
@@ -149,20 +157,64 @@ export default function AdminAttendance() {
     return deptState !== 'all' ? deptState : undefined
   }
 
+  const rosterEmployeesQuery = useQuery({
+    queryKey: ['admin-attendance-roster', user?.id, user?.hr_role, JSON.stringify(user?.attendance_scope || {})],
+    queryFn: async () => {
+      const scope = user?.attendance_scope
+      const params = { per_page: 500 }
+      if (scope?.kind === 'department' && scope.department_ids?.length === 1) {
+        params.department_id = scope.department_ids[0]
+      } else if (scope?.kind === 'branch' && scope.branch_id) {
+        params.branch_id = scope.branch_id
+      } else if (scope?.kind === 'company' && scope.company_ids?.length === 1) {
+        params.company_id = scope.company_ids[0]
+      }
+      const res = await getEmployees(params)
+      const list = res?.employees ?? res ?? []
+      return Array.isArray(list) ? list : []
+    },
+    staleTime: 60_000,
+  })
+
+  const rosterEmployees = rosterEmployeesQuery.data ?? []
+
   useEffect(() => {
     if (!showPayrollAttendanceColumns && premiumType !== 'all') {
       setPremiumType('all')
     }
   }, [showPayrollAttendanceColumns, premiumType])
 
-  const attendanceParams = useMemo(() => ({
-    from_date: fromDate,
-    to_date: toDate,
-    department: resolveDepartmentForApi(),
-    employee_id: employeeId !== 'all' ? Number(employeeId) : undefined,
-    status: status !== 'all' ? status : undefined,
-    premium_type: premiumType !== 'all' ? premiumType : undefined,
-  }), [fromDate, toDate, department, employeeId, status, premiumType, user?.attendance_scope])
+  const attendanceFilters = useMemo(
+    () => ({
+      from_date: fromDate,
+      to_date: toDate,
+      department: resolveDepartmentForApi(),
+      employee_id: employeeId !== 'all' ? Number(employeeId) : undefined,
+      status: status !== 'all' ? status : undefined,
+      premium_type: premiumType !== 'all' ? premiumType : undefined,
+      search: debouncedAttendanceSearch || undefined,
+      company: showCompanyFilter && companyFilter !== 'all' ? companyFilter : undefined,
+      pending_attention: scopeSegment === 'pending' ? true : undefined,
+    }),
+    [
+      fromDate,
+      toDate,
+      department,
+      employeeId,
+      status,
+      premiumType,
+      user?.attendance_scope,
+      debouncedAttendanceSearch,
+      showCompanyFilter,
+      companyFilter,
+      scopeSegment,
+    ],
+  )
+
+  const attendanceParams = useMemo(
+    () => ({ ...attendanceFilters, page: attendancePage }),
+    [attendanceFilters, attendancePage],
+  )
 
   const attendanceQuery = useQuery({
     queryKey: ['admin-attendance', attendanceParams],
@@ -209,6 +261,18 @@ export default function AdminAttendance() {
     }
   }, [attendanceQuery.data, attendanceQuery.error, attendanceQuery.isLoading])
 
+  useEffect(() => {
+    const cp = attendanceQuery.data?.meta?.current_page
+    if (cp == null) return
+    const n = Number(cp)
+    if (!Number.isFinite(n) || n < 1) return
+    const lp = Math.max(1, Number(attendanceQuery.data?.meta?.last_page ?? 1))
+    const clamped = Math.min(n, lp)
+    if (clamped !== attendancePage) {
+      setAttendancePage(clamped)
+    }
+  }, [attendanceQuery.data?.meta?.current_page, attendanceQuery.data?.meta?.last_page, attendancePage])
+
   // Tick every second for "X seconds ago" display
   useEffect(() => {
     const t = setInterval(() => forceTickUpdate((n) => n + 1), 1000)
@@ -217,54 +281,65 @@ export default function AdminAttendance() {
 
   // Auto-refresh handled by React Query refetchInterval.
 
+  useEffect(() => {
+    setAttendancePage(1)
+  }, [
+    fromDate,
+    toDate,
+    department,
+    employeeId,
+    status,
+    premiumType,
+    debouncedAttendanceSearch,
+    companyFilter,
+    scopeSegment,
+  ])
+
   // Apply: reload with current filter values (from/to, department, employee, status)
   function applyFilters() {
     load()
   }
 
-  async function loadWith(overrides = {}) {
-    setLoading(true)
-    setError(null)
-    try {
-      const fd = overrides.fromDate ?? fromDate
-      const td = overrides.toDate ?? toDate
-      const dept = overrides.department ?? department
-      const empId = overrides.employeeId ?? employeeId
-      const st = overrides.status ?? status
-      const premType = overrides.premiumType ?? premiumType
-      const res = await getAdminAttendance({
-        from_date: fd,
-        to_date: td,
-        department: resolveDepartmentForApi({ department: dept }),
-        employee_id: empId !== 'all' ? Number(empId) : undefined,
-        status: st !== 'all' ? st : undefined,
-        premium_type: premType !== 'all' ? premType : undefined,
-      })
-      setRows(res.rows || [])
-      setLastRefresh(new Date())
-    } catch (e) {
-      setError(e.message)
-      setRows([])
-    } finally {
-      setLoading(false)
-    }
+  function loadWith(overrides = {}) {
+    if (overrides.fromDate !== undefined) setFromDate(overrides.fromDate)
+    if (overrides.toDate !== undefined) setToDate(overrides.toDate)
+    if (overrides.department !== undefined) setDepartment(overrides.department)
+    if (overrides.employeeId !== undefined) setEmployeeId(overrides.employeeId)
+    if (overrides.status !== undefined) setStatus(overrides.status)
+    if (overrides.premiumType !== undefined) setPremiumType(overrides.premiumType)
+    setAttendancePage(1)
   }
 
-  const departments = useMemo(() => {
+  function rosterDepartmentName(e) {
+    const nm = typeof e?.department_relation?.name === 'string' ? e.department_relation.name : ''
+    return nm || String(e?.department ?? e?.department_name ?? '').trim() || ''
+  }
+
+  function rosterCompanyName(e) {
+    const fromRel = typeof e?.department_relation?.branch?.company?.name === 'string'
+      ? e.department_relation.branch.company.name
+      : ''
+    if (fromRel) return fromRel
+    const co = typeof e?.company?.name === 'string' ? e.company.name : ''
+    return co || String(e?.company_name ?? '').trim() || ''
+  }
+
+  const departmentsFromRoster = useMemo(() => {
     const set = new Set()
-    rows.forEach((r) => {
-      if (r.department) set.add(r.department)
+    rosterEmployees.forEach((e) => {
+      const d = rosterDepartmentName(e)
+      if (d) set.add(d)
     })
     return Array.from(set).sort()
-  }, [rows])
+  }, [rosterEmployees])
 
   const departmentFilterOptions = useMemo(() => {
     if (attendanceScope?.kind === 'department' || attendanceScope?.kind === 'branch') {
       const names = attendanceScope?.department_names
       return Array.isArray(names) ? [...names].sort() : []
     }
-    return departments
-  }, [attendanceScope, departments])
+    return departmentsFromRoster
+  }, [attendanceScope, departmentsFromRoster])
 
   const departmentSelectAllowsAll =
     isUnrestrictedHr ||
@@ -277,21 +352,22 @@ export default function AdminAttendance() {
       return [...attendanceScope.company_names].sort()
     }
     const set = new Set()
-    rows.forEach((r) => {
-      if (r.company_name) set.add(r.company_name)
+    rosterEmployees.forEach((e) => {
+      const co = rosterCompanyName(e)
+      if (co) set.add(co)
     })
     return Array.from(set).sort()
-  }, [rows, attendanceScope])
+  }, [rosterEmployees, attendanceScope])
 
   const employees = useMemo(() => {
     const map = new Map()
-    rows.forEach((r) => {
-      if (r.employee_id && r.employee_name) {
-        map.set(r.employee_id, r.employee_name)
+    rosterEmployees.forEach((e) => {
+      if (e?.id != null && e?.name) {
+        map.set(e.id, e.name)
       }
     })
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]))
-  }, [rows])
+  }, [rosterEmployees])
 
   const [addOpen, setAddOpen] = useState(false)
   const [allEmployees, setAllEmployees] = useState([])
@@ -368,15 +444,14 @@ export default function AdminAttendance() {
       const date = addForm.date.trim()
 
       // Prevent duplicate manual attendance for the same employee and date
-      const duplicateCheck = await getAdminAttendance({
+      const duplicateRows = await fetchAllAdminAttendanceRows({
         from_date: date,
         to_date: date,
         employee_id: empId,
       })
-      const hasDuplicate =
-        (duplicateCheck.rows || []).some(
-          (r) => r.employee_id === empId && r.date === date && r.has_correction
-        )
+      const hasDuplicate = duplicateRows.some(
+        (r) => r.employee_id === empId && r.date === date && r.has_correction,
+      )
 
       if (hasDuplicate) {
         setAddError('Manual attendance for this employee and date already exists.')
@@ -441,18 +516,19 @@ export default function AdminAttendance() {
   const periodLabel =
     fromDate && toDate && fromDate !== toDate ? `${fromDate} to ${toDate}` : fromDate || ''
 
-  const presentCount = rows.filter((row) => row.status === 'present').length
-  const absentCount = rows.filter((row) => row.status === 'absent').length
-  const lateCount = rows.filter((row) => row.status === 'late').length
-  const onLeaveCount = rows.filter(
-    (row) => row.status === 'leave' || row.status === 'halfday'
-  ).length
+  const attendanceListMeta = attendanceQuery.data?.meta
+  const rollups = attendanceListMeta?.totals ?? {}
 
-  const totalHoursRendered = rows.reduce((sum, row) => {
-    const raw = row.total_rendered_hours ?? row.total_hours
-    const value = typeof raw === 'number' ? raw : 0
-    return sum + value
-  }, 0)
+  const presentCount = rollups.present_count ?? 0
+  const absentCount = rollups.absent_count ?? 0
+  const lateCount = rollups.late_count ?? 0
+  const onLeaveCount = rollups.leave_or_halfday_count ?? 0
+
+  const totalHoursRendered =
+    typeof rollups.total_hours_rendered === 'number' ? rollups.total_hours_rendered : 0
+
+  const attendanceTotalMatched = Number(attendanceListMeta?.total ?? rows.length ?? 0)
+  const attendanceLastPage = Math.max(1, Number(attendanceListMeta?.last_page ?? 1))
 
   const todayIso = getLocalDateString()
   const dateFilterApplied = fromDate !== todayIso || toDate !== todayIso
@@ -550,17 +626,18 @@ export default function AdminAttendance() {
   }
 
   async function handleExportPdf() {
-    if (!displayRows.length) return
+    if (!attendanceTotalMatched) return
     setExportingPdf(true)
     try {
       const cols = pdfColumns()
       const title = 'Attendance Report'
       const period = periodLabel
+      const exportRowsFull = await fetchAllAdminAttendanceRows(attendanceFilters)
       const doc = (
         <ReportPdfDocument
           title={title}
           period={period}
-          rows={displayRows}
+          rows={exportRowsFull}
           columns={cols}
           totalHoursRendered={Number.isFinite(totalHoursRendered) ? totalHoursRendered.toFixed(2) : undefined}
           totalAbsences={absentCount}
@@ -581,41 +658,14 @@ export default function AdminAttendance() {
     }
   }
 
-  const displayRows = useMemo(() => {
-    let list = rows
-    if (scopeSegment === 'pending') {
-      list = list.filter((r) => isPendingAttentionRow(r))
-    }
-    if (showCompanyFilter && companyFilter !== 'all') {
-      list = list.filter((r) => (r.company_name || '') === companyFilter)
-    }
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return list
-    return list.filter((r) => {
-      const refId = attendanceRecordRef(r.employee_id, r.date).toLowerCase()
-      const name = (r.employee_name || '').toLowerCase()
-      const dept = (r.department || '').toLowerCase()
-      const co = (r.company_name || '').toLowerCase()
-      const dt = (r.date || '').toLowerCase()
-      const status = resolveAdminStatusLabel(r).toLowerCase()
-      return (
-        refId.includes(q) ||
-        name.includes(q) ||
-        dept.includes(q) ||
-        co.includes(q) ||
-        dt.includes(q) ||
-        status.includes(q)
-      )
-    })
-  }, [rows, scopeSegment, searchQuery, companyFilter, showCompanyFilter])
+  const displayRows = rows
 
   const secondsAgo = Math.floor((Date.now() - lastRefresh.getTime()) / 1000)
 
   function exportAttendanceCsv() {
     // Use backend export endpoint for consistent column set and status logic.
     return exportAdminAttendance({
-      ...attendanceParams,
-      // include current premiumType/status filters already in attendanceParams
+      ...attendanceFilters,
       format: 'csv',
     }).then((blob) => {
       const url = URL.createObjectURL(blob)
@@ -630,7 +680,7 @@ export default function AdminAttendance() {
   }
 
   async function exportAttendanceExcel() {
-    const data = await exportAdminAttendance({ ...attendanceParams, format: 'json' })
+    const data = await exportAdminAttendance({ ...attendanceFilters, format: 'json' })
     const exportRows = Array.isArray(data?.rows) ? data.rows : []
     const headers = [
       'Employee ID',
@@ -911,7 +961,7 @@ export default function AdminAttendance() {
                     variant="outline"
                     size="sm"
                     className="gap-1.5 border-border/70 bg-background text-[#0A0A0A] shadow-sm hover:bg-muted/60 dark:text-foreground"
-                    disabled={loading || !displayRows.length}
+                    disabled={loading || !attendanceTotalMatched}
                     title="Export Attendance (CSV / Excel)"
                   >
                     <Download className="size-4" aria-hidden />
@@ -1181,7 +1231,10 @@ export default function AdminAttendance() {
           <div>
             <CardTitle className="text-sm font-semibold">Attendance records</CardTitle>
             <CardDescription className="text-xs">
-              {displayRows.length} record{displayRows.length !== 1 ? 's' : ''} · {periodLabel || 'selected period'}
+              Page {Math.min(attendancePage, attendanceLastPage)} of {attendanceLastPage} · Showing{' '}
+              {displayRows.length} / {attendanceTotalMatched} record
+              {attendanceTotalMatched !== 1 ? 's' : ''} · {REPORTS_AND_ATTENDANCE_PAGE_SIZE} per page ·{' '}
+              {periodLabel || 'selected period'}
             </CardDescription>
           </div>
           <DropdownMenu>
@@ -1191,7 +1244,7 @@ export default function AdminAttendance() {
                 size="sm"
                 variant="outline"
                 className="gap-1.5 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
-                disabled={!displayRows.length}
+                disabled={!attendanceTotalMatched}
               >
                 <Download className="size-4" aria-hidden />
                 Export
@@ -1227,11 +1280,42 @@ export default function AdminAttendance() {
               setDetailOpen(true)
             }}
             emptyMessage={
-              rows.length === 0
+              attendanceTotalMatched === 0 && !loading
                 ? 'No attendance records for this date and filters.'
-                : 'No records match your search or pending filter.'
+                : loading
+                  ? ''
+                  : 'No rows on this page.'
             }
           />
+          {attendanceTotalMatched > 0 && (
+            <div className="flex flex-col gap-2 border-t border-border/40 px-4 py-3 text-[11px] text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between">
+              <span className="tabular-nums">
+                Page {Math.min(attendancePage, attendanceLastPage)} of {attendanceLastPage}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-3"
+                  disabled={loading || attendancePage <= 1}
+                  onClick={() => setAttendancePage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-3"
+                  disabled={loading || attendancePage >= attendanceLastPage}
+                  onClick={() => setAttendancePage((p) => Math.min(attendanceLastPage, p + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
       </div>

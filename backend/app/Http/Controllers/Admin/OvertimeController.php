@@ -11,7 +11,6 @@ use App\Services\HrRoleResolver;
 use App\Services\OvertimeApprovalService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
-use App\Support\OvertimeFilingRules;
 use App\Support\PhPayrollReference;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -452,13 +451,6 @@ class OvertimeController extends Controller
         $stage = $overtime->approval_stage ?? HrApprovalStages::PENDING_FIRST;
 
         if ($stage === HrApprovalStages::PENDING_FIRST) {
-            try {
-                $d = Carbon::parse($overtime->date->toDateString())->startOfDay();
-                $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $overtime->user_id, $d, $d);
-            } catch (\RuntimeException $e) {
-                return response()->json(['message' => $e->getMessage()], 422);
-            }
-
             DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {
                 $overtime->first_approver_id = $actor->id;
                 $overtime->first_approved_at = now();
@@ -490,46 +482,6 @@ class OvertimeController extends Controller
 
         if ($stage !== HrApprovalStages::PENDING_SECOND) {
             return response()->json(['message' => 'This overtime request cannot be approved.'], 422);
-        }
-
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $otDate = $overtime->date->toDateString();
-        $today = Carbon::now($tz)->toDateString();
-
-        if ($otDate > $today) {
-            return response()->json([
-                'message' => 'Cannot approve overtime for a future date.',
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
-
-        try {
-            OvertimeFilingRules::assertDateWithinFilingWindow($otDate, $tz);
-        } catch (ValidationException $e) {
-            return response()->json([
-                'message' => $e->errors()['date'][0] ?? 'Date is outside the allowed overtime filing window.',
-                'errors' => $e->errors(),
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
-
-        if ($otDate < $today) {
-            $employee = User::query()->find($overtime->user_id);
-            if (! $employee instanceof User) {
-                return response()->json([
-                    'message' => 'Employee not found for this overtime record.',
-                ], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-            if (! OvertimeFilingRules::pastDateHasCompletedAttendance($employee->id, $otDate, $tz)) {
-                return response()->json([
-                    'message' => 'Cannot approve: that date has no completed attendance (clock-in and clock-out) for this employee.',
-                ], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-        }
-
-        try {
-            $d = Carbon::parse($otDate)->startOfDay();
-            $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $overtime->user_id, $d, $d);
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
         }
 
         DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {

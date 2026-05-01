@@ -186,6 +186,9 @@ function normalizePerPage(perPage, fallback = undefined, max = 100) {
 const TIMEOUT_ERROR_MSG =
   'Server request timed out. Check if the backend API is running and reachable.'
 
+/** Page size enforced by Laravel for Admin Attendance + Reports (detailed) list endpoints. */
+export const REPORTS_AND_ATTENDANCE_PAGE_SIZE = 10
+
 // Lightweight in-memory cache + in-flight dedupe for repeated GET endpoints.
 // This reduces duplicate network calls across tabs/modules during rapid navigation.
 const GET_CACHE = new Map()
@@ -1250,9 +1253,14 @@ export async function getAdminAttendance(params = {}) {
   if (params.department) query.set('department', params.department)
   if (params.employee_id) query.set('employee_id', String(params.employee_id))
   if (params.status) query.set('status', params.status)
-  if (params.page != null) query.set('page', String(params.page))
-  const attendancePerPage = normalizePerPage(params.per_page)
-  if (attendancePerPage != null) query.set('per_page', String(attendancePerPage))
+
+  const p = Number(params.page)
+  query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
+  query.set('per_page', String(REPORTS_AND_ATTENDANCE_PAGE_SIZE))
+
+  if (params.search) query.set('search', String(params.search).trim())
+  if (params.company) query.set('company', String(params.company))
+  if (params.pending_attention === true) query.set('pending_attention', '1')
 
   if (params.premium_type) query.set('premium_type', params.premium_type)
   const path = `/admin/attendance${query.toString() ? `?${query.toString()}` : ''}`
@@ -1260,6 +1268,21 @@ export async function getAdminAttendance(params = {}) {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load attendance')
   return data
+}
+
+/** All rows for the given filters by paging (10 per request). Prefer export endpoint for CSV. */
+export async function fetchAllAdminAttendanceRows(params = {}) {
+  const first = await getAdminAttendance({ ...params, page: 1 })
+  const meta = first.meta || {}
+  const lastPage = Math.max(1, Number(meta.last_page) || 1)
+  const out = [...(first.rows || [])]
+  let page = 2
+  while (page <= lastPage) {
+    const chunk = await getAdminAttendance({ ...params, page })
+    out.push(...(chunk.rows || []))
+    page++
+  }
+  return out
 }
 
 /**
@@ -1277,6 +1300,10 @@ export async function exportAdminAttendance(params = {}) {
   if (params.employee_id) query.set('employee_id', String(params.employee_id))
   if (params.status) query.set('status', params.status)
   if (params.premium_type) query.set('premium_type', params.premium_type)
+  if (params.search) query.set('search', String(params.search).trim())
+  if (params.company) query.set('company', String(params.company))
+  if (params.pending_attention === true) query.set('pending_attention', '1')
+
   query.set('format', params.format === 'json' ? 'json' : 'csv')
 
   const path = `/admin/attendance/export?${query.toString()}`
@@ -1387,15 +1414,45 @@ export async function getAdminReportsDetailed(params = {}) {
   if (params.status) query.set('status', params.status)
   if (params.leave_type) query.set('leave_type', params.leave_type)
   if (params.overtime_status) query.set('overtime_status', params.overtime_status)
-  if (params.page != null) query.set('page', String(params.page))
-  const reportsPerPage = normalizePerPage(params.per_page)
-  if (reportsPerPage != null) query.set('per_page', String(reportsPerPage))
+  const p = Number(params.page)
+  query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
+  query.set('per_page', String(REPORTS_AND_ATTENDANCE_PAGE_SIZE))
+  if (params.search) query.set('search', String(params.search).trim())
 
   const path = `/admin/reports/detailed${query.toString() ? `?${query.toString()}` : ''}`
   const res = await authenticatedFetch(path)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load detailed attendance report')
   return data
+}
+
+/** All detailed rows for exports by paging fixed-size pages server-side. */
+export async function fetchAllAdminReportsDetailedRows(params = {}) {
+  const first = await getAdminReportsDetailed({ ...params, page: 1 })
+  const meta = first.meta || {}
+  const lastPage = Math.max(1, Number(meta.last_page) || 1)
+  const rows = [...(first.rows || [])]
+  let page = 2
+  while (page <= lastPage) {
+    const chunk = await getAdminReportsDetailed({ ...params, page })
+    rows.push(...(chunk.rows || []))
+    page++
+  }
+  return rows
+}
+
+export async function fetchAllEmployeeReportsDetailedRows(params = {}) {
+  const first = await getEmployeeReportsDetailed({ ...params, page: 1 })
+  const meta = first.meta || {}
+  const lastPage = Math.max(1, Number(meta.last_page) || 1)
+  const rows = [...(first.rows || [])]
+  let page = 2
+  while (page <= lastPage) {
+    const chunk = await getEmployeeReportsDetailed({ ...params, page })
+    rows.push(...(chunk.rows || []))
+    page++
+  }
+  return rows
 }
 
 /**
@@ -1421,6 +1478,11 @@ export async function getEmployeeReportsDetailed(params = {}) {
   const query = new URLSearchParams()
   if (params.from_date) query.set('from_date', params.from_date)
   if (params.to_date) query.set('to_date', params.to_date)
+  const p = Number(params.page)
+  query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
+  query.set('per_page', String(REPORTS_AND_ATTENDANCE_PAGE_SIZE))
+  if (params.search) query.set('search', String(params.search).trim())
+
   const path = `/employee/reports/detailed${query.toString() ? `?${query.toString()}` : ''}`
   const res = await authenticatedFetch(path)
   const data = await res.json().catch(() => ({}))
@@ -3921,14 +3983,17 @@ export async function getMyOvertimeRequestContext(dateYmd) {
 /**
  * Employee: submit an overtime request for the authenticated user.
  * Uses FormData to support optional attachment upload.
- * @param {{ date: string, expected_end_time: string, category: string, ph_ot_rule: string, reason: string, attachment?: File|null }} payload
+ * @param {{ date: string, start_time: string, end_time: string, category: string, ph_ot_rule?: string, reason: string, attachment?: File|null }} payload
  */
 export async function createMyOvertimeRequest(payload) {
   const formData = new FormData()
   formData.append('date', String(payload.date || ''))
-  formData.append('expected_end_time', String(payload.expected_end_time || ''))
+  formData.append('start_time', String(payload.start_time || ''))
+  formData.append('end_time', String(payload.end_time || ''))
   formData.append('category', String(payload.category || ''))
-  formData.append('ph_ot_rule', String(payload.ph_ot_rule || ''))
+  if (payload.ph_ot_rule != null && payload.ph_ot_rule !== '') {
+    formData.append('ph_ot_rule', String(payload.ph_ot_rule))
+  }
   formData.append('reason', String(payload.reason || ''))
   if (payload.attachment instanceof File) {
     formData.append('attachment', payload.attachment)
@@ -3946,7 +4011,8 @@ export async function createMyOvertimeRequest(payload) {
   if (!res.ok) {
     const msg =
       data.errors?.date?.[0] ||
-      data.errors?.expected_end_time?.[0] ||
+      data.errors?.start_time?.[0] ||
+      data.errors?.end_time?.[0] ||
       data.errors?.category?.[0] ||
       data.errors?.ph_ot_rule?.[0] ||
       data.errors?.reason?.[0] ||
@@ -3961,16 +4027,44 @@ export async function createMyOvertimeRequest(payload) {
 
 /**
  * Employee: list my overtime requests (paginated).
- * @param {{ per_page?: number }} [params]
+ * @param {{ per_page?: number, from_date?: string, to_date?: string, page?: number }} [params]
  */
 export async function getMyOvertimeRequests(params = {}) {
   const q = new URLSearchParams()
   if (params.per_page != null) q.set('per_page', String(params.per_page))
+  if (params.from_date) q.set('from_date', String(params.from_date))
+  if (params.to_date) q.set('to_date', String(params.to_date))
+  if (params.page != null) q.set('page', String(params.page))
   const suffix = q.toString() ? `?${q.toString()}` : ''
   const res = await authenticatedFetch(`/overtime/my${suffix}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load overtime requests')
   return data
+}
+
+/**
+ * Employee: all overtime requests in a date range (follows pagination until empty).
+ * @param {string} from_date YYYY-MM-DD
+ * @param {string} to_date YYYY-MM-DD
+ */
+export async function getAllMyOvertimeRequestsInRange(from_date, to_date) {
+  const perPage = 50
+  let page = 1
+  let lastPage = 1
+  const all = []
+  do {
+    const data = await getMyOvertimeRequests({
+      from_date,
+      to_date,
+      per_page: perPage,
+      page,
+    })
+    const items = Array.isArray(data.overtimes) ? data.overtimes : []
+    all.push(...items)
+    lastPage = typeof data.pagination?.last_page === 'number' ? data.pagination.last_page : 1
+    page += 1
+  } while (page <= lastPage)
+  return all
 }
 
 /**
@@ -3987,13 +4081,16 @@ export async function getMyOvertimeDetail(id) {
 /**
  * Employee: update a pending overtime request (multipart if attachment).
  * @param {number} id
- * @param {{ expected_end_time: string, category: string, ph_ot_rule: string, reason: string, attachment?: File|null }} payload
+ * @param {{ start_time: string, end_time: string, category: string, ph_ot_rule?: string, reason: string, attachment?: File|null }} payload
  */
 export async function updateMyOvertimeRequest(id, payload) {
   const formData = new FormData()
-  formData.append('expected_end_time', String(payload.expected_end_time || ''))
+  formData.append('start_time', String(payload.start_time || ''))
+  formData.append('end_time', String(payload.end_time || ''))
   formData.append('category', String(payload.category || ''))
-  formData.append('ph_ot_rule', String(payload.ph_ot_rule || ''))
+  if (payload.ph_ot_rule != null && payload.ph_ot_rule !== '') {
+    formData.append('ph_ot_rule', String(payload.ph_ot_rule))
+  }
   formData.append('reason', String(payload.reason || ''))
   if (payload.attachment instanceof File) {
     formData.append('attachment', payload.attachment)
@@ -4002,7 +4099,8 @@ export async function updateMyOvertimeRequest(id, payload) {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     const msg =
-      data.errors?.expected_end_time?.[0] ||
+      data.errors?.start_time?.[0] ||
+      data.errors?.end_time?.[0] ||
       data.errors?.category?.[0] ||
       data.errors?.ph_ot_rule?.[0] ||
       data.errors?.reason?.[0] ||

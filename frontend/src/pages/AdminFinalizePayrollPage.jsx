@@ -206,7 +206,7 @@ export default function AdminFinalizePayrollPage() {
   toastRef.current = toast
   const hrBase = useHrBasePath()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const isAdmin = user?.role === 'admin'
   const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canFinalizePayroll = permissionSet.has('payslip.finalize')
@@ -257,7 +257,12 @@ export default function AdminFinalizePayrollPage() {
   const [previewError, setPreviewError] = useState('')
   const [companies, setCompanies] = useState([])
   const [search, setSearch] = useState('')
-  const [page, setPage] = useState(1)
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const initialPageFromUrl = useMemo(() => {
+    const raw = Number(searchParams.get('page') || 1)
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1
+  }, [searchParams])
+  const [page, setPage] = useState(initialPageFromUrl)
   const [reviewConfirmed, setReviewConfirmed] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
   const [done, setDone] = useState(false)
@@ -269,6 +274,27 @@ export default function AdminFinalizePayrollPage() {
   const [queuedRunId, setQueuedRunId] = useState(null)
   const [finalizeStage, setFinalizeStage] = useState('Preparing request')
   const pageSize = 12
+  // Keep local page in sync when URL page changes (back/forward/manual URL edit).
+  useEffect(() => {
+    const next = Number(searchParams.get('page') || 1)
+    const normalized = Number.isFinite(next) && next > 0 ? Math.floor(next) : 1
+    setPage((prev) => (prev === normalized ? prev : normalized))
+  }, [searchParams])
+
+  // Reflect page changes in URL (?page=2) while preserving existing query params.
+  useEffect(() => {
+    const currentInUrl = Number(searchParams.get('page') || 1)
+    const normalizedCurrent = Number.isFinite(currentInUrl) && currentInUrl > 0 ? Math.floor(currentInUrl) : 1
+    if (normalizedCurrent === page) return
+    const next = new URLSearchParams(searchParams)
+    next.set('page', String(page))
+    setSearchParams(next, { replace: true })
+  }, [page, searchParams, setSearchParams])
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [search])
 
   const [breakdownRow, setBreakdownRow] = useState(null)
   const [refreshToken, setRefreshToken] = useState(() => String(Date.now()))
@@ -378,7 +404,7 @@ export default function AdminFinalizePayrollPage() {
             refresh_token: refreshToken,
             page,
             per_page: pageSize,
-            search: search.trim() || undefined,
+            search: debouncedSearch || undefined,
           })
           if (cancelled) return
           setPreview(data)
@@ -398,8 +424,7 @@ export default function AdminFinalizePayrollPage() {
     return () => {
       cancelled = true
     }
-    // previewScopeKey covers all finalize preview inputs; avoids effect churn from object identity.
-  }, [canFinalizePayroll, isAdmin, previewScopeKey, page, pageSize, search])
+  }, [canFinalizePayroll, isAdmin, previewScopeKey, page, pageSize, debouncedSearch])
 
   // Real-time sync: when attendance logs/corrections change, the preview must recompute.
   // Finalize payroll already supports a cache-busting `refresh_token`; we auto-rotate it
@@ -441,18 +466,24 @@ export default function AdminFinalizePayrollPage() {
   const selectedCompanyLogo = companyLogoUrl(selectedCompany)
 
   const pageRows = useMemo(() => {
-    return [...employees].sort((a, b) => {
-      const byRole = roleRank(employeeCompanyPosition(a)) - roleRank(employeeCompanyPosition(b))
-      if (byRole !== 0) return byRole
-      return String(a?.name || '').localeCompare(String(b?.name || ''))
-    })
+    return [...employees].sort((a, b) =>
+      String(a?.name || '').localeCompare(String(b?.name || ''))
+    )
   }, [employees])
   const pagination = preview?.pagination ?? { page: 1, per_page: pageSize, total: pageRows.length, last_page: 1 }
   const pageCount = Math.max(1, Number(pagination.last_page || 1))
 
+  // If backend clamps page (e.g., URL page > last_page), reflect the effective page in UI + URL.
+  useEffect(() => {
+    if (!preview?.pagination) return
+    const serverPage = Number(preview.pagination.page || 1)
+    const normalized = Number.isFinite(serverPage) && serverPage > 0 ? Math.floor(serverPage) : 1
+    setPage((prev) => (prev === normalized ? prev : normalized))
+  }, [preview?.pagination])
+
   useEffect(() => {
     setPage(1)
-  }, [search])
+  }, [debouncedSearch])
 
   const handleFinalize = async () => {
     if (!canFinalizePayroll || !reviewConfirmed || periodFinalized) return

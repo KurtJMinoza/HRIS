@@ -341,10 +341,13 @@ class AttendanceStatusService
 
     /**
      * Net worked minutes between timeIn and timeOut, subtracting any overlap with the
-     * schedule's unpaid break window (e.g. 12:00–13:00). Use this for manual corrections
-     * where a single clock-in/clock-out pair covers the full shift including break time.
+     * schedule's unpaid break window (e.g. 12:00–13:00).
      *
-     * Example: 08:00–17:00 with break 12:00–13:00 → 540 raw − 60 break = 480 net (8 h).
+     * Pre-shift time (clock-in before schedule start) IS included so that "Total"
+     * displays the true worked duration. The schedule-based regular/OT split is
+     * handled by {@see TimeSegmentationService}.
+     *
+     * Example: 06:00–20:00 with schedule 08:00–17:00, break 12:00–13:00 → 840 raw − 60 break = 780 net (13 h).
      * Night shift (22:00–06:00): timeOut before timeIn on same date is treated as next day.
      */
     public static function getNetWorkedMinutes(
@@ -362,7 +365,55 @@ class AttendanceStatusService
         if ($isNightShift && $out->lessThanOrEqualTo($timeIn)) {
             $out = $out->copy()->addDay();
         }
-        // Early clock-in ("early bird") must not extend net worked time — count from scheduled start onward.
+        $effectiveIn = $timeIn->copy();
+        $rawMinutes = max(0, (int) $effectiveIn->diffInMinutes($out));
+
+        $breakStart = trim((string) ($daySchedule['break_start'] ?? ''));
+        $breakEnd = trim((string) ($daySchedule['break_end'] ?? ''));
+
+        if ($breakStart === '' || $breakEnd === '' ||
+            ! preg_match('/^\d{1,2}:\d{2}/', $breakStart) ||
+            ! preg_match('/^\d{1,2}:\d{2}/', $breakEnd)) {
+            return $rawMinutes;
+        }
+
+        $breakStartC = Carbon::parse($dateKey.' '.substr($breakStart, 0, 5), $tz);
+        $breakEndC = Carbon::parse($dateKey.' '.substr($breakEnd, 0, 5), $tz);
+
+        if ($breakEndC->lessThanOrEqualTo($breakStartC)) {
+            $breakEndC->addDay();
+        }
+
+        $overlapStart = $effectiveIn->greaterThan($breakStartC) ? $effectiveIn->copy() : $breakStartC->copy();
+        $overlapEnd = $out->lessThan($breakEndC) ? $out->copy() : $breakEndC->copy();
+
+        if ($overlapEnd->greaterThan($overlapStart)) {
+            return max(0, $rawMinutes - (int) $overlapStart->diffInMinutes($overlapEnd));
+        }
+
+        return $rawMinutes;
+    }
+
+    /**
+     * Schedule-clipped net worked minutes: clips clock-in to schedule start so
+     * pre-shift time does not count toward the regular hour requirement.
+     * Used only for undertime calculation.
+     */
+    public static function getScheduleClippedNetWorkedMinutes(
+        Carbon $timeIn,
+        Carbon $timeOut,
+        array $daySchedule,
+        string $dateKey,
+        ?string $tz = null
+    ): int {
+        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
+        $out = $timeOut->copy();
+        $in = trim((string) ($daySchedule['in'] ?? ''));
+        $schedOut = trim((string) ($daySchedule['out'] ?? ''));
+        $isNightShift = $schedOut !== '' && $in !== '' && $schedOut <= $in;
+        if ($isNightShift && $out->lessThanOrEqualTo($timeIn)) {
+            $out = $out->copy()->addDay();
+        }
         $effectiveIn = $timeIn->copy();
         $schedStart = self::getScheduledStartForDate($dateKey, $daySchedule, $tz);
         if ($schedStart !== null && $effectiveIn->lessThan($schedStart)) {
@@ -386,7 +437,6 @@ class AttendanceStatusService
             $breakEndC->addDay();
         }
 
-        // Intersect [effectiveIn, timeOut] ∩ [breakStart, breakEnd].
         $overlapStart = $effectiveIn->greaterThan($breakStartC) ? $effectiveIn->copy() : $breakStartC->copy();
         $overlapEnd = $out->lessThan($breakEndC) ? $out->copy() : $breakEndC->copy();
 
@@ -492,7 +542,7 @@ class AttendanceStatusService
             return 0;
         }
 
-        $netWorked = self::getNetWorkedMinutes($timeIn, $timeOut, $daySchedule, $dateKey, $tz);
+        $netWorked = self::getScheduleClippedNetWorkedMinutes($timeIn, $timeOut, $daySchedule, $dateKey, $tz);
 
         return max(0, $requiredMinutes - $netWorked);
     }

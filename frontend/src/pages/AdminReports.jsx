@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { pdf } from '@react-pdf/renderer'
@@ -17,7 +17,10 @@ import {
   getEmployeeReportsDetailed,
   getAdminPremiumReport,
   getEmployees,
+  fetchAllAdminReportsDetailedRows,
+  fetchAllEmployeeReportsDetailedRows,
   profileImageUrl,
+  REPORTS_AND_ATTENDANCE_PAGE_SIZE,
 } from '@/api'
 import { formatEmploymentStatusForViewer } from '@/lib/employmentStatus'
 import ReportPdfDocument from '@/components/reports/ReportPdfDocument'
@@ -146,6 +149,26 @@ function formatLeaveType(value) {
   return LEAVE_TYPE_LABELS[value] || String(value).replace(/_/g, ' ')
 }
 
+function formatDetailedReportOvertimeStatus(row) {
+  const renderedMinutes = Number(row?.overtime_minutes ?? 0)
+  const renderedHours = renderedMinutes > 0 ? renderedMinutes / 60 : 0
+  const approvedHoursRaw = Number(row?.approved_overtime_hours ?? 0)
+  const approvedHours = Number.isFinite(approvedHoursRaw) ? approvedHoursRaw : 0
+  const overtimeStatus = row?.overtime_status ? String(row.overtime_status).toLowerCase() : null
+  const pendingHours =
+    overtimeStatus === 'pending' ? Number(row?.overtime_hours_requested ?? 0) || 0 : 0
+
+  if (renderedHours <= 0 && approvedHours <= 0 && pendingHours <= 0) {
+    return row?.overtime_status || '—'
+  }
+
+  if (!row?.overtime_filed) return 'Not filed'
+  if (overtimeStatus === 'approved') return 'Filed (approved)'
+  if (overtimeStatus === 'pending') return 'Filed (pending)'
+  if (overtimeStatus === 'rejected') return 'Filed (rejected)'
+  return 'Filed'
+}
+
 function isWeekendDate(value) {
   if (!value) return false
   const [year, month, day] = String(value).split('-').map(Number)
@@ -153,6 +176,26 @@ function isWeekendDate(value) {
   const d = new Date(year, month - 1, day)
   const dayOfWeek = d.getDay()
   return dayOfWeek === 0 || dayOfWeek === 6
+}
+
+function dedupeDetailedReportRows(rows, employeeId, employeesOptions) {
+  let list = Array.isArray(rows) ? [...rows] : []
+  if (employeeId !== 'all') {
+    const selected = employeesOptions.find((o) => String(o.id) === String(employeeId))
+    const matchByName = selected?.name?.trim()
+    const matchById = Number(employeeId)
+    list = list.filter((row) => {
+      if (matchByName && (row.employee_name || '').trim() === matchByName) return true
+      return !Number.isNaN(matchById) && Number(row.employee_id ?? row.id) === matchById
+    })
+  }
+  const seen = new Set()
+  return list.filter((row) => {
+    const key = `${row.employee_id ?? row.id}|${row.date || ''}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function getReportTitle(tab) {
@@ -188,10 +231,10 @@ export default function AdminReports() {
   const [tab, setTab] = useState('detailed')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const pageSize = 10
+  const [detailedPage, setDetailedPage] = useState(1)
+  const [debouncedDetailedSearch, setDebouncedDetailedSearch] = useState('')
+  const pageSize = REPORTS_AND_ATTENDANCE_PAGE_SIZE
 
-  const [detailedRows, setDetailedRows] = useState([])
-  const detailedRequestKeyRef = useRef('')
   const [premiumData, setPremiumData] = useState({ employees: [], from_date: '', to_date: '' })
   const [premiumLoading, setPremiumLoading] = useState(false)
 
@@ -228,6 +271,16 @@ export default function AdminReports() {
     employee_id: employeeId !== 'all' ? Number(employeeId) : undefined,
   }), [effectiveRange, companyId, employeeId])
 
+  useEffect(() => {
+    const delay = tab === 'detailed' ? 300 : 0
+    const t = setTimeout(() => setDebouncedDetailedSearch(search.trim()), delay)
+    return () => clearTimeout(t)
+  }, [search, tab])
+
+  useEffect(() => {
+    setDetailedPage(1)
+  }, [tab, fromDate, toDate, companyId, employeeId, debouncedDetailedSearch])
+
   const summaryQuery = useQuery({
     queryKey: ['admin-reports-summary', isEmployeeSelfReport, summaryParams],
     queryFn: async () => {
@@ -236,12 +289,21 @@ export default function AdminReports() {
     },
   })
 
+  const detailedFetchParams = useMemo(
+    () => ({
+      ...summaryParams,
+      page: detailedPage,
+      search: debouncedDetailedSearch || undefined,
+    }),
+    [summaryParams, detailedPage, debouncedDetailedSearch],
+  )
+
   const detailedQuery = useQuery({
-    queryKey: ['admin-reports-detailed', isEmployeeSelfReport, summaryParams],
+    queryKey: ['admin-reports-detailed', isEmployeeSelfReport, detailedFetchParams],
     enabled: tab === 'detailed',
     queryFn: async () => {
       const fetchDetailed = isEmployeeSelfReport ? getEmployeeReportsDetailed : getAdminReportsDetailed
-      return fetchDetailed(summaryParams)
+      return fetchDetailed(detailedFetchParams)
     },
   })
 
@@ -280,46 +342,6 @@ export default function AdminReports() {
       })
     } finally {
       setLoading(false)
-    }
-  }
-
-  async function loadDetailed() {
-    const { from, to } = effectiveDateRange()
-    setReportError(null)
-
-    // Request key so only the latest response updates state (avoids race where "All" overwrites "Kurt").
-    const requestKey = `${from}|${to}|${companyId}|${employeeId}`
-    detailedRequestKeyRef.current = requestKey
-
-    try {
-      const q = await detailedQuery.refetch()
-      const res = q.data || {}
-
-      if (detailedRequestKeyRef.current !== requestKey) return
-
-      let rawRows = Array.isArray(res.rows) ? res.rows : []
-      // Company filter is applied server-side; no client-side re-filter needed (rows already scoped).
-      if (employeeId !== 'all') {
-        const requestedId = Number(employeeId)
-        if (!Number.isNaN(requestedId)) {
-          rawRows = rawRows.filter(
-            (row) => Number(row.employee_id ?? row.id) === requestedId
-          )
-        }
-      }
-      // One row per employee per date (backend already dedupes; guard against duplicates).
-      const seen = new Set()
-      const rows = rawRows.filter((row) => {
-        const key = `${row.employee_id ?? row.id}|${row.date || ''}`
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-      setDetailedRows(rows)
-    } catch (err) {
-      if (detailedRequestKeyRef.current !== requestKey) return
-      setReportError(err instanceof Error ? err.message : 'Failed to load detailed report')
-      setDetailedRows([])
     }
   }
 
@@ -376,15 +398,23 @@ export default function AdminReports() {
 
   useEffect(() => {
     if (tab !== 'detailed') return
-    if (detailedQuery.data) {
-      const rawRows = Array.isArray(detailedQuery.data.rows) ? detailedQuery.data.rows : []
-      setDetailedRows(rawRows)
-      setReportError(null)
-    } else if (detailedQuery.error) {
+    if (detailedQuery.error) {
       setReportError(detailedQuery.error?.message || 'Failed to load detailed report')
-      setDetailedRows([])
+    } else if (detailedQuery.data) {
+      setReportError(null)
     }
-  }, [tab, detailedQuery.data, detailedQuery.error])
+  }, [tab, detailedQuery.error, detailedQuery.data])
+
+  useEffect(() => {
+    if (tab !== 'detailed') return
+    const cp = detailedQuery.data?.meta?.current_page
+    if (cp == null) return
+    const n = Number(cp)
+    if (!Number.isFinite(n) || n < 1) return
+    const lp = Math.max(1, Number(detailedQuery.data?.meta?.last_page ?? 1))
+    const clamped = Math.min(n, lp)
+    if (clamped !== detailedPage) setDetailedPage(clamped)
+  }, [tab, detailedQuery.data?.meta?.current_page, detailedQuery.data?.meta?.last_page, detailedPage])
 
   useEffect(() => {
     if (tab !== 'premium') return
@@ -501,7 +531,12 @@ export default function AdminReports() {
         },
         ...num(),
       }
-      const overtimeStatusCol = { label: 'Overtime Status', accessor: (row) => row.overtime_status || '—', minW: 110, align: 'center' }
+      const overtimeStatusCol = {
+        label: 'Overtime Status',
+        accessor: (row) => formatDetailedReportOvertimeStatus(row),
+        minW: 280,
+        align: 'left',
+      }
 
       const otHoursAcc = (row, key) => {
         const v = row[key]
@@ -715,24 +750,8 @@ export default function AdminReports() {
     // Use selected employee's name from dropdown as source of truth so only that person's rows show.
     // Dedupe by employee_id|date so we never show duplicate day rows (e.g. from race or stale state).
     if (tab === 'detailed') {
-      let rows = Array.isArray(detailedRows) ? detailedRows : []
-      // Company filter is applied server-side; detailed rows are already scoped to the selected company.
-      if (employeeId !== 'all') {
-        const selected = employeesOptions.find((o) => String(o.id) === String(employeeId))
-        const matchByName = selected?.name?.trim()
-        const matchById = Number(employeeId)
-        rows = rows.filter((row) => {
-          if (matchByName && (row.employee_name || '').trim() === matchByName) return true
-          return !Number.isNaN(matchById) && Number(row.employee_id ?? row.id) === matchById
-        })
-      }
-      const seen = new Set()
-      rows = rows.filter((row) => {
-        const key = `${row.employee_id ?? row.id}|${row.date || ''}`
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
+      let rows = Array.isArray(detailedQuery.data?.rows) ? detailedQuery.data.rows : []
+      rows = dedupeDetailedReportRows(rows, employeeId, employeesOptions)
       return rows
     }
 
@@ -764,12 +783,12 @@ export default function AdminReports() {
     }
 
     return base
-  }, [tab, data.departments, data.employees, detailedRows, premiumData.employees, employeeId, employeesOptions])
+  }, [tab, data.departments, data.employees, detailedQuery.data?.rows, premiumData.employees, employeeId, employeesOptions])
 
   const filteredRows = useMemo(() => {
     const rows = Array.isArray(rowsForTable) ? rowsForTable : []
     const term = search.trim().toLowerCase()
-    if (!term) return rows
+    if (!term || tab === 'detailed') return rows
     return rows.filter((row) => {
       if (tab === 'department') {
         return (row.department || '').toLowerCase().includes(term)
@@ -781,12 +800,23 @@ export default function AdminReports() {
     })
   }, [rowsForTable, search, tab])
 
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize))
-  const currentPage = Math.min(page, pageCount)
-  const paginatedRows = filteredRows.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  )
+  const paginationIsServerDetailed = tab === 'detailed'
+  const detailedReportMeta = detailedQuery.data?.meta
+
+  const pageCountForUi = paginationIsServerDetailed
+    ? Math.max(1, Number(detailedReportMeta?.last_page ?? 1))
+    : Math.max(1, Math.ceil(filteredRows.length / pageSize) || 1)
+
+  const paginationCurrentPage = paginationIsServerDetailed
+    ? Math.min(detailedPage, pageCountForUi)
+    : Math.min(page, pageCountForUi)
+
+  const tableRowsForRender = paginationIsServerDetailed
+    ? filteredRows
+    : filteredRows.slice(
+        (paginationCurrentPage - 1) * pageSize,
+        paginationCurrentPage * pageSize,
+      )
 
 
   function buildFiltersSummary() {
@@ -805,49 +835,58 @@ export default function AdminReports() {
 
   async function handleExportPdf() {
     const cols = currentColumns()
-    const rows = filteredRows
+    let rows = filteredRows
     const title = tab === 'detailed' ? 'Detailed Attendance Report' : getReportTitle(tab)
     const period = periodLabel || `${fromDate} to ${toDate}`
     const generatedAt = new Date().toLocaleString()
     const filtersSummary = buildFiltersSummary()
-    debugLog(
-      'handleExportPdf',
-      {
-        tab,
-        rowsCount: rows.length,
-        filteredRowsCount: filteredRows.length,
-        colsCount: cols.length,
-      },
-      'H1'
-    )
-    debugSessionLog(
-      'handleExportPdf columns snapshot',
-      {
-        tab,
-        columnLabels: cols.map((c) => c.label),
-        rowsCount: rows.length,
-      },
-      'H3'
-    )
-    // Match UI summary: same filters (date range, company, employee) and formulas.
-    const exportTotalHours = rows.reduce((sum, r) => sum + (Number(r.total_hours) || 0), 0)
-    const exportTotalAbsences =
-      tab === 'detailed'
-        ? rows.filter((r) => r.status === 'absent' || r.status === 'leave').length
-        : rows.reduce((sum, r) => sum + (Number(r.absent_count) || 0), 0)
-
-    const exportTotalLates =
-      tab === 'detailed'
-        ? rows.filter((r) => r.status === 'late').length
-        : rows.reduce((sum, r) => sum + (Number(r.late_count) || 0), 0)
-
-    const exportTotalOvertime =
-      tab === 'detailed'
-        ? rows.reduce((sum, r) => sum + (Number(r.overtime_minutes) || 0), 0) / 60
-        : rows.reduce((sum, r) => sum + (Number(r.overtime_hours) || 0), 0)
 
     setExportingPdf(true)
     try {
+      if (tab === 'detailed') {
+        const base = { ...summaryParams, search: debouncedDetailedSearch || undefined }
+        const raw = isEmployeeSelfReport
+          ? await fetchAllEmployeeReportsDetailedRows(base)
+          : await fetchAllAdminReportsDetailedRows(base)
+        rows = dedupeDetailedReportRows(raw, employeeId, employeesOptions)
+      }
+
+      debugLog(
+        'handleExportPdf',
+        {
+          tab,
+          rowsCount: rows.length,
+          filteredRowsCount: filteredRows.length,
+          colsCount: cols.length,
+        },
+        'H1',
+      )
+      debugSessionLog(
+        'handleExportPdf columns snapshot',
+        {
+          tab,
+          columnLabels: cols.map((c) => c.label),
+          rowsCount: rows.length,
+        },
+        'H3',
+      )
+
+      const exportTotalHours = rows.reduce((sum, r) => sum + (Number(r.total_hours) || 0), 0)
+      const exportTotalAbsences =
+        tab === 'detailed'
+          ? rows.filter((r) => r.status === 'absent' || r.status === 'leave').length
+          : rows.reduce((sum, r) => sum + (Number(r.absent_count) || 0), 0)
+
+      const exportTotalLates =
+        tab === 'detailed'
+          ? rows.filter((r) => r.status === 'late').length
+          : rows.reduce((sum, r) => sum + (Number(r.late_count) || 0), 0)
+
+      const exportTotalOvertime =
+        tab === 'detailed'
+          ? rows.reduce((sum, r) => sum + (Number(r.overtime_minutes) || 0), 0) / 60
+          : rows.reduce((sum, r) => sum + (Number(r.overtime_hours) || 0), 0)
+
       const doc = (
         <ReportPdfDocument
           title={title}
@@ -880,16 +919,24 @@ export default function AdminReports() {
 
   async function handleExportExcel() {
     const cols = currentColumns()
-    const rows = filteredRows
-    // Match UI: same filters and formulas as Reports summary.
-    const exportTotalHours = rows.reduce((sum, r) => sum + (Number(r.total_hours) || 0), 0)
-    const exportTotalAbsences =
-      tab === 'detailed'
-        ? rows.filter((r) => r.status === 'absent' || r.status === 'leave').length
-        : rows.reduce((sum, r) => sum + (Number(r.absent_count) || 0), 0)
+    let rows = filteredRows
 
     setExportingExcel(true)
     try {
+      if (tab === 'detailed') {
+        const base = { ...summaryParams, search: debouncedDetailedSearch || undefined }
+        const raw = isEmployeeSelfReport
+          ? await fetchAllEmployeeReportsDetailedRows(base)
+          : await fetchAllAdminReportsDetailedRows(base)
+        rows = dedupeDetailedReportRows(raw, employeeId, employeesOptions)
+      }
+
+      const exportTotalHours = rows.reduce((sum, r) => sum + (Number(r.total_hours) || 0), 0)
+      const exportTotalAbsences =
+        tab === 'detailed'
+          ? rows.filter((r) => r.status === 'absent' || r.status === 'leave').length
+          : rows.reduce((sum, r) => sum + (Number(r.absent_count) || 0), 0)
+
       const colCount = cols.length
       const pad = (n) => Array(n).fill('')
       const headerRow = cols.map((c) => c.label)
@@ -897,9 +944,8 @@ export default function AdminReports() {
         cols.map((c) => {
           const raw = typeof c.accessor === 'function' ? c.accessor(row) : row[c.accessor]
           return raw != null ? raw : ''
-        })
+        }),
       )
-      // Summary at bottom right: pad left so label and value sit in last two columns
       const summaryRowsBottom = [
         [...pad(colCount)],
         [...pad(Math.max(0, colCount - 2)), 'Summary', ''],
@@ -919,7 +965,9 @@ export default function AdminReports() {
   }
 
   const cols = currentColumns()
-  const hasRows = filteredRows.length > 0
+  const hasRows = paginationIsServerDetailed
+    ? Number(detailedReportMeta?.total ?? 0) > 0
+    : filteredRows.length > 0
 
   useEffect(() => {
     debugSessionLog(
@@ -947,16 +995,18 @@ export default function AdminReports() {
 
   const summary = useMemo(() => {
     const allRows = filteredRows
-    const totalCount = allRows.length
-    const visibleRows = paginatedRows
+    let totalCount = allRows.length
+    const visibleRows = tableRowsForRender
 
-    // Use the same filtered dataset for counts and totals (table, PDF, Excel).
     if (tab === 'detailed') {
-      const totalHours = allRows.reduce((sum, r) => sum + (r.total_hours || 0), 0)
+      totalCount = Number(detailedReportMeta?.total ?? filteredRows.length)
+      const totalHoursPage = filteredRows.reduce((sum, r) => sum + (Number(r.total_hours) || 0), 0)
+
       return {
-        primary: { label: 'Total records', value: totalCount },
+        primary: { label: 'Total records (all pages)', value: totalCount },
         secondary: [
-          { label: 'Total hours rendered', value: totalHours.toFixed(2) },
+          { label: 'Total hours (this page)', value: totalHoursPage.toFixed(2) },
+          { label: 'Rows per page', value: pageSize },
         ],
       }
     }
@@ -1067,7 +1117,7 @@ export default function AdminReports() {
         { label: 'Total absences', value: totalAbsences },
       ],
     }
-  }, [filteredRows, paginatedRows, tab])
+  }, [filteredRows, tableRowsForRender, tab, detailedReportMeta, pageSize])
 
   return (
     <div className="space-y-6">
@@ -1158,7 +1208,7 @@ export default function AdminReports() {
               className="gap-1.5 shadow-sm"
               onClick={() => {
                 load()
-                if (tab === 'detailed') loadDetailed()
+                if (tab === 'detailed') void detailedQuery.refetch()
                 if (tab === 'premium') loadPremium()
               }}
             >
@@ -1172,7 +1222,7 @@ export default function AdminReports() {
               className="gap-1.5 text-muted-foreground hover:bg-primary/5"
               onClick={() => {
                 load()
-                if (tab === 'detailed') loadDetailed()
+                if (tab === 'detailed') void detailedQuery.refetch()
                 if (tab === 'premium') loadPremium()
               }}
             >
@@ -1381,7 +1431,7 @@ export default function AdminReports() {
                         )
                       }
 
-                      return paginatedRows.map((row, rowIndex) => {
+                      return tableRowsForRender.map((row, rowIndex) => {
                         const employeeName =
                           row.employee_name ?? (typeof row.name === 'string' ? row.name : null)
                         const initials =
@@ -1474,15 +1524,19 @@ export default function AdminReports() {
                 {hasRows && (
                   <div className="flex items-center justify-between border-t border-border/40 px-4 py-3 text-[11px] text-muted-foreground @md:text-xs">
                     <span>
-                      Page {currentPage} of {pageCount}
+                      Page {paginationCurrentPage} of {pageCountForUi}
                     </span>
                     <div className="flex gap-2">
                       <Button
                         type="button"
                         size="xs"
                         variant="outline"
-                        disabled={currentPage <= 1}
-                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        disabled={paginationCurrentPage <= 1}
+                        onClick={() =>
+                          paginationIsServerDetailed
+                            ? setDetailedPage((p) => Math.max(1, p - 1))
+                            : setPage((p) => Math.max(1, p - 1))
+                        }
                       >
                         Previous
                       </Button>
@@ -1490,8 +1544,12 @@ export default function AdminReports() {
                         type="button"
                         size="xs"
                         variant="outline"
-                        disabled={currentPage >= pageCount}
-                        onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                        disabled={paginationCurrentPage >= pageCountForUi}
+                        onClick={() =>
+                          paginationIsServerDetailed
+                            ? setDetailedPage((p) => Math.min(pageCountForUi, p + 1))
+                            : setPage((p) => Math.min(pageCountForUi, p + 1))
+                        }
                       >
                         Next
                       </Button>

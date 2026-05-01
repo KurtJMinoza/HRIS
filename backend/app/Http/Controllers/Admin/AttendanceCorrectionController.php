@@ -425,10 +425,20 @@ class AttendanceCorrectionController extends Controller
                 $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
                     ? (int) $daySchedule['overtime_buffer_minutes']
                     : (int) config('attendance.overtime_buffer_minutes', 15);
+
+                $postShiftOt = 0;
                 $otStart = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
                 if ($timeOut->greaterThan($otStart)) {
-                    $overtimeMinutes = (int) $otStart->diffInMinutes($timeOut);
+                    $postShiftOt = (int) $otStart->diffInMinutes($timeOut);
                 }
+
+                $preShiftOt = 0;
+                $scheduledStart = AttendanceStatusService::getScheduledStartForDate($date, $daySchedule, $tz);
+                if ($scheduledStart && $timeIn->lessThan($scheduledStart)) {
+                    $preShiftOt = (int) $timeIn->diffInMinutes($scheduledStart);
+                }
+
+                $overtimeMinutes = $preShiftOt + $postShiftOt;
             }
         } elseif ($timeOut) {
             $tz = $this->attendanceTimezone();

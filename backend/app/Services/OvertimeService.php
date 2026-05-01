@@ -101,13 +101,17 @@ class OvertimeService
     }
 
     /**
-     * Create or update an overtime record when a clock-out is recorded.
+     * Sync actual clock-out data onto an existing (employee-filed) overtime record.
      *
-     * - Uses computeOvertimeForDate to determine OT minutes/hours.
-     * - Ensures a single overtime row per user per date.
-     * - Does not overwrite approved/rejected records.
+     * Per the Enhanced Attendance Logic spec:
+     * - OT records are ONLY created when an employee explicitly files an OT request.
+     * - This method updates already-filed records with actual clock-out times for audit.
+     * - If no OT record exists for this date, nothing is created (detection is passive).
+     * - Approved records: actual time_out is recorded but approved hours are preserved.
+     * - Rejected records: left untouched.
+     * - Pending records: actual time_out and computed values are synced.
      */
-    public function createOrUpdateFromClockOut(User $user, AttendanceLog $clockOutLog, ?User $admin = null): ?Overtime
+    public function syncClockOutToFiledOvertime(User $user, AttendanceLog $clockOutLog, ?User $admin = null): ?Overtime
     {
         $date = $clockOutLog->created_at->copy();
         $data = $this->computeOvertimeForDate($user, $date);
@@ -118,9 +122,16 @@ class OvertimeService
             ->whereDate('date', $dateKey)
             ->first();
 
-        // If there is no computed overtime from actual logs, sync actuals on DB rows but keep status.
+        if (! $existing) {
+            return null;
+        }
+
+        if ($existing->status === Overtime::STATUS_REJECTED) {
+            return $existing;
+        }
+
         if ($data === null) {
-            if ($existing && $existing->status === Overtime::STATUS_PENDING) {
+            if ($existing->status === Overtime::STATUS_PENDING) {
                 $existing->fill([
                     'schedule_end' => null,
                     'time_out' => null,
@@ -131,7 +142,7 @@ class OvertimeService
                     $existing->updated_by = $admin->id;
                 }
                 $existing->save();
-            } elseif ($existing && $existing->status === Overtime::STATUS_APPROVED) {
+            } elseif ($existing->status === Overtime::STATUS_APPROVED) {
                 $lastOut = $clockOutLog->created_at->timezone(config('attendance.timezone', config('app.timezone', 'Asia/Manila')));
                 $existing->fill([
                     'time_out' => $lastOut->format('H:i:s'),
@@ -145,10 +156,7 @@ class OvertimeService
             return $existing;
         }
 
-        // Approved: record actual clock-out time for audit but preserve the approved
-        // computed_minutes/computed_hours — those are the approved duration and must not
-        // be overwritten by the buffer-affected rendered calculation.
-        if ($existing && $existing->status === Overtime::STATUS_APPROVED) {
+        if ($existing->status === Overtime::STATUS_APPROVED) {
             $payloadApproved = [
                 'schedule_end' => $data['schedule_end']->format('H:i:s'),
                 'time_out' => $data['time_out']->format('H:i:s'),
@@ -162,31 +170,25 @@ class OvertimeService
             return $existing;
         }
 
-        if ($existing && $existing->status === Overtime::STATUS_REJECTED) {
-            return $existing;
-        }
-
-        $payload = [
+        $existing->fill([
             'schedule_end' => $data['schedule_end']->format('H:i:s'),
             'time_out' => $data['time_out']->format('H:i:s'),
             'computed_minutes' => $data['minutes'],
             'computed_hours' => $data['hours'],
-            'ot_type' => $existing?->ot_type ?? 'regular',
-            'status' => $existing?->status ?? Overtime::STATUS_PENDING,
-        ];
-
-        if (! $existing) {
-            $payload['created_by'] = $admin?->id;
-        } elseif ($admin) {
-            $payload['updated_by'] = $admin->id;
+        ]);
+        if ($admin) {
+            $existing->updated_by = $admin->id;
         }
+        $existing->save();
 
-        return Overtime::updateOrCreate(
-            [
-                'user_id' => $user->id,
-                'date' => $data['date'],
-            ],
-            $payload
-        );
+        return $existing;
+    }
+
+    /**
+     * @deprecated Use syncClockOutToFiledOvertime() instead. Kept for backward compatibility.
+     */
+    public function createOrUpdateFromClockOut(User $user, AttendanceLog $clockOutLog, ?User $admin = null): ?Overtime
+    {
+        return $this->syncClockOutToFiledOvertime($user, $clockOutLog, $admin);
     }
 }

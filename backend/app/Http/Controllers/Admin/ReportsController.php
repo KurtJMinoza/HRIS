@@ -27,6 +27,9 @@ use Illuminate\Support\Facades\Log;
 
 class ReportsController extends Controller
 {
+    /** Fixed page size for detailed report list responses; incoming per_page query is ignored. */
+    private const DETAILED_ROWS_PER_PAGE = 10;
+
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly AttendancePresenceDisplayService $presenceDisplay,
@@ -628,8 +631,22 @@ class ReportsController extends Controller
                                 $status = 'undertime';
                             }
 
-                            if ($workedMinutes > $requiredMinutes) {
-                                $overtimeForDay = $workedMinutes - $requiredMinutes;
+                            $postShiftOtSum = 0;
+                            $overtimeBuffer = isset($todaySchedule['overtime_buffer_minutes']) ? (int) $todaySchedule['overtime_buffer_minutes'] : (int) config('attendance.overtime_buffer_minutes', 15);
+                            $otStartSum = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
+                            if ($outCarbon && $outCarbon->greaterThan($otStartSum)) {
+                                $postShiftOtSum = (int) $otStartSum->diffInMinutes($outCarbon);
+                            }
+
+                            $preShiftOtSum = 0;
+                            $scheduledStartSum = AttendanceStatusService::getScheduledStartForDate($dateKey, $todaySchedule, $attendanceTz);
+                            $inCarbonSum = $timeIn instanceof Carbon ? $timeIn : ($timeIn ? Carbon::parse($timeIn) : null);
+                            if ($scheduledStartSum && $inCarbonSum && $inCarbonSum->lessThan($scheduledStartSum)) {
+                                $preShiftOtSum = (int) $inCarbonSum->diffInMinutes($scheduledStartSum);
+                            }
+
+                            $overtimeForDay = $preShiftOtSum + $postShiftOtSum;
+                            if ($overtimeForDay > 0) {
                                 $dayOvertimeCount = 1;
                                 $dayOvertimeMinutes = $overtimeForDay;
                             }
@@ -892,7 +909,8 @@ class ReportsController extends Controller
             'leave_type' => ['nullable', 'string', 'max:50'],
             'overtime_status' => ['nullable', 'string', 'max:50'],
             'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
+            'per_page' => ['nullable', 'integer'], // ignored — fixed DETAILED_ROWS_PER_PAGE
+            'search' => ['nullable', 'string', 'max:200'],
         ]);
 
         // Normalize filters: trim department, lowercase status for consistent matching.
@@ -1006,6 +1024,12 @@ class ReportsController extends Controller
                 'from_date' => $from->toDateString(),
                 'to_date' => $to->toDateString(),
                 'rows' => [],
+                'meta' => [
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'per_page' => self::DETAILED_ROWS_PER_PAGE,
+                    'total' => 0,
+                ],
             ]);
         }
 
@@ -1324,11 +1348,20 @@ class ReportsController extends Controller
                             );
 
                             $overtimeBuffer = isset($todaySchedule['overtime_buffer_minutes']) ? (int) $todaySchedule['overtime_buffer_minutes'] : (int) config('attendance.overtime_buffer_minutes', 15);
+
+                            $postShiftOt = 0;
                             $otStart = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
                             if ($outCarbon->greaterThan($otStart)) {
-                                // Carbon: diff from later→earlier is negative; measure from OT start to clock-out.
-                                $overtimeMinutes = (int) $otStart->diffInMinutes($outCarbon);
+                                $postShiftOt = (int) $otStart->diffInMinutes($outCarbon);
                             }
+
+                            $preShiftOt = 0;
+                            $scheduledStart = AttendanceStatusService::getScheduledStartForDate($dateKey, $todaySchedule, $attendanceTz);
+                            if ($scheduledStart && $inCarbon->lessThan($scheduledStart)) {
+                                $preShiftOt = (int) $inCarbon->diffInMinutes($scheduledStart);
+                            }
+
+                            $overtimeMinutes = $preShiftOt + $postShiftOt;
                         } elseif ($scheduledEnd && $effectiveTimeIn && ! $effectiveTimeOut && ! $isHalfday && $requiredMinutes > 0) {
                             // Missing time-out past shift end: {@see AttendancePresenceDisplayService incomplete_pair}.
                             // Undertime displayed as required net minutes − actual rendered toward that requirement (typically 0 when no pairing).
@@ -1494,15 +1527,13 @@ class ReportsController extends Controller
                     }
                 }
 
-                $payrollImpactHours = ($effectiveWorkedMinutes !== null && $effectiveWorkedMinutes > 0)
-                    ? round($effectiveWorkedMinutes / 60, 2)
-                    : 0;
-
                 $scheduledDurationHours = null;
+                $requiredMinutesForImpact = 0;
                 if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
                     $reqDur = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
                     if ($reqDur > 0) {
                         $scheduledDurationHours = round($reqDur / 60, 2);
+                        $requiredMinutesForImpact = $reqDur;
                     }
                 }
 
@@ -1511,6 +1542,18 @@ class ReportsController extends Controller
                 $approvedFromFiling = ($ot && $ot->status === Overtime::STATUS_APPROVED)
                     ? round((float) ($ot->computed_hours ?? 0), 2)
                     : 0.0;
+
+                // Payroll Impact = Regular hours (capped at schedule) + Approved OT hours only.
+                // Unapproved OT is excluded — employee must file and get OT approved for it to count.
+                if ($effectiveWorkedMinutes !== null && $effectiveWorkedMinutes > 0) {
+                    $regularForImpact = $requiredMinutesForImpact > 0
+                        ? min((int) $effectiveWorkedMinutes, $requiredMinutesForImpact)
+                        : (int) $effectiveWorkedMinutes;
+                    $approvedOtMinutesForImpact = (int) round($approvedFromFiling * 60);
+                    $payrollImpactHours = round(($regularForImpact + $approvedOtMinutesForImpact) / 60, 2);
+                } else {
+                    $payrollImpactHours = 0;
+                }
                 $clockVal = $clockOtHours ?? 0.0;
                 $approvedOtHours = $approvedFromFiling;
                 $unapprovedOtHours = max(0.0, round($clockVal - min($approvedOtHours, $clockVal), 2));
@@ -1592,27 +1635,28 @@ class ReportsController extends Controller
             }));
         }
 
+        $rows = $this->applyDetailedReportSearchFilter($rows, $validated['search'] ?? null);
+
         // Response dates always YYYY-MM-DD so the frontend filter and report period match.
+        $perPage = self::DETAILED_ROWS_PER_PAGE;
+        $page = max(1, (int) ($validated['page'] ?? 1));
+        $total = count($rows);
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min($page, $lastPage);
+        $offset = ($page - 1) * $perPage;
+        $pagedRows = array_slice($rows, $offset, $perPage);
+
         $response = [
             'from_date' => $from->toDateString(),
             'to_date' => $to->toDateString(),
-            'rows' => $rows,
-        ];
-        if (isset($validated['page']) || isset($validated['per_page'])) {
-            $perPage = (int) ($validated['per_page'] ?? 50);
-            $page = (int) ($validated['page'] ?? 1);
-            $total = count($rows);
-            $lastPage = max(1, (int) ceil($total / $perPage));
-            $page = min($page, $lastPage);
-            $offset = ($page - 1) * $perPage;
-            $response['rows'] = array_slice($rows, $offset, $perPage);
-            $response['meta'] = [
+            'rows' => $pagedRows,
+            'meta' => [
                 'current_page' => $page,
                 'last_page' => $lastPage,
                 'per_page' => $perPage,
                 'total' => $total,
-            ];
-        }
+            ],
+        ];
 
         Log::info('Detailed attendance report prepared', [
             'actor_user_id' => (int) $request->user()->id,
@@ -1620,11 +1664,36 @@ class ReportsController extends Controller
             'to_date' => $to->toDateString(),
             'employee_count' => count($userIds),
             'rows_count' => count($response['rows']),
-            'paginated' => isset($response['meta']),
+            'paginated' => true,
             'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
         ]);
 
         return response()->json($response);
+    }
+
+    /**
+     * Narrow detailed rows before pagination (substring match employee, department, company).
+     *
+     * @param  list<array<string,mixed>>  $rows
+     * @return list<array<string,mixed>>
+     */
+    private function applyDetailedReportSearchFilter(array $rows, ?string $search): array
+    {
+        $q = $search !== null ? strtolower(trim($search)) : '';
+        if ($q === '') {
+            return $rows;
+        }
+
+        return array_values(array_filter($rows, function (array $row) use ($q): bool {
+            $haystack = strtolower(implode(' ', [
+                (string) ($row['employee_name'] ?? ''),
+                (string) ($row['department'] ?? ''),
+                (string) ($row['company_name'] ?? ''),
+                (string) ($row['date'] ?? ''),
+            ]));
+
+            return str_contains($haystack, $q);
+        }));
     }
 
     /**

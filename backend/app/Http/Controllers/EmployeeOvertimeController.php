@@ -2,17 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\OvertimeApprovalAudit;
 use App\Models\User;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
 use App\Services\OvertimeApprovalService;
-use App\Services\PayrollPeriodMutationGuard;
-use App\Services\PayrollRulesEngineService;
-use App\Support\EmployeeScheduleResolver;
-use App\Support\OvertimeFilingRules;
 use App\Support\PhPayrollReference;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -25,16 +20,10 @@ use Illuminate\Validation\ValidationException;
 class EmployeeOvertimeController extends Controller
 {
     public function __construct(
-        private readonly PayrollRulesEngineService $rulesEngine,
         private readonly HrApprovalChainResolver $hrApprovalChainResolver,
         private readonly OvertimeApprovalService $overtimeApprovalService,
         private readonly HrRoleResolver $hrRoleResolver,
-        private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
     ) {}
-
-    private const NO_SCHEDULE_ASSIGNED_MESSAGE = 'No schedule assigned yet. Please contact the administrator.';
-
-    private const REST_DAY_MESSAGE = 'No work schedule for this date (rest day or unassigned).';
 
     private function attendanceTimezone(): string
     {
@@ -42,103 +31,32 @@ class EmployeeOvertimeController extends Controller
     }
 
     /**
-     * Validate schedule, attendance, and times; return computed OT quantities.
+     * Flexible OT filing quantities from user-provided time range.
      *
      * @return array{schedule_end: \Carbon\Carbon, expected_end: \Carbon\Carbon, computed_minutes: int, computed_hours: float}
      */
-    private function computeOvertimeRequestQuantities(User $user, string $dateYmd, string $expectedEndTimeHmi): array
+    private function computeOvertimeRequestQuantities(string $dateYmd, string $startTimeHmi, string $endTimeHmi): array
     {
         $tz = $this->attendanceTimezone();
-        $user->loadMissing('workingSchedule');
-
-        $schedule = EmployeeScheduleResolver::resolve($user);
-
-        if (! is_array($schedule) || $schedule === []) {
-            throw ValidationException::withMessages([
-                'date' => [self::NO_SCHEDULE_ASSIGNED_MESSAGE],
-            ]);
+        $start = Carbon::parse($dateYmd.' '.$startTimeHmi, $tz);
+        $end = Carbon::parse($dateYmd.' '.$endTimeHmi, $tz);
+        if ($end->lessThanOrEqualTo($start)) {
+            $end->addDay();
         }
 
-        $carbonDate = Carbon::parse($dateYmd, $tz);
-        $dayKey = EmployeeScheduleResolver::dayKeyForDate($carbonDate);
-        $daySchedule = $schedule[$dayKey] ?? null;
-
-        if (! is_array($daySchedule) || empty($daySchedule['out']) || empty($daySchedule['in'])) {
-            throw ValidationException::withMessages([
-                'date' => [self::REST_DAY_MESSAGE],
-            ]);
-        }
-
-        $hasApprovedLeave = LeaveRequest::query()
-            ->where('user_id', $user->id)
-            ->where('status', LeaveRequest::STATUS_APPROVED)
-            ->whereDate('start_date', '<=', $dateYmd)
-            ->whereDate('end_date', '>=', $dateYmd)
-            ->exists();
-
-        if ($hasApprovedLeave) {
-            throw ValidationException::withMessages([
-                'date' => ['You have an approved leave for this date. Overtime is not allowed.'],
-            ]);
-        }
-
-        OvertimeFilingRules::assertDateWithinFilingWindow($dateYmd, $tz);
-
-        $presence = OvertimeFilingRules::clockInOutPresenceForDate($user->id, $dateYmd, $tz);
-        $hasClockIn = $presence['has_clock_in'];
-        $hasClockOut = $presence['has_clock_out'];
-        $lastClockOutAt = $presence['last_clock_out_at'];
-
-        $todayYmd = Carbon::now($tz)->toDateString();
-
-        if ($dateYmd < $todayYmd) {
-            OvertimeFilingRules::assertPastDateHasCompletedAttendance($user->id, $dateYmd, $tz);
-        } elseif (! $hasClockIn) {
-            throw ValidationException::withMessages([
-                'date' => ['Clock in for this date first. Once clocked in, you can file overtime immediately — no need to wait for clock-out.'],
-            ]);
-        }
-
-        $scheduleStart = Carbon::parse($dateYmd.' '.trim((string) $daySchedule['in']), $tz);
-        $scheduleEnd = Carbon::parse($dateYmd.' '.trim((string) $daySchedule['out']), $tz);
-        if ($scheduleEnd->lessThanOrEqualTo($scheduleStart)) {
-            $scheduleEnd->addDay();
-        }
-        $overnight = $scheduleEnd->toDateString() !== $scheduleStart->toDateString();
-
-        $expectedEnd = Carbon::parse($dateYmd.' '.$expectedEndTimeHmi, $tz);
-        if ($overnight && $expectedEnd->lessThanOrEqualTo($scheduleStart)) {
-            $expectedEnd->addDay();
-        }
-
-        if ($expectedEnd->lessThanOrEqualTo($scheduleEnd)) {
-            throw ValidationException::withMessages([
-                'expected_end_time' => ['Expected end time must be later than your scheduled shift end ('.($scheduleEnd->format('H:i')).').'],
-            ]);
-        }
-
-        if ($hasClockOut && $lastClockOutAt !== null) {
-            $lastOutLocal = $lastClockOutAt->copy()->timezone($tz);
-            if ($expectedEnd->lessThan($lastOutLocal)) {
-                throw ValidationException::withMessages([
-                    'expected_end_time' => ['Expected end time cannot be earlier than your actual clock-out time.'],
-                ]);
-            }
-        }
-
-        $computedMinutes = (int) $scheduleEnd->diffInMinutes($expectedEnd);
+        $computedMinutes = (int) $start->diffInMinutes($end);
 
         if ($computedMinutes <= 0) {
             throw ValidationException::withMessages([
-                'expected_end_time' => ['Overtime must extend beyond your scheduled end time to be valid.'],
+                'end_time' => ['End time must be later than start time.'],
             ]);
         }
 
         $computedHours = round($computedMinutes / 60, 2);
 
         return [
-            'schedule_end' => $scheduleEnd,
-            'expected_end' => $expectedEnd,
+            'schedule_end' => $start,
+            'expected_end' => $end,
             'computed_minutes' => $computedMinutes,
             'computed_hours' => $computedHours,
         ];
@@ -253,6 +171,8 @@ class EmployeeOvertimeController extends Controller
             'date' => $o->date?->toDateString(),
             'schedule_end' => $o->schedule_end?->format('H:i'),
             'expected_end_time' => $o->expected_end_time?->format('H:i'),
+            'start_time' => $o->schedule_end?->format('H:i'),
+            'end_time' => $o->expected_end_time?->format('H:i'),
             'computed_hours' => (float) $o->computed_hours,
             'computed_minutes' => $o->computed_minutes,
             'ot_type' => $o->ot_type,
@@ -297,10 +217,16 @@ class EmployeeOvertimeController extends Controller
         }
         $this->ensureSelfOvertimeAccess($user);
 
-        $perPage = (int) $request->query('per_page', 20);
-        $perPage = max(1, min(50, $perPage));
+        $fromRaw = $request->query('from_date');
+        $toRaw = $request->query('to_date');
+        $hasRange = is_string($fromRaw) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fromRaw)
+            && is_string($toRaw) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $toRaw);
 
-        $paginator = Overtime::query()
+        $perPage = (int) $request->query('per_page', 20);
+        $maxPerPage = $hasRange ? 100 : 50;
+        $perPage = max(1, min($maxPerPage, $perPage));
+
+        $query = Overtime::query()
             ->where('user_id', $user->id)
             ->with([
                 'approvedBy:id,name',
@@ -309,7 +235,16 @@ class EmployeeOvertimeController extends Controller
                 'firstApprover:id,name,profile_image',
                 'secondApprover:id,name,profile_image',
                 'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
-            ])
+            ]);
+
+        if (is_string($fromRaw) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fromRaw)) {
+            $query->whereDate('date', '>=', $fromRaw);
+        }
+        if (is_string($toRaw) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $toRaw)) {
+            $query->whereDate('date', '<=', $toRaw);
+        }
+
+        $paginator = $query
             ->orderByDesc('date')
             ->orderByDesc('id')
             ->paginate($perPage);
@@ -387,24 +322,16 @@ class EmployeeOvertimeController extends Controller
         }
 
         $validated = $request->validate([
-            'expected_end_time' => ['required', 'date_format:H:i'],
+            'start_time' => ['required', 'date_format:H:i'],
+            'end_time' => ['required', 'date_format:H:i'],
             'category' => ['required', 'string', 'max:50'],
-            'ph_ot_rule' => ['required', 'string', Rule::in(PhPayrollReference::OT_RULE_CODES)],
-            'reason' => ['required', 'string', 'min:10'],
+            'ph_ot_rule' => ['nullable', 'string', Rule::in(PhPayrollReference::OT_RULE_CODES)],
+            'reason' => ['required', 'string', 'min:2'],
             'attachment' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
         ]);
 
         $dateYmd = $overtime->date->toDateString();
-        $tz = $this->attendanceTimezone();
-        $todayInTz = Carbon::now($tz)->toDateString();
-
-        if ($dateYmd > $todayInTz) {
-            throw ValidationException::withMessages([
-                'date' => ['Invalid overtime record date.'],
-            ]);
-        }
-
-        $computed = $this->computeOvertimeRequestQuantities($user, $dateYmd, $validated['expected_end_time']);
+        $computed = $this->computeOvertimeRequestQuantities($dateYmd, $validated['start_time'], $validated['end_time']);
 
         $attachmentPath = $overtime->attachment_path;
         if ($request->hasFile('attachment')) {
@@ -419,7 +346,7 @@ class EmployeeOvertimeController extends Controller
             'expected_end_time' => $computed['expected_end']->format('H:i:s'),
             'computed_minutes' => $computed['computed_minutes'],
             'computed_hours' => $computed['computed_hours'],
-            'ph_ot_rule' => $validated['ph_ot_rule'],
+            'ph_ot_rule' => $validated['ph_ot_rule'] ?? $overtime->ph_ot_rule ?? 'ORD',
             'ot_type' => $validated['category'],
             'reason' => $validated['reason'],
             'attachment_path' => $attachmentPath,
@@ -499,145 +426,29 @@ class EmployeeOvertimeController extends Controller
         ]);
 
         $dateYmd = Carbon::parse($request->query('date'))->toDateString();
-        $tz = $this->attendanceTimezone();
-        $todayInTz = Carbon::now($tz)->toDateString();
-
-        if ($dateYmd > $todayInTz) {
-            throw ValidationException::withMessages([
-                'date' => ['Overtime date cannot be in the future.'],
-            ]);
-        }
-
-        $filingDays = OvertimeFilingRules::filingWindowDays();
-        $earliestAllowed = OvertimeFilingRules::earliestAllowedOvertimeDate($tz);
-
-        $user->loadMissing('workingSchedule');
-
-        $schedule = EmployeeScheduleResolver::resolve($user);
-
-        $carbonDate = Carbon::parse($dateYmd, $tz);
-        $dayKey = EmployeeScheduleResolver::dayKeyForDate($carbonDate);
-        $daySchedule = is_array($schedule) ? ($schedule[$dayKey] ?? null) : null;
 
         $phOtOptions = PhPayrollReference::otMultiplierDropdownOptions();
 
-        if (! is_array($schedule) || $schedule === []) {
-            return response()->json([
-                'date' => $dateYmd,
-                'filing_window_days' => $filingDays,
-                'earliest_allowed_date' => $earliestAllowed,
-                'has_assigned_schedule' => false,
-                'is_workday' => false,
-                'schedule_start' => null,
-                'schedule_end' => null,
-                'overnight_shift' => false,
-                'has_clock_in' => false,
-                'has_clock_out' => false,
-                'last_clock_out_at' => null,
-                'mode' => 'unavailable',
-                'mode_label' => 'No schedule assigned',
-                'help' => self::NO_SCHEDULE_ASSIGNED_MESSAGE,
-                'ph_ot_rule_options' => $phOtOptions,
-                'default_ph_ot_rule' => 'ORD',
-                'ph_ot_rule_help' => 'Select the PH pay condition for overtime (Ordinary, Rest day, Holiday…). Default matches calendar + schedule when you file on a workday.',
-            ]);
-        }
-
-        if (! is_array($daySchedule) || empty($daySchedule['in'] ?? null) || empty($daySchedule['out'] ?? null)) {
-            return response()->json([
-                'date' => $dateYmd,
-                'filing_window_days' => $filingDays,
-                'earliest_allowed_date' => $earliestAllowed,
-                'has_assigned_schedule' => true,
-                'is_workday' => false,
-                'schedule_start' => null,
-                'schedule_end' => null,
-                'overnight_shift' => false,
-                'has_clock_in' => false,
-                'has_clock_out' => false,
-                'last_clock_out_at' => null,
-                'mode' => 'unavailable',
-                'mode_label' => 'Not a scheduled workday',
-                'help' => self::REST_DAY_MESSAGE,
-                'ph_ot_rule_options' => $phOtOptions,
-                'default_ph_ot_rule' => 'RD',
-                'ph_ot_rule_help' => 'This date is a scheduled rest day. If you work overtime on a rest day, choose Rest Day (or holiday+rest if a holiday applies).',
-            ]);
-        }
-
-        $scheduleStart = Carbon::parse($dateYmd.' '.trim((string) $daySchedule['in']), $tz);
-        $scheduleEnd = Carbon::parse($dateYmd.' '.trim((string) $daySchedule['out']), $tz);
-        if ($scheduleEnd->lessThanOrEqualTo($scheduleStart)) {
-            $scheduleEnd->addDay();
-        }
-        $overnight = $scheduleEnd->toDateString() !== $scheduleStart->toDateString();
-
-        $presence = OvertimeFilingRules::clockInOutPresenceForDate($user->id, $dateYmd, $tz);
-        $hasClockIn = $presence['has_clock_in'];
-        $hasClockOut = $presence['has_clock_out'];
-        $lastClockOutAt = $presence['last_clock_out_at'];
-
-        $outsideFiling = false;
-        if ($dateYmd < $todayInTz) {
-            $d = Carbon::parse($dateYmd, $tz)->startOfDay();
-            $todayStart = Carbon::now($tz)->startOfDay();
-            $outsideFiling = (int) $d->diffInDays($todayStart) > $filingDays;
-        }
-
-        $mode = 'unavailable';
-        $modeLabel = 'Unavailable';
-        $help = '';
-
-        if ($outsideFiling) {
-            $modeLabel = 'Outside filing window';
-            $help = sprintf(
-                'Late OT filing is only allowed within %d calendar days after the work date. Contact HR for older dates.',
-                $filingDays
-            );
-        } elseif ($dateYmd < $todayInTz) {
-            if (! $hasClockIn || ! $hasClockOut) {
-                $modeLabel = 'Attendance incomplete for this date';
-                $help = 'For past dates, both clock-in and clock-out must exist on that day before you can file overtime (late filing). Use corrections if logs are missing.';
-            } else {
-                $mode = 'post_ot';
-                $modeLabel = 'Late filing (post-shift)';
-                $help = 'You are filing overtime after the work day. Expected end must be after your scheduled end and not before your actual clock-out time.';
-            }
-        } elseif (! $hasClockIn) {
-            $modeLabel = 'Clock in required';
-            $help = 'Clock in for this date first. Once clocked in, you can file overtime immediately — no need to wait for clock-out.';
-        } elseif (! $hasClockOut) {
-            $mode = 'pre_ot';
-            $modeLabel = 'Ready to file advance OT';
-            $help = 'You are currently on shift. Submit your overtime request now — no need to wait for clock-out. Set the expected end time after your scheduled shift end. Clock out as usual when you finish.';
-        } else {
-            $mode = 'post_ot';
-            $modeLabel = 'Post-shift OT';
-            $help = 'You have completed attendance for this date. Expected end time must be after your scheduled end and not before your actual clock-out time.';
-        }
-
-        $isRestDay = $this->rulesEngine->isRestDay($schedule, $carbonDate);
-        $holidayType = $this->rulesEngine->getHolidayType($dateYmd, $user->getEffectiveCompanyId());
-        $defaultPhOtRule = $this->rulesEngine->resolveRuleCode($isRestDay, $holidayType);
+        $defaultPhOtRule = 'ORD';
 
         return response()->json([
             'date' => $dateYmd,
-            'filing_window_days' => $filingDays,
-            'earliest_allowed_date' => $earliestAllowed,
+            'filing_window_days' => null,
+            'earliest_allowed_date' => null,
             'has_assigned_schedule' => true,
             'is_workday' => true,
-            'schedule_start' => $scheduleStart->format('H:i'),
-            'schedule_end' => $scheduleEnd->format('H:i'),
-            'overnight_shift' => $overnight,
-            'has_clock_in' => $hasClockIn,
-            'has_clock_out' => $hasClockOut,
-            'last_clock_out_at' => $lastClockOutAt?->toIso8601String(),
-            'mode' => $mode,
-            'mode_label' => $modeLabel,
-            'help' => $help,
+            'schedule_start' => null,
+            'schedule_end' => null,
+            'overnight_shift' => false,
+            'has_clock_in' => false,
+            'has_clock_out' => false,
+            'last_clock_out_at' => null,
+            'mode' => 'flexible',
+            'mode_label' => 'Flexible OT filing',
+            'help' => 'File OT anytime using your preferred start and end time range.',
             'ph_ot_rule_options' => $phOtOptions,
             'default_ph_ot_rule' => $defaultPhOtRule,
-            'ph_ot_rule_help' => 'Select the PH pay condition for this overtime. Default follows Admin → Holidays + your rest-day schedule for this date. Change only if HR instructs you.',
+            'ph_ot_rule_help' => 'Select the PH pay condition if needed. You can file regardless of schedule, rest day, or holiday.',
         ]);
     }
 
@@ -668,29 +479,15 @@ class EmployeeOvertimeController extends Controller
 
         $validated = $request->validate([
             'date' => ['required', 'date'],
-            'expected_end_time' => ['required', 'date_format:H:i'],
+            'start_time' => ['required', 'date_format:H:i'],
+            'end_time' => ['required', 'date_format:H:i'],
             'category' => ['required', 'string', 'max:50'],
-            'ph_ot_rule' => ['required', 'string', Rule::in(PhPayrollReference::OT_RULE_CODES)],
-            'reason' => ['required', 'string', 'min:10'],
+            'ph_ot_rule' => ['nullable', 'string', Rule::in(PhPayrollReference::OT_RULE_CODES)],
+            'reason' => ['required', 'string', 'min:2'],
             'attachment' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
         ]);
 
-        $tz = $this->attendanceTimezone();
         $dateYmd = Carbon::parse($validated['date'])->toDateString();
-        $todayInTz = Carbon::now($tz)->toDateString();
-
-        if ($dateYmd > $todayInTz) {
-            throw ValidationException::withMessages([
-                'date' => ['Overtime date cannot be in the future.'],
-            ]);
-        }
-
-        try {
-            $day = Carbon::parse($dateYmd)->startOfDay();
-            $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $user->id, $day, $day);
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
-        }
 
         $existing = Overtime::query()
             ->where('user_id', $user->id)
@@ -703,7 +500,7 @@ class EmployeeOvertimeController extends Controller
             ]);
         }
 
-        $computed = $this->computeOvertimeRequestQuantities($user, $dateYmd, $validated['expected_end_time']);
+        $computed = $this->computeOvertimeRequestQuantities($dateYmd, $validated['start_time'], $validated['end_time']);
 
         $routing = $this->hrApprovalChainResolver->resolveRoutingDecision($user);
         $chain = $routing['chain'];
@@ -739,7 +536,7 @@ class EmployeeOvertimeController extends Controller
                 'expected_end_time' => $computed['expected_end']->format('H:i:s'),
                 'computed_minutes' => $computed['computed_minutes'],
                 'computed_hours' => $computed['computed_hours'],
-                'ph_ot_rule' => $validated['ph_ot_rule'],
+                'ph_ot_rule' => $validated['ph_ot_rule'] ?? 'ORD',
                 'ot_type' => $validated['category'],
                 'reason' => $validated['reason'],
                 'attachment_path' => $attachmentPath,

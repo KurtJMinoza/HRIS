@@ -21,6 +21,9 @@ use Illuminate\Support\Facades\Log;
 
 class AttendanceMonitoringController extends Controller
 {
+    /** Fixed page size for admin attendance list (pagination + payloads). Client cannot override. */
+    private const ROWS_PER_PAGE = 10;
+
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly AttendancePresenceDisplayService $presenceDisplay,
@@ -47,7 +50,10 @@ class AttendanceMonitoringController extends Controller
             'status' => ['nullable', 'string', 'in:present,late,absent,halfday,undertime,incomplete'],
             'premium_type' => ['nullable', 'string', 'in:ordinary,rest_day,special_holiday,regular_holiday,special_holiday_rest_day,regular_holiday_rest_day'],
             'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
+            'per_page' => ['nullable', 'integer'], // ignored — fixed at ROWS_PER_PAGE
+            'search' => ['nullable', 'string', 'max:200'],
+            'company' => ['nullable', 'string', 'max:255'],
+            'pending_attention' => ['sometimes', 'boolean'],
         ]);
 
         $computed = $this->computeMonitoringRows($request, $validated);
@@ -56,35 +62,36 @@ class AttendanceMonitoringController extends Controller
         }
 
         $rows = $computed['rows'];
+        $rows = $this->applyAttendanceMonitoringFilters($rows, $validated);
+
+        $totals = $this->attendanceMonitoringTotals($rows);
+
+        $perPage = self::ROWS_PER_PAGE;
+        $page = max(1, (int) ($validated['page'] ?? 1));
+        $total = count($rows);
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min($page, $lastPage);
+        $offset = ($page - 1) * $perPage;
 
         $response = [
             'from_date' => $computed['from_date'],
             'to_date' => $computed['to_date'],
-            'rows' => $rows,
-        ];
-
-        if (isset($validated['page']) || isset($validated['per_page'])) {
-            $perPage = (int) ($validated['per_page'] ?? 50);
-            $page = (int) ($validated['page'] ?? 1);
-            $total = count($response['rows']);
-            $lastPage = max(1, (int) ceil($total / $perPage));
-            $page = min($page, $lastPage);
-            $offset = ($page - 1) * $perPage;
-            $response['rows'] = array_slice($response['rows'], $offset, $perPage);
-            $response['meta'] = [
+            'rows' => array_slice($rows, $offset, $perPage),
+            'meta' => [
                 'current_page' => $page,
                 'last_page' => $lastPage,
                 'per_page' => $perPage,
                 'total' => $total,
-            ];
-        }
+                'totals' => $totals,
+            ],
+        ];
 
         Log::info('Attendance monitoring response prepared', [
             'actor_user_id' => (int) $request->user()->id,
             'from_date' => (string) $computed['from_date'],
             'to_date' => (string) $computed['to_date'],
             'rows_count' => count($response['rows']),
-            'paginated' => isset($response['meta']),
+            'paginated' => true,
             'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
         ]);
 
@@ -109,12 +116,18 @@ class AttendanceMonitoringController extends Controller
             'status' => ['nullable', 'string', 'in:present,late,absent,halfday,undertime,incomplete'],
             'premium_type' => ['nullable', 'string', 'in:ordinary,rest_day,special_holiday,regular_holiday,special_holiday_rest_day,regular_holiday_rest_day'],
             'format' => ['nullable', 'string', 'in:csv,json'],
+            'search' => ['nullable', 'string', 'max:200'],
+            'company' => ['nullable', 'string', 'max:255'],
+            'pending_attention' => ['sometimes', 'boolean'],
         ]);
 
         $computed = $this->computeMonitoringRows($request, $validated);
         if ($computed instanceof JsonResponse) {
             return $computed;
         }
+
+        $filteredRows = $this->applyAttendanceMonitoringFilters($computed['rows'], $validated);
+        $computed['rows'] = $filteredRows;
 
         $format = (string) ($validated['format'] ?? 'csv');
         if ($format === 'json') {
@@ -462,10 +475,20 @@ class AttendanceMonitoringController extends Controller
                             $overtimeBuffer = isset($todaySchedule['overtime_buffer_minutes'])
                                 ? (int) $todaySchedule['overtime_buffer_minutes']
                                 : (int) config('attendance.overtime_buffer_minutes', 15);
+
+                            $postShiftOt = 0;
                             $otStart = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
                             if ($outCarbon->greaterThan($otStart)) {
-                                $overtimeMinutes = (int) $otStart->diffInMinutes($outCarbon);
+                                $postShiftOt = (int) $otStart->diffInMinutes($outCarbon);
                             }
+
+                            $preShiftOt = 0;
+                            $scheduledStart = AttendanceStatusService::getScheduledStartForDate($dateKey, $todaySchedule, $tz);
+                            if ($scheduledStart && $inCarbon->lessThan($scheduledStart)) {
+                                $preShiftOt = (int) $inCarbon->diffInMinutes($scheduledStart);
+                            }
+
+                            $overtimeMinutes = $preShiftOt + $postShiftOt;
                         }
 
                         $isUndertime = $undertimeMinutes !== null && $undertimeMinutes > 0;
@@ -641,6 +664,104 @@ class AttendanceMonitoringController extends Controller
             'from_date' => $from->toDateString(),
             'to_date' => $to->toDateString(),
             'rows' => $rows,
+        ];
+    }
+
+    /** Mirrors frontend {@see attendanceRecordUtils isPendingAttentionRow} for parity. */
+    private function isPendingAttentionMonitoringRow(array $r): bool
+    {
+        if (($r['status'] ?? '') === 'incomplete') {
+            return true;
+        }
+        if (($r['presence_issue'] ?? '') === 'correction_pending') {
+            return true;
+        }
+        if (! empty($r['has_correction']) && empty($r['correction_approved']) && ! empty($r['correction_id'])) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function attendanceMonitoringSearchHaystack(array $r): string
+    {
+        $ref = strtolower((string) ($r['employee_id'] ?? '').'|'.(string) ($r['date'] ?? ''));
+
+        return strtolower(implode(' ', array_filter([
+            $ref,
+            (string) ($r['employee_name'] ?? ''),
+            (string) ($r['department'] ?? ''),
+            (string) ($r['company_name'] ?? ''),
+            (string) ($r['date'] ?? ''),
+            (string) ($r['status'] ?? ''),
+            (string) ($r['presence_label'] ?? ''),
+            (string) ($r['late_label'] ?? ''),
+        ], fn ($x) => $x !== '')));
+    }
+
+    /**
+     * @param  list<array<string,mixed>>  $rows
+     * @param  array<string,mixed>  $validated
+     * @return list<array<string,mixed>>
+     */
+    private function applyAttendanceMonitoringFilters(array $rows, array $validated): array
+    {
+        $company = isset($validated['company']) ? trim((string) $validated['company']) : '';
+        if ($company !== '') {
+            $rows = array_values(array_filter($rows, fn (array $r) => (($r['company_name'] ?? '')) === $company));
+        }
+
+        if (! empty($validated['pending_attention'])) {
+            $rows = array_values(array_filter($rows, fn (array $r) => $this->isPendingAttentionMonitoringRow($r)));
+        }
+
+        $q = isset($validated['search']) ? strtolower(trim((string) $validated['search'])) : '';
+        if ($q !== '') {
+            $rows = array_values(array_filter(
+                $rows,
+                fn (array $r) => str_contains($this->attendanceMonitoringSearchHaystack($r), $q)
+            ));
+        }
+
+        return $rows;
+    }
+
+    /**
+     * KPI rollups for the admin attendance page (computed on the filtered full list, before pagination).
+     *
+     * @param  list<array<string,mixed>>  $rows
+     * @return array{present_count:int,absent_count:int,late_count:int,leave_or_halfday_count:int,total_hours_rendered:float}
+     */
+    private function attendanceMonitoringTotals(array $rows): array
+    {
+        $present = 0;
+        $absent = 0;
+        $late = 0;
+        $leaveHalf = 0;
+        $totalHours = 0.0;
+
+        foreach ($rows as $r) {
+            $st = (string) ($r['status'] ?? '');
+            if ($st === 'present') {
+                $present++;
+            } elseif ($st === 'absent') {
+                $absent++;
+            } elseif ($st === 'late') {
+                $late++;
+            } elseif ($st === 'leave' || $st === 'halfday') {
+                $leaveHalf++;
+            }
+
+            $raw = $r['total_rendered_hours'] ?? $r['total_hours'] ?? 0;
+            $totalHours += is_numeric($raw) ? (float) $raw : 0.0;
+        }
+
+        return [
+            'present_count' => $present,
+            'absent_count' => $absent,
+            'late_count' => $late,
+            'leave_or_halfday_count' => $leaveHalf,
+            'total_hours_rendered' => $totalHours,
         ];
     }
 

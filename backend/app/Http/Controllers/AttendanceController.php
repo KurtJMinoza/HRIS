@@ -14,6 +14,7 @@ use App\Services\AttendanceStatusService;
 use App\Services\FaceAuthService;
 use App\Services\FaceVerificationService;
 use App\Services\LeaveCreditService;
+use App\Services\OtDetectionService;
 use App\Services\OvertimeService;
 use App\Services\PremiumPayCalculatorService;
 use App\Services\PresenceFilingCorrectionFormatter;
@@ -32,6 +33,7 @@ class AttendanceController extends Controller
         private readonly AttendancePresenceDisplayService $presenceDisplay,
         private readonly PresenceFilingCorrectionFormatter $presenceFilingFormatter,
         private readonly LeaveCreditService $leaveCreditService,
+        private readonly OtDetectionService $otDetectionService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -368,53 +370,32 @@ class AttendanceController extends Controller
     }
 
     /**
-     * Validates that the user has an assigned schedule for today. Blocks attendance if not.
-     * Schedule may come from admin/schedules (working_schedule_id) or admin/employees (manual).
-     * Either is valid as long as today has an 'in' time.
+     * Hydrate the user's schedule from working_schedule_id if the JSON field is empty.
+     * Non-blocking: always allows attendance regardless of schedule presence.
      *
-     * @throws ValidationException
+     * Per Enhanced Attendance Logic Section 2: "The system must not block any clock action."
+     * Employees can clock in/out on rest days, holidays, unscheduled days, or any time.
      */
-    private function ensureUserHasScheduleForToday(User $user): void
+    private function hydrateUserSchedule(User $user): void
     {
         $schedule = $user->schedule;
 
-        // Fallback: if schedule JSON is missing but a working_schedule_id is present,
-        // derive the effective schedule from the related WorkingSchedule so attendance
-        // still works even when only working_schedule_id was set (e.g. via profile UI).
         if ((! is_array($schedule) || $schedule === null || $schedule === []) && $user->working_schedule_id !== null) {
+            $user->loadMissing('workingSchedule');
             $derived = $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
             if ($derived !== null) {
-                $schedule = $derived;
-                // Set on the in-memory User instance so subsequent checks in this request use it.
-                $user->schedule = $schedule;
+                $user->schedule = $derived;
             }
         }
+    }
 
-        if ($schedule === null || ! is_array($schedule)) {
-            throw ValidationException::withMessages([
-                'schedule' => [self::NO_SCHEDULE_ASSIGNED_MESSAGE],
-            ]);
-        }
-        if ($schedule === []) {
-            throw ValidationException::withMessages([
-                'schedule' => [self::NO_SCHEDULE_ASSIGNED_MESSAGE],
-            ]);
-        }
-
-        $today = now($this->attendanceTimezone());
-        $dayKey = self::DAY_KEYS[(int) $today->format('w')];
-        $todaySchedule = isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-        if ($todaySchedule === null || ! is_array($todaySchedule)) {
-            throw ValidationException::withMessages([
-                'schedule' => [self::NOT_SCHEDULED_TODAY_MESSAGE],
-            ]);
-        }
-        $inTime = isset($todaySchedule['in']) ? trim((string) $todaySchedule['in']) : '';
-        if ($inTime === '') {
-            throw ValidationException::withMessages([
-                'schedule' => [self::NOT_SCHEDULED_TODAY_MESSAGE],
-            ]);
-        }
+    /**
+     * @deprecated Replaced by hydrateUserSchedule() which is non-blocking.
+     * Kept temporarily for reference during migration.
+     */
+    private function ensureUserHasScheduleForToday(User $user): void
+    {
+        $this->hydrateUserSchedule($user);
     }
 
     /** Record a failed attempt for Admin panel. Spoof attempts and denial reasons are logged. */
@@ -520,129 +501,25 @@ class AttendanceController extends Controller
      *
      * @throws ValidationException
      */
+    /**
+     * @deprecated Per Enhanced Attendance Logic Section 2:
+     * "The system must not block any clock action."
+     * Working-hours restrictions have been removed. Employees can clock in/out
+     * at any time — before shift, after shift, rest day, holiday, OT hours.
+     * Method kept as no-op for call-site compatibility.
+     */
     private function ensureWithinWorkingHours(User $user, string $type): void
     {
-        $user->loadMissing('workingSchedule');
-        $schedule = $user->schedule;
-        if ((! is_array($schedule) || $schedule === []) && $user->working_schedule_id) {
-            $derived = $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
-            if (is_array($derived) && $derived !== []) {
-                $schedule = $derived;
-            }
-        }
-        if (! is_array($schedule) || $schedule === []) {
-            return;
-        }
-
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $now = Carbon::now($tz);
-        $dayKey = self::DAY_KEYS[(int) $now->format('w')];
-        $daySchedule = $schedule[$dayKey] ?? null;
-        if (! is_array($daySchedule)) {
-            return;
-        }
-
-        $inTime = isset($daySchedule['in']) ? trim((string) $daySchedule['in']) : '';
-        $outTime = isset($daySchedule['out']) ? trim((string) $daySchedule['out']) : '';
-
-        if ($inTime === '' || $outTime === '') {
-            return;
-        }
-
-        $start = Carbon::parse($now->toDateString().' '.$inTime, $tz);
-        $endSameDay = Carbon::parse($now->toDateString().' '.$outTime, $tz);
-
-        // Night shift: time_out <= time_in means shift ends next day (e.g. 22:00 - 06:00)
-        $end = $outTime <= $inTime
-            ? Carbon::parse($now->copy()->addDay()->toDateString().' '.$outTime, $tz)
-            : $endSameDay;
-
-        if ($type === AttendanceLog::TYPE_CLOCK_IN) {
-            $earliestBefore = isset($daySchedule['early_timein_minutes'])
-                ? (int) $daySchedule['early_timein_minutes']
-                : (int) config('attendance.earliest_clockin_before_minutes', 60);
-            $earliestAllowed = $start->copy()->subMinutes($earliestBefore);
-
-            if ($now->lessThan($earliestAllowed) || $now->greaterThan($end)) {
-                throw ValidationException::withMessages([
-                    'type' => ['Clock-in is not allowed at this time.'],
-                ]);
-            }
-
-            return;
-        }
-
-        if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            // Latest allowed time to record a clock-out after scheduled end.
-            $latestAfter = isset($daySchedule['latest_clockout_after_minutes'])
-                ? (int) $daySchedule['latest_clockout_after_minutes']
-                : (int) config('attendance.latest_clockout_after_minutes', 60);
-            $latestAllowed = $end->copy()->addMinutes($latestAfter);
-
-            // Approved OT: allow real clock-out up to expected end + grace (do not synthetic time-out).
-            $grace = (int) config('attendance.overtime_approved_clockout_grace_minutes', 30);
-            $todayYmd = $now->toDateString();
-            $approvedOts = Overtime::query()
-                ->where('user_id', $user->id)
-                ->where('status', Overtime::STATUS_APPROVED)
-                ->whereDate('date', $todayYmd)
-                ->orderByDesc('id')
-                ->get();
-
-            $scheduleMap = EmployeeScheduleResolver::resolve($user);
-            if (is_array($scheduleMap) && $scheduleMap !== []) {
-                foreach ($approvedOts as $ot) {
-                    if (! $ot->expected_end_time) {
-                        continue;
-                    }
-                    $otDateYmd = $ot->date->toDateString();
-                    $carbonOt = Carbon::parse($otDateYmd, $tz);
-                    $otDayKey = EmployeeScheduleResolver::dayKeyForDate($carbonOt);
-                    $otDay = $scheduleMap[$otDayKey] ?? null;
-                    if (! is_array($otDay) || empty(trim((string) ($otDay['in'] ?? ''))) || empty(trim((string) ($otDay['out'] ?? '')))) {
-                        continue;
-                    }
-                    $schStart = Carbon::parse($otDateYmd.' '.trim((string) $otDay['in']), $tz);
-                    $schEnd = Carbon::parse($otDateYmd.' '.trim((string) $otDay['out']), $tz);
-                    if ($schEnd->lessThanOrEqualTo($schStart)) {
-                        $schEnd->addDay();
-                    }
-                    $overnightOt = $schEnd->toDateString() !== $schStart->toDateString();
-                    $expectedEnd = Carbon::parse($otDateYmd.' '.$ot->expected_end_time->format('H:i:s'), $tz);
-                    if ($overnightOt && $expectedEnd->lessThanOrEqualTo($schStart)) {
-                        $expectedEnd->addDay();
-                    }
-                    $withGrace = $expectedEnd->copy()->addMinutes($grace);
-                    if ($withGrace->greaterThan($latestAllowed)) {
-                        $latestAllowed = $withGrace;
-                    }
-                }
-            }
-
-            if ($now->greaterThan($latestAllowed)) {
-                throw ValidationException::withMessages([
-                    'type' => ['Clock-out is not allowed at this time. Your shift for today has already ended.'],
-                ]);
-            }
-        }
     }
 
     /**
-     * Block attendance if today is a configured holiday (prevents QR scan on holidays).
+     * @deprecated Per Enhanced Attendance Logic Section 2:
+     * "The system must not block any clock action."
+     * Holiday restrictions have been removed. Employees can clock in/out on holidays.
+     * Method kept as no-op for call-site compatibility.
      */
     private function ensureNotHolidayForAttendance(): void
     {
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $today = Carbon::now($tz)->toDateString();
-        $holidays = config('attendance.holidays', []);
-        if (! is_array($holidays)) {
-            $holidays = [];
-        }
-        if (in_array($today, $holidays, true)) {
-            throw ValidationException::withMessages([
-                'type' => ['Attendance not allowed. Today is a holiday.'],
-            ]);
-        }
     }
 
     /**
@@ -753,7 +630,7 @@ class AttendanceController extends Controller
         ]));
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $this->overtimeService->createOrUpdateFromClockOut($user, $log);
+            $this->overtimeService->syncClockOutToFiledOvertime($user, $log);
             $this->premiumPayCalculator->computeAndStore($log);
         }
 
@@ -962,7 +839,7 @@ class AttendanceController extends Controller
         ]));
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $this->overtimeService->createOrUpdateFromClockOut($user, $log);
+            $this->overtimeService->syncClockOutToFiledOvertime($user, $log);
             $this->premiumPayCalculator->computeAndStore($log);
         }
 
@@ -1053,7 +930,7 @@ class AttendanceController extends Controller
             $timeOnly = $attendanceTime->format('g:i A');
 
             if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-                $this->overtimeService->createOrUpdateFromClockOut($user, $log);
+                $this->overtimeService->syncClockOutToFiledOvertime($user, $log);
                 $this->premiumPayCalculator->computeAndStore($log);
                 $authMethod = $faceContext['authentication_method'] ?? null;
                 $msg = $this->buildAttendanceSmsMessage($type, $timeOnly, null, $authMethod);
@@ -1189,7 +1066,7 @@ class AttendanceController extends Controller
         ]));
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $this->overtimeService->createOrUpdateFromClockOut($user, $log);
+            $this->overtimeService->syncClockOutToFiledOvertime($user, $log);
             $this->premiumPayCalculator->computeAndStore($log);
         }
 
@@ -1624,7 +1501,7 @@ class AttendanceController extends Controller
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $this->overtimeService->createOrUpdateFromClockOut($user, $log);
+            $this->overtimeService->syncClockOutToFiledOvertime($user, $log);
             $this->premiumPayCalculator->computeAndStore($log);
         }
 
@@ -2043,8 +1920,7 @@ class AttendanceController extends Controller
             if (! $isOnLeave && ($daySchedule && ! empty($daySchedule['in']))) {
                 if (! $effectiveTimeIn) {
                     if ($effectiveTimeOut) {
-                        // Clock-out without clock-in: still Present (incomplete pair), never Absent.
-                        $status = 'present';
+                        $status = 'incomplete';
                     } elseif (! $isFuture) {
                         // Absent only after cutoff (e.g. 5 PM). Do NOT mark future dates as absent.
                         $pastCutoff = ! $isToday || AttendanceStatusService::isPastAbsentCutoff($dateKey, $todayNow);
@@ -2176,8 +2052,66 @@ class AttendanceController extends Controller
             $approvedOtHours = ($otRow && $otRow->status === Overtime::STATUS_APPROVED)
                 ? (float) ($otRow->computed_hours ?? 0)
                 : 0.0;
+
+            // Raw-log possible OT for dashboard/unfiled OT:
+            // mirror Admin Reports by counting pre-shift minutes before scheduled start
+            // plus post-shift minutes after scheduled end + OT buffer, even if no OT request exists yet.
+            // Expose explicit time ranges so the employee dashboard can show "06:00 - 08:00 (2h)" style hints.
+            $rawPreOtSegment = null;
+            $rawPostOtSegment = null;
+            $rawOtMinutes = 0;
+            if (
+                is_array($daySchedule)
+                && ! empty($daySchedule['in'])
+                && ! empty($daySchedule['out'])
+                && $effectiveTimeIn
+                && $effectiveTimeOut
+                && $effectiveWorkedMinutes !== null
+                && $status !== 'halfday'
+            ) {
+                $inCarbonForOt = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
+                $outCarbonForOt = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
+                $scheduledStartForOt = AttendanceStatusService::getScheduledStartForDate($dateKey, $daySchedule, $attendanceTz);
+                $scheduledEndForOt = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $attendanceTz);
+
+                if ($scheduledStartForOt && $inCarbonForOt->lessThan($scheduledStartForOt)) {
+                    $preM = (int) $inCarbonForOt->diffInMinutes($scheduledStartForOt);
+                    if ($preM > 0) {
+                        $rawOtMinutes += $preM;
+                        $rawPreOtSegment = [
+                            'kind' => 'pre_shift',
+                            'start' => $this->formatTimeInAttendanceTz($inCarbonForOt),
+                            'end' => $this->formatTimeInAttendanceTz($scheduledStartForOt),
+                            'minutes' => $preM,
+                            'hours' => round($preM / 60, 2),
+                        ];
+                    }
+                }
+
+                if ($scheduledEndForOt) {
+                    $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
+                        ? (int) $daySchedule['overtime_buffer_minutes']
+                        : (int) config('attendance.overtime_buffer_minutes', 15);
+                    $postShiftOtStart = $scheduledEndForOt->copy()->addMinutes($overtimeBuffer);
+                    if ($outCarbonForOt->greaterThan($postShiftOtStart)) {
+                        $postM = (int) $postShiftOtStart->diffInMinutes($outCarbonForOt);
+                        if ($postM > 0) {
+                            $rawOtMinutes += $postM;
+                            $rawPostOtSegment = [
+                                'kind' => 'post_shift',
+                                'start' => $this->formatTimeInAttendanceTz($postShiftOtStart),
+                                'end' => $this->formatTimeInAttendanceTz($outCarbonForOt),
+                                'minutes' => $postM,
+                                'hours' => round($postM / 60, 2),
+                            ];
+                        }
+                    }
+                }
+            }
+
+            $rawOtHours = $rawOtMinutes > 0 ? round($rawOtMinutes / 60, 2) : null;
             $logOtHours = $clockOutForDay?->overtime_hours;
-            $renderedOtHours = $logOtHours !== null ? round((float) $logOtHours, 2) : null;
+            $renderedOtHours = $rawOtHours ?? ($logOtHours !== null ? round((float) $logOtHours, 2) : null);
             // Payable OT in attendance views = approved OT module hours only (rendered OT is separate).
             $displayOvertimeHours = $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : null;
             if ($approvedOtHours > 0.0001) {
@@ -2219,14 +2153,18 @@ class AttendanceController extends Controller
                 $isRestDayRow = ! (is_array($daySchedule) && ! empty(trim((string) ($daySchedule['in'] ?? ''))));
             }
 
+            $isIncomplete = $status === 'incomplete'
+                || ($effectiveTimeIn && ! $effectiveTimeOut && ! $isFuture && $status !== 'clocked_in')
+                || (! $effectiveTimeIn && $effectiveTimeOut);
+
             $days[] = [
                 'date' => $dateKey,
                 'status' => $status,
                 'is_rest_day' => $isRestDayRow,
+                'is_incomplete' => $isIncomplete,
                 'employee_status_label' => $employeeStatusLabel,
                 'schedule_in' => $scheduleInDay,
                 'schedule_out' => $scheduleOutDay,
-                // Match Admin → Attendance: plain H:i in attendance TZ (avoids UI parsing UTC ISO as wall clock).
                 'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
                 'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
                 'virtual_time_out_from_ot' => $virtualTimeOutFromOt,
@@ -2246,6 +2184,10 @@ class AttendanceController extends Controller
                     ? (int) round($renderedOtHours * 60)
                     : null,
                 'rendered_overtime_hours' => $showOtPremiumFields && $renderedOtHours !== null ? $renderedOtHours : null,
+                'raw_overtime_minutes' => $rawOtMinutes > 0 ? $rawOtMinutes : null,
+                'raw_overtime_hours' => $rawOtHours,
+                'raw_pre_ot' => $rawPreOtSegment,
+                'raw_post_ot' => $rawPostOtSegment,
                 'overtime_hours' => $showOtPremiumFields ? $displayOvertimeHours : null,
                 'night_hours' => $hasEffectiveTimeOut ? $displayNightHours : null,
                 'premium_type' => $showOtPremiumFields ? ($clockOutForDay?->premium_type ?? $premiumTypeForDesc) : null,
@@ -2285,6 +2227,8 @@ class AttendanceController extends Controller
 
         $scheduleAssigned = is_array($effectiveSchedule) && $effectiveSchedule !== [];
 
+        $otDetection = $this->otDetectionService->detectForToday($user, $attendanceTz);
+
         $summary = [
             'schedule_assigned' => $scheduleAssigned,
             'present_count' => $metrics['present_count'],
@@ -2314,6 +2258,7 @@ class AttendanceController extends Controller
                 'presence_issue' => $todayPresenceIssue,
                 'presence_filing' => $this->presenceFilingPayloadForSummary($corrections->get($todayDate)?->first(), $attendanceTz),
                 'leave_pay_status' => $todayLeavePayStatus,
+                'ot_detection' => $otDetection,
             ],
         ];
 
