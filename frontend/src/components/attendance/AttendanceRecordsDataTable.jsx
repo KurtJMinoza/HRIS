@@ -296,6 +296,24 @@ export function AttendanceRecordsDataTable({
         ),
       },
       {
+        id: 'overtime_status',
+        header: 'Overtime Status',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm text-foreground">
+            {row.original.overtime_status ? String(row.original.overtime_status).replace(/_/g, ' ') : '—'}
+          </span>
+        ),
+      },
+      {
+        id: 'payroll_impact_hrs',
+        header: 'Payroll Impact (hrs)',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm tabular-nums text-foreground">{tableOtHoursHrs(row.original.payroll_impact_hours)}</span>
+        ),
+      },
+      {
         id: 'status',
         header: ({ column }) => <SortableHeader column={column} label="Status" />,
         accessorFn: (row) =>
@@ -507,6 +525,12 @@ export function AttendanceRecordsDataTable({
                   <p className="font-semibold uppercase tracking-wide text-muted-foreground">Approved / Unapproved OT (hrs)</p>
                   <p className="tabular-nums text-[11px]">
                     {tableApprovedOtHours(r)} / {tableOtHoursHrs(r.unapproved_overtime_hours)}
+                  </p>
+                </div>
+                <div className="col-span-2">
+                  <p className="font-semibold uppercase tracking-wide text-muted-foreground">Overtime Status / Payroll Impact</p>
+                  <p className="text-[11px]">
+                    {(r.overtime_status ? String(r.overtime_status).replace(/_/g, ' ') : '—')} / {tableOtHoursHrs(r.payroll_impact_hours)} hrs
                   </p>
                 </div>
               </div>

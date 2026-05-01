@@ -9,11 +9,12 @@ use App\Models\AttendanceLog;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
+use App\Models\WorkingSchedule;
 use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
+use App\Services\PayrollComputationService;
 use App\Services\HrRoleResolver;
-use App\Services\PayrollRulesEngineService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,8 +28,8 @@ class AttendanceMonitoringController extends Controller
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly AttendancePresenceDisplayService $presenceDisplay,
-        private readonly PayrollRulesEngineService $rulesEngine,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly PayrollComputationService $payrollComputation,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -36,6 +37,59 @@ class AttendanceMonitoringController extends Controller
     private function attendanceTimezone(): string
     {
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+    }
+
+    /**
+     * Build a per-day schedule map from a WorkingSchedule row (same shape used in ReportsController).
+     *
+     * @return array<string, array<string, mixed>>|null
+     */
+    private function buildScheduleFromWorkingSchedule(?WorkingSchedule $workingSchedule): ?array
+    {
+        if (! $workingSchedule || ! $workingSchedule->time_in || ! $workingSchedule->time_out) {
+            return null;
+        }
+
+        $dayConfig = [];
+        foreach (self::DAY_KEYS as $key) {
+            if ($key === 'sun') {
+                continue;
+            }
+            $dayConfig[$key] = [
+                'in' => $workingSchedule->time_in,
+                'out' => $workingSchedule->time_out,
+                'break_start' => $workingSchedule->break_start,
+                'break_end' => $workingSchedule->break_end,
+                'grace_period_minutes' => $workingSchedule->grace_period_minutes,
+                'early_timein_minutes' => $workingSchedule->early_timein_minutes ?? 60,
+                'late_allowance_minutes' => $workingSchedule->late_allowance_minutes,
+                'early_timeout_minutes' => $workingSchedule->early_timeout_minutes,
+                'overtime_buffer_minutes' => $workingSchedule->overtime_buffer_minutes ?? 15,
+            ];
+        }
+
+        return $dayConfig;
+    }
+
+    /**
+     * Resolve effective per-day schedule with the same precedence as Reports:
+     * JSON schedule first, then working_schedule fallback.
+     */
+    private function resolveEffectiveSchedule(User $user): ?array
+    {
+        $schedule = $user->schedule;
+        if (is_array($schedule) && $schedule !== []) {
+            return $schedule;
+        }
+
+        if ($user->working_schedule_id !== null) {
+            $derived = $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
+            if ($derived !== null) {
+                return $derived;
+            }
+        }
+
+        return null;
     }
 
     public function index(Request $request): JsonResponse
@@ -143,6 +197,9 @@ class AttendanceMonitoringController extends Controller
         $headers = [
             'Content-Type' => 'text/csv; charset=UTF-8',
             'Content-Disposition' => 'attachment; filename="'.$file.'"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
         ];
 
         return response()->stream(function () use ($rows) {
@@ -162,10 +219,12 @@ class AttendanceMonitoringController extends Controller
                 'Time In',
                 'Time Out',
                 'Status',
+                'Overtime Status',
                 'Scheduled In',
                 'Scheduled Out',
                 'Scheduled Regular Hours',
                 'Total Worked Hours',
+                'Payroll Impact (hrs)',
                 'Overtime Hours (Approved)',
                 'Unapproved OT (hrs)',
                 'Overtime Hours (Rendered)',
@@ -189,10 +248,12 @@ class AttendanceMonitoringController extends Controller
                     $r['time_in'] ?? null,
                     $r['time_out'] ?? null,
                     $r['status'] ?? null,
+                    $r['overtime_status'] ?? null,
                     $r['schedule_in'] ?? null,
                     $r['schedule_out'] ?? null,
                     $r['scheduled_regular_hours'] ?? null,
                     $r['total_rendered_hours'] ?? ($r['total_hours'] ?? null),
+                    $r['payroll_impact_hours'] ?? null,
                     $r['approved_overtime_hours'] ?? ($r['overtime_hours'] ?? null),
                     $r['unapproved_overtime_hours'] ?? null,
                     $r['rendered_overtime_hours'] ?? null,
@@ -346,7 +407,7 @@ class AttendanceMonitoringController extends Controller
             $dateKey = $cursor->toDateString();
 
             foreach ($employees as $employee) {
-                $effectiveSchedule = $this->rulesEngine->resolveEffectiveSchedule($employee);
+                $effectiveSchedule = $this->resolveEffectiveSchedule($employee);
                 $todaySchedule = is_array($effectiveSchedule) && isset($effectiveSchedule[$dayKey])
                     ? $effectiveSchedule[$dayKey]
                     : null;
@@ -567,20 +628,14 @@ class AttendanceMonitoringController extends Controller
                 $hasClockOut = $effectiveTimeOut !== null;
 
                 $approvedOtHours = $approvedOvertimeForRow ? (float) ($approvedOvertimeForRow->computed_hours ?? 0) : 0.0;
-                $logRenderedOtHours = $clockOutLog?->overtime_hours;
-                $renderedOvertimeHours = null;
-                if ($hasClockOut) {
-                    if ($logRenderedOtHours !== null) {
-                        $renderedOvertimeHours = round((float) $logRenderedOtHours, 2);
-                    } elseif ($overtimeMinutes !== null && $overtimeMinutes > 0) {
-                        $renderedOvertimeHours = round($overtimeMinutes / 60, 2);
-                    }
-                }
+                // Reports-parity OT source:
+                // derive rendered OT only from schedule-vs-clock minutes (pre-shift + post-shift buffer),
+                // not AttendanceLog::overtime_hours snapshots.
+                $otMinutesForRow = $hasClockOut ? ($overtimeMinutes ?? 0) : null;
+                $renderedOvertimeHours = $otMinutesForRow !== null ? round($otMinutesForRow / 60, 2) : null;
                 $approvedOvertimeHours = $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : null;
-                // Match Reports detailed: rendered clock OT vs approved filing hours.
-                $clockOtHours = $hasClockOut
-                    ? round((float) ($renderedOvertimeHours ?? 0), 2)
-                    : null;
+                // Match Reports detailed: clock OT vs approved filing hours.
+                $clockOtHours = $otMinutesForRow !== null ? round($otMinutesForRow / 60, 2) : null;
                 $clockVal = $clockOtHours ?? 0.0;
                 $approvedFromFiling = $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : 0.0;
                 $unapprovedOvertimeHours = max(0.0, round($clockVal - min($approvedFromFiling, $clockVal), 2));
@@ -593,6 +648,25 @@ class AttendanceMonitoringController extends Controller
                 if (is_array($todaySchedule) && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
                     $scheduledRegularMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $tz);
                 }
+                // Payroll Impact (hrs): payslip-parity via PayrollComputationService (paid regular + paid OT),
+                // not min(net-worked, schedule) + raw approved OT (pre-shift "total hours" skewed Impact).
+                $payrollImpactMinutes = 0;
+                if ($isWorkday) {
+                    $tInPayroll = $effectiveTimeIn
+                        ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
+                        : null;
+                    $tOutPayroll = $effectiveTimeOut
+                        ? ($effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut))
+                        : null;
+                    $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
+                        $employee,
+                        $dateKey,
+                        $tInPayroll,
+                        $tOutPayroll,
+                        $tz
+                    );
+                }
+                $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
 
                 $effectiveTimeOutDate = $effectiveTimeOut
                     ? ($effectiveTimeOut instanceof Carbon
@@ -633,11 +707,14 @@ class AttendanceMonitoringController extends Controller
                     'late_label' => $lateLabel,
                     'late_minutes' => $lateMinutes,
                     'undertime_minutes' => $undertimeMinutes,
-                    'overtime_minutes' => $hasClockOut ? $overtimeMinutes : null,
+                    'overtime_minutes' => $otMinutesForRow,
                     'overtime_hours' => $hasClockOut ? $approvedOvertimeHours : null,
                     'rendered_overtime_hours' => $hasClockOut ? $renderedOvertimeHours : null,
                     'approved_overtime_hours' => $approvedOvertimeHours,
                     'unapproved_overtime_hours' => $unapprovedOvertimeHours,
+                    'overtime_status' => $this->normalizeOvertimeModuleStatusForDisplay($approvedOvertimeForRow),
+                    'payroll_impact_minutes' => $payrollImpactMinutes,
+                    'payroll_impact_hours' => $payrollImpactHours,
                     'night_hours' => $hasClockOut ? $clockOutLog?->night_hours : null,
                     'premium_type' => $hasClockOut ? $clockOutLog?->premium_type : null,
                     'premium_description' => $hasClockOut
@@ -808,5 +885,20 @@ class AttendanceMonitoringController extends Controller
         $workedMinutes = $clockIn === null ? $total : null;
 
         return [$timeIn, $timeOut, $workedMinutes];
+    }
+
+    /**
+     * Overtime module status for attendance/report rows: only show approved when payable hours exist.
+     */
+    private function normalizeOvertimeModuleStatusForDisplay(?Overtime $ot): ?string
+    {
+        if ($ot === null) {
+            return null;
+        }
+        if ($ot->status === Overtime::STATUS_APPROVED && (float) ($ot->computed_hours ?? 0) <= 0.0001) {
+            return null;
+        }
+
+        return $ot->status;
     }
 }

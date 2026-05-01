@@ -1305,6 +1305,8 @@ export async function exportAdminAttendance(params = {}) {
   if (params.pending_attention === true) query.set('pending_attention', '1')
 
   query.set('format', params.format === 'json' ? 'json' : 'csv')
+  // Always bypass intermediary/browser cache so exports include the latest columns/data.
+  query.set('_ts', String(Date.now()))
 
   const path = `/admin/attendance/export?${query.toString()}`
   const res = await authenticatedFetch(path)

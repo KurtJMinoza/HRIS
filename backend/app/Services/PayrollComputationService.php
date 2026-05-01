@@ -648,6 +648,38 @@ class PayrollComputationService
     }
 
     /**
+     * Payable minutes for Attendance / Reports "Payroll Impact (hrs)" — same engine as the payslip daily row:
+     * {@see computeDayPayroll()} paid regular (day + night) plus paid OT (day + night).
+     *
+     * Uses segmentation, tardiness caps, and grace regular credit — not raw
+     * {@see AttendanceStatusService::getNetWorkedMinutes()} (total-hours includes pre-shift span that payroll
+     * books as OT, which inflated Impact vs the Regular pay line).
+     *
+     * Missing punches follow the payroll no-punch branch (0 worked pay unless paid leave / policy OT-without-clock);
+     * never substitutes full scheduled hours. Schedule resolution matches payroll via
+     * {@see resolveEffectiveScheduleForDailyComputation()}.
+     *
+     * @param  Carbon|null  $timeIn  Log/correction/virtual OT end time in (any TZ); normalized inside computeDayPayroll.
+     * @param  Carbon|null  $timeOut
+     */
+    public function payrollImpactMinutesForAttendanceDisplay(
+        User $user,
+        string $dateKey,
+        ?Carbon $timeIn,
+        ?Carbon $timeOut,
+        ?string $tz = null
+    ): int {
+        $tz = $tz ?? $this->getTimezone();
+        [$effectiveSchedule] = $this->resolveEffectiveScheduleForDailyComputation($user);
+        // Peso amounts use this rate; minute ledger for worked days is invariant for any positive stub.
+        $day = $this->computeDayPayroll($user, $dateKey, $timeIn, $timeOut, $effectiveSchedule, 1000.0, $tz);
+        $reg = (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0);
+        $ot = (int) ($day['ot_day_minutes'] ?? 0) + (int) ($day['ot_night_minutes'] ?? 0);
+
+        return max(0, $reg + $ot);
+    }
+
+    /**
      * Sum OT request hours for the workday. Matches primary payroll date first; if none, matches the
      * previous calendar day ONLY when the clock-in is actually from a different calendar day
      * (true overnight/graveyard shift where OT was filed on the prior date).

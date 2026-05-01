@@ -25,6 +25,12 @@ import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRe
 import { AttendanceRecordDetailSheet } from '@/components/attendance/AttendanceRecordDetailSheet'
 import {
   attendanceRecordRef,
+  formatScheduleRange,
+  tableRenderedHoursLabel,
+  tableLateMinutes,
+  tableUndertimeMinutes,
+  tableOvertimeMinutes,
+  minutesCellText,
   resolveAdminStatusLabel,
   tableApprovedOtHours,
   tableOtHoursHrs,
@@ -97,6 +103,14 @@ function formatTime(value) {
   } catch {
     return String(value)
   }
+}
+
+function toCsvCell(value) {
+  const s = value == null ? '' : String(value)
+  if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+    return `"${s.replace(/"/g, '""')}"`
+  }
+  return s
 }
 
 /** Local calendar date YYYY-MM-DD (avoids UTC date mismatch with server timezone). */
@@ -558,6 +572,37 @@ export default function AdminAttendance() {
       ? null
       : (employees.find(([id]) => String(id) === String(employeeId)) || [null, null])[1]
 
+  function attendanceTableExportSchema(exportRows) {
+    const columns = [
+      // Export parity contract: always include the same attendance data columns in this exact order.
+      { key: 'employee', label: 'Employee', accessor: (r) => r.employee_name || '' },
+      { key: 'company', label: 'Company', accessor: (r) => r.company_name || '—' },
+      { key: 'department', label: 'Department', accessor: (r) => r.department || '—' },
+      { key: 'date', label: 'Date', accessor: (r) => r.date || '' },
+      { key: 'schedule', label: 'Schedule', accessor: (r) => formatScheduleRange(r) },
+      { key: 'time_in', label: 'Time in', accessor: (r) => r.time_in || '—' },
+      { key: 'time_out', label: 'Time out', accessor: (r) => r.time_out || '—' },
+      { key: 'total_hours', label: 'Total hours', accessor: (r) => tableRenderedHoursLabel(r) },
+      { key: 'late_min', label: 'Late (min)', accessor: (r) => minutesCellText(tableLateMinutes(r)) },
+      { key: 'undertime_min', label: 'Undertime (min)', accessor: (r) => minutesCellText(tableUndertimeMinutes(r)) },
+      { key: 'overtime_min', label: 'Overtime (min)', accessor: (r) => minutesCellText(tableOvertimeMinutes(r)) },
+      { key: 'unapproved_ot', label: 'Unapproved OT (hrs)', accessor: (r) => tableOtHoursHrs(r.unapproved_overtime_hours) },
+      { key: 'approved_ot', label: 'Approved OT (hrs)', accessor: (r) => tableApprovedOtHours(r) },
+      {
+        key: 'overtime_status',
+        label: 'Overtime Status',
+        accessor: (r) => (r.overtime_status ? String(r.overtime_status).replace(/_/g, ' ') : '—'),
+      },
+      { key: 'payroll_impact', label: 'Payroll Impact (hrs)', accessor: (r) => tableOtHoursHrs(r.payroll_impact_hours) },
+      { key: 'status', label: 'Status', accessor: (r) => resolveAdminStatusLabel(r) },
+    ]
+
+    return {
+      headers: columns.map((c) => c.label),
+      rowsMatrix: exportRows.map((r) => columns.map((c) => c.accessor(r))),
+    }
+  }
+
   function pdfColumns() {
     const base = [
       { label: 'Record ID', accessor: (row) => attendanceRecordRef(row.employee_id, row.date) },
@@ -603,6 +648,14 @@ export default function AdminAttendance() {
       {
         label: 'Unapproved OT (hrs)',
         accessor: (row) => tableOtHoursHrs(row.unapproved_overtime_hours),
+      },
+      {
+        label: 'Overtime status',
+        accessor: (row) => (row.overtime_status ? String(row.overtime_status).replace(/_/g, ' ') : '—'),
+      },
+      {
+        label: 'Payroll impact (hrs)',
+        accessor: (row) => tableOtHoursHrs(row.payroll_impact_hours),
       },
     ]
     const payroll = [
@@ -669,15 +722,23 @@ export default function AdminAttendance() {
   const secondsAgo = Math.floor((Date.now() - lastRefresh.getTime()) / 1000)
 
   function exportAttendanceCsv() {
-    // Use backend export endpoint for consistent column set and status logic.
+    // Build CSV from the same column schema as the on-screen table for 1:1 parity.
     return exportAdminAttendance({
       ...attendanceFilters,
-      format: 'csv',
-    }).then((blob) => {
+      format: 'json',
+    }).then((data) => {
+      const exportRows = Array.isArray(data?.rows) ? data.rows : []
+      const { headers, rowsMatrix } = attendanceTableExportSchema(exportRows)
+      const csvLines = [
+        headers.map(toCsvCell).join(','),
+        ...rowsMatrix.map((row) => row.map(toCsvCell).join(',')),
+      ]
+      const blob = new Blob(["\uFEFF" + csvLines.join('\r\n')], { type: 'text/csv;charset=utf-8;' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `attendance-${fromDate || ''}-${toDate || ''}.csv`
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      a.download = `attendance-${fromDate || ''}-${toDate || ''}-${stamp}.csv`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -688,46 +749,11 @@ export default function AdminAttendance() {
   async function exportAttendanceExcel() {
     const data = await exportAdminAttendance({ ...attendanceFilters, format: 'json' })
     const exportRows = Array.isArray(data?.rows) ? data.rows : []
-    const headers = [
-      'Employee ID',
-      'Employee Name',
-      'Department',
-      'Company',
-      'Date',
-      'Time In',
-      'Time Out',
-      'Status',
-      'Approved OT (hrs)',
-      'Unapproved OT (hrs)',
-      'Rendered Overtime Hours',
-      'Night Hours',
-      'Total Hours Worked',
-      'Has Correction',
-      'Correction Approved',
-      'Correction Remarks',
-    ]
-    const rowsMatrix = exportRows.map((r) => [
-      r.employee_id ?? '',
-      r.employee_name ?? '',
-      r.department ?? '',
-      r.company_name ?? '',
-      r.date ?? '',
-      r.time_in ?? '',
-      r.time_out ?? '',
-      resolveAdminStatusLabel(r),
-      r.approved_overtime_hours ?? r.overtime_hours ?? '',
-      r.unapproved_overtime_hours ?? '',
-      r.rendered_overtime_hours ?? '',
-      r.night_hours ?? '',
-      r.total_rendered_hours ?? r.total_hours ?? '',
-      r.has_correction ? 'Yes' : 'No',
-      r.correction_approved ? 'Yes' : 'No',
-      r.correction_remarks ?? '',
-    ])
+    const { headers, rowsMatrix } = attendanceTableExportSchema(exportRows)
     await exportRowsToXlsx(
       headers,
       rowsMatrix,
-      `attendance-${fromDate || ''}-${toDate || ''}.xlsx`,
+      `attendance-${fromDate || ''}-${toDate || ''}-${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`,
       'Attendance',
     )
   }

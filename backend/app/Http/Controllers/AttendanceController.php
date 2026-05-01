@@ -16,6 +16,7 @@ use App\Services\FaceVerificationService;
 use App\Services\LeaveCreditService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeService;
+use App\Services\PayrollComputationService;
 use App\Services\PremiumPayCalculatorService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Support\EmployeeScheduleResolver;
@@ -34,6 +35,7 @@ class AttendanceController extends Controller
         private readonly PresenceFilingCorrectionFormatter $presenceFilingFormatter,
         private readonly LeaveCreditService $leaveCreditService,
         private readonly OtDetectionService $otDetectionService,
+        private readonly PayrollComputationService $payrollComputation,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -2067,11 +2069,13 @@ class AttendanceController extends Controller
             }
 
             $rawOtHours = $rawOtMinutes > 0 ? round($rawOtMinutes / 60, 2) : null;
-            $logOtHours = $clockOutForDay?->overtime_hours;
-            $renderedOtHours = $rawOtHours ?? ($logOtHours !== null ? round((float) $logOtHours, 2) : null);
+            // Reports-parity OT source: use schedule-vs-clock rendered OT only.
+            // Do not fall back to AttendanceLog::overtime_hours snapshots for core OT/payroll columns.
+            $otMinutesForRow = $hasEffectiveTimeOut ? $rawOtMinutes : null;
+            $renderedOtHours = $otMinutesForRow !== null ? round($otMinutesForRow / 60, 2) : null;
             // Parity with Admin → Reports detailed: clock OT vs approved filing.
-            $clockOtHours = $hasEffectiveTimeOut
-                ? round((float) ($renderedOtHours ?? 0), 2)
+            $clockOtHours = $otMinutesForRow !== null
+                ? round($otMinutesForRow / 60, 2)
                 : null;
             $clockVal = $clockOtHours ?? 0.0;
             $approvedFromFiling = round((float) $approvedOtHours, 2);
@@ -2106,6 +2110,25 @@ class AttendanceController extends Controller
             if (is_array($daySchedule) && ! empty($daySchedule['in']) && ! empty($daySchedule['out'])) {
                 $scheduledRegularMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $daySchedule, $attendanceTz);
             }
+            // Payroll Impact (hrs): same paid minutes as payslip (computeDayPayroll), not display net-worked + approved OT.
+            $payrollImpactMinutes = 0;
+            $isScheduledWorkday = is_array($daySchedule) && ! empty($daySchedule['in']);
+            if ($isScheduledWorkday) {
+                $tInPayroll = $effectiveTimeIn
+                    ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
+                    : null;
+                $tOutPayroll = $effectiveTimeOut
+                    ? ($effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut))
+                    : null;
+                $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
+                    $user,
+                    $dateKey,
+                    $tInPayroll,
+                    $tOutPayroll,
+                    $attendanceTz
+                );
+            }
+            $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
 
             $scheduleInDay = is_array($daySchedule) && ! empty($daySchedule['in'])
                 ? (string) $daySchedule['in']
@@ -2147,9 +2170,8 @@ class AttendanceController extends Controller
                 'late_minutes' => $dayLateMinutes,
                 'late_label' => $dayLateLabel,
                 'undertime_minutes' => $dayUndertimeMinutes,
-                'overtime_minutes' => $showOtPremiumFields && $renderedOtHours !== null && $renderedOtHours > 0
-                    ? (int) round($renderedOtHours * 60)
-                    : null,
+                // Reports parity: OT minutes only when we have an actual/virtual time-out anchor.
+                'overtime_minutes' => $otMinutesForRow,
                 'rendered_overtime_hours' => $showOtPremiumFields && $renderedOtHours !== null ? $renderedOtHours : null,
                 'raw_overtime_minutes' => $rawOtMinutes > 0 ? $rawOtMinutes : null,
                 'raw_overtime_hours' => $rawOtHours,
@@ -2166,10 +2188,12 @@ class AttendanceController extends Controller
                     )
                     : null,
                 'calculated_pay_factor' => $hasEffectiveTimeOut ? $clockOutForDay?->calculated_pay_factor : null,
-                'overtime_status' => $otRow?->status,
+                'overtime_status' => $this->normalizeOvertimeModuleStatusForDisplay($otRow),
                 'approved_overtime_hours' => $approvedOtHours > 0 ? round($approvedOtHours, 2) : null,
                 /** Same derivation as {@see ReportsController::detailed()} `approved_overtime_hours` / `unapproved_overtime_hours`. */
                 'unapproved_overtime_hours' => $unapprovedOtHours > 0.0001 ? round($unapprovedOtHours, 2) : null,
+                'payroll_impact_minutes' => $payrollImpactMinutes,
+                'payroll_impact_hours' => $payrollImpactHours,
                 'has_approved_overtime' => $approvedOtHours > 0.0001,
                 'presence_label' => $presenceLabel,
                 'presence_issue' => $presenceIssue,
@@ -2262,6 +2286,21 @@ class AttendanceController extends Controller
             actor: null,
             includeDisplayFields: true
         );
+    }
+
+    /**
+     * Overtime module status for attendance rows: never show approved when payable hours are zero.
+     */
+    private function normalizeOvertimeModuleStatusForDisplay(?Overtime $ot): ?string
+    {
+        if ($ot === null) {
+            return null;
+        }
+        if ($ot->status === Overtime::STATUS_APPROVED && (float) ($ot->computed_hours ?? 0) <= 0.0001) {
+            return null;
+        }
+
+        return $ot->status;
     }
 
     /**

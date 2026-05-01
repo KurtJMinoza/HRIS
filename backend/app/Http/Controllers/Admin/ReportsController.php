@@ -18,6 +18,7 @@ use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
+use App\Services\PayrollComputationService;
 use App\Services\PremiumReportService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -34,6 +35,7 @@ class ReportsController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly AttendancePresenceDisplayService $presenceDisplay,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly PayrollComputationService $payrollComputation,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -1524,12 +1526,10 @@ class ReportsController extends Controller
                 }
 
                 $scheduledDurationHours = null;
-                $requiredMinutesForImpact = 0;
                 if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
                     $reqDur = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
                     if ($reqDur > 0) {
                         $scheduledDurationHours = round($reqDur / 60, 2);
-                        $requiredMinutesForImpact = $reqDur;
                     }
                 }
 
@@ -1539,19 +1539,25 @@ class ReportsController extends Controller
                     ? round((float) ($ot->computed_hours ?? 0), 2)
                     : 0.0;
 
-                // Payroll Impact = Regular hours (capped at schedule) + Approved OT hours only.
-                // Unapproved OT is excluded — employee must file and get OT approved for it to count.
-                // For undertime days this uses actual worked minutes, not scheduled minutes or the undertime shortfall.
+                // Payroll Impact (hrs): {@see PayrollComputationService::payrollImpactMinutesForAttendanceDisplay}
+                // — payslip-parity (paid regular + paid OT). Avoids schedule caps / synthetic undertime-leave hours.
                 $payrollImpactMinutes = 0;
-                if ($effectiveWorkedMinutes !== null && $effectiveWorkedMinutes > 0) {
-                    $regularForImpact = $requiredMinutesForImpact > 0
-                        ? min((int) $effectiveWorkedMinutes, $requiredMinutesForImpact)
-                        : (int) $effectiveWorkedMinutes;
-                    $approvedOtMinutesForImpact = (int) round($approvedFromFiling * 60);
-                    $payrollImpactMinutes = $regularForImpact + $approvedOtMinutesForImpact;
+                $payrollImpactHours = 0.0;
+                if ($todaySchedule && ! empty($todaySchedule['in'])) {
+                    $tInPayroll = $effectiveTimeIn
+                        ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
+                        : null;
+                    $tOutPayroll = $effectiveTimeOut
+                        ? ($effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut))
+                        : null;
+                    $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
+                        $employee,
+                        $dateKey,
+                        $tInPayroll,
+                        $tOutPayroll,
+                        $attendanceTz
+                    );
                     $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
-                } else {
-                    $payrollImpactHours = 0;
                 }
                 $clockVal = $clockOtHours ?? 0.0;
                 $approvedOtHours = $approvedFromFiling;
