@@ -59,8 +59,6 @@ export function FaceRekognitionLiveness({
   const [apiErrorCode, setApiErrorCode] = useState(null)
   const [successSummary, setSuccessSummary] = useState(null)
   const [silentSessionRefresh, setSilentSessionRefresh] = useState(false)
-  /** 0 = first attempt; auto-retry up to 2 more times (3 total). */
-  const faceMatchAttemptRef = useRef(0)
   const [verifyPhase, setVerifyPhase] = useState('verify') // 'verify' | 'match' — shown during backend round-trip
   const handlingErrorRef = useRef(false)
   const amplifyConfiguredRef = useRef(false)
@@ -93,7 +91,6 @@ export function FaceRekognitionLiveness({
     async ({ silent = false } = {}) => {
       if (!silent) {
         setError(null)
-        faceMatchAttemptRef.current = 0
         setLoading(true)
       } else {
         setSilentSessionRefresh(true)
@@ -155,7 +152,6 @@ export function FaceRekognitionLiveness({
         // (InsightFace embedding + duplicate scan + DB write under lock).
         // The parent's handleFaceRegisterVerified owns the timeout/error display.
         await onVerified(session.sessionId)
-        faceMatchAttemptRef.current = 0
         playSuccess(SOUND_FEEDBACK_ENABLED)
         onSuccess?.()
         return
@@ -175,7 +171,6 @@ export function FaceRekognitionLiveness({
           FACE_MATCH_TIMEOUT_MS,
           'Face verification took too long. Please try again.'
         )
-        faceMatchAttemptRef.current = 0
         playSuccess(SOUND_FEEDBACK_ENABLED)
         setKioskSuccess(true)
         setKioskSuccessData(data)
@@ -188,7 +183,6 @@ export function FaceRekognitionLiveness({
         FACE_MATCH_TIMEOUT_MS,
         'Face login timed out. Please try again.'
       )
-      faceMatchAttemptRef.current = 0
       playSuccess(SOUND_FEEDBACK_ENABLED)
       const att = data?.attendance?.attendance
       const typeLabel = att?.type === 'clock_out' ? 'Out' : 'In'
@@ -207,19 +201,6 @@ export function FaceRekognitionLiveness({
       const msg = err?.message || 'Face verification failed'
       playError(SOUND_FEEDBACK_ENABLED)
       const code = err?.errorCode
-      const maxAutoRetries = kioskMode ? 1 : 1
-      if (code === 'face_not_recognized' && faceMatchAttemptRef.current < maxAutoRetries) {
-        faceMatchAttemptRef.current += 1
-        const attemptNum = faceMatchAttemptRef.current + 1
-        const total = maxAutoRetries + 1
-        toast.info(`Trying again (${attemptNum} of ${total})`, {
-          description:
-            'Face not recognized. If your face is not yet enrolled, please register it first in My QR & Face.',
-        })
-        setSubmitting(false)
-        await fetchSession({ silent: true })
-        return
-      }
       if (code === 'spoof_detected') {
         toast.error('Spoof detected', {
           description: 'Liveness check failed. Please use a real face, not a photo or screen.',
@@ -229,13 +210,13 @@ export function FaceRekognitionLiveness({
           setApiErrorCode(code)
         }
       } else if (code === 'face_not_recognized') {
-        toast.error('No match this attempt', {
+        toast.error('Face not recognized', {
           description: kioskMode
-            ? msg || 'Face not recognized. Please use your registered face.'
+            ? msg || 'Face not recognized. Please try again.'
             : msg || 'Try again with good lighting, or sign in with email and password.',
         })
         if (kioskMode) {
-          setApiError('Face not recognized. If your face is not registered yet, please register it first in My QR & Face.')
+          setApiError('Face not recognized. Please try again.')
           setApiErrorCode(code)
         }
       } else if (code === 'face_not_registered') {

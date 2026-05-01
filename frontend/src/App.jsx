@@ -265,11 +265,11 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
         setFaceErrorCode('spoof_detected')
         toast.error('Spoof detected', { description: 'Liveness check failed. Please use a real face, not a photo or screen.' })
       } else if (code === 'face_not_recognized') {
-        toast.error('No match this attempt', {
+        toast.error('Face not recognized', {
           description:
             msg ||
             (kioskMode
-              ? 'Try again with even lighting, or scan your QR code on this kiosk.'
+              ? 'Face not recognized. Please try again.'
               : 'Try again with good lighting, or sign in with username/email and password.'),
         })
       } else if (code === 'no_face_detected') {

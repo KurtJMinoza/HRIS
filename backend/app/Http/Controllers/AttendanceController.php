@@ -212,31 +212,6 @@ class AttendanceController extends Controller
     }
 
     /**
-     * Temporary lockout guard for repeated face verification failures.
-     */
-    private function isFaceAttemptTemporarilyLocked(?int $userId, Request $request): bool
-    {
-        $limit = (int) config('attendance.face_failed_attempts_limit', 5);
-        $windowMinutes = (int) config('attendance.face_failed_attempts_window_minutes', 10);
-        if ($limit <= 0 || $windowMinutes <= 0) {
-            return false;
-        }
-
-        $since = now()->subMinutes($windowMinutes);
-        $ip = $request->ip() ?? '0.0.0.0';
-
-        return FailedFaceAttempt::query()
-            ->where('created_at', '>=', $since)
-            ->where(function ($q) use ($userId, $ip) {
-                if ($userId !== null) {
-                    $q->orWhere('user_id', $userId);
-                }
-                $q->orWhere('ip_address', $ip);
-            })
-            ->count() >= $limit;
-    }
-
-    /**
      * Enforce leave-based attendance restrictions for today.
      *
      * Rules:
@@ -1265,15 +1240,6 @@ class AttendanceController extends Controller
                 ], 422);
             }
 
-            if ($this->isFaceAttemptTemporarilyLocked((int) $claimedUser->id, $request)) {
-                $this->recordFailedAttempt($claimedUser->id, $request, false, 'rate_limited');
-
-                return response()->json([
-                    'message' => 'Too many failed face attempts. Please wait a few minutes before trying again.',
-                    'errors' => ['face' => ['Too many failed face attempts. Please wait a few minutes before trying again.']],
-                    'error_code' => 'rate_limited',
-                ], 429);
-            }
         }
 
         $result = $sessionId
@@ -1377,8 +1343,8 @@ class AttendanceController extends Controller
                 ]);
 
                 return response()->json([
-                    'message' => 'Face not recognized. Please use your registered face.',
-                    'errors' => ['face' => ['Face not recognized. Please use your registered face.']],
+                    'message' => 'Face not recognized. Please try again.',
+                    'errors' => ['face' => ['Face not recognized. Please try again.']],
                     'error_code' => 'face_not_recognized',
                     'hint' => 'If this keeps happening, re-register your face in My QR & Face.',
                     'fallback' => 'qr',
@@ -1397,8 +1363,8 @@ class AttendanceController extends Controller
                 $this->recordFailedAttempt(null, $request, false, 'face_not_recognized');
 
                 return response()->json([
-                    'message' => 'Face not recognized. Please use your registered face.',
-                    'errors' => ['face' => ['Face not recognized. Please use your registered face.']],
+                    'message' => 'Face not recognized. Please try again.',
+                    'errors' => ['face' => ['Face not recognized. Please try again.']],
                     'error_code' => 'face_not_recognized',
                     'performance' => ['match_ms' => $matchMs],
                 ], 422);
@@ -1418,8 +1384,8 @@ class AttendanceController extends Controller
                 ]);
 
                 return response()->json([
-                    'message' => 'Face not recognized. Please use your registered face.',
-                    'errors' => ['face' => ['Face not recognized. Please use your registered face.']],
+                    'message' => 'Face not recognized. Please try again.',
+                    'errors' => ['face' => ['Face not recognized. Please try again.']],
                     'error_code' => 'face_not_recognized',
                     'performance' => ['match_ms' => $matchMs],
                 ], 422);
@@ -1439,15 +1405,6 @@ class AttendanceController extends Controller
                     'errors' => ['face' => ['Your face data needs to be updated. Please re-register your face in My QR & Face.']],
                     'error_code' => 'face_needs_reregistration',
                 ], 422);
-            }
-            if ($this->isFaceAttemptTemporarilyLocked((int) $identifiedUser->id, $request)) {
-                $this->recordFailedAttempt($identifiedUser->id, $request, false, 'rate_limited');
-
-                return response()->json([
-                    'message' => 'Too many failed face attempts. Please wait a few minutes before trying again.',
-                    'errors' => ['face' => ['Too many failed face attempts. Please wait a few minutes before trying again.']],
-                    'error_code' => 'rate_limited',
-                ], 429);
             }
             $similarityScore = $identified['similarity_score'];
             $user = $this->refreshUserForScheduleCheck($identifiedUser);
