@@ -59,10 +59,45 @@ import Webcam from 'react-webcam'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 
-/** Login duo people mark — SVG only (one white tile; avoids nested/cropped raster glitches). */
-function LoginHrDualFigureMark({ className }) {
+/**
+ * Duo figures + optional tile. `minimal` aligns with kiosk login reference (icon beside HRIS title).
+ */
+function LoginHrDualFigureMark({ className, presentation = 'tile' }) {
   const gid = useId().replace(/:/g, '')
   const gradId = `hrisLoginDuoGrad-${gid}`
+  const svg = (
+    <svg
+      viewBox="0 0 88 76"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+      className={cn(presentation === 'minimal' ? 'h-[4.65rem] w-22' : 'h-15.5 w-18 md:h-16.5 md:w-20')}
+    >
+      <defs>
+        <linearGradient id={gradId} x1={44} y1={8} x2={44} y2={74} gradientUnits="userSpaceOnUse">
+          <stop stopColor="#ffc02e" />
+          <stop offset="0.52" stopColor="#ff9420" />
+          <stop offset="1" stopColor="#ea4a12" />
+        </linearGradient>
+      </defs>
+      <g fill={`url(#${gradId})`} opacity="0.95">
+        <ellipse cx={28} cy={27} rx={12} ry={13} />
+        <path d="M16 71V55Q28 44 41 52V71H16z" />
+      </g>
+      <g fill={`url(#${gradId})`}>
+        <ellipse cx={53} cy={25} rx={13} ry={14} />
+        <path d="M35 71V53Q53 46 68 53V71H35z" />
+      </g>
+    </svg>
+  )
+
+  if (presentation === 'minimal') {
+    return (
+      <span className={cn('inline-flex shrink-0 items-center justify-center py-1', className)} role="img" aria-label="HRIS icon">
+        {svg}
+      </span>
+    )
+  }
+
   return (
     <div
       className={cn(
@@ -73,27 +108,7 @@ function LoginHrDualFigureMark({ className }) {
       role="img"
       aria-label="HRIS icon"
     >
-      <svg
-        viewBox="0 0 88 76"
-        className="h-15.5 w-18 md:h-16.5 md:w-20"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden
-      >
-        <defs>
-          <linearGradient id={gradId} x1={44} y1={8} x2={44} y2={74} gradientUnits="userSpaceOnUse">
-            <stop stopColor="#ffb020" />
-            <stop offset="1" stopColor="#ea4a12" />
-          </linearGradient>
-        </defs>
-        <g fill={`url(#${gradId})`} opacity="0.92">
-          <ellipse cx={28} cy={27} rx={12} ry={13} />
-          <path d="M16 71V55Q28 44 41 52V71H16z" />
-        </g>
-        <g fill={`url(#${gradId})`}>
-          <ellipse cx={53} cy={25} rx={13} ry={14} />
-          <path d="M35 71V53Q53 46 68 53V71H35z" />
-        </g>
-      </svg>
+      {svg}
     </div>
   )
 }
@@ -1506,12 +1521,24 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
     >
       <div className="relative z-10 w-full max-w-[min(100%,44rem)] lg:translate-y-6">
 
-        {/* Duo-figure logo tile + separate headings (PNG omits cropped “HRIS” under art) */}
-        <div className="mb-6 flex flex-col items-center gap-3 px-2 text-center">
-          <LoginHrDualFigureMark />
-          <h1 className="text-[2.85rem] font-black leading-none tracking-tight text-[#111318] md:text-[3.35rem]">HRIS</h1>
-          <p className="text-base font-medium text-[#2d3138]">Human Resource Information System</p>
-          <p className="text-[0.9375rem] font-semibold tracking-wide text-[#ff6818]">Secure. Intelligent. Automated.</p>
+        {/* Kiosk-login brand — tight vertical rhythm */}
+        <div className="mb-6 flex flex-col items-center px-2">
+          <div className="flex flex-col items-center gap-2 text-center">
+            <div className="flex flex-wrap items-center justify-center gap-4 md:gap-5">
+              <LoginHrDualFigureMark presentation="minimal" />
+              <h1 className="text-[clamp(2.6rem,8vw,3.875rem)] font-black uppercase leading-none tracking-[-0.02em] text-[#141414] md:tracking-normal">
+                HRIS
+              </h1>
+            </div>
+            <p className="max-w-104 text-[1.0625rem] font-medium leading-tight text-black md:text-[1.125rem]">
+              Human Resource Information System
+            </p>
+            <p className="text-[0.96875rem] font-normal leading-tight tracking-wide text-[#2b2f37] md:text-[1rem]">
+              <span className="text-black">Secure.</span>{' '}
+              <span className="text-black">Intelligent.</span>{' '}
+              <span className="font-semibold text-[#ff5912]">Automated.</span>
+            </p>
+          </div>
         </div>
 
         <Card className="w-full rounded-2xl border border-[#eceff3] bg-white/92 shadow-[0_24px_55px_rgba(15,23,42,0.12)] ring-1 ring-white/80 backdrop-blur-sm">
