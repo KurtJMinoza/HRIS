@@ -1350,27 +1350,28 @@ function SmartDTRPreview({ className }) {
       {/* Kiosk: duplicate clock-in (face / QR) → correction filing instead of forcing another punch */}
       <Dialog open={kioskCorrectionModal.open} onOpenChange={(open) => !open && closeKioskCorrectionModal()}>
         <DialogContent
-          overlayClassName="bg-black/40 backdrop-blur-md"
+          overlayClassName="bg-slate-900/35 backdrop-blur-sm dark:bg-black/40 dark:backdrop-blur-md"
           className={cn(
-            'max-w-[min(100%,440px)] overflow-hidden rounded-[20px] border border-amber-400/25',
-            'bg-white/8 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_24px_48px_rgba(0,0,0,0.35)]',
-            'backdrop-blur-2xl sm:max-w-[440px]',
+            'max-w-[min(100%,440px)] overflow-hidden rounded-[20px] border border-slate-200 bg-white',
+            'shadow-[0_24px_48px_rgba(15,23,42,0.15)] sm:max-w-[440px]',
+            'dark:border-amber-400/25 dark:bg-white/8 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_24px_48px_rgba(0,0,0,0.35)] dark:backdrop-blur-2xl',
           )}
           innerClassName="gap-0 overflow-x-hidden p-0 sm:p-0"
           closeButtonClassName={cn(
-            'rounded-lg border border-white/25 bg-white/15 text-white shadow-md backdrop-blur-sm',
-            'hover:bg-white/22 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-400/50 focus-visible:ring-offset-0',
+            'rounded-lg border border-slate-300 bg-white text-slate-700 shadow-sm',
+            'hover:bg-slate-50 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-amber-400/50 focus-visible:ring-offset-0',
+            'dark:border-white/25 dark:bg-white/15 dark:text-white dark:shadow-md dark:backdrop-blur-sm dark:hover:bg-white/22 dark:hover:text-white',
           )}
         >
-          <div className="w-full min-w-0 max-w-full overflow-x-hidden px-7 pb-8 pt-12 text-center text-white sm:px-10">
-            <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-full border border-amber-400/35 bg-amber-500/15">
-              <ClipboardList className="size-7 text-amber-200" aria-hidden />
+          <div className="w-full min-w-0 max-w-full overflow-x-hidden px-7 pb-8 pt-12 text-center text-slate-900 sm:px-10 dark:text-white">
+            <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-full border border-amber-300 bg-amber-50 dark:border-amber-400/35 dark:bg-amber-500/15">
+              <ClipboardList className="size-7 text-amber-700 dark:text-amber-200" aria-hidden />
             </div>
             {(kioskCorrectionModal.employeeName || '').trim() && (
-              <p className="mb-1 text-sm font-medium text-white/70">{kioskCorrectionModal.employeeName.trim()}</p>
+              <p className="mb-1 text-sm font-medium text-slate-500 dark:text-white/70">{kioskCorrectionModal.employeeName.trim()}</p>
             )}
-            <h2 className="mb-3 text-xl font-bold tracking-tight text-white">{kioskCorrectionConflictTitle}</h2>
-            <p className="mx-auto max-w-prose text-sm leading-relaxed text-white/75">{kioskCorrectionConflictBody}</p>
+            <h2 className="mb-3 text-xl font-bold tracking-tight text-slate-900 dark:text-white">{kioskCorrectionConflictTitle}</h2>
+            <p className="mx-auto max-w-prose text-sm leading-relaxed text-slate-600 dark:text-white/75">{kioskCorrectionConflictBody}</p>
             {/*
               Keep actions in a single column: sm:flex-row + w-full on both buttons forces each to 100% width
               in a row and overflows (orange “File correction” clipped past the modal edge).
@@ -1380,7 +1381,7 @@ function SmartDTRPreview({ className }) {
                 type="button"
                 variant="secondary"
                 onClick={closeKioskCorrectionModal}
-                className="h-12 w-full max-w-full min-w-0 shrink rounded-xl border border-white/15 bg-white/10 text-[15px] font-semibold text-white hover:bg-white/14"
+                className="h-12 w-full max-w-full min-w-0 shrink rounded-xl border border-slate-300 bg-white text-[15px] font-semibold text-black hover:bg-slate-50 dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/14"
               >
                 Scan again
               </Button>
@@ -1808,13 +1809,18 @@ function AccessDeniedToast() {
   return null
 }
 
+function ThemedToaster() {
+  const { theme } = useTheme()
+  return <Toaster richColors position="top-right" closeButton theme={theme} />
+}
+
 // —— App: router + auth + role-based routes ——
 export default function App() {
   return (
     <BrowserRouter basename={routerBasename}>
       <AuthProvider>
         <ThemeProvider>
-          <Toaster richColors position="top-right" closeButton />
+          <ThemedToaster />
           <AccessDeniedToast />
           <ErrorBoundary fullScreen>
             <Routes>

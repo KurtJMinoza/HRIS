@@ -422,13 +422,15 @@ export function FaceRekognitionLiveness({
       )}
       {apiError && (
         <>
-          <div className="rounded-lg border border-rose-400/35 bg-rose-500/10 p-3">
-            <p className="text-center text-sm font-semibold text-rose-100">{apiError}</p>
+          <div className="rounded-lg border border-rose-300! bg-rose-50! p-3 dark:border-rose-400/35! dark:bg-rose-500/10!">
+            <p className="text-center text-sm font-semibold text-black! dark:text-rose-100!">
+              {apiError}
+            </p>
           </div>
           <div className="mt-4 flex flex-row items-center justify-center gap-3">
-            <Button
-              size="sm"
-              className="min-w-28 border border-white/30 bg-white/15 text-white hover:bg-white/25"
+            <button
+              type="button"
+              className="inline-flex h-8 min-w-28 items-center justify-center rounded-md border border-slate-600 bg-slate-200 px-3 text-sm font-semibold text-black opacity-100 hover:bg-slate-300 dark:border-white/30 dark:bg-white/15 dark:text-white dark:hover:bg-white/25"
               onClick={() => {
                 setApiError(null)
                 setApiErrorCode(null)
@@ -436,7 +438,7 @@ export function FaceRekognitionLiveness({
               }}
             >
               {apiErrorCode === 'face_not_recognized' ? 'Try Again' : 'Try again'}
-            </Button>
+            </button>
             {(apiErrorCode === 'face_not_registered' || apiErrorCode === 'face_needs_reregistration') && (
               <Button
                 size="sm"
@@ -450,10 +452,9 @@ export function FaceRekognitionLiveness({
               </Button>
             )}
             {onKioskCancel && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="min-w-28 text-white/90 hover:bg-white/10 hover:text-white"
+              <button
+                type="button"
+                className="inline-flex h-8 min-w-28 items-center justify-center rounded-md border border-slate-600 bg-slate-200 px-3 text-sm font-semibold text-black opacity-100 hover:bg-slate-300 hover:text-black dark:border-white/30 dark:bg-transparent dark:text-white/90 dark:hover:bg-white/10 dark:hover:text-white"
                 onClick={() => {
                   setApiError(null)
                   setApiErrorCode(null)
@@ -461,7 +462,7 @@ export function FaceRekognitionLiveness({
                 }}
               >
                 Cancel
-              </Button>
+              </button>
             )}
           </div>
         </>
