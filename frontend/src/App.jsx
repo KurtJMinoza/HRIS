@@ -4,7 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from
 /** Matches Vite `base` (e.g. `/HR/` → `/HR`) so routes work when deployed under a subpath */
 const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, '') || undefined
 import { Toaster, toast } from 'sonner'
-import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, CheckCircle2, Home, Eye, EyeOff, ClipboardList } from 'lucide-react'
+import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, CheckCircle2, Home, Eye, EyeOff, ClipboardList, User, LockKeyhole } from 'lucide-react'
 import {
   login,
   loginWithFace,
@@ -57,6 +57,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { getEmployeeAvatarColorClass, kioskAttendanceAvatarSrc } from '@/lib/employeeAvatar'
 import Webcam from 'react-webcam'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
+import agcLogo from './logos/AGC.png'
 
 const MySchedule = lazy(() => import('@/pages/MySchedule'))
 const AdminPayslipViewPage = lazy(() => import('@/pages/AdminPayslipViewPage'))
@@ -75,31 +76,141 @@ function RealTimeClock() {
   return (
     <div className="flex flex-col items-center gap-1">
       <div className="flex items-baseline gap-2.5 font-mono tabular-nums" aria-live="polite">
-        <span className="text-[3.5rem] font-black leading-none tracking-tight text-white md:text-[4.5rem]">
+        <span className="text-[3.4rem] font-black leading-none text-[#050918] md:text-[4.35rem] xl:text-[4.55rem]">
           {timeMain}
         </span>
         {timeSuffix && (
-          <span className="mb-1.5 self-end text-lg font-bold tracking-[0.15em] text-teal-300/70 md:text-xl">
+          <span className="mb-1.5 self-end text-lg font-bold text-[#ff5a14] md:text-xl">
             {timeSuffix}
           </span>
         )}
       </div>
-      <span className="text-sm font-medium text-white/45">{date}</span>
+      <span className="text-sm font-medium text-[#4f5665]">{date}</span>
     </div>
   )
 }
 
 const FEATURES = [
+  'Barcode Scanner',
   'Face Recognition',
-  'QR Code Scanner',
   'Real-Time Reports',
   'Role-Based Dashboard',
 ]
+
+function HrisBrandMark({ className = '' }) {
+  return (
+    <div className={cn('relative h-16 w-16 text-[#ff6818]', className)} aria-hidden>
+      <span className="absolute left-1/2 top-0 block size-7 -translate-x-1/2 rounded-full bg-linear-to-br from-[#ffbd14] to-[#ff4b10]" />
+      <span className="absolute bottom-1 left-[4px] block h-8 w-8 rounded-tl-3xl rounded-br-md bg-linear-to-br from-[#ffb20d] to-[#ff5a14] -rotate-45" />
+      <span className="absolute bottom-1 right-[4px] block h-8 w-8 rounded-tr-3xl rounded-bl-md bg-linear-to-br from-[#ff8b19] to-[#ff4b10] rotate-45" />
+      <span className="absolute bottom-[13px] left-1/2 block h-5 w-8 -translate-x-1/2 rounded-t-full bg-white" />
+    </div>
+  )
+}
+
+function ParticleWavePattern() {
+  // Digital grid wave, anchored at bottom-right of auth panel.
+  // Kept low-contrast so branding and form remain the visual priority.
+  return (
+    <div
+      className="pointer-events-none absolute -bottom-12 right-[-2%] h-[280px] w-[min(520px,92%)] opacity-95"
+      aria-hidden
+    >
+      <svg
+        className="absolute inset-0 h-full w-full"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id="hrisGridFadeX" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#f8fafc" stopOpacity="0" />
+            <stop offset="38%" stopColor="#ffb980" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#ff6a18" stopOpacity="0.34" />
+          </linearGradient>
+          <linearGradient id="hrisGridFadeY" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
+            <stop offset="52%" stopColor="#ffd6b2" stopOpacity="0.16" />
+            <stop offset="100%" stopColor="#ff7a2e" stopOpacity="0.26" />
+          </linearGradient>
+          <radialGradient id="hrisGridGlow" cx="100%" cy="100%" r="75%">
+            <stop offset="0%" stopColor="#ff8a2f" stopOpacity="0.35" />
+            <stop offset="55%" stopColor="#ff8a2f" stopOpacity="0.12" />
+            <stop offset="100%" stopColor="#ff8a2f" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+
+        {/* soft glow under the mesh */}
+        <ellipse cx="84" cy="86" rx="40" ry="22" fill="url(#hrisGridGlow)" />
+
+        {/* vertical digital grid lines */}
+        {Array.from({ length: 13 }).map((_, i) => {
+          const x = 34 + i * 5
+          return (
+            <path
+              key={`v-${x}`}
+              d={`M ${x} 22 C ${x - 2.5} 46, ${x - 2} 72, ${x + 1.5} 98`}
+              fill="none"
+              stroke="url(#hrisGridFadeX)"
+              strokeWidth="0.55"
+              strokeLinecap="round"
+            />
+          )
+        })}
+
+        {/* horizontal wave grid lines */}
+        {Array.from({ length: 9 }).map((_, i) => {
+          const y = 42 + i * 6
+          const bend = 7 + i * 0.7
+          return (
+            <path
+              key={`h-${y}`}
+              d={`M 20 ${y} C 42 ${y - bend}, 70 ${y + bend * 0.45}, 100 ${y - bend * 0.25}`}
+              fill="none"
+              stroke="url(#hrisGridFadeY)"
+              strokeWidth="0.62"
+              strokeLinecap="round"
+            />
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
 
 function formatKioskTime(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
   return d.toLocaleString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })
+}
+
+/** Aligns kiosk confirmation dialogs with branded Smart DTR / company logo bar. */
+function KioskAttendanceModalBrandBar({ variant }) {
+  const isOut = variant === 'clock_out'
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/90 bg-linear-to-r from-slate-50 to-white px-5 py-3.5 sm:px-6">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <img
+          src={agcLogo}
+          alt="AGC Technologies & Business Solutions"
+          className="h-8 w-[104px] shrink-0 object-contain object-left"
+        />
+        <div className="min-w-0 text-left">
+          <p className="truncate text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Smart DTR</p>
+          <p className="truncate text-[11px] text-slate-400">
+            {isOut ? 'Shift end confirmation' : 'Shift start confirmation'}
+          </p>
+        </div>
+      </div>
+      <span
+        className={cn(
+          'shrink-0 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide',
+          isOut ? 'border border-slate-200 bg-slate-100 text-slate-700' : 'border border-orange-100 bg-orange-50 text-[#c2410c]',
+        )}
+      >
+        {isOut ? 'Departure' : 'Arrival'}
+      </span>
+    </div>
+  )
 }
 
 /** Relative day label for kiosk feed: Today, Yesterday, or a short date (en-PH). */
@@ -146,7 +257,7 @@ function captureResizedFrameBase64(webcamRef, {
 
 const ATTENDANCE_MODES = [
   { value: 'face_recognition', label: 'Face Recognition', icon: ScanFace },
-  { value: 'qr_code', label: 'QR Code Scanner', icon: Scan },
+  { value: 'qr_code', label: 'Barcode Scanner', icon: Scan },
 ]
 
 // —— Face Recognition: kiosk (attendance only) or login (auth + attendance) ——
@@ -345,32 +456,68 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
         <p className="text-center text-xs text-amber-400">{blinkError}</p>
       )}
       <Dialog open={!!faceSuccessSummary} onOpenChange={(open) => !open && closeFaceSuccessSummary()}>
-        <DialogContent className="kiosk-glass border-white/20 bg-white/12 p-0 shadow-2xl backdrop-blur-xl sm:max-w-md">
-          <div className="flex flex-col items-center gap-4 p-6 text-center">
-            <CheckCircle2 className="size-14 text-emerald-400" aria-hidden />
-            {faceSuccessSummary?.name && (
-              <h3 className="text-xl font-bold text-white">
-                Welcome, {faceSuccessSummary.name}
-              </h3>
-            )}
-            <div className="space-y-1 text-sm text-white/80">
-              {faceSuccessSummary?.typeLabel && (
-                <span className="block font-medium capitalize">
-                  Clocked {faceSuccessSummary.typeLabel}
-                </span>
-              )}
-              {faceSuccessSummary?.recordedAt && (
-                <span className="block text-white/70">
-                  {formatKioskTime(faceSuccessSummary.recordedAt)}
-                </span>
+        <DialogContent
+          overlayClassName="bg-slate-900/45 backdrop-blur-sm"
+          className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.25)] sm:max-w-[400px]"
+          innerClassName="gap-0 p-0 sm:p-0 overflow-x-hidden"
+          closeButtonClassName="right-4 top-[14px] z-30 border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50"
+        >
+          <KioskAttendanceModalBrandBar variant={faceSuccessSummary?.type === 'clock_out' ? 'clock_out' : 'clock_in'} />
+          <div className="px-6 pb-7 pt-6 text-center sm:px-8">
+            <div className="mb-4 inline-flex items-center gap-2 text-sm font-bold">
+              {faceSuccessSummary?.type === 'clock_out' ? (
+                <>
+                  <LogOut className="size-5 text-slate-500" aria-hidden />
+                  <span className="text-slate-700">Clocked out</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="size-5 text-[#ff6818]" aria-hidden />
+                  <span className="text-[#b45309]">Clocked in</span>
+                </>
               )}
             </div>
-            <p className="text-xs text-white/60">
-              Attendance recorded. Closing automatically…
+            {faceSuccessSummary?.name && (
+              <>
+                <h3 className="text-balance text-2xl font-bold leading-tight text-slate-900">
+                  {faceSuccessSummary?.type === 'clock_out' ? (
+                    <>
+                      Goodbye,<br />
+                      <span className="text-slate-800">{faceSuccessSummary.name}</span>
+                    </>
+                  ) : (
+                    <>
+                      Welcome,<br />
+                      <span className="text-slate-800">{faceSuccessSummary.name}</span>
+                    </>
+                  )}
+                </h3>
+                <p className="mt-2 text-sm text-slate-500">
+                  {faceSuccessSummary?.type === 'clock_out'
+                    ? 'Your end-of-shift time has been logged.'
+                    : 'Your attendance has been recorded for this shift.'}
+                </p>
+              </>
+            )}
+            <div className="mt-4 space-y-1 text-slate-600">
+              {faceSuccessSummary?.typeLabel != null && faceSuccessSummary.typeLabel !== '' && (
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Confirmation · Clock {faceSuccessSummary.typeLabel}
+                </p>
+              )}
+              {faceSuccessSummary?.recordedAt && (
+                <p className="font-mono text-2xl font-bold tabular-nums text-slate-900">{formatKioskTime(faceSuccessSummary.recordedAt)}</p>
+              )}
+            </div>
+            <p className="mt-4 text-xs text-slate-400">
+              Closing automatically…
             </p>
-            <Button onClick={closeFaceSuccessSummary} className="w-full rounded-xl bg-emerald-600 text-white hover:bg-emerald-500">
+            <Button
+              onClick={closeFaceSuccessSummary}
+              className="mt-6 w-full rounded-xl border border-[#ff8533]/35 bg-linear-to-br from-[#ff8a44] to-[#ff5410] text-[15px] font-semibold text-white shadow-md hover:from-[#ff7f36] hover:to-[#ea4a0f]"
+            >
               <Home className="mr-2 size-4" />
-              Go to Dashboard
+              Continue
             </Button>
           </div>
         </DialogContent>
@@ -569,9 +716,6 @@ function SmartDTRPreview({ className }) {
 
   const kioskSummaryName = (summaryModal.employeeName || '').trim() || 'Employee'
   const kioskSummaryIsClockOut = summaryModal.type === 'clock_out'
-  const kioskSummaryHeadline = kioskSummaryIsClockOut
-    ? `Goodbye, ${kioskSummaryName}`
-    : `Welcome, ${kioskSummaryName}`
   const kioskSummaryPhotoSrc = kioskAttendanceAvatarSrc(summaryModal)
 
   const kioskCorrectionConflictTitle =
@@ -587,59 +731,45 @@ function SmartDTRPreview({ className }) {
   return (
     <div
       className={cn(
-        'relative flex min-h-full w-full flex-col overflow-hidden',
-        'bg-linear-to-b from-[#0d1117] via-[#0f1420] to-[#0d1117] text-white',
+        'relative flex min-h-full w-full flex-col overflow-hidden bg-[#fbfbfc] text-[#090d18] lg:h-screen',
         className
       )}
     >
-      {/* Subtle dot grid */}
-      <div
-        className="absolute inset-0 -z-10 opacity-[0.04]"
-        style={{
-          backgroundImage: `linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px)`,
-          backgroundSize: '48px 48px',
-        }}
-        aria-hidden
-      />
-      {/* Subtle teal accent — minimal, no heavy glow */}
-      <div
-        className="pointer-events-none absolute left-1/2 top-0 -z-10 h-48 w-96 -translate-x-1/2 rounded-full opacity-40"
-        style={{ background: 'radial-gradient(ellipse, rgba(20,184,166,0.05) 0%, transparent 70%)' }}
-        aria-hidden
-      />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.96),rgba(247,248,250,0.72)_58%,rgba(255,255,255,0.95)_100%)]" aria-hidden />
 
-      {/* ── Brand bar ── */}
-      <div className="flex items-center justify-between px-6 pt-5 pb-0">
-        <div className="inline-flex items-center gap-2">
-          <div className="flex size-8 items-center justify-center rounded-lg border border-white/10 bg-teal-500/10">
-            <Scan className="size-4 text-teal-400" />
-          </div>
-          <span className="text-sm font-bold tracking-tight text-white/90">SmartDTR</span>
+      {/* Brand bar */}
+      <div className="relative z-10 flex items-start justify-between px-8 pt-6 pb-0 sm:px-10 xl:px-12">
+        <div className="relative h-[50px] w-[126px] overflow-hidden">
+          <img
+            src={agcLogo}
+            alt="AGC Technologies & Business Solutions"
+            className="absolute left-0 top-[-37px] h-auto w-[126px] max-w-none object-contain"
+          />
         </div>
-        <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[9px] font-bold uppercase tracking-widest text-white/60">
-          <span className="relative flex size-1.5">
-            <span className="absolute inset-0 animate-ping rounded-full bg-teal-400 opacity-40" />
-            <span className="relative inline-flex size-1.5 rounded-full bg-teal-400" />
+        <div className="inline-flex items-center gap-2 rounded-xl border border-[#dfe2e8] bg-white/80 px-3 py-2 text-xs font-bold uppercase text-[#5b6473] shadow-[0_2px_8px_rgba(15,23,42,0.08)]">
+          <span className="relative flex size-2">
+            <span className="absolute inset-0 animate-ping rounded-full bg-[#ff5a14] opacity-35" />
+            <span className="relative inline-flex size-2 rounded-full bg-[#ff5a14]" />
           </span>
           Live
         </div>
       </div>
 
-      {/* ── Hero Clock ── */}
-      <div className="flex flex-col items-center px-6 pt-5 pb-5">
+      {/* Hero Clock */}
+      <div className="relative z-10 flex flex-col items-center px-6 pt-1 pb-4">
         <RealTimeClock />
       </div>
 
-      <div className="mx-6 h-px bg-white/[0.07]" aria-hidden />
+      <div className="relative z-10 mx-11 h-px bg-[#e3e5ea]" aria-hidden />
 
-      {/* ── Scrollable body ── */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="space-y-5 px-6 pt-5 pb-2">
+      {/* Scrollable body */}
+      <div className="relative z-10 flex-1 overflow-y-auto lg:overflow-hidden">
+        <div className="space-y-3 px-8 pt-4 pb-2 sm:px-10 xl:px-12">
 
           {/* Mode segmented control — iOS-style filled vs outline */}
           <div className="flex items-center justify-center">
             <div
-              className="inline-flex rounded-xl border border-white/10 bg-white/5 p-1"
+              className="inline-flex rounded-[14px] border border-[#e1e4ea] bg-white/85 p-1 shadow-[0_4px_18px_rgba(15,23,42,0.07)]"
               role="tablist"
               aria-label="Attendance capture mode"
             >
@@ -654,13 +784,13 @@ function SmartDTRPreview({ className }) {
                     aria-selected={isActive}
                     onClick={() => handleModeChange(mode.value)}
                     className={cn(
-                      'inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-teal-400/50 focus:ring-offset-1 focus:ring-offset-transparent',
+                      'inline-flex items-center gap-2 rounded-[10px] border px-5 py-2.5 text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#ff6818]/25',
                       isActive
-                        ? 'bg-teal-500/15 text-teal-300 border border-teal-400/20'
-                        : 'text-white/50 hover:text-white/70 hover:bg-white/5 border border-transparent'
+                        ? 'border-[#ff8a45] bg-[#fff6f0] text-[#ff4f0b]'
+                        : 'border-transparent text-[#111827] hover:bg-[#f7f8fa]'
                     )}
                   >
-                    <IconComponent className={cn('size-3.5 shrink-0', isActive ? 'text-teal-400' : '')} />
+                    <IconComponent className={cn('size-4 shrink-0', isActive ? 'text-[#ff5a14]' : 'text-[#ff5a14]')} />
                     {mode.label}
                   </button>
                 )
@@ -678,25 +808,23 @@ function SmartDTRPreview({ className }) {
                   type="button"
                   onClick={() => setKioskType(kioskType === 'clock_in' ? null : 'clock_in')}
                   className={cn(
-                    'group flex flex-col items-center justify-center gap-2 rounded-2xl border px-4 py-4 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-teal-400/50',
+                    'group flex min-h-[154px] flex-col items-center justify-center gap-3 rounded-xl border px-4 py-5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-[#ff6818]/30',
                     kioskType === 'clock_in'
-                      ? 'border-teal-400/30 bg-teal-500/15 ring-1 ring-teal-400/20'
-                      : 'border-white/10 bg-teal-500/8 hover:bg-teal-500/12 hover:border-teal-400/20'
+                      ? 'border-[#ff8a45]/40 bg-linear-to-br from-[#ffb400] to-[#ff4b0c] text-white shadow-[0_14px_32px_rgba(255,91,20,0.23)]'
+                      : 'border-[#ff8a45]/40 bg-linear-to-br from-[#ffb400] to-[#ff4b0c] text-white shadow-[0_14px_32px_rgba(255,91,20,0.23)]'
                   )}
                 >
                   <div className={cn(
-                    'flex size-10 items-center justify-center rounded-full border transition-colors',
+                    'flex size-16 items-center justify-center rounded-full bg-white text-[#ff5a14] shadow-[0_10px_22px_rgba(17,24,39,0.10)] transition-transform group-hover:scale-105',
                     kioskType === 'clock_in'
-                      ? 'border-teal-400/30 bg-teal-500/20'
-                      : 'border-white/10 bg-teal-500/10 group-hover:bg-teal-500/15'
+                      ? ''
+                      : ''
                   )}>
-                    <LogIn className="size-4 text-teal-300" />
+                    <LogIn className="size-8" />
                   </div>
                   <div className="text-center">
-                    <p className="text-sm font-bold text-white">Clock In</p>
-                    <p className="text-[10px] text-white/40 mt-0.5">
-                      {kioskType === 'clock_in' ? 'Selected' : 'Tap to select'}
-                    </p>
+                    <p className="text-xl font-bold text-white">Clock In</p>
+                    <p className="mt-1 text-sm font-semibold text-white">Barcode scan</p>
                   </div>
                 </button>
 
@@ -704,31 +832,29 @@ function SmartDTRPreview({ className }) {
                   type="button"
                   onClick={() => setKioskType(kioskType === 'clock_out' ? null : 'clock_out')}
                   className={cn(
-                    'group flex flex-col items-center justify-center gap-2 rounded-2xl border px-4 py-4 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-white/20',
+                    'group flex min-h-[154px] flex-col items-center justify-center gap-3 rounded-xl border px-4 py-5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-[#ff6818]/20',
                     kioskType === 'clock_out'
-                      ? 'border-white/25 bg-white/10 ring-1 ring-white/15'
-                      : 'border-white/10 bg-white/5 hover:bg-white/8'
+                      ? 'border-[#ff8a45] bg-[#fff4ed] ring-1 ring-[#ff8a45]/20 shadow-[0_8px_24px_rgba(15,23,42,0.07)]'
+                      : 'border-[#e1e4ea] bg-white text-[#111827] shadow-[0_8px_24px_rgba(15,23,42,0.07)] hover:border-[#ffb28a]'
                   )}
                 >
                   <div className={cn(
-                    'flex size-10 items-center justify-center rounded-full border transition-colors',
+                    'flex size-16 items-center justify-center rounded-full transition-transform group-hover:scale-105',
                     kioskType === 'clock_out'
-                      ? 'border-white/20 bg-white/15'
-                      : 'border-white/10 bg-white/8 group-hover:bg-white/12'
+                      ? 'bg-white text-[#111827]'
+                      : 'bg-[#f0f1f3] text-[#111827]'
                   )}>
-                    <LogOut className="size-4 text-white/55" />
+                    <LogOut className="size-8" />
                   </div>
                   <div className="text-center">
-                    <p className="text-sm font-bold text-white/85">Clock Out</p>
-                    <p className="text-[10px] text-white/35 mt-0.5">
-                      {kioskType === 'clock_out' ? 'Selected' : 'Tap to select'}
-                    </p>
+                    <p className="text-xl font-bold text-[#111827]">Clock Out</p>
+                    <p className="mt-1 text-sm font-semibold text-[#6b7280]">Barcode scan</p>
                   </div>
                 </button>
               </div>
 
               {!kioskType && (
-                <p className="text-center text-xs font-medium text-teal-300/90">
+                <p className="text-center text-xs font-medium text-[#ff5a14]">
                   Select Clock In or Clock Out first, then scan.
                 </p>
               )}
@@ -739,40 +865,40 @@ function SmartDTRPreview({ className }) {
                 error={error}
                 successResult={scanResult}
                 onFileAttendanceCorrection={goFileAttendanceCorrectionPortal}
-                theme="dark"
+                theme="light"
               />
             </div>
           ) : !kioskType ? (
             /* ── Face recognition mode: choose action first ── */
             <div className="space-y-3">
-              <p className="text-center text-xs text-white/40">
-                Use <span className="font-semibold text-teal-300">Face Recognition</span> for instant attendance — no badge required
+              <p className="text-center text-sm text-[#2f3542]">
+                Use <span className="font-semibold text-[#ff4f0b]">Face Recognition</span> for instant attendance - no badge required
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => openCapture('clock_in')}
-                  className="group flex flex-col items-center justify-center gap-2.5 rounded-2xl border border-teal-400/20 bg-teal-500/10 px-4 py-6 transition-all duration-200 hover:bg-teal-500/15 hover:border-teal-400/30 hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-teal-400/50"
+                  className="group flex min-h-[154px] flex-col items-center justify-center gap-3 rounded-xl border border-[#ff8a45]/40 bg-linear-to-br from-[#ffb400] to-[#ff4b0c] px-4 py-5 text-white shadow-[0_14px_32px_rgba(255,91,20,0.23)] transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-[#ff6818]/30"
                 >
-                  <div className="flex size-12 items-center justify-center rounded-full border border-teal-400/20 bg-teal-500/15 transition-colors group-hover:bg-teal-500/20">
-                    <LogIn className="size-5 text-teal-300" />
+                  <div className="flex size-16 items-center justify-center rounded-full bg-white text-[#ff5a14] shadow-[0_10px_22px_rgba(17,24,39,0.10)] transition-transform group-hover:scale-105">
+                    <LogIn className="size-8" />
                   </div>
                   <div className="text-center">
-                    <p className="text-base font-bold text-white">Clock In</p>
-                    <p className="text-[10px] text-white/40 mt-0.5">Face scan</p>
+                    <p className="text-xl font-bold text-white">Clock In</p>
+                    <p className="mt-1 text-sm font-semibold text-white">Face scan</p>
                   </div>
                 </button>
                 <button
                   type="button"
                   onClick={() => openCapture('clock_out')}
-                  className="group flex flex-col items-center justify-center gap-2.5 rounded-2xl border border-white/10 bg-white/5 px-4 py-6 transition-all duration-200 hover:bg-white/8 hover:border-white/20 hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-white/20"
+                  className="group flex min-h-[154px] flex-col items-center justify-center gap-3 rounded-xl border border-[#e1e4ea] bg-white px-4 py-5 text-[#111827] shadow-[0_8px_24px_rgba(15,23,42,0.07)] transition-all duration-200 hover:scale-[1.01] hover:border-[#ffb28a] active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-[#ff6818]/20"
                 >
-                  <div className="flex size-12 items-center justify-center rounded-full border border-white/10 bg-white/8 transition-colors group-hover:bg-white/12">
-                    <LogOut className="size-5 text-white/55" />
+                  <div className="flex size-16 items-center justify-center rounded-full bg-[#f0f1f3] text-[#111827] transition-transform group-hover:scale-105">
+                    <LogOut className="size-8" />
                   </div>
                   <div className="text-center">
-                    <p className="text-base font-bold text-white/85">Clock Out</p>
-                    <p className="text-[10px] text-white/35 mt-0.5">Face scan</p>
+                    <p className="text-xl font-bold text-[#111827]">Clock Out</p>
+                    <p className="mt-1 text-sm font-semibold text-[#6b7280]">Face scan</p>
                   </div>
                 </button>
               </div>
@@ -780,7 +906,7 @@ function SmartDTRPreview({ className }) {
           ) : (
             /* ── Face recognition capture ── */
             <div className="space-y-3">
-              <p className="text-center text-[11px] text-white/40">
+              <p className="text-center text-xs text-[#6b7280]">
                 Look into the camera and hold still during the guided liveness check.
               </p>
               <FaceRekognitionLiveness
@@ -825,7 +951,7 @@ function SmartDTRPreview({ className }) {
                   <button
                     type="button"
                     onClick={() => { setKioskType(null); setError(null); setScanResult(null) }}
-                    className="rounded-xl border border-white/15 px-4 py-1.5 text-xs font-medium text-white/55 transition-all hover:bg-white/8 hover:text-white/80"
+                    className="rounded-xl border border-[#e1e4ea] bg-white px-4 py-1.5 text-xs font-medium text-[#6b7280] shadow-sm transition-all hover:border-[#ffb28a] hover:text-[#111827]"
                   >
                     ← Back
                   </button>
@@ -834,17 +960,17 @@ function SmartDTRPreview({ className }) {
             </div>
           )}
 
-          <div className="h-px bg-white/[0.07]" aria-hidden />
+          <div className="h-px bg-[#e3e5ea]" aria-hidden />
 
           {/* ── Recent Activity feed — social proof, higher priority ── */}
-          <div className="space-y-3.5 pt-1">
+          <div className="space-y-3 pt-0">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-bold uppercase tracking-wider text-white/55">Recent Activity</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-[#5d6472]">Recent Activity</p>
               {hasMore && !recentExpanded && (
                 <button
                   type="button"
                   onClick={() => setRecentExpanded(true)}
-                  className="text-[11px] font-semibold text-teal-400/70 transition-colors hover:text-teal-300"
+                  className="text-sm font-semibold text-[#ff4f0b] transition-colors hover:text-[#db3f04]"
                 >
                   View More →
                 </button>
@@ -853,7 +979,7 @@ function SmartDTRPreview({ className }) {
                 <button
                   type="button"
                   onClick={() => setRecentExpanded(false)}
-                  className="text-[11px] font-medium text-white/30 transition-colors hover:text-white/50"
+                  className="text-[11px] font-medium text-[#6b7280] transition-colors hover:text-[#111827]"
                 >
                   Collapse
                 </button>
@@ -861,25 +987,23 @@ function SmartDTRPreview({ className }) {
             </div>
 
             {recentLogs.length === 0 ? (
-              <p className="py-6 text-center text-xs text-white/40">
+              <p className="rounded-xl border border-[#e1e4ea] bg-white py-6 text-center text-xs text-[#6b7280] shadow-sm">
                 No activity yet · use the scanner above to clock in or out
               </p>
             ) : (
-              <ul className="space-y-2">
+              <ul className="space-y-1.5">
                 {visibleLogs.map((log) => {
                   const initials = (log.employee_name || '?').trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2)
-                  const logMins = Number(log.late_minutes) || 0
                   const isLate = log.status === 'late'
-                  const isVeryLate = isLate && logMins >= 120
                   const StatusIcon = log.type === 'clock_in' ? LogIn : LogOut
-                  const statusIconCls = log.status === 'on_time' ? 'text-teal-400' : isLate ? (isVeryLate ? 'text-rose-400' : 'text-amber-400') : log.status === 'half_day' ? 'text-sky-400' : 'text-white/50'
+                  const statusIconCls = 'text-[#ff5a14]'
                   return (
                     <li
                       key={log.id}
-                      className="flex items-center gap-3.5 rounded-xl border border-white/10 bg-white/6 px-4 py-3 transition-colors hover:bg-white/10"
+                      className="flex items-center gap-3 rounded-xl border border-[#e1e4ea] bg-white px-4 py-2.5 shadow-[0_4px_15px_rgba(15,23,42,0.05)] transition-colors hover:border-[#ffdccb]"
                     >
                       {/* Avatar — same URL resolution as admin / employee profile */}
-                      <Avatar className="size-9 shrink-0 rounded-full border border-white/15 shadow-sm ring-2 ring-white/10">
+                      <Avatar className="size-10 shrink-0 rounded-full border border-[#fff0e7] shadow-sm ring-2 ring-[#fff4ed]">
                         <AvatarImage
                           src={
                             kioskAttendanceAvatarSrc({
@@ -902,8 +1026,8 @@ function SmartDTRPreview({ className }) {
                       </Avatar>
                       {/* Name + action with icon */}
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] font-semibold leading-tight text-white/95">{log.employee_name || '—'}</p>
-                        <p className="flex items-center gap-1.5 text-[11px] text-white/50">
+                        <p className="truncate text-sm font-bold leading-tight text-[#111827]">{log.employee_name || '—'}</p>
+                        <p className="flex items-center gap-1.5 text-xs text-[#4b5563]">
                           <StatusIcon className={cn('size-3 shrink-0', statusIconCls)} />
                           <span>{log.type === 'clock_in' ? 'Clocked in' : 'Clocked out'}</span>
                           {log.company?.name && (
@@ -914,7 +1038,7 @@ function SmartDTRPreview({ className }) {
                                   <img
                                     src={log.company.logo_url}
                                     alt=""
-                                    className="size-4 shrink-0 rounded-sm bg-white/10 object-contain ring-1 ring-white/10"
+                                    className="size-4 shrink-0 rounded-sm bg-white object-contain ring-1 ring-[#e1e4ea]"
                                     loading="lazy"
                                     referrerPolicy="no-referrer"
                                     onError={(e) => { e.currentTarget.style.display = 'none' }}
@@ -928,23 +1052,23 @@ function SmartDTRPreview({ className }) {
                       </div>
                       {/* Date + time + status badge */}
                       <div className="flex shrink-0 flex-col items-end gap-1">
-                        <span className="text-[10px] font-medium text-white/40">{formatKioskDateLabel(log.created_at)}</span>
-                        <span className="font-mono text-[12px] font-semibold text-white/65">{formatKioskTime(log.created_at)}</span>
+                        <span className="text-[10px] font-medium text-[#6b7280]">{formatKioskDateLabel(log.created_at)}</span>
+                        <span className="font-mono text-[12px] font-bold text-[#111827]">{formatKioskTime(log.created_at)}</span>
                         {log.status === 'on_time' && (
-                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-teal-400">
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#ff5a14]">
                             <CheckCircle2 className="size-3" aria-hidden />
                             {log.late_label || 'Present'}
                           </span>
                         )}
                         {isLate && (
-                          <span className={cn('flex items-center gap-1.5 text-[10px] font-bold', isVeryLate ? 'text-rose-300' : 'text-amber-300')}>
-                            <span className={cn('size-1.5 rounded-full', isVeryLate ? 'bg-rose-300' : 'bg-amber-300')} aria-hidden />
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#ff5a14]">
+                            <span className="size-1.5 rounded-full bg-[#ff5a14]" aria-hidden />
                             {log.late_label || 'Late'}
                           </span>
                         )}
                         {log.status === 'half_day' && (
-                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-sky-300">
-                            <span className="size-1.5 rounded-full bg-sky-300" aria-hidden />
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#ff5a14]">
+                            <span className="size-1.5 rounded-full bg-[#ff5a14]" aria-hidden />
                             {log.late_label || 'Half Day'}
                           </span>
                         )}
@@ -957,7 +1081,7 @@ function SmartDTRPreview({ className }) {
           </div>
 
           {/* Features footer */}
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-xl border border-white/8 bg-white/3 py-2 px-4 text-[10px] text-white/25 mb-3">
+          <div className="mb-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-xl border border-[#e1e4ea] bg-white/90 py-1.5 px-4 text-[11px] font-medium text-[#5f6673] shadow-sm">
             {FEATURES.map((f, i) => (
               <span key={f} className="flex items-center gap-2">
                 {i > 0 && <span aria-hidden>·</span>}
@@ -966,13 +1090,13 @@ function SmartDTRPreview({ className }) {
             ))}
           </div>
 
-          <p className="pb-4 text-center text-[11px] text-white/45">
+          <p className="pb-3 text-center text-xs text-[#5f6673]">
             Developed by{' '}
             <a
               href="https://www.facebook.com/kurtjerelle"
               target="_blank"
               rel="noopener noreferrer"
-              className="font-medium text-teal-300 transition-colors hover:text-teal-200"
+              className="font-medium text-[#ff4f0b] transition-colors hover:text-[#db3f04]"
             >
               Kurt Jerelle Minoza
             </a>
@@ -981,68 +1105,38 @@ function SmartDTRPreview({ className }) {
         </div>
       </div>{/* end scrollable body */}
 
-      {/* Summary modal: glass kiosk success — face / attendance punch + 2s auto-close */}
+      {/* Summary modal: branded professional confirmation — same layout for Clock In / Clock Out (Welcome vs Goodbye) */}
       <Dialog open={summaryModal.open} onOpenChange={(open) => !open && closeSummaryModal()}>
         <DialogContent
-          overlayClassName="bg-black/40 backdrop-blur-md"
-          className={cn(
-            'max-w-[min(100%,440px)] overflow-hidden rounded-[20px] border border-white/25',
-            'bg-white/8 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_24px_48px_rgba(0,0,0,0.35)]',
-            'backdrop-blur-2xl sm:max-w-[440px]',
-          )}
+          overlayClassName="bg-slate-900/45 backdrop-blur-sm"
+          className="max-w-[min(100%,440px)] overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.28)] sm:max-w-[440px]"
           innerClassName="gap-0 overflow-x-hidden p-0 sm:p-0"
           closeButtonClassName={cn(
-            'rounded-lg border border-white/25 bg-white/15 text-white shadow-md backdrop-blur-sm',
-            'hover:bg-white/22 hover:text-white focus-visible:ring-2 focus-visible:ring-emerald-400/50 focus-visible:ring-offset-0',
+            'right-4 top-[14px] z-30 rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm',
+            'hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-[#ff6818]/35 focus-visible:ring-offset-0',
           )}
         >
+          <KioskAttendanceModalBrandBar variant={kioskSummaryIsClockOut ? 'clock_out' : 'clock_in'} />
           <div
             role="document"
             aria-label="Attendance confirmation"
-            className="relative px-7 pb-9 pt-14 text-center text-white sm:px-12 sm:pb-10 sm:pt-16"
+            className="relative px-6 pb-9 pt-6 text-center text-slate-900 sm:px-10 sm:pb-10 sm:pt-7"
           >
-            {/* Soft glow + particles — green for clock-in, cool neutral for clock-out */}
-            <div
-              className={cn(
-                'pointer-events-none absolute left-1/2 top-28 h-44 w-44 -translate-x-1/2 rounded-full blur-3xl',
-                kioskSummaryIsClockOut ? 'bg-slate-400/10' : 'bg-emerald-500/12',
-              )}
-              aria-hidden
-            />
-            <div
-              className={cn(
-                'pointer-events-none absolute left-[18%] top-36 size-2 blur-[0.5px]',
-                kioskSummaryIsClockOut ? 'bg-slate-300/40' : 'bg-emerald-400/50',
-              )}
-              aria-hidden
-            />
-            <div
-              className={cn(
-                'pointer-events-none absolute right-[20%] top-32 size-1.5 blur-[0.5px]',
-                kioskSummaryIsClockOut ? 'bg-slate-400/35' : 'bg-teal-300/45',
-              )}
-              aria-hidden
-            />
-            <div
-              className="pointer-events-none absolute left-[22%] top-44 size-1 rounded-full bg-white/25 blur-[0.5px]"
-              aria-hidden
-            />
-
             <div className="relative mx-auto flex max-w-sm flex-col items-center">
-              <div className="relative mb-8 shrink-0">
+              <div className="relative mb-6 shrink-0">
                 <div
                   className={cn(
-                    'absolute -inset-3 rounded-full opacity-90 blur-xl',
-                    kioskSummaryIsClockOut
-                      ? 'bg-linear-to-br from-slate-400/20 via-slate-500/10 to-transparent'
-                      : 'bg-linear-to-br from-emerald-400/25 via-emerald-500/10 to-transparent',
+                    'pointer-events-none absolute -inset-2 rounded-full blur-2xl',
+                    kioskSummaryIsClockOut ? 'bg-slate-200/60' : 'bg-orange-100/85',
                   )}
                   aria-hidden
                 />
                 <Avatar
                   className={cn(
-                    'size-[120px] rounded-full border-2 border-white/25 shadow-[0_12px_40px_rgba(0,0,0,0.25)]',
-                    'ring-[3px] ring-emerald-400/70 ring-offset-4 ring-offset-transparent',
+                    'relative size-[112px] rounded-full border-2 border-white shadow-lg',
+                    kioskSummaryIsClockOut
+                      ? 'ring-[3px] ring-slate-400/45 ring-offset-2 ring-offset-white'
+                      : 'ring-[3px] ring-[#ff9248]/65 ring-offset-2 ring-offset-white',
                   )}
                 >
                   <AvatarImage
@@ -1052,7 +1146,7 @@ function SmartDTRPreview({ className }) {
                     className="object-cover"
                     referrerPolicy="no-referrer"
                   />
-                  <AvatarFallback className="rounded-full bg-linear-to-br from-amber-600 via-orange-800 to-amber-950 text-[2rem] font-bold tracking-tight text-white">
+                  <AvatarFallback className="rounded-full bg-linear-to-br from-amber-600 via-orange-700 to-orange-950 text-[1.85rem] font-bold tracking-tight text-white">
                     {kioskSummaryName
                       .split(/\s+/)
                       .map((n) => n[0])
@@ -1063,53 +1157,60 @@ function SmartDTRPreview({ className }) {
                 </Avatar>
               </div>
 
-              <h2
-                className={cn(
-                  'mb-6 max-w-[20ch] text-balance text-[1.75rem] font-bold leading-[1.2] tracking-tight text-white',
-                  'sm:text-[2rem]',
+              <h2 className="mb-1 max-w-[22ch] text-balance text-[1.65rem] font-bold leading-snug tracking-tight text-slate-900 sm:text-[1.85rem]">
+                {kioskSummaryIsClockOut ? (
+                  <>
+                    Goodbye,
+                    <br />
+                    <span className="text-slate-800">{kioskSummaryName}</span>
+                  </>
+                ) : (
+                  <>
+                    Welcome,
+                    <br />
+                    <span className="text-slate-800">{kioskSummaryName}</span>
+                  </>
                 )}
-              >
-                {kioskSummaryHeadline}
               </h2>
+              <p className="mb-6 text-sm text-slate-500">
+                {kioskSummaryIsClockOut
+                  ? 'Your clock-out time has been recorded securely.'
+                  : 'Your clock-in time has been recorded securely.'}
+              </p>
 
               <div className="flex w-full flex-col items-center">
                 <div
                   className={cn(
-                    'mb-3 flex items-center justify-center gap-2.5',
-                    kioskSummaryIsClockOut ? 'text-slate-200' : 'text-emerald-400',
+                    'mb-2 flex items-center justify-center gap-2',
+                    kioskSummaryIsClockOut ? 'text-slate-600' : 'text-[#c2410c]',
                   )}
                 >
                   {kioskSummaryIsClockOut ? (
-                    <LogOut className="size-[1.35rem] shrink-0 opacity-90" strokeWidth={2.25} aria-hidden />
+                    <LogOut className="size-5 shrink-0" strokeWidth={2.25} aria-hidden />
                   ) : (
-                    <CheckCircle2 className="size-[1.35rem] shrink-0" strokeWidth={2.25} aria-hidden />
+                    <CheckCircle2 className="size-5 shrink-0 text-[#ff6818]" strokeWidth={2.25} aria-hidden />
                   )}
-                  <span className="text-lg font-bold leading-none">
-                    {kioskSummaryIsClockOut ? 'Clocked Out' : 'Clocked In'}
+                  <span className="text-base font-bold">
+                    {kioskSummaryIsClockOut ? 'Clocked out' : 'Clocked in'}
                   </span>
                 </div>
 
                 {summaryModal.recordedAt ? (
-                  <p
-                    className={cn(
-                      'font-mono text-[2.25rem] font-bold tabular-nums tracking-tight text-white',
-                      'sm:text-[2.5rem] sm:leading-none',
-                    )}
-                  >
+                  <p className="font-mono text-[2.05rem] font-bold tabular-nums tracking-tight text-slate-900 sm:text-[2.25rem]">
                     {formatKioskTime(summaryModal.recordedAt)}
                   </p>
                 ) : (
-                  <p className="text-4xl font-bold text-white">—</p>
+                  <p className="text-4xl font-bold text-slate-400">—</p>
                 )}
 
-                <div className="mt-5 flex min-h-10 w-full flex-wrap items-center justify-center gap-2.5">
+                <div className="mt-4 flex min-h-10 w-full flex-wrap items-center justify-center gap-2">
                   {!kioskSummaryIsClockOut && summaryModal.status === 'on_time' && (
-                    <span className="rounded-2xl bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-950 shadow-sm">
+                    <span className="rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-900 ring-1 ring-emerald-100">
                       {summaryModal.lateLabel || 'On time'}
                     </span>
                   )}
                   {!kioskSummaryIsClockOut && summaryModal.status === 'late' && (
-                    <span className="rounded-2xl bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-950 shadow-sm">
+                    <span className="rounded-full bg-amber-50 px-3.5 py-1.5 text-xs font-semibold text-amber-950 ring-1 ring-amber-100">
                       {summaryModal.lateLabel
                         ? summaryModal.lateLabel
                         : summaryModal.lateMinutes != null
@@ -1118,7 +1219,7 @@ function SmartDTRPreview({ className }) {
                     </span>
                   )}
                   {!kioskSummaryIsClockOut && summaryModal.status === 'half_day' && (
-                    <span className="rounded-2xl bg-sky-100 px-4 py-2 text-sm font-semibold text-sky-950 shadow-sm">
+                    <span className="rounded-full bg-sky-50 px-3.5 py-1.5 text-xs font-semibold text-sky-950 ring-1 ring-sky-100">
                       Half Day
                     </span>
                   )}
@@ -1126,12 +1227,12 @@ function SmartDTRPreview({ className }) {
                     summaryModal.status === 'undertime' &&
                     summaryModal.undertimeMinutes != null &&
                     summaryModal.undertimeMinutes > 0 && (
-                      <span className="rounded-2xl bg-orange-100 px-4 py-2 text-sm font-semibold text-orange-950 shadow-sm">
+                      <span className="rounded-full bg-orange-50 px-3.5 py-1.5 text-xs font-semibold text-orange-950 ring-1 ring-orange-100">
                         Undertime ({summaryModal.undertimeMinutes} min)
                       </span>
                     )}
                   {kioskSummaryIsClockOut && summaryModal.status === 'present' && (
-                    <span className="rounded-2xl bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-950 shadow-sm">
+                    <span className="rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-900 ring-1 ring-emerald-100">
                       On time (no undertime)
                     </span>
                   )}
@@ -1139,9 +1240,9 @@ function SmartDTRPreview({ className }) {
               </div>
 
               {summaryModal.correctionSuggested && (
-                <div className="mt-5 w-full max-w-sm rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-left shadow-inner shadow-black/10">
-                  <p className="flex items-start gap-2 text-[13px] font-medium leading-snug text-amber-50">
-                    <ClipboardList className="mt-0.5 size-4 shrink-0 text-amber-200" aria-hidden />
+                <div className="mt-6 w-full max-w-sm rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-left shadow-sm">
+                  <p className="flex items-start gap-2 text-[13px] font-medium leading-snug text-amber-950">
+                    <ClipboardList className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden />
                     <span>
                       Clock-out was saved without a recorded clock-in today. File an attendance correction after signing in so
                       your official record matches Daily Computation.
@@ -1150,7 +1251,7 @@ function SmartDTRPreview({ className }) {
                   <Button
                     type="button"
                     variant="outline"
-                    className="mt-3 h-11 w-full rounded-xl border-amber-400/40 bg-amber-500/15 text-[15px] font-semibold text-white hover:bg-amber-500/25"
+                    className="mt-3 h-11 w-full rounded-xl border-amber-300 bg-white text-[15px] font-semibold text-amber-950 hover:bg-amber-100"
                     onClick={() => {
                       closeSummaryModal()
                       goFileAttendanceCorrectionPortal()
@@ -1162,34 +1263,24 @@ function SmartDTRPreview({ className }) {
               )}
 
               {kioskAutoCloseSeconds > 0 && summaryModal.open && !summaryModal.correctionSuggested && (
-                <p
-                  className="mt-6 text-sm font-medium text-white/70"
-                  role="status"
-                  aria-live="polite"
-                >
+                <p className="mt-6 text-sm font-medium text-slate-400" role="status" aria-live="polite">
                   Closing in {kioskAutoCloseSeconds} second{kioskAutoCloseSeconds === 1 ? '' : 's'}…
                 </p>
               )}
 
-              <DialogFooter className="mt-6 w-full flex-col gap-3 border-0 p-0 sm:flex-row sm:justify-stretch sm:gap-4">
+              <DialogFooter className="mt-6 w-full flex-col gap-3 border-t border-slate-100 p-0 pt-6 sm:flex-row sm:justify-stretch sm:gap-4">
                 <Button
                   type="button"
                   variant="secondary"
                   onClick={closeSummaryModal}
-                  className={cn(
-                    'h-12 min-h-[48px] w-full flex-1 rounded-xl border border-white/15 bg-white/10 text-[15px] font-semibold text-white',
-                    'shadow-inner shadow-black/20 hover:bg-white/14 hover:text-white sm:flex-1',
-                  )}
+                  className="h-12 min-h-[48px] w-full flex-1 rounded-xl border border-slate-200 bg-white text-[15px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 sm:flex-1"
                 >
                   Scan again
                 </Button>
                 <Button
                   type="button"
                   onClick={goToDashboard}
-                  className={cn(
-                    'h-12 min-h-[48px] w-full flex-1 rounded-xl border border-emerald-500/30 bg-emerald-600 text-[15px] font-semibold text-white',
-                    'shadow-[0_8px_24px_-4px_rgba(16,185,129,0.45)] transition-transform hover:bg-emerald-500 hover:shadow-[0_10px_28px_-4px_rgba(16,185,129,0.55)] active:scale-[0.99] sm:flex-1',
-                  )}
+                  className="h-12 min-h-[48px] w-full flex-1 rounded-xl border border-[#ff8533]/40 bg-linear-to-br from-[#ff8a44] to-[#ff5410] text-[15px] font-semibold text-white shadow-md hover:from-[#ff7f36] hover:to-[#ea4a0f] active:scale-[0.99] sm:flex-1"
                 >
                   <Home className="mr-2 size-[1.1rem]" aria-hidden />
                   Go to Dashboard
@@ -1262,6 +1353,7 @@ function AuthInput({
   onBlur,
   error,
   required,
+  icon: Icon,
   ...rest
 }) {
   const hasError = Boolean(error)
@@ -1271,11 +1363,14 @@ function AuthInput({
 
   return (
     <div className="space-y-2">
-      <Label htmlFor={name} className="text-sm font-semibold">
+      <Label htmlFor={name} className="text-sm font-bold text-[#0b0f19]">
         {label}
-        {required && <span className="ml-0.5 text-destructive" aria-hidden>*</span>}
+        {required && <span className="ml-2 text-[#ff5a14]" aria-hidden>*</span>}
       </Label>
       <div className="relative">
+        {Icon && (
+          <Icon className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-[#ff5a14]" aria-hidden />
+        )}
         <Input
           id={name}
           type={inputType}
@@ -1288,7 +1383,8 @@ function AuthInput({
           aria-invalid={hasError}
           aria-describedby={hasError ? `${name}-error` : undefined}
         className={cn(
-          'h-11 rounded-lg px-4 text-base transition-colors duration-200',
+          'h-[54px] rounded-xl border-[#dfe2e8] bg-white px-4 text-base text-[#111827] shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition-colors duration-200 placeholder:text-[#7b8190] focus-visible:border-[#ff9b67] focus-visible:ring-[#ff6818]/15',
+          Icon && 'pl-14',
           isPassword && 'pr-11',
           hasError && 'border-destructive focus-visible:ring-destructive/20'
         )}
@@ -1299,7 +1395,7 @@ function AuthInput({
             type="button"
             tabIndex={-1}
             onClick={() => setShowPassword((v) => !v)}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-[#ff5a14] transition-colors hover:bg-[#fff4ed] hover:text-[#db3f04] focus:outline-none focus:ring-2 focus:ring-[#ff6818]/20"
             aria-label={showPassword ? 'Hide password' : 'Show password'}
           >
             {showPassword ? (
@@ -1330,7 +1426,7 @@ function AuthCheckbox({ label, name, checked, onCheckedChange }) {
         onCheckedChange={onCheckedChange}
         aria-label={label}
       />
-      <Label htmlFor={name} className="cursor-pointer text-sm font-medium text-muted-foreground">
+      <Label htmlFor={name} className="cursor-pointer text-sm font-medium text-[#6b7280]">
         {label}
       </Label>
     </div>
@@ -1402,6 +1498,7 @@ function LoginForm({ onSuccess, onError }) {
         type="text"
         name="login"
         placeholder="Enter username or work email"
+        icon={User}
         value={loginValue}
         onChange={handleLoginChange}
         onBlur={() => setErrors((prev) => ({ ...prev, login: validateLoginIdentifier(loginValue) }))}
@@ -1413,6 +1510,7 @@ function LoginForm({ onSuccess, onError }) {
         type="password"
         name="password"
         placeholder="Enter your password"
+        icon={LockKeyhole}
         value={password}
         onChange={handlePasswordChange}
         onBlur={() => setErrors((prev) => ({ ...prev, password: validatePassword(password, false) }))}
@@ -1428,7 +1526,7 @@ function LoginForm({ onSuccess, onError }) {
         />
         <button
           type="button"
-          className="text-sm font-medium text-muted-foreground underline-offset-2 transition-colors duration-200 hover:text-foreground hover:underline"
+          className="text-sm font-medium text-[#ff4f0b] underline-offset-2 transition-colors duration-200 hover:text-[#db3f04] hover:underline"
           onClick={() => navigate('/forgot-password')}
         >
           Forgot password?
@@ -1437,7 +1535,7 @@ function LoginForm({ onSuccess, onError }) {
       <Button
         type="submit"
         disabled={loading}
-        className="h-12 w-full rounded-xl bg-teal-600 py-3 text-base font-semibold text-white shadow-lg shadow-teal-900/20 ring-1 ring-teal-500/30 transition-all duration-200 hover:bg-teal-500 hover:shadow-teal-900/30 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-teal-400/50"
+        className="h-[54px] w-full rounded-xl bg-linear-to-r from-[#ffb300] to-[#ff4b0c] py-3 text-base font-bold text-white shadow-[0_12px_24px_rgba(255,91,20,0.22)] ring-1 ring-[#ff7a2e]/20 transition-all duration-200 hover:brightness-105 active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-[#ff6818]/35"
       >
         {loading ? 'Signing in…' : 'Sign in to Dashboard'}
       </Button>
@@ -1461,35 +1559,40 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
   return (
     <div
       className={cn(
-        'flex min-h-screen w-full flex-col items-center justify-center px-6 py-10 md:px-8 lg:px-12',
-        'bg-background',
+        'relative flex min-h-screen w-full flex-col items-center justify-center overflow-hidden bg-[#fbfbfc] px-6 py-10 md:px-8 lg:px-10',
         className
       )}
     >
-      <div className="w-full max-w-[min(100%,44rem)] md:max-w-[min(100%,48rem)] xl:max-w-[min(100%,56rem)]">
+      <ParticleWavePattern />
+      <div className="relative z-10 w-full max-w-[min(100%,44rem)] lg:translate-y-6">
 
         {/* Brand header — matches kiosk teal accent */}
-        <div className="mb-8 flex flex-col items-center gap-4 text-center">
-          <div className="flex size-14 items-center justify-center rounded-2xl border border-teal-500/20 bg-teal-500/10 shadow-lg shadow-teal-900/10 dark:border-teal-400/15 dark:bg-teal-500/10">
-            <Scan className="size-7 text-teal-600 dark:text-teal-400" />
+        <div className="mb-9 flex flex-col items-center gap-4 text-center">
+          <div className="flex items-center justify-center gap-4">
+            <HrisBrandMark className="h-[76px] w-[76px]" />
+            <h1 className="text-[4rem] font-black leading-none text-[#222326] drop-shadow-[0_2px_1px_rgba(0,0,0,0.08)]">
+              HRIS
+            </h1>
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-foreground">SmartDTR</h1>
-            <p className="mt-1 text-xs text-muted-foreground">Secure. Intelligent. Automated.</p>
+            <p className="text-base text-[#424753]">Human Resource Information System</p>
+            <p className="mt-6 text-base font-medium text-[#6b7280]">
+              Secure. Intelligent. <span className="text-[#ff4f0b]">Automated.</span>
+            </p>
           </div>
         </div>
 
-        <Card className="rounded-2xl border-border/70 shadow-xl shadow-slate-900/5 dark:shadow-slate-950/30 ring-1 ring-slate-200/50 dark:ring-white/5 transition-all duration-200 dark:border-white/10 dark:bg-white/5">
-          <CardHeader className="pb-3 pt-6">
-            <CardTitle className="text-lg font-bold tracking-tight">Welcome back</CardTitle>
-            <CardDescription className="text-muted-foreground text-sm">
+        <Card className="w-full rounded-2xl border border-[#eceff3] bg-white/92 shadow-[0_24px_55px_rgba(15,23,42,0.12)] ring-1 ring-white/80 backdrop-blur-sm">
+          <CardHeader className="px-9 pb-5 pt-9 sm:px-12">
+            <CardTitle className="text-2xl font-black tracking-tight text-[#0b0f19]">Welcome back</CardTitle>
+            <CardDescription className="pt-1 text-base text-[#6b7280]">
               Sign in to your dashboard to continue.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6 pb-8 pt-3">
+          <CardContent className="space-y-6 px-9 pb-10 pt-3 sm:px-12">
             {resetSuccess && (
               <p
-                className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
+                className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800"
                 role="status"
               >
                 Password updated successfully. You can sign in now.
@@ -1504,7 +1607,7 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
           </CardContent>
         </Card>
 
-        <p className="mt-5 text-center text-xs text-muted-foreground/60">© 2026 SmartDTR · All rights reserved</p>
+        <p className="mt-6 text-center text-sm text-[#6b7280]">© 2026 HRIS. All rights reserved.</p>
       </div>
     </div>
   )
@@ -1551,7 +1654,7 @@ function LoginPageWrapper() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[#fbfbfc] text-[#090d18]">
       <div className="flex flex-col lg:grid lg:grid-cols-2 lg:min-h-screen lg:items-stretch">
         <main className="order-1 min-h-screen shrink-0 lg:order-2">
           <AuthPanel onSuccess={handleAuthSuccess} resetSuccess={resetSuccess} />
@@ -1576,7 +1679,7 @@ function LoginPageWrapper() {
         </div>
         <aside
           className={cn(
-            'order-3 min-h-0 overflow-auto transition-all duration-300 lg:order-1 lg:flex lg:min-h-screen lg:flex-col lg:bg-linear-to-br lg:from-slate-900 lg:via-slate-800/90 lg:to-slate-900',
+            'order-3 min-h-0 overflow-auto transition-all duration-300 lg:order-1 lg:flex lg:min-h-screen lg:flex-col lg:border-r lg:border-[#dcdee3] lg:bg-[#fbfbfc]',
             previewOpen ? 'block' : 'hidden'
           )}
         >

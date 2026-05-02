@@ -144,7 +144,13 @@ export function ScannerInput({
           <Avatar
             className={cn(
               'size-16 rounded-full border-2 shadow-sm',
-              isDark ? 'border-white/20 ring-2 ring-emerald-400/30' : 'border-border ring-2 ring-emerald-500/20',
+              isIn
+                ? isDark
+                  ? 'border-white/20 ring-2 ring-orange-400/35'
+                  : 'border-slate-100 ring-2 ring-[#ff9248]/35'
+                : isDark
+                  ? 'border-white/20 ring-2 ring-slate-400/35'
+                  : 'border-slate-200 ring-2 ring-slate-300/70',
             )}
           >
             <AvatarImage
@@ -167,18 +173,29 @@ export function ScannerInput({
           <span
             className={cn(
               'absolute -bottom-0.5 -right-0.5 flex size-7 items-center justify-center rounded-full shadow-md ring-2',
-              isDark ? 'bg-emerald-500/95 text-white ring-white/25' : 'bg-emerald-500 text-white ring-background',
+              isIn
+                ? isDark
+                  ? 'bg-[#ea580c]/95 text-white ring-white/25'
+                  : 'bg-[#ff6818] text-white ring-background'
+                : isDark
+                  ? 'bg-slate-500/95 text-white ring-white/25'
+                  : 'bg-slate-600 text-white ring-background',
             )}
           >
-            <CheckCircle2 className="size-3.5" aria-hidden />
+            {isIn ? <CheckCircle2 className="size-3.5" aria-hidden /> : <LogOut className="size-3.5" aria-hidden />}
           </span>
         </div>
 
-        {/* Primary confirmation: "Name Clocked In" */}
+        {/* Welcome / Goodbye + name — matches kiosk confirmation modal copy */}
         {successResult.employeeName && (
-          <p className={cn('text-center text-lg font-bold', isDark ? 'text-white' : 'text-[#0A0A0A]')}>
-            {successResult.employeeName}
-          </p>
+          <div className="text-center">
+            <p className={cn('text-[11px] font-semibold uppercase tracking-widest', isDark ? 'text-white/50' : 'text-slate-500')}>
+              {isIn ? 'Welcome' : 'Goodbye'}
+            </p>
+            <p className={cn('text-lg font-bold leading-tight', isDark ? 'text-white' : 'text-slate-900')}>
+              {successResult.employeeName}
+            </p>
+          </div>
         )}
 
         {/* Action badge */}
@@ -186,13 +203,13 @@ export function ScannerInput({
           'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold',
           isIn
             ? isDark
-              ? 'border-teal-400/35 bg-teal-500/15 text-teal-200'
-              : 'border-teal-200 bg-teal-50 text-teal-700 dark:bg-teal-900/20 dark:text-teal-300'
+              ? 'border-orange-400/35 bg-orange-500/15 text-orange-200'
+              : 'border-orange-200 bg-orange-50 text-[#c2410c] dark:bg-orange-950/30 dark:text-orange-300'
             : isDark
               ? 'border-slate-400/35 bg-slate-500/15 text-slate-200'
-              : 'border-slate-200 bg-slate-100 text-slate-700 dark:bg-slate-800/40 dark:text-slate-300'
+              : 'border-slate-200 bg-slate-100 text-slate-700 dark:bg-slate-800/40 dark:text-slate-300',
         )}>
-          <CheckCircle2 className="size-3.5" />
+          {isIn ? <CheckCircle2 className="size-3.5" /> : <LogOut className="size-3.5" />}
           {isIn ? 'Clocked In' : 'Clocked Out'}
         </div>
 

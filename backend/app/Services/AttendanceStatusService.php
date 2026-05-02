@@ -178,13 +178,14 @@ class AttendanceStatusService
 
     /**
      * Clock-in status for a single time-in.
-     * All comparisons use the attendance timezone. Status priority: Half-Day > Late > Present.
+     * All comparisons use the attendance timezone. Half Day applies only in the configured noon
+     * clock-in window (default 12:00–13:00); all other times use Present (within grace) or late buckets.
      * Schedule date is taken from the clock-in date in attendance timezone so same-day comparison is correct.
      *
-     * Time-in rules (scheduled start 8:00 AM by default, grace 5 min → Present through 8:05):
-     * - Below 8:05 → Present.
-     * - 8:06–8:29 → 30 Minutes late; … 11:30–11:59 → 4 Hours Late (see getLateBucket).
-     * - 12:00 PM–1:00 PM (half-day window) → Half Day.
+     * Time-in rules (scheduled start from day schedule, grace capped at 5 min e.g. through 8:05 for 8:00 start):
+     * - At or before scheduled start + grace → Present.
+     * - After grace → late bands from getLateBucket (caps at "4 Hours Late" for very late arrivals, e.g. evening).
+     * - Half Day only when actual clock-in falls in [half_day_start_hour, half_day_end_hour), e.g. 12:00 PM–1:00 PM.
      *
      * @return array{status: 'on_time'|'late'|'half_day', late_minutes: int, late_label: string}
      */

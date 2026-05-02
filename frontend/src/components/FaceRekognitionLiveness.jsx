@@ -12,7 +12,7 @@ import { createLivenessSession, loginWithFace, recordAttendanceKioskFace } from 
 import { playSuccess, playError } from '@/lib/attendanceSounds'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { CheckCircle2, Home } from 'lucide-react'
+import { CheckCircle2, Home, LogOut } from 'lucide-react'
 
 const SOUND_FEEDBACK_ENABLED = true
 const FACE_MATCH_TIMEOUT_MS = 12000
@@ -467,22 +467,49 @@ export function FaceRekognitionLiveness({
         </>
       )}
       {successSummary && (
-        <div className="mt-4 flex flex-col items-center gap-4 rounded-xl border border-white/20 bg-white/10 p-6 text-center">
-          <CheckCircle2 className="size-14 text-emerald-400" aria-hidden />
-          {successSummary.name && (
-            <h3 className="text-xl font-bold text-white">Welcome, {successSummary.name}</h3>
+        <div className="mt-4 mx-auto flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-slate-200/90 bg-white p-6 text-center shadow-xl">
+          {successSummary.type === 'clock_out' ? (
+            <LogOut className="size-12 text-slate-500" aria-hidden />
+          ) : (
+            <CheckCircle2 className="size-12 text-[#ff6818]" aria-hidden />
           )}
-          <div className="space-y-1 text-sm text-white/80">
-            {successSummary.typeLabel && (
-              <span className="block font-medium capitalize">Clocked {successSummary.typeLabel}</span>
+          {successSummary.name && (
+            <div>
+              <h3 className="text-balance text-xl font-bold leading-snug text-slate-900">
+                {successSummary.type === 'clock_out' ? (
+                  <>
+                    Goodbye,
+                    <br />
+                    <span className="text-slate-800">{successSummary.name}</span>
+                  </>
+                ) : (
+                  <>
+                    Welcome,
+                    <br />
+                    <span className="text-slate-800">{successSummary.name}</span>
+                  </>
+                )}
+              </h3>
+              <p className="mt-2 text-sm text-slate-500">
+                {successSummary.type === 'clock_out'
+                  ? 'Your end-of-shift time has been logged.'
+                  : 'Your attendance has been recorded.'}
+              </p>
+            </div>
+          )}
+          <div className="space-y-1 text-sm text-slate-600">
+            {successSummary.typeLabel != null && successSummary.typeLabel !== '' && (
+              <span className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Clocked {successSummary.typeLabel}
+              </span>
             )}
             {successSummary.recordedAt && (
-              <span className="block text-white/70">{formatKioskTime(successSummary.recordedAt)}</span>
+              <span className="block font-mono text-lg font-bold text-slate-900">{formatKioskTime(successSummary.recordedAt)}</span>
             )}
           </div>
           <Button
             onClick={closeSuccessSummary}
-            className="rounded-xl bg-emerald-600 text-white hover:bg-emerald-500"
+            className="w-full rounded-xl border border-[#ff8533]/35 bg-linear-to-br from-[#ff8a44] to-[#ff5410] font-semibold text-white shadow-md hover:from-[#ff7f36] hover:to-[#ea4a0f]"
           >
             <Home className="mr-2 size-4" />
             Go to Dashboard

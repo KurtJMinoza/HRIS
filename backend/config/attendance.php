@@ -5,8 +5,8 @@ return [
     |--------------------------------------------------------------------------
     | Timezone for attendance (clock-in/out times and schedule comparison).
     | Clock-in times from the DB (stored in UTC) are converted to this zone so
-    | 1:00 PM local = Half Day. Set APP_TIMEZONE or ATTENDANCE_TIMEZONE in .env
-    | (e.g. Asia/Manila). Default Asia/Manila so 1:33 PM = Half Day, not Late.
+    | noon-window rules match wall clock. Set APP_TIMEZONE or ATTENDANCE_TIMEZONE in .env
+    | (e.g. Asia/Manila). Half Day clock-in window is configurable (default 12:00–13:00 local).
     |-----------------------------------------------------------------d--------
     */
     'timezone' => env('ATTENDANCE_TIMEZONE', env('APP_TIMEZONE', 'Asia/Manila')),
