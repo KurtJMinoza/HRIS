@@ -1416,6 +1416,8 @@ function AuthInput({
   icon: Icon,
   ...rest
 }) {
+  const { theme } = useTheme()
+  const isDarkTheme = theme === 'dark'
   const hasError = Boolean(error)
   const isPassword = type === 'password'
   const [showPassword, setShowPassword] = useState(false)
@@ -1423,14 +1425,17 @@ function AuthInput({
 
   return (
     <div className="space-y-2">
-      <Label htmlFor={name} className="text-sm font-bold text-[#0b0f19] dark:text-zinc-100">
+      <Label htmlFor={name} className={cn('text-sm font-bold', isDarkTheme ? 'text-zinc-100' : 'text-[#0b0f19]')}>
         {label}
-        {required && <span className="ml-2 text-[#ff5a14] dark:text-[#fb923c]" aria-hidden>*</span>}
+        {required && <span className={cn('ml-2', isDarkTheme ? 'text-[#fb923c]' : 'text-[#ff5a14]')} aria-hidden>*</span>}
       </Label>
       <div className="relative">
         {Icon && (
           <Icon
-            className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-[#ff5a14] dark:text-[#fb923c]"
+            className={cn(
+              'pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2',
+              isDarkTheme ? 'text-[#fb923c]' : 'text-[#ff5a14]',
+            )}
             aria-hidden
           />
         )}
@@ -1445,13 +1450,15 @@ function AuthInput({
           required={required}
           aria-invalid={hasError}
           aria-describedby={hasError ? `${name}-error` : undefined}
-        className={cn(
-          'h-[54px] rounded-xl border-[#dfe2e8] bg-white px-4 text-base text-[#111827] shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition-colors duration-200 placeholder:text-[#7b8190] focus-visible:border-[#ff9b67] focus-visible:ring-[3px] focus-visible:ring-[#ff6818]/15',
-          'dark:border-zinc-600/90 dark:bg-zinc-950 dark:text-zinc-50 dark:shadow-[inset_0_2px_4px_rgba(0,0,0,0.35),0_1px_0_0_rgba(255,255,255,0.05)] dark:placeholder:text-zinc-500 dark:focus-visible:border-orange-400/75 dark:focus-visible:ring-orange-500/25',
-          Icon && 'pl-14',
-          isPassword && 'pr-11',
-          hasError && 'border-destructive focus-visible:ring-destructive/20 dark:border-red-400/70',
-        )}
+          className={cn(
+            'h-[54px] rounded-xl px-4 text-base transition-colors duration-200',
+            isDarkTheme
+              ? 'border-zinc-600/90 bg-zinc-950 text-zinc-50 placeholder:text-zinc-500 shadow-[inset_0_2px_4px_rgba(0,0,0,0.35),0_1px_0_0_rgba(255,255,255,0.05)] focus-visible:border-orange-400/75 focus-visible:ring-[3px] focus-visible:ring-orange-500/25'
+              : 'border-[#dfe2e8] bg-white text-[#111827] placeholder:text-[#7b8190] shadow-[0_2px_8px_rgba(15,23,42,0.04)] focus-visible:border-[#ff9b67] focus-visible:ring-[3px] focus-visible:ring-[#ff6818]/15',
+            Icon && 'pl-14',
+            isPassword && 'pr-11',
+            hasError && (isDarkTheme ? 'border-red-400/70 focus-visible:ring-destructive/25' : 'border-destructive focus-visible:ring-destructive/20'),
+          )}
           {...rest}
         />
         {isPassword && (
@@ -1459,7 +1466,12 @@ function AuthInput({
             type="button"
             tabIndex={-1}
             onClick={() => setShowPassword((v) => !v)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-[#ff5a14] transition-colors hover:bg-[#fff4ed] hover:text-[#db3f04] focus:outline-none focus:ring-2 focus:ring-[#ff6818]/20 dark:text-[#fb923c] dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+            className={cn(
+              'absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-[#ff6818]/20',
+              isDarkTheme
+                ? 'text-[#fb923c] hover:bg-zinc-800 hover:text-orange-300'
+                : 'text-[#ff5a14] hover:bg-[#fff4ed] hover:text-[#db3f04]',
+            )}
             aria-label={showPassword ? 'Hide password' : 'Show password'}
           >
             {showPassword ? (
@@ -1481,6 +1493,8 @@ function AuthInput({
 }
 
 function AuthCheckbox({ label, name, checked, onCheckedChange }) {
+  const { theme } = useTheme()
+  const isDarkTheme = theme === 'dark'
   return (
     <div className="flex items-center gap-3">
       <Checkbox
@@ -1489,9 +1503,13 @@ function AuthCheckbox({ label, name, checked, onCheckedChange }) {
         checked={checked}
         onCheckedChange={onCheckedChange}
         aria-label={label}
-        className="dark:border-zinc-500 dark:bg-zinc-900/80 dark:data-[state=checked]:border-orange-500 dark:data-[state=checked]:bg-orange-600 dark:data-[state=checked]:text-white"
+        className={cn(
+          isDarkTheme
+            ? 'border-zinc-500 bg-zinc-900/80 data-[state=checked]:border-orange-500 data-[state=checked]:bg-orange-600 data-[state=checked]:text-white'
+            : '',
+        )}
       />
-      <Label htmlFor={name} className="cursor-pointer text-sm font-medium text-muted-foreground dark:text-zinc-300">
+      <Label htmlFor={name} className={cn('cursor-pointer text-sm font-medium', isDarkTheme ? 'text-zinc-300' : 'text-muted-foreground')}>
         {label}
       </Label>
     </div>
