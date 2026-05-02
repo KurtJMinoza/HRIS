@@ -126,7 +126,7 @@ export function ScannerInput({
     )
   }
 
-  // ── SUCCESS state — ✅ Name Clocked In/Out (clear feedback) ───────────────────
+  // ── SUCCESS state — matches kiosk welcome/goodbye modal (light or dark from `theme`) ──
   if (successResult) {
     const isIn = successResult.type === 'clock_in'
     const timeStr = formatTime(successResult.recordedAt)
@@ -139,18 +139,31 @@ export function ScannerInput({
       .slice(0, 2)
 
     return (
-      <div className={cn('flex flex-col items-center justify-center gap-3 py-6 px-4', className)}>
+      <div
+        className={cn(
+          'relative flex flex-col items-center justify-center gap-3 rounded-2xl border py-6 px-4',
+          isDark
+            ? 'border-zinc-700/55 bg-linear-to-b from-zinc-900 to-zinc-950 shadow-[0_20px_44px_rgba(0,0,0,0.45)] ring-1 ring-white/6'
+            : 'border-slate-200/90 bg-linear-to-b from-white to-slate-50/95 shadow-[0_8px_28px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70',
+          className,
+        )}
+      >
+        <div
+          className="pointer-events-none absolute inset-x-6 top-0 mx-auto h-px max-w-[280px] bg-linear-to-r from-transparent via-orange-500/20 to-transparent"
+          aria-hidden
+        />
         <div className="relative">
           <Avatar
             className={cn(
-              'size-16 rounded-full border-2 shadow-sm',
+              'size-16 rounded-full border-2 shadow-md',
+              isDark ? 'border-zinc-600/80 shadow-black/30' : 'border-slate-200 shadow-slate-200/80',
               isIn
                 ? isDark
-                  ? 'border-white/20 ring-2 ring-orange-400/35'
-                  : 'border-slate-100 ring-2 ring-[#ff9248]/35'
+                  ? 'ring-2 ring-orange-400/45'
+                  : 'ring-2 ring-[#ff9248]/40'
                 : isDark
-                  ? 'border-white/20 ring-2 ring-slate-400/35'
-                  : 'border-slate-200 ring-2 ring-slate-300/70',
+                  ? 'ring-2 ring-slate-500/45'
+                  : 'ring-2 ring-slate-300/80',
             )}
           >
             <AvatarImage
@@ -173,13 +186,10 @@ export function ScannerInput({
           <span
             className={cn(
               'absolute -bottom-0.5 -right-0.5 flex size-7 items-center justify-center rounded-full shadow-md ring-2',
+              isDark ? 'ring-zinc-950' : 'ring-white',
               isIn
-                ? isDark
-                  ? 'bg-[#ea580c]/95 text-white ring-white/25'
-                  : 'bg-[#ff6818] text-white ring-background'
-                : isDark
-                  ? 'bg-slate-500/95 text-white ring-white/25'
-                  : 'bg-slate-600 text-white ring-background',
+                ? 'bg-[#ea580c]/95 text-white dark:bg-[#ea580c]/95'
+                : 'bg-slate-600 text-white dark:bg-slate-500/95',
             )}
           >
             {isIn ? <CheckCircle2 className="size-3.5" aria-hidden /> : <LogOut className="size-3.5" aria-hidden />}
@@ -189,63 +199,92 @@ export function ScannerInput({
         {/* Welcome / Goodbye + name — matches kiosk confirmation modal copy */}
         {successResult.employeeName && (
           <div className="text-center">
-            <p className={cn('text-[11px] font-semibold uppercase tracking-widest', isDark ? 'text-white/50' : 'text-slate-500')}>
+            <p
+              className={cn(
+                'text-[11px] font-semibold uppercase tracking-widest',
+                isDark ? 'text-zinc-500' : 'text-slate-500',
+              )}
+            >
               {isIn ? 'Welcome' : 'Goodbye'}
             </p>
-            <p className={cn('text-lg font-bold leading-tight', isDark ? 'text-white' : 'text-slate-900')}>
+            <p className={cn('text-lg font-bold leading-tight', isDark ? 'text-zinc-50' : 'text-slate-900')}>
               {successResult.employeeName}
             </p>
           </div>
         )}
 
         {/* Action badge */}
-        <div className={cn(
-          'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold',
-          isIn
-            ? isDark
-              ? 'border-orange-400/35 bg-orange-500/15 text-orange-200'
-              : 'border-orange-200 bg-orange-50 text-[#c2410c] dark:bg-orange-950/30 dark:text-orange-300'
-            : isDark
-              ? 'border-slate-400/35 bg-slate-500/15 text-slate-200'
-              : 'border-slate-200 bg-slate-100 text-slate-700 dark:bg-slate-800/40 dark:text-slate-300',
-        )}>
+        <div
+          className={cn(
+            'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold',
+            isIn
+              ? isDark
+                ? 'border-orange-400/35 bg-orange-500/15 text-orange-200'
+                : 'border-orange-200 bg-orange-50 text-[#c2410c]'
+              : isDark
+                ? 'border-slate-400/35 bg-slate-500/15 text-slate-200'
+                : 'border-slate-200 bg-slate-100 text-slate-700',
+          )}
+        >
           {isIn ? <CheckCircle2 className="size-3.5" /> : <LogOut className="size-3.5" />}
           {isIn ? 'Clocked In' : 'Clocked Out'}
         </div>
 
         {/* Time */}
         {timeStr && (
-          <p className={cn('font-mono text-sm', isDark ? 'text-white/55' : 'text-muted-foreground')}>
+          <p className={cn('font-mono text-sm', isDark ? 'text-zinc-400' : 'text-slate-600')}>
             {timeStr}
           </p>
         )}
 
         {/* Status badges */}
         {isIn && successResult.status === 'on_time' && (
-          <span className={cn(
-            'rounded-full border px-2.5 py-0.5 text-xs font-medium',
-            isDark ? 'border-emerald-400/25 bg-emerald-500/15 text-emerald-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          )}>Present — On Time</span>
+          <span
+            className={cn(
+              'rounded-full border px-2.5 py-0.5 text-xs font-medium',
+              isDark
+                ? 'border-emerald-400/25 bg-emerald-500/15 text-emerald-300'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-800',
+            )}
+          >
+            Present — On Time
+          </span>
         )}
         {isIn && successResult.status === 'late' && (
-          <span className={cn(
-            'rounded-full border px-2.5 py-0.5 text-xs font-medium',
-            isDark ? 'border-amber-400/25 bg-amber-500/15 text-amber-300' : 'border-amber-200 bg-amber-50 text-amber-700'
-          )}>
+          <span
+            className={cn(
+              'rounded-full border px-2.5 py-0.5 text-xs font-medium',
+              isDark
+                ? 'border-amber-400/25 bg-amber-500/15 text-amber-300'
+                : 'border-amber-200 bg-amber-50 text-amber-900',
+            )}
+          >
             Late{successResult.lateMinutes ? ` — ${successResult.lateMinutes} min` : successResult.lateLabel ? ` — ${successResult.lateLabel}` : ''}
           </span>
         )}
         {isIn && successResult.status === 'half_day' && (
-          <span className={cn(
-            'rounded-full border px-2.5 py-0.5 text-xs font-medium',
-            isDark ? 'border-sky-400/25 bg-sky-500/15 text-sky-300' : 'border-sky-200 bg-sky-50 text-sky-700'
-          )}>Half Day</span>
+          <span
+            className={cn(
+              'rounded-full border px-2.5 py-0.5 text-xs font-medium',
+              isDark
+                ? 'border-sky-400/25 bg-sky-500/15 text-sky-300'
+                : 'border-sky-200 bg-sky-50 text-sky-900',
+            )}
+          >
+            Half Day
+          </span>
         )}
         {!isIn && (successResult.undertimeMinutes ?? 0) > 0 && (
-          <span className={cn(
-            'rounded-full border px-2.5 py-0.5 text-xs font-medium',
-            isDark ? 'border-orange-400/25 bg-orange-500/15 text-orange-300' : 'border-orange-200 bg-orange-50 text-orange-700'
-          )}>Undertime — {successResult.undertimeMinutes} min</span>
+          <span
+            className={cn(
+              'rounded-full border px-2.5 py-0.5 text-xs font-medium',
+              isDark
+                ? 'border-orange-400/25 bg-orange-500/15 text-orange-300'
+                : 'border-orange-200 bg-orange-50 text-orange-900',
+            )}
+          >
+            Undertime — {successResult.undertimeMinutes} min
+          </span>
         )}
 
         {!isIn && successResult.correctionSuggested && onFileAttendanceCorrection && (
@@ -269,7 +308,7 @@ export function ScannerInput({
                 'w-full rounded-xl border font-semibold',
                 isDark
                   ? 'border-amber-400/35 bg-amber-500/15 text-amber-50 hover:bg-amber-500/25'
-                  : 'border-amber-300 bg-background text-amber-950 hover:bg-amber-50',
+                  : 'border-amber-300 bg-white text-amber-950 hover:bg-amber-50',
               )}
               onClick={onFileAttendanceCorrection}
             >
@@ -279,7 +318,7 @@ export function ScannerInput({
         )}
 
         {/* Reset hint */}
-        <p className={cn('mt-1 text-[10px]', isDark ? 'text-white/22' : 'text-muted-foreground/50')}>
+        <p className={cn('mt-1 text-[10px]', isDark ? 'text-zinc-600' : 'text-slate-500')}>
           Ready for next scan…
         </p>
       </div>

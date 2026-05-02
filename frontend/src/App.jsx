@@ -135,7 +135,7 @@ function RealTimeClock() {
           {timeMain}
         </span>
         {timeSuffix && (
-          <span className="mb-1.5 self-end text-lg font-bold text-[#ff5a14] md:text-xl">
+          <span className="mb-1.5 self-end text-lg font-bold text-[#ff5a14] dark:text-[#fb923c] md:text-xl">
             {timeSuffix}
           </span>
         )}
@@ -158,7 +158,7 @@ function formatKioskTime(iso) {
   return d.toLocaleString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })
 }
 
-/** Kiosk attendance confirmation dialog header — logo follows surface (matches dashboard theme). */
+/** Kiosk attendance confirmation dialog header — follows app light/dark theme. */
 function KioskAttendanceModalBrandBar({ variant }) {
   const isOut = variant === 'clock_out'
   const { theme } = useTheme()
@@ -168,7 +168,7 @@ function KioskAttendanceModalBrandBar({ variant }) {
       className={cn(
         'flex flex-wrap items-center gap-3 border-b px-5 py-3.5 sm:px-6',
         isDark
-          ? 'border-border bg-card'
+          ? 'border-zinc-700/55 bg-zinc-900/95'
           : 'border-slate-200/90 bg-linear-to-r from-slate-50 to-white',
       )}
     >
@@ -179,7 +179,7 @@ function KioskAttendanceModalBrandBar({ variant }) {
       <p
         className={cn(
           'min-w-0 flex-1 truncate text-[11px]',
-          isDark ? 'text-muted-foreground' : 'text-slate-500',
+          isDark ? 'text-zinc-400' : 'text-slate-500',
         )}
       >
         {isOut ? 'Shift end confirmation' : 'Shift start confirmation'}
@@ -432,66 +432,82 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
       )}
       <Dialog open={!!faceSuccessSummary} onOpenChange={(open) => !open && closeFaceSuccessSummary()}>
         <DialogContent
-          overlayClassName="bg-slate-900/45 backdrop-blur-sm dark:bg-black/55"
-          className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.25)] dark:border-border dark:bg-card dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.45)] sm:max-w-[400px]"
+          overlayClassName="bg-slate-900/45 backdrop-blur-sm dark:bg-black/65"
+          className={cn(
+            'overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.25)]',
+            'dark:border-zinc-700/60 dark:bg-zinc-950 dark:text-zinc-100 dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.65)]',
+            'sm:max-w-[400px]',
+          )}
           innerClassName="gap-0 p-0 sm:p-0 overflow-x-hidden"
-          closeButtonClassName="right-4 top-[14px] z-30 border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 dark:border-border dark:bg-card dark:text-muted-foreground dark:hover:bg-muted"
+          closeButtonClassName={cn(
+            'right-4 top-[14px] z-30 border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50',
+            'dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white',
+          )}
         >
           <KioskAttendanceModalBrandBar variant={faceSuccessSummary?.type === 'clock_out' ? 'clock_out' : 'clock_in'} />
-          <div className="px-6 pb-7 pt-6 text-center sm:px-8">
+          <div
+            className={cn(
+              'relative bg-linear-to-b from-white to-slate-50/90 px-6 pb-7 pt-6 text-center sm:px-8',
+              'dark:from-zinc-950 dark:to-zinc-900',
+            )}
+          >
+            <div
+              className="pointer-events-none absolute inset-x-8 top-0 h-px bg-linear-to-r from-transparent via-orange-500/25 to-transparent dark:via-orange-500/25"
+              aria-hidden
+            />
             <div className="mb-4 inline-flex items-center gap-2 text-sm font-bold">
               {faceSuccessSummary?.type === 'clock_out' ? (
                 <>
-                  <LogOut className="size-5 text-slate-500 dark:text-muted-foreground" aria-hidden />
-                  <span className="text-slate-700 dark:text-foreground">Clocked out</span>
+                  <LogOut className="size-5 text-slate-500 dark:text-zinc-400" aria-hidden />
+                  <span className="text-slate-700 dark:text-zinc-200">Clocked out</span>
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="size-5 text-[#ff6818]" aria-hidden />
-                  <span className="text-[#b45309] dark:text-[#fb923c]">Clocked in</span>
+                  <CheckCircle2 className="size-5 text-[#ff6818] dark:text-orange-400" aria-hidden />
+                  <span className="text-[#b45309] dark:text-orange-300">Clocked in</span>
                 </>
               )}
             </div>
             {faceSuccessSummary?.name && (
               <>
-                <h3 className="text-balance text-2xl font-bold leading-tight text-slate-900 dark:text-foreground">
+                <h3 className="text-balance text-2xl font-bold leading-tight text-slate-900 dark:text-zinc-50">
                   {faceSuccessSummary?.type === 'clock_out' ? (
                     <>
                       Goodbye,<br />
-                      <span className="text-slate-800 dark:text-foreground/90">{faceSuccessSummary.name}</span>
+                      <span className="text-slate-800 dark:text-zinc-100">{faceSuccessSummary.name}</span>
                     </>
                   ) : (
                     <>
                       Welcome,<br />
-                      <span className="text-slate-800 dark:text-foreground/90">{faceSuccessSummary.name}</span>
+                      <span className="text-slate-800 dark:text-zinc-100">{faceSuccessSummary.name}</span>
                     </>
                   )}
                 </h3>
-                <p className="mt-2 text-sm text-slate-500 dark:text-muted-foreground">
+                <p className="mt-2 text-sm text-slate-500 dark:text-zinc-400">
                   {faceSuccessSummary?.type === 'clock_out'
                     ? 'Your end-of-shift time has been logged.'
                     : 'Your attendance has been recorded for this shift.'}
                 </p>
               </>
             )}
-            <div className="mt-4 space-y-1 text-slate-600 dark:text-muted-foreground">
+            <div className="mt-4 space-y-1 text-slate-600 dark:text-zinc-400">
               {faceSuccessSummary?.typeLabel != null && faceSuccessSummary.typeLabel !== '' && (
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-muted-foreground/80">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-zinc-500">
                   Confirmation · Clock {faceSuccessSummary.typeLabel}
                 </p>
               )}
               {faceSuccessSummary?.recordedAt && (
-                <p className="font-mono text-2xl font-bold tabular-nums text-slate-900 dark:text-foreground">
+                <p className="font-mono text-2xl font-bold tabular-nums text-slate-900 dark:text-zinc-50">
                   {formatKioskTime(faceSuccessSummary.recordedAt)}
                 </p>
               )}
             </div>
-            <p className="mt-4 text-xs text-slate-400 dark:text-muted-foreground">
+            <p className="mt-4 text-xs text-slate-400 dark:text-zinc-500">
               Closing automatically…
             </p>
             <Button
               onClick={closeFaceSuccessSummary}
-              className="mt-6 w-full rounded-xl border border-[#ff8533]/35 bg-linear-to-br from-[#ff8a44] to-[#ff5410] text-[15px] font-semibold text-white shadow-md hover:from-[#ff7f36] hover:to-[#ea4a0f]"
+              className="mt-6 w-full rounded-xl border border-[#ff8533]/40 bg-linear-to-br from-[#ff8a44] to-[#ff5410] text-[15px] font-semibold text-white shadow-md hover:from-[#ff7f36] hover:to-[#ea4a0f] dark:border-orange-500/40 dark:shadow-lg dark:shadow-orange-950/40"
             >
               <Home className="mr-2 size-4" />
               Continue
@@ -1132,38 +1148,49 @@ function SmartDTRPreview({ className }) {
       {/* Summary modal: branded professional confirmation — same layout for Clock In / Clock Out (Welcome vs Goodbye) */}
       <Dialog open={summaryModal.open} onOpenChange={(open) => !open && closeSummaryModal()}>
         <DialogContent
-          overlayClassName="bg-slate-900/45 backdrop-blur-sm dark:bg-black/55"
-          className="max-w-[min(100%,440px)] overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.28)] dark:border-border dark:bg-card dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] sm:max-w-[440px]"
+          overlayClassName="bg-slate-900/45 backdrop-blur-sm dark:bg-black/65"
+          className={cn(
+            'max-w-[min(100%,440px)] overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.28)]',
+            'dark:border-zinc-700/60 dark:bg-zinc-950 dark:text-zinc-100 dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.65)]',
+            'sm:max-w-[440px]',
+          )}
           innerClassName="gap-0 overflow-x-hidden p-0 sm:p-0"
           closeButtonClassName={cn(
-            'right-4 top-[14px] z-30 rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm',
-            'hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-[#ff6818]/35 focus-visible:ring-offset-0',
-            'dark:border-border dark:bg-card dark:text-muted-foreground dark:hover:bg-muted',
+            'right-4 top-[14px] z-30 rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50',
+            'focus-visible:ring-2 focus-visible:ring-[#ff6818]/35 focus-visible:ring-offset-0',
+            'dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white dark:focus-visible:ring-orange-500/35 dark:focus-visible:ring-offset-zinc-950',
           )}
         >
           <KioskAttendanceModalBrandBar variant={kioskSummaryIsClockOut ? 'clock_out' : 'clock_in'} />
           <div
             role="document"
             aria-label="Attendance confirmation"
-            className="relative px-6 pb-9 pt-6 text-center text-slate-900 dark:text-foreground sm:px-10 sm:pb-10 sm:pt-7"
+            className={cn(
+              'relative bg-linear-to-b from-white via-white to-slate-50/80 px-6 pb-9 pt-6 text-center sm:px-10 sm:pb-10 sm:pt-7',
+              'dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900',
+            )}
           >
+            <div
+              className="pointer-events-none absolute inset-x-10 top-0 h-px bg-linear-to-r from-transparent via-orange-500/20 to-transparent"
+              aria-hidden
+            />
             <div className="relative mx-auto flex max-w-sm flex-col items-center">
               <div className="relative mb-6 shrink-0">
                 <div
                   className={cn(
                     'pointer-events-none absolute -inset-2 rounded-full blur-2xl',
                     kioskSummaryIsClockOut
-                      ? 'bg-slate-200/60 dark:bg-slate-500/15'
-                      : 'bg-orange-100/85 dark:bg-orange-500/20',
+                      ? 'bg-slate-200/60 dark:bg-slate-500/20'
+                      : 'bg-orange-100/85 dark:bg-orange-500/18',
                   )}
                   aria-hidden
                 />
                 <Avatar
                   className={cn(
-                    'relative size-[112px] rounded-full border-2 border-white shadow-lg dark:border-card',
+                    'relative size-[112px] rounded-full border-2 border-white shadow-lg dark:border-zinc-700/80 dark:shadow-black/30',
                     kioskSummaryIsClockOut
-                      ? 'ring-[3px] ring-slate-400/45 ring-offset-2 ring-offset-white dark:ring-slate-500/50 dark:ring-offset-card'
-                      : 'ring-[3px] ring-[#ff9248]/65 ring-offset-2 ring-offset-white dark:ring-[#ff9248]/50 dark:ring-offset-card',
+                      ? 'ring-[3px] ring-slate-400/45 ring-offset-2 ring-offset-white dark:ring-slate-500/55 dark:ring-offset-zinc-950'
+                      : 'ring-[3px] ring-[#ff9248]/65 ring-offset-2 ring-offset-white dark:ring-orange-400/50 dark:ring-offset-zinc-950',
                   )}
                 >
                   <AvatarImage
@@ -1184,22 +1211,22 @@ function SmartDTRPreview({ className }) {
                 </Avatar>
               </div>
 
-              <h2 className="mb-1 max-w-[22ch] text-balance text-[1.65rem] font-bold leading-snug tracking-tight text-slate-900 dark:text-foreground sm:text-[1.85rem]">
+              <h2 className="mb-1 max-w-[22ch] text-balance text-[1.65rem] font-bold leading-snug tracking-tight text-slate-900 dark:text-zinc-50 sm:text-[1.85rem]">
                 {kioskSummaryIsClockOut ? (
                   <>
                     Goodbye,
                     <br />
-                    <span className="text-slate-800 dark:text-foreground/90">{kioskSummaryName}</span>
+                    <span className="text-slate-800 dark:text-zinc-100">{kioskSummaryName}</span>
                   </>
                 ) : (
                   <>
                     Welcome,
                     <br />
-                    <span className="text-slate-800 dark:text-foreground/90">{kioskSummaryName}</span>
+                    <span className="text-slate-800 dark:text-zinc-100">{kioskSummaryName}</span>
                   </>
                 )}
               </h2>
-              <p className="mb-6 text-sm text-slate-500 dark:text-muted-foreground">
+              <p className="mb-6 text-sm text-slate-500 dark:text-zinc-400">
                 {kioskSummaryIsClockOut
                   ? 'Your clock-out time has been recorded securely.'
                   : 'Your clock-in time has been recorded securely.'}
@@ -1210,14 +1237,14 @@ function SmartDTRPreview({ className }) {
                   className={cn(
                     'mb-2 flex items-center justify-center gap-2',
                     kioskSummaryIsClockOut
-                      ? 'text-slate-600 dark:text-muted-foreground'
-                      : 'text-[#c2410c] dark:text-[#fb923c]',
+                      ? 'text-slate-600 dark:text-zinc-300'
+                      : 'text-[#c2410c] dark:text-orange-300',
                   )}
                 >
                   {kioskSummaryIsClockOut ? (
                     <LogOut className="size-5 shrink-0" strokeWidth={2.25} aria-hidden />
                   ) : (
-                    <CheckCircle2 className="size-5 shrink-0 text-[#ff6818]" strokeWidth={2.25} aria-hidden />
+                    <CheckCircle2 className="size-5 shrink-0 text-[#ff6818] dark:text-orange-400" strokeWidth={2.25} aria-hidden />
                   )}
                   <span className="text-base font-bold">
                     {kioskSummaryIsClockOut ? 'Clocked out' : 'Clocked in'}
@@ -1225,21 +1252,21 @@ function SmartDTRPreview({ className }) {
                 </div>
 
                 {summaryModal.recordedAt ? (
-                  <p className="font-mono text-[2.05rem] font-bold tabular-nums tracking-tight text-slate-900 dark:text-foreground sm:text-[2.25rem]">
+                  <p className="font-mono text-[2.05rem] font-bold tabular-nums tracking-tight text-slate-900 dark:text-zinc-50 sm:text-[2.25rem]">
                     {formatKioskTime(summaryModal.recordedAt)}
                   </p>
                 ) : (
-                  <p className="text-4xl font-bold text-slate-400 dark:text-muted-foreground">—</p>
+                  <p className="text-4xl font-bold text-slate-400 dark:text-zinc-500">—</p>
                 )}
 
                 <div className="mt-4 flex min-h-10 w-full flex-wrap items-center justify-center gap-2">
                   {!kioskSummaryIsClockOut && summaryModal.status === 'on_time' && (
-                    <span className="rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-900 ring-1 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-100 dark:ring-emerald-500/25">
+                    <span className="rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-900 ring-1 ring-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-500/25">
                       {summaryModal.lateLabel || 'On time'}
                     </span>
                   )}
                   {!kioskSummaryIsClockOut && summaryModal.status === 'late' && (
-                    <span className="rounded-full bg-amber-50 px-3.5 py-1.5 text-xs font-semibold text-amber-950 ring-1 ring-amber-100 dark:bg-amber-950/35 dark:text-amber-100 dark:ring-amber-500/25">
+                    <span className="rounded-full bg-amber-50 px-3.5 py-1.5 text-xs font-semibold text-amber-950 ring-1 ring-amber-100 dark:bg-amber-500/12 dark:text-amber-100 dark:ring-amber-500/25">
                       {summaryModal.lateLabel
                         ? summaryModal.lateLabel
                         : summaryModal.lateMinutes != null
@@ -1248,7 +1275,7 @@ function SmartDTRPreview({ className }) {
                     </span>
                   )}
                   {!kioskSummaryIsClockOut && summaryModal.status === 'half_day' && (
-                    <span className="rounded-full bg-sky-50 px-3.5 py-1.5 text-xs font-semibold text-sky-950 ring-1 ring-sky-100 dark:bg-sky-950/35 dark:text-sky-100 dark:ring-sky-500/25">
+                    <span className="rounded-full bg-sky-50 px-3.5 py-1.5 text-xs font-semibold text-sky-950 ring-1 ring-sky-100 dark:bg-sky-500/12 dark:text-sky-100 dark:ring-sky-500/25">
                       Half Day
                     </span>
                   )}
@@ -1256,12 +1283,12 @@ function SmartDTRPreview({ className }) {
                     summaryModal.status === 'undertime' &&
                     summaryModal.undertimeMinutes != null &&
                     summaryModal.undertimeMinutes > 0 && (
-                      <span className="rounded-full bg-orange-50 px-3.5 py-1.5 text-xs font-semibold text-orange-950 ring-1 ring-orange-100 dark:bg-orange-950/35 dark:text-orange-100 dark:ring-orange-500/25">
+                      <span className="rounded-full bg-orange-50 px-3.5 py-1.5 text-xs font-semibold text-orange-950 ring-1 ring-orange-100 dark:bg-orange-500/12 dark:text-orange-100 dark:ring-orange-500/25">
                         Undertime ({summaryModal.undertimeMinutes} min)
                       </span>
                     )}
                   {kioskSummaryIsClockOut && summaryModal.status === 'present' && (
-                    <span className="rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-900 ring-1 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-100 dark:ring-emerald-500/25">
+                    <span className="rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-900 ring-1 ring-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-500/25">
                       On time (no undertime)
                     </span>
                   )}
@@ -1280,7 +1307,7 @@ function SmartDTRPreview({ className }) {
                   <Button
                     type="button"
                     variant="outline"
-                    className="mt-3 h-11 w-full rounded-xl border-amber-300 bg-white text-[15px] font-semibold text-amber-950 hover:bg-amber-100 dark:border-amber-500/35 dark:bg-card dark:text-amber-100 dark:hover:bg-amber-950/40"
+                    className="mt-3 h-11 w-full rounded-xl border-amber-300 bg-white text-[15px] font-semibold text-amber-950 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50 dark:hover:bg-amber-500/20"
                     onClick={() => {
                       closeSummaryModal()
                       goFileAttendanceCorrectionPortal()
@@ -1292,24 +1319,24 @@ function SmartDTRPreview({ className }) {
               )}
 
               {kioskAutoCloseSeconds > 0 && summaryModal.open && !summaryModal.correctionSuggested && (
-                <p className="mt-6 text-sm font-medium text-slate-400 dark:text-muted-foreground" role="status" aria-live="polite">
+                <p className="mt-6 text-sm font-medium text-slate-400 dark:text-zinc-500" role="status" aria-live="polite">
                   Closing in {kioskAutoCloseSeconds} second{kioskAutoCloseSeconds === 1 ? '' : 's'}…
                 </p>
               )}
 
-              <DialogFooter className="mt-6 w-full flex-col gap-3 border-t border-slate-100 p-0 pt-6 dark:border-border sm:flex-row sm:justify-stretch sm:gap-4">
+              <DialogFooter className="mt-6 w-full flex-col gap-3 border-t border-slate-100 p-0 pt-6 dark:border-zinc-800 sm:flex-row sm:justify-stretch sm:gap-4">
                 <Button
                   type="button"
                   variant="secondary"
                   onClick={closeSummaryModal}
-                  className="h-12 min-h-[48px] w-full flex-1 rounded-xl border border-slate-200 bg-white text-[15px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-border dark:bg-card dark:text-foreground dark:hover:bg-muted sm:flex-1"
+                  className="h-12 min-h-[48px] w-full min-w-0 flex-1 rounded-xl border border-slate-200 bg-white text-[15px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 sm:flex-1"
                 >
                   Scan again
                 </Button>
                 <Button
                   type="button"
                   onClick={goToDashboard}
-                  className="h-12 min-h-[48px] w-full flex-1 rounded-xl border border-[#ff8533]/40 bg-linear-to-br from-[#ff8a44] to-[#ff5410] text-[15px] font-semibold text-white shadow-md hover:from-[#ff7f36] hover:to-[#ea4a0f] active:scale-[0.99] sm:flex-1"
+                  className="h-12 min-h-[48px] w-full min-w-0 flex-1 rounded-xl border border-[#ff8533]/40 bg-linear-to-br from-[#ff8a44] to-[#ff5410] text-[15px] font-semibold text-white shadow-md hover:from-[#ff7f36] hover:to-[#ea4a0f] active:scale-[0.99] dark:border-orange-500/40 dark:shadow-lg dark:shadow-orange-950/35 sm:flex-1"
                 >
                   <Home className="mr-2 size-[1.1rem]" aria-hidden />
                   Go to Dashboard
@@ -1335,7 +1362,7 @@ function SmartDTRPreview({ className }) {
             'hover:bg-white/22 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-400/50 focus-visible:ring-offset-0',
           )}
         >
-          <div className="px-7 pb-8 pt-12 text-center text-white sm:px-10">
+          <div className="w-full min-w-0 max-w-full overflow-x-hidden px-7 pb-8 pt-12 text-center text-white sm:px-10">
             <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-full border border-amber-400/35 bg-amber-500/15">
               <ClipboardList className="size-7 text-amber-200" aria-hidden />
             </div>
@@ -1343,13 +1370,17 @@ function SmartDTRPreview({ className }) {
               <p className="mb-1 text-sm font-medium text-white/70">{kioskCorrectionModal.employeeName.trim()}</p>
             )}
             <h2 className="mb-3 text-xl font-bold tracking-tight text-white">{kioskCorrectionConflictTitle}</h2>
-            <p className="text-sm leading-relaxed text-white/75">{kioskCorrectionConflictBody}</p>
-            <DialogFooter className="mt-8 flex-col gap-3 border-0 p-0 sm:flex-row sm:justify-stretch">
+            <p className="mx-auto max-w-prose text-sm leading-relaxed text-white/75">{kioskCorrectionConflictBody}</p>
+            {/*
+              Keep actions in a single column: sm:flex-row + w-full on both buttons forces each to 100% width
+              in a row and overflows (orange “File correction” clipped past the modal edge).
+            */}
+            <DialogFooter className="mt-8 w-full min-w-0 max-w-full flex-col gap-3 border-0 p-0 sm:flex-col">
               <Button
                 type="button"
                 variant="secondary"
                 onClick={closeKioskCorrectionModal}
-                className="h-12 w-full rounded-xl border border-white/15 bg-white/10 text-[15px] font-semibold text-white hover:bg-white/14"
+                className="h-12 w-full max-w-full min-w-0 shrink rounded-xl border border-white/15 bg-white/10 text-[15px] font-semibold text-white hover:bg-white/14"
               >
                 Scan again
               </Button>
@@ -1359,7 +1390,7 @@ function SmartDTRPreview({ className }) {
                   closeKioskCorrectionModal()
                   goFileAttendanceCorrectionPortal()
                 }}
-                className="h-12 w-full rounded-xl border border-amber-400/35 bg-amber-600 text-[15px] font-semibold text-white hover:bg-amber-500"
+                className="h-12 w-full max-w-full min-w-0 shrink rounded-xl border border-amber-400/35 bg-amber-600 text-[15px] font-semibold text-white hover:bg-amber-500"
               >
                 File correction
               </Button>
@@ -1392,13 +1423,16 @@ function AuthInput({
 
   return (
     <div className="space-y-2">
-      <Label htmlFor={name} className="text-sm font-bold text-[#0b0f19] dark:text-foreground">
+      <Label htmlFor={name} className="text-sm font-bold text-[#0b0f19] dark:text-zinc-100">
         {label}
-        {required && <span className="ml-2 text-[#ff5a14]" aria-hidden>*</span>}
+        {required && <span className="ml-2 text-[#ff5a14] dark:text-[#fb923c]" aria-hidden>*</span>}
       </Label>
       <div className="relative">
         {Icon && (
-          <Icon className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-[#ff5a14]" aria-hidden />
+          <Icon
+            className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-[#ff5a14] dark:text-[#fb923c]"
+            aria-hidden
+          />
         )}
         <Input
           id={name}
@@ -1412,11 +1446,11 @@ function AuthInput({
           aria-invalid={hasError}
           aria-describedby={hasError ? `${name}-error` : undefined}
         className={cn(
-          'h-[54px] rounded-xl border-[#dfe2e8] bg-white px-4 text-base text-[#111827] shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition-colors duration-200 placeholder:text-[#7b8190] focus-visible:border-[#ff9b67] focus-visible:ring-[#ff6818]/15',
-          'dark:border-border dark:bg-background dark:text-foreground dark:placeholder:text-muted-foreground dark:focus-visible:border-[#ff9b67]/80',
+          'h-[54px] rounded-xl border-[#dfe2e8] bg-white px-4 text-base text-[#111827] shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition-colors duration-200 placeholder:text-[#7b8190] focus-visible:border-[#ff9b67] focus-visible:ring-[3px] focus-visible:ring-[#ff6818]/15',
+          'dark:border-zinc-600/90 dark:bg-zinc-950 dark:text-zinc-50 dark:shadow-[inset_0_2px_4px_rgba(0,0,0,0.35),0_1px_0_0_rgba(255,255,255,0.05)] dark:placeholder:text-zinc-500 dark:focus-visible:border-orange-400/75 dark:focus-visible:ring-orange-500/25',
           Icon && 'pl-14',
           isPassword && 'pr-11',
-          hasError && 'border-destructive focus-visible:ring-destructive/20',
+          hasError && 'border-destructive focus-visible:ring-destructive/20 dark:border-red-400/70',
         )}
           {...rest}
         />
@@ -1425,7 +1459,7 @@ function AuthInput({
             type="button"
             tabIndex={-1}
             onClick={() => setShowPassword((v) => !v)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-[#ff5a14] transition-colors hover:bg-[#fff4ed] hover:text-[#db3f04] focus:outline-none focus:ring-2 focus:ring-[#ff6818]/20 dark:hover:bg-orange-950/30 dark:hover:text-[#fb923c]"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-[#ff5a14] transition-colors hover:bg-[#fff4ed] hover:text-[#db3f04] focus:outline-none focus:ring-2 focus:ring-[#ff6818]/20 dark:text-[#fb923c] dark:hover:bg-zinc-800 dark:hover:text-orange-300"
             aria-label={showPassword ? 'Hide password' : 'Show password'}
           >
             {showPassword ? (
@@ -1455,8 +1489,9 @@ function AuthCheckbox({ label, name, checked, onCheckedChange }) {
         checked={checked}
         onCheckedChange={onCheckedChange}
         aria-label={label}
+        className="dark:border-zinc-500 dark:bg-zinc-900/80 dark:data-[state=checked]:border-orange-500 dark:data-[state=checked]:bg-orange-600 dark:data-[state=checked]:text-white"
       />
-      <Label htmlFor={name} className="cursor-pointer text-sm font-medium text-muted-foreground">
+      <Label htmlFor={name} className="cursor-pointer text-sm font-medium text-muted-foreground dark:text-zinc-300">
         {label}
       </Label>
     </div>
@@ -1474,7 +1509,6 @@ function LoginFormWithTabs({ onSuccess, onError }) {
 
 // —— Auth forms ——
 function LoginForm({ onSuccess, onError }) {
-  const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [loginValue, setLoginValue] = useState('')
   const [password, setPassword] = useState('')
@@ -1547,20 +1581,13 @@ function LoginForm({ onSuccess, onError }) {
         error={errors.password}
         required
       />
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <AuthCheckbox
           label="Remember me"
           name="remember"
           checked={remember}
           onCheckedChange={(checked) => setRemember(checked === true)}
         />
-        <button
-          type="button"
-          className="text-sm font-medium text-[#ff4f0b] underline-offset-2 transition-colors duration-200 hover:text-[#db3f04] hover:underline dark:text-[#fb923c] dark:hover:text-orange-300"
-          onClick={() => navigate('/forgot-password')}
-        >
-          Forgot password?
-        </button>
       </div>
       <Button
         type="submit"
