@@ -1,5 +1,6 @@
+import { useEffect, useMemo, useState } from 'react'
 import { useTheme } from '@/contexts/useTheme'
-import { agcLogoPathForTheme } from '@/lib/agcLogoUrl'
+import { agcLogoCandidatePathsForTheme } from '@/lib/agcLogoUrl'
 import { cn } from '@/lib/utils'
 
 /**
@@ -13,14 +14,22 @@ export function AgcBrandLogo({
 }) {
   const { theme } = useTheme()
   const surface = variant === 'light' || variant === 'dark' ? variant : theme
-  const src = agcLogoPathForTheme(surface)
+  const candidates = useMemo(() => agcLogoCandidatePathsForTheme(surface), [surface])
+  const [candidateIndex, setCandidateIndex] = useState(0)
+  useEffect(() => {
+    setCandidateIndex(0)
+  }, [surface])
+  const src = candidates[candidateIndex] || candidates[0]
   return (
     <img
-      key={src}
+      key={`${surface}-${src}`}
       src={src}
       alt={alt}
       className={cn('block max-h-full w-auto shrink-0 object-contain object-left', className)}
       decoding="async"
+      onError={() => {
+        setCandidateIndex((i) => (i + 1 < candidates.length ? i + 1 : i))
+      }}
     />
   )
 }
