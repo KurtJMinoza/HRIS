@@ -718,7 +718,7 @@ function SmartDTRPreview({ className }) {
 
   const kioskCorrectionConflictBody =
     kioskCorrectionModal.reason === 'already_timed_in'
-      ? 'You already have a clock-in today. Use Attendance Correction after signing in if your punches are wrong or incomplete.'
+      ? 'Your attendance for today is already completed.'
       : 'Sign in to the employee portal to submit an attendance correction (Presence filing / approvals).'
 
   const { theme, setTheme } = useTheme()
