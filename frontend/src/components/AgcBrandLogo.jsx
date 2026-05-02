@@ -3,7 +3,7 @@ import { agcLogoPathForTheme } from '@/lib/agcLogoUrl'
 import { cn } from '@/lib/utils'
 
 /**
- * Light UI → `dist/logo/AGC_DARK.png`; dark UI → `dist/dist/logo/AGC_WHITE.png`.
+ * Light UI → `dist/logo/AGC_DARK.png`; dark UI → `dist/dist/dist/logo/AGC_WHITE.png`.
  * `variant`: `auto` follows app theme; `light`/`dark` forces logo for that surface brightness.
  */
 export function AgcBrandLogo({

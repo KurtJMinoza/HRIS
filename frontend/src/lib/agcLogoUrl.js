@@ -1,6 +1,6 @@
 /**
  * Served from `frontend/public/` → dev/build URLs relative to `import.meta.env.BASE_URL`.
- * Light sidebar: `dist/logo/AGC_DARK.png` — dark sidebar: `dist/dist/logo/AGC_WHITE.png`.
+ * Light UI: `public/dist/logo/AGC_DARK.png` — dark UI: `public/dist/dist/dist/logo/AGC_WHITE.png`.
  */
 export function agcLogoPathForTheme(theme) {
   const base =
@@ -8,7 +8,7 @@ export function agcLogoPathForTheme(theme) {
       ? String(import.meta.env.BASE_URL).replace(/\/?$/, '')
       : ''
   if (theme === 'dark') {
-    return `${base}/dist/dist/logo/AGC_WHITE.png`
+    return `${base}/dist/dist/dist/logo/AGC_WHITE.png`
   }
   return `${base}/dist/logo/AGC_DARK.png`
 }
