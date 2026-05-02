@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState, useEffect, useRef, useCallback } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
 
 /** Matches Vite `base` (e.g. `/HR/` → `/HR`) so routes work when deployed under a subpath */
@@ -57,7 +57,46 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { getEmployeeAvatarColorClass, kioskAttendanceAvatarSrc } from '@/lib/employeeAvatar'
 import Webcam from 'react-webcam'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
-import agcLogo from './logos/AGC.png'
+import { AgcBrandLogo } from '@/components/AgcBrandLogo'
+
+/** Login duo people mark — SVG only (one white tile; avoids nested/cropped raster glitches). */
+function LoginHrDualFigureMark({ className }) {
+  const gid = useId().replace(/:/g, '')
+  const gradId = `hrisLoginDuoGrad-${gid}`
+  return (
+    <div
+      className={cn(
+        'flex size-28 shrink-0 items-center justify-center rounded-[1.125rem] border border-orange-400/45 bg-white',
+        'shadow-[0_12px_30px_-14px_rgba(15,23,42,0.18)] md:size-31',
+        className,
+      )}
+      role="img"
+      aria-label="HRIS icon"
+    >
+      <svg
+        viewBox="0 0 88 76"
+        className="h-15.5 w-18 md:h-16.5 md:w-20"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden
+      >
+        <defs>
+          <linearGradient id={gradId} x1={44} y1={8} x2={44} y2={74} gradientUnits="userSpaceOnUse">
+            <stop stopColor="#ffb020" />
+            <stop offset="1" stopColor="#ea4a12" />
+          </linearGradient>
+        </defs>
+        <g fill={`url(#${gradId})`} opacity="0.92">
+          <ellipse cx={28} cy={27} rx={12} ry={13} />
+          <path d="M16 71V55Q28 44 41 52V71H16z" />
+        </g>
+        <g fill={`url(#${gradId})`}>
+          <ellipse cx={53} cy={25} rx={13} ry={14} />
+          <path d="M35 71V53Q53 46 68 53V71H35z" />
+        </g>
+      </svg>
+    </div>
+  )
+}
 
 const MySchedule = lazy(() => import('@/pages/MySchedule'))
 const AdminPayslipViewPage = lazy(() => import('@/pages/AdminPayslipViewPage'))
@@ -97,118 +136,21 @@ const FEATURES = [
   'Role-Based Dashboard',
 ]
 
-function HrisBrandMark({ className = '' }) {
-  return (
-    <div className={cn('relative h-16 w-16 text-[#ff6818]', className)} aria-hidden>
-      <span className="absolute left-1/2 top-0 block size-7 -translate-x-1/2 rounded-full bg-linear-to-br from-[#ffbd14] to-[#ff4b10]" />
-      <span className="absolute bottom-1 left-[4px] block h-8 w-8 rounded-tl-3xl rounded-br-md bg-linear-to-br from-[#ffb20d] to-[#ff5a14] -rotate-45" />
-      <span className="absolute bottom-1 right-[4px] block h-8 w-8 rounded-tr-3xl rounded-bl-md bg-linear-to-br from-[#ff8b19] to-[#ff4b10] rotate-45" />
-      <span className="absolute bottom-[13px] left-1/2 block h-5 w-8 -translate-x-1/2 rounded-t-full bg-white" />
-    </div>
-  )
-}
-
-function ParticleWavePattern() {
-  // Digital grid wave, anchored at bottom-right of auth panel.
-  // Kept low-contrast so branding and form remain the visual priority.
-  return (
-    <div
-      className="pointer-events-none absolute -bottom-12 right-[-2%] h-[280px] w-[min(520px,92%)] opacity-95"
-      aria-hidden
-    >
-      <svg
-        className="absolute inset-0 h-full w-full"
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-      >
-        <defs>
-          <linearGradient id="hrisGridFadeX" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#f8fafc" stopOpacity="0" />
-            <stop offset="38%" stopColor="#ffb980" stopOpacity="0.22" />
-            <stop offset="100%" stopColor="#ff6a18" stopOpacity="0.34" />
-          </linearGradient>
-          <linearGradient id="hrisGridFadeY" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
-            <stop offset="52%" stopColor="#ffd6b2" stopOpacity="0.16" />
-            <stop offset="100%" stopColor="#ff7a2e" stopOpacity="0.26" />
-          </linearGradient>
-          <radialGradient id="hrisGridGlow" cx="100%" cy="100%" r="75%">
-            <stop offset="0%" stopColor="#ff8a2f" stopOpacity="0.35" />
-            <stop offset="55%" stopColor="#ff8a2f" stopOpacity="0.12" />
-            <stop offset="100%" stopColor="#ff8a2f" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-
-        {/* soft glow under the mesh */}
-        <ellipse cx="84" cy="86" rx="40" ry="22" fill="url(#hrisGridGlow)" />
-
-        {/* vertical digital grid lines */}
-        {Array.from({ length: 13 }).map((_, i) => {
-          const x = 34 + i * 5
-          return (
-            <path
-              key={`v-${x}`}
-              d={`M ${x} 22 C ${x - 2.5} 46, ${x - 2} 72, ${x + 1.5} 98`}
-              fill="none"
-              stroke="url(#hrisGridFadeX)"
-              strokeWidth="0.55"
-              strokeLinecap="round"
-            />
-          )
-        })}
-
-        {/* horizontal wave grid lines */}
-        {Array.from({ length: 9 }).map((_, i) => {
-          const y = 42 + i * 6
-          const bend = 7 + i * 0.7
-          return (
-            <path
-              key={`h-${y}`}
-              d={`M 20 ${y} C 42 ${y - bend}, 70 ${y + bend * 0.45}, 100 ${y - bend * 0.25}`}
-              fill="none"
-              stroke="url(#hrisGridFadeY)"
-              strokeWidth="0.62"
-              strokeLinecap="round"
-            />
-          )
-        })}
-      </svg>
-    </div>
-  )
-}
-
 function formatKioskTime(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
   return d.toLocaleString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })
 }
 
-/** Aligns kiosk confirmation dialogs with branded Smart DTR / company logo bar. */
+/** Kiosk attendance confirmation dialog header (light surface → dark logo asset). */
 function KioskAttendanceModalBrandBar({ variant }) {
   const isOut = variant === 'clock_out'
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/90 bg-linear-to-r from-slate-50 to-white px-5 py-3.5 sm:px-6">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <img
-          src={agcLogo}
-          alt="AGC Technologies & Business Solutions"
-          className="h-8 w-[104px] shrink-0 object-contain object-left"
-        />
-        <div className="min-w-0 text-left">
-          <p className="truncate text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Smart DTR</p>
-          <p className="truncate text-[11px] text-slate-400">
-            {isOut ? 'Shift end confirmation' : 'Shift start confirmation'}
-          </p>
-        </div>
-      </div>
-      <span
-        className={cn(
-          'shrink-0 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide',
-          isOut ? 'border border-slate-200 bg-slate-100 text-slate-700' : 'border border-orange-100 bg-orange-50 text-[#c2410c]',
-        )}
-      >
-        {isOut ? 'Departure' : 'Arrival'}
-      </span>
+    <div className="flex flex-wrap items-center gap-3 border-b border-slate-200/90 bg-linear-to-r from-slate-50 to-white px-5 py-3.5 sm:px-6">
+      <AgcBrandLogo variant="light" className="h-8 w-[104px] shrink-0 object-contain object-left" />
+      <p className="min-w-0 flex-1 truncate text-[11px] text-slate-500">
+        {isOut ? 'Shift end confirmation' : 'Shift start confirmation'}
+      </p>
     </div>
   )
 }
@@ -737,13 +679,12 @@ function SmartDTRPreview({ className }) {
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.96),rgba(247,248,250,0.72)_58%,rgba(255,255,255,0.95)_100%)]" aria-hidden />
 
-      {/* Brand bar */}
+      {/* Brand bar — AGC lockup framing (narrow viewport + lift) */}
       <div className="relative z-10 flex items-start justify-between px-8 pt-6 pb-0 sm:px-10 xl:px-12">
-        <div className="relative h-[50px] w-[126px] overflow-hidden">
-          <img
-            src={agcLogo}
-            alt="AGC Technologies & Business Solutions"
-            className="absolute left-0 top-[-37px] h-auto w-[126px] max-w-none object-contain"
+        <div className="relative h-[50px] w-[126px] shrink-0 overflow-hidden">
+          <AgcBrandLogo
+            variant="light"
+            className="absolute left-0 top-[-37px] h-auto max-h-none w-[126px] max-w-none object-contain object-left"
           />
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl border border-[#dfe2e8] bg-white/80 px-3 py-2 text-xs font-bold uppercase text-[#5b6473] shadow-[0_2px_8px_rgba(15,23,42,0.08)]">
@@ -1559,27 +1500,18 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
   return (
     <div
       className={cn(
-        'relative flex min-h-screen w-full flex-col items-center justify-center overflow-hidden bg-[#fbfbfc] px-6 py-10 md:px-8 lg:px-10',
+        'relative flex min-h-screen w-full flex-col items-center justify-center bg-[#fbfbfc] px-6 py-10 md:px-8 lg:px-10',
         className
       )}
     >
-      <ParticleWavePattern />
       <div className="relative z-10 w-full max-w-[min(100%,44rem)] lg:translate-y-6">
 
-        {/* Brand header — matches kiosk teal accent */}
-        <div className="mb-9 flex flex-col items-center gap-4 text-center">
-          <div className="flex items-center justify-center gap-4">
-            <HrisBrandMark className="h-[76px] w-[76px]" />
-            <h1 className="text-[4rem] font-black leading-none text-[#222326] drop-shadow-[0_2px_1px_rgba(0,0,0,0.08)]">
-              HRIS
-            </h1>
-          </div>
-          <div>
-            <p className="text-base text-[#424753]">Human Resource Information System</p>
-            <p className="mt-6 text-base font-medium text-[#6b7280]">
-              Secure. Intelligent. <span className="text-[#ff4f0b]">Automated.</span>
-            </p>
-          </div>
+        {/* Duo-figure logo tile + separate headings (PNG omits cropped “HRIS” under art) */}
+        <div className="mb-6 flex flex-col items-center gap-3 px-2 text-center">
+          <LoginHrDualFigureMark />
+          <h1 className="text-[2.85rem] font-black leading-none tracking-tight text-[#111318] md:text-[3.35rem]">HRIS</h1>
+          <p className="text-base font-medium text-[#2d3138]">Human Resource Information System</p>
+          <p className="text-[0.9375rem] font-semibold tracking-wide text-[#ff6818]">Secure. Intelligent. Automated.</p>
         </div>
 
         <Card className="w-full rounded-2xl border border-[#eceff3] bg-white/92 shadow-[0_24px_55px_rgba(15,23,42,0.12)] ring-1 ring-white/80 backdrop-blur-sm">

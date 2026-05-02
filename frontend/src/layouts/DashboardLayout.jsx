@@ -27,6 +27,7 @@ import { hrPanelPath } from '@/lib/hrRoutes'
 import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
+import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { Bell, CalendarClock, Banknote, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, User, Loader2, Sun, Moon } from 'lucide-react'
 
 const SIDEBAR_COLLAPSED_KEY = 'smartdtr_sidebar_collapsed'
@@ -213,16 +214,30 @@ function SidebarContent({
 
   return (
     <>
-      <div className={cn('flex h-16 items-center border-b border-border/40', collapsed ? 'justify-center px-0' : 'px-4')}>
+      <div
+        className={cn(
+          'flex h-16 min-h-16 items-center border-b border-border/40',
+          collapsed ? 'justify-center px-1.5' : 'px-4'
+        )}
+      >
         <Link
           to={homePath}
-          className={cn('flex items-center font-semibold tracking-tight text-foreground', collapsed ? 'gap-0' : 'gap-2')}
-          title={collapsed ? 'SmartDTR' : undefined}
+          className={cn(
+            'flex min-w-0 overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            collapsed
+              ? 'h-full max-h-15 w-full items-center justify-center py-2'
+              : 'items-center justify-start'
+          )}
+          title={collapsed ? 'HRIS home' : undefined}
         >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-            DTR
-          </span>
-          {!collapsed && <span className="truncate">SmartDTR</span>}
+          <AgcBrandLogo
+            className={cn(
+              collapsed
+                ? 'mx-auto max-h-11.5 w-full max-w-full object-contain object-center'
+                : 'h-9 w-auto max-w-44 object-left'
+            )}
+          />
+          <span className="sr-only">HRIS — home</span>
         </Link>
       </div>
       <nav className={cn('flex flex-1 flex-col gap-1 p-3', collapsed && 'px-2')}>
@@ -328,11 +343,11 @@ function SidebarContent({
                 <PanelLeft className="size-5" />
               </Button>
             )}
-            <p className="text-center text-[10px] text-muted-foreground" title="SmartDTR v1.0">v1</p>
+            <p className="text-center text-[10px] text-muted-foreground" title="HRIS v1.0">v1</p>
           </>
         ) : (
           <div className="flex items-center justify-between px-1">
-            <p className="text-xs text-muted-foreground">SmartDTR v1.0</p>
+            <p className="text-xs text-muted-foreground">HRIS v1.0</p>
             {onToggleCollapse && (
               <Button
                 variant="ghost"
@@ -592,11 +607,9 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             />
           </SheetContent>
         </Sheet>
-        <Link to={homePath} className="flex items-center gap-2 font-semibold">
-          <span className="flex size-8 items-center justify-center rounded-xl bg-linear-to-br from-teal-600 to-teal-700 text-xs font-bold text-white shadow-md ring-1 ring-white/15 dark:from-teal-500 dark:to-teal-800">
-            DTR
-          </span>
-          SmartDTR
+        <Link to={homePath} className="flex min-w-0 max-w-[60%] items-center">
+          <AgcBrandLogo className="h-8 w-auto max-w-full" />
+          <span className="sr-only">HRIS — home</span>
         </Link>
       </header>
 
