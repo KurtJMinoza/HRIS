@@ -113,6 +113,7 @@ function SidebarContent({
   collapsed,
   onToggleCollapse,
   pathname,
+  role,
 }) {
   const [manualExpanded, setManualExpanded] = useState({})
   const autoExpanded = useMemo(() => {
@@ -149,7 +150,7 @@ function SidebarContent({
           className={cn(
             'mx-auto flex size-10 items-center justify-center rounded-xl text-sm font-medium transition-all duration-200',
             active
-              ? 'bg-slate-100 text-black ring-1 ring-slate-200 dark:bg-white/10 dark:text-white dark:ring-white/15'
+              ? 'bg-orange-50 text-orange-600 ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
               : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
           )}
           onClick={onNavClick}
@@ -170,7 +171,7 @@ function SidebarContent({
               'flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-all duration-200',
               depth > 0 && 'ml-4',
               active
-                ? 'bg-slate-100 text-black dark:bg-white/10 dark:text-white'
+                ? 'bg-orange-50 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300'
                 : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
             )}
             onClick={() => setManualExpanded((prev) => ({ ...prev, [key]: !isOpen }))}
@@ -199,7 +200,7 @@ function SidebarContent({
           cn(
             'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200',
             isActive
-              ? 'bg-slate-100 text-black shadow-sm dark:bg-white/10 dark:text-white'
+              ? 'bg-orange-50 text-orange-600 shadow-sm ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
               : 'border-l-2 border-transparent text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
           )
         }
@@ -567,6 +568,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
           pathname={location.pathname}
+          role={role}
         />
       </aside>
 
@@ -604,6 +606,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               onLogout={handleLogout}
               onNavClick={() => setSheetOpen(false)}
               pathname={location.pathname}
+              role={role}
             />
           </SheetContent>
         </Sheet>

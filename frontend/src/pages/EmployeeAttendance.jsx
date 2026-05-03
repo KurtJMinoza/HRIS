@@ -14,6 +14,7 @@ import {
   Table2,
   UserX,
   AlertCircle,
+  ChevronRight,
   ChevronDown,
   Download,
 } from 'lucide-react'
@@ -383,25 +384,28 @@ export default function EmployeeAttendance() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-[#f8fafc] via-card to-emerald-50/30 p-6 shadow-sm dark:from-card dark:via-card dark:to-emerald-950/20">
-        <div className="flex flex-col gap-4 @lg:flex-row @lg:items-end @lg:justify-between">
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:text-emerald-400">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-orange-600">
               Attendance
             </p>
-            <h1 className="hr-page-title">My Attendance</h1>
+            <h1 className="text-3xl font-extrabold tracking-tight text-foreground">My Attendance</h1>
             <p className="max-w-xl text-sm text-muted-foreground">
               Clock in, file corrections, and request leave — your daily records stay organized in one calm workspace.
             </p>
-            <p className="text-xs text-muted-foreground">
-              Period <span className="font-medium text-foreground">{fromDate}</span> →{' '}
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              Period:
+              <span className="font-medium text-foreground">{fromDate}</span>
+              —
               <span className="font-medium text-foreground">{toDate}</span>
+              <Calendar className="size-3.5 opacity-70" />
             </p>
           </div>
           <div className="flex max-w-xl flex-col gap-2 @sm:flex-row @sm:flex-wrap @sm:justify-end">
             <Button
-              className="gap-2 bg-emerald-600 text-white hover:bg-emerald-500"
+              className="gap-2 bg-orange-500 text-white hover:bg-orange-600"
               onClick={() => openModal(isClockedIn ? 'clock_out' : 'clock_in')}
             >
               {isClockedIn ? <LogOut className="size-4" /> : <LogIn className="size-4" />}
@@ -497,100 +501,65 @@ export default function EmployeeAttendance() {
         </div>
       )}
 
-      {targetDailyHours && (
-        <Card className="border-border/80 bg-card/95 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold @md:text-base">
-              Today&apos;s schedule context
-            </CardTitle>
-            <CardDescription className="text-xs @md:text-sm">
-              Based on your recent working days. Actual rules (grace period, overtime) are enforced
-              by the SmartDTR engine.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 text-sm @md:grid-cols-4">
-              <div className="space-y-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                  Planned hours (approx.)
+      <div className="grid gap-3">
+        {targetDailyHours && (
+          <Card className="border-border/80 bg-card/95 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold @md:text-base">
+                Today&apos;s schedule context
+              </CardTitle>
+              <CardDescription className="text-xs @md:text-sm">
+                Based on your recent working days. Actual rules (grace period, overtime) are enforced by the SmartDTR engine.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 text-sm @md:grid-cols-3">
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Planned hours (approx.)
+                  </div>
+                  <div className="text-lg font-semibold text-foreground">
+                    {formatHoursLabel(targetDailyHours)}h
+                  </div>
                 </div>
-                <div className="text-lg font-semibold text-foreground">
-                  {formatHoursLabel(targetDailyHours)}h
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Worked so far today
+                  </div>
+                  <div className="text-lg font-semibold text-foreground">
+                    {formatHoursLabel(todayWorkedHours)}h
+                  </div>
                 </div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                  Worked so far today
-                </div>
-                <div className="text-lg font-semibold text-foreground">
-                  {formatHoursLabel(todayWorkedHours)}h
-                </div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                  Remaining (approx.)
-                </div>
-                <div className="text-lg font-semibold text-foreground">
-                  {remainingHours != null ? `${formatHoursLabel(remainingHours)}h` : '—'}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                  Today&apos;s status
-                </div>
-                <div className="text-lg font-semibold capitalize text-foreground">
-                  {todayRow?.status === 'upcoming' ? 'Upcoming' : todayRow?.status || '—'}
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Remaining (approx.)
+                  </div>
+                  <div className="text-lg font-semibold text-foreground">
+                    {remainingHours != null ? `${formatHoursLabel(remainingHours)}h` : '—'}
+                  </div>
                 </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+            </CardContent>
+          </Card>
+        )}
+
+      </div>
 
       <Card className="border-border/80 bg-card/95 shadow-sm">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="size-5" />
-            DTR
-          </CardTitle>
-          <CardDescription>
-            Scan your QR code or use Face Recognition to record your attendance — the same secure method as the SmartDTR kiosk.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 @sm:flex-row @sm:flex-wrap @sm:items-center @sm:justify-between">
-          <div className="flex flex-wrap gap-3">
-            <Button
-              onClick={() => openModal('clock_in')}
-              disabled={isClockedIn}
-              variant={isClockedIn ? 'outline' : 'default'}
-            >
-              <LogIn className="size-4" />
-              Clock In
-            </Button>
-            <Button
-              variant={isClockedIn ? 'default' : 'outline'}
-              disabled={!isClockedIn}
-              onClick={() => openModal('clock_out')}
-            >
-              <LogOut className="size-4" />
-              Clock Out
-            </Button>
+        <CardContent className="flex flex-col gap-3 px-4 py-4 @md:flex-row @md:items-center @md:justify-between">
+          <div>
+            <p className="text-base font-semibold text-foreground">Correction requests</p>
+            <p className="text-sm text-muted-foreground">
+              Submit and track attendance corrections in one place.
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">{dtrStatusLabel}</p>
+          <Button variant="outline" asChild className="gap-1.5">
+            <Link to="/employee/correction-requests">
+              Go to Correction Requests
+              <ChevronRight className="size-4" />
+            </Link>
+          </Button>
         </CardContent>
-      </Card>
-
-      <Card className="border-border/80 bg-card/95 shadow-sm">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold">Correction requests</CardTitle>
-          <CardDescription>
-            Submit and track attendance corrections in one place — open{' '}
-            <Link to="/employee/correction-requests" className="font-medium text-primary underline-offset-4 hover:underline">
-              Correction Requests
-            </Link>{' '}
-            to file a new request or view status.
-          </CardDescription>
-        </CardHeader>
       </Card>
 
       <Card className="rounded-xl border-border/80 bg-card/95 shadow-sm">

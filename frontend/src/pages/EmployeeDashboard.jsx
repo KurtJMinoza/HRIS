@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
-import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, QrCode, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree } from 'lucide-react'
+import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, QrCode, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -162,7 +162,7 @@ function getCalendarDayVisual(record, dateKey, ctx) {
 
   /** Neutral frame + soft tint; status is plain text (no pill chrome). */
   const baseGridCell =
-    'touch-manipulation group relative flex h-full min-h-[4rem] w-full min-w-0 max-w-full flex-col rounded-lg border border-border/45 bg-card p-2 text-left @sm:min-h-[4.75rem] @sm:p-2.5 transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-1 ring-offset-background hover:border-border/70 hover:bg-muted/20 active:scale-[0.995]'
+    'touch-manipulation group relative flex h-full min-h-[4rem] w-full min-w-0 max-w-full flex-col rounded-lg border border-border bg-card p-2 text-left shadow-[0_8px_18px_-18px_rgba(15,23,42,0.7)] @sm:min-h-[4.75rem] @sm:p-2.5 transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-1 ring-offset-background hover:border-border/80 hover:bg-muted/35 active:scale-[0.995] dark:bg-card/80'
 
   /** Plain label: color only, no borders or badge backgrounds. */
   const L = {
@@ -178,15 +178,15 @@ function getCalendarDayVisual(record, dateKey, ctx) {
   }
 
   const tint = {
-    base: 'bg-card',
-    muted: 'bg-muted/30',
-    emerald: 'bg-emerald-500/[0.07] dark:bg-emerald-950/25',
-    amber: 'bg-amber-500/[0.07] dark:bg-amber-950/25',
-    red: 'bg-red-500/[0.06] dark:bg-red-950/30',
-    blue: 'bg-blue-500/[0.06] dark:bg-blue-950/25',
-    slate: 'bg-slate-500/[0.06] dark:bg-slate-950/25',
-    sky: 'bg-sky-500/[0.06] dark:bg-sky-950/25',
-    orange: 'bg-orange-500/[0.06] dark:bg-orange-950/25',
+    base: 'bg-card dark:bg-card/80',
+    muted: 'bg-muted/25 dark:bg-muted/30',
+    emerald: 'bg-emerald-50 dark:bg-emerald-500/12',
+    amber: 'bg-amber-50 dark:bg-amber-500/12',
+    red: 'bg-red-50 dark:bg-red-500/12',
+    blue: 'bg-blue-50 dark:bg-blue-500/12',
+    slate: 'bg-slate-50 dark:bg-muted/35',
+    sky: 'bg-sky-50 dark:bg-sky-500/12',
+    orange: 'bg-orange-50 dark:bg-orange-500/12',
   }
 
   const empty = {
@@ -376,8 +376,8 @@ function LiveClock() {
   const time = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
   const date = now.toLocaleDateString('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
   return (
-    <div className="shrink-0 rounded-lg border border-border/80 bg-muted/30 px-4 py-2.5 shadow-sm">
-      <p className="flex items-baseline gap-2 text-xl font-semibold tabular-nums tracking-tight @md:text-2xl">
+    <div className="shrink-0 rounded-xl border border-border bg-card px-4 py-3 shadow-sm dark:bg-card/85">
+      <p className="flex items-baseline gap-2 text-xl font-extrabold tabular-nums tracking-tight text-foreground @md:text-2xl">
         {time}
         <span
           className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.25)] animate-pulse"
@@ -1033,41 +1033,41 @@ export default function EmployeeDashboard() {
 
   return (
     <Motion.div
-      className="space-y-8 text-base"
+      className="space-y-4 text-[15px] text-foreground"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
     >
       {/* Welcome + live clock */}
       <Motion.div
-        className="flex flex-col gap-4 @sm:flex-row @sm:items-center @sm:justify-between"
+        className="flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between"
         variants={itemVariants}
         initial="hidden"
         whileInView="visible"
         viewport={scrollViewport}
         transition={scrollRevealTransition}
       >
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           <div>
-            <h2 className="text-2xl font-bold tracking-tight @md:text-3xl">
-              Welcome back, {firstName}
+            <h2 className="text-2xl font-extrabold tracking-tight text-foreground @md:text-[1.7rem]">
+              Welcome back, {firstName} <span className="align-middle text-xl">{'\u{1F44B}'}</span>
             </h2>
             {user?.position && (
-              <p className="mt-0.5 text-base font-medium text-muted-foreground">
+              <p className="mt-1 text-xs font-extrabold uppercase tracking-wide text-orange-600">
                 {user.position}
               </p>
             )}
-            <p className="mt-1 text-base text-muted-foreground">
+            <p className="mt-2 text-[15px] text-muted-foreground">
               Track your time, review your logs, and stay on top of your schedule.
             </p>
           </div>
           {currentStatus && (
-            <div className="inline-flex w-full flex-wrap items-start gap-2 rounded-md border border-border/80 bg-card/80 px-3 py-2.5 text-sm shadow-sm transition-opacity duration-200 @sm:w-auto">
+            <div className="inline-flex w-full flex-wrap items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm transition-opacity duration-200 @sm:w-auto dark:bg-card/85">
               <div className="flex w-full flex-wrap items-center gap-2 @sm:w-auto">
                 <span className={`inline-flex h-2 w-2 shrink-0 rounded-full ${currentStatus.dotClass}`} />
-                <span className="font-medium text-foreground">{currentStatus.label}</span>
+                <span className="font-semibold text-foreground">{currentStatus.label}</span>
                 {currentStatus.detail && (
-                  <span className="w-full text-muted-foreground @sm:w-auto @sm:pl-1">• {currentStatus.detail}</span>
+                  <span className="w-full text-muted-foreground @sm:w-auto @sm:pl-1">- {currentStatus.detail}</span>
                 )}
               </div>
               {(currentStatus.label === 'Not started' || currentStatus.label === 'No activity yet today') && scheduleAssigned && (
@@ -1096,18 +1096,18 @@ export default function EmployeeDashboard() {
             </div>
           )}
         </div>
-        <div className="flex w-full items-center justify-between gap-3 @sm:w-auto @sm:justify-end @sm:gap-4">
+        <div className="flex w-full flex-wrap items-stretch justify-start gap-3 @lg:w-auto @lg:justify-end @lg:gap-4">
           {user?.has_face && (
-            <div className="hidden @sm:flex flex-col items-center gap-1.5 rounded-md border border-border/80 bg-muted/30 px-4 py-3">
-              <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Registered Face</span>
+            <div className="flex min-w-[8.75rem] flex-col items-center gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-sm dark:bg-card/85">
+              <span className="text-xs font-extrabold uppercase tracking-wide text-muted-foreground">Registered Face</span>
               {faceImage ? (
                 <img
                   src={faceImage}
                   alt="Your registered face"
-                  className="h-16 w-16 rounded-lg object-cover border border-border/60"
+                  className="h-16 w-16 rounded-lg border border-border object-cover shadow-sm"
                 />
               ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-border/60 bg-muted/50">
+                <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30">
                   <ScanFace className="size-6 text-muted-foreground" />
                 </div>
               )}
@@ -1127,7 +1127,7 @@ export default function EmployeeDashboard() {
         </Motion.div>
       )}
       <Motion.div
-        className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-4"
+        className="grid gap-4 @lg:grid-cols-2 @xl:grid-cols-[minmax(0,1.65fr)_minmax(240px,0.95fr)_minmax(280px,1.08fr)]"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1135,11 +1135,11 @@ export default function EmployeeDashboard() {
         transition={scrollRevealTransition}
       >
         {/* Today — primary, elevated */}
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@lg:col-span-2">
-        <Card className="overflow-hidden border-primary/40 bg-card shadow-lg shadow-primary/10 ring-1 ring-primary/15 transition-all duration-200 hover:shadow-xl hover:shadow-primary/15 hover:ring-primary/20">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
+        <Card className="min-h-[11.2rem] overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <div className="flex flex-wrap items-center gap-2">
-              <CardTitle className="text-sm font-semibold uppercase tracking-wide text-primary">
+              <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-foreground">
                 Today
               </CardTitle>
               {!loading && summary?.schedule_assigned === false && (
@@ -1148,27 +1148,27 @@ export default function EmployeeDashboard() {
                 </Badge>
               )}
               {!loading && summary?.schedule_assigned !== false && user?.working_schedule_name && (
-                <Badge variant="secondary" className="bg-emerald-500/15 text-emerald-800 dark:bg-emerald-400/20 dark:text-emerald-200 border-emerald-500/30">
+                <Badge variant="secondary" className="rounded-full border-emerald-500/20 bg-emerald-50 text-xs font-bold text-emerald-700">
                   Assigned: {user.working_schedule_name}
                   {user?.working_schedule_time && ` (${formatScheduleLabel12h(user.working_schedule_time)})`}
                 </Badge>
               )}
             </div>
-            <div className="rounded-lg bg-primary/10 p-2">
-              <Clock className="size-5 text-primary" />
+            <div className="rounded-full bg-muted p-2">
+              <Clock className="size-5 text-muted-foreground" />
             </div>
           </CardHeader>
           <CardContent>
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-3xl font-bold tracking-tight @md:text-4xl">
+              <span className="text-3xl font-extrabold tracking-tight text-foreground @md:text-4xl">
                 {loading ? '—' : formatTodayStatus()}
               </span>
-              <span className="shrink-0 text-sm text-muted-foreground">
+              <span className="shrink-0 text-sm font-medium text-muted-foreground">
                 {formatTodayDate(summary?.today?.date)}
               </span>
             </div>
             {!loading && formatTodayContext() && (
-              <p className="mt-1.5 text-base text-muted-foreground transition-opacity duration-200">
+              <p className="mt-2 text-base text-muted-foreground transition-opacity duration-200">
                 {formatTodayContext()}
               </p>
             )}
@@ -1177,26 +1177,26 @@ export default function EmployeeDashboard() {
         </Motion.div>
         {/* Today's Time — secondary */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-        <Card className="overflow-hidden border-border/80 bg-card/95 shadow-sm transition-all duration-200 hover:shadow-md hover:shadow-primary/10">
+        <Card className="min-h-[11.2rem] overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+            <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
               Today&apos;s Time
             </CardTitle>
-            <div className="rounded-lg bg-primary/5 p-2">
-              <FileCheck className="size-4 text-primary" />
+            <div className="rounded-lg bg-muted p-2">
+              <FileCheck className="size-4 text-muted-foreground" />
             </div>
           </CardHeader>
           <CardContent>
             <div className="flex flex-col gap-2 text-base">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Time in</span>
-                <span className="font-medium">
+                <span className="font-semibold text-foreground">
                   {loading ? '—' : (formatTime(summary?.today?.time_in) || '—')}
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Time out</span>
-                <span className="font-medium">
+                <span className="font-semibold text-foreground">
                   {loading ? '—' : (formatTime(summary?.today?.time_out) || '—')}
                 </span>
               </div>
@@ -1232,12 +1232,12 @@ export default function EmployeeDashboard() {
           </CardContent>
         </Card>
         </Motion.div>
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-        <Card className="overflow-hidden border-border/80 bg-card/95 shadow-sm transition-all duration-200 hover:shadow-md hover:shadow-primary/10">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@xl:row-span-2">
+        <Card className="h-full overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] dark:bg-card/85">
           <CardHeader className="space-y-3 pb-2">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
-                <CardTitle className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+                <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
                   Monthly overview
                 </CardTitle>
                 <p className="text-xs leading-snug text-muted-foreground">
@@ -1246,11 +1246,11 @@ export default function EmployeeDashboard() {
                     : 'Tap the month name to return to this month, or → to move forward.'}
                 </p>
               </div>
-              <div className="shrink-0 rounded-lg bg-primary/5 p-2">
-                <User className="size-4 text-primary" aria-hidden />
+              <div className="shrink-0 rounded-lg bg-muted p-2">
+                <User className="size-4 text-muted-foreground" aria-hidden />
               </div>
             </div>
-            <div className="flex min-w-0 items-center gap-0.5 rounded-xl border border-border/60 bg-muted/30 p-1 dark:bg-muted/25">
+            <div className="flex min-w-0 items-center gap-0.5 rounded-xl border border-border bg-muted/40 p-1">
               <Button
                 type="button"
                 variant="ghost"
@@ -1391,27 +1391,32 @@ export default function EmployeeDashboard() {
         </Card>
         </Motion.div>
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-        <Card className="overflow-hidden border-border/80 bg-card/95 shadow-sm transition-all duration-200 hover:shadow-md hover:shadow-primary/10">
+        <Card className="overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+            <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
               Leave Overview
             </CardTitle>
-            <div className="rounded-lg bg-primary/5 p-2">
-              <ScanLine className="size-4 text-primary" />
+            <div className="rounded-lg bg-muted p-2">
+              <ScanLine className="size-4 text-muted-foreground" />
             </div>
           </CardHeader>
           <CardContent>
-            <p className="mb-2 text-sm font-medium text-foreground">
+            <p className="mb-4 text-sm font-semibold text-foreground">
               {getMonthLabel()}
             </p>
             {!loading && !hasLeaveActivity ? (
-              <div className="rounded-lg border border-border/80 bg-muted/40 px-3 py-2.5 text-sm">
-                <p className="text-sm font-medium uppercase tracking-[0.12em] text-foreground">
-                  No leave activity this month
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  You&apos;re fully available for your current schedule.
-                </p>
+              <div className="flex items-center gap-4 rounded-lg border border-border bg-muted/30 px-4 py-5 text-sm">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-orange-200/70 bg-card text-orange-600 dark:bg-card/80">
+                  <CalendarDays className="size-6" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-extrabold uppercase tracking-wide text-foreground">
+                    No leave activity this month
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    You&apos;re fully available for your current schedule.
+                  </p>
+                </div>
               </div>
             ) : (
               <>
@@ -1554,20 +1559,23 @@ export default function EmployeeDashboard() {
       )}
 
       <Motion.div
-        className="flex flex-col gap-2 rounded-md border border-border/80 bg-card/95 px-3 py-3 text-base @sm:flex-row @sm:items-center @sm:justify-between"
+        className="flex flex-col gap-3 rounded-xl border border-border bg-card px-5 py-4 text-base shadow-[0_12px_30px_-24px_rgba(15,23,42,0.7)] @sm:flex-row @sm:items-center @sm:justify-between dark:bg-card/85"
         variants={itemVariants}
         initial="hidden"
         whileInView="visible"
         viewport={scrollViewport}
         transition={scrollRevealTransition}
       >
-        <p className="text-muted-foreground">
-          Need to take action? Jump straight from your dashboard.
+        <p className="flex items-center gap-3 text-sm text-muted-foreground">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-orange-200 bg-orange-50 text-orange-600">
+            <Zap className="size-4" />
+          </span>
+          <span>Need to take action? Jump straight from your dashboard.</span>
         </p>
         <div className="flex w-full flex-col gap-2 @sm:w-auto @sm:flex-row @sm:flex-wrap">
           <Button
             size="sm"
-            className="h-9 w-full px-3 text-sm @sm:w-auto"
+            className="h-10 w-full rounded-lg bg-orange-600 px-5 text-sm font-bold text-white shadow-[0_12px_24px_-16px_rgba(234,88,12,0.8)] hover:bg-orange-700 @sm:w-auto"
             onClick={() => navigate('/employee/requests')}
           >
             Request leave
@@ -1575,7 +1583,7 @@ export default function EmployeeDashboard() {
           <Button
             size="sm"
             variant="outline"
-            className="h-9 w-full px-3 text-sm @sm:w-auto"
+            className="h-10 w-full rounded-lg border-border px-5 text-sm font-bold text-foreground @sm:w-auto"
             onClick={() => navigate('/employee/attendance')}
           >
             View full attendance
@@ -1583,7 +1591,7 @@ export default function EmployeeDashboard() {
           <Button
             size="sm"
             variant="outline"
-            className="h-9 w-full px-3 text-sm @sm:w-auto"
+            className="h-10 w-full rounded-lg border-border px-5 text-sm font-bold text-foreground @sm:w-auto"
             onClick={() => navigate('/employee/overtime')}
           >
             File overtime
@@ -1601,9 +1609,12 @@ export default function EmployeeDashboard() {
         transition={scrollRevealTransition}
       >
         <Motion.div variants={itemVariants}>
-          <Card className="overflow-hidden border-border/80 bg-card shadow-sm dark:bg-card/95">
-            <CardHeader className="bg-muted/20 dark:bg-muted/30">
-              <CardTitle className="text-lg font-semibold tracking-tight @md:text-xl">
+          <Card className="overflow-hidden rounded-xl border-border bg-card shadow-[0_14px_36px_-26px_rgba(15,23,42,0.8)] dark:bg-card/85">
+            <CardHeader className="bg-card dark:bg-card/85">
+              <CardTitle className="flex items-center gap-3 text-lg font-extrabold tracking-tight text-foreground @md:text-xl">
+                <span className="flex size-7 items-center justify-center rounded-lg bg-orange-50 text-orange-600">
+                  <CalendarDays className="size-4" />
+                </span>
                 Attendance calendar
               </CardTitle>
               <CardDescription className="text-sm text-muted-foreground @md:text-base">
@@ -1612,8 +1623,8 @@ export default function EmployeeDashboard() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 p-0">
-              <div className="bg-white/80 px-3 py-2.5 backdrop-blur-sm dark:bg-muted/45 dark:backdrop-blur-md @sm:px-4 md:px-6">
-                <div className="mx-auto flex w-full max-w-5xl min-w-0 items-center justify-center gap-0.5 rounded-xl bg-muted/30 p-1 dark:bg-muted/35">
+              <div className="bg-card px-3 py-2.5 @sm:px-4 md:px-6 dark:bg-card/85">
+                <div className="mx-auto flex w-full max-w-6xl min-w-0 items-center justify-center gap-0.5 rounded-xl border border-border bg-card p-1 dark:bg-card/85">
                   <Button
                     type="button"
                     variant="ghost"
@@ -1645,12 +1656,12 @@ export default function EmployeeDashboard() {
                 </div>
               </div>
               <div className="mt-2 space-y-2 px-3 pb-3 @sm:px-4 md:pb-4">
-                <div className="mx-auto w-full max-w-5xl min-w-0 overflow-x-auto @sm:overflow-x-visible">
+                <div className="mx-auto w-full max-w-6xl min-w-0 overflow-x-auto @sm:overflow-x-visible">
                   <div className="grid w-full min-w-[320px] grid-cols-7 grid-rows-[auto_repeat(6,minmax(4.25rem,1fr))] gap-2 @sm:min-w-0 @sm:grid-rows-[auto_repeat(6,minmax(5rem,1fr))]">
                     {WEEKDAYS.map((w) => (
                       <div
                         key={w}
-                        className="min-w-0 rounded-md bg-muted/45 px-1.5 py-2 text-center text-[10px] font-semibold uppercase leading-tight tracking-wide text-muted-foreground @sm:py-2.5 @sm:text-xs"
+                        className="min-w-0 rounded-md bg-card px-1.5 py-2 text-center text-[10px] font-extrabold uppercase leading-tight tracking-wide text-muted-foreground @sm:py-2.5 @sm:text-xs"
                       >
                         {w}
                       </div>
@@ -1682,9 +1693,9 @@ export default function EmployeeDashboard() {
                             className={cn(
                               visual.tileClass,
                               'text-base',
-                              isToday && 'ring-1 ring-primary/55 ring-offset-2 ring-offset-background dark:ring-primary/45',
+                              isToday && 'ring-1 ring-orange-500 ring-offset-2 ring-offset-background',
                               isSelected &&
-                                'z-1 border-primary/60 ring-1 ring-primary/35 ring-offset-1 ring-offset-background',
+                                'z-1 border-orange-500 ring-1 ring-orange-300 ring-offset-1 ring-offset-background',
                               cell.isAdjacent && record && 'opacity-[0.88]',
                             )}
                           >
@@ -1696,7 +1707,7 @@ export default function EmployeeDashboard() {
                                 )}
                               >
                                 {isToday ? (
-                                  <span className="inline-flex min-w-8 items-center justify-center rounded-md bg-primary px-2 py-0.5 text-sm font-semibold text-primary-foreground @sm:min-w-9 @sm:px-2.5 @sm:text-base">
+                                  <span className="inline-flex min-w-8 items-center justify-center rounded-md bg-orange-500 px-2 py-0.5 text-sm font-semibold text-white @sm:min-w-9 @sm:px-2.5 @sm:text-base">
                                     {cell.day}
                                   </span>
                                 ) : (
@@ -1723,7 +1734,7 @@ export default function EmployeeDashboard() {
                   </div>
                 </div>
               </div>
-              <div className="mx-auto w-full max-w-5xl space-y-2 px-3 pb-3 @sm:px-4 md:pb-4">
+              <div className="mx-auto w-full max-w-6xl space-y-2 px-3 pb-3 @sm:px-4 md:pb-4">
               {selectedDayDetails && (
                 <div className="rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-xs text-muted-foreground @sm:text-sm">
                   <div className="flex items-center justify-between gap-2">
