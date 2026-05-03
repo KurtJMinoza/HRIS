@@ -638,6 +638,9 @@ class AttendanceMonitoringController extends Controller
                 $clockOtHours = $otMinutesForRow !== null ? round($otMinutesForRow / 60, 2) : null;
                 $clockVal = $clockOtHours ?? 0.0;
                 $approvedFromFiling = $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : 0.0;
+                $approvedOtAppliedHours = $clockVal > 0.0001
+                    ? min($approvedFromFiling, $clockVal)
+                    : ($virtualClockOutFromOt ? $approvedFromFiling : 0.0);
                 $unapprovedOvertimeHours = max(0.0, round($clockVal - min($approvedFromFiling, $clockVal), 2));
                 if ($clockVal <= 0.0001 && $approvedFromFiling > 0) {
                     $unapprovedOvertimeHours = 0.0;
@@ -708,9 +711,9 @@ class AttendanceMonitoringController extends Controller
                     'late_minutes' => $lateMinutes,
                     'undertime_minutes' => $undertimeMinutes,
                     'overtime_minutes' => $otMinutesForRow,
-                    'overtime_hours' => $hasClockOut ? $approvedOvertimeHours : null,
+                    'overtime_hours' => $hasClockOut && $approvedOtAppliedHours > 0.0001 ? round($approvedOtAppliedHours, 2) : null,
                     'rendered_overtime_hours' => $hasClockOut ? $renderedOvertimeHours : null,
-                    'approved_overtime_hours' => $approvedOvertimeHours,
+                    'approved_overtime_hours' => $approvedOtAppliedHours > 0.0001 ? round($approvedOtAppliedHours, 2) : null,
                     'unapproved_overtime_hours' => $unapprovedOvertimeHours,
                     'overtime_status' => $this->normalizeOvertimeModuleStatusForDisplay($approvedOvertimeForRow),
                     'payroll_impact_minutes' => $payrollImpactMinutes,
@@ -730,7 +733,7 @@ class AttendanceMonitoringController extends Controller
                     'correction_id' => $correction?->id,
                     'correction_approved' => $approved,
                     'correction_remarks' => $remarks,
-                    'has_approved_overtime' => $approvedOtHours > 0.0001,
+                    'has_approved_overtime' => $approvedOtAppliedHours > 0.0001,
                     'approved_ot_end_time' => $approvedOvertimeForRow?->expected_end_time?->format('H:i'),
                     'effective_expected_out' => $approvedOvertimeForRow?->expected_end_time
                         ? $approvedOvertimeForRow->expected_end_time->format('H:i')

@@ -6,6 +6,7 @@ use App\Enums\PolicyConditionKey;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\Company;
+use App\Models\Overtime;
 use App\Models\Policy;
 use App\Models\PolicyMultiplier;
 use App\Models\PolicyNdSetting;
@@ -375,6 +376,100 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(170.0, $regularLine['amount']);
         $this->assertSame(378, $undertimeLine['minutes']);
         $this->assertSame(0.0, $undertimeLine['amount']);
+    }
+
+    public function test_payroll_impact_uses_scheduled_hours_for_full_shift_with_early_and_late_punches(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $effectiveSchedule = [
+            'sun' => null,
+            'mon' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'tue' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'thu' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'fri' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'sat' => null,
+        ];
+
+        $user = User::factory()->create([
+            'company_id' => null,
+            'daily_rate' => 800,
+            'schedule' => $effectiveSchedule,
+        ]);
+
+        $dateKey = '2026-04-29'; // Wednesday, 8 scheduled paid hours after lunch break.
+        $timeIn = Carbon::parse("{$dateKey} 07:01:30", 'Asia/Manila');
+        $timeOut = Carbon::parse("{$dateKey} 17:05:15", 'Asia/Manila');
+
+        $payroll = app(PayrollComputationService::class);
+        $result = $payroll->computeDayPayroll($user, $dateKey, $timeIn, $timeOut, $effectiveSchedule, 800, 'Asia/Manila');
+        $impactMinutes = $payroll->payrollImpactMinutesForAttendanceDisplay($user, $dateKey, $timeIn, $timeOut, 'Asia/Manila');
+
+        $this->assertSame(480, $result['required_minutes']);
+        $this->assertSame(480, $result['regular_day_minutes'] + $result['regular_night_minutes']);
+        $this->assertSame(0, $result['ot_day_minutes'] + $result['ot_night_minutes']);
+        $this->assertSame(480, $impactMinutes);
+        $this->assertSame(800.0, $result['regular_pay']);
+    }
+
+    public function test_approved_ot_hours_are_capped_to_rendered_overtime(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $effectiveSchedule = [
+            'sun' => null,
+            'mon' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'tue' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'thu' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'fri' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'sat' => null,
+        ];
+
+        $user = User::factory()->create([
+            'company_id' => null,
+            'daily_rate' => 800,
+            'schedule' => $effectiveSchedule,
+        ]);
+
+        $dateKey = '2026-04-30'; // Thursday.
+        Overtime::create([
+            'user_id' => $user->id,
+            'date' => $dateKey,
+            'schedule_end' => '17:00:00',
+            'expected_end_time' => '01:00:00',
+            'computed_minutes' => 480,
+            'computed_hours' => 8.00,
+            'status' => Overtime::STATUS_APPROVED,
+        ]);
+
+        $payroll = app(PayrollComputationService::class);
+        $result = $payroll->computeDayPayroll(
+            $user,
+            $dateKey,
+            Carbon::parse("{$dateKey} 07:51:00", 'Asia/Manila'),
+            Carbon::parse("{$dateKey} 17:01:00", 'Asia/Manila'),
+            $effectiveSchedule,
+            800,
+            'Asia/Manila'
+        );
+
+        $this->assertSame(480, $result['regular_day_minutes'] + $result['regular_night_minutes']);
+        $this->assertSame(10, $result['ot_day_minutes'] + $result['ot_night_minutes']);
+        $this->assertSame(0.17, $result['approved_ot_hours']);
+        $this->assertSame(8.0, $result['approved_ot_requested_hours']);
+        $this->assertSame(490, $payroll->payrollImpactMinutesForAttendanceDisplay(
+            $user,
+            $dateKey,
+            Carbon::parse("{$dateKey} 07:51:00", 'Asia/Manila'),
+            Carbon::parse("{$dateKey} 17:01:00", 'Asia/Manila'),
+            'Asia/Manila'
+        ));
     }
 
     public function test_regular_pay_units_show_zero_days_for_partial_work(): void

@@ -458,6 +458,22 @@ class PayrollComputationService
             }
         }
 
+        // Payroll Impact / Payslip base: once the employee fully covers the scheduled shift,
+        // regular payable minutes must be the schedule's net required minutes. This prevents
+        // 7.98h-style drift from second-level punches or minute segmentation on an 8.00h schedule.
+        if ($this->coversScheduledRegularShift(
+            $dateKey,
+            $daySchedule,
+            $timeInTz,
+            $timeOutTz,
+            $requiredMinutes,
+            $undertimeDeductionMinutes,
+            $clockInResult,
+            $tz
+        )) {
+            $paidReg = max($paidReg, $requiredMinutes);
+        }
+
         $graceCreditMinutes = max(0, $paidReg - $regSeg);
         $lateDeductionMinutes = max(0, $regSeg - $paidReg);
 
@@ -627,7 +643,10 @@ class PayrollComputationService
             'ot_pay' => round($otPay, 2),
             'nd_pay' => round($ndPay, 2),
             'holiday_premium_pay' => round($holidayPremiumPay, 2),
-            'approved_ot_hours' => $approvedOtHours,
+            // Applied approved OT is capped by actual rendered OT. Keep the raw request separately
+            // so payroll/daily records do not display an 8.00h approval when only 0.17h was worked.
+            'approved_ot_hours' => round($paidOtMinutes / 60.0, 2),
+            'approved_ot_requested_hours' => round($approvedOtHours, 2),
             'pending_ot_hours' => $pendingOtHours,
             'unapproved_ot_hours' => $unapprovedOtHours,
             'has_overtime_request' => $hasOvertimeRequest,
@@ -677,6 +696,57 @@ class PayrollComputationService
         $ot = (int) ($day['ot_day_minutes'] ?? 0) + (int) ($day['ot_night_minutes'] ?? 0);
 
         return max(0, $reg + $ot);
+    }
+
+    /**
+     * True when a worked day covers the whole scheduled regular shift.
+     *
+     * This is the schedule-based gate used by payroll impact, daily computation, and payslip totals:
+     * full scheduled presence earns the schedule's net required minutes as regular base pay, while
+     * late, half-day, undertime, and incomplete days continue using the actual/capped regular minutes.
+     */
+    private function coversScheduledRegularShift(
+        string $dateKey,
+        ?array $daySchedule,
+        Carbon $timeInTz,
+        Carbon $timeOutTz,
+        int $requiredMinutes,
+        int $undertimeDeductionMinutes,
+        ?array $clockInResult,
+        string $tz
+    ): bool {
+        if (! $daySchedule || $requiredMinutes <= 0 || $undertimeDeductionMinutes > 0) {
+            return false;
+        }
+
+        $status = (string) ($clockInResult['status'] ?? '');
+        if ($status === 'late' || $status === 'half_day') {
+            return false;
+        }
+
+        $scheduledStart = AttendanceStatusService::getScheduledStartForDate($dateKey, $daySchedule, $tz);
+        $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+        if (! $scheduledStart || ! $scheduledEnd) {
+            return false;
+        }
+
+        $toleranceMinutes = max(0, (int) config('attendance.payroll_schedule_coverage_tolerance_minutes', 2));
+        if ($timeInTz->greaterThan($scheduledStart->copy()->addMinutes($toleranceMinutes))) {
+            return false;
+        }
+        if ($timeOutTz->lessThan($scheduledEnd->copy()->subMinutes($toleranceMinutes))) {
+            return false;
+        }
+
+        $coveredNetMinutes = AttendanceStatusService::getScheduleClippedNetWorkedMinutes(
+            $timeInTz,
+            $timeOutTz,
+            $daySchedule,
+            $dateKey,
+            $tz
+        );
+
+        return $coveredNetMinutes >= max(0, $requiredMinutes - $toleranceMinutes);
     }
 
     /**
@@ -1818,6 +1888,7 @@ class PayrollComputationService
         $paidOtHours = round($paidOtMinutes / 60, 2);
         $rawRenderedOtHours = round($rawRenderedOtMinutes / 60, 2);
         $approvedOtHours = round((float) ($day['approved_ot_hours'] ?? 0), 2);
+        $approvedOtRequestedHours = round((float) ($day['approved_ot_requested_hours'] ?? $approvedOtHours), 2);
         $pendingOtHours = round((float) ($day['pending_ot_hours'] ?? 0), 2);
         $unapprovedOtHours = round((float) ($day['unapproved_ot_hours'] ?? 0), 2);
 
@@ -1893,7 +1964,7 @@ class PayrollComputationService
             'raw_rendered_ot_hours' => $rawRenderedOtHours,
             'ot_status' => $this->otWorkflowStatus(
                 $rawRenderedOtHours,
-                $approvedOtHours,
+                max($approvedOtHours, $approvedOtRequestedHours),
                 $pendingOtHours,
                 (bool) ($day['has_overtime_request'] ?? false)
             ),
@@ -1910,6 +1981,7 @@ class PayrollComputationService
             'first_8_multiplier' => (float) ($conditions['first_8'] ?? 1.0),
             'ot_multiplier' => (float) ($conditions['ot'] ?? 1.25),
             'approved_ot_hours' => $approvedOtHours,
+            'approved_ot_requested_hours' => $approvedOtRequestedHours,
             'pending_ot_hours' => $pendingOtHours,
             'unapproved_ot_hours' => $unapprovedOtHours,
             'has_overtime_request' => (bool) ($day['has_overtime_request'] ?? false),

@@ -1560,9 +1560,12 @@ class ReportsController extends Controller
                     $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
                 }
                 $clockVal = $clockOtHours ?? 0.0;
-                $approvedOtHours = $approvedFromFiling;
-                $unapprovedOtHours = max(0.0, round($clockVal - min($approvedOtHours, $clockVal), 2));
-                if ($clockVal <= 0.0001 && $approvedOtHours > 0) {
+                $approvedOtRequestedHours = $approvedFromFiling;
+                $approvedOtHours = $clockVal > 0.0001
+                    ? min($approvedOtRequestedHours, $clockVal)
+                    : ($virtualClockOutFromOt ? $approvedOtRequestedHours : 0.0);
+                $unapprovedOtHours = max(0.0, round($clockVal - min($approvedOtRequestedHours, $clockVal), 2));
+                if ($clockVal <= 0.0001 && $approvedOtRequestedHours > 0) {
                     $unapprovedOtHours = 0.0;
                 }
 

@@ -2079,14 +2079,18 @@ class AttendanceController extends Controller
                 : null;
             $clockVal = $clockOtHours ?? 0.0;
             $approvedFromFiling = round((float) $approvedOtHours, 2);
+            $approvedOtAppliedHours = $clockVal > 0.0001
+                ? min($approvedFromFiling, $clockVal)
+                : 0.0;
             $unapprovedOtHours = max(0.0, round($clockVal - min($approvedFromFiling, $clockVal), 2));
             if ($clockVal <= 0.0001 && $approvedFromFiling > 0) {
                 $unapprovedOtHours = 0.0;
             }
-            // Payable OT in attendance views = approved OT module hours only (rendered OT is separate).
-            $displayOvertimeHours = $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : null;
-            if ($approvedOtHours > 0.0001) {
-                $metrics['approved_overtime_minutes'] += (int) round($approvedOtHours * 60);
+            // Payable OT in attendance views = approved OT that was actually rendered by the logs.
+            // The raw request remains available as overtime_hours_requested.
+            $displayOvertimeHours = $approvedOtAppliedHours > 0.0001 ? round($approvedOtAppliedHours, 2) : null;
+            if ($approvedOtAppliedHours > 0.0001) {
+                $metrics['approved_overtime_minutes'] += (int) round($approvedOtAppliedHours * 60);
             }
             $displayNightHours = $clockOutForDay?->night_hours;
             $premiumTypeForDesc = $clockOutForDay?->premium_type;
@@ -2101,8 +2105,8 @@ class AttendanceController extends Controller
                 };
             }
 
-            $showOtPremiumFields = $hasEffectiveTimeOut || $approvedOtHours > 0.0001;
-            $employeeStatusLabel = ($approvedOtHours > 0.0001 && in_array($status, ['present', 'late'], true))
+            $showOtPremiumFields = $hasEffectiveTimeOut || $approvedOtAppliedHours > 0.0001;
+            $employeeStatusLabel = ($approvedOtAppliedHours > 0.0001 && in_array($status, ['present', 'late'], true))
                 ? ($status === 'late' ? 'Late + OT' : 'Present + OT')
                 : null;
 
@@ -2189,12 +2193,13 @@ class AttendanceController extends Controller
                     : null,
                 'calculated_pay_factor' => $hasEffectiveTimeOut ? $clockOutForDay?->calculated_pay_factor : null,
                 'overtime_status' => $this->normalizeOvertimeModuleStatusForDisplay($otRow),
-                'approved_overtime_hours' => $approvedOtHours > 0 ? round($approvedOtHours, 2) : null,
+                'approved_overtime_hours' => $approvedOtAppliedHours > 0 ? round($approvedOtAppliedHours, 2) : null,
+                'overtime_hours_requested' => $otRow !== null ? round((float) ($otRow->computed_hours ?? 0), 2) : null,
                 /** Same derivation as {@see ReportsController::detailed()} `approved_overtime_hours` / `unapproved_overtime_hours`. */
                 'unapproved_overtime_hours' => $unapprovedOtHours > 0.0001 ? round($unapprovedOtHours, 2) : null,
                 'payroll_impact_minutes' => $payrollImpactMinutes,
                 'payroll_impact_hours' => $payrollImpactHours,
-                'has_approved_overtime' => $approvedOtHours > 0.0001,
+                'has_approved_overtime' => $approvedOtAppliedHours > 0.0001,
                 'presence_label' => $presenceLabel,
                 'presence_issue' => $presenceIssue,
                 'presence_filing' => $this->presenceFilingPayloadForSummary($correction, $attendanceTz),
