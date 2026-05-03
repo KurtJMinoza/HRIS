@@ -141,6 +141,33 @@ function formatUnfiledOtClockSummary12h(preSeg, postSeg, totalHours) {
   return `${parts.join(' + ')} = ${roundHours1(totalHours)}h`
 }
 
+function segmentUiLabel(key) {
+  return key === 'pre_shift' ? 'Pre-shift OT' : 'Post-shift OT'
+}
+
+function normalizeSelectableSegments(segments) {
+  if (!Array.isArray(segments)) return []
+  return segments
+    .map((seg) => {
+      const key = String(seg?.key || '')
+      if (key !== 'pre_shift' && key !== 'post_shift') return null
+      const start = String(seg?.start_time || '').trim()
+      const end = String(seg?.end_time || '').trim()
+      if (!start || !end) return null
+      const minutes = Number(seg?.minutes || 0)
+      const hours = Number.isFinite(Number(seg?.hours)) ? Number(seg.hours) : (minutes > 0 ? minutes / 60 : 0)
+      return {
+        key,
+        start_time: start.slice(0, 5),
+        end_time: end.slice(0, 5),
+        minutes: Number.isFinite(minutes) ? minutes : 0,
+        hours: roundHours1(hours),
+        label: String(seg?.label || ''),
+      }
+    })
+    .filter(Boolean)
+}
+
 function timeToMinutes(t) {
   if (!t) return null
   const s = String(t).trim()
@@ -396,13 +423,21 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   /** Dashboard "File OT" deep-link: /employee/overtime?date=YYYY-MM-DD */
   const dateFromUrl = searchParams.get('date')
+  const segmentsFromUrl = searchParams.get('segments')
   useEffect(() => {
     if (isHr || !dateFromUrl || !/^\d{4}-\d{2}-\d{2}$/.test(dateFromUrl)) return
-    setDate(dateFromUrl)
+    const urlSegments = String(segmentsFromUrl || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s === 'pre_shift' || s === 'post_shift')
+      .slice(0, 1)
+      .map((key) => ({ key }))
+    openFile({ date: dateFromUrl, segments: urlSegments })
     const next = new URLSearchParams(searchParams.toString())
     next.delete('date')
+    next.delete('segments')
     setSearchParams(next, { replace: true })
-  }, [isHr, dateFromUrl, searchParams, setSearchParams])
+  }, [isHr, dateFromUrl, segmentsFromUrl, searchParams, setSearchParams])
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
   const [category, setCategory] = useState('regular')
@@ -414,6 +449,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [otContext, setOtContext] = useState(null)
   const [contextLoading, setContextLoading] = useState(false)
   const [contextError, setContextError] = useState(null)
+  const [selectedSegments, setSelectedSegments] = useState([])
+  const [seedSegments, setSeedSegments] = useState([])
   const [viewOpen, setViewOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detail, setDetail] = useState(null)
@@ -613,15 +650,15 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   }, [otContext])
 
   const canSubmitFile = useMemo(() => {
+    const hasSegmentSelection = selectedSegments.length > 0
     return (
       date &&
-      startTime &&
-      endTime &&
+      (hasSegmentSelection || (startTime && endTime)) &&
       reason.trim().length >= 2 &&
       !submitting &&
       !contextLoading
     )
-  }, [date, startTime, endTime, reason, submitting, contextLoading])
+  }, [date, selectedSegments, startTime, endTime, reason, submitting, contextLoading])
 
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine' ? loadingMine : loadingAll
@@ -637,6 +674,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setAttachment(null)
     setStartTime(initialStart)
     setEndTime(initialEnd)
+    setSeedSegments(normalizeSelectableSegments(opts.segments || []))
+    setSelectedSegments([])
     setDate(initialDate || new Date().toISOString().slice(0, 10))
     setCategory('regular')
     setFileOpen(true)
@@ -653,6 +692,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         start_time: startTime,
         end_time: endTime,
         category,
+        selected_segments: selectedSegments,
         ph_ot_rule: phOtRule,
         reason: reason.trim(),
         attachment: attachment || null,
@@ -936,33 +976,105 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               ) : (
                 <div className="grid gap-3 @lg:grid-cols-2">
                   {unfiledRows.map((r) => {
-                    const preferred = r.post?.start && r.post?.end ? r.post : r.pre
-                    const startPrefill = preferred?.start || ''
-                    const endPrefill = preferred?.end || ''
+                    const segments = []
+                    if (r.pre?.start && r.pre?.end) {
+                      segments.push({
+                        key: 'pre_shift',
+                        start_time: r.pre.start,
+                        end_time: r.pre.end,
+                        minutes: r.pre.minutes || 0,
+                        hours: r.pre.hours,
+                        label: 'Pre-shift',
+                      })
+                    }
+                    if (r.post?.start && r.post?.end) {
+                      segments.push({
+                        key: 'post_shift',
+                        start_time: r.post.start,
+                        end_time: r.post.end,
+                        minutes: r.post.minutes || 0,
+                        hours: r.post.hours,
+                        label: 'Post-shift',
+                      })
+                    }
+                    const preferred = segments.find((s) => s.key === 'post_shift') || segments[0] || null
+                    const startPrefill = preferred?.start_time || ''
+                    const endPrefill = preferred?.end_time || ''
+                    const totalHours = roundHours1(
+                      segments.reduce((sum, seg) => sum + (Number(seg.hours) || 0), 0)
+                    )
                     return (
-                      <div key={r.date} className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
-                        <p className="text-base font-semibold tracking-tight text-foreground">{formatDateShort(`${r.date}T12:00:00`)}</p>
-                        <p className="mt-1 text-sm font-medium text-muted-foreground">Unfiled OT (clock)</p>
-                        <p className="mt-2 text-sm leading-relaxed text-foreground tabular-nums">{r.summary}</p>
-                        <div className="mt-3 flex flex-col gap-2">
-                          <p className="text-xs leading-relaxed text-muted-foreground">
-                            File OT with the same windows when filing pre-shift or post-shift overtime.
-                          </p>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            className="h-9 w-full font-semibold @sm:w-auto"
-                            onClick={() =>
-                              openFile({
-                                date: r.date,
-                                start_time: startPrefill,
-                                end_time: endPrefill,
-                              })
-                            }
-                          >
-                            File OT
-                          </Button>
+                      <div key={r.date} className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-base font-semibold tracking-tight text-foreground">
+                              {formatDateShort(`${r.date}T12:00:00`)}
+                            </p>
+                            <p className="mt-0.5 text-xs uppercase tracking-wide text-muted-foreground">
+                              Unfiled OT (clock)
+                            </p>
+                          </div>
+                          <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold">
+                            {totalHours}h total
+                          </Badge>
+                        </div>
+
+                        <div className="mt-3 space-y-2">
+                          {segments.map((seg) => {
+                            const range = formatOtRange12h(seg.start_time, seg.end_time) || `${seg.start_time} - ${seg.end_time}`
+                            return (
+                              <div
+                                key={`${r.date}-${seg.key}`}
+                                className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2"
+                              >
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-foreground">{segmentUiLabel(seg.key)}</p>
+                                  <p className="text-xs tabular-nums text-muted-foreground">{range}</p>
+                                </div>
+                                <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{seg.hours}h</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {segments.map((seg) => (
+                            <Button
+                              key={`${r.date}-file-${seg.key}`}
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-9 flex-1 font-semibold"
+                              onClick={() =>
+                                openFile({
+                                  date: r.date,
+                                  start_time: seg.start_time,
+                                  end_time: seg.end_time,
+                                  segments: [seg],
+                                })
+                              }
+                            >
+                              {seg.key === 'pre_shift' ? 'File pre-shift' : 'File post-shift'}
+                            </Button>
+                          ))}
+                          {segments.length === 1 && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-9 flex-1"
+                              onClick={() =>
+                                openFile({
+                                  date: r.date,
+                                  start_time: startPrefill,
+                                  end_time: endPrefill,
+                                  segments,
+                                })
+                              }
+                            >
+                              Open form
+                            </Button>
+                          )}
                         </div>
                       </div>
                     )
@@ -1312,6 +1424,54 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               <div className="rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-sm text-primary/90">
                 You can file OT anytime (before, during, or after the date), including rest day, holiday, and night shift.
               </div>
+              {(() => {
+                const selectableSegments = normalizeSelectableSegments(
+                  seedSegments.length > 0 ? seedSegments : (otContext?.detected_segments || [])
+                )
+                if (selectableSegments.length === 0) return null
+                const selectedSet = new Set(selectedSegments)
+                return (
+                  <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 px-3 py-3">
+                    <p className="text-sm font-semibold text-foreground">Detected OT segments</p>
+                    <p className="text-xs text-muted-foreground">
+                      Choose only one segment: pre-shift or post-shift.
+                    </p>
+                    <div className="space-y-2">
+                      {selectableSegments.map((seg) => {
+                        const isChecked = selectedSet.has(seg.key)
+                        const range = formatOtRange12h(seg.start_time, seg.end_time) || `${seg.start_time} - ${seg.end_time}`
+                        return (
+                          <label
+                            key={seg.key}
+                            className="flex cursor-pointer items-start gap-2 rounded-md border border-border/60 bg-card px-3 py-2"
+                          >
+                            <Input
+                              type="radio"
+                              className="mt-0.5 size-4"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedSegments([seg.key])
+                                  setStartTime(seg.start_time)
+                                  setEndTime(seg.end_time)
+                                }
+                              }}
+                            />
+                            <span className="text-sm">
+                              <span className="font-medium text-foreground">
+                                {seg.key === 'pre_shift' ? 'Pre-shift OT' : 'Post-shift OT'}
+                              </span>
+                              <span className="block text-muted-foreground">
+                                {range} ({seg.hours}h)
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
               <div className="grid gap-4 @md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="otm-date">Date</Label>
@@ -1321,7 +1481,11 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       id="otm-date"
                       type="date"
                       value={date}
-                      onChange={(e) => setDate(e.target.value)}
+                      onChange={(e) => {
+                        setDate(e.target.value)
+                        setSeedSegments([])
+                        setSelectedSegments([])
+                      }}
                       className="h-11 pl-9"
                       required
                     />
@@ -1337,7 +1501,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       value={startTime}
                       onChange={(e) => setStartTime(e.target.value)}
                       className="h-11 pl-9"
-                      required
+                      required={selectedSegments.length === 0}
+                      disabled={selectedSegments.length > 0}
                     />
                   </div>
                 </div>
@@ -1351,7 +1516,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       value={endTime}
                       onChange={(e) => setEndTime(e.target.value)}
                       className="h-11 pl-9"
-                      required
+                      required={selectedSegments.length === 0}
+                      disabled={selectedSegments.length > 0}
                     />
                   </div>
                 </div>

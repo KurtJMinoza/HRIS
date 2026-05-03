@@ -7,6 +7,7 @@ use App\Models\OvertimeApprovalAudit;
 use App\Models\User;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
+use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
 use App\Support\PhPayrollReference;
 use Carbon\Carbon;
@@ -23,6 +24,7 @@ class EmployeeOvertimeController extends Controller
         private readonly HrApprovalChainResolver $hrApprovalChainResolver,
         private readonly OvertimeApprovalService $overtimeApprovalService,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly OtDetectionService $otDetectionService,
     ) {}
 
     private function attendanceTimezone(): string
@@ -150,6 +152,53 @@ class EmployeeOvertimeController extends Controller
         }
 
         return $steps;
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $detected
+     * @return array<int, array{key:string,start_time:string,end_time:string,minutes:int,hours:float,label:string}>
+     */
+    private function mapDetectedSegmentsForFiling(?array $detected): array
+    {
+        if (! is_array($detected)) {
+            return [];
+        }
+
+        $segments = [];
+        $scheduleStart = is_string($detected['schedule_start'] ?? null) ? $detected['schedule_start'] : null;
+        $scheduleEnd = is_string($detected['schedule_end'] ?? null) ? $detected['schedule_end'] : null;
+
+        $pre = $detected['pre_shift'] ?? null;
+        if (is_array($pre) && $scheduleStart && is_string($pre['clock_in'] ?? null)) {
+            $minutes = max(0, (int) ($pre['minutes'] ?? 0));
+            if ($minutes > 0) {
+                $segments[] = [
+                    'key' => 'pre_shift',
+                    'start_time' => Carbon::parse($pre['clock_in'])->format('H:i'),
+                    'end_time' => Carbon::parse($scheduleStart)->format('H:i'),
+                    'minutes' => $minutes,
+                    'hours' => round($minutes / 60, 2),
+                    'label' => (string) ($pre['label'] ?? ''),
+                ];
+            }
+        }
+
+        $post = $detected['post_shift'] ?? null;
+        if (is_array($post) && $scheduleEnd && is_string($post['work_end'] ?? null)) {
+            $minutes = max(0, (int) ($post['minutes'] ?? 0));
+            if ($minutes > 0) {
+                $segments[] = [
+                    'key' => 'post_shift',
+                    'start_time' => Carbon::parse($scheduleEnd)->format('H:i'),
+                    'end_time' => Carbon::parse($post['work_end'])->format('H:i'),
+                    'minutes' => $minutes,
+                    'hours' => round($minutes / 60, 2),
+                    'label' => (string) ($post['label'] ?? ''),
+                ];
+            }
+        }
+
+        return $segments;
     }
 
     private function mapOvertimeRowForEmployee(Overtime $o): array
@@ -430,6 +479,8 @@ class EmployeeOvertimeController extends Controller
         $phOtOptions = PhPayrollReference::otMultiplierDropdownOptions();
 
         $defaultPhOtRule = 'ORD';
+        $detected = $this->otDetectionService->detectForDate($user, $dateYmd, $this->attendanceTimezone());
+        $detectedSegments = $this->mapDetectedSegmentsForFiling($detected);
 
         return response()->json([
             'date' => $dateYmd,
@@ -446,6 +497,7 @@ class EmployeeOvertimeController extends Controller
             'mode' => 'flexible',
             'mode_label' => 'Flexible OT filing',
             'help' => 'File OT anytime using your preferred start and end time range.',
+            'detected_segments' => $detectedSegments,
             'ph_ot_rule_options' => $phOtOptions,
             'default_ph_ot_rule' => $defaultPhOtRule,
             'ph_ot_rule_help' => 'Select the PH pay condition if needed. You can file regardless of schedule, rest day, or holiday.',
@@ -482,6 +534,8 @@ class EmployeeOvertimeController extends Controller
             'start_time' => ['required', 'date_format:H:i'],
             'end_time' => ['required', 'date_format:H:i'],
             'category' => ['required', 'string', 'max:50'],
+            'selected_segments' => ['nullable', 'array', 'min:1', 'max:1'],
+            'selected_segments.*' => ['string', Rule::in(['pre_shift', 'post_shift'])],
             'ph_ot_rule' => ['nullable', 'string', Rule::in(PhPayrollReference::OT_RULE_CODES)],
             'reason' => ['required', 'string', 'min:2'],
             'attachment' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
@@ -489,18 +543,68 @@ class EmployeeOvertimeController extends Controller
 
         $dateYmd = Carbon::parse($validated['date'])->toDateString();
 
-        $existing = Overtime::query()
+        $existingForDate = Overtime::query()
             ->where('user_id', $user->id)
             ->whereDate('date', $dateYmd)
-            ->first();
+            ->get();
 
-        if ($existing) {
+        $detected = $this->otDetectionService->detectForDate($user, $dateYmd, $this->attendanceTimezone());
+        $detectedSegments = collect($this->mapDetectedSegmentsForFiling($detected))
+            ->keyBy(static fn (array $seg) => $seg['key']);
+
+        $selectedSegments = collect($validated['selected_segments'] ?? [])
+            ->map(static fn ($s) => (string) $s)
+            ->filter(static fn (string $s) => $s === 'pre_shift' || $s === 'post_shift')
+            ->unique()
+            ->values();
+        if ($selectedSegments->count() > 1) {
             throw ValidationException::withMessages([
-                'date' => ['You already have an overtime record for this date.'],
+                'selected_segments' => ['Please select only one OT segment at a time (pre-shift or post-shift).'],
             ]);
         }
 
-        $computed = $this->computeOvertimeRequestQuantities($dateYmd, $validated['start_time'], $validated['end_time']);
+        $targets = [];
+        if ($selectedSegments->isNotEmpty()) {
+            foreach ($selectedSegments as $segmentKey) {
+                $seg = $detectedSegments->get($segmentKey);
+                if (! is_array($seg) || empty($seg['start_time']) || empty($seg['end_time'])) {
+                    throw ValidationException::withMessages([
+                        'selected_segments' => ["Selected segment [{$segmentKey}] is no longer available for this date."],
+                    ]);
+                }
+                $targets[] = [
+                    'segment' => $segmentKey,
+                    'start_time' => (string) $seg['start_time'],
+                    'end_time' => (string) $seg['end_time'],
+                ];
+            }
+        } else {
+            $targets[] = [
+                'segment' => null,
+                'start_time' => $validated['start_time'],
+                'end_time' => $validated['end_time'],
+            ];
+        }
+
+        $computedTargets = [];
+        foreach ($targets as $target) {
+            $computed = $this->computeOvertimeRequestQuantities($dateYmd, $target['start_time'], $target['end_time']);
+            $computedTargets[] = array_merge($target, ['computed' => $computed]);
+        }
+
+        foreach ($computedTargets as $target) {
+            $newStart = $target['start_time'];
+            $newEnd = $target['end_time'];
+            foreach ($existingForDate as $existing) {
+                $existingStart = $existing->schedule_end?->format('H:i');
+                $existingEnd = $existing->expected_end_time?->format('H:i');
+                if ($existingStart === $newStart && $existingEnd === $newEnd) {
+                    throw ValidationException::withMessages([
+                        'selected_segments' => ['You already filed this OT time segment for the selected date.'],
+                    ]);
+                }
+            }
+        }
 
         $routing = $this->hrApprovalChainResolver->resolveRoutingDecision($user);
         $chain = $routing['chain'];
@@ -525,53 +629,64 @@ class EmployeeOvertimeController extends Controller
                 'approval' => ['No active Admin (HR) approver is configured.'],
             ]);
         }
-        $fileDetails = (string) $validated['reason'];
+        $overtimes = DB::transaction(function () use ($user, $dateYmd, $computedTargets, $validated, $attachmentPath, $stage, $firstApproverId, $hrApproverId) {
+            $rows = [];
+            foreach ($computedTargets as $target) {
+                $computed = $target['computed'];
+                $segment = $target['segment'];
+                $segmentPrefix = $segment === 'pre_shift'
+                    ? '[Pre-shift OT]'
+                    : ($segment === 'post_shift' ? '[Post-shift OT]' : null);
+                $reason = $segmentPrefix ? $segmentPrefix.' '.$validated['reason'] : $validated['reason'];
 
-        $overtime = DB::transaction(function () use ($user, $dateYmd, $computed, $validated, $attachmentPath, $stage, $firstApproverId, $hrApproverId, $fileDetails) {
-            $overtime = Overtime::create([
-                'user_id' => $user->id,
-                'date' => $dateYmd,
-                'schedule_end' => $computed['schedule_end']->format('H:i:s'),
-                'time_out' => null,
-                'expected_end_time' => $computed['expected_end']->format('H:i:s'),
-                'computed_minutes' => $computed['computed_minutes'],
-                'computed_hours' => $computed['computed_hours'],
-                'ph_ot_rule' => $validated['ph_ot_rule'] ?? 'ORD',
-                'ot_type' => $validated['category'],
-                'reason' => $validated['reason'],
-                'attachment_path' => $attachmentPath,
-                'status' => Overtime::STATUS_PENDING,
-                'created_by' => $user->id,
-                'approval_stage' => $stage,
-                'pending_approval' => true,
-                'first_approver_id' => $firstApproverId,
-                'second_approver_id' => $hrApproverId,
-                'filed_at' => now(),
-                'filed_by' => $user->id,
-            ]);
+                $overtime = Overtime::create([
+                    'user_id' => $user->id,
+                    'date' => $dateYmd,
+                    'schedule_end' => $computed['schedule_end']->format('H:i:s'),
+                    'time_out' => null,
+                    'expected_end_time' => $computed['expected_end']->format('H:i:s'),
+                    'computed_minutes' => $computed['computed_minutes'],
+                    'computed_hours' => $computed['computed_hours'],
+                    'ph_ot_rule' => $validated['ph_ot_rule'] ?? 'ORD',
+                    'ot_type' => $validated['category'],
+                    'reason' => $reason,
+                    'attachment_path' => $attachmentPath,
+                    'status' => Overtime::STATUS_PENDING,
+                    'created_by' => $user->id,
+                    'approval_stage' => $stage,
+                    'pending_approval' => true,
+                    'first_approver_id' => $firstApproverId,
+                    'second_approver_id' => $hrApproverId,
+                    'filed_at' => now(),
+                    'filed_by' => $user->id,
+                ]);
 
-            OvertimeApprovalAudit::create([
-                'overtime_id' => $overtime->id,
-                'actor_id' => $user->id,
-                'employee_id' => $user->id,
-                'action' => 'file',
-                'details' => $fileDetails,
-                'approver_role' => $this->hrRoleResolver->resolveForApprovalSubject($user)->badgeLabel(),
-            ]);
+                OvertimeApprovalAudit::create([
+                    'overtime_id' => $overtime->id,
+                    'actor_id' => $user->id,
+                    'employee_id' => $user->id,
+                    'action' => 'file',
+                    'details' => $reason,
+                    'approver_role' => $this->hrRoleResolver->resolveForApprovalSubject($user)->badgeLabel(),
+                ]);
+                $rows[] = $overtime;
+            }
 
-            return $overtime;
+            return collect($rows);
         });
 
         return response()->json([
-            'message' => 'Overtime request submitted successfully.',
-            'overtime' => $this->mapOvertimeRowForEmployee($overtime->fresh([
+            'message' => $overtimes->count() > 1
+                ? 'Overtime requests submitted successfully.'
+                : 'Overtime request submitted successfully.',
+            'overtimes' => $overtimes->map(fn (Overtime $overtime) => $this->mapOvertimeRowForEmployee($overtime->fresh([
                 'approvedBy:id,name',
                 'user:id,name,position,profile_image,department_id,department,branch_id,company_id',
                 'filedBy:id,name,profile_image',
                 'firstApprover:id,name,profile_image',
                 'secondApprover:id,name,profile_image',
                 'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
-            ])),
+            ])))->values(),
         ], 201);
     }
 }

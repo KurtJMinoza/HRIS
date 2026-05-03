@@ -1517,13 +1517,40 @@ export default function EmployeeDashboard() {
                 <p className="pt-0.5">Total detected OT: {summary.today.ot_detection.total_extra_label}.</p>
               </div>
               <div className="mt-2.5 flex gap-2">
-                <Button
-                  size="sm"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => navigate('/employee/overtime')}
-                >
-                  File OT
-                </Button>
+                {(() => {
+                  const hasPre = Boolean(summary.today.ot_detection.pre_shift)
+                  const hasPost = Boolean(summary.today.ot_detection.post_shift)
+                  const todayDate = summary.today.ot_detection.date || formatLocalDateKey(new Date())
+                  if (hasPre && hasPost) {
+                    return (
+                      <>
+                        <Button
+                          size="sm"
+                          className="h-8 px-3 text-xs"
+                          onClick={() => navigate(`/employee/overtime?date=${encodeURIComponent(todayDate)}&segments=pre_shift`)}
+                        >
+                          File pre-shift
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-8 px-3 text-xs"
+                          onClick={() => navigate(`/employee/overtime?date=${encodeURIComponent(todayDate)}&segments=post_shift`)}
+                        >
+                          File post-shift
+                        </Button>
+                      </>
+                    )
+                  }
+                  return (
+                    <Button
+                      size="sm"
+                      className="h-8 px-3 text-xs"
+                      onClick={() => navigate('/employee/overtime')}
+                    >
+                      File OT
+                    </Button>
+                  )
+                })()}
                 <Button
                   size="sm"
                   variant="ghost"

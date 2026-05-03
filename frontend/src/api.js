@@ -3985,7 +3985,7 @@ export async function getMyOvertimeRequestContext(dateYmd) {
 /**
  * Employee: submit an overtime request for the authenticated user.
  * Uses FormData to support optional attachment upload.
- * @param {{ date: string, start_time: string, end_time: string, category: string, ph_ot_rule?: string, reason: string, attachment?: File|null }} payload
+ * @param {{ date: string, start_time: string, end_time: string, category: string, selected_segments?: string[], ph_ot_rule?: string, reason: string, attachment?: File|null }} payload
  */
 export async function createMyOvertimeRequest(payload) {
   const formData = new FormData()
@@ -3993,6 +3993,11 @@ export async function createMyOvertimeRequest(payload) {
   formData.append('start_time', String(payload.start_time || ''))
   formData.append('end_time', String(payload.end_time || ''))
   formData.append('category', String(payload.category || ''))
+  if (Array.isArray(payload.selected_segments)) {
+    payload.selected_segments
+      .filter((s) => typeof s === 'string' && s.trim() !== '')
+      .forEach((seg) => formData.append('selected_segments[]', String(seg)))
+  }
   if (payload.ph_ot_rule != null && payload.ph_ot_rule !== '') {
     formData.append('ph_ot_rule', String(payload.ph_ot_rule))
   }
@@ -4016,6 +4021,7 @@ export async function createMyOvertimeRequest(payload) {
       data.errors?.start_time?.[0] ||
       data.errors?.end_time?.[0] ||
       data.errors?.category?.[0] ||
+      data.errors?.selected_segments?.[0] ||
       data.errors?.ph_ot_rule?.[0] ||
       data.errors?.reason?.[0] ||
       data.errors?.attachment?.[0] ||
