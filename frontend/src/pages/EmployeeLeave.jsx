@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
   Calendar,
-  FileText,
   Loader2,
   Plus,
   RefreshCw,
@@ -11,7 +10,6 @@ import {
   Eye,
   Clock,
   Inbox,
-  Sparkles,
   ChevronRight,
   Palmtree,
   HeartPulse,
@@ -20,6 +18,10 @@ import {
   CalendarClock,
   Paperclip,
   X,
+  Info,
+  Scale,
+  UploadCloud,
+  ArrowRight,
 } from 'lucide-react'
 import { TableBodySkeleton } from '@/components/skeletons'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -36,12 +38,28 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
+import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { cn } from '@/lib/utils'
 import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 
 const MAX_LEAVE_SUPPORTING_FILES = 5
 const MAX_LEAVE_FILE_BYTES = 10 * 1024 * 1024
+const employeeLeaveCardClass =
+  'rounded-[18px] border border-border/70 bg-card shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
+const employeeLeaveInputClass =
+  'h-12 rounded-lg border-border/80 bg-background px-4 text-[15px] font-medium tabular-nums text-foreground shadow-sm dark:border-white/10 dark:bg-background/40'
+const employeeLeavePrimaryButtonClass =
+  'h-11 gap-2 rounded-lg bg-brand px-5 text-sm font-semibold text-brand-foreground shadow-[0_12px_22px_-14px_rgba(234,88,12,0.9)] transition hover:bg-brand-strong dark:shadow-[0_12px_24px_-16px_rgba(251,146,60,0.75)]'
+const employeeLeaveOutlineButtonClass =
+  'h-11 gap-2 rounded-lg border-border/80 bg-card px-5 text-sm font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
+const leaveModalFieldClass =
+  'h-14 rounded-xl border-border/80 bg-background px-4 text-base font-medium text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
+const leaveModalSelectClass =
+  'h-14 w-full rounded-xl border border-brand bg-background px-5 text-lg font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-background/40 dark:focus:ring-brand/20'
+const leaveModalLabelClass = 'text-base font-semibold tracking-tight text-foreground'
+const leaveModalHintClass = 'text-[13px] leading-relaxed text-muted-foreground'
 
 /** @param {{ document_url?: string|null, document_urls?: string[]|null }} leave */
 function supportingDocUrls(leave) {
@@ -241,6 +259,202 @@ function RemarksPreviewCell({ text }) {
         <p className="whitespace-pre-wrap leading-relaxed text-foreground">{clean}</p>
       </PopoverContent>
     </Popover>
+  )
+}
+
+function LeaveCreditsSummaryPanel({ leaveCreditInfo }) {
+  if (!leaveCreditInfo) return null
+
+  const remaining = Number(leaveCreditInfo.remaining ?? 0)
+  const annual = Number(leaveCreditInfo.annual_allocation ?? 0)
+  const effective = Number(leaveCreditInfo.effective_available ?? 0)
+  const pending = Number(leaveCreditInfo.pending_reserved_days ?? 0)
+  const unpaidNotice =
+    !leaveCreditInfo.eligible_for_paid_leave_pool && leaveCreditInfo.unpaid_leave_notice
+      ? leaveCreditInfo.unpaid_leave_notice
+      : null
+
+  return (
+    <section className={cn(employeeLeaveCardClass, 'relative overflow-hidden px-4 py-4 @md:px-5 @md:py-5')}>
+      <div className="pointer-events-none absolute -bottom-7 right-1 hidden h-28 w-40 opacity-[0.055] dark:opacity-[0.075] @lg:block" aria-hidden>
+        <div className="absolute bottom-0 right-4 h-24 w-24 rounded-lg border-[3px] border-foreground" />
+        <div className="absolute bottom-14 right-6 h-2 w-20 rounded-full bg-foreground" />
+        <div className="absolute bottom-4 right-11 grid h-14 w-14 grid-cols-2 gap-2">
+          <span className="rounded-sm border-2 border-foreground" />
+          <span className="rounded-sm border-2 border-foreground" />
+          <span className="rounded-sm border-2 border-foreground" />
+          <span className="rounded-sm border-2 border-foreground" />
+        </div>
+        <div className="absolute bottom-7 right-28 h-16 w-7 rounded-full border-2 border-foreground" />
+      </div>
+
+      <div className="relative flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-brand/12 text-brand ring-1 ring-brand/20 dark:bg-brand/15">
+              <Scale className="size-4" strokeWidth={2.15} aria-hidden />
+            </span>
+            <h2 className="text-[15px] font-semibold tracking-tight text-foreground">Available credits</h2>
+          </div>
+
+          <div className="mt-4 space-y-2 text-sm leading-relaxed text-muted-foreground">
+            {leaveCreditInfo.display ? (
+              <p className="text-[15px] font-semibold text-foreground">{leaveCreditInfo.display}</p>
+            ) : null}
+            {leaveCreditInfo.status_summary ? <p>{leaveCreditInfo.status_summary}</p> : null}
+            <p>{leaveCreditInfo.recharge_policy || 'Recharge on January 1st every year (full reset; unused credits do not carry over).'}</p>
+            <p>
+              {pending > 0 ? (
+                <>
+                  <span className="font-semibold tabular-nums text-foreground">{pending}</span> day{pending === 1 ? '' : 's'} reserved by pending requests.{' '}
+                </>
+              ) : null}
+              Usable for new requests:{' '}
+              <span className="font-semibold tabular-nums text-foreground">{Number.isFinite(effective) ? effective : 0}</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="shrink-0 self-start text-left @lg:text-right">
+          <p className="text-3xl font-bold tracking-tight text-foreground tabular-nums @md:text-4xl">
+            {Number.isFinite(remaining) ? remaining : 0}
+            <span className="px-1 text-2xl font-semibold text-muted-foreground @md:text-3xl">/</span>
+            <span className="text-xl font-semibold text-foreground @md:text-2xl">{Number.isFinite(annual) ? annual : 0}</span>
+          </p>
+        </div>
+      </div>
+
+      {unpaidNotice ? (
+        <div className="relative mt-4 flex items-start gap-2 rounded-lg border border-brand/35 bg-brand/10 px-3.5 py-2.5 text-sm font-medium leading-snug text-foreground dark:bg-brand/12">
+          <Info className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
+          <span>{unpaidNotice}</span>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function LeaveEmptyState({ onFileLeave }) {
+  return (
+    <div className="flex min-h-[330px] flex-col items-center justify-center px-6 py-16 text-center">
+      <div className="relative mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+        <Inbox className="size-11" strokeWidth={1.85} aria-hidden />
+        <span className="absolute -left-1 top-2 text-lg font-semibold text-brand" aria-hidden>
+          +
+        </span>
+        <span className="absolute -right-2 bottom-3 text-lg font-semibold text-brand/70" aria-hidden>
+          +
+        </span>
+      </div>
+      <h3 className="text-xl font-semibold tracking-tight text-foreground">No leave requests</h3>
+      <p className="mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">
+        You have no leave requests in the selected date range. File a new leave to get started.
+      </p>
+      <Button type="button" className={cn(employeeLeavePrimaryButtonClass, 'mt-7 px-6')} onClick={onFileLeave}>
+        <Plus className="size-4" />
+        File new leave
+      </Button>
+    </div>
+  )
+}
+
+function LeaveModalCalendarArt() {
+  return (
+    <div className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-72 text-brand opacity-20 dark:opacity-25 @lg:block" aria-hidden>
+      <svg viewBox="0 0 280 160" className="h-full w-full" fill="none">
+        <path d="M38 152C31 122 36 91 61 62C78 99 69 128 42 152" stroke="currentColor" strokeWidth="2" />
+        <path d="M60 63L42 152" stroke="currentColor" strokeWidth="2" />
+        <path d="M57 89L43 98M63 108L45 119M51 129L39 137" stroke="currentColor" strokeWidth="2" />
+        <path d="M86 152C83 125 93 99 118 75C130 111 119 137 90 152" stroke="currentColor" strokeWidth="2" />
+        <path d="M117 76L90 152" stroke="currentColor" strokeWidth="2" />
+        <path d="M111 101L96 110M113 122L93 131" stroke="currentColor" strokeWidth="2" />
+        <path d="M128 48L260 30L268 152H116L128 48Z" stroke="currentColor" strokeWidth="2" />
+        <path d="M125 73L263 55" stroke="currentColor" strokeWidth="2" />
+        <path d="M165 36V22C165 16 169 12 174 12C179 12 183 16 183 22V49C183 54 179 58 174 58C170 58 167 56 165 52" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M209 30V16C209 10 213 6 218 6C223 6 227 10 227 16V43C227 48 223 52 218 52C214 52 211 50 209 46" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M247 25V12C247 7 251 3 256 3C261 3 265 7 265 12V38C265 43 261 47 256 47C252 47 249 45 247 41" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M150 88H171V111H150V88ZM190 83H212V106H190V83ZM230 78H252V101H230V78ZM145 124H167V147H145V124ZM187 119H209V142H187V119ZM228 114H250V137H228V114Z" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    </div>
+  )
+}
+
+function LeaveModalCreditsCard({
+  leaveCreditInfo,
+  addForm,
+  billableCreditDays,
+  paidLeavePreview,
+  paidLeavePreviewLoading,
+  leaveWillBeFullyPaid,
+  leaveWillBeUnpaidNoPool,
+  leaveWillBeUnpaidPartial,
+  effAvail,
+}) {
+  if (!leaveCreditInfo) return null
+
+  const consumesCredits = formConsumesCredits(addForm.type)
+
+  return (
+    <section className="rounded-xl border border-brand/25 bg-brand/[0.045] px-5 py-5 shadow-sm dark:border-brand/25 dark:bg-brand/10">
+      <div className="flex items-start gap-4">
+        <span className="flex size-12 shrink-0 items-center justify-center rounded-xl border border-brand/30 bg-brand/10 text-brand dark:bg-brand/15">
+          <Calendar className="size-5" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1 space-y-2">
+          <h3 className="text-lg font-semibold tracking-tight text-foreground">Leave credits</h3>
+          {leaveCreditInfo.display ? (
+            <p className="text-[15px] font-semibold text-foreground">{leaveCreditInfo.display}</p>
+          ) : null}
+          {leaveCreditInfo.status_summary ? (
+            <p className="text-[15px] leading-relaxed text-muted-foreground">{leaveCreditInfo.status_summary}</p>
+          ) : null}
+          <p className="text-[15px] leading-relaxed text-muted-foreground">
+            <span className="font-semibold tabular-nums text-foreground">
+              {leaveCreditInfo.remaining} / {leaveCreditInfo.annual_allocation}
+            </span>{' '}
+            · This request uses <span className="font-semibold tabular-nums text-foreground">{billableCreditDays}</span>{' '}
+            billable credit day{billableCreditDays === 1 ? '' : 's'} (schedule-based).
+            {paidLeavePreviewLoading ? <span> Updating...</span> : null}
+            <br />
+            You have <span className="font-semibold tabular-nums text-foreground">{leaveCreditInfo.effective_available}</span>{' '}
+            credits remaining this year (after pending).
+          </p>
+          {consumesCredits && paidLeavePreview && !paidLeavePreviewLoading ? (
+            <>
+              {paidLeavePreview.message ? (
+                <p
+                  className={cn(
+                    'text-[15px] font-medium leading-relaxed',
+                    leaveWillBeFullyPaid ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'
+                  )}
+                >
+                  {paidLeavePreview.message}
+                </p>
+              ) : null}
+              {paidLeavePreview.message_detail ? (
+                <p className="text-[13px] leading-relaxed text-muted-foreground">{paidLeavePreview.message_detail}</p>
+              ) : null}
+            </>
+          ) : null}
+          {leaveCreditInfo.warning && !(leaveWillBeUnpaidNoPool && consumesCredits) ? (
+            <p className="text-[13px] leading-relaxed text-muted-foreground">{leaveCreditInfo.warning}</p>
+          ) : null}
+          {leaveWillBeUnpaidNoPool && consumesCredits ? (
+            <p className="font-semibold leading-relaxed text-brand">
+              {leaveCreditInfo.unpaid_leave_notice ||
+                leaveCreditInfo.warning ||
+                'This leave will be unpaid because you are not yet eligible for paid leave credits.'}
+            </p>
+          ) : null}
+          {leaveWillBeUnpaidPartial && !paidLeavePreview ? (
+            <p className="font-semibold leading-relaxed text-brand">
+              Only {effAvail} day{effAvail === 1 ? '' : 's'} can be paid from your pool. Extra days will be unpaid if
+              approved.
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -644,23 +858,23 @@ export default function EmployeeLeave() {
   function renderLeaveTable() {
     return (
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[960px] border-collapse text-[15px]">
+        <table className="w-full min-w-[980px] border-collapse text-[15px]">
           <thead>
-            <tr className="border-b border-slate-200 bg-white text-left dark:border-slate-800 dark:bg-card">
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Leave type</th>
-              <th className="min-w-[200px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
+            <tr className="border-b border-border/70 bg-card text-left">
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">Leave type</th>
+              <th className="min-w-[200px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">
                 Date / range
               </th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Duration</th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">Duration</th>
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">
                 Supporting documents
               </th>
-              <th className="min-w-[180px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">
+              <th className="min-w-[180px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">
                 Reason / remarks
               </th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Status</th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Date filed</th>
-              <th className="w-28 px-4 py-4 text-right text-xs font-bold uppercase tracking-wider text-[#0a0a0a] dark:text-foreground">Actions</th>
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">Status</th>
+              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">Date filed</th>
+              <th className="w-28 px-4 py-4 text-right text-xs font-bold uppercase tracking-wider text-foreground">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -668,27 +882,8 @@ export default function EmployeeLeave() {
               <TableBodySkeleton rows={6} cols={8} />
             ) : !hasTableRows ? (
               <tr>
-                <td colSpan={8} className="px-6 py-20 text-center">
-                  <div className="flex flex-col items-center justify-center">
-                    <div className="mb-6 flex size-24 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40">
-                      <Inbox className="size-12 text-slate-400" aria-hidden />
-                    </div>
-                    <div className="flex items-center gap-2 text-xl font-semibold text-slate-900 dark:text-slate-50">
-                      <Sparkles className="size-6 text-amber-500" aria-hidden />
-                      No leave requests
-                    </div>
-                    <p className="mt-3 max-w-md text-sm leading-relaxed text-slate-600 dark:text-slate-400">
-                      You have no leave requests in the selected date range. File a new leave to get started.
-                    </p>
-                    <Button
-                      type="button"
-                      className="mt-8 rounded-xl bg-black px-6 text-white hover:bg-black/90 dark:bg-black"
-                      onClick={openFileLeave}
-                    >
-                      <Plus className="size-4" />
-                      File new leave
-                    </Button>
-                  </div>
+                <td colSpan={8}>
+                  <LeaveEmptyState onFileLeave={openFileLeave} />
                 </td>
               </tr>
             ) : (
@@ -707,22 +902,22 @@ export default function EmployeeLeave() {
                   <tr
                     key={leave.id}
                     className={cn(
-                      'border-b border-slate-100 transition-colors duration-150 hover:bg-emerald-500/[0.06] dark:border-slate-800/80 dark:hover:bg-emerald-500/[0.08]',
-                      rowIdx % 2 === 0 ? 'bg-white dark:bg-slate-950/20' : 'bg-slate-50/50 dark:bg-slate-900/15'
+                      'border-b border-border/55 transition-colors duration-150 hover:bg-brand/5 dark:hover:bg-white/[0.045]',
+                      rowIdx % 2 === 0 ? 'bg-card' : 'bg-muted/20 dark:bg-white/[0.02]'
                     )}
                   >
                     <td className="px-5 py-4 align-middle">
                       <LeaveTypeBadge type={leave.type} />
                     </td>
-                    <td className="px-5 py-4 align-middle text-sm font-medium leading-snug text-slate-900 dark:text-slate-100">
+                    <td className="px-5 py-4 align-middle text-sm font-medium leading-snug text-foreground">
                       {formatDateRangeShort(leave.start_date, leave.end_date)}
                     </td>
-                    <td className="px-5 py-4 align-middle tabular-nums text-slate-700 dark:text-slate-300">{durLabel}</td>
+                    <td className="px-5 py-4 align-middle tabular-nums text-muted-foreground">{durLabel}</td>
                     <td className="px-5 py-4 align-middle text-sm">
                       {(() => {
                         const urls = supportingDocUrls(leave)
                         if (!urls.length) {
-                          return <span className="text-slate-500 dark:text-slate-400">No</span>
+                          return <span className="text-muted-foreground">No</span>
                         }
                         return (
                           <div className="flex flex-col gap-1">
@@ -732,7 +927,7 @@ export default function EmployeeLeave() {
                                 href={profileImageUrl(url)}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+                                className="inline-flex items-center gap-1 font-medium text-brand underline-offset-2 hover:underline"
                               >
                                 <Paperclip className="size-3.5 shrink-0" aria-hidden />
                                 View{urls.length > 1 ? ` (${i + 1})` : ''}
@@ -748,7 +943,7 @@ export default function EmployeeLeave() {
                     <td className="px-5 py-4 align-middle">
                       <LeaveStatusPill status={leave.status} displayStatus={leave.display_status} />
                     </td>
-                    <td className="px-5 py-4 align-middle text-sm tabular-nums text-slate-600 dark:text-slate-400">
+                    <td className="px-5 py-4 align-middle text-sm tabular-nums text-muted-foreground">
                       {leave.created_at ? formatDateTime(leave.created_at) : '—'}
                     </td>
                     <td className="px-4 py-4 text-right align-middle">
@@ -756,7 +951,7 @@ export default function EmployeeLeave() {
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="gap-1.5 rounded-lg text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                        className="gap-1.5 rounded-lg text-foreground hover:bg-brand/10 hover:text-brand dark:hover:bg-brand/12"
                         onClick={() => openLeaveDetail(leave)}
                       >
                         <Eye className="size-4" />
@@ -780,12 +975,12 @@ export default function EmployeeLeave() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
     >
-      <div className="mx-auto flex w-full max-w-full flex-1 flex-col space-y-8 px-1 @sm:px-0">
-        <header className="flex flex-col gap-6 border-b border-slate-200/80 pb-8 dark:border-slate-800 @lg:flex-row @lg:items-end @lg:justify-between">
+      <div className="mx-auto flex w-full max-w-full flex-1 flex-col space-y-7 px-1 @sm:px-0">
+        <header className="flex flex-col gap-5 pb-1 @lg:flex-row @lg:items-end @lg:justify-between">
           <div className="max-w-2xl space-y-3">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">My leave</p>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900 @sm:text-4xl dark:text-slate-50">Leave</h1>
-            <p className="text-base leading-relaxed text-slate-600 dark:text-slate-400">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand">My leave</p>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground @sm:text-4xl">Leave</h1>
+            <p className="text-[15px] leading-relaxed text-muted-foreground">
               Request leave, attach supporting documents, and track approvals in one place.
             </p>
           </div>
@@ -793,7 +988,7 @@ export default function EmployeeLeave() {
             <Button
               type="button"
               variant="outline"
-              className="h-11 flex-1 gap-2 rounded-xl border-slate-200 bg-white @lg:flex-initial dark:border-slate-700 dark:bg-slate-950"
+              className={cn(employeeLeaveOutlineButtonClass, 'flex-1 @lg:flex-initial')}
               onClick={() => load()}
               disabled={loading}
             >
@@ -802,7 +997,7 @@ export default function EmployeeLeave() {
             </Button>
             <Button
               type="button"
-              className="h-11 flex-1 gap-2 rounded-xl bg-black px-5 text-white shadow-lg shadow-black/20 ring-1 ring-black/20 @lg:flex-initial dark:bg-black dark:text-white dark:ring-white/15"
+              className={cn(employeeLeavePrimaryButtonClass, 'flex-1 @lg:flex-initial')}
               onClick={openFileLeave}
             >
               <Plus className="size-4" />
@@ -811,7 +1006,8 @@ export default function EmployeeLeave() {
           </div>
         </header>
 
-        {leaveCreditInfo && (
+        <LeaveCreditsSummaryPanel leaveCreditInfo={leaveCreditInfo} />
+        {leaveCreditInfo && Boolean(leaveCreditInfo.__legacy_never_render) && (
           <div className="flex flex-col gap-2 rounded-2xl border border-teal-200/80 bg-gradient-to-br from-teal-50/90 to-emerald-50/50 px-5 py-4 dark:border-teal-900/40 dark:from-teal-950/30 dark:to-emerald-950/20">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -848,29 +1044,29 @@ export default function EmployeeLeave() {
         )}
 
         {/* Period filter */}
-        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/30">
+        <div className={cn(employeeLeaveCardClass, 'px-4 py-4 @md:px-5')}>
           <div className="flex flex-col gap-4 @lg:flex-row @lg:items-end @lg:justify-between">
             <div className="grid w-full max-w-lg grid-cols-1 gap-3 @sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">From</span>
+              <div className="space-y-2">
+                <span className="text-sm font-semibold text-foreground">From</span>
                 <Input
                   type="date"
                   value={fromDate}
                   onChange={(e) => setFromDate(e.target.value)}
-                  className="h-9 rounded-lg border-slate-200 dark:border-slate-700"
+                  className={employeeLeaveInputClass}
                 />
               </div>
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">To</span>
+              <div className="space-y-2">
+                <span className="text-sm font-semibold text-foreground">To</span>
                 <Input
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  className="h-9 rounded-lg border-slate-200 dark:border-slate-700"
+                  className={employeeLeaveInputClass}
                 />
               </div>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="max-w-md text-sm leading-relaxed text-muted-foreground @lg:ml-auto @lg:text-right">
               Filter the list below. Filing a new leave is not limited by these dates—you can choose any leave dates in the
               form.
             </p>
@@ -883,12 +1079,12 @@ export default function EmployeeLeave() {
           </div>
         )}
 
-        <Card className="w-full min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xl shadow-slate-200/50 ring-1 ring-slate-100/80 dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-black/40 dark:ring-slate-800/50">
-            <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-6 py-6 dark:border-slate-800 dark:from-slate-900/40 dark:to-slate-950/20">
-              <CardTitle className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+        <Card className={cn(employeeLeaveCardClass, 'w-full min-w-0 flex-1 overflow-hidden')}>
+            <CardHeader className="border-b border-border/70 bg-card px-5 py-6 @md:px-6">
+              <CardTitle className="text-xl font-semibold tracking-tight text-foreground">
                 My leave requests
               </CardTitle>
-              <CardDescription className="text-base text-slate-600 dark:text-slate-400">
+              <CardDescription className="text-sm leading-relaxed text-muted-foreground @md:text-[15px]">
                 Each row is one request. Open details to see the approval chain and remarks.
               </CardDescription>
             </CardHeader>
@@ -897,16 +1093,10 @@ export default function EmployeeLeave() {
               <div className="space-y-4 p-4 md:hidden">
                 {loading ? (
                   <div className="flex justify-center py-16">
-                    <Loader2 className="size-10 animate-spin text-emerald-600" />
+                    <Loader2 className="size-10 animate-spin text-brand" />
                   </div>
                 ) : !hasTableRows ? (
-                  <div className="flex flex-col items-center px-2 py-12 text-center">
-                    <Inbox className="mb-4 size-14 text-slate-400" />
-                    <p className="font-semibold text-slate-900 dark:text-slate-50">Nothing to show</p>
-                    <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-                      Adjust the date range or file a new leave request.
-                    </p>
-                  </div>
+                  <LeaveEmptyState onFileLeave={openFileLeave} />
                 ) : (
                   <AnimatedSection staggerChildren={0.03} duration={0.4}>
                     {rows.map((leave) => {
@@ -922,13 +1112,13 @@ export default function EmployeeLeave() {
                           key={leave.id}
                           type="button"
                           onClick={() => openLeaveDetail(leave)}
-                          className="w-full rounded-2xl border border-slate-200/90 bg-white p-4 text-left shadow-sm transition hover:border-emerald-200/80 hover:shadow-md active:scale-[0.99] dark:border-slate-800 dark:bg-slate-950/50"
+                          className="w-full rounded-xl border border-border/70 bg-card p-4 text-left shadow-sm transition hover:border-brand/35 hover:bg-brand/5 hover:shadow-md active:scale-[0.99] dark:border-white/10 dark:hover:bg-brand/10"
                         >
                           <div className="flex items-start justify-between gap-3">
                             <LeaveTypeBadge type={leave.type} />
                             <LeaveStatusPill status={leave.status} displayStatus={leave.display_status} />
                           </div>
-                          <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
+                          <p className="mt-3 text-sm text-muted-foreground">
                             {formatDateShort(leave.start_date)}
                             {leave.start_date !== leave.end_date && (
                               <>
@@ -937,8 +1127,8 @@ export default function EmployeeLeave() {
                               </>
                             )}
                           </p>
-                          <p className="mt-1 text-xs font-medium text-slate-500">Duration: {durLabel}</p>
-                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          <p className="mt-1 text-xs font-medium text-muted-foreground">Duration: {durLabel}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
                             Supporting documents:{' '}
                             {(() => {
                               const urls = supportingDocUrls(leave)
@@ -952,7 +1142,7 @@ export default function EmployeeLeave() {
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       onClick={(e) => e.stopPropagation()}
-                                      className="font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-400"
+                                      className="font-medium text-brand underline-offset-2 hover:underline"
                                     >
                                       View{urls.length > 1 ? ` ${i + 1}` : ''}
                                     </a>
@@ -976,7 +1166,7 @@ export default function EmployeeLeave() {
             </CardContent>
           </Card>
 
-        <p className="text-center text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+        <p className="text-center text-xs leading-relaxed text-muted-foreground">
           Your request is reviewed by your manager (department, branch, or company head depending on your role), then by HR
           for final approval.
         </p>
@@ -984,6 +1174,315 @@ export default function EmployeeLeave() {
 
       {/* File leave dialog */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent
+          showCloseButton
+          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
+          closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className="max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          innerClassName="gap-0 overflow-hidden p-0 pr-0"
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-8 pb-6 pt-8 text-left dark:to-brand/10 @md:px-12">
+              <AgcBrandLogo className="mb-7 h-9 @md:h-10" />
+              <div className="relative z-10 max-w-[43rem] space-y-3 pr-14 @md:pr-0">
+                <DialogTitle className="text-2xl font-bold tracking-tight text-foreground @md:text-3xl">
+                  File new leave
+                </DialogTitle>
+                <DialogDescription className="max-w-[42rem] text-base leading-relaxed text-muted-foreground @md:text-lg">
+                  Choose your leave type and dates. The earliest start date is tomorrow. Leave cannot cover dates that
+                  already have complete attendance (clock-in and clock-out) for you, and cannot overlap another pending or
+                  approved leave. Add optional remarks and supporting documents if needed.
+                </DialogDescription>
+              </div>
+              <LeaveModalCalendarArt />
+            </DialogHeader>
+
+            <div className="px-8 py-7 @md:px-12">
+            {addError && (
+              <div className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive dark:bg-destructive/15">
+                {addError}
+              </div>
+            )}
+            <form id="emp-leave-file-form" className="space-y-6" onSubmit={handleSubmit}>
+              <div className="space-y-3">
+                <Label htmlFor="leave-type" className={leaveModalLabelClass}>
+                  Leave type
+                </Label>
+                <Select value={addForm.type} onValueChange={(value) => setAddForm((prev) => ({ ...prev, type: value }))}>
+                  <SelectTrigger id="leave-type" className={leaveModalSelectClass}>
+                    <SelectValue>
+                      <span className="flex items-center gap-4">
+                        <Briefcase className="size-5 text-brand" strokeWidth={2.2} aria-hidden />
+                        {leaveTypeLabel(addForm.type)}
+                      </span>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent
+                    position="popper"
+                    align="start"
+                    className="z-[80] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10"
+                  >
+                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="vacation">
+                      Vacation
+                    </SelectItem>
+                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="sick">
+                      Sick
+                    </SelectItem>
+                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="emergency">
+                      Emergency
+                    </SelectItem>
+                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="undertime">
+                      Undertime
+                    </SelectItem>
+                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="half_day">
+                      Half Day
+                    </SelectItem>
+                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="other">
+                      Other
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-3">
+                <Label className={leaveModalLabelClass}>
+                  {addForm.type === 'undertime' || addForm.type === 'half_day' ? 'Leave date' : 'Date range'}
+                </Label>
+                {addForm.type === 'undertime' || addForm.type === 'half_day' ? (
+                  <div className="relative">
+                    <Input
+                      type="date"
+                      min={minLeaveDate}
+                      value={addForm.start_date}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
+                      className={leaveModalFieldClass}
+                      required
+                    />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 @md:grid-cols-2">
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">From</span>
+                      <Input
+                        type="date"
+                        min={minLeaveDate}
+                        value={addForm.start_date}
+                        onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
+                        className={cn(leaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7')}
+                        required
+                      />
+                    </div>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">To</span>
+                      <Input
+                        type="date"
+                        min={minEndDate}
+                        value={addForm.end_date}
+                        onChange={(e) => setAddForm((prev) => ({ ...prev, end_date: e.target.value }))}
+                        className={cn(leaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7')}
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+                {restRangeValidating && addForm.start_date && rangeEndForRestCheck ? (
+                  <p className="mt-1.5 flex items-center gap-2 text-[12px] text-muted-foreground">
+                    <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                    Checking dates against your work schedule...
+                  </p>
+                ) : null}
+                {restRangeCheck && !restRangeCheck.valid ? (
+                  <p className="mt-1.5 flex items-start gap-2 text-[12px] font-medium text-brand">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span>{restRangeCheck.message}</span>
+                  </p>
+                ) : null}
+                {restRangeCheck?.valid && restRangeCheck?.using_default_schedule && restRangeCheck?.schedule_warning ? (
+                  <p className="mt-1.5 flex items-start gap-2 text-[12px] leading-snug text-muted-foreground">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-brand" aria-hidden />
+                    <span>{restRangeCheck.schedule_warning}</span>
+                  </p>
+                ) : null}
+              </div>
+
+              {addForm.type === 'undertime' ? (
+                <div className="space-y-3">
+                  <Label htmlFor="undertime-time" className={leaveModalLabelClass}>
+                    Approved early-out time
+                  </Label>
+                  <Input
+                    id="undertime-time"
+                    type="time"
+                    value={addForm.undertime_time}
+                    onChange={(e) => setAddForm((prev) => ({ ...prev, undertime_time: e.target.value }))}
+                    className={leaveModalFieldClass}
+                    required
+                  />
+                  {undertimePreviewLoading ? (
+                    <p className={leaveModalHintClass}>Calculating undertime based on your schedule...</p>
+                  ) : null}
+                  {undertimePreviewError ? <p className="text-[13px] text-destructive">{undertimePreviewError}</p> : null}
+                  {undertimePreview && undertimePreview.undertime_minutes != null ? (
+                    <p className="text-[13px] font-medium text-brand">
+                      You will incur{' '}
+                      <span className="font-semibold">
+                        {undertimePreview.undertime_hours != null
+                          ? `${Number(undertimePreview.undertime_hours).toFixed(2)} hours`
+                          : `${undertimePreview.undertime_minutes} minutes`}
+                      </span>{' '}
+                      of undertime.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {addForm.type === 'half_day' ? (
+                <div className="space-y-3">
+                  <Label htmlFor="half-type" className={leaveModalLabelClass}>
+                    Half day type
+                  </Label>
+                  <Select
+                    value={addForm.half_type || undefined}
+                    onValueChange={(value) =>
+                      setAddForm((prev) => ({
+                        ...prev,
+                        half_type: value,
+                      }))
+                    }
+                    required
+                  >
+                    <SelectTrigger id="half-type" className={cn(leaveModalFieldClass, 'w-full justify-between')}>
+                      <SelectValue placeholder="Select option" />
+                    </SelectTrigger>
+                    <SelectContent
+                      position="popper"
+                      align="start"
+                      className="z-[80] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10"
+                    >
+                      <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="am">
+                        AM Half Day (leave morning, work afternoon)
+                      </SelectItem>
+                      <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="pm">
+                        PM Half Day (work morning, leave afternoon)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+
+              <div className="space-y-3">
+                <Label
+                  htmlFor={addForm.type === 'undertime' ? 'undertime-reason' : addForm.type === 'half_day' ? 'half-reason' : 'leave-remarks'}
+                  className={leaveModalLabelClass}
+                >
+                  {addForm.type === 'undertime' ? 'Reason' : 'Reason / remarks'}{' '}
+                  {addForm.type === 'undertime' ? null : (
+                    <span className="font-normal text-muted-foreground">(optional)</span>
+                  )}
+                </Label>
+                <div className="relative">
+                  <Textarea
+                    id={addForm.type === 'undertime' ? 'undertime-reason' : addForm.type === 'half_day' ? 'half-reason' : 'leave-remarks'}
+                    value={addForm.reason}
+                    onChange={(e) => setAddForm((prev) => ({ ...prev, reason: e.target.value }))}
+                    rows={4}
+                    maxLength={250}
+                    required={addForm.type === 'undertime'}
+                    placeholder={addForm.type === 'undertime' ? 'Context for approvers...' : 'Optional context for approvers...'}
+                    className="min-h-28 resize-none rounded-xl border-border/80 bg-background px-4 pb-9 pt-4 text-base shadow-sm focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40"
+                  />
+                  <span className="pointer-events-none absolute bottom-4 right-4 text-sm tabular-nums text-muted-foreground">
+                    {addForm.reason.length} / 250
+                  </span>
+                </div>
+              </div>
+
+              <LeaveModalCreditsCard
+                leaveCreditInfo={leaveCreditInfo}
+                addForm={addForm}
+                billableCreditDays={billableCreditDays}
+                paidLeavePreview={paidLeavePreview}
+                paidLeavePreviewLoading={paidLeavePreviewLoading}
+                leaveWillBeFullyPaid={leaveWillBeFullyPaid}
+                leaveWillBeUnpaidNoPool={leaveWillBeUnpaidNoPool}
+                leaveWillBeUnpaidPartial={leaveWillBeUnpaidPartial}
+                effAvail={effAvail}
+              />
+
+              <div className="space-y-3">
+                <Label className={leaveModalLabelClass}>Supporting documents (optional)</Label>
+                <div className="rounded-xl border border-dashed border-border bg-muted/15 px-5 py-6 dark:border-white/15 dark:bg-white/[0.03]">
+                  <div className="flex flex-col items-center justify-center gap-3 text-center">
+                    <label className="flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg px-4 py-2 text-muted-foreground transition hover:text-foreground">
+                      <UploadCloud className="size-9 text-foreground" strokeWidth={1.7} aria-hidden />
+                      <span className="text-base font-medium text-muted-foreground">
+                        Drag and drop files here or click to upload
+                      </span>
+                      <span className={leaveModalHintClass}>
+                        Up to {MAX_LEAVE_SUPPORTING_FILES} files. PDF, PNG, JPG, DOC, DOCX up to 10MB each
+                      </span>
+                      <input
+                        type="file"
+                        className="sr-only"
+                        multiple
+                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                        onChange={addSupportingFilesFromInput}
+                      />
+                    </label>
+                  </div>
+                  {addForm.supportingFiles.length > 0 ? (
+                    <ul className="mt-3 space-y-2">
+                      {addForm.supportingFiles.map((f, i) => (
+                        <li
+                          key={`${f.name}-${i}-${f.size}`}
+                          className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm"
+                        >
+                          <span className="min-w-0 flex-1 truncate font-medium text-foreground">{f.name}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                            onClick={() => removeSupportingFile(i)}
+                            aria-label={`Remove ${f.name}`}
+                          >
+                            <X className="size-3.5" />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              </div>
+            </form>
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-8 py-5 @md:px-12">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-14 min-w-36 rounded-xl border-border/80 bg-card px-8 text-lg font-semibold text-foreground hover:bg-muted dark:border-white/10"
+              onClick={() => setAddOpen(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="emp-leave-file-form"
+              className="h-14 min-w-72 gap-4 rounded-xl bg-brand px-9 text-lg font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
+              disabled={submitting || isFormInvalidBasic || restDayBlocksSubmit}
+            >
+              {submitting && <Loader2 className="size-4 animate-spin" />}
+              Submit request
+              <ArrowRight className="size-5" aria-hidden />
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={false} onOpenChange={setAddOpen}>
         <DialogContent showCloseButton className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_MD)}>
           <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
             <div className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
