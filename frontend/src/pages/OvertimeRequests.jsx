@@ -12,6 +12,7 @@ import {
   FileDown,
   Info,
   Loader2,
+  MoreVertical,
   Plus,
   RefreshCw,
   Timer,
@@ -355,6 +356,13 @@ const STATUS_CHIPS = [
   { value: 'rejected', label: 'Rejected' },
 ]
 
+const employeeOvertimeCardClass =
+  'rounded-[18px] border border-border/70 bg-card shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
+const employeeOvertimePrimaryButtonClass =
+  'h-11 gap-2 rounded-lg bg-brand px-5 text-sm font-semibold text-brand-foreground shadow-[0_12px_22px_-14px_rgba(234,88,12,0.9)] transition hover:bg-brand-strong dark:shadow-[0_12px_24px_-16px_rgba(251,146,60,0.75)]'
+const employeeOvertimeOutlineButtonClass =
+  'h-11 gap-2 rounded-lg border-border/80 bg-card px-5 text-sm font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
+
 function DetailSection({ title, children, className }) {
   return (
     <section className={cn('rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50', className)}>
@@ -395,6 +403,13 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       setMonthIndex(11)
       setMonthYear((y) => y - 1)
     } else setMonthIndex((m) => m - 1)
+  }
+
+  function goNextMonth() {
+    if (monthIndex === 11) {
+      setMonthIndex(0)
+      setMonthYear((y) => y + 1)
+    } else setMonthIndex((m) => m + 1)
   }
 
   function goThisMonth() {
@@ -892,52 +907,64 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
     >
       <div className="mx-auto w-full max-w-full space-y-8 px-1 @sm:px-0">
-        <header className="flex flex-col gap-6 rounded-2xl border border-border/70 bg-card/80 p-5 shadow-sm @sm:p-6 @lg:flex-row @lg:items-end @lg:justify-between">
+        <header className="flex flex-col gap-6 border-b border-border/70 pb-8 @lg:flex-row @lg:items-end @lg:justify-between">
           <div className="max-w-2xl space-y-3">
-            <p className="hr-helper font-semibold uppercase tracking-[0.2em]">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand">
               {isHr ? 'HR' : 'My workspace'}
             </p>
-            <h1 className="hr-page-title !mb-0 text-foreground">{title}</h1>
-            <p className="hr-body text-muted-foreground">{subtitle}</p>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground @sm:text-4xl">{title}</h1>
+            <p className="max-w-2xl text-[15px] leading-relaxed text-muted-foreground">{subtitle}</p>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="h-8 w-fit gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+              className="h-8 w-fit gap-2 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-brand"
               onClick={() => setApprovalInfoOpen(true)}
               aria-label="View approval chain information"
             >
-              <Info className="size-4" />
+              <Info className="size-4 text-brand" />
               Approval chain info
+              <ChevronRight className="size-4" />
             </Button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-3 @lg:w-auto @lg:justify-end">
             {!isHr && (
-              <div className="flex w-full items-center justify-center gap-0.5 rounded-xl border border-border/60 bg-muted/30 p-1 @lg:w-auto">
+              <div className="flex h-11 w-full items-center justify-center overflow-hidden rounded-lg border border-border/80 bg-card shadow-sm @lg:w-auto">
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="size-9 shrink-0 rounded-lg hover:bg-background/80"
+                  className="size-11 shrink-0 rounded-none border-r border-border/70 hover:bg-brand/10 hover:text-brand"
                   onClick={goPrevMonth}
                   aria-label="Previous month"
                 >
-                  <ChevronLeft className="size-4 opacity-70" />
+                  <ChevronLeft className="size-4" />
                 </Button>
                 <button
                   type="button"
                   onClick={goThisMonth}
-                  className="min-w-0 flex-1 truncate rounded-md px-3 py-2 text-center text-sm font-semibold tabular-nums tracking-tight text-foreground transition-colors hover:bg-background/70 @lg:w-[11rem]"
+                  className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-2 truncate px-4 text-center text-sm font-semibold tabular-nums tracking-tight text-foreground transition-colors hover:bg-brand/10 hover:text-brand @lg:w-[13rem]"
                   aria-label="Jump to current month"
                 >
+                  <Calendar className="size-4 shrink-0" />
                   {new Date(`${monthFrom}T12:00:00`).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
                 </button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 shrink-0 rounded-none border-l border-border/70 hover:bg-brand/10 hover:text-brand"
+                  onClick={goNextMonth}
+                  aria-label="Next month"
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
               </div>
             )}
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl border-border bg-card text-foreground hover:bg-muted @lg:flex-initial"
+              className={cn(employeeOvertimeOutlineButtonClass, '@lg:flex-initial')}
               onClick={() => loadMine()}
               disabled={loadingMine}
             >
@@ -946,7 +973,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             </Button>
             <Button
               type="button"
-              className="h-11 gap-2 rounded-xl bg-primary px-5 text-primary-foreground shadow-sm ring-1 ring-border/40 transition hover:brightness-95 @lg:flex-initial"
+              className={cn(employeeOvertimePrimaryButtonClass, '@lg:flex-initial')}
               onClick={openFile}
             >
               <Plus className="size-4" />
@@ -956,24 +983,32 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         </header>
 
         {!isHr && tab === 'mine' && (
-          <Card className="overflow-hidden border-border/70 bg-card shadow-sm @md:rounded-2xl">
-            <CardHeader className="border-b border-border/60 bg-muted/20 px-4 py-5 @sm:px-6 md:px-8">
-              <CardTitle className="hr-section-title hr-section-title--tight !mb-0">Unfiled OT (clock)</CardTitle>
-              <CardDescription className="hr-helper">
-                Detected from your clock logs for the current month. Use the same windows when filing pre-shift or post-shift overtime.
-              </CardDescription>
+          <Card className={cn(employeeOvertimeCardClass, 'overflow-hidden')}>
+            <CardHeader className="px-4 py-5 @sm:px-5 md:px-6">
+              <div className="flex items-start gap-3">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                  <Timer className="size-5" aria-hidden />
+                </span>
+                <div className="min-w-0 space-y-2">
+                  <CardTitle className="text-xl font-semibold tracking-tight text-foreground">Unfiled OT (clock)</CardTitle>
+                  <CardDescription className="space-y-1 text-sm leading-relaxed text-muted-foreground">
+                    <span className="block">Detected from your clock logs for the current month.</span>
+                    <span className="block">Use the same windows when filing pre-shift or post-shift overtime.</span>
+                  </CardDescription>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-3 px-4 py-5 @sm:px-6 md:px-8">
+            <CardContent className="space-y-3 px-4 pb-5 @sm:px-5 md:px-6">
               {unfiledLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
                   Detecting unfiled OT…
                 </div>
               ) : unfiledRows.length === 0 ? (
-                <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-                  No unfiled clock OT detected for this month.
-                </div>
-              ) : (
+                  <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                    No unfiled clock OT detected for this month.
+                  </div>
+                ) : (
                 <div className="grid gap-3 @lg:grid-cols-2">
                   {unfiledRows.map((r) => {
                     const segments = []
@@ -1004,7 +1039,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       segments.reduce((sum, seg) => sum + (Number(seg.hours) || 0), 0)
                     )
                     return (
-                      <div key={r.date} className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+                      <div key={r.date} className="rounded-xl border border-border/70 bg-card p-4 shadow-sm dark:border-white/10">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <p className="text-base font-semibold tracking-tight text-foreground">
@@ -1014,7 +1049,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                               Unfiled OT (clock)
                             </p>
                           </div>
-                          <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold">
+                          <Badge className="shrink-0 rounded-lg border border-brand/15 bg-brand/10 px-2.5 py-1 text-xs font-semibold text-brand shadow-none dark:bg-brand/15">
                             {totalHours}h total
                           </Badge>
                         </div>
@@ -1025,7 +1060,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                             return (
                               <div
                                 key={`${r.date}-${seg.key}`}
-                                className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2"
+                                className="flex items-center justify-between rounded-lg border border-border/60 bg-background/70 px-3 py-2 shadow-sm dark:bg-background/35"
                               >
                                 <div className="min-w-0">
                                   <p className="text-sm font-medium text-foreground">{segmentUiLabel(seg.key)}</p>
@@ -1037,32 +1072,13 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                           })}
                         </div>
 
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {segments.map((seg) => (
-                            <Button
-                              key={`${r.date}-file-${seg.key}`}
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              className="h-9 flex-1 font-semibold"
-                              onClick={() =>
-                                openFile({
-                                  date: r.date,
-                                  start_time: seg.start_time,
-                                  end_time: seg.end_time,
-                                  segments: [seg],
-                                })
-                              }
-                            >
-                              {seg.key === 'pre_shift' ? 'File pre-shift' : 'File post-shift'}
-                            </Button>
-                          ))}
+                        <div className="mt-4 flex flex-wrap gap-3">
                           {segments.length === 1 && (
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
-                              className="h-9 flex-1"
+                              className="h-10 flex-1 rounded-lg border-border/80 bg-card font-semibold text-foreground hover:bg-brand/10 hover:text-brand"
                               onClick={() =>
                                 openFile({
                                   date: r.date,
@@ -1075,6 +1091,30 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                               Open form
                             </Button>
                           )}
+                          {segments.map((seg) => (
+                            <Button
+                              key={`${r.date}-file-${seg.key}`}
+                              type="button"
+                              size="sm"
+                              variant={seg.key === 'pre_shift' ? 'outline' : 'default'}
+                              className={cn(
+                                'h-10 flex-1 rounded-lg font-semibold',
+                                seg.key === 'pre_shift'
+                                  ? 'border-brand/25 bg-brand/10 text-brand hover:bg-brand/15 dark:bg-brand/15'
+                                  : 'bg-brand text-brand-foreground hover:bg-brand-strong'
+                              )}
+                              onClick={() =>
+                                openFile({
+                                  date: r.date,
+                                  start_time: seg.start_time,
+                                  end_time: seg.end_time,
+                                  segments: [seg],
+                                })
+                              }
+                            >
+                              {seg.key === 'pre_shift' ? 'File pre-shift' : 'File post-shift'}
+                            </Button>
+                          ))}
                         </div>
                       </div>
                     )
@@ -1127,14 +1167,21 @@ export default function OvertimeRequests({ variant = 'employee' }) {
           </div>
         )}
 
-        <Card className="overflow-hidden border-slate-200/80 shadow-sm dark:border-slate-800 @md:rounded-2xl">
-          <CardHeader className="border-b border-border/60 bg-white px-4 py-5 @sm:px-6 md:px-8 dark:bg-card">
-            <CardTitle className="text-lg font-semibold">Requests</CardTitle>
-            <CardDescription className="text-sm">
-              {tab === 'mine'
-                ? 'Your overtime filings and their current stage in the approval chain.'
-                : 'All overtime in your organization scope. Approve or reject when you are the current approver.'}
-            </CardDescription>
+        <Card className={cn(employeeOvertimeCardClass, 'overflow-hidden')}>
+          <CardHeader className="px-4 py-5 @sm:px-5 md:px-6">
+            <div className="flex items-start gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                <CalendarDays className="size-5" aria-hidden />
+              </span>
+              <div className="min-w-0 space-y-2">
+                <CardTitle className="text-xl font-semibold tracking-tight text-foreground">Requests</CardTitle>
+                <CardDescription className="text-sm leading-relaxed text-muted-foreground">
+                  {tab === 'mine'
+                    ? 'Your overtime filings and their current stage in the approval chain.'
+                    : 'All overtime in your organization scope. Approve or reject when you are the current approver.'}
+                </CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {tab === 'all' && canSeeAllTab && (
@@ -1235,10 +1282,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               </div>
             ) : (
               <AnimatedSection delay={0.05}>
-                <div className="overflow-x-auto bg-white px-4 pb-8 pt-2 @sm:px-6 md:px-8 dark:bg-background">
+                <div className="overflow-x-auto bg-card px-4 pb-8 pt-2 @sm:px-5 md:px-6">
                   <Table>
                     <TableHeader>
-                      <TableRow className="sticky top-0 z-10 border-b border-slate-200/90 bg-white/95 hover:bg-white/95 dark:border-slate-800 dark:bg-slate-950/95">
+                      <TableRow className="sticky top-0 z-10 border-b border-border/80 bg-card hover:bg-card">
                         <TableHead className="w-[88px] py-3.5">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">ID</span>
                         </TableHead>
@@ -1265,9 +1312,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                           <TableRow
                             key={row.id}
                             className={cn(
-                              'border-b border-slate-100 text-[15px] leading-snug transition-colors duration-150 dark:border-slate-800/90',
-                              'hover:bg-emerald-500/[0.04] dark:hover:bg-emerald-500/[0.06]',
-                              rowIdx % 2 === 0 ? 'bg-white/80 dark:bg-slate-950/20' : 'bg-slate-50/40 dark:bg-slate-950/35'
+                              'border-b border-border/65 text-[15px] leading-snug transition-colors duration-150 hover:bg-brand/5 dark:hover:bg-white/[0.045]',
+                              rowIdx % 2 === 0 ? 'bg-card' : 'bg-muted/20 dark:bg-white/[0.02]'
                             )}
                           >
                             <TableCell className="align-middle font-mono text-sm font-semibold text-foreground">
@@ -1319,13 +1365,23 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                               <div className="flex flex-wrap justify-end gap-1">
                                 <Button
                                   type="button"
-                                  variant="ghost"
+                                  variant="outline"
                                   size="sm"
-                                  className="h-9 gap-1.5 rounded-lg px-3 text-xs font-semibold"
+                                  className="h-9 gap-1.5 rounded-lg border-border/80 bg-card px-3 text-xs font-semibold hover:bg-brand/10 hover:text-brand"
                                   onClick={() => openView(row)}
                                 >
                                   <Eye className="size-3.5" />
                                   Details
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-9 rounded-lg text-muted-foreground hover:bg-brand/10 hover:text-brand"
+                                  onClick={() => openView(row)}
+                                  aria-label={`More actions for overtime request #${row.id}`}
+                                >
+                                  <MoreVertical className="size-4" aria-hidden />
                                 </Button>
                                 {tab === 'mine' && canEditPendingOvertime(row) && (
                                   <>
@@ -1378,6 +1434,19 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                         Next
                       </Button>
                     </div>
+                  </div>
+                )}
+                {tab === 'mine' && activeItems.length > 0 && (
+                  <div className="flex items-center justify-center gap-2 border-t border-border/50 px-4 pb-6 pt-5 @sm:px-6 md:px-8">
+                    <Button type="button" variant="outline" size="icon" className="size-9 rounded-lg" disabled>
+                      <ChevronLeft className="size-4" aria-hidden />
+                    </Button>
+                    <span className="flex size-9 items-center justify-center rounded-lg bg-brand text-sm font-bold tabular-nums text-brand-foreground shadow-sm">
+                      1
+                    </span>
+                    <Button type="button" variant="outline" size="icon" className="size-9 rounded-lg" disabled>
+                      <ChevronRight className="size-4" aria-hidden />
+                    </Button>
                   </div>
                 )}
               </AnimatedSection>
