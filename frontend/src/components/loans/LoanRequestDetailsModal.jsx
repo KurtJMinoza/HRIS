@@ -2,8 +2,22 @@ import { useMemo } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  BarChart3,
+  CalendarDays,
+  ClipboardList,
+  Clock3,
+  Hourglass,
+  MessageSquareText,
+  RefreshCcw,
+  Send,
+  UsersRound,
+  WalletCards,
+} from 'lucide-react'
+import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { computeLoanEstimatePreview, normalizeInterestProfile } from '@/lib/loanRequestEstimate'
 import { formatDeductionScheduleTypeShort } from '@/components/salary/EmployeeSalaryTab'
+import { cn } from '@/lib/utils'
 
 function formatPhp(n) {
   const v = Number(n)
@@ -48,6 +62,38 @@ function statusBadgeLabel(status) {
   return status ? String(status) : '—'
 }
 
+function SectionHeading({ icon: Icon, children, className }) {
+  return (
+    <div className={cn('flex items-center gap-4', className)}>
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/8 text-brand dark:bg-brand/15">
+        <Icon className="size-5" strokeWidth={1.8} aria-hidden />
+      </span>
+      <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-foreground/80 dark:text-foreground/90">{children}</p>
+    </div>
+  )
+}
+
+function DetailItem({ icon: Icon, label, value, className }) {
+  return (
+    <div className={cn('flex min-w-0 gap-4 py-5', className)}>
+      <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted/45 text-foreground dark:bg-muted/35">
+        <Icon className="size-5" strokeWidth={1.75} aria-hidden />
+      </span>
+      <div className="min-w-0">
+        <dt className="text-sm text-muted-foreground">{label}</dt>
+        <dd className="mt-1 wrap-break-word text-lg font-bold leading-snug text-foreground">{value}</dd>
+      </div>
+    </div>
+  )
+}
+
+function timelineIconClass(step, idx) {
+  const status = String(step?.status || step?.state || '').toLowerCase()
+  if (idx === 0 || status === 'completed' || status === 'approved') return 'bg-foreground text-background'
+  if (status === 'rejected') return 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-200'
+  return 'bg-muted text-foreground/70 dark:bg-muted/50'
+}
+
 export function LoanRequestDetailsModal({
   open,
   onOpenChange,
@@ -86,18 +132,21 @@ export function LoanRequestDetailsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(92vh,900px)] w-full max-w-5xl sm:max-w-5xl" innerClassName="gap-0 overflow-y-auto px-0 pb-0 pt-0">
+      <DialogContent
+        className="max-h-[min(94vh,920px)] w-full max-w-6xl sm:max-w-6xl"
+        innerClassName="gap-0 overflow-y-auto bg-card px-0 pb-0 pt-0"
+        closeButtonClassName="right-5 top-5 size-11 rounded-xl bg-background text-foreground shadow-sm"
+      >
         {loading || !loanRequest || !estimate ? (
           <div className="flex justify-center py-20 text-sm text-muted-foreground">Loading request details...</div>
         ) : (
           <>
-            <DialogHeader className="border-b border-border/60 bg-muted/25 px-6 py-5 text-left sm:px-8">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <DialogTitle className="text-xl font-semibold tracking-tight text-[#0A0A0A] dark:text-slate-50 sm:text-2xl">
-                    Loan request details
-                  </DialogTitle>
-                  <DialogDescription className="text-sm text-muted-foreground">
+            <DialogHeader className="border-b border-border/60 bg-card px-6 py-5 text-left sm:px-8">
+              <div className="flex items-start gap-5 pr-16">
+                <AgcBrandLogo variant="light" className="mt-1 h-10 w-20 object-left" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">Loan request details</DialogTitle>
+                  <DialogDescription className="truncate text-sm text-muted-foreground">
                     Request #{loanRequest.id} · {product}
                     {borrowerName ? ` · ${borrowerName}` : ''}
                     {borrowerCode ? ` (${borrowerCode})` : ''}
@@ -105,7 +154,7 @@ export function LoanRequestDetailsModal({
                 </div>
                 <Badge
                   variant="outline"
-                  className={`rounded-full px-3 py-1 text-xs font-semibold tracking-wide ${statusBadgeClass(status)}`}
+                  className={`mt-1 rounded-full px-3.5 py-1.5 text-xs font-semibold tracking-wide ${statusBadgeClass(status)}`}
                 >
                   {statusBadgeLabel(status)}
                 </Badge>
@@ -113,71 +162,81 @@ export function LoanRequestDetailsModal({
             </DialogHeader>
 
             <div className="grid gap-6 px-6 py-6 sm:px-8 lg:grid-cols-2">
-              <div className="space-y-5 rounded-2xl border border-border/50 bg-muted/20 p-5 sm:p-6">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Request information</p>
-                <dl className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-sm font-medium text-muted-foreground">Requested amount</dt>
-                    <dd className="mt-1 text-xl font-bold tabular-nums leading-tight text-[#0A0A0A]">
-                      {formatPhpSym(loanRequest.requested_amount)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm font-medium text-muted-foreground">Preferred monthly</dt>
-                    <dd className="mt-1 text-xl font-bold tabular-nums leading-tight text-[#0A0A0A]">
-                      {loanRequest.preferred_monthly_deduction != null ? formatPhpSym(loanRequest.preferred_monthly_deduction) : '—'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm font-medium text-muted-foreground">Term (months)</dt>
-                    <dd className="mt-1 text-xl font-bold leading-tight text-[#0A0A0A]">{loanRequest.term_months || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm font-medium text-muted-foreground">Schedule</dt>
-                    <dd className="mt-1 text-xl font-bold leading-tight text-[#0A0A0A]">
-                      {formatDeductionScheduleTypeShort(loanRequest.deduction_schedule || 'both')}
-                    </dd>
-                  </div>
+              <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm dark:border-border/60">
+                <SectionHeading icon={ClipboardList}>Request information</SectionHeading>
+                <dl className="mt-6 grid sm:grid-cols-2">
+                  <DetailItem
+                    icon={WalletCards}
+                    label="Requested amount"
+                    value={formatPhpSym(loanRequest.requested_amount)}
+                    className="border-b border-border/50 sm:pr-6"
+                  />
+                  <DetailItem
+                    icon={CalendarDays}
+                    label="Preferred monthly"
+                    value={loanRequest.preferred_monthly_deduction != null ? formatPhpSym(loanRequest.preferred_monthly_deduction) : '—'}
+                    className="border-b border-border/50 sm:border-l sm:pl-6"
+                  />
+                  <DetailItem
+                    icon={CalendarDays}
+                    label="Term (months)"
+                    value={loanRequest.term_months || '—'}
+                    className="border-b border-border/50 sm:pr-6"
+                  />
+                  <DetailItem
+                    icon={RefreshCcw}
+                    label="Schedule"
+                    value={formatDeductionScheduleTypeShort(loanRequest.deduction_schedule || 'both')}
+                    className="border-b border-border/50 sm:border-l sm:pl-6"
+                  />
+                  {reason ? (
+                    <DetailItem
+                      icon={MessageSquareText}
+                      label="Reason"
+                      value={reason}
+                      className="sm:col-span-2"
+                    />
+                  ) : null}
                 </dl>
-                {reason ? (
-                  <div className="border-t border-border/40 pt-4">
-                    <dt className="text-sm font-medium text-muted-foreground">Reason</dt>
-                    <dd className="mt-1 text-sm leading-relaxed text-[#0A0A0A]/85 dark:text-slate-200">{reason}</dd>
-                  </div>
-                ) : null}
               </div>
 
-              <div className="space-y-4 rounded-2xl border border-[#0A0A0A]/10 bg-gradient-to-br from-muted/40 to-muted/20 p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.03] sm:p-6">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Estimated impact</p>
-                <p className="text-2xl font-bold tabular-nums text-[#0A0A0A] dark:text-slate-50 sm:text-3xl">
+              <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm dark:border-border/60">
+                <SectionHeading icon={BarChart3}>Estimated impact</SectionHeading>
+                <p className="mt-6 text-3xl font-bold tabular-nums tracking-tight text-foreground sm:text-4xl">
                   {estimate.monthlyImpact != null && Number.isFinite(estimate.monthlyImpact)
                     ? `${formatPhpSym(estimate.monthlyImpact)} / month (total)`
                     : '—'}
                 </p>
                 {estimate.isAdjustedToTerm ? (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="mt-2 text-sm text-muted-foreground">
                     {estimate.adjustedReason === 'increased_to_match_term'
                       ? 'Adjusted up to fully repay principal within the selected term.'
                       : 'Adjusted down to match principal within the selected term.'}
                   </p>
                 ) : null}
                 {estimate.sched === 'both' && estimate.per15 != null && estimate.per30 != null ? (
-                  <p className="text-sm tabular-nums text-[#0A0A0A]/90 dark:text-slate-200">
-                    Per pay run (approx.): 15th — {formatPhpSym(estimate.per15)} · 30th — {formatPhpSym(estimate.per30)}
-                  </p>
+                  <div className="mt-6 text-sm leading-relaxed text-foreground/90">
+                    <p>Per pay run (approx.):</p>
+                    <p className="font-bold tabular-nums text-foreground">
+                      15th — {formatPhpSym(estimate.per15)} · 30th — {formatPhpSym(estimate.per30)}
+                    </p>
+                  </div>
                 ) : estimate.monthlyImpact != null ? (
-                  <p className="text-sm text-[#0A0A0A]/90 dark:text-slate-200">
-                    {estimate.sched === '15th'
-                      ? `Full amount on the first semi-monthly pay run (~15th): ${formatPhpSym(estimate.monthlyImpact)}`
-                      : `Full amount on the second semi-monthly run (end of month): ${formatPhpSym(estimate.monthlyImpact)}`}
-                  </p>
+                  <div className="mt-6 text-sm leading-relaxed text-foreground/90">
+                    <p>
+                      {estimate.sched === '15th'
+                        ? 'Full amount on the first semi-monthly pay run (~15th):'
+                        : 'Full amount on the second semi-monthly run (end of month):'}
+                    </p>
+                    <p className="font-bold tabular-nums text-foreground">{formatPhpSym(estimate.monthlyImpact)}</p>
+                  </div>
                 ) : null}
                 {estimate.hasInterestRate ? (
-                  <p className="text-sm font-medium text-[#0A0A0A] dark:text-slate-100">
+                  <p className="mt-3 text-sm font-medium text-foreground">
                     Interest rate: {estimate.rateDisplayPercent}% p.a. ({estimate.interestType === 'compound' ? 'compound' : 'simple'})
                   </p>
                 ) : null}
-                <div className="border-t border-border/40 pt-3">
+                <div className="mt-6 border-t border-border/60 pt-4">
                   <p className="text-sm font-medium text-foreground/85">
                     {estimate.hasInterestRate && estimate.totalInterest != null
                       ? estimate.interestShortfall
@@ -185,7 +244,7 @@ export function LoanRequestDetailsModal({
                         : 'Total repayment (principal + interest)'
                       : 'Total repayment (principal)'}
                   </p>
-                  <p className="mt-1 text-lg font-bold tabular-nums text-[#0A0A0A] dark:text-slate-50">
+                  <p className="mt-1 text-lg font-bold tabular-nums text-foreground">
                     {estimate.totalRepayment != null ? formatPhpSym(estimate.totalRepayment) : '—'}
                   </p>
                   {estimate.interestRepaymentNote ? (
@@ -198,9 +257,9 @@ export function LoanRequestDetailsModal({
                     </p>
                   ) : null}
                 </div>
-                <div className="rounded-xl border border-border/40 bg-background/60 px-3 py-2.5 dark:bg-white/[0.04]">
-                  <span className="text-xs font-medium text-foreground/80">Approx. deductions</span>
-                  <p className="mt-0.5 text-base font-bold tabular-nums text-[#0A0A0A] dark:text-slate-50">
+                <div className="mt-4 rounded-xl bg-muted/35 px-4 py-3 dark:bg-muted/25">
+                  <span className="text-xs font-medium text-foreground/90">Approx. deductions</span>
+                  <p className="mt-0.5 text-base font-bold tabular-nums text-foreground">
                     {estimate.deductionCount != null ? `${estimate.deductionCount}` : '—'}
                   </p>
                   <span className="text-[11px] text-muted-foreground">
@@ -208,60 +267,95 @@ export function LoanRequestDetailsModal({
                   </span>
                 </div>
                 {previewLine ? (
-                  <div className="border-t border-border/40 pt-3">
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      <span className="font-medium text-foreground/80">Pay cycle (your account):</span>{' '}
-                      {payCyclePreview?.name ? `${payCyclePreview.name} · ` : ''}
-                      {previewLine}
-                      {payDate ? (
-                        <>
-                          {' → '}
-                          <span className="font-medium text-foreground/80">Pay Date:</span> {formatDateLong(payDate)}
-                        </>
-                      ) : null}
-                    </p>
+                  <div className="mt-4 border-t border-border/60 pt-4">
+                    <div className="flex gap-3 text-xs leading-relaxed text-muted-foreground">
+                      <CalendarDays className="mt-0.5 size-4 shrink-0 text-foreground" aria-hidden />
+                      <p>
+                        <span className="font-medium text-foreground">Pay cycle (your account):</span>{' '}
+                        {payCyclePreview?.name ? `${payCyclePreview.name} · ` : ''}
+                        {previewLine}
+                        {payDate ? (
+                          <>
+                            {' → '}
+                            <span className="font-medium text-brand">Pay Date: {formatDateLong(payDate)}</span>
+                          </>
+                        ) : null}
+                      </p>
+                    </div>
                   </div>
                 ) : null}
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  <span className="font-medium text-foreground/80">
-                    {Array.isArray(nextDeductionDates) && nextDeductionDates.length > 1
-                      ? 'Next deduction dates: '
-                      : 'Next deduction date: '}
-                  </span>
-                  {Array.isArray(nextDeductionDates) && nextDeductionDates.length > 1
-                    ? nextDeductionDates.slice(0, 2).map(formatDateShort).join(' and ')
-                    : nextDeductionDates?.[0] ? formatDateShort(nextDeductionDates[0]) : '—'}
-                </p>
+                <div className="mt-3 flex gap-3 text-xs leading-relaxed text-muted-foreground">
+                  <Clock3 className="mt-0.5 size-4 shrink-0 text-foreground" aria-hidden />
+                  <p>
+                    <span className="font-medium text-foreground">
+                      {Array.isArray(nextDeductionDates) && nextDeductionDates.length > 1
+                        ? 'Next deduction dates: '
+                        : 'Next deduction date: '}
+                    </span>
+                    <span className="font-medium text-brand">
+                      {Array.isArray(nextDeductionDates) && nextDeductionDates.length > 1
+                        ? nextDeductionDates.slice(0, 2).map(formatDateShort).join(' and ')
+                        : nextDeductionDates?.[0] ? formatDateShort(nextDeductionDates[0]) : '—'}
+                    </span>
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div className="border-t border-border/60 px-6 py-4 sm:px-8">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Approval timeline</p>
-              <div className="mt-3 space-y-2">
+            <div className="px-6 pb-6 sm:px-8">
+              <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm dark:border-border/60">
+                <SectionHeading icon={Hourglass}>Approval timeline</SectionHeading>
+                <div className="relative mt-6 space-y-3">
                 {approvalProgress.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No timeline data.</p>
                 ) : (
-                  approvalProgress.map((step, idx) => (
-                    <div key={step.key || idx} className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-sm">
-                      <p className="font-medium text-[#0A0A0A]">{step.label}</p>
-                      <p className="text-xs text-muted-foreground">{step.acted_at ? formatDateShort(step.acted_at) : 'Pending'}</p>
-                    </div>
-                  ))
+                  approvalProgress.map((step, idx) => {
+                    const stepStatus = String(step.status || step.state || '').toLowerCase()
+                    const showPending = stepStatus === 'pending' || (!step.acted_at && idx > 0)
+                    return (
+                      <div key={step.key || idx} className="relative flex gap-5">
+                        {idx + 1 < approvalProgress.length ? (
+                          <span className="absolute -bottom-3 left-5 top-11 w-px bg-border" aria-hidden />
+                        ) : null}
+                        <span className={cn('relative z-1 flex size-10 shrink-0 items-center justify-center rounded-full', timelineIconClass(step, idx))}>
+                          {idx === 0 ? (
+                            <Send className="size-5" strokeWidth={1.8} aria-hidden />
+                          ) : (
+                            <UsersRound className="size-5" strokeWidth={1.8} aria-hidden />
+                          )}
+                        </span>
+                        <div className="min-w-0 flex-1 rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm shadow-sm dark:bg-muted/10">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium text-foreground">{step.label}</p>
+                            {showPending ? (
+                              <Badge variant="outline" className={statusBadgeClass('pending')}>
+                                Pending
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{step.acted_at ? formatDateShort(step.acted_at) : '—'}</p>
+                        </div>
+                      </div>
+                    )
+                  })
                 )}
+                </div>
               </div>
             </div>
 
-            <DialogFooter className="flex items-center justify-between border-t border-border/60 px-6 py-4 sm:px-8">
-              <div className="text-xs text-muted-foreground">
-                {canApprove || canReject ? 'You can take action on this request.' : 'This request is read-only.'}
-              </div>
-              <div className="flex items-center gap-2">
-                {actionsSlot}
-                <Button type="button" variant="outline" className="rounded-full px-6" onClick={() => onOpenChange(false)}>
-                  Close
-                </Button>
-              </div>
-            </DialogFooter>
+            {actionsSlot ? (
+              <DialogFooter className="flex items-center justify-between border-t border-border/60 px-6 py-4 sm:px-8">
+                <div className="text-xs text-muted-foreground">
+                  {canApprove || canReject ? 'You can take action on this request.' : 'This request is read-only.'}
+                </div>
+                <div className="flex items-center gap-2">
+                  {actionsSlot}
+                  <Button type="button" variant="outline" className="rounded-full px-6" onClick={() => onOpenChange(false)}>
+                    Close
+                  </Button>
+                </div>
+              </DialogFooter>
+            ) : null}
           </>
         )}
       </DialogContent>
