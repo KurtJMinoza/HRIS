@@ -220,9 +220,9 @@ function AnimatedLoanProgress({
 function PiggyBankIllustration() {
   return (
     <div className="relative flex size-28 items-center justify-center" aria-hidden>
-      <div className="absolute inset-0 rounded-[2rem] bg-brand/10 shadow-inner ring-1 ring-brand/15" />
-      <PiggyBank className="relative size-[4.5rem] text-brand" strokeWidth={1.35} />
-      <span className="absolute -right-1 -top-1 flex size-9 items-center justify-center rounded-full border border-border bg-card text-sm text-muted-foreground shadow-sm">
+      <div className="absolute inset-0 rounded-[2rem] bg-orange-50/95 shadow-inner ring-1 ring-orange-200/70 dark:bg-brand/12 dark:ring-brand/25" />
+      <PiggyBank className="relative size-[4.5rem] text-orange-600 dark:text-brand" strokeWidth={1.35} />
+      <span className="absolute -right-1 -top-1 flex size-9 items-center justify-center rounded-full border border-white bg-white text-sm text-orange-700 shadow-md ring-2 ring-orange-100/90 dark:border-card dark:bg-card dark:text-brand dark:ring-brand/30">
         ✦
       </span>
     </div>
@@ -662,11 +662,8 @@ export default function EmployeeLoansDeductionsPage() {
 
             {/* Active loans */}
             <section className="space-y-4">
-              <div className="space-y-1.5">
-                <h2 className="flex items-center gap-2.5 text-xl font-bold tracking-tight text-foreground md:text-2xl">
-                  <span className="inline-block h-7 w-1 shrink-0 rounded-full bg-brand" aria-hidden />
-                  Active loans & deductions
-                </h2>
+              <div className="space-y-1.5 border-l-4 border-brand pl-4">
+                <h2 className="text-xl font-bold tracking-tight text-foreground md:text-2xl">Active loans & deductions</h2>
                 <p className="text-sm text-muted-foreground md:text-[15px]">
                   Amounts follow your pay cycle and deduction schedule.
                 </p>
@@ -888,11 +885,8 @@ export default function EmployeeLoansDeductionsPage() {
 
             {/* Requests — timeline */}
             <section className="space-y-4">
-              <div className="space-y-1.5">
-                <h2 className="flex items-center gap-2.5 text-xl font-bold tracking-tight text-foreground md:text-2xl">
-                  <span className="inline-block h-7 w-1 shrink-0 rounded-full bg-brand" aria-hidden />
-                  Your requests & history
-                </h2>
+              <div className="space-y-1.5 border-l-4 border-brand pl-4">
+                <h2 className="text-xl font-bold tracking-tight text-foreground md:text-2xl">Your requests & history</h2>
                 <p className="text-sm text-muted-foreground md:text-[15px]">Track what you&apos;ve submitted and what HR decided.</p>
               </div>
               <Card className={cn('overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm', cardShadow)} style={{ borderRadius: 16 }}>
