@@ -2,12 +2,57 @@
  * Display helpers for 24h API times (HH:mm). Storage and APIs stay 24-hour.
  */
 
+/**
+ * Value for `<input type="time">`: empty string or "HH:mm" (24h, zero-padded).
+ * Parses "H:mm", "HH:mm:ss", ISO datetimes, and rejects placeholders like "—".
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function toTimeInputValue(value) {
+  if (value == null || value === '') return ''
+  let s = String(value).trim().replace(/^\uFEFF/, '')
+  if (!s || s === '—' || s === '-') return ''
+  const ampm = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(am|pm)\s*$/i)
+  if (ampm) {
+    let h = parseInt(ampm[1], 10)
+    const min = parseInt(ampm[2], 10)
+    const ap = ampm[4].toUpperCase()
+    if (Number.isNaN(h) || Number.isNaN(min) || min < 0 || min > 59) return ''
+    if (ap === 'PM' && h !== 12) h += 12
+    if (ap === 'AM' && h === 12) h = 0
+    if (h < 0 || h > 23) return ''
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+  }
+  const clock = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/)
+  if (clock) {
+    const h = parseInt(clock[1], 10)
+    const min = parseInt(clock[2], 10)
+    if (
+      Number.isNaN(h) ||
+      Number.isNaN(min) ||
+      h < 0 ||
+      h > 23 ||
+      min < 0 ||
+      min > 59
+    ) {
+      return ''
+    }
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+  }
+  const d = new Date(s)
+  if (!Number.isNaN(d.getTime())) {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+  return ''
+}
+
 /** Normalize time string to HH:mm. Handles "HH:mm" or "HH:mm:ss". */
 export function toHhMm(value) {
   if (value == null || typeof value !== 'string') return value
   const trimmed = value.trim()
   if (!trimmed) return trimmed
-  return trimmed.length >= 5 ? trimmed.slice(0, 5) : trimmed
+  const tv = toTimeInputValue(trimmed)
+  return tv || trimmed.slice(0, 5)
 }
 
 /**
@@ -51,7 +96,7 @@ export function formatScheduleLabel12h(label) {
   if (label == null || label === '') return '—'
   const s = String(label).trim()
   if (s === 'Rest day' || s === '—' || s === '-') return s
-  const range = s.match(/^(\d{1,2}:\d{2})\s*[\u2013\-]\s*(\d{1,2}:\d{2})$/)
+  const range = s.match(/^(\d{1,2}:\d{2})\s*[-\u2013]\s*(\d{1,2}:\d{2})$/)
   if (range) return formatShiftRange12h(range[1], range[2])
   return s
 }

@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
   AlertTriangle,
+  ArrowRight,
   Calendar,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  Clock,
   ExternalLink,
   Eye,
   FileDown,
@@ -16,7 +16,6 @@ import {
   MoreVertical,
   Plus,
   RefreshCw,
-  SendHorizontal,
   Timer,
   X,
   Inbox,
@@ -36,7 +35,8 @@ import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { Link, useSearchParams } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
-import { formatHHmmTo12h, toHhMm } from '@/lib/timeFormat'
+import { formatHHmmTo12h, toHhMm, toTimeInputValue } from '@/lib/timeFormat'
+import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import {
   Dialog,
   DialogContent,
@@ -122,17 +122,6 @@ function formatOtRange12h(startHm, endHm) {
   return `${a} - ${b}`
 }
 
-function formatDateMmDdYyyy(dateStr) {
-  if (!dateStr) return 'mm/dd/yyyy'
-  const [year, month, day] = String(dateStr).split('-')
-  if (!year || !month || !day) return dateStr
-  return `${month}/${day}/${year}`
-}
-
-function formatModalTime(timeStr) {
-  return formatHHmmTo12h(toHhMm(timeStr)) || '--:--'
-}
-
 function formatPhRuleOption(opt) {
   if (!opt) return 'Ordinary Day - 1st 8h - 1 OT - 1.25'
   return `${opt.day_type_label} - 1st 8h x${opt.first_8_multiplier} - OT x${opt.ot_multiplier}`
@@ -145,13 +134,17 @@ function roundHours1(n) {
 
 function formatUnfiledOtClockSummary12h(preSeg, postSeg, totalHours) {
   const parts = []
-  if (preSeg?.start && preSeg?.end) {
-    const range = formatOtRange12h(preSeg.start, preSeg.end)
+  const preStart = preSeg?.start ?? preSeg?.start_time
+  const preEnd = preSeg?.end ?? preSeg?.end_time
+  const postStart = postSeg?.start ?? postSeg?.start_time
+  const postEnd = postSeg?.end ?? postSeg?.end_time
+  if (preStart && preEnd) {
+    const range = formatOtRange12h(preStart, preEnd)
     const h = typeof preSeg.hours === 'number' ? preSeg.hours : (preSeg.minutes || 0) / 60
     if (range) parts.push(`${range} (${roundHours1(h)}h)`)
   }
-  if (postSeg?.start && postSeg?.end) {
-    const range = formatOtRange12h(postSeg.start, postSeg.end)
+  if (postStart && postEnd) {
+    const range = formatOtRange12h(postStart, postEnd)
     const h = typeof postSeg.hours === 'number' ? postSeg.hours : (postSeg.minutes || 0) / 60
     if (range) parts.push(`${range} (${roundHours1(h)}h)`)
   }
@@ -164,27 +157,70 @@ function segmentUiLabel(key) {
   return key === 'pre_shift' ? 'Pre-shift OT' : 'Post-shift OT'
 }
 
+/** Attendance summary day `date`: keep YYYY-MM-DD for type="date" + API. */
+function normalizeAttendanceDateYmd(d) {
+  if (d == null || d === '') return ''
+  const m = String(d).trim().match(/^(\d{4}-\d{2}-\d{2})/)
+  return m ? m[1] : ''
+}
+
+/** Normalize raw API / UI OT clock segment bounds for `<input type="time">`. */
+function resolveOtClockSegmentBounds(seg) {
+  if (!seg || typeof seg !== 'object') return { key: '', start: '', end: '' }
+  const key = String(seg.key ?? seg.kind ?? '').trim()
+  const rawStart = seg.start_time ?? seg.start ?? seg.begin ?? seg.time_in ?? seg.clock_in
+  const rawEnd = seg.end_time ?? seg.end ?? seg.finish ?? seg.time_out ?? seg.clock_out
+  return {
+    key: key === 'pre_shift' || key === 'post_shift' ? key : '',
+    start: toTimeInputValue(rawStart),
+    end: toTimeInputValue(rawEnd),
+  }
+}
+
 function normalizeSelectableSegments(segments) {
   if (!Array.isArray(segments)) return []
   return segments
     .map((seg) => {
-      const key = String(seg?.key || '')
+      const { key, start, end } = resolveOtClockSegmentBounds(seg)
       if (key !== 'pre_shift' && key !== 'post_shift') return null
-      const start = String(seg?.start_time || '').trim()
-      const end = String(seg?.end_time || '').trim()
       if (!start || !end) return null
       const minutes = Number(seg?.minutes || 0)
       const hours = Number.isFinite(Number(seg?.hours)) ? Number(seg.hours) : (minutes > 0 ? minutes / 60 : 0)
       return {
         key,
-        start_time: start.slice(0, 5),
-        end_time: end.slice(0, 5),
+        start_time: start,
+        end_time: end,
         minutes: Number.isFinite(minutes) ? minutes : 0,
         hours: roundHours1(hours),
-        label: String(seg?.label || ''),
+        label: String(seg?.label ?? ''),
       }
     })
     .filter(Boolean)
+}
+
+/** Fallback when normalizeSelectableSegments rejects a single legacy-shaped segment */
+function coerceSingleSelectableSegment(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const { key, start, end } = resolveOtClockSegmentBounds(raw)
+  if (!start || !end || (key !== 'pre_shift' && key !== 'post_shift')) return null
+  const minutes = Number(raw.minutes || 0)
+  const hours = Number.isFinite(Number(raw.hours)) ? Number(raw.hours) : (minutes > 0 ? minutes / 60 : 0)
+  return {
+    key,
+    start_time: start,
+    end_time: end,
+    minutes: Number.isFinite(minutes) ? minutes : 0,
+    hours: roundHours1(hours),
+    label: String(raw.label ?? ''),
+  }
+}
+
+function repairSelectableSegmentsList(rawSegments) {
+  const normalized = normalizeSelectableSegments(rawSegments)
+  if (normalized.length > 0 || !Array.isArray(rawSegments)) return normalized
+  if (rawSegments.length !== 1) return normalized
+  const coerced = coerceSingleSelectableSegment(rawSegments[0])
+  return coerced ? [coerced] : normalized
 }
 
 function timeToMinutes(t) {
@@ -196,12 +232,15 @@ function timeToMinutes(t) {
 }
 
 function segmentCoveredByRequest(seg, request) {
-  if (!seg?.start || !seg?.end || !request) return false
-  const segStart = timeToMinutes(seg.start)
+  if (!seg || !request) return false
+  const cs = seg.start ?? seg.start_time
+  const ce = seg.end ?? seg.end_time
+  if (!cs || !ce) return false
+  const segStart = timeToMinutes(cs)
   const reqStart = timeToMinutes(request.start_time || request.schedule_end)
   const reqEnd = timeToMinutes(request.end_time || request.expected_end_time)
   if (segStart == null || reqStart == null || reqEnd == null) return false
-  const segEnd = timeToMinutes(seg.end)
+  const segEnd = timeToMinutes(ce)
   if (segEnd == null) return false
   const overlapStart = Math.max(segStart, reqStart)
   const overlapEnd = Math.min(segEnd, reqEnd)
@@ -381,6 +420,23 @@ const employeeOvertimePrimaryButtonClass =
 const employeeOvertimeOutlineButtonClass =
   'h-11 gap-2 rounded-lg border-border/80 bg-card px-5 text-sm font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
 
+const otModalLabelClass = 'text-base font-semibold tracking-tight text-foreground'
+const otModalFieldClass =
+  'h-14 rounded-xl border-border/80 bg-background px-4 text-base font-medium tabular-nums text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
+const otModalSelectClass =
+  'h-14 w-full rounded-xl border border-brand bg-background px-5 text-lg font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-background/40 dark:focus:ring-brand/20'
+
+function OvertimeModalHeaderArt() {
+  return (
+    <div
+      className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-40 items-center justify-center text-brand opacity-20 dark:opacity-25 @lg:flex"
+      aria-hidden
+    >
+      <Timer className="size-36" strokeWidth={1.15} />
+    </div>
+  )
+}
+
 function DetailSection({ title, children, className }) {
   return (
     <section className={cn('rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50', className)}>
@@ -483,7 +539,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [contextLoading, setContextLoading] = useState(false)
   const [contextError, setContextError] = useState(null)
   const [selectedSegments, setSelectedSegments] = useState([])
-  const [seedSegments, setSeedSegments] = useState([])
+  const [, setSeedSegments] = useState([])
+  const fileModalClockPrefillRef = useRef({ start: '', end: '' })
   const [viewOpen, setViewOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detail, setDetail] = useState(null)
@@ -568,8 +625,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       const rows = []
       for (const d of days) {
         if (!d?.date) continue
-        const preSeg = d.raw_pre_ot ?? null
-        const postSeg = d.raw_post_ot ?? null
+        const preSeg = d.raw_pre_ot ?? d.rawPreOt ?? null
+        const postSeg = d.raw_post_ot ?? d.rawPostOt ?? null
         if (!preSeg && !postSeg) continue
 
         const dateRequests = requestsByDate[d.date] || []
@@ -590,7 +647,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         const summary = formatUnfiledOtClockSummary12h(unfiledPre, unfiledPost, unfiledH)
         if (!summary) continue
         rows.push({
-          date: d.date,
+          date: normalizeAttendanceDateYmd(d.date) || String(d.date ?? '').trim().slice(0, 10),
           rawHours: roundHours1(unfiledH),
           pre: unfiledPre,
           post: unfiledPost,
@@ -664,6 +721,13 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     }
   }, [date, fileOpen])
 
+  useLayoutEffect(() => {
+    if (!fileOpen) return
+    const { start, end } = fileModalClockPrefillRef.current
+    if (start) setStartTime(start)
+    if (end) setEndTime(end)
+  }, [fileOpen])
+
   useEffect(() => {
     if (!otContext?.default_ph_ot_rule) return
     setPhOtRule(String(otContext.default_ph_ot_rule))
@@ -698,16 +762,35 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   const totalAllPages = allPagination?.last_page || 1
 
-  function openFile(opts = {}) {
-    const initialDate = opts.date || null
-    const initialStart = opts.start_time || ''
-    const initialEnd = opts.end_time || ''
+  function openFile(optsMaybe) {
+    const opts =
+      optsMaybe && typeof optsMaybe === 'object' && typeof optsMaybe.preventDefault !== 'function'
+        ? optsMaybe
+        : {}
+
+    const rawSegs = Array.isArray(opts.segments) ? opts.segments : []
+    let normalizedSegments = repairSelectableSegmentsList(rawSegs)
+
+    let initialStart = toTimeInputValue(opts.start_time ?? opts.start ?? '')
+    let initialEnd = toTimeInputValue(opts.end_time ?? opts.end ?? '')
+    if (normalizedSegments.length === 1) {
+      initialStart = normalizedSegments[0].start_time
+      initialEnd = normalizedSegments[0].end_time
+    }
+
+    const ymd = normalizeAttendanceDateYmd(opts.date) || String(opts.date ?? '').trim().slice(0, 10)
+    const initialDate = ymd && /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null
+
+    fileModalClockPrefillRef.current = {
+      start: initialStart || '',
+      end: initialEnd || '',
+    }
+
     setSubmitError(null)
     setReason('')
     setAttachment(null)
-    setStartTime(initialStart)
-    setEndTime(initialEnd)
-    const normalizedSegments = normalizeSelectableSegments(opts.segments || [])
+    setStartTime(initialStart || '')
+    setEndTime(initialEnd || '')
     setSeedSegments(normalizedSegments)
     setSelectedSegments(normalizedSegments.length === 1 ? [normalizedSegments[0].key] : [])
     setDate(initialDate || new Date().toISOString().slice(0, 10))
@@ -854,8 +937,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   async function openEdit(row) {
     if (!canEditPendingOvertime(row)) return
     setEditId(row.id)
-    setEditStartTime(formatTimeHm(row.start_time || row.schedule_end))
-    setEditEndTime(formatTimeHm(row.end_time || row.expected_end_time))
+    setEditStartTime(toTimeInputValue(row.start_time || row.schedule_end))
+    setEditEndTime(toTimeInputValue(row.end_time || row.expected_end_time))
     setEditCategory(row.ot_type || 'regular')
     setEditReason(row.reason || '')
     setEditPhOtRule(row.ph_ot_rule || 'ORD')
@@ -993,7 +1076,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             <Button
               type="button"
               className={cn(employeeOvertimePrimaryButtonClass, '@lg:flex-initial')}
-              onClick={openFile}
+              onClick={() => openFile()}
             >
               <Plus className="size-4" />
               File New Overtime
@@ -1031,25 +1114,35 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 <div className="grid gap-3 @lg:grid-cols-2">
                   {unfiledRows.map((r) => {
                     const segments = []
-                    if (r.pre?.start && r.pre?.end) {
-                      segments.push({
-                        key: 'pre_shift',
-                        start_time: r.pre.start,
-                        end_time: r.pre.end,
-                        minutes: r.pre.minutes || 0,
-                        hours: r.pre.hours,
-                        label: 'Pre-shift',
-                      })
+                    const rowDate = normalizeAttendanceDateYmd(r.date) || String(r.date ?? '').trim().slice(0, 10)
+                    const preMerged = r.pre ? { ...r.pre, key: 'pre_shift' } : null
+                    const postMerged = r.post ? { ...r.post, key: 'post_shift' } : null
+                    if (preMerged) {
+                      const b = resolveOtClockSegmentBounds(preMerged)
+                      if (b.start && b.end && b.key === 'pre_shift') {
+                        segments.push({
+                          key: 'pre_shift',
+                          start_time: b.start,
+                          end_time: b.end,
+                          minutes: Number(r.pre?.minutes ?? 0) || 0,
+                          hours: typeof r.pre?.hours === 'number' ? r.pre.hours : roundHours1((Number(r.pre?.minutes) || 0) / 60),
+                          label: 'Pre-shift',
+                        })
+                      }
                     }
-                    if (r.post?.start && r.post?.end) {
-                      segments.push({
-                        key: 'post_shift',
-                        start_time: r.post.start,
-                        end_time: r.post.end,
-                        minutes: r.post.minutes || 0,
-                        hours: r.post.hours,
-                        label: 'Post-shift',
-                      })
+                    if (postMerged) {
+                      const b = resolveOtClockSegmentBounds(postMerged)
+                      if (b.start && b.end && b.key === 'post_shift') {
+                        segments.push({
+                          key: 'post_shift',
+                          start_time: b.start,
+                          end_time: b.end,
+                          minutes: Number(r.post?.minutes ?? 0) || 0,
+                          hours:
+                            typeof r.post?.hours === 'number' ? r.post.hours : roundHours1((Number(r.post?.minutes) || 0) / 60),
+                          label: 'Post-shift',
+                        })
+                      }
                     }
                     const preferred = segments.find((s) => s.key === 'post_shift') || segments[0] || null
                     const startPrefill = preferred?.start_time || ''
@@ -1058,11 +1151,11 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       segments.reduce((sum, seg) => sum + (Number(seg.hours) || 0), 0)
                     )
                     return (
-                      <div key={r.date} className="rounded-xl border border-border/70 bg-card p-4 shadow-sm dark:border-white/10">
+                      <div key={rowDate} className="rounded-xl border border-border/70 bg-card p-4 shadow-sm dark:border-white/10">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <p className="text-base font-semibold tracking-tight text-foreground">
-                              {formatDateShort(`${r.date}T12:00:00`)}
+                              {formatDateShort(`${rowDate}T12:00:00`)}
                             </p>
                             <p className="mt-0.5 text-xs uppercase tracking-wide text-muted-foreground">
                               Unfiled OT (clock)
@@ -1078,7 +1171,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                             const range = formatOtRange12h(seg.start_time, seg.end_time) || `${seg.start_time} - ${seg.end_time}`
                             return (
                               <div
-                                key={`${r.date}-${seg.key}`}
+                                key={`${rowDate}-${seg.key}`}
                                 className="flex items-center justify-between rounded-lg border border-border/60 bg-background/70 px-3 py-2 shadow-sm dark:bg-background/35"
                               >
                                 <div className="min-w-0">
@@ -1100,7 +1193,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                               className="h-10 flex-1 rounded-lg border-border/80 bg-card font-semibold text-foreground hover:bg-brand/10 hover:text-brand"
                               onClick={() =>
                                 openFile({
-                                  date: r.date,
+                                  date: rowDate,
                                   start_time: startPrefill,
                                   end_time: endPrefill,
                                   segments,
@@ -1112,7 +1205,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                           )}
                           {segments.map((seg) => (
                             <Button
-                              key={`${r.date}-file-${seg.key}`}
+                              key={`${rowDate}-file-${seg.key}`}
                               type="button"
                               size="sm"
                               variant={seg.key === 'pre_shift' ? 'outline' : 'default'}
@@ -1124,7 +1217,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                               )}
                               onClick={() =>
                                 openFile({
-                                  date: r.date,
+                                  date: rowDate,
                                   start_time: seg.start_time,
                                   end_time: seg.end_time,
                                   segments: [seg],
@@ -1474,125 +1567,121 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         </Card>
       </div>
 
-      {/* File new */}
-      <Dialog open={fileOpen} onOpenChange={setFileOpen}>
+      {/* File new — shell matches EmployeeLeave "File new leave" dialog */}
+      <Dialog
+        open={fileOpen}
+        onOpenChange={(o) => {
+          setFileOpen(o)
+          if (!o) fileModalClockPrefillRef.current = { start: '', end: '' }
+        }}
+      >
         <DialogContent
           showCloseButton
-          className={cn(
-            'max-h-[min(92dvh,780px)] max-w-[min(96vw,52rem)] gap-0 overflow-hidden rounded-[20px] border-border/70 bg-card p-0 text-card-foreground shadow-[0_28px_90px_rgba(15,23,42,0.34)] dark:border-border/60 dark:bg-card dark:shadow-[0_28px_90px_rgba(0,0,0,0.72)]'
-          )}
-          innerClassName="gap-0 overflow-hidden p-0"
-          closeButtonClassName="right-4 top-4 size-11 rounded-xl border-border/70 bg-background/95 text-foreground shadow-[0_8px_18px_rgba(15,23,42,0.14)] hover:bg-muted dark:bg-background/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.45)] sm:right-6 sm:top-6 sm:size-12 [&_svg]:size-5"
+          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
+          closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className="max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          innerClassName="gap-0 overflow-hidden p-0 pr-0"
           aria-describedby="ot-file-desc"
         >
-          <div className="relative shrink-0 border-b border-border/60 bg-gradient-to-r from-brand/5 via-card to-card px-5 pb-5 pt-6 dark:from-brand/10 dark:via-card dark:to-card sm:px-8 sm:pb-6 sm:pt-8">
-            <div className="absolute left-0 top-8 h-28 w-1.5 bg-brand sm:top-10 sm:h-32" aria-hidden />
-            <div className="flex items-start gap-4 pr-12 sm:gap-6 sm:pr-16">
-              <div className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-brand/20 bg-brand/10 text-brand dark:bg-brand/15 sm:size-18">
-                <Timer className="size-8 sm:size-10" strokeWidth={2.3} aria-hidden />
-              </div>
-              <DialogHeader className="min-w-0 max-w-3xl space-y-2 text-left">
-                <DialogTitle className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-8 pb-6 pt-8 text-left dark:to-brand/10 @md:px-12">
+              <AgcBrandLogo className="mb-7 h-9 @md:h-10" />
+              <div className="relative z-10 max-w-[43rem] space-y-3 pr-14 @md:pr-0">
+                <DialogTitle className="text-2xl font-bold tracking-tight text-foreground @md:text-3xl">
                   File New Overtime
                 </DialogTitle>
-                <DialogDescription id="ot-file-desc" className="text-sm leading-relaxed text-muted-foreground sm:text-base">
-                  Flexible OT filing. Example format:
-                  <span className="block">6:00 AM - 8:00 AM -&gt; FOR OT, 5:00 PM - 12:00 MIDNIGHT -&gt; FOR OT.</span>
+                <DialogDescription id="ot-file-desc" className="max-w-[42rem] text-base leading-relaxed text-muted-foreground @md:text-lg">
+                  Flexible OT filing before, during, or after your shift. Example format:
+                  <span className="block">
+                    6:00 AM - 8:00 AM -&gt; FOR OT, 5:00 PM - 12:00 MIDNIGHT -&gt; FOR OT.
+                  </span>
                 </DialogDescription>
-              </DialogHeader>
-            </div>
-          </div>
-          <form onSubmit={handleFileSubmit} className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 sm:space-y-5 sm:px-8 sm:py-6">
+              </div>
+              <OvertimeModalHeaderArt />
+            </DialogHeader>
+
+            <div className="px-8 py-7 @md:px-12">
               {submitError && (
-                <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive">
+                <div className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive dark:bg-destructive/15">
                   {submitError}
                 </div>
               )}
               {contextLoading && (
-                <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/25 px-4 py-2.5 text-sm text-muted-foreground">
+                <div className="mb-5 flex items-center gap-3 rounded-xl border border-border/60 bg-muted/25 px-4 py-2.5 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
                   Loading schedule...
                 </div>
               )}
               {contextError && (
-                <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive">
+                <div className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive dark:bg-destructive/15">
                   {contextError}
                 </div>
               )}
-              <div className="flex items-start gap-4 rounded-xl border border-brand/20 bg-brand/5 px-4 py-4 text-sm leading-relaxed text-foreground shadow-sm dark:border-brand/25 dark:bg-brand/10 sm:text-base">
-                <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground">
-                  <Info className="size-4" strokeWidth={2.4} aria-hidden />
-                </span>
-                <p>
-                  You can file OT anytime (before, during, or after the date), including rest day, holiday, and night shift.
-                </p>
-              </div>
-              <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 sm:gap-y-5">
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="otm-date" className="text-base font-bold text-foreground">
+
+              <form id="ot-file-form" onSubmit={handleFileSubmit} className="space-y-6">
+                <div className="flex items-start gap-4 rounded-xl border border-brand/20 bg-brand/5 px-4 py-4 text-sm leading-relaxed text-foreground shadow-sm dark:border-brand/25 dark:bg-brand/10 sm:text-base">
+                  <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground">
+                    <Info className="size-4" strokeWidth={2.4} aria-hidden />
+                  </span>
+                  <p>
+                    You can file OT anytime (before, during, or after the date), including rest day, holiday, and night
+                    shift.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <Label htmlFor="otm-date" className={otModalLabelClass}>
                     Date
                   </Label>
-                  <div className="relative flex h-12 items-center rounded-xl border border-input bg-background px-4 text-base shadow-sm dark:border-white/12 dark:bg-input/20 sm:h-14 sm:px-5 sm:text-lg">
-                    <Calendar className="mr-3 size-5 shrink-0 text-muted-foreground sm:mr-4" aria-hidden />
-                    <span className="pointer-events-none flex-1 font-medium text-foreground">{formatDateMmDdYyyy(date)}</span>
-                    <Calendar className="pointer-events-none size-5 shrink-0 text-foreground" aria-hidden />
-                    <Input
-                      id="otm-date"
-                      type="date"
-                      value={date}
-                      onChange={(e) => {
-                        setDate(e.target.value)
-                        setSeedSegments([])
-                        setSelectedSegments([])
-                      }}
-                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                      required
-                    />
-                  </div>
+                  <Input
+                    id="otm-date"
+                    type="date"
+                    value={date}
+                    onChange={(e) => {
+                      setDate(e.target.value)
+                      setSeedSegments([])
+                      setSelectedSegments([])
+                    }}
+                    className={cn(otModalFieldClass, '[color-scheme:light] dark:[color-scheme:dark]')}
+                    required
+                  />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="otm-start" className="text-base font-bold text-foreground">
-                    Start time
-                  </Label>
-                  <div className="relative flex h-12 items-center rounded-xl border border-input bg-background px-4 text-base shadow-sm dark:border-white/12 dark:bg-input/20 sm:h-14 sm:px-5 sm:text-lg">
-                    <Clock className="mr-3 size-5 shrink-0 text-muted-foreground sm:mr-4" aria-hidden />
-                    <span className="pointer-events-none flex-1 font-medium text-foreground">{formatModalTime(startTime)}</span>
-                    <Clock className="pointer-events-none size-5 shrink-0 text-foreground" aria-hidden />
+
+                <div className="grid gap-6 @md:grid-cols-2">
+                  <div className="space-y-3">
+                    <Label htmlFor="otm-start" className={otModalLabelClass}>
+                      Start time
+                    </Label>
                     <Input
                       id="otm-start"
                       type="time"
+                      step={60}
                       value={startTime}
                       onChange={(e) => setStartTime(e.target.value)}
-                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      className={cn(otModalFieldClass, '[color-scheme:light] dark:[color-scheme:dark]')}
                       required={selectedSegments.length === 0}
-                      disabled={selectedSegments.length > 0}
                     />
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="otm-end" className="text-base font-bold text-foreground">
-                    End time
-                  </Label>
-                  <div className="relative flex h-12 items-center rounded-xl border border-input bg-background px-4 text-base shadow-sm dark:border-white/12 dark:bg-input/20 sm:h-14 sm:px-5 sm:text-lg">
-                    <Clock className="mr-3 size-5 shrink-0 text-muted-foreground sm:mr-4" aria-hidden />
-                    <span className="pointer-events-none flex-1 font-medium text-foreground">{formatModalTime(endTime)}</span>
-                    <Clock className="pointer-events-none size-5 shrink-0 text-foreground" aria-hidden />
+                  <div className="space-y-3">
+                    <Label htmlFor="otm-end" className={otModalLabelClass}>
+                      End time
+                    </Label>
                     <Input
                       id="otm-end"
                       type="time"
+                      step={60}
                       value={endTime}
                       onChange={(e) => setEndTime(e.target.value)}
-                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      className={cn(otModalFieldClass, '[color-scheme:light] dark:[color-scheme:dark]')}
                       required={selectedSegments.length === 0}
-                      disabled={selectedSegments.length > 0}
                     />
                   </div>
                 </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label className="text-base font-bold text-foreground">PH pay condition</Label>
+
+                <div className="space-y-3">
+                  <Label className={otModalLabelClass}>PH pay condition</Label>
                   <Select value={phOtRule} onValueChange={setPhOtRule}>
-                    <SelectTrigger className="h-12 rounded-xl border-input bg-background px-4 text-base shadow-sm dark:border-white/12 dark:bg-input/20 sm:h-14 sm:px-5 sm:text-lg [&>svg]:size-5 [&>svg]:text-foreground">
+                    <SelectTrigger className={cn(otModalSelectClass, 'justify-between [&>svg]:size-5 [&>svg]:text-foreground')}>
                       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                         <CalendarDays className="size-5 shrink-0 text-brand" aria-hidden />
                         <SelectValue />
@@ -1615,8 +1704,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="otm-reason" className="text-base font-bold text-foreground">
+
+                <div className="space-y-3">
+                  <Label htmlFor="otm-reason" className={otModalLabelClass}>
                     Reason (required)
                   </Label>
                   <div className="relative">
@@ -1629,48 +1719,51 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       required
                       minLength={2}
                       placeholder="Enter reason for filing overtime..."
-                      className="min-h-28 resize-none rounded-xl border-border/80 bg-background px-4 pb-9 pt-3 text-base text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40 sm:min-h-32 sm:px-5 sm:pt-4 sm:text-lg"
+                      className="min-h-28 resize-none rounded-xl border-border/80 bg-background px-4 pb-9 pt-4 text-base shadow-sm placeholder:text-muted-foreground focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40"
                     />
-                    <span className="pointer-events-none absolute bottom-3 right-4 text-sm tabular-nums text-muted-foreground sm:bottom-4 sm:right-5">
+                    <span className="pointer-events-none absolute bottom-4 right-4 text-sm tabular-nums text-muted-foreground">
                       {reason.length} / 500
                     </span>
                   </div>
-                  <p className="text-sm text-muted-foreground">Example: FOR OT</p>
+                  <p className="text-[13px] leading-relaxed text-muted-foreground">Example: FOR OT</p>
                 </div>
-                <div className="sm:col-span-2">
-                  <div className="flex items-start gap-4 rounded-xl border border-dashed border-brand/55 bg-brand/5 px-4 py-4 text-base dark:bg-brand/10 sm:px-5">
-                    <FileText className="mt-1 size-5 shrink-0 text-brand" aria-hidden />
-                    <div>
-                      <p className="font-bold text-foreground">Format preview:</p>
-                      <p className="mt-1.5 font-medium text-muted-foreground">
-                        {(startTime || '06:00')} - {(endTime || '08:00')} -&gt; {reason.trim() || 'FOR OT'}
-                      </p>
-                    </div>
+
+                <div className="flex items-start gap-4 rounded-xl border border-dashed border-brand/55 bg-brand/5 px-4 py-4 text-base dark:bg-brand/10 sm:px-5">
+                  <FileText className="mt-1 size-5 shrink-0 text-brand" aria-hidden />
+                  <div>
+                    <p className="font-bold text-foreground">Format preview:</p>
+                    <p className="mt-1.5 font-medium text-muted-foreground">
+                      {formatOtRange12h(startTime, endTime) ||
+                        `${formatHHmmTo12h(toHhMm(startTime)) || '—'} - ${formatHHmmTo12h(toHhMm(endTime)) || '—'}`}{' '}
+                      -&gt; {reason.trim() || 'FOR OT'}
+                    </p>
                   </div>
                 </div>
-              </div>
+              </form>
             </div>
-            <DialogFooter className="shrink-0 flex-col gap-3 border-t border-border/60 bg-card/95 px-5 py-4 dark:bg-card/95 sm:flex-row sm:justify-end sm:px-8 sm:py-5">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-12 w-full rounded-xl border-border/80 bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-background/70 sm:w-auto sm:min-w-32"
-                onClick={() => setFileOpen(false)}
-                disabled={submitting}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                className="h-12 w-full gap-3 rounded-xl bg-brand px-6 text-base font-bold text-brand-foreground shadow-[0_12px_24px_rgba(249,115,22,0.24)] hover:bg-brand-strong dark:shadow-[0_12px_26px_rgba(0,0,0,0.4)] sm:w-auto sm:min-w-60"
-                disabled={!canSubmitFile}
-              >
-                {submitting && <Loader2 className="size-4 animate-spin" />}
-                Submit request
-                {!submitting && <SendHorizontal className="size-5" aria-hidden />}
-              </Button>
-            </DialogFooter>
-          </form>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-8 py-5 @md:px-12">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-14 min-w-36 rounded-xl border-border/80 bg-card px-8 text-lg font-semibold text-foreground hover:bg-muted dark:border-white/10"
+              onClick={() => setFileOpen(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="ot-file-form"
+              className="h-14 min-w-72 gap-4 rounded-xl bg-brand px-9 text-lg font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
+              disabled={!canSubmitFile}
+            >
+              {submitting && <Loader2 className="size-4 animate-spin" />}
+              Submit request
+              {!submitting && <ArrowRight className="size-5" aria-hidden />}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
