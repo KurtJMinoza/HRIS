@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
   AlertTriangle,
-  ArrowRight,
   Calendar,
   CalendarDays,
   ChevronLeft,
@@ -11,11 +10,13 @@ import {
   ExternalLink,
   Eye,
   FileDown,
+  FileText,
   Info,
   Loader2,
   MoreVertical,
   Plus,
   RefreshCw,
+  SendHorizontal,
   Timer,
   X,
   Inbox,
@@ -134,7 +135,7 @@ function formatModalTime(timeStr) {
 
 function formatPhRuleOption(opt) {
   if (!opt) return 'Ordinary Day - 1st 8h - 1 OT - 1.25'
-  return `${opt.day_type_label} - 1st 8h - ${opt.first_8_multiplier} OT - ${opt.ot_multiplier}`
+  return `${opt.day_type_label} - 1st 8h x${opt.first_8_multiplier} - OT x${opt.ot_multiplier}`
 }
 
 function roundHours1(n) {
@@ -702,7 +703,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     const initialStart = opts.start_time || ''
     const initialEnd = opts.end_time || ''
     setSubmitError(null)
-    setReason('FOR OT')
+    setReason('')
     setAttachment(null)
     setStartTime(initialStart)
     setEndTime(initialEnd)
@@ -1478,39 +1479,38 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         <DialogContent
           showCloseButton
           className={cn(
-            'max-h-[min(92vh,900px)] max-w-[min(100vw-2rem,64rem)] gap-0 overflow-hidden rounded-[24px] border-border/70 bg-card p-0 text-card-foreground shadow-[0_28px_90px_rgba(15,23,42,0.34)] dark:border-border/60 dark:bg-card dark:shadow-[0_28px_90px_rgba(0,0,0,0.72)]',
-            'before:absolute before:inset-y-0 before:left-0 before:z-10 before:w-2.5 before:bg-brand'
+            'max-h-[min(92dvh,780px)] max-w-[min(96vw,52rem)] gap-0 overflow-hidden rounded-[20px] border-border/70 bg-card p-0 text-card-foreground shadow-[0_28px_90px_rgba(15,23,42,0.34)] dark:border-border/60 dark:bg-card dark:shadow-[0_28px_90px_rgba(0,0,0,0.72)]'
           )}
           innerClassName="gap-0 overflow-hidden p-0"
-          closeButtonClassName="right-6 top-6 size-14 rounded-xl border-border/70 bg-background/95 text-foreground shadow-[0_8px_18px_rgba(15,23,42,0.14)] hover:bg-muted dark:bg-background/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.45)] [&_svg]:size-7"
+          closeButtonClassName="right-4 top-4 size-11 rounded-xl border-border/70 bg-background/95 text-foreground shadow-[0_8px_18px_rgba(15,23,42,0.14)] hover:bg-muted dark:bg-background/90 dark:shadow-[0_8px_24px_rgba(0,0,0,0.45)] sm:right-6 sm:top-6 sm:size-12 [&_svg]:size-5"
           aria-describedby="ot-file-desc"
         >
-          <div className="shrink-0 border-b border-border/60 bg-gradient-to-r from-brand/5 via-card to-card px-8 pb-9 pt-11 dark:from-brand/10 dark:via-card dark:to-card sm:px-12">
-            <div className="flex items-start gap-8 pr-16">
-              <div className="flex size-28 shrink-0 items-center justify-center rounded-[22px] bg-brand/10 text-brand ring-1 ring-brand/10 dark:bg-brand/15 dark:ring-brand/20">
-                <Timer className="size-16" strokeWidth={2.5} aria-hidden />
+          <div className="relative shrink-0 border-b border-border/60 bg-gradient-to-r from-brand/5 via-card to-card px-5 pb-5 pt-6 dark:from-brand/10 dark:via-card dark:to-card sm:px-8 sm:pb-6 sm:pt-8">
+            <div className="absolute left-0 top-8 h-28 w-1.5 bg-brand sm:top-10 sm:h-32" aria-hidden />
+            <div className="flex items-start gap-4 pr-12 sm:gap-6 sm:pr-16">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-brand/20 bg-brand/10 text-brand dark:bg-brand/15 sm:size-18">
+                <Timer className="size-8 sm:size-10" strokeWidth={2.3} aria-hidden />
               </div>
-              <DialogHeader className="max-w-3xl space-y-4 text-left">
-                <DialogTitle className="text-4xl font-bold tracking-tight text-foreground">
+              <DialogHeader className="min-w-0 max-w-3xl space-y-2 text-left">
+                <DialogTitle className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
                   File New Overtime
                 </DialogTitle>
-                <p id="ot-file-desc" className="text-xl leading-relaxed text-muted-foreground">
+                <DialogDescription id="ot-file-desc" className="text-sm leading-relaxed text-muted-foreground sm:text-base">
                   Flexible OT filing. Example format:
-                  <span className="block">6:00 AM - 8:00 AM -&gt; FOR OT,</span>
-                  <span className="block">5:00 PM - 12:00 MIDNIGHT -&gt; FOR OT.</span>
-                </p>
+                  <span className="block">6:00 AM - 8:00 AM -&gt; FOR OT, 5:00 PM - 12:00 MIDNIGHT -&gt; FOR OT.</span>
+                </DialogDescription>
               </DialogHeader>
             </div>
           </div>
           <form onSubmit={handleFileSubmit} className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-8 py-8 sm:px-12">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 sm:space-y-5 sm:px-8 sm:py-6">
               {submitError && (
                 <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive">
                   {submitError}
                 </div>
               )}
               {contextLoading && (
-                <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/25 px-4 py-3 text-sm text-muted-foreground">
+                <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/25 px-4 py-2.5 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
                   Loading schedule...
                 </div>
@@ -1520,72 +1520,23 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   {contextError}
                 </div>
               )}
-              <div className="flex items-start gap-5 rounded-xl border border-brand/20 bg-brand/5 px-7 py-6 text-xl leading-relaxed text-foreground shadow-sm dark:border-brand/25 dark:bg-brand/10">
-                <Info className="mt-1 size-7 shrink-0 fill-brand text-brand" aria-hidden />
+              <div className="flex items-start gap-4 rounded-xl border border-brand/20 bg-brand/5 px-4 py-4 text-sm leading-relaxed text-foreground shadow-sm dark:border-brand/25 dark:bg-brand/10 sm:text-base">
+                <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground">
+                  <Info className="size-4" strokeWidth={2.4} aria-hidden />
+                </span>
                 <p>
                   You can file OT anytime (before, during, or after the date), including rest day, holiday, and night shift.
                 </p>
               </div>
-              {(() => {
-                const selectableSegments = normalizeSelectableSegments(
-                  seedSegments.length > 0 ? seedSegments : (otContext?.detected_segments || [])
-                )
-                if (selectableSegments.length === 0) return null
-                const selectedSet = new Set(selectedSegments)
-                return (
-                  <div className="space-y-5 rounded-xl border border-border/70 bg-card px-7 py-7 shadow-sm dark:bg-card/80">
-                    <div className="space-y-2">
-                      <p className="text-2xl font-bold tracking-tight text-foreground">Detected OT segments</p>
-                      <p className="text-xl text-muted-foreground">Choose only one segment: pre-shift or post-shift.</p>
-                    </div>
-                    <div className="space-y-3">
-                      {selectableSegments.map((seg) => {
-                        const isChecked = selectedSet.has(seg.key)
-                        const range = formatOtRange12h(seg.start_time, seg.end_time) || `${seg.start_time} - ${seg.end_time}`
-                        return (
-                          <label
-                            key={seg.key}
-                            className={cn(
-                              'flex cursor-pointer items-center gap-6 rounded-xl border bg-background px-6 py-5 transition-all dark:bg-background/30',
-                              isChecked
-                                ? 'border-brand text-foreground ring-2 ring-brand/10'
-                                : 'border-border/70 hover:border-brand/45 hover:bg-brand/5'
-                            )}
-                          >
-                            <Input
-                              type="radio"
-                              className="size-7 shrink-0 accent-brand"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedSegments([seg.key])
-                                  setStartTime(seg.start_time)
-                                  setEndTime(seg.end_time)
-                                }
-                              }}
-                            />
-                            <span className="text-xl leading-tight">
-                              <span className="font-bold text-foreground">
-                                {seg.key === 'pre_shift' ? 'Pre-shift OT' : 'Post-shift OT'}
-                              </span>
-                              <span className="mt-1 block text-muted-foreground">
-                                {range} ({seg.hours}h)
-                              </span>
-                            </span>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })()}
-              <div className="grid gap-x-10 gap-y-6 sm:grid-cols-2">
-                <div className="space-y-3 sm:col-span-2">
-                  <Label htmlFor="otm-date" className="text-xl font-bold text-foreground">Date</Label>
-                  <div className="relative flex h-16 items-center rounded-xl border border-input bg-background px-6 text-xl shadow-sm dark:bg-input/20">
-                    <Calendar className="mr-5 size-6 shrink-0 text-muted-foreground" aria-hidden />
+              <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 sm:gap-y-5">
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="otm-date" className="text-base font-bold text-foreground">
+                    Date
+                  </Label>
+                  <div className="relative flex h-12 items-center rounded-xl border border-input bg-background px-4 text-base shadow-sm dark:border-white/12 dark:bg-input/20 sm:h-14 sm:px-5 sm:text-lg">
+                    <Calendar className="mr-3 size-5 shrink-0 text-muted-foreground sm:mr-4" aria-hidden />
                     <span className="pointer-events-none flex-1 font-medium text-foreground">{formatDateMmDdYyyy(date)}</span>
-                    <Calendar className="pointer-events-none size-6 shrink-0 text-foreground" aria-hidden />
+                    <Calendar className="pointer-events-none size-5 shrink-0 text-foreground" aria-hidden />
                     <Input
                       id="otm-date"
                       type="date"
@@ -1600,12 +1551,14 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     />
                   </div>
                 </div>
-                <div className="space-y-3">
-                  <Label htmlFor="otm-start" className="text-xl font-bold text-foreground">Start time</Label>
-                  <div className="relative flex h-16 items-center rounded-xl border border-input bg-background px-6 text-xl shadow-sm dark:bg-input/20">
-                    <Clock className="mr-5 size-6 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="space-y-2">
+                  <Label htmlFor="otm-start" className="text-base font-bold text-foreground">
+                    Start time
+                  </Label>
+                  <div className="relative flex h-12 items-center rounded-xl border border-input bg-background px-4 text-base shadow-sm dark:border-white/12 dark:bg-input/20 sm:h-14 sm:px-5 sm:text-lg">
+                    <Clock className="mr-3 size-5 shrink-0 text-muted-foreground sm:mr-4" aria-hidden />
                     <span className="pointer-events-none flex-1 font-medium text-foreground">{formatModalTime(startTime)}</span>
-                    <ChevronRight className="pointer-events-none size-6 shrink-0 rotate-90 text-foreground" aria-hidden />
+                    <Clock className="pointer-events-none size-5 shrink-0 text-foreground" aria-hidden />
                     <Input
                       id="otm-start"
                       type="time"
@@ -1617,12 +1570,14 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     />
                   </div>
                 </div>
-                <div className="space-y-3">
-                  <Label htmlFor="otm-end" className="text-xl font-bold text-foreground">End time</Label>
-                  <div className="relative flex h-16 items-center rounded-xl border border-input bg-background px-6 text-xl shadow-sm dark:bg-input/20">
-                    <Clock className="mr-5 size-6 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="space-y-2">
+                  <Label htmlFor="otm-end" className="text-base font-bold text-foreground">
+                    End time
+                  </Label>
+                  <div className="relative flex h-12 items-center rounded-xl border border-input bg-background px-4 text-base shadow-sm dark:border-white/12 dark:bg-input/20 sm:h-14 sm:px-5 sm:text-lg">
+                    <Clock className="mr-3 size-5 shrink-0 text-muted-foreground sm:mr-4" aria-hidden />
                     <span className="pointer-events-none flex-1 font-medium text-foreground">{formatModalTime(endTime)}</span>
-                    <ChevronRight className="pointer-events-none size-6 shrink-0 rotate-90 text-foreground" aria-hidden />
+                    <Clock className="pointer-events-none size-5 shrink-0 text-foreground" aria-hidden />
                     <Input
                       id="otm-end"
                       type="time"
@@ -1634,31 +1589,72 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     />
                   </div>
                 </div>
-                <div className="space-y-3 sm:col-span-2">
-                  <Label className="text-xl font-bold text-foreground">PH pay condition</Label>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label className="text-base font-bold text-foreground">PH pay condition</Label>
                   <Select value={phOtRule} onValueChange={setPhOtRule}>
-                    <SelectTrigger className="h-16 rounded-xl border-input bg-background px-6 text-xl shadow-sm dark:bg-input/20 [&>svg]:size-6 [&>svg]:text-foreground">
-                      <div className="flex min-w-0 items-center gap-5">
-                        <CalendarDays className="size-6 shrink-0 text-brand" aria-hidden />
+                    <SelectTrigger className="h-12 rounded-xl border-input bg-background px-4 text-base shadow-sm dark:border-white/12 dark:bg-input/20 sm:h-14 sm:px-5 sm:text-lg [&>svg]:size-5 [&>svg]:text-foreground">
+                      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                        <CalendarDays className="size-5 shrink-0 text-brand" aria-hidden />
                         <SelectValue />
                       </div>
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent
+                      position="popper"
+                      align="start"
+                      className="z-[80] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10"
+                    >
                       {phRuleSelectOptions.map((opt) => (
-                        <SelectItem key={opt.code} value={String(opt.code)}>
+                        <SelectItem
+                          key={opt.code}
+                          value={String(opt.code)}
+                          className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground"
+                        >
                           {formatPhRuleOption(opt)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="otm-reason" className="text-base font-bold text-foreground">
+                    Reason (required)
+                  </Label>
+                  <div className="relative">
+                    <Textarea
+                      id="otm-reason"
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      rows={4}
+                      maxLength={500}
+                      required
+                      minLength={2}
+                      placeholder="Enter reason for filing overtime..."
+                      className="min-h-28 resize-none rounded-xl border-border/80 bg-background px-4 pb-9 pt-3 text-base text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40 sm:min-h-32 sm:px-5 sm:pt-4 sm:text-lg"
+                    />
+                    <span className="pointer-events-none absolute bottom-3 right-4 text-sm tabular-nums text-muted-foreground sm:bottom-4 sm:right-5">
+                      {reason.length} / 500
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">Example: FOR OT</p>
+                </div>
+                <div className="sm:col-span-2">
+                  <div className="flex items-start gap-4 rounded-xl border border-dashed border-brand/55 bg-brand/5 px-4 py-4 text-base dark:bg-brand/10 sm:px-5">
+                    <FileText className="mt-1 size-5 shrink-0 text-brand" aria-hidden />
+                    <div>
+                      <p className="font-bold text-foreground">Format preview:</p>
+                      <p className="mt-1.5 font-medium text-muted-foreground">
+                        {(startTime || '06:00')} - {(endTime || '08:00')} -&gt; {reason.trim() || 'FOR OT'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-            <DialogFooter className="shrink-0 flex-row justify-end gap-6 border-t border-border/60 bg-card/95 px-8 py-6 dark:bg-card/95 sm:px-12">
+            <DialogFooter className="shrink-0 flex-col gap-3 border-t border-border/60 bg-card/95 px-5 py-4 dark:bg-card/95 sm:flex-row sm:justify-end sm:px-8 sm:py-5">
               <Button
                 type="button"
                 variant="outline"
-                className="h-14 min-w-40 rounded-xl border-border/80 bg-background px-8 text-xl font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-background/70"
+                className="h-12 w-full rounded-xl border-border/80 bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-background/70 sm:w-auto sm:min-w-32"
                 onClick={() => setFileOpen(false)}
                 disabled={submitting}
               >
@@ -1666,12 +1662,12 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               </Button>
               <Button
                 type="submit"
-                className="h-14 min-w-72 rounded-xl bg-brand px-8 text-xl font-bold text-brand-foreground shadow-[0_12px_24px_rgba(249,115,22,0.24)] hover:bg-brand-strong dark:shadow-[0_12px_26px_rgba(0,0,0,0.4)]"
+                className="h-12 w-full gap-3 rounded-xl bg-brand px-6 text-base font-bold text-brand-foreground shadow-[0_12px_24px_rgba(249,115,22,0.24)] hover:bg-brand-strong dark:shadow-[0_12px_26px_rgba(0,0,0,0.4)] sm:w-auto sm:min-w-60"
                 disabled={!canSubmitFile}
               >
                 {submitting && <Loader2 className="size-4 animate-spin" />}
-                {!submitting && <ArrowRight className="size-6" aria-hidden />}
                 Submit request
+                {!submitting && <SendHorizontal className="size-5" aria-hidden />}
               </Button>
             </DialogFooter>
           </form>
