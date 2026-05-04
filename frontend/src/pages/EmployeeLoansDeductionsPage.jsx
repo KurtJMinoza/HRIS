@@ -29,6 +29,9 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { cn } from '@/lib/utils'
 
+const MotionDiv = motion.div
+const MotionLi = motion.li
+
 const HERO_SNAPSHOT_KEY = 'hr-employee-loans-hero-snapshot-v1'
 
 const cardShadow =
@@ -529,7 +532,7 @@ export default function EmployeeLoansDeductionsPage() {
           <>
             {/* Hero metrics — premium metric cards */}
             <section className="grid gap-5 md:grid-cols-2 lg:gap-7">
-              <motion.div
+              <MotionDiv
                 className="h-full"
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -584,9 +587,9 @@ export default function EmployeeLoansDeductionsPage() {
                     />
                   </CardContent>
                 </Card>
-              </motion.div>
+              </MotionDiv>
 
-              <motion.div
+              <MotionDiv
                 className="h-full"
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -645,7 +648,7 @@ export default function EmployeeLoansDeductionsPage() {
                     />
                   </CardContent>
                 </Card>
-              </motion.div>
+              </MotionDiv>
             </section>
 
             {/* CTA card when no products */}
@@ -669,7 +672,7 @@ export default function EmployeeLoansDeductionsPage() {
                 </p>
               </div>
               {(data.employee_deductions || []).length === 0 ? (
-                <motion.div
+                <MotionDiv
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4 }}
@@ -699,7 +702,7 @@ export default function EmployeeLoansDeductionsPage() {
                       ) : null}
                     </CardContent>
                   </Card>
-                </motion.div>
+                </MotionDiv>
               ) : (
                 <Card
                   className={cn('overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm', cardShadow)}
@@ -936,7 +939,7 @@ export default function EmployeeLoansDeductionsPage() {
                           const productName = r.pay_component?.name || r.deduction_type?.name || 'Loan'
 
                           return (
-                            <motion.li
+                            <MotionLi
                               key={r.id}
                               initial={{ opacity: 0, x: -8 }}
                               animate={{ opacity: 1, x: 0 }}
@@ -1022,7 +1025,7 @@ export default function EmployeeLoansDeductionsPage() {
                                   </div>
                                 </div>
                               </button>
-                            </motion.li>
+                            </MotionLi>
                           )
                         })}
                       </ul>

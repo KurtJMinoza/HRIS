@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { createElement, useMemo } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -62,22 +62,22 @@ function statusBadgeLabel(status) {
   return status ? String(status) : '—'
 }
 
-function SectionHeading({ icon: Icon, children, className }) {
+function SectionHeading({ icon, children, className }) {
   return (
     <div className={cn('flex items-center gap-4', className)}>
       <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/8 text-brand dark:bg-brand/15">
-        <Icon className="size-5" strokeWidth={1.8} aria-hidden />
+        {createElement(icon, { className: 'size-5', strokeWidth: 1.8, 'aria-hidden': true })}
       </span>
       <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-foreground/80 dark:text-foreground/90">{children}</p>
     </div>
   )
 }
 
-function DetailItem({ icon: Icon, label, value, className }) {
+function DetailItem({ icon, label, value, className }) {
   return (
     <div className={cn('flex min-w-0 gap-4 py-5', className)}>
       <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted/45 text-foreground dark:bg-muted/35">
-        <Icon className="size-5" strokeWidth={1.75} aria-hidden />
+        {createElement(icon, { className: 'size-5', strokeWidth: 1.75, 'aria-hidden': true })}
       </span>
       <div className="min-w-0">
         <dt className="text-sm text-muted-foreground">{label}</dt>
@@ -133,16 +133,16 @@ export function LoanRequestDetailsModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[min(88vh,780px)] w-full max-w-4xl sm:max-w-4xl"
+        className="max-h-[min(94vh,920px)] w-full max-w-6xl sm:max-w-6xl"
         innerClassName="gap-0 overflow-y-auto bg-card px-0 pb-0 pt-0"
-        closeButtonClassName="right-4 top-4 size-10 rounded-xl bg-background text-foreground shadow-sm sm:right-5 sm:top-5"
+        closeButtonClassName="right-5 top-5 size-11 rounded-xl bg-background text-foreground shadow-sm"
       >
         {loading || !loanRequest || !estimate ? (
           <div className="flex justify-center py-20 text-sm text-muted-foreground">Loading request details...</div>
         ) : (
           <>
-            <DialogHeader className="border-b border-border/60 bg-card px-5 py-4 text-left sm:px-6">
-              <div className="flex items-start gap-4 pr-14 sm:pr-16">
+            <DialogHeader className="border-b border-border/60 bg-card px-6 py-5 text-left sm:px-8">
+              <div className="flex items-start gap-5 pr-16">
                 <AgcBrandLogo variant="light" className="mt-1 h-10 w-20 object-left" />
                 <div className="min-w-0 flex-1 space-y-1">
                   <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">Loan request details</DialogTitle>
@@ -161,8 +161,8 @@ export function LoanRequestDetailsModal({
               </div>
             </DialogHeader>
 
-            <div className="grid gap-4 px-5 py-5 sm:px-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm dark:border-border/60">
+            <div className="grid gap-6 px-6 py-6 sm:px-8 lg:grid-cols-2">
+              <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm dark:border-border/60">
                 <SectionHeading icon={ClipboardList}>Request information</SectionHeading>
                 <dl className="mt-6 grid sm:grid-cols-2">
                   <DetailItem
@@ -200,7 +200,7 @@ export function LoanRequestDetailsModal({
                 </dl>
               </div>
 
-              <div className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm dark:border-border/60">
+              <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm dark:border-border/60">
                 <SectionHeading icon={BarChart3}>Estimated impact</SectionHeading>
                 <p className="mt-6 text-3xl font-bold tabular-nums tracking-tight text-foreground sm:text-4xl">
                   {estimate.monthlyImpact != null && Number.isFinite(estimate.monthlyImpact)
@@ -302,8 +302,8 @@ export function LoanRequestDetailsModal({
               </div>
             </div>
 
-            <div className="px-5 pb-5 sm:px-6">
-              <div className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm dark:border-border/60">
+            <div className="px-6 pb-6 sm:px-8">
+              <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm dark:border-border/60">
                 <SectionHeading icon={Hourglass}>Approval timeline</SectionHeading>
                 <div className="relative mt-6 space-y-3">
                 {approvalProgress.length === 0 ? (
@@ -344,7 +344,7 @@ export function LoanRequestDetailsModal({
             </div>
 
             {actionsSlot ? (
-              <DialogFooter className="flex items-center justify-between border-t border-border/60 px-5 py-3 sm:px-6">
+              <DialogFooter className="flex items-center justify-between border-t border-border/60 px-6 py-4 sm:px-8">
                 <div className="text-xs text-muted-foreground">
                   {canApprove || canReject ? 'You can take action on this request.' : 'This request is read-only.'}
                 </div>
