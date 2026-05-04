@@ -92,6 +92,8 @@
 /* Payslips (employee list / hero): use Tailwind semantic colors mapped above — bg-background, bg-card,
    border-border, text-foreground, text-muted-foreground, text-brand, bg-brand (see PayslipsListPage.jsx). */
 
+/* My loans & deductions: AGCTEK hero tints (brand + emerald), orange section rules, tokens in EmployeeLoansDeductionsPage.jsx. */
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

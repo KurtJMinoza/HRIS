@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle2, Clock, HandCoins, PiggyBank, Plus, TrendingDown, XCircle } from 'lucide-react'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  FileText,
+  HandCoins,
+  PiggyBank,
+  Plus,
+  TrendingDown,
+  Wallet,
+  XCircle,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -13,13 +24,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { getEmployeeLoanRequestContext, getEmployeeLoanRequestDetail, getEmployeeMyDeductions, getEmployeeNextDeductionDates } from '@/api'
-import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { formatDeductionScheduleTypeShort } from '@/components/salary/EmployeeSalaryTab'
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { cn } from '@/lib/utils'
 
-const TEXT = '#0A0A0A'
 const HERO_SNAPSHOT_KEY = 'hr-employee-loans-hero-snapshot-v1'
 
 const cardShadow =
@@ -88,16 +97,6 @@ function relativeTimeFromDate(value) {
   return null
 }
 
-function initials(name) {
-  const parts = String(name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-  if (parts.length === 0) return '?'
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
-
 function rowIsLoan(row) {
   const dt = row.deduction_type
   return String(dt?.type || '').toLowerCase() === 'loan' || row.pay_component?.is_loan
@@ -113,9 +112,9 @@ function rowTypeLabel(row) {
 }
 
 function nextDueUrgencyBadgeClass(dueDiff) {
-  if (dueDiff == null) return 'border-border bg-muted/50 text-[#0A0A0A] dark:text-slate-200'
+  if (dueDiff == null) return 'border-border bg-muted/50 text-foreground'
   if (dueDiff < 0) return 'border-red-200 bg-red-50 text-red-800 dark:border-red-800/60 dark:bg-red-950/45 dark:text-red-200'
-  return 'border-border bg-muted/40 text-[#0A0A0A] dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-200'
+  return 'border-border bg-muted/40 text-foreground dark:border-white/10 dark:bg-white/[0.05]'
 }
 
 function loanStageLabel(stage, status) {
@@ -140,8 +139,16 @@ function loanRequestDecision(status) {
 }
 
 
-/** Circular progress — neutral track, black progress */
-function RepaymentRing({ pct, size = 112, label }) {
+/** Donut metric — AGCTEK hero cards; optional center icon (reference v2) or % + caption */
+function MetricRing({
+  pct,
+  size = 120,
+  label,
+  subLabel = 'paid',
+  strokeClassName = 'text-brand',
+  trackClassName = 'text-muted/35 dark:text-muted/25',
+  centerIcon = null,
+}) {
   const p = pct == null || Number.isNaN(pct) ? 0 : Math.min(100, Math.max(0, Number(pct)))
   const stroke = 7
   const r = (size - stroke) / 2
@@ -150,13 +157,7 @@ function RepaymentRing({ pct, size = 112, label }) {
 
   return (
     <div className="relative flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
-      <svg
-        width={size}
-        height={size}
-        className="-rotate-90"
-        viewBox={`0 0 ${size} ${size}`}
-        aria-hidden
-      >
+      <svg width={size} height={size} className="-rotate-90" viewBox={`0 0 ${size} ${size}`} aria-hidden>
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -164,7 +165,7 @@ function RepaymentRing({ pct, size = 112, label }) {
           fill="none"
           stroke="currentColor"
           strokeWidth={stroke}
-          className="text-muted/40 dark:text-muted/30"
+          className={trackClassName}
         />
         <circle
           cx={size / 2}
@@ -176,23 +177,29 @@ function RepaymentRing({ pct, size = 112, label }) {
           strokeDasharray={c}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          className="text-[#0A0A0A] transition-[stroke-dashoffset] duration-1000 ease-out dark:text-slate-100"
+          className={cn('transition-[stroke-dashoffset] duration-1000 ease-out', strokeClassName)}
         />
       </svg>
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="text-xl font-bold tabular-nums leading-none text-[#0A0A0A] dark:text-slate-50">{label}</span>
-        <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">paid</span>
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-1 text-center">
+        {centerIcon ? (
+          <span className="flex items-center justify-center text-foreground [&_svg]:text-foreground">{centerIcon}</span>
+        ) : (
+          <>
+            <span className="text-xl font-bold tabular-nums leading-none text-foreground">{label}</span>
+            <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{subLabel}</span>
+          </>
+        )}
       </div>
     </div>
   )
 }
 
-/** Staggered progress fill — black / light indicator for table */
+/** Staggered progress fill — brand accent */
 function AnimatedLoanProgress({
   value,
   isLarge,
   delayMs = 0,
-  indicatorClassName = 'bg-[#0A0A0A] dark:bg-slate-100',
+  indicatorClassName = 'bg-brand',
 }) {
   const pct = Math.min(100, Math.max(0, Number(value) || 0))
   const [shown, setShown] = useState(0)
@@ -213,8 +220,8 @@ function AnimatedLoanProgress({
 function PiggyBankIllustration() {
   return (
     <div className="relative flex size-28 items-center justify-center" aria-hidden>
-      <div className="absolute inset-0 rounded-[2rem] bg-muted/60 shadow-inner dark:bg-white/5" />
-      <PiggyBank className="relative size-[4.5rem] text-[#0A0A0A]/70 dark:text-slate-300" strokeWidth={1.35} />
+      <div className="absolute inset-0 rounded-[2rem] bg-brand/10 shadow-inner ring-1 ring-brand/15" />
+      <PiggyBank className="relative size-[4.5rem] text-brand" strokeWidth={1.35} />
       <span className="absolute -right-1 -top-1 flex size-9 items-center justify-center rounded-full border border-border bg-card text-sm text-muted-foreground shadow-sm">
         ✦
       </span>
@@ -248,6 +255,13 @@ export default function EmployeeLoansDeductionsPage() {
   const [progressBarsReady, setProgressBarsReady] = useState(false)
   const [debtSinceVisit, setDebtSinceVisit] = useState(null)
   const [monthlySinceVisit, setMonthlySinceVisit] = useState(null)
+  const [activityFilter, setActivityFilter] = useState('all')
+
+  const filteredLoanRequests = useMemo(() => {
+    const list = Array.isArray(data.loan_requests) ? data.loan_requests : []
+    if (activityFilter === 'all') return list
+    return list.filter((r) => loanRequestDecision(r.status) === activityFilter)
+  }, [data.loan_requests, activityFilter])
 
   const load = useCallback(async (opts = {}) => {
     const silent = Boolean(opts.silent)
@@ -418,6 +432,17 @@ export default function EmployeeLoansDeductionsPage() {
     }
   }, [data.employee_deductions])
 
+  const debtRingPct = useMemo(() => {
+    if (heroStats.principalKnown && heroStats.repaymentPct != null) return heroStats.repaymentPct
+    return 0
+  }, [heroStats.principalKnown, heroStats.repaymentPct])
+
+  const monthlyLoanSharePct = useMemo(() => {
+    const m = heroStats.monthly
+    if (!m || m <= 0) return 0
+    return Math.min(100, Math.round((heroStats.monthlyLoans / m) * 100))
+  }, [heroStats.monthly, heroStats.monthlyLoans])
+
   useEffect(() => {
     if (loading) return
     try {
@@ -459,19 +484,16 @@ export default function EmployeeLoansDeductionsPage() {
     hrBase === '/company' ? 'Company' : hrBase === '/branch' ? 'Branch' : hrBase === '/department' ? 'Department' : 'Employee'
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-b from-muted/30 via-background to-background dark:from-muted/10">
-      <div className="w-full space-y-10 px-4 pb-24 pt-8 md:space-y-12 md:px-8 lg:px-10 md:pt-10">
+    <div className="min-h-screen w-full bg-muted/35 bg-gradient-to-b from-muted/40 via-muted/25 to-background dark:from-background dark:via-background dark:to-background">
+      <div className="w-full space-y-9 px-4 pb-24 pt-8 md:space-y-10 md:px-8 lg:px-10 md:pt-10">
         <header className="space-y-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">{workspaceLabel}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand">{workspaceLabel}</p>
           <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div className="max-w-2xl">
-              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium text-[#0A0A0A]/80 dark:text-slate-300">
+              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-brand/25 bg-brand/8 px-3 py-1 text-xs font-medium text-brand dark:bg-brand/12">
                 Personal finance hub
               </div>
-              <h1
-                className="text-3xl font-bold tracking-tight md:text-4xl lg:text-[2.5rem] lg:leading-tight"
-                style={{ color: TEXT }}
-              >
+              <h1 className="text-3xl font-bold tracking-tight text-foreground md:text-4xl lg:text-[2.5rem] lg:leading-tight">
                 My loans & deductions
               </h1>
               <p className="mt-3 max-w-xl text-base leading-relaxed text-muted-foreground md:text-[17px]">
@@ -484,7 +506,7 @@ export default function EmployeeLoansDeductionsPage() {
                 size="lg"
                 disabled={!canOpenRequestDialog}
                 onClick={() => setDialogOpen(true)}
-                className="h-12 shrink-0 gap-2 rounded-2xl border border-[#0A0A0A]/15 bg-[#0A0A0A] px-8 text-white shadow-sm transition-colors hover:bg-[#0A0A0A]/90 disabled:opacity-50 dark:bg-slate-100 dark:text-[#0A0A0A] dark:hover:bg-white"
+                className="h-12 shrink-0 gap-2 rounded-2xl bg-brand px-8 text-[15px] font-semibold text-brand-foreground shadow-sm transition-colors hover:bg-brand-strong disabled:opacity-50"
               >
                 <Plus className="size-5" strokeWidth={2.5} aria-hidden />
                 Request new loan
@@ -506,7 +528,7 @@ export default function EmployeeLoansDeductionsPage() {
         ) : (
           <>
             {/* Hero metrics — premium metric cards */}
-            <section className="grid gap-4 md:grid-cols-2 lg:gap-6">
+            <section className="grid gap-5 md:grid-cols-2 lg:gap-7">
               <motion.div
                 className="h-full"
                 initial={{ opacity: 0, y: 16 }}
@@ -514,23 +536,28 @@ export default function EmployeeLoansDeductionsPage() {
                 transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
               >
                 <Card
-                  className={cn('h-full overflow-hidden rounded-2xl border-border/50 bg-card', cardShadow, cardShadowHover)}
+                  className={cn(
+                    'h-full overflow-hidden rounded-2xl border-0 bg-white dark:bg-card',
+                    cardShadow,
+                    cardShadowHover,
+                  )}
                   style={{ borderRadius: 16 }}
                 >
-                  <div className="h-1 w-full bg-[#0A0A0A]/12 dark:bg-white/15" aria-hidden />
                   <CardContent className="flex h-full flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
                     <div className="min-w-0 flex-1 space-y-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Total remaining debt</p>
-                      <p
-                        className="text-4xl font-bold tabular-nums tracking-tight md:text-[2.85rem] md:leading-none"
-                        style={{ color: TEXT }}
-                      >
+                      <p className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand">
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand text-white shadow-sm">
+                          <Wallet className="size-4" aria-hidden strokeWidth={2.25} />
+                        </span>
+                        Total remaining debt
+                      </p>
+                      <p className="text-4xl font-bold tabular-nums tracking-tight text-brand md:text-[2.85rem] md:leading-none">
                         {formatPhpSym(heroStats.totalDebt)}
                       </p>
-                      <p className="text-sm text-muted-foreground">Across your active loan deductions</p>
+                      <p className="text-sm text-foreground/90">Across your active loan deductions</p>
                       {debtSinceVisit != null && Math.abs(debtSinceVisit) > 0.01 ? (
                         <p className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                          <TrendingDown className="size-3.5 shrink-0 text-[#0A0A0A]/60 dark:text-slate-400" aria-hidden />
+                          <TrendingDown className="size-3.5 shrink-0 text-brand" aria-hidden />
                           {debtSinceVisit > 0 ? (
                             <>↓ {formatPhpSym(debtSinceVisit)} less debt since your last visit</>
                           ) : (
@@ -538,22 +565,23 @@ export default function EmployeeLoansDeductionsPage() {
                           )}
                         </p>
                       ) : null}
-                      <p className="text-xs font-medium text-muted-foreground">
-                        {heroStats.principalKnown && heroStats.repaymentPct != null
-                          ? `${heroStats.repaymentPct}% of principal repaid across your active loans`
-                          : 'Add principal on file to unlock repayment progress'}
-                      </p>
+                      {heroStats.principalKnown && heroStats.repaymentPct != null ? (
+                        <p className="text-xs font-medium text-muted-foreground">
+                          {heroStats.repaymentPct}% of principal repaid across your active loans
+                        </p>
+                      ) : (
+                        <span className="inline-flex items-center gap-0.5 text-xs font-medium text-brand">
+                          Add principal on file to unlock repayment progress
+                          <ChevronRight className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+                        </span>
+                      )}
                     </div>
-                    {heroStats.principalKnown && heroStats.repaymentPct != null ? (
-                      <RepaymentRing pct={heroStats.repaymentPct} label={`${heroStats.repaymentPct}%`} />
-                    ) : (
-                      <div
-                        className="flex size-[112px] shrink-0 items-center justify-center rounded-full border-2 border-dashed border-border bg-muted/40 text-[#0A0A0A]/50 dark:text-slate-400"
-                        aria-hidden
-                      >
-                        <HandCoins className="size-10 opacity-80" strokeWidth={1.25} />
-                      </div>
-                    )}
+                    <MetricRing
+                      pct={debtRingPct}
+                      strokeClassName="text-brand"
+                      trackClassName="text-brand/25 dark:text-brand/20"
+                      centerIcon={<HandCoins className="size-7" strokeWidth={1.75} aria-hidden />}
+                    />
                   </CardContent>
                 </Card>
               </motion.div>
@@ -565,39 +593,56 @@ export default function EmployeeLoansDeductionsPage() {
                 transition={{ duration: 0.45, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
               >
                 <Card
-                  className={cn('h-full overflow-hidden rounded-2xl border-border/50 bg-card', cardShadow, cardShadowHover)}
+                  className={cn(
+                    'h-full overflow-hidden rounded-2xl border-0 bg-white dark:bg-card',
+                    cardShadow,
+                    cardShadowHover,
+                  )}
                   style={{ borderRadius: 16 }}
                 >
-                  <div className="h-1 w-full bg-muted-foreground/15 dark:bg-white/15" aria-hidden />
-                  <CardContent className="flex h-full flex-col justify-between space-y-5 p-6 md:p-8">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Total monthly deductions</p>
-                      <p
-                        className="mt-1 text-4xl font-bold tabular-nums tracking-tight md:text-[2.85rem] md:leading-none"
-                        style={{ color: TEXT }}
-                      >
-                        {formatPhpSym(heroStats.monthly)}
-                      </p>
-                      <p className="mt-2 text-sm text-muted-foreground">Combined recurring payroll amounts</p>
-                      {monthlySinceVisit != null && Math.abs(monthlySinceVisit) > 0.01 ? (
-                        <p className="mt-2 text-xs font-medium text-muted-foreground">
-                          {monthlySinceVisit > 0 ? (
-                            <>↓ {formatPhpSym(monthlySinceVisit)} lower per month vs last visit</>
-                          ) : (
-                            <>↑ {formatPhpSym(Math.abs(monthlySinceVisit))} higher per month vs last visit</>
-                          )}
+                  <CardContent className="flex h-full flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
+                    <div className="min-w-0 flex-1 space-y-4">
+                      <div>
+                        <p className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-200">
+                          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm dark:bg-emerald-500">
+                            <FileText className="size-4" aria-hidden strokeWidth={2.25} />
+                          </span>
+                          Total monthly deductions
                         </p>
-                      ) : null}
+                        <p className="mt-1 text-4xl font-bold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300 md:text-[2.85rem] md:leading-none">
+                          {formatPhpSym(heroStats.monthly)}
+                        </p>
+                        <p className="mt-2 text-sm text-foreground/85">Combined recurring payroll amounts</p>
+                        {monthlySinceVisit != null && Math.abs(monthlySinceVisit) > 0.01 ? (
+                          <p className="mt-2 text-xs font-medium text-muted-foreground">
+                            {monthlySinceVisit > 0 ? (
+                              <>↓ {formatPhpSym(monthlySinceVisit)} lower per month vs last visit</>
+                            ) : (
+                              <>↑ {formatPhpSym(Math.abs(monthlySinceVisit))} higher per month vs last visit</>
+                            )}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-background/70 px-3 py-1.5 text-xs font-medium text-foreground shadow-none dark:bg-background/40">
+                          <span className="text-muted-foreground">Loans</span>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="tabular-nums font-semibold">{formatPhpSym(heroStats.monthlyLoans)}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-background/70 px-3 py-1.5 text-xs font-medium text-foreground shadow-none dark:bg-background/40">
+                          <span className="text-muted-foreground">Other</span>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="tabular-nums font-semibold">{formatPhpSym(heroStats.monthlyOther)}</span>
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Snapshot · Updates when payroll runs</p>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <span className="inline-flex items-center rounded-full border border-border bg-muted/50 px-3 py-1.5 text-xs font-semibold text-[#0A0A0A] dark:text-slate-100">
-                        Loans ~ {formatPhpSym(heroStats.monthlyLoans)}
-                      </span>
-                      <span className="inline-flex items-center rounded-full border border-border bg-muted/30 px-3 py-1.5 text-xs font-semibold text-[#0A0A0A] dark:text-slate-100">
-                        Other ~ {formatPhpSym(heroStats.monthlyOther)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Snapshot · Updates when payroll runs</p>
+                    <MetricRing
+                      pct={monthlyLoanSharePct}
+                      strokeClassName="text-emerald-600 dark:text-emerald-400"
+                      trackClassName="text-emerald-400/35 dark:text-emerald-500/25"
+                      centerIcon={<Wallet className="size-7" strokeWidth={1.75} aria-hidden />}
+                    />
                   </CardContent>
                 </Card>
               </motion.div>
@@ -607,9 +652,7 @@ export default function EmployeeLoansDeductionsPage() {
             {maySubmitLoanRequest && !hasLoanProducts ? (
               <Card className="rounded-2xl border-dashed border-border bg-muted/30 shadow-sm">
                 <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
-                  <p className="font-semibold" style={{ color: TEXT }}>
-                    No loan products available yet
-                  </p>
+                  <p className="font-semibold text-foreground">No loan products available yet</p>
                   <p className="max-w-md text-sm text-muted-foreground">
                     Ask HR to configure Pay Components (Loan category) or deduction types for your company.
                   </p>
@@ -617,13 +660,16 @@ export default function EmployeeLoansDeductionsPage() {
               </Card>
             ) : null}
 
-            {/* Active loans — data table */}
-            <section className="space-y-5">
-              <div className="space-y-1">
-                <h2 className="text-2xl font-bold tracking-tight" style={{ color: TEXT }}>
+            {/* Active loans */}
+            <section className="space-y-4">
+              <div className="space-y-1.5">
+                <h2 className="flex items-center gap-2.5 text-xl font-bold tracking-tight text-foreground md:text-2xl">
+                  <span className="inline-block h-7 w-1 shrink-0 rounded-full bg-brand" aria-hidden />
                   Active loans & deductions
                 </h2>
-                <p className="text-sm text-muted-foreground md:text-base">Amounts follow your pay cycle and deduction schedule.</p>
+                <p className="text-sm text-muted-foreground md:text-[15px]">
+                  Amounts follow your pay cycle and deduction schedule.
+                </p>
               </div>
               {(data.employee_deductions || []).length === 0 ? (
                 <motion.div
@@ -632,16 +678,14 @@ export default function EmployeeLoansDeductionsPage() {
                   transition={{ duration: 0.4 }}
                 >
                   <Card
-                    className={cn('overflow-hidden rounded-2xl border-dashed border-border bg-card', cardShadow)}
+                    className={cn('overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm', cardShadow)}
                     style={{ borderRadius: 16 }}
                   >
-                    <CardContent className="flex flex-col items-center gap-7 px-6 py-16 text-center md:py-20">
+                    <CardContent className="flex flex-col items-center gap-5 px-6 py-14 text-center md:py-16">
                       <PiggyBankIllustration />
-                      <div className="max-w-md space-y-3">
-                        <p className="text-2xl font-bold tracking-tight" style={{ color: TEXT }}>
-                          Nothing due right now
-                        </p>
-                        <p className="text-base leading-relaxed text-muted-foreground">
+                      <div className="max-w-md space-y-2">
+                        <p className="text-xl font-bold tracking-tight text-foreground">Nothing due right now</p>
+                        <p className="text-sm leading-relaxed text-muted-foreground">
                           You currently have no active loans or deductions. Request one below — when HR assigns a loan, balances and payoff
                           progress show up here automatically.
                         </p>
@@ -650,7 +694,7 @@ export default function EmployeeLoansDeductionsPage() {
                         <Button
                           type="button"
                           onClick={() => setDialogOpen(true)}
-                          className="h-12 gap-2 rounded-2xl border border-[#0A0A0A]/15 bg-[#0A0A0A] px-10 text-base font-semibold text-white shadow-sm transition-colors hover:bg-[#0A0A0A]/90 dark:bg-slate-100 dark:text-[#0A0A0A] dark:hover:bg-white"
+                          className="h-10 gap-2 rounded-xl border border-brand bg-card px-8 text-sm font-semibold text-brand shadow-sm transition-colors hover:bg-brand/10"
                         >
                           <Plus className="size-5" strokeWidth={2.5} aria-hidden />
                           Request new loan
@@ -661,33 +705,33 @@ export default function EmployeeLoansDeductionsPage() {
                 </motion.div>
               ) : (
                 <Card
-                  className={cn('overflow-hidden rounded-2xl border-0 bg-card', cardShadow)}
+                  className={cn('overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm', cardShadow)}
                   style={{ borderRadius: 16 }}
                 >
-                  <div className="relative w-full min-w-0 overflow-x-auto">
+                  <div className="relative w-full min-w-0 overflow-x-auto rounded-2xl bg-card dark:bg-card">
                     <div className="relative max-h-[min(72vh,800px)] w-full overflow-y-auto rounded-b-2xl">
                       <Table className="w-full min-w-[960px] border-0 [&_td]:border-0 [&_th]:border-0">
                         <TableHeader className="sticky top-0 z-10 [&_tr]:border-b-0 bg-muted/30 backdrop-blur-md dark:bg-muted/20">
                           <TableRow className="border-0 shadow-none hover:bg-transparent">
-                            <TableHead className="w-[56px] py-4 pl-6 text-[11px] font-bold uppercase tracking-wider text-[#0A0A0A]/65 dark:text-slate-400">
-                              <span className="sr-only">Profile</span>
+                            <TableHead className="w-[52px] py-4 pl-6 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                              <span className="sr-only">Item</span>
                             </TableHead>
-                            <TableHead className="min-w-[160px] py-4 text-[11px] font-bold uppercase tracking-wider text-[#0A0A0A]/65 dark:text-slate-400">
+                            <TableHead className="min-w-[160px] py-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                               Loan / deduction
                             </TableHead>
-                            <TableHead className="min-w-[120px] py-4 text-[11px] font-bold uppercase tracking-wider text-[#0A0A0A]/65 dark:text-slate-400">
+                            <TableHead className="min-w-[120px] py-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                               Type
                             </TableHead>
-                            <TableHead className="min-w-[100px] py-4 text-right text-[11px] font-bold uppercase tracking-wider text-[#0A0A0A]/65 dark:text-slate-400">
+                            <TableHead className="min-w-[100px] py-4 text-right text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                               Monthly
                             </TableHead>
-                            <TableHead className="min-w-[200px] py-4 text-[11px] font-bold uppercase tracking-wider text-[#0A0A0A]/65 dark:text-slate-400">
+                            <TableHead className="min-w-[200px] py-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                               Remaining
                             </TableHead>
-                            <TableHead className="min-w-[150px] py-4 text-[11px] font-bold uppercase tracking-wider text-[#0A0A0A]/65 dark:text-slate-400">
+                            <TableHead className="min-w-[150px] py-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                               Next due
                             </TableHead>
-                            <TableHead className="min-w-[200px] py-4 pr-6 text-right text-[11px] font-bold uppercase tracking-wider text-[#0A0A0A]/65 dark:text-slate-400">
+                            <TableHead className="min-w-[200px] py-4 pr-6 text-right text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                               Actions
                             </TableHead>
                           </TableRow>
@@ -710,26 +754,19 @@ export default function EmployeeLoansDeductionsPage() {
                             const showBar = row.is_amortized && paid != null && total != null && total > 0
                             const pctW = progressBarsReady && showBar ? pct : 0
                             const isLargeLoan = total != null && total >= 100000
-                            const displayName = (user?.name || 'You').trim() || 'You'
-                            const avatarSrc = employeeAvatarSrc(user)
 
                             return (
                               <TableRow key={row.id} className={TABLE_ROW_HOVER}>
                                 <TableCell className="py-5 pl-6 align-middle">
-                                  <Avatar className="size-9 shrink-0 rounded-full border border-border/60 shadow-sm ring-2 ring-border/20">
-                                    <AvatarImage src={avatarSrc || undefined} alt="" className="object-cover" />
-                                    <AvatarFallback
-                                      className={cn(
-                                        'rounded-full text-[11px] font-bold',
-                                        getEmployeeAvatarColorClass(user?.id, user?.name),
-                                      )}
-                                    >
-                                      {initials(displayName)}
-                                    </AvatarFallback>
-                                  </Avatar>
+                                  <span
+                                    className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand/15 text-brand ring-1 ring-brand/15"
+                                    aria-hidden
+                                  >
+                                    <HandCoins className="size-4" strokeWidth={1.85} />
+                                  </span>
                                 </TableCell>
                                 <TableCell className="py-5 align-middle">
-                                  <span className="font-semibold text-[#0A0A0A] dark:text-slate-100">{productName}</span>
+                                  <span className="font-semibold text-foreground">{productName}</span>
                                   {row.source ? (
                                     <p className="mt-0.5 text-xs text-muted-foreground">{row.source}</p>
                                   ) : null}
@@ -737,7 +774,7 @@ export default function EmployeeLoansDeductionsPage() {
                                 <TableCell className="py-5 align-middle">
                                   <Badge
                                     variant="outline"
-                                    className="rounded-md border-border bg-muted/40 text-[11px] font-semibold text-[#0A0A0A] dark:text-slate-100"
+                                    className="rounded-md border-border bg-muted/40 text-[11px] font-semibold text-foreground"
                                   >
                                     {rowTypeLabel(row)}
                                   </Badge>
@@ -747,12 +784,12 @@ export default function EmployeeLoansDeductionsPage() {
                                     </p>
                                   ) : null}
                                 </TableCell>
-                                <TableCell className="py-5 text-right align-middle tabular-nums text-sm font-semibold text-[#0A0A0A] dark:text-slate-100">
+                                <TableCell className="py-5 text-right align-middle tabular-nums text-sm font-semibold text-foreground">
                                   {formatPhpSym(row.amount)}
                                 </TableCell>
                                 <TableCell className="py-5 align-middle">
                                   <div className="flex max-w-[220px] flex-col gap-1.5">
-                                    <span className="font-semibold tabular-nums text-[#0A0A0A] dark:text-slate-50">
+                                    <span className="font-semibold tabular-nums text-foreground">
                                       {rem != null ? formatPhpSym(rem) : '—'}
                                     </span>
                                     {showBar ? (
@@ -761,7 +798,7 @@ export default function EmployeeLoansDeductionsPage() {
                                           value={pctW}
                                           isLarge={isLargeLoan}
                                           delayMs={100 + rowIndex * 60}
-                                          indicatorClassName="bg-[#0A0A0A] dark:bg-slate-100"
+                                          indicatorClassName="bg-brand"
                                         />
                                         <span className="text-[11px] tabular-nums text-muted-foreground">
                                           {pct}% paid · {formatPhpSym(paid)} / {formatPhpSym(total)}
@@ -775,7 +812,7 @@ export default function EmployeeLoansDeductionsPage() {
                                 <TableCell className="py-5 align-middle">
                                   {nextDue ? (
                                     <div className="flex flex-col gap-1.5">
-                                      <span className="text-sm font-medium text-[#0A0A0A] dark:text-slate-100">
+                                      <span className="text-sm font-medium text-foreground">
                                         {formatDisplayDate(nextDue)}
                                       </span>
                                       {relativeTimeFromDate(nextDue) ? (
@@ -795,7 +832,7 @@ export default function EmployeeLoansDeductionsPage() {
                                         type="button"
                                         variant="outline"
                                         size="sm"
-                                        className="h-8 border-border bg-background text-[#0A0A0A] hover:bg-muted dark:text-slate-100"
+                                        className="h-8 border-border bg-background text-foreground hover:bg-muted"
                                         onClick={() => {
                                           setScheduleTitle(productName)
                                           setScheduleRows(sched)
@@ -810,7 +847,7 @@ export default function EmployeeLoansDeductionsPage() {
                                         type="button"
                                         variant="outline"
                                         size="sm"
-                                        className="h-8 border-border bg-background text-[#0A0A0A] hover:bg-muted dark:text-slate-100"
+                                        className="h-8 border-border bg-background text-foreground hover:bg-muted"
                                         onClick={() => {
                                           setAuditTitle(productName)
                                           setAuditRows(row.audit_logs)
@@ -825,7 +862,7 @@ export default function EmployeeLoansDeductionsPage() {
                                         type="button"
                                         variant="ghost"
                                         size="sm"
-                                        className="h-8 text-[#0A0A0A]/80 hover:bg-muted dark:text-slate-300"
+                                        className="h-8 text-foreground/80 hover:bg-muted"
                                         onClick={() =>
                                           toast({
                                             title: 'Extra payments',
@@ -850,29 +887,54 @@ export default function EmployeeLoansDeductionsPage() {
             </section>
 
             {/* Requests — timeline */}
-            <section className="space-y-5">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight md:text-[1.75rem]" style={{ color: TEXT }}>
+            <section className="space-y-4">
+              <div className="space-y-1.5">
+                <h2 className="flex items-center gap-2.5 text-xl font-bold tracking-tight text-foreground md:text-2xl">
+                  <span className="inline-block h-7 w-1 shrink-0 rounded-full bg-brand" aria-hidden />
                   Your requests & history
                 </h2>
-                <p className="mt-1 text-sm text-muted-foreground md:text-base">Track what you&apos;ve submitted and what HR decided.</p>
+                <p className="text-sm text-muted-foreground md:text-[15px]">Track what you&apos;ve submitted and what HR decided.</p>
               </div>
-              <Card className={cn('rounded-2xl border-border/50 bg-card', cardShadow)} style={{ borderRadius: 16 }}>
-                <div className="h-px w-full bg-border" aria-hidden />
-                <CardHeader className="border-b border-border/40 pb-4">
-                  <CardTitle className="text-lg" style={{ color: TEXT }}>
-                    Activity
-                  </CardTitle>
-                  <CardDescription>Latest submissions and outcomes, newest first.</CardDescription>
+              <Card className={cn('overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm', cardShadow)} style={{ borderRadius: 16 }}>
+                <CardHeader className="flex flex-col gap-4 border-b border-border/50 px-6 py-5 @sm:flex-row @sm:items-start @sm:justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base font-semibold text-foreground">Activity</CardTitle>
+                    <CardDescription className="text-sm">Latest submissions and outcomes, newest first.</CardDescription>
+                  </div>
+                  <Select value={activityFilter} onValueChange={setActivityFilter}>
+                    <SelectTrigger className="h-10 w-full min-w-[160px] rounded-xl border-border bg-background shadow-sm @sm:w-[190px]">
+                      <SelectValue placeholder="All status" />
+                    </SelectTrigger>
+                    <SelectContent align="end">
+                      <SelectItem value="all">All status</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </CardHeader>
                 <CardContent className="pt-6">
-                  {(data.loan_requests || []).length === 0 ? (
-                    <p className="py-14 text-center text-sm text-muted-foreground">No requests filed yet — your submissions will appear here.</p>
+                  {filteredLoanRequests.length === 0 ? (
+                    <div className="flex flex-col items-center gap-3 px-6 py-14 text-center md:py-16">
+                      <span className="flex size-14 items-center justify-center rounded-2xl bg-brand/10 text-brand dark:bg-brand/15">
+                        <FileText className="size-7" strokeWidth={1.5} aria-hidden />
+                      </span>
+                      <div className="max-w-sm space-y-1.5">
+                        <p className="text-base font-semibold text-foreground">
+                          {(data.loan_requests || []).length === 0 ? 'No requests filed yet' : 'No matching activity'}
+                        </p>
+                        <p className="text-sm leading-relaxed text-muted-foreground">
+                          {(data.loan_requests || []).length === 0
+                            ? 'Your submissions will appear here once you request a loan or any changes.'
+                            : 'No activity matches this filter.'}
+                        </p>
+                      </div>
+                    </div>
                   ) : (
                     <div className="relative">
-                      <div className="absolute bottom-6 left-[19px] top-6 w-px bg-border" aria-hidden />
+                      <div className="absolute bottom-6 left-[19px] top-6 w-px bg-border/40" aria-hidden />
                       <ul className="space-y-7">
-                        {(data.loan_requests || []).map((r, ri) => {
+                        {filteredLoanRequests.map((r, ri) => {
                           const decision = loanRequestDecision(r.status)
                           const approved = decision === 'approved'
                           const rejected = decision === 'rejected'
@@ -913,17 +975,17 @@ export default function EmployeeLoansDeductionsPage() {
                               </div>
                               <button
                                 type="button"
-                                className="min-w-0 flex-1 rounded-2xl border border-border/50 bg-card p-5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md"
+                                className="min-w-0 flex-1 rounded-2xl border-0 bg-card/90 p-5 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md dark:bg-card/60 dark:shadow-[0_8px_28px_-12px_rgba(0,0,0,0.5)]"
                                 onClick={() => openRequestDetails(r)}
                                 style={{ borderRadius: 16 }}
                               >
                                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                                   <div className="space-y-2">
-                                    <p className="font-semibold text-[#0A0A0A] dark:text-slate-50">{productName}</p>
+                                    <p className="font-semibold text-foreground">{productName}</p>
                                     {r.user && user?.id != null && Number(r.user_id ?? r.user?.id) !== Number(user.id) ? (
                                       <p className="text-xs text-muted-foreground">Borrower: {r.user.name}</p>
                                     ) : null}
-                                    <p className="text-3xl font-bold tabular-nums tracking-tight text-[#0A0A0A] dark:text-slate-50 md:text-[2rem]">
+                                    <p className="text-3xl font-bold tabular-nums tracking-tight text-brand md:text-[2rem]">
                                       {formatPhpSym(r.requested_amount)}
                                     </p>
                                     <p className="text-sm text-muted-foreground">
@@ -959,7 +1021,7 @@ export default function EmployeeLoansDeductionsPage() {
                                         Pending
                                       </span>
                                     ) : (
-                                      <Badge variant="secondary" className="rounded-full capitalize text-[#0A0A0A] dark:text-slate-100">
+                                      <Badge variant="secondary" className="rounded-full capitalize text-foreground">
                                         {r.status || '—'}
                                       </Badge>
                                     )}
@@ -985,7 +1047,7 @@ export default function EmployeeLoansDeductionsPage() {
           >
             <div className="flex flex-col gap-6 px-6 pb-6 pt-6 sm:px-8 sm:pb-8 sm:pt-7">
               <DialogHeader className="gap-2 space-y-0 pr-10 text-left">
-                <DialogTitle className="text-xl font-semibold tracking-tight text-[#0A0A0A] dark:text-slate-50">
+                <DialogTitle className="text-xl font-semibold tracking-tight text-foreground">
                   Payment schedule
                 </DialogTitle>
                 <DialogDescription className="text-[15px] leading-relaxed text-muted-foreground">{scheduleTitle}</DialogDescription>
@@ -1021,19 +1083,19 @@ export default function EmployeeLoansDeductionsPage() {
                         key={row.id}
                         className="border-0 transition-colors hover:bg-background/80 dark:hover:bg-white/[0.06]"
                       >
-                        <TableCell className="py-3.5 pl-4 text-sm font-medium tabular-nums text-[#0A0A0A] dark:text-slate-100">
+                        <TableCell className="py-3.5 pl-4 text-sm font-medium tabular-nums text-foreground">
                           {row.installment_number}
                         </TableCell>
-                        <TableCell className="py-3.5 text-sm text-[#0A0A0A] dark:text-slate-100">
+                        <TableCell className="py-3.5 text-sm text-foreground">
                           {formatLongDate(row.pay_date || row.due_date)}
                         </TableCell>
-                        <TableCell className="py-3.5 text-right text-sm tabular-nums text-[#0A0A0A] dark:text-slate-100">
+                        <TableCell className="py-3.5 text-right text-sm tabular-nums text-foreground">
                           {formatPhpSym(row.principal)}
                         </TableCell>
-                        <TableCell className="py-3.5 text-right text-sm tabular-nums text-[#0A0A0A] dark:text-slate-100">
+                        <TableCell className="py-3.5 text-right text-sm tabular-nums text-foreground">
                           {formatPhpSym(row.interest)}
                         </TableCell>
-                        <TableCell className="py-3.5 text-right text-sm font-semibold tabular-nums text-[#0A0A0A] dark:text-slate-50">
+                        <TableCell className="py-3.5 text-right text-sm font-semibold tabular-nums text-foreground">
                           {formatPhpSym(row.total_installment)}
                         </TableCell>
                         <TableCell className="py-3.5 pr-4">
@@ -1058,7 +1120,7 @@ export default function EmployeeLoansDeductionsPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-10 rounded-full border-border px-6 text-[#0A0A0A] hover:bg-muted dark:text-slate-100"
+                  className="h-10 rounded-full border-border px-6 text-foreground hover:bg-muted"
                   onClick={() => setScheduleOpen(false)}
                 >
                   Close
@@ -1084,7 +1146,7 @@ export default function EmployeeLoansDeductionsPage() {
           <DialogContent className="w-full max-w-4xl sm:max-w-4xl">
             <div className="flex flex-col gap-6 px-1 pb-1 pt-1">
               <DialogHeader className="gap-2 space-y-0 pr-10 text-left">
-                <DialogTitle className="text-xl font-semibold tracking-tight text-[#0A0A0A] dark:text-slate-50">
+                <DialogTitle className="text-xl font-semibold tracking-tight text-foreground">
                   Audit trail
                 </DialogTitle>
                 <DialogDescription className="text-[15px] leading-relaxed text-muted-foreground">{auditTitle}</DialogDescription>
