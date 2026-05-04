@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees } from '@/api'
-import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
+import { getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { Bell, CalendarClock, Banknote, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, User, Loader2, Sun, Moon } from 'lucide-react'
 
@@ -276,7 +276,6 @@ function SidebarContent({
               >
                 <div className="flex items-center gap-2">
                   <Avatar key={user?.id ?? 'sidebar-u'} className="size-8 rounded-full ring-1 ring-border/40">
-                    <AvatarImage src={employeeAvatarSrc(user) || undefined} alt="" className="object-cover" />
                     <AvatarFallback
                       className={cn(
                         'rounded-full text-xs font-bold',
@@ -958,7 +957,6 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="relative size-9 rounded-full ring-1 ring-border/50">
                 <Avatar key={user?.id ?? 'u'} className="size-8 rounded-full shadow-sm ring-2 ring-border/20">
-                  <AvatarImage src={employeeAvatarSrc(user) || undefined} alt="" className="object-cover" />
                   <AvatarFallback
                     className={cn(
                       'rounded-full text-sm font-bold',

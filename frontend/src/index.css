@@ -44,6 +44,10 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.89 0.005 247);
   --sidebar-ring: oklch(0.708 0 0);
+  /** AGCTEK / product orange — distinct from chart tokens (avoids pink cast on dark UIs). */
+  --brand: oklch(0.58 0.22 48);
+  --brand-strong: oklch(0.52 0.23 46);
+  --brand-foreground: oklch(0.985 0 0);
 }
 
 /* Dark theme tokens */
@@ -80,7 +84,13 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --brand: oklch(0.78 0.17 52);
+  --brand-strong: oklch(0.68 0.19 48);
+  --brand-foreground: oklch(0.985 0 0);
 }
+
+/* Payslips (employee list / hero): use Tailwind semantic colors mapped above — bg-background, bg-card,
+   border-border, text-foreground, text-muted-foreground, text-brand, bg-brand (see PayslipsListPage.jsx). */
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -119,6 +129,9 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-foreground: var(--brand-foreground);
 }
 
 body {

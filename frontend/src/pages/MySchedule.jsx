@@ -4,6 +4,7 @@ import {
   CalendarClock,
   ChevronRight,
   Clock3,
+  Filter,
   Inbox,
   Loader2,
   Plus,
@@ -132,6 +133,20 @@ function scheduleDetailSummary(item) {
     workDaysCount,
     breakLabel,
   }
+}
+
+function compactDayLabel(value) {
+  const key = String(value || '').trim().toLowerCase().slice(0, 3)
+  const labels = {
+    mon: 'MON',
+    tue: 'TUE',
+    wed: 'WED',
+    thu: 'THU',
+    fri: 'FRI',
+    sat: 'SAT',
+    sun: 'SUN',
+  }
+  return labels[key] || String(value || '').trim().toUpperCase()
 }
 
 export default function MySchedule() {
@@ -338,45 +353,61 @@ export default function MySchedule() {
       (!customForm.name.trim() || !customForm.time_in || !customForm.time_out || customForm.rest_days.length >= 7))
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm dark:border-border/50">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-2">
-            <Badge variant="outline" className="w-fit rounded-full border-border/70 bg-background px-3 py-1 text-[11px] tracking-[0.14em] text-muted-foreground">
-              My workplace hours
-            </Badge>
-            <div>
-              <h1 className="hr-page-title">My Schedule</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+    <div className="space-y-6 scheme-light dark:scheme-dark">
+      <section className="relative overflow-hidden rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm dark:border-border dark:shadow-[0_14px_48px_-28px_rgba(0,0,0,0.55)] sm:p-8">
+        <div className="pointer-events-none absolute right-8 top-6 hidden h-36 w-64 rounded-full bg-brand/10 blur-3xl lg:block" />
+        <div className="relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-2xl space-y-4">
+            <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-brand">My workplace hours</p>
+            <div className="space-y-3">
+              <h1 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">My Schedule</h1>
+              <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
                 See the shift you are on today and, when you need a change, send a simple request for your manager and HR to review.
               </p>
             </div>
           </div>
-          <div className="flex gap-3">
-            {canApprove ? (
-              <Button variant="outline" className="rounded-lg" onClick={() => window.location.assign(`${hrBase}/schedule-requests`)}>
-                <Workflow className="mr-2 size-4" />
-                Review team requests
-              </Button>
-            ) : null}
-            {canRequest ? (
-              <Button className="rounded-lg" onClick={openRequestDialog}>
-                <Plus className="mr-2 size-4" />
-                Request schedule change
-              </Button>
-            ) : null}
+          <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-center lg:gap-8">
+            <div className="hidden items-center justify-center lg:flex">
+              <div className="relative flex size-36 items-center justify-center rounded-4xl bg-brand/15 text-brand">
+                <CalendarClock className="size-20" aria-hidden />
+                <div className="absolute -right-3 bottom-3 flex size-14 items-center justify-center rounded-full border border-border bg-card shadow-sm">
+                  <Clock3 className="size-7" aria-hidden />
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {canApprove ? (
+                <Button
+                  variant="outline"
+                  className="h-11 rounded-lg border-border bg-background px-4 font-semibold text-foreground hover:bg-muted"
+                  onClick={() => window.location.assign(`${hrBase}/schedule-requests`)}
+                >
+                  <Workflow className="mr-2 size-4" />
+                  Review team requests
+                </Button>
+              ) : null}
+              {canRequest ? (
+                <Button
+                  className="h-11 rounded-lg bg-linear-to-r from-brand to-brand-strong px-5 font-bold text-brand-foreground shadow-[0_18px_32px_-20px_color-mix(in_oklab,var(--brand)_45%,transparent)] hover:opacity-95"
+                  onClick={openRequestDialog}
+                >
+                  <Plus className="mr-2 size-4" />
+                  Request schedule change
+                </Button>
+              ) : null}
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {pendingChange?.schedule ? (
-        <div className="rounded-xl border border-sky-200/80 bg-sky-50/60 px-4 py-3 text-sm text-sky-950 shadow-sm dark:border-sky-900/50 dark:bg-sky-950/25 dark:text-sky-100">
-          <p className="font-medium">Upcoming schedule change</p>
-          <p className="mt-1 text-sky-900/90 dark:text-sky-100/90">
-            Starting <span className="font-semibold tabular-nums">{formatShortDate(pendingChange.effective_from)}</span>, your schedule will update to{' '}
-            <span className="font-semibold">{pendingChange.schedule.name}</span>
+        <div className="rounded-xl border border-border bg-muted/25 px-4 py-3 text-sm text-card-foreground shadow-sm">
+          <p className="font-semibold text-foreground">Upcoming schedule change</p>
+          <p className="mt-1 leading-relaxed text-muted-foreground">
+            Starting <span className="font-semibold tabular-nums text-foreground">{formatShortDate(pendingChange.effective_from)}</span>, your schedule will update to{' '}
+            <span className="font-semibold text-foreground">{pendingChange.schedule.name}</span>
             {pendingChange.schedule.time_in && pendingChange.schedule.time_out ? (
-              <span className="text-sky-800/90 dark:text-sky-200/90">
+              <span className="text-muted-foreground">
                 {' '}
                 ({pendingChange.schedule.time_in} – {pendingChange.schedule.time_out})
               </span>
@@ -387,89 +418,70 @@ export default function MySchedule() {
       ) : null}
 
       <div className="grid gap-6">
-        <Card className="overflow-hidden border-border/60 shadow-sm dark:border-border/50">
-          <CardHeader className="border-b border-border/60 bg-linear-to-br from-emerald-50/40 via-background to-background pb-6 dark:from-emerald-950/20">
-            <CardTitle className="text-xl">Your current schedule</CardTitle>
-            <CardDescription>This is what attendance, overtime, and leave use for your working hours.</CardDescription>
+        <Card className="overflow-hidden rounded-2xl border-border bg-card text-card-foreground shadow-sm dark:border-border dark:shadow-[0_14px_48px_-28px_rgba(0,0,0,0.45)]">
+          <CardHeader className="px-6 py-6">
+            <CardTitle className="text-xl font-bold tracking-tight text-foreground">Your current schedule</CardTitle>
+            <CardDescription className="text-sm text-muted-foreground">
+              This is what attendance, overtime, and leave use for your working hours.
+            </CardDescription>
           </CardHeader>
-          <CardContent className="p-6">
+          <CardContent className="px-4 pb-6 pt-0 sm:px-6">
             {loading ? (
               <div className="space-y-3">
                 <Skeleton className="h-8 w-64" />
                 <Skeleton className="h-40 w-full" />
               </div>
             ) : current ? (
-              <div className="space-y-6">
-                <div className="rounded-2xl border border-border/60 bg-linear-to-br from-background via-background to-emerald-50/35 p-6 shadow-sm dark:border-border/50 dark:from-background dark:via-background dark:to-emerald-950/15">
-                  <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-                    <div className="space-y-4">
+              <div className="rounded-2xl border border-border bg-background p-4 shadow-sm dark:border-border sm:p-6">
+                <div className="space-y-5">
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="min-w-0 space-y-5">
                       <div className="flex flex-wrap items-center gap-3">
-                        <p className="text-sm font-medium text-muted-foreground">Schedule type</p>
-                        <Badge className="max-w-full truncate rounded-full bg-emerald-100 px-3 py-1 font-medium text-emerald-950 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-50">
+                        <span className="text-xs font-semibold text-muted-foreground">Schedule type</span>
+                        <Badge className="max-w-full rounded-full border-transparent bg-brand/15 px-3 py-1 text-[11px] font-bold text-brand hover:bg-brand/15">
                           {current.name}
                         </Badge>
-                        <Badge
-                          variant="outline"
-                          className="rounded-full border-emerald-300/80 bg-emerald-50 px-3 py-1 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/30 dark:text-emerald-100"
-                        >
+                        <Badge className="rounded-full bg-chart-2/10 px-3 py-1 text-[11px] font-bold text-chart-2 hover:bg-chart-2/10">
                           {current.status || 'Active'}
                         </Badge>
                       </div>
-                      <h2 className="text-3xl font-semibold tracking-tight text-foreground lg:text-4xl">{current.name}</h2>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <div className="rounded-xl border border-border/60 bg-background px-4 py-3 shadow-sm dark:border-border/50">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Shift Hours</p>
-                          <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{current.time_in} <span className="text-muted-foreground">→</span> {current.time_out}</p>
+                      <div className="flex items-center gap-4">
+                        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-brand/15 text-brand ring-1 ring-brand/25">
+                          <Calendar className="size-6" aria-hidden />
                         </div>
+                        <h2 className="min-w-0 truncate text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">
+                          {current.name}
+                        </h2>
+                      </div>
+                      <div className="max-w-md rounded-xl border border-border bg-card px-4 py-4 shadow-sm dark:border-border">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Shift Hours</p>
+                        <p className="mt-2 text-2xl font-extrabold tracking-tight text-brand">
+                          <span>{current.time_in}</span>
+                          <span className="mx-2 text-muted-foreground">–</span>
+                          <span>{current.time_out}</span>
+                        </p>
                       </div>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <HeroStatCard label="Work Days / Week" value={workDaysPerWeek} />
-                      <HeroStatCard label="Break Duration" value={breakDuration || 'No break'} />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-                  <div className="rounded-xl border border-border/60 bg-background p-5 shadow-sm dark:border-border/50">
-                    <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Rest Days</p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {restDayBadges.length > 0 ? (
-                        restDayBadges.map((item) => (
-                          <Badge key={item} className="rounded-full bg-muted px-3 py-1 text-muted-foreground dark:bg-muted/70">
-                            {String(item).toUpperCase()}
-                          </Badge>
-                        ))
-                      ) : (
-                        <span className="text-sm text-muted-foreground">No configured rest days</span>
-                      )}
+                    <div className="grid gap-3 sm:grid-cols-2 lg:min-w-96">
+                      <ScheduleMetricCard icon={Calendar} label="Work Days / Week" value={workDaysPerWeek} />
+                      <ScheduleMetricCard icon={Timer} label="Break Duration" value={breakDuration || 'No break'} />
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-border/60 bg-background p-5 shadow-sm dark:border-border/50">
-                    <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Work Week</p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {workDayBadges.length > 0 ? (
-                        workDayBadges.map((item) => (
-                          <Badge key={item} className="rounded-full bg-sky-100 px-3 py-1 text-sky-900 dark:bg-sky-950/45 dark:text-sky-100">
-                            {String(item).toUpperCase()}
-                          </Badge>
-                        ))
-                      ) : (
-                        <span className="text-sm text-muted-foreground">No configured work days</span>
-                      )}
-                    </div>
+                  <div className="grid overflow-hidden rounded-xl border border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,1.75fr)] lg:divide-x lg:divide-border">
+                    <DayStrip title="Rest Days" items={restDayBadges} emptyLabel="No configured rest days" tone="rest" />
+                    <DayStrip title="Work Week" items={workDayBadges} emptyLabel="No configured work days" tone="work" />
                   </div>
-                </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
-                  <ScheduleMetaCard icon={Clock3} label="Start Time" value={current.time_in} />
-                  <ScheduleMetaCard icon={Clock3} label="End Time" value={current.time_out} />
-                  <ScheduleMetaCard icon={Timer} label="Break Window" value={current.break_start && current.break_end ? `${current.break_start} - ${current.break_end}` : 'No break set'} />
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <ScheduleMetaCard icon={Clock3} label="Start Time" value={current.time_in} />
+                    <ScheduleMetaCard icon={Clock3} label="End Time" value={current.time_out} />
+                    <ScheduleMetaCard icon={Timer} label="Break Window" value={current.break_start && current.break_end ? `${current.break_start} - ${current.break_end}` : 'No break set'} />
+                  </div>
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-border/60 bg-background p-8 text-center dark:border-border/50">
+              <div className="rounded-xl border border-dashed border-border bg-background p-8 text-center dark:border-border/50">
                 <CalendarClock className="mx-auto size-10 text-muted-foreground" />
                 <h3 className="mt-4 text-lg font-semibold text-foreground">No schedule on file yet</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
@@ -489,12 +501,12 @@ export default function MySchedule() {
         </Card>
       </div>
 
-      <Card className="w-full min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xl shadow-slate-200/50 ring-1 ring-slate-100/80 dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-black/40 dark:ring-slate-800/50">
-        <CardHeader className="space-y-1 border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-5 py-5 dark:border-slate-800 dark:from-slate-900/40 dark:to-slate-950/20 @md:px-6 @md:py-6">
-          <CardTitle className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+      <Card className="w-full min-w-0 overflow-hidden rounded-2xl border-border bg-card text-card-foreground shadow-sm dark:border-border dark:shadow-[0_14px_48px_-28px_rgba(0,0,0,0.45)]">
+        <CardHeader className="space-y-1 px-5 py-5 @md:px-6 @md:py-6">
+          <CardTitle className="text-xl font-bold tracking-tight text-foreground">
             Your schedule requests
           </CardTitle>
-          <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
+          <CardDescription className="text-sm text-muted-foreground">
             Request ID, proposed shift, your note, status, and when you submitted — same layout as Correction Requests.
           </CardDescription>
         </CardHeader>
@@ -505,9 +517,9 @@ export default function MySchedule() {
             </div>
           ) : (
             <>
-              <div className="border-b border-slate-100 bg-muted/15 px-4 py-5 dark:border-slate-800 dark:bg-muted/10 @sm:px-6 md:px-8">
-                <div className="flex flex-col gap-4">
-                  <div className="relative w-full min-w-0 max-w-full">
+              <div className="border-b border-border px-4 py-5 @sm:px-6 md:px-8">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="relative w-full min-w-0 max-w-full lg:max-w-3xl">
                     <Search
                       className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
                       aria-hidden
@@ -517,79 +529,74 @@ export default function MySchedule() {
                       value={requestsQuery}
                       onChange={(e) => setRequestsQuery(e.target.value)}
                       placeholder="Search request ID, schedule name, status, or note…"
-                      className="h-12 w-full min-w-0 rounded-xl border-slate-200/90 bg-white pl-10 pr-14 text-[15px] shadow-[0_1px_2px_rgba(15,23,42,0.06)] dark:border-slate-700 dark:bg-slate-950/45"
+                      className="h-12 w-full min-w-0 rounded-xl border-input bg-background pl-10 pr-4 text-[15px] text-foreground shadow-sm"
                       aria-label="Search schedule requests"
                     />
-                    <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="icon"
-                        className="size-9 rounded-lg"
-                        onClick={() => scheduleQuery.refetch()}
-                        disabled={refreshing}
-                        aria-label="Refresh requests"
-                      >
-                        {refreshing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-                      </Button>
-                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    <span className="font-semibold tabular-nums text-foreground">{filteredRequests.length}</span>
-                    {filteredRequests.length === 1 ? ' request' : ' requests'}
-                    {requestsQuery.trim() ? ' · filtered' : ''}
-                  </p>
+                  <div className="flex shrink-0 flex-wrap items-center gap-3">
+                    <Button type="button" variant="outline" className="h-11 rounded-lg border-border bg-background px-4 hover:bg-muted">
+                      <Filter className="mr-2 size-4" />
+                      Filters
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-11 rounded-lg border-border bg-background hover:bg-muted"
+                      onClick={() => scheduleQuery.refetch()}
+                      disabled={refreshing}
+                      aria-label="Refresh requests"
+                    >
+                      {refreshing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                    </Button>
+                  </div>
                 </div>
               </div>
 
               {!loading && filteredRequests.length === 0 ? (
                 <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
-                  <div className="mb-6 flex size-24 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40">
-                    <Inbox className="size-12 text-slate-400" aria-hidden />
+                  <div className="mb-6 flex size-24 items-center justify-center rounded-3xl bg-brand/15 text-brand">
+                    <Inbox className="size-12" aria-hidden />
                   </div>
-                  <div className="flex items-center gap-2 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-                    <Sparkles className="size-6 text-amber-500" aria-hidden />
+                  <div className="flex items-center gap-2 text-xl font-bold tracking-tight text-foreground">
+                    <Sparkles className="size-6 text-brand" aria-hidden />
                     {requests.length === 0 ? 'No schedule requests yet' : 'No requests match'}
                   </div>
-                  <p className="mt-3 max-w-md text-sm leading-relaxed text-slate-600 dark:text-slate-400">
+                  <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
                     {requests.length === 0
                       ? 'When you request a template or custom schedule, it will appear here with live status updates. Submit a new request using the button at the top of this page.'
                       : 'Try a different search keyword or clear the filter.'}
                   </p>
                 </div>
               ) : (
-                <div className="w-full min-w-0 touch-pan-x overflow-x-auto bg-card px-4 pb-8 pt-2 sm:px-6 md:px-8">
-                  <Table className="w-full min-w-[1020px]">
+                <div className="w-full min-w-0 touch-pan-x overflow-x-auto bg-card px-4 pb-5 pt-0 sm:px-6 md:px-8">
+                  <p className="py-3 text-xs text-muted-foreground">
+                    <span className="font-semibold tabular-nums text-foreground">{filteredRequests.length}</span>
+                    {filteredRequests.length === 1 ? ' request' : ' requests'}
+                    {requestsQuery.trim() ? ' · filtered' : ''}
+                  </p>
+                  <Table className="w-full min-w-[900px]">
                     <TableHeader>
-                      <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25 dark:hover:bg-muted/25">
-                        <TableHead className={cn('min-w-[6.5rem] py-3.5 pl-2 font-semibold sm:pl-3')}>
+                      <TableRow className="border-b border-border bg-muted/20 hover:bg-muted/20">
+                        <TableHead className={cn('min-w-26 py-3.5 pl-2 font-semibold sm:pl-3')}>
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Request ID</span>
                         </TableHead>
-                        <TableHead className="min-w-[11rem] py-3.5">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Requested schedule
-                          </span>
+                        <TableHead className="min-w-44 py-3.5">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Schedule name</span>
                         </TableHead>
-                        <TableHead className="min-w-[8.5rem] py-3.5">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Time</span>
+                        <TableHead className="min-w-48 py-3.5">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Proposed shift</span>
                         </TableHead>
-                        <TableHead className="min-w-[9rem] py-3.5">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Effective date
-                          </span>
-                        </TableHead>
-                        <TableHead className="min-w-[12rem] py-3.5">
+                        <TableHead className="min-w-56 py-3.5">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Note</span>
                         </TableHead>
-                        <TableHead className="min-w-[12rem] py-3.5">
+                        <TableHead className="min-w-48 py-3.5">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</span>
                         </TableHead>
-                        <TableHead className="min-w-[10rem] py-3.5">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Submitted
-                          </span>
+                        <TableHead className="min-w-40 py-3.5">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Submitted on</span>
                         </TableHead>
-                        <TableHead className="w-[7.5rem] min-w-[7.5rem] py-3.5 pr-2 text-right sm:pr-3">
+                        <TableHead className="w-30 min-w-30 py-3.5 pr-2 text-right sm:pr-3">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Actions</span>
                         </TableHead>
                       </TableRow>
@@ -599,8 +606,8 @@ export default function MySchedule() {
                         <TableRow
                           key={item.id}
                           className={cn(
-                            'border-b border-border/50 text-[15px] leading-snug transition-colors hover:bg-muted/25',
-                            rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10',
+                            'border-b border-border text-[15px] leading-snug transition-colors hover:bg-muted/25',
+                            rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/10',
                           )}
                         >
                           <TableCell className={cn('align-middle font-mono text-sm text-muted-foreground', cellPad)}>
@@ -608,7 +615,6 @@ export default function MySchedule() {
                           </TableCell>
                           <TableCell className={cn('align-top', cellPad)}>
                             {(() => {
-                              const details = scheduleDetailSummary(item)
                               return <div>
                               <p className="font-semibold leading-snug text-foreground">{requestedScheduleTitle(item)}</p>
                               {requestedScheduleSubtitle(item) ? (
@@ -617,32 +623,17 @@ export default function MySchedule() {
                               {String(item.request_kind || '').toLowerCase() === 'custom' ? (
                                 <Badge
                                   variant="outline"
-                                  className="mt-1.5 rounded-lg border-slate-200/90 bg-white px-2 py-0 text-[10px] font-medium shadow-sm dark:border-slate-700 dark:bg-slate-900/40"
+                                  className="mt-1.5 rounded-lg border-border bg-background px-2 py-0 text-[10px] font-medium shadow-sm"
                                 >
                                   Custom schedule
                                 </Badge>
                               ) : null}
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                {details.restDays.map((d) => (
-                                  <Badge
-                                    key={`${item.id}-rest-${d}`}
-                                    variant="outline"
-                                    className="rounded-full px-2 py-0 text-[10px]"
-                                  >
-                                    {String(d).toUpperCase()}
-                                  </Badge>
-                                ))}
-                                <span className="text-[11px] text-muted-foreground">Break: {details.breakLabel}</span>
-                                <span className="text-[11px] text-muted-foreground">Work: {details.workDaysCount} days/week</span>
-                              </div>
                             </div>
                             })()}
                           </TableCell>
-                          <TableCell className={cn('align-middle font-mono text-sm tabular-nums text-foreground', cellPad)}>
-                            {scheduleTimeRange(item)}
-                          </TableCell>
-                          <TableCell className={cn('align-middle text-sm tabular-nums text-foreground', cellPad)}>
-                            {formatShortDate(item.effective_from)}
+                          <TableCell className={cn('align-top', cellPad)}>
+                            <p className="font-mono text-sm tabular-nums text-foreground">{scheduleTimeRange(item)}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">Effective {formatShortDate(item.effective_from)}</p>
                           </TableCell>
                           <TableCell className={cn('max-w-[16rem] align-top', cellPad)}>
                             <RemarksPreviewCell text={item.remarks} />
@@ -676,12 +667,13 @@ export default function MySchedule() {
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent
-          className="w-full max-w-[min(100vw-1.25rem,80rem)] overflow-hidden border-border/60 bg-card p-0 shadow-2xl sm:max-w-[min(100vw-2rem,80rem)] dark:border-border/50"
+          closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
+          className="w-full max-w-[min(100vw-1.25rem,80rem)] overflow-hidden border-border bg-card p-0 shadow-2xl sm:max-w-[min(100vw-2rem,80rem)] dark:shadow-black/45"
           innerClassName="gap-0 overflow-hidden p-0 pr-0"
         >
           <div className="grid max-h-[min(92vh,900px)] min-h-0 grid-cols-1 items-stretch overflow-hidden xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <div className="min-h-0 overflow-y-auto bg-card overscroll-contain">
-              <DialogHeader className="border-b border-border/60 px-8 py-7">
+              <DialogHeader className="border-b border-border px-8 py-7">
                 <DialogTitle className="text-2xl tracking-tight">Request schedule change</DialogTitle>
                 <DialogDescription className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
                   Pick an existing template from Admin → Schedules, or describe a custom shift. Approved schedules apply to attendance, overtime, leave, and payroll.
@@ -718,7 +710,7 @@ export default function MySchedule() {
                               <button
                                 type="button"
                                 id="schedule-type-picker"
-                                className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-border/60 bg-background px-3 py-2 text-left shadow-sm transition-colors hover:bg-muted/20"
+                                className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left shadow-sm transition-colors hover:bg-muted/20"
                               >
                                 <div className="min-w-0 flex-1">
                                   <span className={cn('block truncate text-sm', selectedSchedule ? 'text-foreground' : 'text-muted-foreground')}>
@@ -731,14 +723,14 @@ export default function MySchedule() {
                               </button>
                             </PopoverTrigger>
                             <PopoverContent className="w-[min(100vw-2rem,40rem)] p-0" align="start">
-                              <div className="border-b border-border/60 p-3">
+                              <div className="border-b border-border p-3">
                                 <div className="relative">
                                   <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                                   <Input
                                     value={scheduleSearch}
                                     onChange={(e) => setScheduleSearch(e.target.value)}
                                     placeholder="Search by name, time, or workdays..."
-                                    className="h-10 border-border/60 bg-background pl-9"
+                                    className="h-10 border-border bg-background pl-9"
                                     autoFocus
                                   />
                                 </div>
@@ -777,7 +769,7 @@ export default function MySchedule() {
                           <p className="text-xs text-muted-foreground">After final approval, this template is assigned to you as-is.</p>
                         </div>
 
-                        <div className="rounded-xl border border-border/60 bg-background p-5 shadow-sm dark:border-border/50">
+                        <div className="rounded-xl border border-border bg-background p-5 shadow-sm dark:border-border/50">
                           <p className="text-sm font-medium text-foreground">Template preview</p>
                           {selectedSchedule ? (
                             <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -795,7 +787,7 @@ export default function MySchedule() {
                               <ScheduleMetaCard icon={CalendarClock} label="Rest Days" value={selectedSchedule.rest_days_label || 'None'} />
                             </div>
                           ) : (
-                            <div className="mt-4 rounded-lg border border-dashed border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground dark:border-border/50">
+                            <div className="mt-4 rounded-lg border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground dark:border-border/50">
                               Select a template to preview shift hours, break window, and rest days.
                             </div>
                           )}
@@ -818,7 +810,7 @@ export default function MySchedule() {
                             value={customForm.name}
                             onChange={(e) => setCustomForm((f) => ({ ...f, name: e.target.value }))}
                             placeholder="e.g. Early shift – Customer support"
-                            className="h-11 rounded-lg border-border/60 bg-background"
+                            className="h-11 rounded-lg border-border bg-background"
                             maxLength={255}
                           />
                         </div>
@@ -830,7 +822,7 @@ export default function MySchedule() {
                               type="time"
                               value={customForm.time_in}
                               onChange={(e) => setCustomForm((f) => ({ ...f, time_in: e.target.value }))}
-                              className="h-11 rounded-lg border-border/60 bg-background"
+                              className="h-11 rounded-lg border-border bg-background"
                               required
                             />
                           </div>
@@ -841,7 +833,7 @@ export default function MySchedule() {
                               type="time"
                               value={customForm.time_out}
                               onChange={(e) => setCustomForm((f) => ({ ...f, time_out: e.target.value }))}
-                              className="h-11 rounded-lg border-border/60 bg-background"
+                              className="h-11 rounded-lg border-border bg-background"
                               required
                             />
                           </div>
@@ -855,7 +847,7 @@ export default function MySchedule() {
                             {DAY_OPTIONS.map((d) => (
                               <label
                                 key={d.key}
-                                className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm shadow-sm"
+                                className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm shadow-sm"
                               >
                                 <Checkbox
                                   checked={customForm.rest_days.includes(d.key)}
@@ -879,7 +871,7 @@ export default function MySchedule() {
                               max={240}
                               value={customForm.break_duration_minutes}
                               onChange={(e) => setCustomForm((f) => ({ ...f, break_duration_minutes: e.target.value }))}
-                              className="h-11 rounded-lg border-border/60 bg-background"
+                              className="h-11 rounded-lg border-border bg-background"
                             />
                             <p className="text-[11px] text-muted-foreground">Placed in the middle of your shift span (same rule as payroll).</p>
                           </div>
@@ -889,7 +881,7 @@ export default function MySchedule() {
                               value={customForm.shift_type || 'none'}
                               onValueChange={(v) => setCustomForm((f) => ({ ...f, shift_type: v === 'none' ? '' : v }))}
                             >
-                              <SelectTrigger className="h-11 rounded-lg border-border/60 bg-background">
+                              <SelectTrigger className="h-11 rounded-lg border-border bg-background">
                                 <SelectValue placeholder="Select" />
                               </SelectTrigger>
                               <SelectContent>
@@ -912,7 +904,7 @@ export default function MySchedule() {
                               max={240}
                               value={customForm.grace_period_minutes}
                               onChange={(e) => setCustomForm((f) => ({ ...f, grace_period_minutes: e.target.value }))}
-                              className="h-11 rounded-lg border-border/60 bg-background"
+                              className="h-11 rounded-lg border-border bg-background"
                             />
                           </div>
                           <div className="space-y-2">
@@ -924,12 +916,12 @@ export default function MySchedule() {
                               max={480}
                               value={customForm.overtime_buffer_minutes}
                               onChange={(e) => setCustomForm((f) => ({ ...f, overtime_buffer_minutes: e.target.value }))}
-                              className="h-11 rounded-lg border-border/60 bg-background"
+                              className="h-11 rounded-lg border-border bg-background"
                             />
                           </div>
                         </div>
 
-                        <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground dark:border-border/50">
+                        <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground dark:border-border/50">
                           <span className="font-medium text-foreground">Work days per week: </span>
                           {7 - (customForm.rest_days?.length || 0)} ·
                           <span className="ml-2 font-medium text-foreground">Weekly hours (preview): </span>
@@ -954,7 +946,7 @@ export default function MySchedule() {
                         value={form.effective_from}
                         min={todayIsoLocal()}
                         onChange={(e) => setForm((prev) => ({ ...prev, effective_from: e.target.value }))}
-                        className="h-11 rounded-lg border-border/60 bg-background"
+                        className="h-11 rounded-lg border-border bg-background"
                         required
                       />
                     </div>
@@ -967,18 +959,18 @@ export default function MySchedule() {
                       value={form.remarks}
                       onChange={(e) => setForm((prev) => ({ ...prev, remarks: e.target.value }))}
                       placeholder="For example: agreed with your lead, or a temporary change."
-                      className="rounded-lg border-border/60 bg-background shadow-sm"
+                      className="rounded-lg border-border bg-background shadow-sm"
                     />
                   </div>
                 </RequestSection>
 
-                <DialogFooter className="border-t border-border/60 pt-6">
-                  <Button type="button" variant="outline" className="rounded-lg" onClick={() => setDialogOpen(false)}>
+                <DialogFooter className="border-t border-border pt-6">
+                  <Button type="button" variant="outline" className="rounded-lg border-border bg-background hover:bg-muted" onClick={() => setDialogOpen(false)}>
                     Cancel
                   </Button>
                   <Button
                     type="submit"
-                    className="rounded-lg bg-black text-white hover:bg-neutral-900 dark:bg-black dark:text-white dark:hover:bg-neutral-900"
+                    className="rounded-lg bg-linear-to-r from-brand to-brand-strong px-6 font-bold text-brand-foreground shadow-[0_18px_32px_-20px_color-mix(in_oklab,var(--brand)_40%,transparent)] hover:opacity-95 dark:shadow-black/35"
                     disabled={submitDisabled}
                   >
                     {submitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Plus className="mr-2 size-4" />}
@@ -988,8 +980,8 @@ export default function MySchedule() {
               </form>
             </div>
 
-            <aside className="flex h-full min-h-0 flex-col border-t border-border/60 bg-muted/20 lg:border-t-0 lg:border-l dark:border-border/50 dark:bg-muted/10">
-              <div className="shrink-0 border-b border-border/60 bg-muted/30 px-5 py-4 dark:bg-muted/15">
+            <aside className="flex h-full min-h-0 flex-col border-t border-border bg-muted/20 lg:border-t-0 lg:border-l dark:border-border/50 dark:bg-muted/10">
+              <div className="shrink-0 border-b border-border bg-muted/30 px-5 py-4 dark:bg-muted/15">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="space-y-1">
                     <Badge variant="outline" className="rounded-full border-border/70 bg-background text-muted-foreground">
@@ -1005,7 +997,7 @@ export default function MySchedule() {
 
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 lg:px-6 lg:py-6">
                 <div className="space-y-5 pb-2">
-                  <div className="rounded-xl border border-border/60 bg-card p-5 shadow-sm dark:border-border/50">
+                  <div className="rounded-xl border border-border bg-card p-5 shadow-sm dark:border-border/50">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
@@ -1023,7 +1015,7 @@ export default function MySchedule() {
                         </p>
                       </div>
                       {rightPanelSchedule ? (
-                        <Badge className="shrink-0 rounded-full bg-emerald-100 text-emerald-950 hover:bg-emerald-100 dark:bg-emerald-950/45 dark:text-emerald-50">
+                        <Badge className="shrink-0 rounded-full border border-transparent bg-chart-2/15 px-3 py-0.5 text-[11px] font-bold text-chart-2 hover:bg-chart-2/15">
                           Ready
                         </Badge>
                       ) : (
@@ -1035,9 +1027,9 @@ export default function MySchedule() {
                   </div>
 
                   {form.remarks?.trim() ? (
-                    <div className="rounded-xl border border-border/60 bg-amber-50/55 p-4 shadow-sm dark:border-amber-900/30 dark:bg-amber-950/20">
+                    <div className="rounded-xl border border-border bg-muted/20 p-4 shadow-sm">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Remarks</p>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{form.remarks.trim()}</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{form.remarks.trim()}</p>
                     </div>
                   ) : null}
 
@@ -1085,7 +1077,7 @@ export default function MySchedule() {
                     </>
                   ) : null}
 
-                  <div className="rounded-xl border border-border/60 bg-background/80 p-4 shadow-sm dark:border-border/50 dark:bg-background/40">
+                  <div className="rounded-xl border border-border bg-background/80 p-4 shadow-sm dark:border-border/50 dark:bg-background/40">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">After approval</p>
                     <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                       Your assigned schedule updates for <span className="font-medium text-foreground">clock in/out</span>,{' '}
@@ -1096,7 +1088,7 @@ export default function MySchedule() {
                     </p>
                   </div>
 
-                  <div className="rounded-xl border border-border/60 bg-card p-5 shadow-sm dark:border-border/50">
+                  <div className="rounded-xl border border-border bg-card p-5 shadow-sm dark:border-border/50">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Approval routing</p>
                     <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                       Your request goes through your manager, then HR final approval, depending on your role.
@@ -1122,7 +1114,10 @@ export default function MySchedule() {
       </Dialog>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-4xl border-border/60 bg-card shadow-2xl dark:border-border/50">
+        <DialogContent
+          closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
+          className="max-w-4xl border-border bg-card shadow-2xl dark:shadow-black/45"
+        >
           <DialogHeader>
             <DialogTitle>
               {selectedRequest
@@ -1136,7 +1131,7 @@ export default function MySchedule() {
           {selectedRequest ? (
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
               <div className="space-y-4">
-                <div className="rounded-xl border border-border/60 bg-muted/20 p-4 dark:border-border/50">
+                <div className="rounded-xl border border-border bg-muted/20 p-4">
                   <p className="text-sm font-medium text-foreground">Requested schedule</p>
                   <p className="mt-1 text-lg font-semibold text-foreground">{requestedScheduleTitle(selectedRequest)}</p>
                   {requestedScheduleSubtitle(selectedRequest) ? (
@@ -1170,21 +1165,21 @@ export default function MySchedule() {
                     </p>
                   ) : null}
                 </div>
-                <div className="rounded-xl border border-border/60 bg-background p-4 dark:border-border/50">
+                <div className="rounded-xl border border-border bg-background p-4 dark:border-border/50">
                   <p className="text-sm font-medium text-foreground">Effective date requested</p>
                   <p className="mt-2 text-sm tabular-nums text-muted-foreground">{formatShortDate(selectedRequest.effective_from)}</p>
                 </div>
-                <div className="rounded-xl border border-border/60 bg-amber-50/50 p-4 dark:border-amber-900/30 dark:bg-amber-950/20">
+                <div className="rounded-xl border border-border bg-muted/20 p-4">
                   <p className="text-sm font-medium text-foreground">Your note to approvers</p>
                   <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
                     {selectedRequest.remarks?.trim() ? selectedRequest.remarks : 'No note added.'}
                   </p>
                 </div>
-                <div className="rounded-xl border border-border/60 bg-background p-4 dark:border-border/50">
+                <div className="rounded-xl border border-border bg-background p-4 dark:border-border/50">
                   <p className="text-sm font-medium text-foreground">Approval history</p>
                   <div className="mt-3 space-y-3">
                     {(selectedRequest.approval_history || []).map((entry, index) => (
-                      <div key={`${entry.action}-${index}`} className="rounded-lg border border-border/60 px-3 py-3 dark:border-border/50">
+                      <div key={`${entry.action}-${index}`} className="rounded-lg border border-border px-3 py-3 dark:border-border/50">
                         <p className="text-sm font-medium text-foreground">{formatHistoryAction(entry.action)}</p>
                         <p className="text-xs text-muted-foreground">{entry.actor_name || 'System'} · {formatDateTime(entry.at)}</p>
                         <p className="mt-1 text-sm text-muted-foreground">
@@ -1207,29 +1202,64 @@ export default function MySchedule() {
 }
 
 function ScheduleMetaCard({ icon, label, value }) {
+  const toneClass = 'text-brand bg-brand/12 ring-brand/25'
+
   return (
-    <div className="rounded-xl border border-border/60 bg-background p-4 shadow-sm dark:border-border/50">
+    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
       <div className="flex items-center gap-2 text-muted-foreground">
-        {createElement(icon, { className: 'size-4', 'aria-hidden': true })}
-        <span className="text-xs font-medium uppercase tracking-[0.12em]">{label}</span>
+        <span className={cn('flex size-6 items-center justify-center rounded-full ring-1', toneClass)}>
+          {createElement(icon, { className: 'size-3.5', 'aria-hidden': true })}
+        </span>
+        <span className="text-xs font-bold uppercase tracking-[0.12em]">{label}</span>
       </div>
-      <p className="mt-3 text-sm font-medium leading-relaxed text-foreground">{value}</p>
+      <p className="mt-3 text-base font-bold leading-relaxed text-foreground">{value}</p>
     </div>
   )
 }
 
-function HeroStatCard({ label, value }) {
+function ScheduleMetricCard({ icon, label, value }) {
+  const toneClass = 'text-brand bg-brand/12 ring-brand/25'
+
   return (
-    <div className="rounded-xl border border-border/60 bg-background px-4 py-3 shadow-sm dark:border-border/50">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-foreground">{value}</p>
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-4 shadow-sm">
+      <div>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+        <p className="mt-2 text-lg font-extrabold text-foreground">{value}</p>
+      </div>
+      <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-xl ring-1', toneClass)}>
+        {createElement(icon, { className: 'size-5', 'aria-hidden': true })}
+      </span>
+    </div>
+  )
+}
+
+function DayStrip({ title, items, emptyLabel, tone }) {
+  const badgeClass =
+    tone === 'work'
+      ? 'border-transparent bg-chart-1/15 text-chart-1 hover:bg-chart-1/15'
+      : 'border-transparent bg-brand/15 text-brand hover:bg-brand/15'
+
+  return (
+    <div className="bg-muted/10 p-4 dark:bg-muted/5">
+      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {Array.isArray(items) && items.length > 0 ? (
+          items.map((item) => (
+            <Badge key={item} className={cn('rounded-full px-3 py-1 text-[11px] font-bold', badgeClass)}>
+              {compactDayLabel(item)}
+            </Badge>
+          ))
+        ) : (
+          <span className="text-sm text-muted-foreground">{emptyLabel}</span>
+        )}
+      </div>
     </div>
   )
 }
 
 function RequestSection({ eyebrow, title, description, children }) {
   return (
-    <section className="rounded-xl border border-border/60 bg-card p-6 shadow-sm dark:border-border/50">
+    <section className="rounded-xl border border-border bg-card p-6 shadow-sm dark:border-border/50">
       <div className="mb-5 space-y-1">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{eyebrow}</p>
         <h3 className="text-lg font-semibold text-foreground">{title}</h3>
@@ -1243,11 +1273,11 @@ function RequestSection({ eyebrow, title, description, children }) {
 function DayBadgePanel({ title, items, emptyLabel, tone }) {
   const toneClass =
     tone === 'sky'
-      ? 'bg-sky-100 text-sky-900 dark:bg-sky-950/45 dark:text-sky-100'
-      : 'bg-muted text-muted-foreground dark:bg-muted/70'
+      ? 'border-transparent bg-chart-1/15 text-chart-1 hover:bg-chart-1/15'
+      : 'border-border bg-muted text-muted-foreground hover:bg-muted'
 
   return (
-    <div className="rounded-xl border border-border/60 bg-background p-4 shadow-sm dark:border-border/50">
+    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{title}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {Array.isArray(items) && items.length > 0 ? (

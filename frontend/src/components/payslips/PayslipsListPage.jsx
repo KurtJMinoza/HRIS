@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getMyPayslipPdfBlob, getMyPayslips, userProfileImageSrc } from '@/api'
+import { getMyPayslipPdfBlob, getMyPayslips } from '@/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -11,9 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
-import { ArrowRight, CalendarRange, Download, Eye, FileText, Loader2, TrendingUp } from 'lucide-react'
-
-const TEXT = 'text-[#0A0A0A]'
+import { ArrowRight, CalendarDays, CalendarRange, Download, Eye, FileText, Loader2, TrendingUp } from 'lucide-react'
 
 function formatPeso(n) {
   const v = Number(n)
@@ -104,7 +101,7 @@ function MiniSparkline({ values, className }) {
     .join(' ')
 
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className={cn('shrink-0 text-slate-500', className)} aria-hidden>
+    <svg viewBox={`0 0 ${w} ${h}`} className={cn('shrink-0 text-muted-foreground', className)} aria-hidden>
       <polyline
         fill="none"
         stroke="currentColor"
@@ -115,14 +112,6 @@ function MiniSparkline({ values, className }) {
       />
     </svg>
   )
-}
-
-function initials(name) {
-  const s = String(name || '').trim()
-  if (!s) return '?'
-  const parts = s.split(/\s+/).filter(Boolean)
-  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-  return s.slice(0, 2).toUpperCase()
 }
 
 /**
@@ -293,7 +282,6 @@ export default function PayslipsListPage({ variant }) {
   const heroPeriod = hero ? formatPeriodRange(hero.pay_period_start, hero.pay_period_end) : '—'
   const heroPayDate = hero ? formatDate(hero.pay_date) : '—'
   const displayName = String(user?.name || 'there').trim() || 'there'
-  const avatarSrc = userProfileImageSrc(user)
 
   const filterSummary =
     fromDate && toDate
@@ -305,46 +293,49 @@ export default function PayslipsListPage({ variant }) {
           : 'Any pay date'
 
   return (
-    <div className="w-full min-w-0 max-w-none space-y-8 bg-white px-3 py-5 pb-12 sm:space-y-10 sm:px-4 md:px-5 lg:space-y-12 lg:px-6 lg:py-6 3xl:px-10">
+    <div className="w-full min-w-0 max-w-none space-y-8 bg-background px-3 py-5 pb-12 text-foreground sm:space-y-10 sm:px-4 md:px-5 lg:space-y-12 lg:px-6 lg:py-6 3xl:px-10">
       <header className="space-y-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0A0A0A]/55">Compensation</p>
-        <h1 className={cn('text-[1.75rem] font-bold tracking-tight text-[#0A0A0A] @md:text-[2.125rem]', TEXT)}>Payslips</h1>
-        <p className="max-w-3xl text-[15px] leading-relaxed text-[#0A0A0A]/65">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-brand">Compensation</p>
+        <h1 className="text-[1.75rem] font-bold tracking-tight text-foreground @md:text-[2.125rem]">Payslips</h1>
+        <p className="max-w-3xl text-[15px] leading-relaxed text-muted-foreground">
           Your payslips appear here after payroll is finalized and HR releases them with{' '}
-          <span className="font-medium text-[#0A0A0A]">Send payslips</span>.
+          <span className="font-medium text-foreground">Send payslips</span>.
         </p>
       </header>
 
       <section
-        className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm @md:p-8"
+        className="rounded-2xl border border-border bg-card p-6 shadow-sm @md:p-8"
         aria-label="Latest payment"
       >
         {hero ? (
           <div className="grid gap-8 @lg:grid-cols-[1fr_auto] @lg:items-center @lg:gap-10">
             <div className="min-w-0 space-y-5">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="text-sm font-medium text-[#0A0A0A]/60">Pay date {heroPayDate}</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-brand/30 bg-brand/10 px-3 py-1 text-sm font-medium text-brand dark:bg-brand/15">
+                  <CalendarDays className="h-4 w-4" aria-hidden />
+                  Pay date {heroPayDate}
+                </span>
               </div>
 
               <div>
-                <p className="text-[13px] font-medium text-[#0A0A0A]/55">
-                  Latest payslip · <span className="text-[#0A0A0A]">{displayName}</span>
+                <p className="text-[13px] font-medium text-muted-foreground">
+                  Latest payslip · <span className="text-foreground">{displayName}</span>
                 </p>
                 <p
-                  className="mt-2 text-[clamp(2.25rem,6vw,3.25rem)] font-bold leading-none tracking-tight tabular-nums text-[#0A0A0A]"
+                  className="mt-2 text-[clamp(2.25rem,6vw,3.25rem)] font-bold leading-none tracking-tight tabular-nums text-foreground"
                   style={{ fontFeatureSettings: '"tnum"' }}
                 >
                   {heroNet}
                 </p>
-                <p className="mt-3 text-base font-medium text-[#0A0A0A]/65">
-                  Net pay · <span className="text-[#0A0A0A]">{heroPeriod}</span>
+                <p className="mt-3 text-base font-medium text-muted-foreground">
+                  Net pay · <span className="text-foreground">{heroPeriod}</span>
                 </p>
               </div>
 
               <div className="flex flex-col gap-3 @sm:flex-row @sm:flex-wrap @sm:items-center">
                 <Button
                   type="button"
-                  className="h-11 rounded-xl bg-[#0A0A0A] px-7 text-[15px] font-semibold text-white shadow-sm transition hover:bg-[#0A0A0A]/90"
+                  className="h-11 rounded-xl bg-brand px-7 text-[15px] font-semibold text-brand-foreground shadow-sm transition hover:bg-brand-strong"
                   onClick={() => openView(Number(hero.id))}
                 >
                   View full breakdown
@@ -353,7 +344,7 @@ export default function PayslipsListPage({ variant }) {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-11 rounded-xl border-slate-200 bg-white px-6 text-[15px] font-semibold text-[#0A0A0A] hover:bg-slate-50"
+                  className="h-11 rounded-xl border-border bg-card px-6 text-[15px] font-semibold text-foreground hover:bg-muted/60"
                   disabled={downloadingId === Number(hero.id)}
                   onClick={(e) => handleDownloadPdf(e, Number(hero.id))}
                 >
@@ -367,24 +358,17 @@ export default function PayslipsListPage({ variant }) {
               </div>
             </div>
 
-            <div className="flex flex-row items-center justify-between gap-6 @lg:flex-col @lg:items-end">
-              <Avatar className="h-16 w-16 border border-slate-200 bg-white shadow-sm @md:h-20 @md:w-20">
-                <AvatarImage src={avatarSrc || undefined} alt="" />
-                <AvatarFallback className="bg-slate-100 text-base font-bold text-[#0A0A0A]">
-                  {initials(displayName)}
-                </AvatarFallback>
-              </Avatar>
-
+            <div className="flex flex-row items-center justify-end gap-6 @lg:flex-col @lg:items-end">
               <div className="flex flex-col items-end gap-2 text-right">
                 {chartSeries.length >= 2 ? (
                   <>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0A0A0A]/45">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                       Recent trend
                     </p>
                     <MiniSparkline values={chartSeries} className="h-10 w-[132px]" />
                   </>
                 ) : (
-                  <div className="rounded-xl bg-slate-50 px-4 py-3 text-right text-xs text-[#0A0A0A]/50">
+                  <div className="rounded-xl border border-brand/25 bg-brand/10 px-4 py-3 text-right text-xs text-brand dark:bg-brand/15">
                     More payslips unlock a net-pay trend chart.
                   </div>
                 )}
@@ -393,12 +377,12 @@ export default function PayslipsListPage({ variant }) {
           </div>
         ) : (
           <div className="flex flex-col items-center py-6 text-center @md:flex-row @md:items-center @md:gap-10 @md:text-left">
-            <div className="mb-6 flex h-24 w-24 shrink-0 items-center justify-center rounded-2xl bg-slate-100 @md:mb-0">
-              <FileText className="h-11 w-11 text-slate-400" strokeWidth={1.25} aria-hidden />
+            <div className="mb-6 flex h-24 w-24 shrink-0 items-center justify-center rounded-2xl bg-muted @md:mb-0">
+              <FileText className="h-11 w-11 text-muted-foreground" strokeWidth={1.25} aria-hidden />
             </div>
             <div>
-              <p className="text-lg font-semibold text-[#0A0A0A]">No payslips yet</p>
-              <p className="mt-2 max-w-md text-[15px] leading-relaxed text-[#0A0A0A]/60">
+              <p className="text-lg font-semibold text-foreground">No payslips yet</p>
+              <p className="mt-2 max-w-md text-[15px] leading-relaxed text-muted-foreground">
                 When HR finalizes payroll and sends your payslip, your latest net pay and history will show up here.
               </p>
             </div>
@@ -434,15 +418,24 @@ export default function PayslipsListPage({ variant }) {
             ].map((m) => (
               <div
                 key={m.label}
-                className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm transition hover:bg-slate-50/80"
+                className="rounded-2xl border border-border bg-card p-5 shadow-sm transition hover:bg-muted/40"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#0A0A0A]/50">{m.label}</p>
-                    <p className="mt-2 text-xl font-bold tabular-nums text-[#0A0A0A] @md:text-2xl">{m.value}</p>
-                    <p className="mt-1 text-xs text-[#0A0A0A]/55">{m.sub}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">{m.label}</p>
+                    <p className="mt-2 text-xl font-bold tabular-nums text-foreground @md:text-2xl">{m.value}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{m.sub}</p>
                   </div>
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-[#0A0A0A]">
+                  <span
+                    className={cn(
+                      'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
+                      m.label.startsWith('Net') && 'bg-brand/15 text-brand',
+                      m.label === 'Average net' &&
+                        'bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300',
+                      m.label === 'Vs prior period' &&
+                        'bg-violet-500/12 text-violet-700 dark:bg-violet-400/15 dark:text-violet-300',
+                    )}
+                  >
                     <m.icon className="h-5 w-5" aria-hidden />
                   </span>
                 </div>
@@ -451,14 +444,14 @@ export default function PayslipsListPage({ variant }) {
           </div>
         ) : null}
 
-        <Card className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
-          <div className="border-b border-slate-100 bg-white px-6 py-5 @md:px-8">
-            <h2 className="text-lg font-semibold text-[#0A0A0A]">Historical payslips</h2>
-            <p className="mt-1 text-sm text-[#0A0A0A]/60">Filter by pay period, then open or download.</p>
+        <Card className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          <div className="border-b border-border bg-card px-6 py-5 @md:px-8">
+            <h2 className="text-lg font-semibold text-foreground">Historical payslips</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Filter by pay period, then open or download.</p>
           </div>
           <CardContent className="space-y-6 p-6 @md:p-8">
             <div className="space-y-4">
-              <Label className="text-xs font-semibold uppercase tracking-[0.1em] text-[#0A0A0A]/45">Date range</Label>
+              <Label className="text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">Date range</Label>
               <div className="flex flex-wrap gap-2">
                 {DATE_PRESETS.map((p) => (
                   <button
@@ -472,21 +465,21 @@ export default function PayslipsListPage({ variant }) {
                       applyDatePreset(p.id)
                     }}
                     className={cn(
-                      'rounded-full border px-4 py-2 text-sm font-semibold text-[#0A0A0A] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0A0A0A]/20',
+                      'rounded-full border px-4 py-2 text-sm font-semibold text-foreground transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       datePreset === p.id
-                        ? 'border-[#0A0A0A] bg-[#0A0A0A] text-white shadow-sm'
-                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
+                        ? 'border-brand bg-brand text-brand-foreground shadow-sm'
+                        : 'border-border bg-card hover:bg-muted/50',
                     )}
                   >
                     {p.label}
                   </button>
                 ))}
               </div>
-              <p className="text-sm text-[#0A0A0A]/50">{filterSummary}</p>
+              <p className="text-sm text-muted-foreground">{filterSummary}</p>
               {datePreset === 'custom' ? (
                 <div className="grid max-w-xl gap-4 @md:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="payslips-from" className="text-[#0A0A0A]/70">
+                    <Label htmlFor="payslips-from" className="text-muted-foreground">
                       From
                     </Label>
                     <Input
@@ -497,11 +490,11 @@ export default function PayslipsListPage({ variant }) {
                         setFromDate(e.target.value)
                         setPage(1)
                       }}
-                      className="h-11 rounded-xl border-slate-200 text-[#0A0A0A] focus-visible:ring-[#0A0A0A]/15"
+                      className="h-11 rounded-xl border-border bg-background text-foreground"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="payslips-to" className="text-[#0A0A0A]/70">
+                    <Label htmlFor="payslips-to" className="text-muted-foreground">
                       To
                     </Label>
                     <Input
@@ -512,7 +505,7 @@ export default function PayslipsListPage({ variant }) {
                         setToDate(e.target.value)
                         setPage(1)
                       }}
-                      className="h-11 rounded-xl border-slate-200 text-[#0A0A0A] focus-visible:ring-[#0A0A0A]/15"
+                      className="h-11 rounded-xl border-border bg-background text-foreground"
                     />
                   </div>
                 </div>
@@ -520,38 +513,38 @@ export default function PayslipsListPage({ variant }) {
             </div>
 
             {/* Desktop table — borderless rows, light hover */}
-            <div className="hidden overflow-x-auto rounded-xl bg-slate-50/40 @md:block">
+            <div className="hidden overflow-x-auto rounded-xl bg-muted/30 @md:block">
               <Table>
                 <TableHeader className="[&_tr]:border-0">
                   <TableRow className="border-0 bg-transparent hover:bg-transparent">
-                    <TableHead className="py-3.5 pl-4 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#0A0A0A]/50">
+                    <TableHead className="py-3.5 pl-4 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
                       Pay period
                     </TableHead>
-                    <TableHead className="py-3.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#0A0A0A]/50">
+                    <TableHead className="py-3.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
                       Pay date
                     </TableHead>
-                    <TableHead className="py-3.5 text-right text-[11px] font-semibold uppercase tracking-[0.1em] text-[#0A0A0A]/50">
+                    <TableHead className="py-3.5 text-right text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
                       Net pay
                     </TableHead>
-                    <TableHead className="py-3.5 pr-4 text-right text-[11px] font-semibold uppercase tracking-[0.1em] text-[#0A0A0A]/50">
+                    <TableHead className="py-3.5 pr-4 text-right text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
                       Actions
                     </TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody className="divide-y divide-slate-100/90">
+                <TableBody className="divide-y divide-border">
                   {loading ? (
                     <TableRow className="border-0 hover:bg-transparent">
                       <TableCell colSpan={colSpan} className="py-20 text-center">
-                        <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-[#0A0A0A]/35" />
-                        <p className="text-sm font-medium text-[#0A0A0A]/60">Loading your payslips…</p>
+                        <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-muted-foreground" />
+                        <p className="text-sm font-medium text-muted-foreground">Loading your payslips…</p>
                       </TableCell>
                     </TableRow>
                   ) : sorted.length === 0 ? (
                     <TableRow className="border-0 hover:bg-transparent">
                       <TableCell colSpan={colSpan} className="py-16 text-center">
-                        <FileText className="mx-auto mb-3 h-10 w-10 text-slate-300" strokeWidth={1.25} />
-                        <p className="font-medium text-[#0A0A0A]">No payslips match these filters</p>
-                        <p className="mt-1 text-sm text-[#0A0A0A]/55">Try another date range.</p>
+                        <FileText className="mx-auto mb-3 h-10 w-10 text-muted-foreground/50" strokeWidth={1.25} />
+                        <p className="font-medium text-foreground">No payslips match these filters</p>
+                        <p className="mt-1 text-sm text-muted-foreground">Try another date range.</p>
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -562,24 +555,24 @@ export default function PayslipsListPage({ variant }) {
                       return (
                         <TableRow
                           key={id}
-                          className="group cursor-pointer border-0 transition hover:bg-white"
+                          className="group cursor-pointer border-0 transition hover:bg-muted/40"
                           onClick={() => openView(id)}
                         >
                           <TableCell className="max-w-[240px] py-4 pl-4 align-middle">
                             <div className="flex items-start gap-3">
-                              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[#0A0A0A] transition group-hover:bg-slate-200/80">
+                              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/15 text-brand transition group-hover:bg-brand/25">
                                 <FileText className="h-4 w-4" aria-hidden />
                               </span>
                               <div>
-                                <p className="text-[15px] font-semibold leading-snug text-[#0A0A0A]">{periodLine}</p>
-                                <p className="mt-0.5 text-xs text-[#0A0A0A]/50">{sub}</p>
+                                <p className="text-[15px] font-semibold leading-snug text-foreground">{periodLine}</p>
+                                <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="py-4 align-middle text-[15px] text-[#0A0A0A]/70">
+                          <TableCell className="py-4 align-middle text-[15px] text-muted-foreground">
                             {formatDate(row.pay_date)}
                           </TableCell>
-                          <TableCell className="py-4 align-middle text-right text-lg font-bold tabular-nums text-[#0A0A0A]">
+                          <TableCell className="py-4 align-middle text-right text-lg font-bold tabular-nums text-foreground">
                             {formatPeso(row.net_pay)}
                           </TableCell>
                           <TableCell className="py-4 pr-4 text-right align-middle" onClick={(e) => e.stopPropagation()}>
@@ -588,7 +581,7 @@ export default function PayslipsListPage({ variant }) {
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="h-9 shrink-0 gap-1.5 rounded-lg border-slate-200 font-semibold text-[#0A0A0A] hover:bg-slate-50"
+                                className="h-9 shrink-0 gap-1.5 rounded-lg border-border font-semibold text-foreground hover:bg-muted/60"
                                 onClick={() => openView(id)}
                               >
                                 <Eye className="h-4 w-4" aria-hidden />
@@ -596,8 +589,9 @@ export default function PayslipsListPage({ variant }) {
                               </Button>
                               <Button
                                 type="button"
+                                variant="outline"
                                 size="sm"
-                                className="h-9 shrink-0 gap-1.5 rounded-lg bg-[#0A0A0A] font-semibold text-white hover:bg-[#0A0A0A]/90"
+                                className="h-9 shrink-0 gap-1.5 rounded-lg border-border font-semibold text-foreground hover:bg-muted/60"
                                 disabled={downloadingId === id}
                                 onClick={(e) => handleDownloadPdf(e, id)}
                               >
@@ -619,34 +613,34 @@ export default function PayslipsListPage({ variant }) {
             </div>
 
             {/* Mobile list — no card borders */}
-            <div className="divide-y divide-slate-100 @md:hidden">
+            <div className="divide-y divide-border @md:hidden">
               {loading ? (
-                <div className="flex flex-col items-center bg-white py-14">
-                  <Loader2 className="mb-3 h-8 w-8 animate-spin text-[#0A0A0A]/35" />
-                  <p className="text-sm text-[#0A0A0A]/60">Loading…</p>
+                <div className="flex flex-col items-center bg-card py-14">
+                  <Loader2 className="mb-3 h-8 w-8 animate-spin text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">Loading…</p>
                 </div>
               ) : sorted.length === 0 ? (
-                <div className="bg-slate-50/50 px-4 py-12 text-center">
-                  <FileText className="mx-auto mb-3 h-10 w-10 text-slate-300" strokeWidth={1.25} />
-                  <p className="font-medium text-[#0A0A0A]">No payslips match these filters</p>
+                <div className="bg-muted/30 px-4 py-12 text-center">
+                  <FileText className="mx-auto mb-3 h-10 w-10 text-muted-foreground/50" strokeWidth={1.25} />
+                  <p className="font-medium text-foreground">No payslips match these filters</p>
                 </div>
               ) : (
                 sorted.map((row) => {
                   const id = Number(row.id)
                   const periodLine = formatPeriodRange(row.pay_period_start, row.pay_period_end)
                   return (
-                    <div key={id} className="bg-white transition hover:bg-slate-50/70">
+                    <div key={id} className="bg-card transition hover:bg-muted/40">
                       <button
                         type="button"
-                        className="w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0A0A0A]/10"
+                        className="w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={() => openView(id)}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="text-[15px] font-semibold text-[#0A0A0A]">{periodLine}</p>
-                            <p className="mt-0.5 text-xs text-[#0A0A0A]/50">{formatDate(row.pay_date)}</p>
+                            <p className="text-[15px] font-semibold text-foreground">{periodLine}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{formatDate(row.pay_date)}</p>
                           </div>
-                          <p className="shrink-0 text-lg font-bold tabular-nums text-[#0A0A0A]">{formatPeso(row.net_pay)}</p>
+                          <p className="shrink-0 text-lg font-bold tabular-nums text-foreground">{formatPeso(row.net_pay)}</p>
                         </div>
                       </button>
                       <div className="flex flex-wrap items-center justify-end gap-2 px-4 pb-4">
@@ -654,15 +648,16 @@ export default function PayslipsListPage({ variant }) {
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="h-8 rounded-lg border-slate-200 font-semibold text-[#0A0A0A]"
+                          className="h-8 rounded-lg border-border font-semibold text-foreground"
                           onClick={() => openView(id)}
                         >
                           View
                         </Button>
                         <Button
                           type="button"
+                          variant="outline"
                           size="sm"
-                          className="h-8 rounded-lg bg-[#0A0A0A] font-semibold text-white"
+                          className="h-8 rounded-lg border-border font-semibold text-foreground"
                           disabled={downloadingId === id}
                           onClick={(e) => void handleDownloadPdf(e, id)}
                         >
@@ -676,13 +671,13 @@ export default function PayslipsListPage({ variant }) {
             </div>
 
             {totalCount > 0 ? (
-              <div className="flex flex-col gap-4 border-t border-slate-100 pt-6 @md:flex-row @md:items-center @md:justify-between">
-                <p className="text-sm text-[#0A0A0A]/55">
+              <div className="flex flex-col gap-4 border-t border-border pt-6 @md:flex-row @md:items-center @md:justify-between">
+                <p className="text-sm text-muted-foreground">
                   Showing{' '}
-                  <span className="font-semibold text-[#0A0A0A]">
+                  <span className="font-semibold text-foreground">
                     {rangeFrom}–{rangeTo}
                   </span>{' '}
-                  of <span className="font-semibold text-[#0A0A0A]">{totalCount}</span> payslips
+                  of <span className="font-semibold text-foreground">{totalCount}</span> payslips
                 </p>
                 {lastPage > 1 ? (
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -690,7 +685,7 @@ export default function PayslipsListPage({ variant }) {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-9 min-w-9 rounded-xl border-slate-200/90"
+                      className="h-9 min-w-9 rounded-xl border-border"
                       disabled={page <= 1 || loading}
                       onClick={() => setPage((p) => Math.max(1, p - 1))}
                     >
@@ -698,20 +693,20 @@ export default function PayslipsListPage({ variant }) {
                     </Button>
                     {pageNumbers.map((p, idx) =>
                       p === '…' ? (
-                        <span key={`pg-${idx}`} className="px-1 text-[#0A0A0A]/35">
+                        <span key={`pg-${idx}`} className="px-1 text-muted-foreground/50">
                           …
                         </span>
                       ) : (
                         <Button
                           key={p}
                           type="button"
-                          variant={page === p ? 'default' : 'outline'}
+                          variant="outline"
                           size="sm"
                           className={cn(
                             'h-9 min-w-9 rounded-xl px-3',
                             page === p
-                              ? 'border-[#0A0A0A] bg-[#0A0A0A] text-white hover:bg-[#0A0A0A]/90'
-                              : 'border-slate-200 text-[#0A0A0A]',
+                              ? 'border-brand bg-brand text-brand-foreground hover:bg-brand-strong'
+                              : 'border-border text-foreground hover:bg-muted/50',
                           )}
                           disabled={loading}
                           onClick={() => setPage(p)}
@@ -724,7 +719,7 @@ export default function PayslipsListPage({ variant }) {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-9 min-w-9 rounded-xl border-slate-200/90"
+                      className="h-9 min-w-9 rounded-xl border-border"
                       disabled={page >= lastPage || loading}
                       onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
                     >

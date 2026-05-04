@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { companyLogoUrl, userProfileImageSrc } from '@/api'
+import { companyLogoUrl } from '@/api'
 import { displayCompanyAddress, displayCompanyTin } from '@/lib/payslipCompanyDisplay'
 import { cn } from '@/lib/utils'
 
@@ -160,7 +160,6 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
   }, [data, isPreviewMode, isSentFinalizedLike, payrollStatusRaw])
 
   const companyLogoSrc = companyLogoUrl(data?.company ?? null)
-  const employeeAvatarSrc = userProfileImageSrc(data?.employee)
 
   const generatedFooter = useMemo(
     () =>
@@ -245,21 +244,9 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
           <h2 className="mb-4 border-l-[3px] border-l-emerald-600 pl-3 text-lg font-bold uppercase tracking-[0.08em] text-[#0A0A0A]">
             Employee Information
           </h2>
-          <div data-payslip-avatar className="mb-4 flex items-center gap-3">
-            <div
-              data-payslip-avatar-photo
-              className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200/80 bg-white"
-            >
-              {employeeAvatarSrc ? (
-                <img src={employeeAvatarSrc} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <span className="text-lg font-semibold text-muted-foreground">{(data?.employee?.name || '?').slice(0, 1).toUpperCase()}</span>
-              )}
-            </div>
-            <div data-payslip-employee-headline>
-              <p className="text-[1.05rem] font-bold text-[#0A0A0A]">{data?.employee?.name || '—'}</p>
-              <p className="text-[13px] text-[#0A0A0A]/70">{data?.employee?.position?.trim() || '—'}</p>
-            </div>
+          <div data-payslip-employee-headline className="mb-4">
+            <p className="text-[1.05rem] font-bold text-[#0A0A0A]">{data?.employee?.name || '—'}</p>
+            <p className="text-[13px] text-[#0A0A0A]/70">{data?.employee?.position?.trim() || '—'}</p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="grid grid-cols-1 gap-4">
