@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { createElement, useEffect, useState, useCallback, useMemo } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
   Loader2,
@@ -21,6 +21,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  FileText,
+  Send,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -44,17 +46,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
-  ADMIN_FORM_DIALOG_BODY_CLASS,
-  ADMIN_FORM_DIALOG_DESC_CLASS,
-  ADMIN_FORM_DIALOG_FOOTER_CLASS,
-  ADMIN_FORM_DIALOG_HEADER_INNER_CLASS,
-  ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS,
-  ADMIN_FORM_DIALOG_MAX_W_MD,
-  ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS,
-  ADMIN_FORM_DIALOG_TITLE_CLASS,
-  adminFormDialogContentClass,
-} from '@/lib/adminFormDialogStyles'
-import {
   Table,
   TableBody,
   TableCell,
@@ -65,6 +56,7 @@ import {
 import {
   issueLabel,
   remarksUserText,
+  reviewStatusKey,
   reviewStatusSortValue,
   formatTimeOnly,
 } from '@/lib/presenceFilingTable'
@@ -150,6 +142,48 @@ function humanStepStatus(status) {
     default:
       return status ? String(status) : '—'
   }
+}
+
+const brandCardClass =
+  'rounded-2xl border border-slate-200 bg-white shadow-[0_18px_50px_-36px_rgba(15,23,42,0.75)] dark:border-slate-800 dark:bg-slate-950/70 dark:shadow-black/30'
+
+function RequestStatCard({ icon, value, label, hint, tone = 'orange' }) {
+  const tones = {
+    orange: {
+      shell: 'bg-orange-50 text-orange-600 ring-orange-100 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/20',
+      value: 'text-orange-600 dark:text-orange-300',
+    },
+    blue: {
+      shell: 'bg-blue-50 text-blue-600 ring-blue-100 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/20',
+      value: 'text-blue-600 dark:text-blue-300',
+    },
+    green: {
+      shell: 'bg-emerald-50 text-emerald-600 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20',
+      value: 'text-emerald-600 dark:text-emerald-300',
+    },
+    red: {
+      shell: 'bg-red-50 text-red-600 ring-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/20',
+      value: 'text-red-600 dark:text-red-300',
+    },
+  }
+  const t = tones[tone] ?? tones.orange
+
+  return (
+    <Card className={cn(brandCardClass, 'overflow-hidden')}>
+      <CardContent className="flex items-center gap-5 p-5 @md:p-6">
+        <div className={cn('flex size-16 shrink-0 items-center justify-center rounded-full ring-1', t.shell)}>
+          {createElement(icon, { className: 'size-7', 'aria-hidden': true })}
+        </div>
+        <div className="min-w-0">
+          <p className={cn('text-3xl font-extrabold leading-none tabular-nums tracking-tight', t.value)}>
+            {value}
+          </p>
+          <p className="mt-2 text-base font-semibold text-slate-700 dark:text-slate-200">{label}</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{hint}</p>
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
 /** Large status pill with icon — employee-facing */
@@ -283,6 +317,9 @@ export default function EmployeeCorrectionRequests() {
   const [fileSubmitting, setFileSubmitting] = useState(false)
 
   const [listSearch, setListSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [sortKey, setSortKey] = useState('filed_at')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -321,6 +358,15 @@ export default function EmployeeCorrectionRequests() {
           (row.employee_position || '').toLowerCase().includes(q) ||
           (row.employee_role_label || '').toLowerCase().includes(q)
       )
+    }
+    if (statusFilter !== 'all') {
+      list = list.filter((row) => reviewStatusKey(row) === statusFilter)
+    }
+    if (fromDate) {
+      list = list.filter((row) => !row.date || row.date >= fromDate)
+    }
+    if (toDate) {
+      list = list.filter((row) => !row.date || row.date <= toDate)
     }
     const dir = sortDir === 'asc' ? 1 : -1
     const key = sortKey
@@ -375,7 +421,20 @@ export default function EmployeeCorrectionRequests() {
       return 0
     })
     return list
-  }, [items, listSearch, sortKey, sortDir])
+  }, [items, listSearch, statusFilter, fromDate, toDate, sortKey, sortDir])
+
+  const requestStats = useMemo(() => {
+    const out = { total: items.length, pending: 0, approved: 0, rejected: 0 }
+    for (const item of items) {
+      const key = reviewStatusKey(item)
+      if (key === 'rejected') out.rejected += 1
+      else if (key === 'hr_approved') out.approved += 1
+      else out.pending += 1
+    }
+    return out
+  }, [items])
+
+  const hasActiveFilters = Boolean(listSearch.trim() || statusFilter !== 'all' || fromDate || toDate)
 
   function toggleSort(key) {
     if (sortKey === key) {
@@ -390,16 +449,14 @@ export default function EmployeeCorrectionRequests() {
     const active = sortKey === col
     const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown
     return (
-      <Button
+      <button
         type="button"
-        variant="ghost"
-        size="sm"
-        className="-ml-2 h-9 gap-1.5 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+        className="-ml-2 inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-extrabold uppercase tracking-wide text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-50"
         onClick={() => toggleSort(col)}
       >
         {label}
-        <Icon className={cn('size-3.5', active ? 'text-primary opacity-100' : 'opacity-50')} />
-      </Button>
+        <Icon className={cn('size-3.5', active ? 'text-orange-600 opacity-100 dark:text-orange-300' : 'opacity-50')} />
+      </button>
     )
   }
 
@@ -485,22 +542,22 @@ export default function EmployeeCorrectionRequests() {
 
   return (
     <Motion.div
-      className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full space-y-6 overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
+      className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
     >
-      <div className="mx-auto w-full max-w-full space-y-8 px-1 @sm:px-0">
+      <div className="mx-auto w-full max-w-full space-y-7 px-1 @sm:px-0">
         {/* Hero */}
-        <header className="flex flex-col gap-6 border-b border-slate-200/80 pb-8 dark:border-slate-800 @lg:flex-row @lg:items-end @lg:justify-between">
+        <header className="flex flex-col gap-6 pb-2 @lg:flex-row @lg:items-end @lg:justify-between">
           <div className="max-w-2xl space-y-3">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-              My requests
+            <p className="text-sm font-extrabold uppercase tracking-[0.14em] text-orange-600 dark:text-orange-300">
+              My Requests
             </p>
-            <h1 className="hr-page-title text-slate-900 dark:text-slate-50">
+            <h1 className="text-3xl font-extrabold tracking-tight text-slate-950 dark:text-slate-50 @md:text-4xl">
               My Correction Requests
             </h1>
-            <p className="text-base leading-relaxed text-slate-600 dark:text-slate-400">
+            <p className="text-base leading-relaxed text-slate-500 dark:text-slate-400">
               Track all your attendance correction requests and their approval status.
           </p>
         </div>
@@ -508,7 +565,7 @@ export default function EmployeeCorrectionRequests() {
             <Button
               type="button"
               variant="outline"
-              className="h-11 flex-1 gap-2 rounded-xl border-slate-200 bg-white @lg:flex-initial dark:border-slate-700 dark:bg-slate-950"
+              className="h-12 flex-1 gap-2 rounded-xl border-slate-200 bg-white px-5 text-base font-semibold text-slate-900 shadow-sm hover:bg-slate-50 @lg:flex-initial dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
               onClick={() => load()}
               disabled={loading}
             >
@@ -517,7 +574,7 @@ export default function EmployeeCorrectionRequests() {
           </Button>
             <Button
               type="button"
-              className="h-11 flex-1 gap-2 rounded-xl bg-black px-5 text-white shadow-lg shadow-black/20 ring-1 ring-black/20 @lg:flex-initial dark:bg-black dark:text-white dark:ring-white/15"
+              className="h-12 flex-1 gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-6 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700 @lg:flex-initial"
               onClick={openFileDialog}
             >
               <Plus className="size-4" />
@@ -526,9 +583,40 @@ export default function EmployeeCorrectionRequests() {
         </div>
         </header>
 
+        <section className="grid gap-5 @md:grid-cols-2 @xl:grid-cols-4">
+          <RequestStatCard
+            icon={FileText}
+            value={requestStats.total}
+            label="Total Requests"
+            hint="All correction requests"
+            tone="orange"
+          />
+          <RequestStatCard
+            icon={Clock}
+            value={requestStats.pending}
+            label="Pending"
+            hint="Awaiting approval"
+            tone="blue"
+          />
+          <RequestStatCard
+            icon={CheckCircle2}
+            value={requestStats.approved}
+            label="Approved"
+            hint="Successfully approved"
+            tone="green"
+          />
+          <RequestStatCard
+            icon={XCircle}
+            value={requestStats.rejected}
+            label="Rejected"
+            hint="Not approved"
+            tone="red"
+          />
+        </section>
+
         {/* Main card */}
-        <Card className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xl shadow-slate-200/50 ring-1 ring-slate-100/80 dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-black/40 dark:ring-slate-800/50">
-          <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-6 py-6 dark:border-slate-800 dark:from-slate-900/40 dark:to-slate-950/20">
+        <Card className={cn(brandCardClass, 'overflow-hidden')}>
+          <CardHeader className="border-b border-slate-100 bg-white px-6 py-6 dark:border-slate-800 dark:bg-slate-950/80">
             <CardTitle className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
               Your filings
             </CardTitle>
@@ -557,52 +645,101 @@ export default function EmployeeCorrectionRequests() {
                 </p>
                 <Button
                   type="button"
-                  className="mt-8 rounded-xl bg-black px-6 text-white hover:bg-black/90 dark:bg-black"
+                  className="mt-8 rounded-xl bg-orange-600 px-6 font-bold text-white hover:bg-orange-700"
                   onClick={openFileDialog}
                 >
                   <Plus className="size-4" />
                   File correction
                 </Button>
               </div>
-            ) : filteredSorted.length === 0 && listSearch.trim() ? (
+            ) : filteredSorted.length === 0 && hasActiveFilters ? (
               <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
                 <p className="text-lg font-semibold text-slate-900 dark:text-slate-50">No matching requests</p>
                 <p className="mt-2 max-w-md text-sm text-slate-600 dark:text-slate-400">
-                  Try a different keyword or clear the search box.
+                  Try a different keyword, status, or date range.
                 </p>
-                <Button type="button" variant="outline" className="mt-6 rounded-xl" onClick={() => setListSearch('')}>
-                  Clear search
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-6 rounded-xl"
+                  onClick={() => {
+                    setListSearch('')
+                    setStatusFilter('all')
+                    setFromDate('')
+                    setToDate('')
+                  }}
+                >
+                  Clear filters
                 </Button>
               </div>
             ) : (
               <AnimatedSection staggerChildren={0.03} duration={0.4}>
-                <div className="bg-muted/15 px-4 py-4 dark:bg-muted/10 @sm:px-6">
-                  <div className="relative max-w-xl">
-                    <Search
-                      className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                      aria-hidden
-                    />
-                    <Input
-                      type="search"
-                      value={listSearch}
-                      onChange={(e) => setListSearch(e.target.value)}
-                      placeholder="Search employee, date, status, issue type, remarks…"
-                      className="h-11 rounded-xl border-slate-200/90 bg-white pl-10 pr-4 dark:border-slate-700 dark:bg-slate-950/45"
-                      aria-label="Search correction requests"
-                    />
+                <div className="flex flex-col gap-4 bg-white px-4 py-5 dark:bg-slate-950/60 @lg:flex-row @lg:items-center @lg:justify-between @sm:px-6">
+                  <div className="min-w-0 flex-1">
+                    <div className="relative max-w-2xl">
+                      <Search
+                        className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-slate-400"
+                        aria-hidden
+                      />
+                      <Input
+                        type="search"
+                        value={listSearch}
+                        onChange={(e) => setListSearch(e.target.value)}
+                        placeholder="Search employee, date, status, issue type, remarks..."
+                        className="h-12 rounded-xl border-slate-200 bg-white pl-12 pr-4 text-base shadow-sm focus-visible:ring-orange-500/25 dark:border-slate-700 dark:bg-slate-900/70"
+                        aria-label="Search correction requests"
+                      />
+                    </div>
+                    <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+                      Showing{' '}
+                      <span className="font-bold tabular-nums text-slate-950 dark:text-slate-50">
+                        {filteredSorted.length}
+                      </span>
+                      {filteredSorted.length === 1 ? ' request' : ' requests'}
+                      {hasActiveFilters ? ' - filtered' : ''}. Use column headers to sort.
+                    </p>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Showing <span className="font-semibold tabular-nums text-foreground">{filteredSorted.length}</span>
-                    {filteredSorted.length === 1 ? ' request' : ' requests'}
-                    {listSearch.trim() ? ' · filtered' : ''}. Use column headers to sort.
-                  </p>
+                  <div className="grid gap-3 @sm:grid-cols-[10rem_10rem_12rem] @lg:shrink-0">
+                    <div className="relative">
+                      <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                      <Input
+                        type="date"
+                        value={fromDate}
+                        onChange={(e) => setFromDate(e.target.value)}
+                        className="h-12 rounded-xl border-slate-200 bg-white pl-9 text-sm font-semibold shadow-sm dark:border-slate-700 dark:bg-slate-900"
+                        aria-label="Filter from date"
+                      />
+                    </div>
+                    <div className="relative">
+                      <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                      <Input
+                        type="date"
+                        value={toDate}
+                        onChange={(e) => setToDate(e.target.value)}
+                        className="h-12 rounded-xl border-slate-200 bg-white pl-9 text-sm font-semibold shadow-sm dark:border-slate-700 dark:bg-slate-900"
+                        aria-label="Filter to date"
+                      />
+                    </div>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-white text-sm font-semibold shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                        <SelectValue placeholder="All status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All status</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="department_approved">Department Approved</SelectItem>
+                        <SelectItem value="hr_approved">Approved</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
 
                 {/* Desktop / tablet: scrollable table; Remarks + Date filed only at xl+ */}
-                <div className="hidden w-full min-w-0 touch-pan-x overflow-x-auto bg-card lg:block">
+                <div className="hidden w-full min-w-0 touch-pan-x overflow-x-auto border-t border-slate-100 bg-white dark:border-slate-800 dark:bg-slate-950/40 lg:block">
                   <Table className="w-full min-w-[720px] xl:min-w-[980px]">
                     <TableHeader className="[&_tr]:border-b-0">
-                      <TableRow className="border-0 bg-muted/40 dark:bg-muted/25">
+                      <TableRow className="border-0 bg-slate-50/80 dark:bg-slate-900/70">
                         <TableHead className="min-w-[200px] py-3.5 pl-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="employee_name" label="Employee" />
                         </TableHead>
@@ -653,8 +790,8 @@ export default function EmployeeCorrectionRequests() {
                               }
                             }}
                             className={cn(
-                              'cursor-pointer transition-colors hover:bg-muted/25',
-                              rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10'
+                              'cursor-pointer border-slate-100 transition-colors hover:bg-orange-50/40 dark:border-slate-800 dark:hover:bg-orange-950/10',
+                              rowIdx % 2 === 1 ? 'bg-white dark:bg-slate-950/40' : 'bg-slate-50/35 dark:bg-slate-900/25'
                             )}
                           >
                             <TableCell className="pl-5 align-top">
@@ -714,7 +851,7 @@ export default function EmployeeCorrectionRequests() {
                         key={row.id}
                         type="button"
                         onClick={() => openDetail(row)}
-                        className="w-full rounded-2xl border border-border/80 bg-card p-4 text-left shadow-sm transition hover:border-primary/25 hover:shadow-md active:scale-[0.99]"
+                        className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-orange-200 hover:shadow-md active:scale-[0.99] dark:border-slate-800 dark:bg-slate-950/70 dark:hover:border-orange-900/60"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -774,33 +911,54 @@ export default function EmployeeCorrectionRequests() {
       <Dialog open={fileOpen} onOpenChange={setFileOpen}>
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_MD)}
+          className="max-h-[92vh] overflow-y-auto rounded-3xl border border-slate-200 bg-white p-0 shadow-[0_28px_80px_-38px_rgba(15,23,42,0.9)] sm:max-w-[40rem] dark:border-slate-800 dark:bg-slate-950"
         >
-          <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <div className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>File correction request</DialogTitle>
-              <DialogDescription className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Select issue type first — only the time fields that apply are shown. Remarks are required.
-              </DialogDescription>
+          <DialogHeader className="border-b border-slate-100 px-7 pb-5 pt-7 text-left dark:border-slate-800">
+            <div className="flex items-start gap-4 pr-10">
+              <div className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-orange-600 ring-1 ring-orange-100 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/20">
+                <FileText className="size-8" aria-hidden />
+              </div>
+              <div className="min-w-0 pt-1">
+                <DialogTitle className="text-2xl font-extrabold tracking-tight text-slate-950 dark:text-slate-50">
+                  File correction request
+                </DialogTitle>
+                <DialogDescription className="mt-2 max-w-lg text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                  Select the attendance issue first. Only the required time fields will appear, and remarks are required
+                  for approval.
+                </DialogDescription>
+              </div>
             </div>
           </DialogHeader>
-          <div className={ADMIN_FORM_DIALOG_BODY_CLASS}>
-            <div className="space-y-4">
+          <div className="space-y-6 px-7 py-6">
+            <div className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="emp-corr-date">Attendance date *</Label>
+                <Label htmlFor="emp-corr-date" className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Attendance date <span className="text-orange-600">*</span>
+                </Label>
                 <Input
                   id="emp-corr-date"
                   type="date"
                   value={fileDate}
                   onChange={(e) => setFileDate(e.target.value)}
-                  className="h-11 rounded-lg"
+                  className="h-[3.25rem] rounded-xl border-slate-200 bg-white px-4 text-base shadow-sm focus-visible:ring-orange-500/25 dark:border-slate-700 dark:bg-slate-900/70"
                 />
+                <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                  Select the date of the attendance record you want to correct.
+                </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="emp-corr-issue">Issue type *</Label>
+                <Label htmlFor="emp-corr-issue" className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Issue type <span className="text-orange-600">*</span>
+                </Label>
                 <Select value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
-                  <SelectTrigger id="emp-corr-issue" className="h-11 rounded-lg">
-                    <SelectValue placeholder="Select issue" />
+                  <SelectTrigger
+                    id="emp-corr-issue"
+                    className="h-[3.25rem] rounded-xl border-slate-200 bg-white px-4 text-base shadow-sm focus:ring-orange-500/25 dark:border-slate-700 dark:bg-slate-900/70"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Clock className="size-5 shrink-0 text-orange-600 dark:text-orange-300" aria-hidden />
+                      <SelectValue placeholder="Select issue" />
+                    </div>
                   </SelectTrigger>
                   <SelectContent>
                     {ISSUE_KIND_OPTIONS.map((o) => (
@@ -810,6 +968,9 @@ export default function EmployeeCorrectionRequests() {
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                  Choose the type of correction you&apos;re requesting.
+                </p>
               </div>
               <Motion.div
                 layout
@@ -827,16 +988,20 @@ export default function EmployeeCorrectionRequests() {
                     transition={{ duration: 0.2 }}
                     className="space-y-2"
                   >
-                    <Label htmlFor="emp-corr-time-in">Actual Clock In Time *</Label>
+                    <Label htmlFor="emp-corr-time-in" className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Actual clock in time <span className="text-orange-600">*</span>
+                    </Label>
                     <Input
                       id="emp-corr-time-in"
                       type="time"
                       step={60}
-                      className="h-11 rounded-lg"
+                      className="h-[3.25rem] rounded-xl border-slate-200 bg-white px-4 text-base shadow-sm focus-visible:ring-orange-500/25 dark:border-slate-700 dark:bg-slate-900/70"
                       value={fileTimeIn}
                       onChange={(e) => setFileTimeIn(e.target.value)}
                     />
-                    <p className="text-xs text-muted-foreground">Enter the actual time you clocked in.</p>
+                    <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                      Enter the actual time you clocked in.
+                    </p>
                   </Motion.div>
                 )}
                 {showFileTimeOut && (
@@ -847,44 +1012,72 @@ export default function EmployeeCorrectionRequests() {
                     transition={{ duration: 0.2 }}
                     className="space-y-2"
                   >
-                    <Label htmlFor="emp-corr-time-out">Actual Clock Out Time *</Label>
+                    <Label htmlFor="emp-corr-time-out" className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Actual clock out time <span className="text-orange-600">*</span>
+                    </Label>
                     <Input
                       id="emp-corr-time-out"
                       type="time"
                       step={60}
-                      className="h-11 rounded-lg"
+                      className="h-[3.25rem] rounded-xl border-slate-200 bg-white px-4 text-base shadow-sm focus-visible:ring-orange-500/25 dark:border-slate-700 dark:bg-slate-900/70"
                       value={fileTimeOut}
                       onChange={(e) => setFileTimeOut(e.target.value)}
                     />
-                    <p className="text-xs text-muted-foreground">Enter the actual time you clocked out.</p>
+                    <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                      Enter the actual time you clocked out.
+                    </p>
                   </Motion.div>
                 )}
               </Motion.div>
               <div className="space-y-2">
-                <Label htmlFor="emp-corr-remarks">Remarks *</Label>
+                <Label htmlFor="emp-corr-remarks" className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Remarks <span className="text-orange-600">*</span>
+                </Label>
                 <Textarea
                   id="emp-corr-remarks"
                   value={fileRemarks}
-                  onChange={(e) => setFileRemarks(e.target.value)}
-                  rows={4}
-                  placeholder="Explain what needs to be corrected and why…"
-                  className="min-h-[100px] resize-y rounded-lg"
+                  onChange={(e) => setFileRemarks(e.target.value.slice(0, 500))}
+                  rows={5}
+                  maxLength={500}
+                  placeholder="Explain what needs to be corrected and why..."
+                  className="min-h-[8.5rem] resize-y rounded-xl border-slate-200 bg-white p-4 pb-9 text-base shadow-sm focus-visible:ring-orange-500/25 dark:border-slate-700 dark:bg-slate-900/70"
                   required
                 />
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                    Provide details to help your approver understand the request.
+                  </p>
+                  <span className="shrink-0 text-xs font-medium tabular-nums text-slate-500 dark:text-slate-400">
+                    {fileRemarks.length} / 500
+                  </span>
+                </div>
               </div>
             </div>
           </div>
-          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button type="button" variant="outline" onClick={() => setFileOpen(false)} disabled={fileSubmitting}>
+          <DialogFooter className="flex flex-col-reverse gap-3 border-t border-slate-100 bg-white px-7 py-5 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 rounded-xl border-slate-200 px-6 text-base font-semibold text-slate-900 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-900"
+              onClick={() => setFileOpen(false)}
+              disabled={fileSubmitting}
+            >
               Cancel
             </Button>
             <Button
               type="button"
-              className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}
+              className="h-12 gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-7 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700"
               onClick={submitFile}
               disabled={fileSubmitting}
             >
-              {fileSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Submit request'}
+              {fileSubmitting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <>
+                  Submit request
+                  <Send className="size-4" aria-hidden />
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
