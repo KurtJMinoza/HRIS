@@ -621,7 +621,7 @@ export default function EmployeeDashboard() {
     if (t.status === 'clocked_in') {
       const parts = []
       if (late != null && late > 0) parts.push(`${late} min late`)
-      if (t.late_label && String(t.late_label).trim()) parts.push(`Late: ${t.late_label}`)
+      if (t.late_label && String(t.late_label).trim()) parts.push(`Status: ${t.late_label}`)
       if (timeInLabel && !timeOutLabel) {
         return parts.length
           ? `${parts.join(' · ')} — Working since ${timeInLabel} — clock out when you leave.`
@@ -1023,8 +1023,13 @@ export default function EmployeeDashboard() {
     lines.push(label)
     if (record.time_in) lines.push(`In: ${formatTime(record.time_in)}`)
     if (record.time_out) lines.push(`Out: ${formatTime(record.time_out)}`)
-    if (record.late_label) lines.push(`Late: ${record.late_label}`)
-    if (!record.late_label && typeof record.late_minutes === 'number' && record.late_minutes > 0) lines.push(`Late: ${record.late_minutes} min`)
+    const lateLbl = record.late_label != null ? String(record.late_label).trim() : ''
+    if (lateLbl && lateLbl.toLowerCase() !== String(label).trim().toLowerCase()) {
+      lines.push(`Status: ${lateLbl}`)
+    }
+    if (!lateLbl && typeof record.late_minutes === 'number' && record.late_minutes > 0) {
+      lines.push(`Minutes late: ${record.late_minutes} min`)
+    }
     if (typeof record.undertime_minutes === 'number' && record.undertime_minutes > 0) lines.push(`Undertime: ${record.undertime_minutes} min`)
     if (typeof record.total_hours === 'number') lines.push(`Total: ${record.total_hours.toFixed ? record.total_hours.toFixed(2) : record.total_hours}h`)
     if (typeof record.overtime_hours === 'number' && record.overtime_hours > 0) lines.push(`OT: ${record.overtime_hours.toFixed ? record.overtime_hours.toFixed(2) : record.overtime_hours}h`)
@@ -1762,7 +1767,24 @@ export default function EmployeeDashboard() {
                 </div>
               </div>
               <div className="mx-auto w-full max-w-6xl space-y-2 px-3 pb-3 @sm:px-4 md:pb-4">
-              {selectedDayDetails && (
+              {selectedDayDetails && (() => {
+                const dayHeadline =
+                  getDisplayStatus(
+                    selectedDayDetails.status,
+                    selectedDayDetails.date_iso,
+                    selectedDayDetails.late_label,
+                    selectedDayDetails.late_minutes,
+                  ) || '—'
+                const ll = String(selectedDayDetails.late_label || '').trim()
+                const lm = selectedDayDetails.late_minutes
+                const lmNum = typeof lm === 'number' ? lm : 0
+                let statusExtra = null
+                if (ll && ll.toLowerCase() !== String(dayHeadline).trim().toLowerCase()) {
+                  statusExtra = { kind: 'label', text: ll }
+                } else if (!ll && lmNum > 0) {
+                  statusExtra = { kind: 'minutes', minutes: lmNum }
+                }
+                return (
                 <div className="rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-xs text-muted-foreground @sm:text-sm">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium text-foreground">
@@ -1773,12 +1795,7 @@ export default function EmployeeDashboard() {
                       })}
                     </span>
                     <span className="inline-flex items-center rounded-md bg-card px-2 py-0.5 text-sm capitalize">
-                      {getDisplayStatus(
-                        selectedDayDetails.status,
-                        selectedDayDetails.date_iso,
-                        selectedDayDetails.late_label,
-                        selectedDayDetails.late_minutes,
-                      ) || '—'}
+                      {dayHeadline}
                     </span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
@@ -1798,12 +1815,19 @@ export default function EmployeeDashboard() {
                         </span>
                       </span>
                     )}
-                    {(selectedDayDetails.late_label || (typeof selectedDayDetails.late_minutes === 'number' && selectedDayDetails.late_minutes > 0)) && (
+                    {statusExtra && (
                         <span>
-                          Late:{' '}
-                          <span className="font-medium text-amber-600 dark:text-amber-400">
-                            {selectedDayDetails.late_label || `${selectedDayDetails.late_minutes} min`}
-                          </span>
+                          {statusExtra.kind === 'label' ? (
+                            <>
+                              Status:{' '}
+                              <span className="font-medium text-amber-600 dark:text-amber-400">{statusExtra.text}</span>
+                            </>
+                          ) : (
+                            <>
+                              Minutes late:{' '}
+                              <span className="font-medium text-amber-600 dark:text-amber-400">{statusExtra.minutes} min</span>
+                            </>
+                          )}
                         </span>
                       )}
                     {typeof selectedDayDetails.undertime_minutes === 'number' &&
@@ -1828,7 +1852,8 @@ export default function EmployeeDashboard() {
                     )}
                   </div>
                 </div>
-              )}
+                )
+              })()}
               </div>
             </CardContent>
           </Card>
