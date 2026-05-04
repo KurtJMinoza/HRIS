@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { EmployeeDashboardSkeleton } from '@/components/skeletons'
 import { useAuth } from '@/contexts/AuthContext'
-import { getMyAttendanceSummary, getMyLeaveSummary, getMyFace, getAllMyOvertimeRequestsInRange } from '@/api'
+import { getMyAttendanceSummary, getMyLeaveSummary, getAllMyOvertimeRequestsInRange } from '@/api'
 import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
 import { cn } from '@/lib/utils'
 
@@ -376,15 +376,15 @@ function LiveClock() {
   const time = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
   const date = now.toLocaleDateString('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
   return (
-    <div className="shrink-0 rounded-xl border border-border bg-card px-4 py-3 shadow-sm dark:bg-card/85">
-      <p className="flex items-baseline gap-2 text-xl font-extrabold tabular-nums tracking-tight text-foreground @md:text-2xl">
+    <div className="shrink-0 rounded-xl border border-border bg-card px-5 py-4 shadow-sm dark:bg-card/85">
+      <p className="flex items-baseline gap-2.5 text-3xl font-extrabold tabular-nums tracking-tight text-foreground @md:text-4xl @lg:text-5xl">
         {time}
         <span
-          className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.25)] animate-pulse"
+          className="inline-flex h-2 w-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.25)] animate-pulse @md:h-2.5 @md:w-2.5"
           aria-hidden
         />
       </p>
-      <p className="mt-0.5 text-sm text-muted-foreground">{date}</p>
+      <p className="mt-1 text-sm font-medium text-muted-foreground @md:text-base">{date}</p>
     </div>
   )
 }
@@ -405,7 +405,6 @@ export default function EmployeeDashboard() {
   const [otDetailsOpen, setOtDetailsOpen] = useState(false)
   const [otNoticeDismissed, setOtNoticeDismissed] = useState(false)
   const [selectedDay, setSelectedDay] = useState(DEFAULT_CALENDAR_VALUE)
-  const [faceImage, setFaceImage] = useState(null)
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear())
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth())
 
@@ -472,16 +471,6 @@ export default function EmployeeDashboard() {
     window.addEventListener('hr:schedules-changed', onSchedulesChanged)
     return () => window.removeEventListener('hr:schedules-changed', onSchedulesChanged)
   }, [loadDashboard, refreshUser])
-
-  useEffect(() => {
-    if (!user?.has_face) {
-      setFaceImage(null)
-      return
-    }
-    getMyFace()
-      .then((data) => setFaceImage(data.face_image))
-      .catch(() => setFaceImage(null))
-  }, [user?.has_face])
 
   /** Prefer server-computed rest day from /attendance/summary; fallback to schedule template / legacy JSON. */
   const restDayByDate = useMemo(() => {
@@ -1098,23 +1087,7 @@ export default function EmployeeDashboard() {
             </div>
           )}
         </div>
-        <div className="flex w-full flex-wrap items-stretch justify-start gap-3 @lg:w-auto @lg:justify-end @lg:gap-4">
-          {user?.has_face && (
-            <div className="flex min-w-[8.75rem] flex-col items-center gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-sm dark:bg-card/85">
-              <span className="text-xs font-extrabold uppercase tracking-wide text-muted-foreground">Registered Face</span>
-              {faceImage ? (
-                <img
-                  src={faceImage}
-                  alt="Your registered face"
-                  className="h-16 w-16 rounded-lg border border-border object-cover shadow-sm"
-                />
-              ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30">
-                  <ScanFace className="size-6 text-muted-foreground" />
-                </div>
-              )}
-            </div>
-          )}
+        <div className="flex w-full flex-wrap items-stretch justify-start @lg:w-auto @lg:justify-end">
           <LiveClock />
         </div>
       </Motion.div>
