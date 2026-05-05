@@ -5174,6 +5174,28 @@ export async function createAdminDeductionType(payload) {
   return data
 }
 
+export async function updateAdminDeductionType(id, payload) {
+  const res = await authenticatedFetch(`/admin/deduction-types/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update deduction type')
+  return data
+}
+
+export async function deleteAdminDeductionType(id) {
+  const res = await authenticatedFetch(`/admin/deduction-types/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_active: false }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to delete deduction type')
+  return data
+}
+
 export async function getAdminActiveEmployeeDeductionsInScope() {
   const res = await authenticatedFetch('/admin/employee-deductions/active')
   const data = await res.json().catch(() => ({}))

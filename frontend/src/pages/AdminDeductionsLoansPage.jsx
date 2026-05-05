@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CalendarDays, ChevronRight, Loader2, MoreHorizontal, Pencil, Search, Wallet } from 'lucide-react'
+import { CalendarDays, ChevronRight, Loader2, MoreHorizontal, Pencil, Search, Trash2, Wallet } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,12 +32,14 @@ import { useToast } from '@/components/ui/use-toast'
 import {
   approveAdminLoanRequest,
   createAdminDeductionType,
+  deleteAdminDeductionType,
   createAdminEmployeePayDeduction,
   getEmployees,
   getAdminDeductionTypes,
   getAdminActiveEmployeeDeductionsInScope,
   getAdminLoanRequestDetail,
   getAdminLoanRequests,
+  updateAdminDeductionType,
   postAdminEmployeeDeductionEarlyPayoff,
   patchAdminEmployeeDeductionBalance,
   rejectAdminLoanRequest,
@@ -371,6 +373,12 @@ function typeKindMeta(kind) {
   }
 }
 
+function isDeductionTypeActive(type) {
+  const value = type?.is_active
+  if (value === false || value === 0 || value === '0') return false
+  return true
+}
+
 function TableSkeletonRows({ cols = 8, rows = 6 }) {
   return (
     <>
@@ -415,6 +423,12 @@ export default function AdminDeductionsLoansPage() {
     interest_type: 'simple',
   })
   const [savingType, setSavingType] = useState(false)
+  const [typeRenameDialog, setTypeRenameDialog] = useState(false)
+  const [typeDeleteDialog, setTypeDeleteDialog] = useState(false)
+  const [typeTarget, setTypeTarget] = useState(null)
+  const [typeRenameValue, setTypeRenameValue] = useState('')
+  const [savingTypeRename, setSavingTypeRename] = useState(false)
+  const [deletingType, setDeletingType] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [selectedId, setSelectedId] = useState(null)
@@ -494,6 +508,7 @@ export default function AdminDeductionsLoansPage() {
     () => (requests || []).filter((row) => String(row.status || '').toLowerCase() === 'pending'),
     [requests],
   )
+  const activeTypes = useMemo(() => (types || []).filter((t) => isDeductionTypeActive(t)), [types])
 
   const stats = useMemo(() => {
     const monthlyExposure = (activeDeductions || []).reduce((acc, row) => acc + (Number(row.amount) || 0), 0)
@@ -751,6 +766,53 @@ export default function AdminDeductionsLoansPage() {
       toast({ title: 'Error', description: err.message, variant: 'destructive' })
     } finally {
       setSavingType(false)
+    }
+  }
+
+  function openRenameType(type) {
+    if (!type) return
+    setTypeTarget(type)
+    setTypeRenameValue(String(type.name || ''))
+    setTypeRenameDialog(true)
+  }
+
+  async function handleRenameType(e) {
+    e.preventDefault()
+    if (!typeTarget?.id) return
+    const nextName = typeRenameValue.trim()
+    if (!nextName) {
+      toast({ title: 'Name is required', variant: 'destructive' })
+      return
+    }
+    setSavingTypeRename(true)
+    try {
+      await updateAdminDeductionType(typeTarget.id, { name: nextName })
+      toast({ title: 'Deduction type renamed' })
+      setTypeRenameDialog(false)
+      setTypeTarget(null)
+      setTypeRenameValue('')
+      await loadAll()
+    } catch (err) {
+      toast({ title: 'Rename failed', description: err.message, variant: 'destructive' })
+    } finally {
+      setSavingTypeRename(false)
+    }
+  }
+
+  async function handleDeleteType() {
+    if (!typeTarget?.id) return
+    setDeletingType(true)
+    try {
+      await deleteAdminDeductionType(typeTarget.id)
+      setTypes((prev) => prev.filter((t) => String(t.id) !== String(typeTarget.id)))
+      toast({ title: 'Deduction type deleted' })
+      setTypeDeleteDialog(false)
+      setTypeTarget(null)
+      await loadAll()
+    } catch (err) {
+      toast({ title: 'Delete failed', description: err.message, variant: 'destructive' })
+    } finally {
+      setDeletingType(false)
     }
   }
 
@@ -1784,7 +1846,7 @@ export default function AdminDeductionsLoansPage() {
                                 <SelectValue placeholder="Select type" />
                               </SelectTrigger>
                               <SelectContent>
-                                {types.map((t) => (
+                                {activeTypes.map((t) => (
                                   <SelectItem key={t.id} value={String(t.id)}>
                                     {t.name} ({t.type})
                                   </SelectItem>
@@ -1999,7 +2061,7 @@ export default function AdminDeductionsLoansPage() {
                     </div>
                   ) : (
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                      {types.map((t) => {
+                      {activeTypes.map((t) => {
                         const meta = typeKindMeta(t.type)
                         return (
                           <div
@@ -2007,23 +2069,58 @@ export default function AdminDeductionsLoansPage() {
                             className="flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-card p-5 shadow-sm transition-colors hover:bg-muted/30 dark:bg-card"
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <span
-                                className={cn(
-                                  'rounded-md border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
-                                  meta.chip,
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={cn(
+                                    'rounded-md border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+                                    meta.chip,
+                                  )}
+                                >
+                                  {meta.label}
+                                </span>
+                                {t.is_active ? (
+                                  <span className="rounded-md border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#0A0A0A] dark:text-slate-200">
+                                    Active
+                                  </span>
+                                ) : (
+                                  <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Inactive
+                                  </span>
                                 )}
-                              >
-                                {meta.label}
-                              </span>
-                              {t.is_active ? (
-                                <span className="rounded-md border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#0A0A0A] dark:text-slate-200">
-                                  Active
-                                </span>
-                              ) : (
-                                <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                  Inactive
-                                </span>
-                              )}
+                              </div>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    className={cn(BTN_SECONDARY, 'size-8 shrink-0 text-[#0A0A0A] dark:text-slate-100')}
+                                    aria-label={`Actions for ${t.name}`}
+                                  >
+                                    <MoreHorizontal className="size-4" aria-hidden />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="min-w-[10rem]">
+                                  <DropdownMenuItem
+                                    className="cursor-pointer"
+                                    onSelect={() => openRenameType(t)}
+                                  >
+                                    <Pencil className="size-4" aria-hidden />
+                                    Rename
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    className="cursor-pointer"
+                                    onSelect={() => {
+                                      setTypeTarget(t)
+                                      setTypeDeleteDialog(true)
+                                    }}
+                                  >
+                                    <Trash2 className="size-4" aria-hidden />
+                                    Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                             <p className="mt-4 text-lg font-semibold leading-snug text-[#0A0A0A] dark:text-slate-100">{t.name}</p>
                             <p className="mt-2 text-xs text-muted-foreground">Used in assignments and loan requests</p>
@@ -2032,7 +2129,7 @@ export default function AdminDeductionsLoansPage() {
                       })}
                     </div>
                   )}
-                  {!loading && types.length === 0 ? (
+                  {!loading && activeTypes.length === 0 ? (
                     <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-14 text-center">
                       <p className="text-base font-semibold text-[#0A0A0A] dark:text-slate-50">No deduction types yet</p>
                       <p className="max-w-sm text-sm text-muted-foreground">
@@ -2307,7 +2404,7 @@ export default function AdminDeductionsLoansPage() {
                     </div>
                   ) : null}
                 </div>
-                <DialogFooter className="gap-2 sm:gap-0">
+                <DialogFooter className="gap-3 sm:gap-3">
                   <Button
                     type="button"
                     variant="ghost"
@@ -2325,6 +2422,99 @@ export default function AdminDeductionsLoansPage() {
                   </Button>
                 </DialogFooter>
               </form>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={typeRenameDialog}
+            onOpenChange={(open) => {
+              setTypeRenameDialog(open)
+              if (!open) {
+                setTypeTarget(null)
+                setTypeRenameValue('')
+              }
+            }}
+          >
+            <DialogContent className="sm:max-w-md">
+              <form onSubmit={handleRenameType}>
+                <DialogHeader>
+                  <DialogTitle className="text-[#0A0A0A] dark:text-slate-50">Rename deduction type</DialogTitle>
+                  <DialogDescription>
+                    Update the display name used in assignments and requests.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="py-3">
+                  <Label htmlFor="rename-deduction-type">Display name</Label>
+                  <Input
+                    id="rename-deduction-type"
+                    className="mt-2 h-11 rounded-xl"
+                    value={typeRenameValue}
+                    onChange={(e) => setTypeRenameValue(e.target.value)}
+                    required
+                    maxLength={120}
+                  />
+                </div>
+                <DialogFooter className="gap-2 sm:gap-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setTypeRenameDialog(false)}
+                    disabled={savingTypeRename}
+                    className={cn(BTN_SECONDARY)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={savingTypeRename} className={cn(BTN_PRIMARY)}>
+                    {savingTypeRename ? (
+                      <>
+                        <Loader2 className="mr-2 size-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      'Save'
+                    )}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={typeDeleteDialog}
+            onOpenChange={(open) => {
+              setTypeDeleteDialog(open)
+              if (!open) setTypeTarget(null)
+            }}
+          >
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-[#0A0A0A] dark:text-slate-50">Delete deduction type?</DialogTitle>
+                <DialogDescription>
+                  This will remove <span className="font-semibold text-foreground">{typeTarget?.name || 'this type'}</span>.
+                  If it is used by existing records, deletion may be blocked.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="gap-3 sm:gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setTypeDeleteDialog(false)}
+                  disabled={deletingType}
+                  className={cn(BTN_SECONDARY)}
+                >
+                  Cancel
+                </Button>
+                <Button type="button" variant="destructive" onClick={handleDeleteType} disabled={deletingType} className="ml-1">
+                  {deletingType ? (
+                    <>
+                      <Loader2 className="mr-2 size-4 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete'
+                  )}
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
 
