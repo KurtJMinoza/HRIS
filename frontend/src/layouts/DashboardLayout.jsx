@@ -28,7 +28,7 @@ import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees } from '@/api'
 import { getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
-import { Bell, CalendarClock, Banknote, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, User, Loader2, Sun, Moon } from 'lucide-react'
+import { Bell, CalendarClock, Banknote, ChevronDown, ChevronRight, Clock, Eye, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
 const SIDEBAR_COLLAPSED_KEY = 'smartdtr_sidebar_collapsed'
 
@@ -79,15 +79,16 @@ const MOCK_NOTIFICATIONS = [
   {
     id: '1',
     title: 'Attendance recorded',
-    body: 'Time in: 8:02 AM',
+    body: 'Your attendance for today has been recorded.',
     time: 'Just now',
+    detail: '8:02 AM',
     unread: true,
     type: 'attendance',
   },
   {
     id: '2',
     title: 'Leave request submitted',
-    body: 'Pending approval',
+    body: 'Your leave request is pending approval.',
     time: '2h ago',
     unread: true,
     type: 'leave',
@@ -95,7 +96,7 @@ const MOCK_NOTIFICATIONS = [
   {
     id: '3',
     title: 'Payslip available',
-    body: 'January 2026',
+    body: 'Your payslip for January 2026 is ready.',
     time: '1d ago',
     unread: false,
     type: 'payslip',
@@ -822,10 +823,15 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             </Button>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" className="relative rounded-full" aria-label="Notifications">
-                  <Bell className="size-5 text-muted-foreground" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="relative rounded-full data-[state=open]:text-foreground data-[state=open]:after:absolute data-[state=open]:after:-bottom-2 data-[state=open]:after:left-1/2 data-[state=open]:after:h-1 data-[state=open]:after:w-9 data-[state=open]:after:-translate-x-1/2 data-[state=open]:after:rounded-full data-[state=open]:after:bg-brand"
+                  aria-label="Notifications"
+                >
+                  <Bell className="size-5 text-foreground" />
                   {notificationCount > 0 && (
-                    <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-destructive-foreground">
+                    <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-destructive text-[11px] font-bold text-destructive-foreground ring-2 ring-background">
                       {notificationCount > 9 ? '9+' : notificationCount}
                     </span>
                   )}
@@ -833,123 +839,156 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               </PopoverTrigger>
               <PopoverContent
                 align="end"
-                className="w-80 overflow-hidden rounded-xl border border-border bg-card p-0 shadow-[0_20px_40px_-12px_rgba(0,0,0,0.12),inset_0_1px_0_0_rgba(255,255,255,0.05)] dark:shadow-[0_20px_40px_-12px_rgba(0,0,0,0.4),inset_0_1px_0_0_rgba(255,255,255,0.03)] ring-1 ring-black/5 dark:ring-white/5"
-                sideOffset={8}
+                className="relative w-[min(92vw,46rem)] overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_70px_-28px_rgba(15,23,42,0.55)] ring-1 ring-black/5 dark:border-white/10 dark:bg-card dark:shadow-[0_24px_70px_-26px_rgba(0,0,0,0.85)] dark:ring-white/5"
+                sideOffset={14}
               >
-                <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/50 px-4 py-2.5">
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-[15px] font-bold tracking-tight">Notifications</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      Stay up to date with activity.
+                <span className="absolute -top-2 right-16 size-4 rotate-45 border-l border-t border-border/80 bg-card dark:border-white/10" aria-hidden />
+
+                <div className="flex flex-col gap-5 border-b border-border/70 bg-card px-7 py-7 sm:flex-row sm:items-center sm:justify-between sm:px-9">
+                  <div className="flex min-w-0 items-center gap-5">
+                    <span className="flex size-16 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                      <Bell className="size-8" strokeWidth={2.2} aria-hidden />
                     </span>
+                    <div className="min-w-0">
+                      <h2 className="text-2xl font-bold tracking-tight text-foreground">Notifications</h2>
+                      <p className="mt-1 text-lg text-muted-foreground">Stay up to date with activity.</p>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-4 self-start sm:self-center">
                     {notificationCount > 0 && (
                       <>
                         <button
                           type="button"
                           onClick={markAllNotificationsDone}
-                          className="text-[11px] font-medium text-muted-foreground transition-colors duration-200 hover:text-foreground"
+                          className="rounded-lg px-2 py-1 text-lg font-bold text-brand transition-colors duration-200 hover:bg-brand/10 hover:text-brand-strong"
                         >
-                          Mark all done
+                          Mark all as done
                         </button>
-                        <Badge variant="secondary" className="text-[11px] font-semibold">
+                        <Badge className="rounded-xl border border-brand/10 bg-brand/10 px-4 py-2 text-lg font-bold text-brand shadow-none hover:bg-brand/10 dark:border-brand/20 dark:bg-brand/15">
                           {notificationCount} new
                         </Badge>
                       </>
                     )}
                   </div>
                 </div>
-                <div className="max-h-[300px] space-y-px overflow-y-auto py-1">
+                <div className="max-h-[min(58vh,32rem)] overflow-y-auto">
                   {notifications.length === 0 ? (
-                    <div className="px-4 py-5 text-center text-xs text-muted-foreground">
+                    <div className="px-8 py-12 text-center text-sm text-muted-foreground">
                       You&apos;re all caught up.
                     </div>
                   ) : (
                     notifications.map((n) => {
                       const typeConfig = {
                         attendance: {
-                          dot: 'bg-blue-500',
-                          accent: 'border-l-blue-500',
+                          rail: 'bg-brand',
+                          dot: 'bg-brand',
                           icon: Clock,
-                          iconBg: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+                          iconBg: 'bg-brand/10 text-brand dark:bg-brand/15',
+                          rowBg: 'bg-brand/[0.04] dark:bg-brand/[0.08]',
+                          badge: 'New',
                         },
                         leave: {
+                          rail: 'bg-amber-500',
                           dot: 'bg-amber-500',
-                          accent: 'border-l-amber-500',
                           icon: CalendarClock,
-                          iconBg: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+                          iconBg: 'bg-amber-500/10 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
+                          rowBg: 'bg-card',
                         },
                         payslip: {
+                          rail: 'bg-emerald-500',
                           dot: 'bg-emerald-500',
-                          accent: 'border-l-emerald-500',
                           icon: Banknote,
-                          iconBg: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+                          iconBg: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
+                          rowBg: 'bg-card',
                         },
                       }
                       const config = typeConfig[n.type] ?? {
+                        rail: 'bg-muted-foreground',
                         dot: 'bg-muted-foreground',
-                        accent: 'border-l-muted-foreground',
                         icon: Bell,
                         iconBg: 'bg-muted text-muted-foreground',
+                        rowBg: 'bg-card',
                       }
                       const Icon = config.icon
                       return (
-                        <div
+                        <button
                           key={n.id}
+                          type="button"
                           className={cn(
-                            'flex w-full items-start gap-3 border-l-2 border-transparent px-3 py-2 text-left text-sm transition-all duration-200',
-                            'hover:bg-muted hover:shadow-sm hover:-translate-y-0.5 focus-within:bg-muted/90',
-                            n.unread ? 'bg-primary/5' : 'bg-transparent',
-                            config.accent
+                            'group relative grid w-full grid-cols-[auto_1fr_auto] items-center gap-5 border-b border-border/60 px-7 py-7 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 dark:border-white/10 dark:hover:bg-muted/20 sm:px-9',
+                            n.unread ? config.rowBg : 'bg-card'
                           )}
                         >
-                          <div className="relative mt-0.5 shrink-0">
+                          <span className={cn('absolute left-0 top-3 bottom-3 w-1.5 rounded-r-full', config.rail)} aria-hidden />
+                          <div className="relative shrink-0">
                             <div
                               className={cn(
-                                'flex size-9 items-center justify-center rounded-full',
+                                'flex size-16 items-center justify-center rounded-full',
                                 config.iconBg
                               )}
                             >
-                              <Icon className="size-4" />
+                              <Icon className="size-8" strokeWidth={2.2} aria-hidden />
                             </div>
                             {n.unread && (
                               <span
                                 className={cn(
-                                  'absolute -right-0.5 -top-0.5 inline-flex size-2 rounded-full ring-2 ring-background',
+                                  'absolute -right-1 -top-1 inline-flex size-3 rounded-full ring-4 ring-card',
                                   config.dot
                                 )}
                               />
                             )}
                           </div>
-                          <div className="flex min-w-0 flex-1 flex-col gap-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="truncate text-[13px] font-medium">
-                                  {n.title}
-                                </p>
-                                <p className="truncate text-[12px] text-muted-foreground">
-                                  {n.body}
-                                </p>
-                              </div>
-                              <span className="shrink-0 text-[11px] font-medium text-foreground/70">
-                                {n.time}
+                          <div className="min-w-0">
+                            <h3 className="truncate text-xl font-bold tracking-tight text-foreground">{n.title}</h3>
+                            <p className="mt-1 line-clamp-2 text-lg leading-snug text-muted-foreground">{n.body}</p>
+                            {n.detail ? (
+                              <span className="mt-3 inline-flex items-center gap-2 rounded-lg border border-border/70 bg-background px-3 py-1 text-sm font-medium text-muted-foreground shadow-sm dark:border-white/10 dark:bg-background/40">
+                                <Clock className="size-4" aria-hidden />
+                                {n.detail}
                               </span>
-                            </div>
+                            ) : null}
                           </div>
-                        </div>
+                          <div className="flex shrink-0 items-center gap-5">
+                            <div className="hidden min-w-20 flex-col items-end gap-3 sm:flex">
+                              {n.unread && config.badge ? (
+                                <span className="rounded-xl bg-brand/10 px-4 py-2 text-lg font-bold text-brand dark:bg-brand/15">
+                                  {config.badge}
+                                </span>
+                              ) : null}
+                              <span className="text-lg font-medium text-muted-foreground">{n.time}</span>
+                            </div>
+                            <ChevronRight className="size-7 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
+                          </div>
+                        </button>
                       )
                     })
                   )}
                 </div>
-                <div className="flex border-t border-border px-3 py-1.5">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 flex-1 text-[11px] font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted/70 hover:text-foreground"
+                <div className="border-t border-border/70 bg-card px-7 py-5 sm:px-9">
+                  <button
+                    type="button"
+                    className="mx-auto flex items-center justify-center gap-5 rounded-xl px-5 py-3 text-lg font-semibold text-foreground transition hover:bg-brand/10"
                   >
-                    View all
-                  </Button>
+                    <span className="flex size-12 items-center justify-center rounded-xl bg-brand/10 text-brand dark:bg-brand/15">
+                      <Eye className="size-6" aria-hidden />
+                    </span>
+                    View all notifications
+                    <span className="text-brand">
+                      <ChevronRight className="size-7" aria-hidden />
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="mt-4 grid w-full grid-cols-[auto_1fr_auto] items-center gap-5 rounded-xl bg-muted/40 px-5 py-5 text-left transition hover:bg-muted/60 dark:bg-muted/20 dark:hover:bg-muted/30"
+                  >
+                    <Settings className="size-8 text-muted-foreground" aria-hidden />
+                    <span>
+                      <span className="block text-lg font-bold text-foreground">Notification settings</span>
+                      <span className="mt-1 block text-base text-muted-foreground">Manage how you receive notifications.</span>
+                    </span>
+                    <ChevronRight className="size-6 text-muted-foreground" aria-hidden />
+                  </button>
                 </div>
               </PopoverContent>
             </Popover>
