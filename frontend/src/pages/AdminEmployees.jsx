@@ -150,6 +150,24 @@ function hasAssignedSchedule(employee) {
   return false
 }
 
+function toBooleanLike(value) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value === 1
+  const normalized = String(value ?? '').trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes'
+}
+
+function normalizeEmployeeFlags(employee) {
+  if (!employee || typeof employee !== 'object') return employee
+  const faceStatus = String(employee.face_status ?? '').trim().toLowerCase()
+  const hasFace = toBooleanLike(employee.has_face) || faceStatus === 'registered'
+  return {
+    ...employee,
+    has_face: hasFace,
+    is_active: toBooleanLike(employee.is_active),
+  }
+}
+
 /** Consistent avatar color per employee (improves visual scan). */
 const AVATAR_COLORS = [
   'bg-blue-500/20 text-blue-700 dark:bg-blue-400/25 dark:text-blue-200',
@@ -413,7 +431,7 @@ export default function AdminEmployees() {
     if (employeesQuery.data) {
       const data = employeesQuery.data
       const list = Array.isArray(data?.employees) ? data.employees : []
-      setEmployees(list)
+      setEmployees(list.map(normalizeEmployeeFlags))
       setSelectedIds([])
       setBulkScheduleIds([])
       const meta = data?.meta || {}
@@ -512,9 +530,9 @@ export default function AdminEmployees() {
         supervisor_id: normalizedSupervisorId || null,
         working_schedule_id: personalInfoForm.working_schedule_id || null,
       })
-      const emp = data.employee
-      setEmployees((prev) => prev.map((e) => (e.id === previewEmployee.id ? { ...e, ...emp } : e)))
-      setPreviewEmployee((p) => (p && p.id === previewEmployee.id ? { ...p, ...emp } : p))
+      const emp = normalizeEmployeeFlags(data.employee)
+      setEmployees((prev) => prev.map((e) => (e.id === previewEmployee.id ? normalizeEmployeeFlags({ ...e, ...emp }) : e)))
+      setPreviewEmployee((p) => (p && p.id === previewEmployee.id ? normalizeEmployeeFlags({ ...p, ...emp }) : p))
       setPersonalInfoForm({
         first_name: emp?.first_name || '',
         middle_name: emp?.middle_name || '',
@@ -3305,9 +3323,9 @@ export default function AdminEmployees() {
                         setError(null)
                         try {
                               const data = await uploadEmployeePhoto(previewEmployee.id, file)
-                              const emp = data.employee
-                              setEmployees((prev) => prev.map((item) => (item.id === previewEmployee.id ? { ...item, ...emp } : item)))
-                              setPreviewEmployee((p) => (p && p.id === previewEmployee.id ? { ...p, ...emp } : p))
+                              const emp = normalizeEmployeeFlags(data.employee)
+                              setEmployees((prev) => prev.map((item) => (item.id === previewEmployee.id ? normalizeEmployeeFlags({ ...item, ...emp }) : item)))
+                              setPreviewEmployee((p) => (p && p.id === previewEmployee.id ? normalizeEmployeeFlags({ ...p, ...emp }) : p))
                               toast({
                                 title: 'Profile photo updated',
                                 description: `${previewEmployee.name}'s photo was uploaded successfully.`,
@@ -3342,9 +3360,9 @@ export default function AdminEmployees() {
                               setError(null)
                               try {
                                 const data = await removeEmployeePhoto(previewEmployee.id)
-                          const emp = data.employee
-                                setEmployees((prev) => prev.map((item) => (item.id === previewEmployee.id ? { ...item, ...emp } : item)))
-                                setPreviewEmployee((p) => (p && p.id === previewEmployee.id ? { ...p, ...emp } : p))
+                          const emp = normalizeEmployeeFlags(data.employee)
+                                setEmployees((prev) => prev.map((item) => (item.id === previewEmployee.id ? normalizeEmployeeFlags({ ...item, ...emp }) : item)))
+                                setPreviewEmployee((p) => (p && p.id === previewEmployee.id ? normalizeEmployeeFlags({ ...p, ...emp }) : p))
                                 toast({
                                   title: 'Profile photo removed',
                                   description: `${previewEmployee.name}'s photo was removed.`,
