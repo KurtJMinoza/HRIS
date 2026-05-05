@@ -10,7 +10,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,7 +27,7 @@ import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees } from '@/api'
 import { getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
-import { Bell, CalendarClock, Banknote, ChevronDown, ChevronRight, Clock, Eye, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
+import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
 const SIDEBAR_COLLAPSED_KEY = 'smartdtr_sidebar_collapsed'
 
@@ -78,29 +77,50 @@ function hasActiveDescendant(item, pathname) {
 const MOCK_NOTIFICATIONS = [
   {
     id: '1',
-    title: 'Attendance recorded',
-    body: 'Your attendance for today has been recorded.',
+    actor: 'Attendance',
+    body: 'Your clock-in for today was recorded.',
     time: 'Just now',
     detail: '8:02 AM',
     unread: true,
+    mention: false,
     type: 'attendance',
+    avatar: null,
   },
   {
     id: '2',
-    title: 'Leave request submitted',
+    actor: 'HR Team',
     body: 'Your leave request is pending approval.',
     time: '2h ago',
     unread: true,
+    mention: true,
     type: 'leave',
+    avatar: 'HR',
   },
   {
     id: '3',
-    title: 'Payslip available',
-    body: 'Your payslip for January 2026 is ready.',
+    actor: 'Payroll',
+    body: 'Your January 2026 payslip is ready to view.',
     time: '1d ago',
     unread: false,
+    mention: false,
     type: 'payslip',
+    avatar: 'PR',
   },
+  {
+    id: '4',
+    actor: 'Marcus Lee',
+    body: 'mentioned you on an overtime correction thread.',
+    time: '3h ago',
+    unread: true,
+    mention: true,
+    type: 'mention',
+    avatar: 'ML',
+  },
+]
+
+const NOTIFICATION_TABS = [
+  { id: 'all', label: 'All' },
+  { id: 'unread', label: 'Unread' },
 ]
 
 function SidebarContent({
@@ -380,6 +400,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
     }
   })
   const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS)
+  const [notificationTab, setNotificationTab] = useState('all')
 
   useEffect(() => {
     try {
@@ -405,6 +426,20 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
     : '?'
 
   const notificationCount = notifications.filter((n) => n.unread).length
+
+  const filteredNotifications = useMemo(() => {
+    if (notificationTab === 'unread') return notifications.filter((n) => n.unread)
+    return notifications
+  }, [notifications, notificationTab])
+
+  const markAllNotificationsRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })))
+  }
+
+  const markNotificationRead = (id) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, unread: false } : n)))
+  }
+
   const { theme, cycleTheme } = useTheme()
 
   const homePath =
@@ -542,10 +577,6 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
         to: `${hrPanelPath(hrBasePath, 'employees/list')}?q=${encodeURIComponent(trimmedQuery)}`,
       })
     }
-  }
-
-  function markAllNotificationsDone() {
-    setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })))
   }
 
   return (
@@ -839,155 +870,165 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               </PopoverTrigger>
               <PopoverContent
                 align="end"
-                className="relative w-[min(92vw,46rem)] overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_70px_-28px_rgba(15,23,42,0.55)] ring-1 ring-black/5 dark:border-white/10 dark:bg-card dark:shadow-[0_24px_70px_-26px_rgba(0,0,0,0.85)] dark:ring-white/5"
-                sideOffset={14}
+                className="w-[min(94vw,22rem)] overflow-hidden rounded-2xl border border-brand/20 bg-card p-0 text-card-foreground shadow-lg ring-1 ring-brand/10 dark:border-brand/25 dark:ring-brand/20"
+                sideOffset={10}
               >
-                <span className="absolute -top-2 right-16 size-4 rotate-45 border-l border-t border-border/80 bg-card dark:border-white/10" aria-hidden />
-
-                <div className="flex flex-col gap-5 border-b border-border/70 bg-card px-7 py-7 sm:flex-row sm:items-center sm:justify-between sm:px-9">
-                  <div className="flex min-w-0 items-center gap-5">
-                    <span className="flex size-16 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
-                      <Bell className="size-8" strokeWidth={2.2} aria-hidden />
-                    </span>
-                    <div className="min-w-0">
-                      <h2 className="text-2xl font-bold tracking-tight text-foreground">Notifications</h2>
-                      <p className="mt-1 text-lg text-muted-foreground">Stay up to date with activity.</p>
+                <div className="border-b border-brand/15 bg-linear-to-b from-brand/8 to-card px-4 pt-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <h2 id="notifications-popover-title" className="text-base font-bold tracking-tight text-foreground">
+                      Notifications
+                    </h2>
+                    <div className="flex items-center gap-2">
+                      {notificationCount > 0 ? (
+                        <span className="inline-flex shrink-0 items-center rounded-lg bg-brand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-foreground">
+                          {notificationCount} new
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={markAllNotificationsRead}
+                        disabled={notificationCount === 0}
+                        className="inline-flex items-center gap-1 rounded-md border border-brand/20 bg-background/85 px-2 py-1 text-[11px] font-semibold text-brand transition hover:bg-brand/10 disabled:pointer-events-none disabled:opacity-50"
+                      >
+                        <CheckCheck className="size-3.5" aria-hidden />
+                        Mark all read
+                      </button>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-4 self-start sm:self-center">
-                    {notificationCount > 0 && (
-                      <>
+
+                  <div
+                    className="mt-4 flex gap-1 rounded-full bg-muted/70 p-1 dark:bg-muted/40"
+                    role="tablist"
+                    aria-label="Filter notifications"
+                  >
+                    {NOTIFICATION_TABS.map((tab) => {
+                      const selected = notificationTab === tab.id
+                      return (
                         <button
+                          key={tab.id}
                           type="button"
-                          onClick={markAllNotificationsDone}
-                          className="rounded-lg px-2 py-1 text-lg font-bold text-brand transition-colors duration-200 hover:bg-brand/10 hover:text-brand-strong"
+                          role="tab"
+                          aria-selected={selected}
+                          onClick={() => setNotificationTab(tab.id)}
+                          className={cn(
+                            'min-w-0 flex-1 rounded-full px-3 py-1.5 text-center text-xs font-semibold transition-colors',
+                            selected
+                              ? 'bg-brand text-brand-foreground shadow-sm'
+                              : 'text-muted-foreground hover:text-foreground'
+                          )}
                         >
-                          Mark all as done
+                          {tab.label}
                         </button>
-                        <Badge className="rounded-xl border border-brand/10 bg-brand/10 px-4 py-2 text-lg font-bold text-brand shadow-none hover:bg-brand/10 dark:border-brand/20 dark:bg-brand/15">
-                          {notificationCount} new
-                        </Badge>
-                      </>
-                    )}
+                      )
+                    })}
                   </div>
                 </div>
-                <div className="max-h-[min(58vh,32rem)] overflow-y-auto">
-                  {notifications.length === 0 ? (
-                    <div className="px-8 py-12 text-center text-sm text-muted-foreground">
-                      You&apos;re all caught up.
+
+                <div
+                  className="max-h-[min(52vh,22rem)] overflow-y-auto"
+                  role="tabpanel"
+                  aria-labelledby="notifications-popover-title"
+                >
+                  {filteredNotifications.length === 0 ? (
+                    <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+                      {notificationTab === 'unread'
+                          ? "You're all caught up."
+                          : 'No notifications.'}
                     </div>
                   ) : (
-                    notifications.map((n) => {
+                    filteredNotifications.map((n) => {
                       const typeConfig = {
                         attendance: {
-                          rail: 'bg-brand',
-                          dot: 'bg-brand',
                           icon: Clock,
-                          iconBg: 'bg-brand/10 text-brand dark:bg-brand/15',
-                          rowBg: 'bg-brand/[0.04] dark:bg-brand/[0.08]',
-                          badge: 'New',
+                          iconBg: 'bg-muted text-muted-foreground',
                         },
                         leave: {
-                          rail: 'bg-amber-500',
-                          dot: 'bg-amber-500',
                           icon: CalendarClock,
-                          iconBg: 'bg-amber-500/10 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
-                          rowBg: 'bg-card',
+                          iconBg: 'bg-muted text-muted-foreground',
                         },
                         payslip: {
-                          rail: 'bg-emerald-500',
-                          dot: 'bg-emerald-500',
                           icon: Banknote,
-                          iconBg: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
-                          rowBg: 'bg-card',
+                          iconBg: 'bg-muted text-muted-foreground',
+                        },
+                        mention: {
+                          icon: AtSign,
+                          iconBg: 'bg-muted text-muted-foreground',
                         },
                       }
                       const config = typeConfig[n.type] ?? {
-                        rail: 'bg-muted-foreground',
-                        dot: 'bg-muted-foreground',
                         icon: Bell,
                         iconBg: 'bg-muted text-muted-foreground',
-                        rowBg: 'bg-card',
                       }
                       const Icon = config.icon
+
                       return (
                         <button
                           key={n.id}
                           type="button"
+                          onClick={() => markNotificationRead(n.id)}
                           className={cn(
-                            'group relative grid w-full grid-cols-[auto_1fr_auto] items-center gap-5 border-b border-border/60 px-7 py-7 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 dark:border-white/10 dark:hover:bg-muted/20 sm:px-9',
-                            n.unread ? config.rowBg : 'bg-card'
+                            'relative flex w-full gap-0 border-b border-border/55 text-left transition-colors hover:bg-brand/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:ring-offset-2 focus-visible:ring-offset-card dark:border-white/10 dark:hover:bg-brand/10',
+                            n.unread ? 'bg-brand/4 dark:bg-brand/7' : 'bg-card'
                           )}
                         >
-                          <span className={cn('absolute left-0 top-3 bottom-3 w-1.5 rounded-r-full', config.rail)} aria-hidden />
-                          <div className="relative shrink-0">
-                            <div
-                              className={cn(
-                                'flex size-16 items-center justify-center rounded-full',
-                                config.iconBg
-                              )}
-                            >
-                              <Icon className="size-8" strokeWidth={2.2} aria-hidden />
-                            </div>
-                            {n.unread && (
+                          {n.unread ? (
+                            <span
+                              className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-full bg-brand"
+                              aria-hidden
+                            />
+                          ) : null}
+                          <div className="flex min-w-0 flex-1 items-start gap-3 py-3 pr-3 pl-3.5 sm:pl-4">
+                            {n.avatar ? (
+                              <Avatar className="size-10 shrink-0 ring-1 ring-border/50">
+                                <AvatarFallback
+                                  className={cn(
+                                    'rounded-full text-[11px] font-bold',
+                                    getEmployeeAvatarColorClass(n.id, n.actor),
+                                  )}
+                                >
+                                  {n.avatar}
+                                </AvatarFallback>
+                              </Avatar>
+                            ) : (
                               <span
                                 className={cn(
-                                  'absolute -right-1 -top-1 inline-flex size-3 rounded-full ring-4 ring-card',
-                                  config.dot
+                                  'flex size-10 shrink-0 items-center justify-center rounded-full ring-1 ring-border/40',
+                                  config.iconBg
                                 )}
-                              />
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <h3 className="truncate text-xl font-bold tracking-tight text-foreground">{n.title}</h3>
-                            <p className="mt-1 line-clamp-2 text-lg leading-snug text-muted-foreground">{n.body}</p>
-                            {n.detail ? (
-                              <span className="mt-3 inline-flex items-center gap-2 rounded-lg border border-border/70 bg-background px-3 py-1 text-sm font-medium text-muted-foreground shadow-sm dark:border-white/10 dark:bg-background/40">
-                                <Clock className="size-4" aria-hidden />
-                                {n.detail}
+                              >
+                                <Icon className="size-4" strokeWidth={2} aria-hidden />
                               </span>
-                            ) : null}
-                          </div>
-                          <div className="flex shrink-0 items-center gap-5">
-                            <div className="hidden min-w-20 flex-col items-end gap-3 sm:flex">
-                              {n.unread && config.badge ? (
-                                <span className="rounded-xl bg-brand/10 px-4 py-2 text-lg font-bold text-brand dark:bg-brand/15">
-                                  {config.badge}
-                                </span>
+                            )}
+                            <div className="min-w-0 flex-1 pt-0.5">
+                              <p className="text-sm leading-snug text-foreground">
+                                <span className="font-semibold text-foreground">{n.actor}</span>
+                                <span className="font-normal text-muted-foreground"> {n.body}</span>
+                              </p>
+                              {n.detail ? (
+                                <p className="mt-1 text-xs italic text-muted-foreground">{n.detail}</p>
                               ) : null}
-                              <span className="text-lg font-medium text-muted-foreground">{n.time}</span>
+                              <p className="mt-1.5 text-xs text-muted-foreground">{n.time}</p>
                             </div>
-                            <ChevronRight className="size-7 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
+                            {n.unread ? (
+                              <span
+                                className="mt-2 size-2 shrink-0 rounded-full bg-brand"
+                                title="Unread"
+                                aria-hidden
+                              />
+                            ) : null}
                           </div>
                         </button>
                       )
                     })
                   )}
                 </div>
-                <div className="border-t border-border/70 bg-card px-7 py-5 sm:px-9">
-                  <button
-                    type="button"
-                    className="mx-auto flex items-center justify-center gap-5 rounded-xl px-5 py-3 text-lg font-semibold text-foreground transition hover:bg-brand/10"
-                  >
-                    <span className="flex size-12 items-center justify-center rounded-xl bg-brand/10 text-brand dark:bg-brand/15">
-                      <Eye className="size-6" aria-hidden />
-                    </span>
-                    View all notifications
-                    <span className="text-brand">
-                      <ChevronRight className="size-7" aria-hidden />
-                    </span>
-                  </button>
 
+                <div className="border-t border-border/60 bg-card px-4 py-3">
                   <button
                     type="button"
-                    className="mt-4 grid w-full grid-cols-[auto_1fr_auto] items-center gap-5 rounded-xl bg-muted/40 px-5 py-5 text-left transition hover:bg-muted/60 dark:bg-muted/20 dark:hover:bg-muted/30"
+                    className="w-full text-center text-sm font-semibold text-brand transition hover:text-brand-strong"
                   >
-                    <Settings className="size-8 text-muted-foreground" aria-hidden />
-                    <span>
-                      <span className="block text-lg font-bold text-foreground">Notification settings</span>
-                      <span className="mt-1 block text-base text-muted-foreground">Manage how you receive notifications.</span>
-                    </span>
-                    <ChevronRight className="size-6 text-muted-foreground" aria-hidden />
+                    View all notifications
                   </button>
                 </div>
               </PopoverContent>
