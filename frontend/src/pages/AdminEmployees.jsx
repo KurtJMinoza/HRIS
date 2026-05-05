@@ -331,6 +331,15 @@ export default function AdminEmployees() {
 
   const [manageFaceOpen, setManageFaceOpen] = useState(false)
   const [manageFaceEmployee, setManageFaceEmployee] = useState(null)
+  const hasClientSideFilters = Boolean(
+    searchQuery.trim() || filterStatus || filterSchedule || filterFace
+  )
+  const listPerPage = hasClientSideFilters ? 1000 : 20
+  const listPage = hasClientSideFilters ? 1 : page
+
+  useEffect(() => {
+    if (hasClientSideFilters && page !== 1) setPage(1)
+  }, [hasClientSideFilters, page])
 
   useEffect(() => {
     if (location.pathname === hrPanelPath(hrBase, 'employees/add')) {
@@ -339,12 +348,12 @@ export default function AdminEmployees() {
   }, [location.pathname, hrBase])
 
   const employeesQuery = useQuery({
-    queryKey: ['admin-employees-list', { page, q: debouncedSearchQuery, companyId: filterCompany || '' }],
+    queryKey: ['admin-employees-list', { page: listPage, perPage: listPerPage, q: debouncedSearchQuery, companyId: filterCompany || '' }],
     queryFn: () =>
       getEmployees({
         lite: true,
-        page,
-        per_page: 20,
+        page: listPage,
+        per_page: listPerPage,
         q: debouncedSearchQuery || undefined,
         company_id: filterCompany || undefined,
       }),
@@ -435,9 +444,15 @@ export default function AdminEmployees() {
       setSelectedIds([])
       setBulkScheduleIds([])
       const meta = data?.meta || {}
-      const total = typeof meta.total === 'number' ? meta.total : list.length
-      const perPage = typeof meta.per_page === 'number' ? meta.per_page : list.length || 20
-      const lastPage = typeof meta.last_page === 'number' ? meta.last_page : 1
+      const total = hasClientSideFilters
+        ? list.length
+        : (typeof meta.total === 'number' ? meta.total : list.length)
+      const perPage = hasClientSideFilters
+        ? list.length || listPerPage
+        : (typeof meta.per_page === 'number' ? meta.per_page : list.length || 20)
+      const lastPage = hasClientSideFilters
+        ? 1
+        : (typeof meta.last_page === 'number' ? meta.last_page : 1)
       setPagination({ total, perPage, lastPage })
       setError(null)
       return
@@ -449,7 +464,7 @@ export default function AdminEmployees() {
       setPagination({ total: 0, perPage: 20, lastPage: 1 })
       setError(employeesQuery.error?.message || 'Failed to load employees')
     }
-  }, [employeesQuery.data, employeesQuery.error])
+  }, [employeesQuery.data, employeesQuery.error, hasClientSideFilters, listPerPage])
 
   const workingScheduleNameById = (() => {
     const map = new Map()
