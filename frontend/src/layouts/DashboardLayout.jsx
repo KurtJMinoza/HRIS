@@ -134,7 +134,6 @@ function SidebarContent({
   collapsed,
   onToggleCollapse,
   pathname,
-  role,
 }) {
   const [manualExpanded, setManualExpanded] = useState({})
   const autoExpanded = useMemo(() => {
@@ -599,7 +598,6 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
           pathname={location.pathname}
-          role={role}
         />
       </aside>
 
@@ -637,7 +635,6 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               onLogout={handleLogout}
               onNavClick={() => setSheetOpen(false)}
               pathname={location.pathname}
-              role={role}
             />
           </SheetContent>
         </Sheet>
@@ -870,17 +867,20 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               </PopoverTrigger>
               <PopoverContent
                 align="end"
-                className="w-[min(94vw,22rem)] overflow-hidden rounded-2xl border border-brand/20 bg-card p-0 text-card-foreground shadow-lg ring-1 ring-brand/10 dark:border-brand/25 dark:ring-brand/20"
+                className="w-[min(94vw,23rem)] overflow-hidden rounded-2xl border border-border/70 bg-card p-0 text-card-foreground shadow-xl ring-1 ring-black/5 dark:border-border/60 dark:ring-white/10"
                 sideOffset={10}
               >
-                <div className="border-b border-brand/15 bg-linear-to-b from-brand/8 to-card px-4 pt-4">
+                <div className="border-b border-border/60 bg-card px-4 pt-4">
                   <div className="flex items-start justify-between gap-3">
-                    <h2 id="notifications-popover-title" className="text-base font-bold tracking-tight text-foreground">
-                      Notifications
-                    </h2>
+                    <div className="min-w-0">
+                      <h2 id="notifications-popover-title" className="text-base font-bold tracking-tight text-foreground">
+                        Notifications
+                      </h2>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Recent updates from your workspace</p>
+                    </div>
                     <div className="flex items-center gap-2">
                       {notificationCount > 0 ? (
-                        <span className="inline-flex shrink-0 items-center rounded-lg bg-brand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-foreground">
+                        <span className="inline-flex shrink-0 items-center rounded-md bg-brand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-foreground">
                           {notificationCount} new
                         </span>
                       ) : null}
@@ -888,7 +888,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                         type="button"
                         onClick={markAllNotificationsRead}
                         disabled={notificationCount === 0}
-                        className="inline-flex items-center gap-1 rounded-md border border-brand/20 bg-background/85 px-2 py-1 text-[11px] font-semibold text-brand transition hover:bg-brand/10 disabled:pointer-events-none disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold text-brand/90 underline-offset-2 transition hover:bg-brand/10 hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:pointer-events-none disabled:text-muted-foreground/70 disabled:no-underline"
                       >
                         <CheckCheck className="size-3.5" aria-hidden />
                         Mark all read
@@ -903,6 +903,10 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                   >
                     {NOTIFICATION_TABS.map((tab) => {
                       const selected = notificationTab === tab.id
+                      const tabCount =
+                        tab.id === 'unread'
+                          ? notificationCount
+                          : notifications.length
                       return (
                         <button
                           key={tab.id}
@@ -911,13 +915,21 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                           aria-selected={selected}
                           onClick={() => setNotificationTab(tab.id)}
                           className={cn(
-                            'min-w-0 flex-1 rounded-full px-3 py-1.5 text-center text-xs font-semibold transition-colors',
+                            'min-w-0 flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-center text-xs font-semibold transition-colors',
                             selected
                               ? 'bg-brand text-brand-foreground shadow-sm'
-                              : 'text-muted-foreground hover:text-foreground'
+                              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                           )}
                         >
                           {tab.label}
+                          <span
+                            className={cn(
+                              'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                              selected ? 'bg-brand-foreground/20 text-brand-foreground' : 'bg-background text-muted-foreground'
+                            )}
+                          >
+                            {tabCount}
+                          </span>
                         </button>
                       )
                     })}
@@ -967,7 +979,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                           type="button"
                           onClick={() => markNotificationRead(n.id)}
                           className={cn(
-                            'relative flex w-full gap-0 border-b border-border/55 text-left transition-colors hover:bg-brand/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:ring-offset-2 focus-visible:ring-offset-card dark:border-white/10 dark:hover:bg-brand/10',
+                            'relative flex w-full gap-0 border-b border-border/55 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:ring-offset-2 focus-visible:ring-offset-card dark:border-white/10 dark:hover:bg-muted/20',
                             n.unread ? 'bg-brand/4 dark:bg-brand/7' : 'bg-card'
                           )}
                         >
@@ -979,7 +991,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                           ) : null}
                           <div className="flex min-w-0 flex-1 items-start gap-3 py-3 pr-3 pl-3.5 sm:pl-4">
                             {n.avatar ? (
-                              <Avatar className="size-10 shrink-0 ring-1 ring-border/50">
+                              <Avatar className="size-9 shrink-0 ring-1 ring-border/50">
                                 <AvatarFallback
                                   className={cn(
                                     'rounded-full text-[11px] font-bold',
@@ -992,15 +1004,15 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                             ) : (
                               <span
                                 className={cn(
-                                  'flex size-10 shrink-0 items-center justify-center rounded-full ring-1 ring-border/40',
+                                  'flex size-9 shrink-0 items-center justify-center rounded-full ring-1 ring-border/40',
                                   config.iconBg
                                 )}
                               >
-                                <Icon className="size-4" strokeWidth={2} aria-hidden />
+                                <Icon className="size-3.5" strokeWidth={2} aria-hidden />
                               </span>
                             )}
                             <div className="min-w-0 flex-1 pt-0.5">
-                              <p className="text-sm leading-snug text-foreground">
+                              <p className="line-clamp-2 text-sm leading-snug text-foreground">
                                 <span className="font-semibold text-foreground">{n.actor}</span>
                                 <span className="font-normal text-muted-foreground"> {n.body}</span>
                               </p>
@@ -1026,7 +1038,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                 <div className="border-t border-border/60 bg-card px-4 py-3">
                   <button
                     type="button"
-                    className="w-full text-center text-sm font-semibold text-brand transition hover:text-brand-strong"
+                    className="w-full rounded-md border border-transparent py-1 text-center text-sm font-semibold text-brand transition hover:border-brand/20 hover:bg-brand/5 hover:text-brand-strong"
                   >
                     View all notifications
                   </button>
