@@ -881,8 +881,8 @@ export async function initializeAuthSession() {
 // —— Profile (authenticated user) ——
 
 /**
- * Update profile (email, phone, and/or password). Sensitive changes require liveness_session_id (Rekognition Face Liveness).
- * @param {{ email?: string, phone_number?: string | null, current_password?: string, password?: string, password_confirmation?: string, liveness_session_id?: string }} payload
+ * Update profile (email, phone, and/or password).
+ * @param {{ email?: string, phone_number?: string | null, current_password?: string, password?: string, password_confirmation?: string, name?: string, username?: string }} payload
  * @returns {Promise<{ user: object, message?: string }>}
  */
 export async function updateProfile(payload) {

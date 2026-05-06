@@ -33,23 +33,6 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { RoleBadge } from '@/components/RoleBadge'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  ADMIN_FORM_DIALOG_BODY_CLASS,
-  ADMIN_FORM_DIALOG_DESC_CLASS,
-  ADMIN_FORM_DIALOG_FOOTER_CLASS,
-  ADMIN_FORM_DIALOG_HEADER_INNER_CLASS,
-  ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS,
-  ADMIN_FORM_DIALOG_TITLE_CLASS,
-  adminFormDialogContentClass,
-  ADMIN_FORM_DIALOG_MAX_W_LG,
-} from '@/lib/adminFormDialogStyles'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -59,7 +42,6 @@ import {
   getMyFace,
   profileImageUrl,
 } from '@/api'
-import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
 import {
   validateEmail,
   validatePassword,
@@ -173,10 +155,6 @@ export default function Profile() {
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
-  const [livenessOpen, setLivenessOpen] = useState(false)
-  const [pendingUpdate, setPendingUpdate] = useState(null)
-
-  const [faceImage, setFaceImage] = useState(null)
   const [faceLoading, setFaceLoading] = useState(false)
   const [hasFace, setHasFace] = useState(user?.has_face ?? false)
   const [activeTab, setActiveTab] = useState('personal')
@@ -404,8 +382,19 @@ export default function Profile() {
       setEmailError('Enter a new email address to change.')
       return
     }
-    setPendingUpdate({ type: 'email', payload: { email: email.trim() } })
-    setLivenessOpen(true)
+    void (async () => {
+      setEmailLoading(true)
+      setEmailError('')
+      try {
+        const data = await updateProfile({ email: email.trim() })
+        setUser(data.user)
+        setEmailSuccess(true)
+      } catch (err) {
+        setEmailError(err?.message || 'Update failed')
+      } finally {
+        setEmailLoading(false)
+      }
+    })()
   }
 
   function handlePhoneSubmit(e) {
@@ -413,8 +402,21 @@ export default function Profile() {
     const err = validatePhone(phone, false)
     setPhoneError(err)
     if (err && phone.trim() !== '') return
-    setPendingUpdate({ type: 'phone', payload: { phone_number: phone.trim() || null } })
-    setLivenessOpen(true)
+    void (async () => {
+      setPhoneLoading(true)
+      setPhoneError('')
+      try {
+        const data = await updateProfile({ phone_number: phone.trim() || null })
+        setUser(data.user)
+        if (data.user?.phone_number != null) setPhone(data.user.phone_number)
+        else setPhone('')
+        setPhoneSuccess(true)
+      } catch (err) {
+        setPhoneError(err?.message || 'Update failed')
+      } finally {
+        setPhoneLoading(false)
+      }
+    })()
   }
 
   // —— Password ———
@@ -453,58 +455,27 @@ export default function Profile() {
   function handlePasswordSubmit(e) {
     e.preventDefault()
     if (!validatePasswordForm()) return
-    setPendingUpdate({
-      type: 'password',
-      payload: {
-        current_password: currentPassword,
-        password: newPassword,
-        password_confirmation: confirmPassword,
-      },
-    })
-    setLivenessOpen(true)
-  }
-
-  async function submitPendingUpdateWithLiveness(sessionId) {
-    if (!pendingUpdate) return
-    const payload = { ...pendingUpdate.payload, liveness_session_id: sessionId }
-    const type = pendingUpdate.type
-    setPendingUpdate(null)
-    setLivenessOpen(false)
-    if (type === 'email') {
-      setEmailLoading(true)
-      setEmailError('')
-    } else if (type === 'phone') {
-      setPhoneLoading(true)
-      setPhoneError('')
-    } else {
+    void (async () => {
       setPasswordLoading(true)
       setPasswordErrors({ current: '', new: '', confirm: '' })
-    }
-    try {
-      const data = await updateProfile(payload)
-      setUser(data.user)
-      if (type === 'email') {
-        setEmailSuccess(true)
-      } else if (type === 'phone') {
-        if (data.user?.phone_number != null) setPhone(data.user.phone_number)
-        else setPhone('')
-        setPhoneSuccess(true)
-      } else {
+      try {
+        const data = await updateProfile({
+          current_password: currentPassword,
+          password: newPassword,
+          password_confirmation: confirmPassword,
+        })
+        setUser(data.user)
         setCurrentPassword('')
         setNewPassword('')
         setConfirmPassword('')
         setPasswordSuccess(true)
+      } catch (err) {
+        const msg = err?.message || 'Update failed'
+        setPasswordErrors((prev) => ({ ...prev, new: msg }))
+      } finally {
+        setPasswordLoading(false)
       }
-    } catch (err) {
-      const msg = err?.message || 'Update failed'
-      if (type === 'email') setEmailError(msg)
-      else if (type === 'phone') setPhoneError(msg)
-      else setPasswordErrors((prev) => ({ ...prev, new: msg }))
-    } finally {
-      setEmailLoading(false)
-      setPhoneLoading(false)
-      setPasswordLoading(false)
-    }
+    })()
   }
 
   // —— Photo ———
@@ -1570,39 +1541,6 @@ export default function Profile() {
         </Card>
       )}
 
-      {/* Identity verification (Face Liveness) for sensitive profile updates */}
-      <Dialog open={livenessOpen} onOpenChange={(open) => !open && (setLivenessOpen(false), setPendingUpdate(null))}>
-        <DialogContent
-          showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
-          aria-describedby="profile-liveness-desc"
-        >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={cn(ADMIN_FORM_DIALOG_TITLE_CLASS, 'flex items-center gap-2')}>
-                <ShieldCheck className="size-5" />
-                Verify your identity
-              </DialogTitle>
-              <p id="profile-liveness-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Changing your {pendingUpdate?.type === 'email' ? 'email' : pendingUpdate?.type === 'phone' ? 'phone number' : 'password'} requires identity verification. Complete the face liveness check to continue.
-              </p>
-            </DialogHeader>
-          </div>
-          <div className={ADMIN_FORM_DIALOG_BODY_CLASS}>
-            <FaceRekognitionLiveness
-              onVerified={submitPendingUpdateWithLiveness}
-              onSuccess={() => setLivenessOpen(false)}
-              hideInstruction
-              instructionText="Complete the face liveness check to verify your identity."
-            />
-          </div>
-          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button variant="outline" onClick={() => { setLivenessOpen(false); setPendingUpdate(null); }}>
-              Cancel
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

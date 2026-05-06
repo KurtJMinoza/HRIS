@@ -14,6 +14,7 @@ function isSameAuthUser(a, b) {
     && String(a.updated_at ?? '') === String(b.updated_at ?? '')
     && String(a.role ?? '') === String(b.role ?? '')
     && String(a.hr_role ?? '') === String(b.hr_role ?? '')
+    && String(a.profile_image_url ?? a.profile_image ?? '') === String(b.profile_image_url ?? b.profile_image ?? '')
 }
 
 function shouldClearAuthFromError(err) {

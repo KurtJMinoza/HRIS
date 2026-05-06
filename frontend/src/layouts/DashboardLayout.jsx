@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees } from '@/api'
-import { getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
+import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
@@ -135,6 +135,7 @@ function SidebarContent({
   onToggleCollapse,
   pathname,
 }) {
+  const sidebarAvatarSrc = employeeAvatarSrc(user)
   const [manualExpanded, setManualExpanded] = useState({})
   const autoExpanded = useMemo(() => {
     const next = {}
@@ -295,7 +296,13 @@ function SidebarContent({
                 className="w-full rounded-xl border border-border/60 bg-background/70 p-2 text-left transition-colors hover:bg-muted/40"
               >
                 <div className="flex items-center gap-2">
-                  <Avatar key={user?.id ?? 'sidebar-u'} className="size-8 rounded-full ring-1 ring-border/40">
+                  <Avatar
+                    key={`${user?.id ?? 'sidebar-u'}-${sidebarAvatarSrc ?? ''}-${user?.updated_at ?? ''}`}
+                    className="size-8 rounded-full ring-1 ring-border/40"
+                  >
+                    {sidebarAvatarSrc ? (
+                      <AvatarImage src={sidebarAvatarSrc} alt="" className="object-cover" />
+                    ) : null}
                     <AvatarFallback
                       className={cn(
                         'rounded-full text-xs font-bold',
@@ -423,6 +430,8 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
         .toUpperCase()
         .slice(0, 2)
     : '?'
+
+  const headerAvatarSrc = employeeAvatarSrc(user)
 
   const notificationCount = notifications.filter((n) => n.unread).length
 
@@ -1048,7 +1057,13 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="relative size-9 rounded-full ring-1 ring-border/50">
-                <Avatar key={user?.id ?? 'u'} className="size-8 rounded-full shadow-sm ring-2 ring-border/20">
+                <Avatar
+                  key={`${user?.id ?? 'u'}-${headerAvatarSrc ?? ''}-${user?.updated_at ?? ''}`}
+                  className="size-8 rounded-full shadow-sm ring-2 ring-border/20"
+                >
+                  {headerAvatarSrc ? (
+                    <AvatarImage src={headerAvatarSrc} alt="" className="object-cover" />
+                  ) : null}
                   <AvatarFallback
                     className={cn(
                       'rounded-full text-sm font-bold',

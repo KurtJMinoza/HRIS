@@ -7,7 +7,6 @@ use App\Models\UserAdminActivityLog;
 use App\Jobs\ProcessFaceRegistrationJob;
 use App\Services\FaceRegistrationStatusService;
 use App\Services\RbacService;
-use App\Services\RekognitionLivenessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -23,7 +22,6 @@ class ProfileController extends Controller
 
     /**
      * Update profile: email, phone, and/or password.
-     * Sensitive changes (email, phone_number, password) require identity verification via Rekognition Face Liveness.
      */
     public function update(Request $request): JsonResponse
     {
@@ -35,26 +33,6 @@ class ProfileController extends Controller
         $rules = [];
         $data = [];
         $messages = [];
-
-        $sensitiveChange = $request->filled('email')
-            || $request->filled('username')
-            || $request->has('phone_number')
-            || $request->filled('password');
-
-        if ($sensitiveChange) {
-            $request->validate([
-                'liveness_session_id' => ['required', 'string', 'max:255'],
-            ], [
-                'liveness_session_id.required' => 'Identity verification is required. Complete the face liveness check before updating.',
-            ]);
-            $sessionId = $request->input('liveness_session_id');
-            $livenessResult = RekognitionLivenessService::getSessionResults($sessionId);
-            if ($livenessResult === null || ($livenessResult['result'] ?? '') !== 'PASS') {
-                throw ValidationException::withMessages([
-                    'liveness_session_id' => ['Identity verification failed. Please complete the face liveness check again.'],
-                ]);
-            }
-        }
 
         if ($request->filled('name')) {
             $rules['name'] = ['required', 'string', 'max:255', "regex:/^[A-Za-z0-9\\s\\-']+$/"];

@@ -80,7 +80,6 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { validateEmail, validatePassword, validateConfirmPassword, validatePhone, validateUsername, sanitizeEmail, sanitizePassword } from '@/validation'
-import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
 import ESignatureCard from '@/components/ESignatureCard'
 import SignaturePadDialog from '@/components/SignaturePadDialog'
 import { ProfilePageSkeleton } from '@/components/skeletons'
@@ -791,9 +790,6 @@ export default function EmployeeProfile() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordErrors, setPasswordErrors] = useState({ current: '', new: '', confirm: '' })
   const [passwordLoading, setPasswordLoading] = useState(false)
-
-  const [livenessOpen, setLivenessOpen] = useState(false)
-  const [pendingUpdate, setPendingUpdate] = useState(null) // { type, payload }
 
   const mergeAuthUser = useCallback((nextUser) => {
     if (!nextUser || typeof nextUser !== 'object') return
@@ -2388,20 +2384,8 @@ export default function EmployeeProfile() {
     }
   }
 
-  function requestSensitiveUpdate(type, payload) {
+  async function submitAccountUpdate(type, payload) {
     if (!canEdit) return
-    setPendingUpdate({ type, payload })
-    setLivenessOpen(true)
-  }
-
-  async function submitPendingUpdateWithLiveness(sessionId) {
-    if (!canEdit) return
-    if (!pendingUpdate) return
-    const type = pendingUpdate.type
-    const payload = { ...pendingUpdate.payload, liveness_session_id: sessionId }
-    setPendingUpdate(null)
-    setLivenessOpen(false)
-
     if (type === 'email') {
       setEmailLoading(true)
       setEmailError('')
@@ -2412,15 +2396,13 @@ export default function EmployeeProfile() {
       setPasswordLoading(true)
       setPasswordErrors({ current: '', new: '', confirm: '' })
     }
-
     try {
       const data = await updateProfile(payload)
       if (data?.user) mergeAuthUser(data.user)
       if (type === 'email') toast.success('Email updated.')
       else if (type === 'phone') toast.success('Phone updated.')
-      else toast.success('Password updated.')
-
-      if (type === 'password') {
+      else {
+        toast.success('Password updated.')
         setCurrentPassword('')
         setNewPassword('')
         setConfirmPassword('')
@@ -2804,7 +2786,7 @@ export default function EmployeeProfile() {
                   }}
                   className={cn('h-11', emailError && 'border-destructive')}
                 />
-                <FieldHint>Use the Account tab to update your login email (identity verification required).</FieldHint>
+                <FieldHint>Use the Account tab to update your login email.</FieldHint>
                 {emailError && <p className="text-sm text-destructive">{emailError}</p>}
               </div>
               <div className="space-y-2 @sm:col-span-2">
@@ -2824,7 +2806,7 @@ export default function EmployeeProfile() {
                   className={cn('h-11', phoneError && 'border-destructive')}
                   placeholder="+63 9XX XXX XXXX or 09XXXXXXXXX"
                 />
-                <FieldHint>Use the Account tab to update your mobile number (verification required).</FieldHint>
+                <FieldHint>Use the Account tab to update your mobile number.</FieldHint>
                 {phoneError && <p className="text-sm text-destructive">{phoneError}</p>}
               </div>
               </div>
@@ -4231,7 +4213,7 @@ export default function EmployeeProfile() {
           <Card className="border border-border/60 shadow-sm dark:border-white/8 dark:bg-[#111827]">
             <CardHeader>
               <CardTitle>Update Login Details</CardTitle>
-              <CardDescription>Changing email/phone/password requires identity verification (face liveness).</CardDescription>
+              <CardDescription>Update your login email, mobile number, or password below.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="space-y-2">
@@ -4260,7 +4242,7 @@ export default function EmployeeProfile() {
                       setEmailError('Enter a new email address to change.')
                       return
                     }
-                    requestSensitiveUpdate('email', { email: email.trim() })
+                    void submitAccountUpdate('email', { email: email.trim() })
                   }}
                   disabled={emailLoading}
                 >
@@ -4290,7 +4272,7 @@ export default function EmployeeProfile() {
                     const err = validatePhone(phone, false)
                     setPhoneError(err)
                     if (err && String(phone || '').trim() !== '') return
-                    requestSensitiveUpdate('phone', { phone_number: String(phone || '').trim() || null })
+                    void submitAccountUpdate('phone', { phone_number: String(phone || '').trim() || null })
                   }}
                   disabled={phoneLoading}
                 >
@@ -4355,7 +4337,7 @@ export default function EmployeeProfile() {
                     const confirmErr = newPassword ? validateConfirmPassword(newPassword, confirmPassword) : ''
                     setPasswordErrors({ current: currentErr, new: newErr, confirm: confirmErr })
                     if (currentErr || newErr || confirmErr) return
-                    requestSensitiveUpdate('password', {
+                    void submitAccountUpdate('password', {
                       current_password: currentPassword,
                       password: newPassword,
                       password_confirmation: confirmPassword,
@@ -5517,38 +5499,6 @@ export default function EmployeeProfile() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={livenessOpen} onOpenChange={(open) => !open && (setLivenessOpen(false), setPendingUpdate(null))}>
-        <DialogContent
-          showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
-          aria-describedby="emp-profile-liveness-desc"
-        >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={cn(ADMIN_FORM_DIALOG_TITLE_CLASS, 'flex items-center gap-2')}>
-                <ShieldCheck className="size-5" />
-                Verify your identity
-              </DialogTitle>
-              <p id="emp-profile-liveness-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Changing your{' '}
-                {pendingUpdate?.type === 'email'
-                  ? 'email'
-                  : pendingUpdate?.type === 'phone'
-                    ? 'phone number'
-                    : 'password'} requires identity verification. Complete the face liveness check to continue.
-              </p>
-            </DialogHeader>
-          </div>
-          <div className={ADMIN_FORM_DIALOG_BODY_CLASS}>
-            <FaceRekognitionLiveness onVerified={submitPendingUpdateWithLiveness} onSuccess={() => setLivenessOpen(false)} hideInstruction />
-          </div>
-          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button variant="outline" onClick={() => { setLivenessOpen(false); setPendingUpdate(null) }}>
-              Cancel
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
