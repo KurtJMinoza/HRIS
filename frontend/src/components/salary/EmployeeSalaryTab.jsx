@@ -26,7 +26,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
-const TEXT = 'text-[#0A0A0A]'
+/** Primary foreground for salary cards — must stay readable in dark mode (avoid near-black on dark surfaces). */
+const TEXT = 'text-[#0A0A0A] dark:text-slate-100'
 
 export function formatSalaryTabPhp(value) {
   const n = Number(value)
@@ -547,7 +548,7 @@ export function SalaryCompensationStructureCard({
             </div>
 
             {scheduleHint ? (
-              <div className="flex items-start gap-2 rounded-xl border border-dashed border-slate-200/90 bg-white px-3 py-2.5 text-sm text-slate-600 dark:border-white/15 dark:text-slate-300">
+              <div className="flex items-start gap-2 rounded-xl border border-dashed border-slate-200/90 bg-white px-3 py-2.5 text-sm text-slate-600 dark:border-white/15 dark:bg-[#151922] dark:text-slate-200">
                 <Clock3 className="mt-0.5 size-4 shrink-0 text-[#0A0A0A] dark:text-slate-100" aria-hidden />
                 <span>{scheduleHint}</span>
               </div>
@@ -575,7 +576,7 @@ export function SalaryCompensationStructureCard({
           >
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Real-time preview</p>
-              <p className={cn('mt-1 text-lg font-semibold leading-snug', TEXT, 'dark:text-slate-100')}>Next cut-off &amp; pay date</p>
+              <p className={cn('mt-1 text-lg font-semibold leading-snug', TEXT)}>Next cut-off &amp; pay date</p>
               <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
                 From your assigned pay cycle (reference {formatSalaryTabDate(preview?.reference_date)})
               </p>
@@ -583,14 +584,14 @@ export function SalaryCompensationStructureCard({
             <div className="mt-4 space-y-4">
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Next cut-off</p>
-                <p className={cn('mt-1 text-lg font-semibold tabular-nums', TEXT, 'dark:text-slate-100')}>
+                <p className={cn('mt-1 text-lg font-semibold tabular-nums', TEXT)}>
                   {next.cutStart && next.cutEnd ? `${formatSalaryTabDate(next.cutStart)} – ${formatSalaryTabDate(next.cutEnd)}` : '—'}
                 </p>
               </div>
               <Separator className="bg-slate-200 dark:bg-white/15" />
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Next pay date</p>
-                <p className={cn('mt-1 text-2xl font-semibold tabular-nums', TEXT, 'dark:text-slate-100')}>{formatSalaryTabDate(next.payDate)}</p>
+                <p className={cn('mt-1 text-2xl font-semibold tabular-nums', TEXT)}>{formatSalaryTabDate(next.payDate)}</p>
               </div>
               {preview?.pro_ration_type ? (
                 <p className="text-xs text-slate-600 dark:text-slate-400">
@@ -637,7 +638,7 @@ export function SalaryPayrollHistoryCard({ periods, loading, error, onViewAll, c
       </CardHeader>
       <CardContent className="pt-4">
         {loading ? (
-          <p className="py-8 text-center text-sm text-slate-500">Loading payroll history…</p>
+          <p className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">Loading payroll history…</p>
         ) : error ? (
           <p className="rounded-xl border border-dashed border-amber-200/80 bg-amber-50/50 px-4 py-6 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-100">
             {error}
@@ -702,7 +703,7 @@ function StatutoryMiniCard({ icon: Icon, title, amount, subtitle, status = 'matc
         {status === 'matched' ? matchedBadge : pendingBadge}
       </div>
       <p className={cn('mt-4 text-2xl font-semibold tabular-nums', TEXT)}>{amount}</p>
-      <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">{footer}</p>
+      <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{footer}</p>
     </div>
   )
 }
@@ -797,7 +798,7 @@ export function SalaryStatutoryDeductionsCard({ statutory, withholding, compensa
             )}
           </div>
           <p className={cn('mt-4 text-2xl font-semibold tabular-nums', TEXT)}>{whtPresentation.amountLabel}</p>
-          <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">Estimated monthly withholding (annualized)</p>
+          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Estimated monthly withholding (annualized)</p>
           {whtPresentation.showGovIdsLink && onUpdateGovIds ? (
             <Button
               type="button"
@@ -852,7 +853,7 @@ export function SalaryTaxInfoCard({ compensationSummary, tinResolution, onUpdate
       <CardContent className="grid gap-4 pt-6 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-white/5">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">TIN</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">TIN</p>
             {tr?.showVerifiedBadge ? (
               <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] font-medium text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/40 dark:text-emerald-200">
                 Verified
@@ -860,7 +861,7 @@ export function SalaryTaxInfoCard({ compensationSummary, tinResolution, onUpdate
             ) : null}
           </div>
           {tr?.loading ? (
-            <p className="mt-2 text-sm font-medium text-slate-500">Loading…</p>
+            <p className="mt-2 text-sm font-medium text-slate-500 dark:text-slate-400">Loading…</p>
           ) : (
             <p className={cn('mt-2 font-mono text-sm font-semibold tabular-nums', TEXT)}>{tr?.displayValue ?? '—'}</p>
           )}
@@ -869,12 +870,12 @@ export function SalaryTaxInfoCard({ compensationSummary, tinResolution, onUpdate
           ) : null}
         </div>
         <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-white/5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Tax category</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Tax category</p>
           <p className={cn('mt-2 text-sm font-semibold leading-snug', TEXT)}>{category}</p>
         </div>
         <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-white/5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">RDO code</p>
-          <p className="mt-2 text-sm font-semibold text-slate-400">Not on file</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">RDO code</p>
+          <p className={cn('mt-2 text-sm font-semibold', TEXT, 'opacity-80')}>Not on file</p>
         </div>
       </CardContent>
     </Card>
@@ -886,8 +887,8 @@ export function SalaryTaxInfoCard({ compensationSummary, tinResolution, onUpdate
  */
 export function SalaryTabNotice({ children }) {
   return (
-    <div className="flex items-start gap-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-300">
-      <Wallet className="mt-0.5 size-4 shrink-0 text-slate-400" aria-hidden />
+    <div className="flex items-start gap-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+      <Wallet className="mt-0.5 size-4 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden />
       <div className="leading-relaxed">{children}</div>
     </div>
   )
@@ -931,14 +932,15 @@ function filterNonZeroAssignedLines(items) {
 }
 
 function payComponentsTableHeader() {
+  const th = 'text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300'
   return (
     <TableRow className="border-b border-slate-100 bg-slate-50/80 hover:bg-slate-50/80 dark:border-white/10 dark:bg-white/5">
-      <TableHead className={cn('text-[11px] font-semibold uppercase tracking-wide text-slate-500', TEXT)}>Name</TableHead>
-      <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Calculation</TableHead>
-      <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Type</TableHead>
-      <TableHead className="text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">Amount</TableHead>
-      <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Schedule</TableHead>
-      <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Effective</TableHead>
+      <TableHead className={th}>Name</TableHead>
+      <TableHead className={th}>Calculation</TableHead>
+      <TableHead className={th}>Type</TableHead>
+      <TableHead className={cn('text-right', th)}>Amount</TableHead>
+      <TableHead className={th}>Schedule</TableHead>
+      <TableHead className={th}>Effective</TableHead>
     </TableRow>
   )
 }
@@ -1076,10 +1078,10 @@ export function SalaryPayComponentsBreakdownCard({
               <Table className="min-w-[640px] text-sm">
                 <TableHeader>
                   <TableRow className="border-b border-slate-100 bg-slate-50/80 hover:bg-slate-50/80 dark:border-white/10 dark:bg-white/5">
-                    <TableHead className={cn('text-[11px] font-semibold uppercase tracking-wide text-slate-500', TEXT)}>Contribution</TableHead>
-                    <TableHead className="text-right text-[11px] font-semibold uppercase tracking-wide text-slate-500">Amount</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Schedule</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Notes</TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Contribution</TableHead>
+                    <TableHead className="text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Amount</TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Schedule</TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Notes</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

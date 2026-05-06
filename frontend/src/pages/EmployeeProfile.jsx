@@ -3321,9 +3321,9 @@ export default function EmployeeProfile() {
                 { label: 'Effectivity', value: formatDate(displayUser?.salary_effectivity_date), sub: 'Salary structure' },
               ].map((row) => (
                 <div key={row.label} className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#111318]">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{row.label}</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{row.label}</p>
                   <p className="mt-2 text-xl font-semibold tabular-nums text-[#0A0A0A] dark:text-slate-100">{row.value}</p>
-                  <p className="mt-1 text-xs text-slate-500">{row.sub}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{row.sub}</p>
                 </div>
               ))}
             </div>
