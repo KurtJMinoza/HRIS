@@ -189,7 +189,7 @@ function SidebarContent({
           <button
             type="button"
             className={cn(
-              'flex w-full items-center rounded-md px-3 py-2.5 text-left text-sm font-medium transition-all duration-200',
+              'flex w-full items-start gap-0 rounded-md px-3 py-2.5 text-left text-sm font-medium transition-all duration-200',
               depth > 0 && 'ml-4',
               active
                 ? 'bg-orange-50 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300'
@@ -197,9 +197,9 @@ function SidebarContent({
             )}
             onClick={() => setManualExpanded((prev) => ({ ...prev, [key]: !isOpen }))}
           >
-            {item.icon ? <item.icon className="mr-3 size-5 shrink-0" /> : <span className="mr-3 inline-block size-5 shrink-0" />}
-            <span className="flex-1 truncate">{item.label}</span>
-            {isOpen ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
+            {item.icon ? <item.icon className="mr-3 mt-0.5 size-5 shrink-0" /> : <span className="mr-3 mt-0.5 inline-block size-5 shrink-0" />}
+            <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{item.label}</span>
+            {isOpen ? <ChevronDown className="mt-1 size-4 shrink-0" /> : <ChevronRight className="mt-1 size-4 shrink-0" />}
           </button>
           {isOpen && (
             <div className="space-y-1">
@@ -219,7 +219,7 @@ function SidebarContent({
         end={item.end}
         className={({ isActive }) =>
           cn(
-            'flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-all duration-200',
+            'flex items-start gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-all duration-200',
             isActive
               ? 'border-l-2 border-orange-500 bg-orange-50 text-orange-600 shadow-sm ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
               : 'border-l-2 border-transparent text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
@@ -228,8 +228,8 @@ function SidebarContent({
         onClick={onNavClick}
         style={depth > 0 ? { paddingLeft: `${12 + depth * 16}px` } : undefined}
       >
-        {item.icon ? <item.icon className="size-4 shrink-0" /> : <span className="inline-block size-4 shrink-0" />}
-        <span className="truncate">{item.label}</span>
+        {item.icon ? <item.icon className="mt-0.5 size-4 shrink-0" /> : <span className="mt-0.5 inline-block size-4 shrink-0" />}
+        <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{item.label}</span>
       </NavLink>
     )
   }
@@ -593,7 +593,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
       <aside
         className={cn(
           'hidden flex-col border-r border-sidebar-border/70 bg-sidebar text-sidebar-foreground shadow-[4px_0_24px_-18px_rgba(15,23,42,0.18)] transition-[width] duration-200 ease-in-out dark:border-sidebar-border/50 dark:shadow-[4px_0_36px_-18px_rgba(0,0,0,0.5)] md:flex',
-          sidebarCollapsed ? 'w-16' : 'w-52'
+          sidebarCollapsed ? 'w-16' : 'w-64'
         )}
       >
         <SidebarContent
@@ -631,7 +631,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               <Menu className="size-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-64 p-0">
+          <SheetContent side="left" className="w-72 max-w-[85vw] p-0">
             <SheetHeader className="sr-only">
               <SheetTitle>Menu</SheetTitle>
             </SheetHeader>

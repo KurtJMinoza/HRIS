@@ -6,13 +6,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { RoleBadge } from '@/components/RoleBadge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { addEmployeeSkill, adjustEmployeeLeaveCredits, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
+import { addEmployeeSkill, adjustEmployeeLeaveCredits, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
 import { motion as Motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -426,6 +426,20 @@ function formatDate(dateStr) {
   return date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function formatDateTime(dateStr) {
+  if (!dateStr) return '—'
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return dateStr
+  return date.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function validateAccountPasswordConfirm(newPassword, confirmPassword) {
+  const c = String(confirmPassword || '')
+  if (!c) return 'Confirm your new password.'
+  if (String(newPassword || '') !== c) return 'Password confirmation does not match.'
+  return ''
+}
+
 function validateTempPassword(value) {
   const v = String(value || '')
   const trimmed = v.trim()
@@ -729,7 +743,7 @@ function buildProfileSnapshot(form, skills, certifications, govIds, secondaryIds
 }
 
 export default function AdminEmployeeProfile() {
-  const { user } = useAuth()
+  const { user, setUser } = useAuth()
   const { employeeId: routeEmployeeId } = useParams()
   const effectiveEmployeeId = routeEmployeeId ?? user?.id ?? null
   const isOwnProfile = Number(effectiveEmployeeId) === Number(user?.id)
@@ -909,6 +923,14 @@ export default function AdminEmployeeProfile() {
   const [reportingManagerAutoHint, setReportingManagerAutoHint] = useState('')
   const [reportingManagerManualOverride, setReportingManagerManualOverride] = useState(false)
   const [activeTab, setActiveTab] = useState('personal-info')
+  const [accountEmail, setAccountEmail] = useState('')
+  const [accountPhone, setAccountPhone] = useState('')
+  const [accountCurrentPassword, setAccountCurrentPassword] = useState('')
+  const [accountNewPassword, setAccountNewPassword] = useState('')
+  const [accountConfirmPassword, setAccountConfirmPassword] = useState('')
+  const [accountBusy, setAccountBusy] = useState({ email: false, phone: false, password: false })
+  const [accountErrors, setAccountErrors] = useState({ email: '', phone: '', password: '' })
+  const [accountPasswordFieldErrors, setAccountPasswordFieldErrors] = useState({ current: '', new: '', confirm: '' })
   const [deferredSectionLoading, setDeferredSectionLoading] = useState({
     salary: false,
     government: false,
@@ -949,6 +971,12 @@ export default function AdminEmployeeProfile() {
       payrollHistory: false,
     }
   }, [employeeId])
+
+  useEffect(() => {
+    if (!isOwnProfile || !employee) return
+    setAccountEmail(String(employee.email || ''))
+    setAccountPhone(String(employee.phone_number || ''))
+  }, [isOwnProfile, employee?.id, employee?.email, employee?.phone_number])
 
   useEffect(() => {
     const onSchedulesChanged = () => {
@@ -1701,7 +1729,91 @@ export default function AdminEmployeeProfile() {
     { id: 'government-ids', label: 'Gov IDs' },
     { id: 'emergency-contacts', label: 'Emergency' },
     { id: 'skills', label: 'Skills' },
+    ...(isOwnProfile ? [{ id: 'account', label: 'Account' }] : []),
   ]
+
+  const mergeOwnUserFromApi = useCallback((nextUser) => {
+    if (!nextUser || typeof nextUser !== 'object') return
+    setEmployee((prev) => (prev ? { ...prev, ...nextUser } : nextUser))
+    if (isOwnProfile && typeof setUser === 'function') {
+      setUser((prev) => ({
+        ...(prev && typeof prev === 'object' ? prev : {}),
+        ...nextUser,
+      }))
+    }
+  }, [isOwnProfile, setUser])
+
+  async function handleAccountEmailSave() {
+    const next = String(accountEmail || '').trim()
+    if (!isValidEmailAddress(next)) {
+      setAccountErrors((prev) => ({ ...prev, email: 'Enter a valid email address.' }))
+      return
+    }
+    if (next === String(employee?.email || '').trim()) {
+      setAccountErrors((prev) => ({ ...prev, email: 'Enter a new email address to change.' }))
+      return
+    }
+    setAccountErrors((prev) => ({ ...prev, email: '' }))
+    setAccountBusy((prev) => ({ ...prev, email: true }))
+    try {
+      const data = await updateProfile({ email: next })
+      mergeOwnUserFromApi(data?.user)
+      toast.success('Email updated.')
+    } catch (e) {
+      setAccountErrors((prev) => ({ ...prev, email: e?.message || 'Failed to update email.' }))
+    } finally {
+      setAccountBusy((prev) => ({ ...prev, email: false }))
+    }
+  }
+
+  async function handleAccountPhoneSave() {
+    const next = String(accountPhone || '').trim()
+    if (next && !isValidPhMobile(next)) {
+      setAccountErrors((prev) => ({ ...prev, phone: 'Enter a valid PH mobile number (+63... or 09...).' }))
+      return
+    }
+    setAccountErrors((prev) => ({ ...prev, phone: '' }))
+    setAccountBusy((prev) => ({ ...prev, phone: true }))
+    try {
+      const data = await updateProfile({ phone_number: next || null })
+      mergeOwnUserFromApi(data?.user)
+      setAccountPhone(String(data?.user?.phone_number || ''))
+      toast.success('Phone updated.')
+    } catch (e) {
+      setAccountErrors((prev) => ({ ...prev, phone: e?.message || 'Failed to update phone.' }))
+    } finally {
+      setAccountBusy((prev) => ({ ...prev, phone: false }))
+    }
+  }
+
+  async function handleAccountPasswordSave() {
+    const current = String(accountCurrentPassword || '')
+    const next = String(accountNewPassword || '')
+    const confirm = String(accountConfirmPassword || '')
+    const currentErr = !current ? 'Current password is required.' : ''
+    const newErr = validateTempPassword(next)
+    const confirmErr = next ? validateAccountPasswordConfirm(next, confirm) : ''
+    setAccountPasswordFieldErrors({ current: currentErr, new: newErr, confirm: confirmErr })
+    setAccountErrors((prev) => ({ ...prev, password: '' }))
+    if (currentErr || newErr || confirmErr) return
+    setAccountBusy((prev) => ({ ...prev, password: true }))
+    try {
+      await updateProfile({
+        current_password: current,
+        password: next,
+        password_confirmation: confirm,
+      })
+      setAccountCurrentPassword('')
+      setAccountNewPassword('')
+      setAccountConfirmPassword('')
+      setAccountPasswordFieldErrors({ current: '', new: '', confirm: '' })
+      toast.success('Password updated.')
+    } catch (e) {
+      setAccountErrors((prev) => ({ ...prev, password: e?.message || 'Failed to update password.' }))
+    } finally {
+      setAccountBusy((prev) => ({ ...prev, password: false }))
+    }
+  }
 
   const reportingManagerSuggestion = useMemo(() => {
     if (!employee?.id) return null
@@ -3220,6 +3332,19 @@ export default function AdminEmployeeProfile() {
     try {
       const data = await uploadEmployeePhoto(employee.id, croppedFile)
       if (data?.employee) setEmployee(data.employee)
+      if (isOwnProfile && data?.employee && typeof setUser === 'function') {
+        const e = data.employee
+        setUser((prev) =>
+          prev && typeof prev === 'object'
+            ? {
+                ...prev,
+                profile_image: e.profile_image ?? null,
+                profile_image_url: e.profile_image_url ?? e.profile_image ?? null,
+                updated_at: e.updated_at ?? prev.updated_at,
+              }
+            : prev,
+        )
+      }
       await refreshAdminEmployeeCaches(employee.id)
       toast.success('Profile picture updated.')
     } catch (e) {
@@ -3238,6 +3363,19 @@ export default function AdminEmployeeProfile() {
       const data = await removeEmployeePhoto(employee.id)
       if (data?.employee) setEmployee(data.employee)
       else setEmployee((prev) => (prev ? { ...prev, profile_image: null } : prev))
+      if (isOwnProfile && typeof setUser === 'function') {
+        const e = data?.employee
+        setUser((prev) =>
+          prev && typeof prev === 'object'
+            ? {
+                ...prev,
+                profile_image: e?.profile_image ?? null,
+                profile_image_url: e?.profile_image_url ?? e?.profile_image ?? null,
+                updated_at: e?.updated_at ?? prev.updated_at,
+              }
+            : prev,
+        )
+      }
       await refreshAdminEmployeeCaches(employee.id)
       toast.success('Profile picture removed.')
     } catch (e) {
@@ -6272,6 +6410,153 @@ export default function AdminEmployeeProfile() {
                       <p className="text-sm font-semibold">Upload New File</p>
                       <p className="text-xs text-muted-foreground">PDF, JPG up to 10MB</p>
                     </button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </Motion.div>
+        </TabsContent>
+        )}
+
+        {activeTab === 'account' && isOwnProfile && (
+        <TabsContent value="account">
+          <Motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="space-y-4">
+            <div className="grid gap-6 @lg:grid-cols-2">
+              <Card className="border border-border/60 shadow-sm dark:border-white/8 dark:bg-[#111827]">
+                <CardHeader>
+                  <CardTitle>Account Information</CardTitle>
+                  <CardDescription>Sensitive fields are managed by administrators.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p><span className="text-muted-foreground">Username:</span> {employee?.username || '—'}</p>
+                  <p><span className="text-muted-foreground">Email Address:</span> {employee?.email || '—'}</p>
+                  <p className="flex flex-wrap items-center gap-2">
+                    <span className="text-muted-foreground">Role:</span>
+                    <RoleBadge user={employee} size="sm" />
+                  </p>
+                  <p><span className="text-muted-foreground">Account Status:</span> {employee?.is_active ? 'Active' : 'Inactive'}</p>
+                  <p><span className="text-muted-foreground">Last Login:</span> {formatDateTime(employee?.last_login_at)}</p>
+                </CardContent>
+              </Card>
+
+              <Card className="border border-border/60 shadow-sm dark:border-white/8 dark:bg-[#111827]">
+                <CardHeader>
+                  <CardTitle>Update Login Details</CardTitle>
+                  <CardDescription>Update your login email, mobile number, or password below.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="space-y-2">
+                    <Label htmlFor="admin_acc_email">Email Address</Label>
+                    <Input
+                      id="admin_acc_email"
+                      type="email"
+                      value={accountEmail}
+                      onChange={(e) => {
+                        setAccountEmail(e.target.value)
+                        setAccountErrors((prev) => ({ ...prev, email: '' }))
+                      }}
+                      className={cn(accountErrors.email && 'border-destructive')}
+                    />
+                    {accountErrors.email ? <p className="text-sm text-destructive">{accountErrors.email}</p> : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { void handleAccountEmailSave() }}
+                      disabled={accountBusy.email}
+                    >
+                      {accountBusy.email ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                      Update Email
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="admin_acc_phone">Contact Number</Label>
+                    <Input
+                      id="admin_acc_phone"
+                      value={accountPhone}
+                      onChange={(e) => {
+                        setAccountPhone(e.target.value)
+                        setAccountErrors((prev) => ({ ...prev, phone: '' }))
+                      }}
+                      className={cn(accountErrors.phone && 'border-destructive')}
+                    />
+                    {accountErrors.phone ? <p className="text-sm text-destructive">{accountErrors.phone}</p> : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { void handleAccountPhoneSave() }}
+                      disabled={accountBusy.phone}
+                    >
+                      {accountBusy.phone ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                      Update Phone
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold">Change Password</p>
+                    <div className="space-y-2">
+                      <Label htmlFor="admin_acc_current">Current Password</Label>
+                      <PasswordInput
+                        id="admin_acc_current"
+                        value={accountCurrentPassword}
+                        onChange={(e) => {
+                          const next = e.target.value
+                          setAccountCurrentPassword(next)
+                          setAccountPasswordFieldErrors((prev) => ({ ...prev, current: next ? '' : prev.current }))
+                          setAccountErrors((p) => ({ ...p, password: '' }))
+                        }}
+                        className={cn(accountPasswordFieldErrors.current && 'border-destructive')}
+                      />
+                      {accountPasswordFieldErrors.current ? <p className="text-sm text-destructive">{accountPasswordFieldErrors.current}</p> : null}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="admin_acc_new">New Password</Label>
+                      <PasswordInput
+                        id="admin_acc_new"
+                        value={accountNewPassword}
+                        onChange={(e) => {
+                          const next = e.target.value
+                          setAccountNewPassword(next)
+                          setAccountPasswordFieldErrors((prev) => ({
+                            ...prev,
+                            new: next ? validateTempPassword(next) : '',
+                            confirm: accountConfirmPassword ? validateAccountPasswordConfirm(next, accountConfirmPassword) : prev.confirm,
+                          }))
+                          setAccountErrors((p) => ({ ...p, password: '' }))
+                        }}
+                        className={cn(accountPasswordFieldErrors.new && 'border-destructive')}
+                      />
+                      {accountPasswordFieldErrors.new ? <p className="text-sm text-destructive">{accountPasswordFieldErrors.new}</p> : null}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="admin_acc_confirm">Confirm New Password</Label>
+                      <PasswordInput
+                        id="admin_acc_confirm"
+                        value={accountConfirmPassword}
+                        onChange={(e) => {
+                          const next = e.target.value
+                          setAccountConfirmPassword(next)
+                          setAccountPasswordFieldErrors((prev) => ({
+                            ...prev,
+                            confirm: next ? validateAccountPasswordConfirm(accountNewPassword, next) : '',
+                          }))
+                          setAccountErrors((p) => ({ ...p, password: '' }))
+                        }}
+                        className={cn(accountPasswordFieldErrors.confirm && 'border-destructive')}
+                      />
+                      {accountPasswordFieldErrors.confirm ? <p className="text-sm text-destructive">{accountPasswordFieldErrors.confirm}</p> : null}
+                    </div>
+                    {accountErrors.password ? <p className="text-sm text-destructive">{accountErrors.password}</p> : null}
+                    <Button
+                      type="button"
+                      onClick={() => { void handleAccountPasswordSave() }}
+                      disabled={accountBusy.password}
+                    >
+                      {accountBusy.password ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                      Update Password
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
