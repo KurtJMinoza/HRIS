@@ -54,6 +54,7 @@ import {
   getDashboardCompanyAttendance,
   getCompanies,
   getHalfDayList,
+  getAdminOvertime,
   profileImageUrl,
   companyLogoUrl,
   submitRegularizationRecommendation,
@@ -66,7 +67,7 @@ import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { cn } from '@/lib/utils'
 import { DIALOG_CONTENT_CLASS } from '@/lib/fieldClasses'
-import { ExpiringContractsCard } from '@/components/dashboard/ExpiringContractsCard'
+import { OvertimeRequestsCard } from '@/components/dashboard/OvertimeRequestsCard'
 
 const CARD_ICONS = {
   total: Users,
@@ -293,6 +294,7 @@ export default function AdminDashboard() {
   const { user, loading: authLoading } = useAuth()
   const perms = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canViewCompanyDirectory = useMemo(() => perms.has('org.company.view'), [perms])
+  const canViewOvertime = useMemo(() => perms.has('overtime.view'), [perms])
   const hrRole = String(user?.hr_role || '').trim()
   const isHrAdmin = hrRole === 'admin_hr' || String(user?.role || '').toLowerCase() === 'admin'
   const dashboardScopeLabel =
@@ -346,7 +348,24 @@ export default function AdminDashboard() {
     refetchOnWindowFocus: true,
   })
 
+  const overtimePendingQuery = useQuery({
+    queryKey: ['admin-dashboard-overtime-pending'],
+    queryFn: () => getAdminOvertime({ status: 'pending', page: 1, per_page: 1 }),
+    enabled: !authLoading && canViewOvertime,
+    refetchInterval: 15000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  })
+
   const loading = authLoading || dashboardQuery.isLoading
+  const overtimePendingCount = Number(
+    overtimePendingQuery.data?.summary?.pending_count
+      ?? overtimePendingQuery.data?.summary?.pending
+      ?? overtimePendingQuery.data?.pending_count
+      ?? overtimePendingQuery.data?.pagination?.total
+      ?? overtimePendingQuery.data?.meta?.total
+      ?? 0,
+  )
 
   const fetchDashboard = useCallback(async () => {
     const result = await dashboardQuery.refetch()
@@ -1240,14 +1259,12 @@ export default function AdminDashboard() {
           </Card>
         </Motion.div>
 
-        {/* 3. Expiring Contracts */}
+        {/* 3. Overtime Requests */}
         <Motion.div variants={itemVariants} className="self-stretch">
-          <ExpiringContractsCard
-            loading={loading && !data}
-            contracts={expiringContracts}
-            profileImageUrl={profileImageUrl}
-            onViewAll={() => navigate(hrPanelPath(hrBase, 'employees'))}
-            onRenewContract={(emp) => handleReviewContract(emp)}
+          <OvertimeRequestsCard
+            loading={(!canViewOvertime && loading) || overtimePendingQuery.isLoading}
+            pendingCount={canViewOvertime ? overtimePendingCount : 0}
+            onViewAll={() => navigate(hrPanelPath(hrBase, 'overtime'))}
           />
         </Motion.div>
 
