@@ -412,6 +412,7 @@ class EmployeeController extends Controller
         $header = [
             'Employee ID',
             'Full Name',
+            'Username',
             'First Name',
             'Middle Name',
             'Last Name',
@@ -481,6 +482,7 @@ class EmployeeController extends Controller
                     'id',
                     'employee_code',
                     'name',
+                    'username',
                     'first_name',
                     'middle_name',
                     'last_name',
@@ -615,6 +617,7 @@ class EmployeeController extends Controller
                     fputcsv($out, [
                         (string) ($user->employee_code ?? ''),
                         (string) ($user->name ?? ''),
+                        (string) ($user->username ?? ''),
                         (string) ($user->first_name ?? ''),
                         (string) ($user->middle_name ?? ''),
                         (string) ($user->last_name ?? ''),
