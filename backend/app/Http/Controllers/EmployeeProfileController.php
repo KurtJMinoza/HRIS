@@ -528,6 +528,7 @@ class EmployeeProfileController extends Controller
             'profile_image_url' => $user->profile_image_url,
             'signature_image' => $user->signature_image_url,
             'signature_signed_at' => $user->signature_signed_at?->toIso8601String(),
+            'last_login_at' => $user->last_login_at?->toIso8601String(),
             // Kept for frontend org-scope UI compatibility.
             'management_role' => null,
         ];
@@ -588,6 +589,7 @@ class EmployeeProfileController extends Controller
             'profile_image_url' => $user->profile_image_url,
             'signature_image' => $user->signature_image_url,
             'signature_signed_at' => $user->signature_signed_at?->toIso8601String(),
+            'last_login_at' => $user->last_login_at?->toIso8601String(),
             'management_role' => null,
         ];
     }
@@ -645,6 +647,7 @@ class EmployeeProfileController extends Controller
             'profile_image',
             'signature_image',
             'signature_signed_at',
+            'last_login_at',
         ];
     }
 

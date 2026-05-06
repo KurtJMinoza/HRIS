@@ -717,6 +717,9 @@ class AuthController extends Controller
         $payload['email_verified_at'] = $user->email_verified_at
             ? $user->email_verified_at->toIso8601String()
             : null;
+        $payload['last_login_at'] = $user->last_login_at
+            ? $user->last_login_at->toIso8601String()
+            : null;
         $payload['updated_at'] = $user->updated_at
             ? $user->updated_at->toIso8601String()
             : null;

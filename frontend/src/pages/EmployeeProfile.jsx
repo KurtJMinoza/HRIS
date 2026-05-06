@@ -222,6 +222,14 @@ function formatDate(value) {
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+function formatDateTime(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return '—'
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw
+  return date.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
 function formatSalaryAmount(value) {
   const raw = value === undefined || value === null ? '' : String(value).trim()
   if (raw === '') return '—'
@@ -4206,7 +4214,7 @@ export default function EmployeeProfile() {
                 <RoleBadge user={displayUser} size="sm" />
               </p>
               <p><span className="text-muted-foreground">Account Status:</span> {displayUser?.is_active ? 'Active' : 'Inactive'}</p>
-              <p><span className="text-muted-foreground">Last Login:</span> —</p>
+              <p><span className="text-muted-foreground">Last Login:</span> {formatDateTime(displayUser?.last_login_at)}</p>
             </CardContent>
           </Card>
 

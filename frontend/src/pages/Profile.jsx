@@ -533,6 +533,7 @@ export default function Profile() {
   const passwordStrength = getPasswordStrength(newPassword)
   const emailVerifiedAt = user?.email_verified_at ?? null
   const emailVerified = !!emailVerifiedAt
+  const lastLoginAt = user?.last_login_at ? new Date(user.last_login_at) : null
   const lastUpdatedAt = user?.updated_at ? new Date(user.updated_at) : null
   const phoneDigits = String(phone || '').replace(/\D/g, '')
   const localPhoneDigits = phoneDigits.startsWith('63')
@@ -1525,7 +1526,12 @@ export default function Profile() {
             <CardDescription>Recent account activity overview.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>🕒 Last login: Not available</p>
+            <p>
+              🕒 Last login:{' '}
+              {lastLoginAt && !Number.isNaN(lastLoginAt.getTime())
+                ? lastLoginAt.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+                : '—'}
+            </p>
             <p>
               📝 Last profile update:{' '}
               {lastUpdatedAt
