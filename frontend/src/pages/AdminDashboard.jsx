@@ -77,46 +77,46 @@ const CARD_ICONS = {
 }
 
 const CHART = {
-  weeklyBar: 'hsl(160 84% 39%)',
-  lateLine: 'hsl(25 95% 53%)',
-  lateArea: 'hsl(25 95% 53% / 0.2)',
-  deptBars: ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'],
+  weeklyBar: 'var(--brand)',
+  lateLine: 'hsl(351 95% 58%)',
+  lateArea: 'hsl(351 95% 58% / 0.2)',
+  deptBars: ['#ff6b00', '#ff4d5a', '#f6c453', '#35b768', '#5c9ded'],
 }
 
 const CARD_META = {
   total_employees: {
-    border: 'border-t-2 border-sky-500/70',
-    gradient: 'from-sky-500/10 via-sky-500/0 to-transparent',
+    accent: 'text-orange-500',
+    iconBg: 'bg-orange-500/12 ring-orange-500/15',
     sentiment: 'neutral',
-    hoverShadow: 'hover:shadow-sky-500/15',
+    hoverShadow: 'hover:shadow-orange-500/15',
   },
   present_today: {
-    border: 'border-t-2 border-emerald-500/70',
-    gradient: 'from-emerald-500/10 via-emerald-500/0 to-transparent',
+    accent: 'text-emerald-500',
+    iconBg: 'bg-emerald-500/12 ring-emerald-500/15',
     sentiment: 'up_good',
     hoverShadow: 'hover:shadow-emerald-500/20',
   },
   late_today: {
-    border: 'border-t-2 border-amber-500/70',
-    gradient: 'from-amber-500/10 via-amber-500/0 to-transparent',
+    accent: 'text-amber-500',
+    iconBg: 'bg-amber-500/14 ring-amber-500/18',
     sentiment: 'down_good',
     hoverShadow: 'hover:shadow-amber-500/20',
   },
   absent_today: {
-    border: 'border-t-2 border-red-500/70',
-    gradient: 'from-red-500/10 via-red-500/0 to-transparent',
+    accent: 'text-rose-500',
+    iconBg: 'bg-rose-500/12 ring-rose-500/15',
     sentiment: 'down_good',
     hoverShadow: 'hover:shadow-red-500/20',
   },
   on_leave: {
-    border: 'border-t-2 border-violet-500/70',
-    gradient: 'from-violet-500/10 via-violet-500/0 to-transparent',
+    accent: 'text-blue-500',
+    iconBg: 'bg-blue-500/12 ring-blue-500/15',
     sentiment: 'neutral',
-    hoverShadow: 'hover:shadow-violet-500/15',
+    hoverShadow: 'hover:shadow-blue-500/15',
   },
   default: {
-    border: 'border-t-2 border-primary/70',
-    gradient: 'from-primary/10 via-primary/0 to-transparent',
+    accent: 'text-brand',
+    iconBg: 'bg-brand/12 ring-brand/15',
     sentiment: 'neutral',
     hoverShadow: 'hover:shadow-primary/15',
   },
@@ -753,22 +753,22 @@ export default function AdminDashboard() {
 
   return (
     <Motion.div
-      className="space-y-1 text-foreground dark:text-zinc-50 @md:space-y-1.5"
+      className="admin-dashboard space-y-4 text-foreground dark:text-zinc-50 @md:space-y-5"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
     >
       <Motion.div
-        className="mb-0 flex flex-col gap-0.5 pt-0 @md:flex-row @md:items-start @md:justify-between"
+        className="mb-0 flex flex-col gap-3 pt-0 @md:flex-row @md:items-start @md:justify-between"
         variants={itemVariants}
       >
-        <div className="space-y-0.5 @md:space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="space-y-1">
+          <p className="text-[13px] font-semibold uppercase tracking-[0.18em] text-foreground/85 dark:text-foreground/75">
             {getGreeting()}
             {isHrAdmin ? ', Admin' : dashboardScopeLabel ? `, ${dashboardScopeLabel} lead` : ''}
           </p>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h2 className="text-[32px] font-bold leading-tight tracking-tight @md:text-[36px]">
+            <h2 className="text-[30px] font-extrabold leading-none tracking-tight @md:text-[34px]">
               {isHrAdmin
                 ? 'Admin Dashboard'
                 : hrRole === 'department_head'
@@ -792,7 +792,7 @@ export default function AdminDashboard() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50/80 px-2.5 py-1 text-[11px] text-emerald-800 shadow-sm dark:border-emerald-500/40 dark:bg-emerald-900/30 dark:text-emerald-300">
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-card px-3 py-1.5 text-[11px] text-emerald-800 shadow-sm dark:bg-card dark:text-emerald-300">
             <span className="relative inline-flex size-2 shrink-0">
               <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400/70" />
               <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
@@ -800,9 +800,9 @@ export default function AdminDashboard() {
             <span className="font-extrabold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-200">Live</span>
             <span className="text-[10px] font-normal opacity-75">Auto-refresh 15s</span>
           </div>
-          <div className="inline-flex items-center gap-2 rounded-lg border border-border/70 bg-card/80 px-2.5 py-1.5 text-xs shadow-sm">
+          <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card px-3 py-1.5 text-xs shadow-sm">
             <span className="text-[11px] font-normal uppercase tracking-wide text-muted-foreground">Range</span>
-            <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-semibold text-foreground">
+            <span className="rounded-full bg-background px-2.5 py-0.5 text-xs font-semibold text-foreground dark:bg-muted">
               Today
             </span>
           </div>
@@ -863,7 +863,7 @@ export default function AdminDashboard() {
 
       {/* Top stats cards */}
       <Motion.div
-        className="mt-0 grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-5"
+        className="mt-1 grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-5"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -933,35 +933,37 @@ export default function AdminDashboard() {
           }
 
           return (
-            <Motion.div key={key} variants={itemVariants} whileHover={{ y: -3, scale: 1.02, transition: { duration: 0.15, ease: 'easeOut' } }}>
+            <Motion.div key={key} variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15, ease: 'easeOut' } }}>
               <Card
                 className={[
-                  'relative gap-0 overflow-hidden shadow-sm transition-all duration-200',
-                  'dark:bg-white/4 dark:backdrop-blur-sm',
+                  'admin-dashboard-card relative min-h-[250px] gap-0 overflow-hidden py-0 transition-all duration-200',
                   isLateAlert
-                    ? 'bg-card/95 border-2 border-border/80 ring-0 hover:border-border hover:shadow-md dark:bg-card/90 dark:border-white/20 dark:hover:border-white/30'
-                    : `bg-card/95 border-2 border-border/80 ring-0 hover:border-border hover:shadow-md dark:bg-card/90 dark:border-white/20 dark:hover:border-white/30 ${meta.hoverShadow ?? ''}`,
+                    ? 'border-rose-500/40 ring-1 ring-rose-500/15'
+                    : `${meta.hoverShadow ?? ''}`,
                 ].join(' ')}
               >
-              <CardHeader className="relative z-10 flex flex-row items-center justify-between space-y-0 px-5 pb-1 pt-5">
-                <CardTitle className={`mb-0 text-sm font-medium uppercase tracking-[0.08em] ${isLateAlert ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'}`}>
+              <CardHeader className="relative z-10 flex flex-col items-start gap-5 px-5 pb-0 pt-5">
+                <div className={`flex size-11 items-center justify-center rounded-full ring-1 ${isLateAlert ? 'animate-pulse bg-rose-500/15 text-rose-500 ring-rose-500/35' : `${meta.iconBg} ${meta.accent}`}`}>
+                  <Icon className="size-5" />
+                </div>
+                <CardTitle className={`mb-0 text-[13px] font-extrabold uppercase tracking-[0.04em] ${isLateAlert ? 'text-rose-700 dark:text-rose-300' : 'text-foreground'}`}>
                   {label}
                 </CardTitle>
-                <div className={`flex h-7 w-7 items-center justify-center rounded-full shadow-sm ring-1 ${isLateAlert ? 'animate-pulse bg-red-500/20 ring-red-500/50' : 'bg-muted/80 ring-border/60'}`}>
-                  <Icon className={`size-4 ${isLateAlert ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground/90'}`} />
-                </div>
               </CardHeader>
-              <CardContent className="relative z-10 px-5 pb-5 pt-1">
-                <div className="flex items-baseline justify-between gap-3">
-                  <div className={`text-5xl font-bold tabular-nums leading-none tracking-tight @md:text-[56px] ${isLateAlert ? 'text-red-600 dark:text-red-400' : ''}`}>
+              <CardContent className="relative z-10 px-5 pb-5 pt-5">
+                <div className="flex items-end justify-between gap-3">
+                  <div className={`text-[46px] font-extrabold tabular-nums leading-none tracking-tight ${isLateAlert ? 'text-rose-600 dark:text-rose-300' : 'text-foreground'}`}>
                     <KpiValue value={value} />
                   </div>
-                  <div className="flex flex-col items-end gap-0.5">
-                    <div className={`flex items-center text-[13px] font-semibold tabular-nums ${deltaColorClass}`}>
+                  <div className="mb-1 flex flex-col items-end gap-1">
+                    <span className="text-[11px] font-normal text-muted-foreground">
+                      {periodLabel}
+                    </span>
+                    <div className={`flex items-center text-xs font-bold tabular-nums ${deltaColorClass}`}>
                       {direction === 'up' ? (
-                        <ArrowUpRight className="mr-0.5 size-4" />
+                        <ArrowUpRight className="mr-0.5 size-3.5" />
                       ) : direction === 'down' ? (
-                        <ArrowDownRight className="mr-0.5 size-4" />
+                        <ArrowDownRight className="mr-0.5 size-3.5" />
                       ) : (
                         <Minus className="mr-0.5 size-3.5" />
                       )}
@@ -989,14 +991,11 @@ export default function AdminDashboard() {
                         <span className="text-[11px] font-normal">—</span>
                       )}
                     </div>
-                    <span className="text-[12px] font-normal text-muted-foreground">
-                      {periodLabel}
-                    </span>
                   </div>
                 </div>
-                <div className="mt-6 h-8 w-full">
+                <div className="mt-7 h-10 w-full">
                   {miniSeries.length > 0 ? (
-                    <div className="h-full w-full text-slate-500 dark:text-slate-300">
+                    <div className={`h-full w-full ${isLateAlert ? 'text-rose-500' : meta.accent}`}>
                       <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={miniSeries} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
                         <defs>
@@ -1009,7 +1008,7 @@ export default function AdminDashboard() {
                           type="monotone"
                           dataKey="value"
                           stroke="currentColor"
-                          strokeWidth={1.1}
+                          strokeWidth={1.5}
                           fill={`url(#miniArea-${key})`}
                           isAnimationActive
                           animationDuration={500}
@@ -1031,7 +1030,7 @@ export default function AdminDashboard() {
 
       {/* ── Insight row: Today's Leaves · Half-Day Summary · Quick Actions ── */}
       <Motion.div
-        className="mt-4 grid items-stretch gap-7 gap-y-10 @sm:grid-cols-2 @xl:grid-cols-3"
+        className="mt-4 grid items-stretch gap-3 @sm:grid-cols-2 @xl:grid-cols-3"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1041,17 +1040,17 @@ export default function AdminDashboard() {
         {/* 1. Today's Leaves */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="self-stretch">
           <Card className={cn(
-            'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[420px]',
+            'admin-dashboard-card h-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[330px]',
             todayLeaves.length > 0 ? 'max-h-[420px]' : 'max-h-none',
           )}>
-            <CardHeader className="px-7 pb-7 pt-8">
+            <CardHeader className="px-5 pb-5 pt-6">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <CardTitle className="mb-4 flex items-center gap-2 text-xl font-bold leading-snug tracking-tight text-foreground">
-                    <CalendarDays className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
+                    <CalendarDays className="size-4 shrink-0 text-brand" aria-hidden="true" />
                     <span className="truncate">Today&apos;s Leaves</span>
                   </CardTitle>
-                  <CardDescription className="mt-0 text-sm font-normal leading-[1.55] text-muted-foreground">
+                  <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
                     {todayLeaves.length > 0
                       ? `${todayLeaves.length} employee${todayLeaves.length !== 1 ? 's are' : ' is'} on leave today`
                       : 'Updates automatically from approved leave requests.'}
@@ -1060,13 +1059,16 @@ export default function AdminDashboard() {
               </div>
             </CardHeader>
             <CardContent className={cn(
-              'min-h-0 space-y-5 px-7 pb-8 pt-0 pr-5',
+              'min-h-0 space-y-5 px-5 pb-5 pt-0',
               todayLeaves.length > 0 ? 'overflow-hidden' : 'overflow-visible',
             )}>
               {todayLeaves.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-emerald-300/45 bg-emerald-500/5 p-5 text-center dark:border-emerald-500/40 dark:bg-emerald-900/20">
-                  <p className="text-base font-normal leading-[1.55] text-foreground">No leaves today. Everyone is present.</p>
-                  <p className="mt-3 text-sm font-normal leading-[1.55] text-muted-foreground">
+                <div className="flex min-h-[172px] flex-col items-center justify-center rounded-lg border border-emerald-500/10 bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.14),rgba(16,185,129,0.04)_58%,transparent)] p-5 text-center dark:border-emerald-400/15">
+                  <span className="mb-4 flex size-9 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
+                    <ClipboardCheck className="size-5" aria-hidden />
+                  </span>
+                  <p className="text-sm font-semibold leading-[1.55] text-foreground">No leaves today. Everyone is present.</p>
+                  <p className="mt-2 max-w-56 text-xs font-normal leading-[1.55] text-muted-foreground">
                     This section updates automatically from approved leave requests.
                   </p>
                 </div>
@@ -1252,22 +1254,22 @@ export default function AdminDashboard() {
         {/* 4. Required Actions Before Confirmation */}
         <Motion.div variants={itemVariants} className="self-stretch">
           <Card className={cn(
-            'h-full w-full max-w-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[420px]',
+            'admin-dashboard-card h-full w-full max-w-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[330px]',
             requiredConfirmationActions.length > 0 ? 'max-h-[420px]' : 'max-h-none',
           )}>
-            <CardHeader className="px-4 pb-5 pt-5 sm:px-5 sm:pb-6 sm:pt-6 lg:px-7 lg:pb-7 lg:pt-8">
+            <CardHeader className="px-5 pb-5 pt-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div className="min-w-0">
-                  <CardTitle className="mb-2 flex items-center gap-2 text-base font-bold leading-snug tracking-tight text-foreground sm:text-lg lg:mb-3 lg:text-xl">
-                    <LayoutList className="size-4 shrink-0 text-muted-foreground sm:size-5" aria-hidden="true" />
+                  <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
+                    <LayoutList className="size-4 shrink-0 text-brand" aria-hidden="true" />
                     <span className="truncate">Required Actions Before Confirmation</span>
                     {requiredConfirmationActions.length > 0 ? (
-                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand/12 px-1.5 text-[11px] font-semibold text-brand">
                         {requiredConfirmationActions.length}
                       </span>
                     ) : null}
                   </CardTitle>
-                  <CardDescription className="mt-0 text-xs font-normal leading-relaxed text-muted-foreground sm:text-sm sm:leading-[1.55]">
+                  <CardDescription className="mt-0 text-xs font-normal leading-relaxed text-muted-foreground">
                     Pending performance reviews and checklist items.
                   </CardDescription>
                 </div>
@@ -1275,7 +1277,7 @@ export default function AdminDashboard() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-9 w-full rounded-full border-border/70 bg-background/70 px-3 text-xs font-medium shadow-sm shadow-black/5 transition-[background-color,box-shadow,color] duration-200 hover:bg-accent/55 hover:shadow-black/10 sm:mt-1 sm:h-auto sm:w-auto sm:shrink-0 sm:px-3.5 sm:text-sm"
+                  className="h-8 w-full rounded-md border-border/70 bg-background/70 px-3 text-xs font-medium shadow-sm shadow-black/5 transition-[background-color,box-shadow,color] duration-200 hover:bg-accent/55 hover:shadow-black/10 sm:mt-1 sm:w-auto sm:shrink-0"
                   onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
                 >
                   View All
@@ -1283,7 +1285,7 @@ export default function AdminDashboard() {
               </div>
             </CardHeader>
             <CardContent className={cn(
-              'flex min-h-0 flex-1 flex-col gap-4 px-4 pb-5 pt-0 pr-3 sm:gap-5 sm:px-5 sm:pb-6 sm:pr-4 lg:px-7 lg:pb-8 lg:pr-5',
+              'flex min-h-0 flex-1 flex-col gap-4 px-5 pb-5 pt-0 pr-3',
               requiredConfirmationActions.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
             )}>
               {loading && !data ? (
@@ -1299,7 +1301,7 @@ export default function AdminDashboard() {
                   {requiredConfirmationActions.map((emp) => (
                     <div
                       key={emp.id}
-                      className="group rounded-xl border border-border/70 bg-background/45 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_1px_2px_rgba(15,23,42,0.05)] transition-[transform,box-shadow,background-color,border-color] duration-250 hover:-translate-y-px hover:border-border hover:bg-accent/30 hover:shadow-[0_1px_0_rgba(15,23,42,0.03),0_16px_34px_rgba(15,23,42,0.08)] sm:rounded-2xl sm:p-4"
+                      className="group rounded-lg border border-border/70 bg-background/50 p-3 shadow-sm transition-[transform,box-shadow,background-color,border-color] duration-200 hover:-translate-y-px hover:border-brand/30 hover:bg-accent/25 hover:shadow-md sm:p-4"
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                         <div className="flex min-w-0 flex-1 items-start gap-2.5 sm:gap-3">
@@ -1346,7 +1348,7 @@ export default function AdminDashboard() {
                         <Button
                           type="button"
                           size="sm"
-                          className="h-9 w-full rounded-xl border border-amber-500/30 bg-amber-500/90 px-4 text-xs font-semibold tracking-[-0.01em] text-white shadow-[0_10px_24px_rgba(217,119,6,0.28)] transition-[background-color,box-shadow,transform] duration-200 hover:bg-amber-500 hover:shadow-[0_16px_30px_rgba(217,119,6,0.34)] active:translate-y-px sm:w-auto"
+                          className="h-9 w-full rounded-md border border-brand/30 bg-brand px-4 text-xs font-semibold tracking-[-0.01em] text-brand-foreground shadow-[0_10px_24px_rgba(217,119,6,0.22)] transition-[background-color,box-shadow,transform] duration-200 hover:bg-brand-strong hover:shadow-[0_16px_30px_rgba(217,119,6,0.3)] active:translate-y-px sm:w-auto"
                           onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
                         >
                           Review Actions
@@ -1744,7 +1746,7 @@ export default function AdminDashboard() {
 
       {/* Charts row – redesigned UI */}
       <Motion.div
-        className="mt-6 grid gap-8 @lg:grid-cols-2"
+        className="mt-4 grid gap-3 @lg:grid-cols-2"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1753,15 +1755,18 @@ export default function AdminDashboard() {
       >
         {/* Weekly Attendance – vertical bars, stronger contrast */}
         <Motion.div variants={chartCardVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-          <Card className="overflow-hidden border border-border/80 bg-card/95 shadow-md transition-all duration-150 hover:shadow-xl">
-          <CardHeader className="pb-5">
-            <CardTitle className="mb-3 text-xl font-semibold leading-snug tracking-tight text-foreground">Weekly Attendance</CardTitle>
+          <Card className="admin-dashboard-card overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
+          <CardHeader className="px-5 pb-5 pt-6">
+            <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
+              <BarChart3 className="size-4 text-brand" aria-hidden />
+              Weekly Attendance
+            </CardTitle>
             <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
               Employees who clocked in per day (last 7 days)
             </CardDescription>
           </CardHeader>
-          <CardContent className="pt-0">
-            <div className="h-[300px] w-full rounded-xl bg-linear-to-b from-emerald-500/10 via-card to-card px-2 pt-2">
+          <CardContent className="px-5 pb-5 pt-0">
+            <div className="h-[300px] w-full rounded-lg bg-background/35 px-2 pt-2 dark:bg-background/25">
               {weeklyData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
@@ -1773,13 +1778,13 @@ export default function AdminDashboard() {
                     <defs>
                       <linearGradient id="weeklyBarGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor={CHART.weeklyBar} stopOpacity={1} />
-                        <stop offset="60%" stopColor={CHART.weeklyBar} stopOpacity={0.85} />
-                        <stop offset="100%" stopColor={CHART.weeklyBar} stopOpacity={0.6} />
+                        <stop offset="60%" stopColor={CHART.weeklyBar} stopOpacity={0.9} />
+                        <stop offset="100%" stopColor={CHART.weeklyBar} stopOpacity={0.78} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid
                       strokeDasharray="2 4"
-                      stroke="rgba(148, 163, 184, 0.32)"
+                      stroke="color-mix(in oklab, var(--border) 76%, transparent)"
                       vertical
                     />
                     <XAxis
@@ -1816,7 +1821,7 @@ export default function AdminDashboard() {
                       animationEasing="ease-out"
                       activeBar={{
                         fill: CHART.weeklyBar,
-                        stroke: 'hsl(160 84% 24%)',
+                        stroke: 'var(--brand-strong)',
                         strokeWidth: 2,
                         radius: [14, 14, 8, 8],
                       }}
@@ -1835,11 +1840,12 @@ export default function AdminDashboard() {
 
         {/* Monthly Late – area + line trend */}
         <Motion.div variants={chartCardVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-          <Card className="overflow-hidden border-border/80 bg-card/95 shadow-md transition-all duration-150 hover:shadow-xl">
-          <CardHeader className="pb-5">
+          <Card className="admin-dashboard-card overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
+          <CardHeader className="px-5 pb-5 pt-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <CardTitle className="mb-3 text-xl font-semibold leading-snug tracking-tight text-foreground">
+                <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
+                  <FileBarChart2 className="size-4 text-rose-500" aria-hidden />
                   Monthly Late Statistics
                 </CardTitle>
                 <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
@@ -1864,8 +1870,8 @@ export default function AdminDashboard() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="pt-0">
-            <div className="h-[300px] w-full rounded-xl bg-linear-to-b from-amber-500/5 via-card to-card px-2 pt-2">
+          <CardContent className="px-5 pb-5 pt-0">
+            <div className="h-[300px] w-full rounded-lg bg-background/35 px-2 pt-2 dark:bg-background/25">
               {monthlyLateData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart
@@ -1880,7 +1886,7 @@ export default function AdminDashboard() {
                     </defs>
                     <CartesianGrid
                       strokeDasharray="2 4"
-                      stroke="rgba(148, 163, 184, 0.28)"
+                      stroke="color-mix(in oklab, var(--border) 76%, transparent)"
                       vertical
                     />
                     <XAxis
@@ -1959,11 +1965,12 @@ export default function AdminDashboard() {
         transition={{ ...scrollRevealTransition, duration: 0.9 }}
         whileHover={{ y: -2, transition: { duration: 0.15 } }}
       >
-        <Card className="overflow-hidden border border-border/80 bg-card/95 shadow-md transition-all duration-150 hover:shadow-xl">
-        <CardHeader className="pb-5">
+        <Card className="admin-dashboard-card overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
+        <CardHeader className="px-5 pb-5 pt-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <CardTitle className="mb-3 text-xl font-semibold leading-snug tracking-tight text-foreground">
+              <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
+                <Building2 className="size-4 text-brand" aria-hidden />
                 {isSingleCompany ? 'Company Attendance Overview' : 'Company Attendance Comparison'}
               </CardTitle>
               <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
@@ -1992,14 +1999,14 @@ export default function AdminDashboard() {
                 type="date"
                 value={companyDateFrom}
                 onChange={(e) => setCompanyDateFrom(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground @md:w-auto @md:flex-none"
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm @md:w-auto @md:flex-none"
               />
               <span className="text-xs text-muted-foreground">→</span>
               <input
                 type="date"
                 value={companyDateTo}
                 onChange={(e) => setCompanyDateTo(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground @md:w-auto @md:flex-none"
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm @md:w-auto @md:flex-none"
               />
               <Button
                 variant="ghost"
@@ -2022,7 +2029,7 @@ export default function AdminDashboard() {
                   onClick={() => setSelectedCompanyIds([])}
                   className={`rounded-full px-3 py-1 text-xs transition-colors ${
                     selectedCompanyIds.length === 0
-                      ? 'border-2 border-primary/70 bg-primary font-bold text-primary-foreground shadow-sm dark:bg-primary dark:text-primary-foreground'
+                      ? 'border border-brand bg-brand font-bold text-brand-foreground shadow-sm'
                       : 'border border-border bg-muted/50 font-normal text-muted-foreground hover:bg-muted'
                   }`}
                 >
@@ -2043,7 +2050,7 @@ export default function AdminDashboard() {
                       }}
                       className={`rounded-full px-3 py-1 text-xs transition-colors ${
                         isSelected
-                          ? 'border-2 border-primary/70 bg-primary font-bold text-primary-foreground shadow-sm dark:bg-primary dark:text-primary-foreground'
+                          ? 'border border-brand bg-brand font-bold text-brand-foreground shadow-sm'
                           : 'border border-border bg-muted/50 font-normal text-muted-foreground hover:bg-muted'
                       }`}
                     >
@@ -2095,8 +2102,8 @@ export default function AdminDashboard() {
             </div>
           )}
         </CardHeader>
-        <CardContent className="pt-0">
-          <div className="h-[260px] w-full rounded-xl bg-linear-to-r from-emerald-500/8 via-card to-card px-1.5 pt-2 @sm:h-[280px] @md:h-[300px] @md:px-2">
+        <CardContent className="px-5 pb-5 pt-0">
+          <div className="h-[260px] w-full rounded-lg bg-background/35 px-1.5 pt-2 dark:bg-background/25 @sm:h-[280px] @md:h-[300px] @md:px-2">
             {companyChartLoading ? (
               <div className="flex h-full items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
                 Loading…
@@ -2110,7 +2117,7 @@ export default function AdminDashboard() {
                 >
                   <CartesianGrid
                     strokeDasharray="2 4"
-                    stroke="rgba(148, 163, 184, 0.25)"
+                    stroke="color-mix(in oklab, var(--border) 76%, transparent)"
                     horizontal={false}
                   />
                   <XAxis
@@ -2218,7 +2225,7 @@ export default function AdminDashboard() {
 
       {/* Data tables – Today's Attendance Logs (real-time) */}
       <Motion.div
-        className="space-y-5"
+        className="space-y-3"
         variants={itemVariants}
         initial="hidden"
         whileInView="visible"
@@ -2226,14 +2233,14 @@ export default function AdminDashboard() {
         transition={scrollRevealTransition}
       >
         <div className="flex items-center gap-2 text-muted-foreground">
-          <Table2 className="size-5 shrink-0 opacity-80" aria-hidden />
+          <Table2 className="size-4 shrink-0 opacity-80" aria-hidden />
           <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Data tables</h3>
         </div>
-        <Card className="overflow-hidden border-0 bg-card shadow-sm">
-          <CardHeader className="border-b border-border/40 bg-muted/25 px-7 pb-5 pt-6">
+        <Card className="admin-dashboard-card overflow-hidden py-0">
+          <CardHeader className="border-b border-border/45 bg-card px-5 pb-5 pt-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <CardTitle className="mb-3 text-xl font-semibold leading-snug tracking-tight text-foreground">
+                <CardTitle className="mb-3 text-base font-extrabold leading-snug tracking-tight text-foreground">
                   Today&apos;s Attendance
                 </CardTitle>
                 <CardDescription className="mt-0 text-sm font-normal leading-[1.55] text-muted-foreground">
@@ -2269,7 +2276,7 @@ export default function AdminDashboard() {
                 className={[
                   'inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs transition-all',
                   !showOnlyLate
-                    ? 'border-2 border-primary/70 bg-primary font-bold text-primary-foreground shadow-md'
+                    ? 'border border-brand bg-brand font-bold text-brand-foreground shadow-md'
                     : 'border-border/60 bg-transparent font-normal text-muted-foreground hover:border-border hover:text-foreground',
                 ].join(' ')}
               >All {!showOnlyLate && `(${todayLogs.length})`}</button>
@@ -2412,31 +2419,31 @@ export default function AdminDashboard() {
               <table className="w-full border-separate border-spacing-0 text-sm">
                 <thead className="sticky top-0 z-20 bg-card/95 backdrop-blur-sm shadow-sm">
                   <tr className="border-b border-border/50">
-                    <th className="sticky left-0 z-30 bg-card/95 backdrop-blur-sm px-5 py-3 text-left text-sm font-semibold uppercase tracking-[0.06em] text-foreground/80">
+                    <th className="sticky left-0 z-30 bg-card/95 backdrop-blur-sm px-5 py-3 text-left text-xs font-medium text-muted-foreground">
                       <button type="button" onClick={() => handleSort('employee_name')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
                         Employee
                         {sortConfig.key === 'employee_name' ? (sortConfig.dir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUpDown className="size-3 opacity-40" />}
                       </button>
                     </th>
-                    <th className="px-5 py-3 text-left text-sm font-semibold uppercase tracking-[0.06em] text-foreground/80">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-muted-foreground">
                       Company
                     </th>
-                    <th className="px-5 py-3 text-left text-sm font-semibold uppercase tracking-[0.06em] text-foreground/80">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-muted-foreground">
                       <button type="button" onClick={() => handleSort('time_in')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
                         Time In
                         {sortConfig.key === 'time_in' ? (sortConfig.dir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUpDown className="size-3 opacity-40" />}
                       </button>
                     </th>
-                    <th className="px-5 py-3 text-left text-sm font-semibold uppercase tracking-[0.06em] text-foreground/80">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-muted-foreground">
                       <button type="button" onClick={() => handleSort('is_late')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
                         Late
                         {sortConfig.key === 'is_late' ? (sortConfig.dir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUpDown className="size-3 opacity-40" />}
                       </button>
                     </th>
-                    <th className="px-5 py-3 text-left text-sm font-semibold uppercase tracking-[0.06em] text-foreground/80">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-muted-foreground">
                       Status
                     </th>
-                    <th className="px-5 py-3 text-left text-sm font-semibold uppercase tracking-[0.06em] text-foreground/80">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-muted-foreground">
                       <button type="button" onClick={() => handleSort('time_out')} className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
                         Time Out
                         {sortConfig.key === 'time_out' ? (sortConfig.dir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUpDown className="size-3 opacity-40" />}
@@ -2691,6 +2698,31 @@ export default function AdminDashboard() {
         </Card>
       </Motion.div>
       <style>{`
+        .admin-dashboard-card {
+          border: 1px solid var(--border);
+          border-radius: 0.625rem;
+          background: color-mix(in oklab, var(--card) 96%, transparent);
+          box-shadow:
+            0 1px 0 rgba(15, 23, 42, 0.03),
+            0 12px 28px rgba(15, 23, 42, 0.055);
+        }
+        .admin-dashboard-card:hover {
+          box-shadow:
+            0 1px 0 rgba(15, 23, 42, 0.04),
+            0 16px 34px rgba(15, 23, 42, 0.08);
+        }
+        .dark .admin-dashboard-card {
+          background: color-mix(in oklab, var(--card) 92%, transparent);
+          border-color: var(--border);
+          box-shadow:
+            0 1px 0 rgba(255, 255, 255, 0.03),
+            0 18px 40px rgba(0, 0, 0, 0.3);
+        }
+        .dark .admin-dashboard-card:hover {
+          box-shadow:
+            0 1px 0 rgba(255, 255, 255, 0.04),
+            0 22px 52px rgba(0, 0, 0, 0.38);
+        }
         /* ── Recharts tooltip: transparent wrapper, themed inner ── */
         .recharts-tooltip-wrapper,
         .recharts-tooltip-wrapper *,

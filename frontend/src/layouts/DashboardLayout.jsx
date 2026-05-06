@@ -169,7 +169,7 @@ function SidebarContent({
           key={key}
           to={to}
           className={cn(
-            'mx-auto flex size-10 items-center justify-center rounded-xl text-sm font-medium transition-all duration-200',
+            'mx-auto flex size-10 items-center justify-center rounded-md text-sm font-medium transition-all duration-200',
             active
               ? 'bg-orange-50 text-orange-600 ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
               : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
@@ -189,7 +189,7 @@ function SidebarContent({
           <button
             type="button"
             className={cn(
-              'flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-all duration-200',
+              'flex w-full items-center rounded-md px-3 py-2.5 text-left text-sm font-medium transition-all duration-200',
               depth > 0 && 'ml-4',
               active
                 ? 'bg-orange-50 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300'
@@ -219,9 +219,9 @@ function SidebarContent({
         end={item.end}
         className={({ isActive }) =>
           cn(
-            'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200',
+            'flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-all duration-200',
             isActive
-              ? 'bg-orange-50 text-orange-600 shadow-sm ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
+              ? 'border-l-2 border-orange-500 bg-orange-50 text-orange-600 shadow-sm ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
               : 'border-l-2 border-transparent text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
           )
         }
@@ -270,7 +270,7 @@ function SidebarContent({
           <div className="space-y-1">
             <Link
               to={profilePath}
-              className="mx-auto flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+              className="mx-auto flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
               onClick={onNavClick}
               title="Profile"
             >
@@ -278,7 +278,7 @@ function SidebarContent({
             </Link>
             <button
               type="button"
-              className="mx-auto flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive"
+              className="mx-auto flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive"
               onClick={async () => {
                 await onLogout?.()
                 onNavClick?.()
@@ -293,7 +293,7 @@ function SidebarContent({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="w-full rounded-xl border border-border/60 bg-background/70 p-2 text-left transition-colors hover:bg-muted/40"
+                className="w-full rounded-md border border-border/60 bg-background/70 p-2 text-left transition-colors hover:bg-muted/40"
               >
                 <div className="flex items-center gap-2">
                   <Avatar
@@ -592,8 +592,8 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
       {/* Desktop sidebar – collapsible, no border */}
       <aside
         className={cn(
-          'hidden flex-col border-r border-sidebar-border/70 bg-linear-to-b from-sidebar via-sidebar to-sidebar/95 text-sidebar-foreground shadow-[4px_0_32px_-16px_rgba(15,23,42,0.12)] transition-[width] duration-200 ease-in-out dark:border-sidebar-border/50 dark:shadow-[4px_0_40px_-12px_rgba(0,0,0,0.45)] md:flex',
-          sidebarCollapsed ? 'w-16' : 'w-64'
+          'hidden flex-col border-r border-sidebar-border/70 bg-sidebar text-sidebar-foreground shadow-[4px_0_24px_-18px_rgba(15,23,42,0.18)] transition-[width] duration-200 ease-in-out dark:border-sidebar-border/50 dark:shadow-[4px_0_36px_-18px_rgba(0,0,0,0.5)] md:flex',
+          sidebarCollapsed ? 'w-16' : 'w-52'
         )}
       >
         <SidebarContent
@@ -656,7 +656,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
         {/* Top bar: toggle + search in one row (min-w-0 keeps Popover/search from collapsing the layout). */}
         <header
           className={cn(
-            'sticky top-0 z-10 grid h-16 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/50 px-3 py-3 shadow-sm shadow-black/5 backdrop-blur-xl @sm:px-4 @lg:px-5',
+            'sticky top-0 z-10 grid h-16 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/40 px-3 py-3 shadow-sm shadow-black/4 backdrop-blur-xl @sm:px-4 @lg:px-5',
             /* Light: flat white strip flush with main canvas */
             'bg-white supports-backdrop-filter:bg-white/95',
             /* Dark: no card gradient — glass tint matches .dashboard-content-canvas (see index.css) */
@@ -687,7 +687,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                     <Input
                       type="search"
                       placeholder="Search employees, pages..."
-                      className="h-10 w-full rounded-xl border-border/60 bg-muted/40 pl-9 pr-4 text-sm shadow-inner placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-teal-500/25"
+                      className="h-10 w-full rounded-md border-border/60 bg-muted/45 pl-9 pr-4 text-sm shadow-inner placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-brand/25"
                       aria-label="Global search"
                       role="combobox"
                       aria-expanded={searchOpen}
@@ -832,7 +832,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                 <Input
                   type="search"
                   placeholder="Search..."
-                  className="h-10 w-full rounded-xl border-border/60 bg-muted/40 pl-9 pr-4 text-sm shadow-inner placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-teal-500/25"
+                  className="h-10 w-full rounded-md border-border/60 bg-muted/45 pl-9 pr-4 text-sm shadow-inner placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-brand/25"
                   aria-label="Search"
                 />
               </div>

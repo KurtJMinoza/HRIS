@@ -32,18 +32,18 @@ export function ExpiringContractsCard({
   return (
     <Card
       className={cn(
-        'h-full gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card/95 py-0 shadow-[0_1px_0_rgba(15,23,42,0.04),0_14px_34px_rgba(15,23,42,0.08)] transition-[transform,box-shadow] duration-300 hover:-translate-y-px hover:shadow-[0_1px_0_rgba(15,23,42,0.05),0_20px_50px_rgba(15,23,42,0.12)] dark:bg-card/90 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_22px_60px_rgba(0,0,0,0.38)] @xl:h-[420px]',
+        'admin-dashboard-card h-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[330px]',
         rows.length > 0 ? 'max-h-[420px]' : 'max-h-none',
       )}
     >
-      <CardHeader className="px-7 pb-7 pt-8">
+      <CardHeader className="px-5 pb-5 pt-6">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <CardTitle className="mb-4 flex items-center gap-2 truncate text-xl font-bold leading-snug tracking-tight text-foreground">
-              <Building2 className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <CardTitle className="mb-3 flex items-center gap-2 truncate text-base font-extrabold leading-snug tracking-tight text-foreground">
+              <Building2 className="size-4 shrink-0 text-brand" aria-hidden="true" />
               <span className="truncate">Expiring Contracts</span>
             </CardTitle>
-            <CardDescription className="mt-0 text-sm font-normal leading-[1.55] text-muted-foreground">
+            <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
               Contracts ending soon in your scope.
             </CardDescription>
           </div>
@@ -53,8 +53,8 @@ export function ExpiringContractsCard({
             variant="outline"
             size="sm"
             className={cn(
-              'mt-1 shrink-0 rounded-full border-border/70 bg-background/70 px-3.5',
-              'text-sm font-medium',
+              'mt-1 h-8 shrink-0 rounded-md border-border/70 bg-background/70 px-3',
+              'text-xs font-medium',
               'shadow-sm shadow-black/5 hover:bg-accent/55 hover:shadow-black/10',
               'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               'transition-[background-color,box-shadow,color] duration-200',
@@ -69,7 +69,7 @@ export function ExpiringContractsCard({
 
       <CardContent
         className={cn(
-          'min-h-0 space-y-5 px-7 pb-8 pt-0 pr-5',
+          'min-h-0 space-y-4 px-5 pb-5 pt-0',
           rows.length > 0 ? 'overflow-hidden' : 'overflow-visible',
         )}
       >
@@ -78,8 +78,12 @@ export function ExpiringContractsCard({
             Loading expiring contracts...
           </div>
         ) : rows.length === 0 ? (
-          <div className="rounded-2xl border border-border/70 bg-muted/15 p-6 text-center text-base font-medium leading-[1.55] text-foreground/90">
-            No expiring contracts.
+          <div className="flex min-h-[172px] flex-col items-center justify-center rounded-lg border border-brand/10 bg-[radial-gradient(circle_at_center,rgba(255,107,0,0.14),rgba(255,107,0,0.04)_58%,transparent)] p-5 text-center dark:border-brand/15">
+            <span className="mb-4 flex size-12 items-center justify-center rounded-full border border-brand/25 bg-background text-brand shadow-sm dark:bg-card">
+              <Building2 className="size-6" aria-hidden />
+            </span>
+            <p className="text-sm font-semibold leading-[1.55] text-foreground">No expiring contracts.</p>
+            <p className="mt-1 text-xs text-muted-foreground">You&apos;re all caught up.</p>
           </div>
         ) : (
           <div className="space-y-5">
@@ -107,7 +111,7 @@ export function ExpiringContractsCard({
                 <article
                   key={c?.id ?? `${name}-${c?.contract_end_date ?? ''}`}
                   className={cn(
-                    'group rounded-2xl border border-border/70 bg-background/45 p-4',
+                    'group rounded-lg border border-border/70 bg-background/50 p-4',
                     'shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_1px_2px_rgba(15,23,42,0.05)]',
                     'transition-[transform,box-shadow,background-color,border-color] duration-250',
                     'hover:border-border hover:bg-accent/30 hover:shadow-[0_1px_0_rgba(15,23,42,0.03),0_16px_34px_rgba(15,23,42,0.08)]',
@@ -199,4 +203,3 @@ function formatShortDate(iso) {
     return '—'
   }
 }
-
