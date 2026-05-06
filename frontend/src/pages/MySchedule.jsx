@@ -12,6 +12,7 @@ import {
   Search,
   Sparkles,
   Timer,
+  Trash2,
   Workflow,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -28,7 +29,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
-import { createMyScheduleRequest, getMySchedule, getMyScheduleRequestContext } from '@/api'
+import { createMyScheduleRequest, deleteMyScheduleRequest, getMySchedule, getMyScheduleRequestContext } from '@/api'
 import { cn } from '@/lib/utils'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -163,6 +164,7 @@ export default function MySchedule() {
   const [schedulePickerOpen, setSchedulePickerOpen] = useState(false)
   const [scheduleSearch, setScheduleSearch] = useState('')
   const [requestsQuery, setRequestsQuery] = useState('')
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, request: null })
 
   const canRequest = useMemo(() => new Set(user?.permissions || []).has('request-schedule'), [user])
   const canApprove = useMemo(() => new Set(user?.permissions || []).has('approve-schedule'), [user])
@@ -216,6 +218,18 @@ export default function MySchedule() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['my-schedule'] })
+    },
+  })
+
+  const deleteRequestMutation = useMutation({
+    mutationFn: deleteMyScheduleRequest,
+    onSuccess: () => {
+      toast({ title: 'Request deleted', description: 'Your pending schedule request was deleted.' })
+      setDeleteDialog({ open: false, request: null })
+      queryClient.invalidateQueries({ queryKey: ['my-schedule'] })
+    },
+    onError: (error) => {
+      toast({ title: 'Schedule request', description: error.message || 'Failed to delete schedule request', variant: 'destructive' })
     },
   })
 
@@ -652,6 +666,8 @@ export default function MySchedule() {
                               }}
                               viewLabel="View details"
                               viewAriaLabel="View schedule request details"
+                              showDelete={Boolean(item.actor_can_delete)}
+                              onDelete={() => setDeleteDialog({ open: true, request: item })}
                             />
                           </TableCell>
                         </TableRow>
@@ -1195,6 +1211,34 @@ export default function MySchedule() {
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, request: null })}>
+        <DialogContent className="max-w-md border-border bg-card shadow-2xl">
+          <DialogHeader>
+            <DialogTitle>Delete schedule request</DialogTitle>
+            <DialogDescription>Are you sure you want to delete this request?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteDialog({ open: false, request: null })}
+              disabled={deleteRequestMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => deleteDialog.request && deleteRequestMutation.mutate(deleteDialog.request.id)}
+              disabled={deleteRequestMutation.isPending}
+            >
+              {deleteRequestMutation.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Trash2 className="mr-2 size-4" />}
+              Delete
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

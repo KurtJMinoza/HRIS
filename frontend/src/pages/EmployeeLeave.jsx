@@ -22,10 +22,12 @@ import {
   Scale,
   UploadCloud,
   ArrowRight,
+  Trash2,
 } from 'lucide-react'
 import { TableBodySkeleton } from '@/components/skeletons'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/components/ui/use-toast'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -71,6 +73,7 @@ function supportingDocUrls(leave) {
 import {
   getMyLeaveSummary,
   createMyLeaveRequest,
+  deleteMyLeaveRequest,
   uploadMyLeaveDocument,
   getUndertimePreview,
   getPaidLeavePreview,
@@ -459,6 +462,7 @@ function LeaveModalCreditsCard({
 }
 
 export default function EmployeeLeave() {
+  const { toast } = useToast()
   const [fromDate, setFromDate] = useState(() => {
     const d = new Date()
     return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
@@ -488,6 +492,8 @@ export default function EmployeeLeave() {
   const [addOpen, setAddOpen] = useState(false)
   const [leaveDetailOpen, setLeaveDetailOpen] = useState(false)
   const [leaveDetailRow, setLeaveDetailRow] = useState(null)
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, leave: null })
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
   const [addForm, setAddForm] = useState({
     type: 'vacation',
     start_date: '',
@@ -837,6 +843,25 @@ export default function EmployeeLeave() {
     setLeaveDetailOpen(true)
   }
 
+  async function handleDeleteLeave() {
+    if (!deleteDialog.leave) return
+    setDeleteSubmitting(true)
+    try {
+      await deleteMyLeaveRequest(deleteDialog.leave.id)
+      toast({ title: 'Leave deleted', description: 'Your pending leave request was deleted.', variant: 'success' })
+      setDeleteDialog({ open: false, leave: null })
+      if (leaveDetailRow?.id && Number(leaveDetailRow.id) === Number(deleteDialog.leave.id)) {
+        setLeaveDetailOpen(false)
+        setLeaveDetailRow(null)
+      }
+      await load()
+    } catch (e) {
+      toast({ title: 'Failed to delete leave', description: e.message, variant: 'error' })
+    } finally {
+      setDeleteSubmitting(false)
+    }
+  }
+
   function openFileLeave() {
     setAddError(null)
     setRestRangeCheck(null)
@@ -947,16 +972,30 @@ export default function EmployeeLeave() {
                       {leave.created_at ? formatDateTime(leave.created_at) : '—'}
                     </td>
                     <td className="px-4 py-4 text-right align-middle">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="gap-1.5 rounded-lg text-foreground hover:bg-brand/10 hover:text-brand dark:hover:bg-brand/12"
-                        onClick={() => openLeaveDetail(leave)}
-                      >
-                        <Eye className="size-4" />
-                        View details
-                      </Button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5 rounded-lg text-foreground hover:bg-brand/10 hover:text-brand dark:hover:bg-brand/12"
+                          onClick={() => openLeaveDetail(leave)}
+                        >
+                          <Eye className="size-4" />
+                          View details
+                        </Button>
+                        {leave.actor_can_delete ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1.5 rounded-lg text-destructive hover:bg-destructive/10"
+                            onClick={() => setDeleteDialog({ open: true, leave })}
+                          >
+                            <Trash2 className="size-4" />
+                            Delete
+                          </Button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -1108,8 +1147,8 @@ export default function EmployeeLeave() {
                             ? '0.5 day'
                             : `${dur} day${dur === 1 ? '' : 's'}`
                       return (
+                        <div key={leave.id} className="space-y-2">
                         <button
-                          key={leave.id}
                           type="button"
                           onClick={() => openLeaveDetail(leave)}
                           className="w-full rounded-xl border border-border/70 bg-card p-4 text-left shadow-sm transition hover:border-brand/35 hover:bg-brand/5 hover:shadow-md active:scale-[0.99] dark:border-white/10 dark:hover:bg-brand/10"
@@ -1158,6 +1197,18 @@ export default function EmployeeLeave() {
                             <ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden />
                           </div>
                         </button>
+                        {leave.actor_can_delete ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full gap-2 rounded-xl border-destructive/40 text-destructive hover:bg-destructive/10"
+                            onClick={() => setDeleteDialog({ open: true, leave })}
+                          >
+                            <Trash2 className="size-4" />
+                            Delete
+                          </Button>
+                        ) : null}
+                        </div>
                       )
                     })}
                   </AnimatedSection>
@@ -1815,6 +1866,26 @@ export default function EmployeeLeave() {
         leave={leaveDetailRow}
         resolveDocUrl={profileImageUrl}
       />
+
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, leave: null })}>
+        <DialogContent className={adminFormDialogContentClass('max-w-md')}>
+          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
+            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
+              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Delete leave request</DialogTitle>
+              <p className={ADMIN_FORM_DIALOG_DESC_CLASS}>Are you sure you want to delete this request?</p>
+            </DialogHeader>
+          </div>
+          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+            <Button type="button" variant="outline" onClick={() => setDeleteDialog({ open: false, leave: null })} disabled={deleteSubmitting}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleDeleteLeave} disabled={deleteSubmitting}>
+              {deleteSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Motion.div>
   )
 }

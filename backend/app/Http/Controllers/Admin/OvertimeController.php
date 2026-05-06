@@ -16,6 +16,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -579,6 +580,54 @@ class OvertimeController extends Controller
         ]);
     }
 
+    public function destroy(Request $request, int $id): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $overtime = Overtime::query()->with('user')->findOrFail($id);
+        if ($overtime->user) {
+            $this->dataScopeService->ensureEmployeeAccessible($actor, $overtime->user);
+        }
+
+        if ($overtime->status !== Overtime::STATUS_PENDING) {
+            return response()->json([
+                'message' => 'Only pending overtime requests can be deleted.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if (! $this->canDeleteOvertimeRequest($actor, $overtime)) {
+            return response()->json([
+                'message' => 'You can only delete overtime requests you created or requests filed for you.',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        $path = $overtime->attachment_path;
+        if (is_string($path) && $path !== '' && Storage::disk('public')->exists($path)) {
+            Storage::disk('public')->delete($path);
+        }
+
+        $overtime->delete();
+
+        return response()->json([
+            'message' => 'Overtime request deleted.',
+        ]);
+    }
+
+    private function canDeleteOvertimeRequest(User $actor, Overtime $overtime): bool
+    {
+        if ($overtime->status !== Overtime::STATUS_PENDING) {
+            return false;
+        }
+
+        $actorId = (int) $actor->id;
+
+        return $actorId === (int) $overtime->filed_by
+            || $actorId === (int) $overtime->user_id;
+    }
+
     /**
      * Export overtime records as CSV using the same filters as index().
      */
@@ -777,6 +826,7 @@ class OvertimeController extends Controller
         return [
             'actor_can_approve' => $this->overtimeApprovalService->canApprove($actor, $overtime),
             'actor_can_reject' => $this->overtimeApprovalService->canReject($actor, $overtime),
+            'actor_can_delete' => $this->canDeleteOvertimeRequest($actor, $overtime),
             'hr_wait_message' => $hrWait,
         ];
     }

@@ -258,7 +258,7 @@ class PresenceFilingController extends Controller
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',
-            'presence_filing' => $this->correctionFormatter->format($correction, $tz, includeEmployee: true, actor: null, includeDisplayFields: true),
+            'presence_filing' => $this->correctionFormatter->format($correction, $tz, includeEmployee: true, actor: $user, includeDisplayFields: true),
         ], 201);
     }
 
@@ -287,7 +287,7 @@ class PresenceFilingController extends Controller
                 'rejectedBy',
                 'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
                 'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
-            ]), $tz, includeEmployee: true, actor: null, includeDisplayFields: true) : null,
+            ]), $tz, includeEmployee: true, actor: $user, includeDisplayFields: true) : null,
             'approval_chain' => $this->correctionFormatter->chainPayload($this->approvalService->getApprovalChain($user)),
         ]);
     }
@@ -333,9 +333,41 @@ class PresenceFilingController extends Controller
             $q->whereDate('date', '<=', $validated['to_date']);
         }
 
-        $items = $q->limit(200)->get()->map(fn (AttendanceCorrection $c) => $this->correctionFormatter->format($c, $tz, includeEmployee: true, actor: null, includeDisplayFields: true));
+        $items = $q->limit(200)->get()->map(fn (AttendanceCorrection $c) => $this->correctionFormatter->format($c, $tz, includeEmployee: true, actor: $user, includeDisplayFields: true));
 
         return response()->json(['presence_filings' => $items]);
+    }
+
+    public function destroy(Request $request, int $id): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $correction = AttendanceCorrection::query()->findOrFail($id);
+        if (! $correction->pending_approval || $correction->approved || $correction->rejected_at) {
+            return response()->json(['message' => 'Only pending attendance correction requests can be deleted.'], 422);
+        }
+
+        $actorId = (int) $actor->id;
+        $canDelete = $actorId === (int) $correction->filed_by
+            || $actorId === (int) $correction->user_id;
+        if (! $canDelete) {
+            return response()->json([
+                'message' => 'You can only delete attendance correction requests you created or requests filed for you.',
+            ], 403);
+        }
+
+        DB::transaction(function () use ($correction) {
+            $correction->approvals()->delete();
+            $correction->audits()->delete();
+            $correction->delete();
+        });
+
+        return response()->json([
+            'message' => 'Attendance correction request deleted.',
+        ]);
     }
 
     /**

@@ -125,6 +125,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/employee/presence-filing', [PresenceFilingController::class, 'store']);
     Route::get('/employee/presence-filing', [PresenceFilingController::class, 'mine']);
     Route::get('/employee/presence-filings', [PresenceFilingController::class, 'listMine']);
+    Route::delete('/employee/presence-filings/{id}', [PresenceFilingController::class, 'destroy']);
     Route::get('/leave/my', [EmployeeLeaveController::class, 'my']);
     Route::get('/leave/halfday-availability', [EmployeeLeaveController::class, 'halfdayAvailability']);
     Route::get('/leave/undertime-preview', [EmployeeLeaveController::class, 'undertimePreview']);
@@ -132,6 +133,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/leave/validate-range', [EmployeeLeaveController::class, 'validateLeaveDateRange']);
     Route::post('/leave', [EmployeeLeaveController::class, 'apply']);
     Route::post('/leave/{id}/document', [EmployeeLeaveController::class, 'uploadDocument']);
+    Route::delete('/leave/{id}', [EmployeeLeaveController::class, 'destroy']);
     Route::get('/overtime/request-context', [EmployeeOvertimeController::class, 'requestContext']);
     Route::get('/overtime/my', [EmployeeOvertimeController::class, 'myIndex']);
     Route::get('/overtime/my/{id}', [EmployeeOvertimeController::class, 'myShow']);
@@ -142,6 +144,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('permission:view-my-schedule|request-schedule')->get('/my-schedule', [MyScheduleController::class, 'index']);
     Route::middleware('permission:request-schedule')->get('/my-schedule/request-context', [MyScheduleController::class, 'requestContext']);
     Route::middleware('permission:request-schedule')->post('/my-schedule/requests', [MyScheduleController::class, 'store']);
+    Route::middleware('permission:request-schedule')->delete('/my-schedule/requests/{id}', [MyScheduleController::class, 'destroy']);
     Route::get('/reports/premiums', [PremiumReportController::class, 'employee']);
     Route::get('/employee/contributions', [EmployeeContributionController::class, 'mine']);
 
@@ -197,6 +200,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/presence-filings/{id}/approve', [PresenceFilingController::class, 'approve']);
             Route::post('/admin/presence-filings/{id}/reject', [PresenceFilingController::class, 'reject']);
             Route::post('/admin/presence-filings/{id}/note', [PresenceFilingController::class, 'addHrNote']);
+            Route::delete('/admin/presence-filings/{id}', [PresenceFilingController::class, 'destroy']);
         });
 
         Route::middleware('permission:holiday.view')->get('/admin/holidays', [HolidayController::class, 'index']);
@@ -222,6 +226,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:approve-schedule|manage-schedules')->get('/admin/schedule-requests/{id}', [ScheduleRequestController::class, 'show']);
         Route::middleware('permission:approve-schedule|manage-schedules')->post('/admin/schedule-requests/{id}/approve', [ScheduleRequestController::class, 'approve']);
         Route::middleware('permission:approve-schedule|manage-schedules')->post('/admin/schedule-requests/{id}/reject', [ScheduleRequestController::class, 'reject']);
+        Route::middleware('permission:approve-schedule|manage-schedules')->delete('/admin/schedule-requests/{id}', [ScheduleRequestController::class, 'destroy']);
 
         Route::middleware('permission:employees.view')->group(function () {
             Route::get('/admin/employees', [EmployeeController::class, 'index']);
@@ -320,6 +325,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/leave/{id}/reject', [LeaveController::class, 'reject']);
             Route::post('/admin/leave/{id}/document', [LeaveController::class, 'uploadDocument']);
         });
+        Route::middleware('permission:leave.view')->delete('/admin/leave/{id}', [LeaveController::class, 'destroy']);
         Route::middleware('permission:leave.notes')->patch('/admin/leave/{id}/notes', [LeaveController::class, 'updateNotes']);
 
         Route::middleware('permission:overtime.view')->group(function () {
@@ -329,6 +335,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:overtime.export')->get('/admin/overtime/export', [OvertimeController::class, 'export']);
         Route::middleware('permission:overtime.approve')->patch('/admin/overtime/{id}/status', [OvertimeController::class, 'updateStatus']);
         Route::middleware('permission:overtime.edit_hours')->patch('/admin/overtime/{id}/hours', [OvertimeController::class, 'updateHours']);
+        Route::middleware('permission:overtime.view')->delete('/admin/overtime/{id}', [OvertimeController::class, 'destroy']);
 
         Route::middleware('permission:payroll.view')->group(function () {
             Route::get('/admin/payroll/classify', [PayrollController::class, 'classify']);

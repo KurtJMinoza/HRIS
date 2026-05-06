@@ -2373,6 +2373,13 @@ export async function createMyScheduleRequest(payload) {
   return data
 }
 
+export async function deleteMyScheduleRequest(id) {
+  const res = await authenticatedFetch(`/my-schedule/requests/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete schedule request')
+  return data
+}
+
 export async function getAdminScheduleRequests(params = {}) {
   const query = new URLSearchParams()
   if (params.status) query.set('status', String(params.status))
@@ -2406,6 +2413,13 @@ export async function rejectScheduleRequest(id, payload) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to reject schedule request')
+  return data
+}
+
+export async function deleteAdminScheduleRequest(id) {
+  const res = await authenticatedFetch(`/admin/schedule-requests/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete schedule request')
   return data
 }
 
@@ -3714,6 +3728,13 @@ export async function updateLeaveNotes(id, notes) {
   return data
 }
 
+export async function deleteAdminLeaveRequest(id) {
+  const res = await authenticatedFetch(`/admin/leave/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete leave request')
+  return data
+}
+
 /** Probation employees approaching 3- or 6-month regularization milestones (scoped by HR data access). */
 export async function getAdminUpcomingRegularizations(daysAhead = 30) {
   const q = new URLSearchParams()
@@ -3931,6 +3952,13 @@ export async function uploadMyLeaveDocument(id, file) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to upload document')
+  return data
+}
+
+export async function deleteMyLeaveRequest(id) {
+  const res = await authenticatedFetch(`/leave/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete leave request')
   return data
 }
 
@@ -4664,6 +4692,20 @@ export async function addPresenceFilingHrNote(id, notes) {
   return data
 }
 
+export async function deleteMyPresenceFiling(id) {
+  const res = await authenticatedFetch(`/employee/presence-filings/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete correction request')
+  return data
+}
+
+export async function deleteAdminPresenceFiling(id) {
+  const res = await authenticatedFetch(`/admin/presence-filings/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete correction request')
+  return data
+}
+
 /**
  * Get leave summary and list for the authenticated employee.
  * @param {{ from_date?: string, to_date?: string, status?: 'pending'|'approved'|'rejected' }} params
@@ -4918,6 +4960,13 @@ export async function updateAdminOvertimeHours(id, hours, reason, notes) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to update overtime hours')
+  return data
+}
+
+export async function deleteAdminOvertimeRequest(id) {
+  const res = await authenticatedFetch(`/admin/overtime/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete overtime request')
   return data
 }
 

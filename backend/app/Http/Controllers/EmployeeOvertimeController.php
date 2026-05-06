@@ -201,7 +201,19 @@ class EmployeeOvertimeController extends Controller
         return $segments;
     }
 
-    private function mapOvertimeRowForEmployee(Overtime $o): array
+    private function canDeleteOvertimeRequest(User $actor, Overtime $overtime): bool
+    {
+        if ($overtime->status !== Overtime::STATUS_PENDING) {
+            return false;
+        }
+
+        $actorId = (int) $actor->id;
+
+        return $actorId === (int) $overtime->filed_by
+            || $actorId === (int) $overtime->user_id;
+    }
+
+    private function mapOvertimeRowForEmployee(Overtime $o, ?User $actor = null): array
     {
         $o->loadMissing([
             'approvedBy:id,name',
@@ -251,6 +263,7 @@ class EmployeeOvertimeController extends Controller
                     'actor_name' => $a->actor?->name,
                 ];
             })->values()->all(),
+            'actor_can_delete' => $actor ? $this->canDeleteOvertimeRequest($actor, $o) : false,
         ], $requesterMeta, PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
     }
 
@@ -298,7 +311,7 @@ class EmployeeOvertimeController extends Controller
             ->orderByDesc('id')
             ->paginate($perPage);
 
-        $items = $paginator->getCollection()->map(fn (Overtime $o) => $this->mapOvertimeRowForEmployee($o))->values();
+        $items = $paginator->getCollection()->map(fn (Overtime $o) => $this->mapOvertimeRowForEmployee($o, $user))->values();
 
         return response()->json([
             'overtimes' => $items,
@@ -337,7 +350,7 @@ class EmployeeOvertimeController extends Controller
             ->firstOrFail();
 
         return response()->json([
-            'overtime' => $this->mapOvertimeRowForEmployee($overtime),
+            'overtime' => $this->mapOvertimeRowForEmployee($overtime, $user),
         ]);
     }
 
@@ -413,7 +426,7 @@ class EmployeeOvertimeController extends Controller
                 'firstApprover:id,name,profile_image',
                 'secondApprover:id,name,profile_image',
                 'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
-            ])),
+            ]), $user),
         ]);
     }
 
@@ -436,7 +449,13 @@ class EmployeeOvertimeController extends Controller
 
         if ($overtime->status !== Overtime::STATUS_PENDING) {
             throw ValidationException::withMessages([
-                'id' => ['Only pending overtime requests can be cancelled.'],
+                'id' => ['Only pending overtime requests can be deleted.'],
+            ]);
+        }
+
+        if (! $this->canDeleteOvertimeRequest($user, $overtime)) {
+            throw ValidationException::withMessages([
+                'id' => ['You can only delete overtime requests you created or requests filed for you.'],
             ]);
         }
 
@@ -448,7 +467,7 @@ class EmployeeOvertimeController extends Controller
         $overtime->delete();
 
         return response()->json([
-            'message' => 'Overtime request cancelled.',
+            'message' => 'Overtime request deleted.',
         ]);
     }
 
@@ -686,7 +705,7 @@ class EmployeeOvertimeController extends Controller
                 'firstApprover:id,name,profile_image',
                 'secondApprover:id,name,profile_image',
                 'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
-            ])))->values(),
+            ]), $user))->values(),
         ], 201);
     }
 }

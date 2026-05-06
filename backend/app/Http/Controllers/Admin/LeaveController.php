@@ -22,7 +22,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 
 class LeaveController extends Controller
 {
@@ -45,9 +47,9 @@ class LeaveController extends Controller
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
         // Include org + role columns so approval checks (department head, etc.) match the approve() endpoint.
         $query = LeaveRequest::with([
-            'user:id,name,profile_image,schedule,working_schedule_id,role,department_id,branch_id,company_id',
+            'user:id,name,profile_image,position,schedule,working_schedule_id,role,department_id,branch_id,company_id',
             'reviewedByUser:id,name',
-            'filedBy:id,name,profile_image',
+            'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
             'firstApprover:id,name,profile_image',
             'secondApprover:id,name,profile_image',
             'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
@@ -131,7 +133,7 @@ class LeaveController extends Controller
                     $l,
                     $this->leaveApprovalService->buildApprovalProgress($l)
                 ),
-            ], $this->documentPayload($l), $this->leaveActorFlags($l, $actor));
+            ], $this->documentPayload($l), $this->leaveRequesterMeta($l), $this->leaveActorFlags($l, $actor));
         });
 
         return response()->json(['leave_requests' => $leaves]);
@@ -258,7 +260,7 @@ class LeaveController extends Controller
             'approval_stage' => $stage,
             'pending_approval' => true,
             'filed_at' => now(),
-            'filed_by' => $employee->id,
+            'filed_by' => $actor->id,
             'rest_day_bypass' => $bypassRest,
             'rest_day_bypass_reason' => $bypassRest ? $restBypassReason : null,
             'rest_day_bypass_by' => $bypassRest ? $actor->id : null,
@@ -537,6 +539,39 @@ class LeaveController extends Controller
         ]);
     }
 
+    public function destroy(Request $request, int $id): JsonResponse
+    {
+        $actor = $request->user();
+        $leave = LeaveRequest::query()->with('user')->findOrFail($id);
+        if ($leave->user) {
+            $this->dataScopeService->ensureEmployeeAccessible($actor, $leave->user);
+        }
+
+        if ($leave->status !== LeaveRequest::STATUS_PENDING) {
+            return response()->json([
+                'message' => 'Only pending leave requests can be deleted.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if (! $this->canDeleteLeaveRequest($actor, $leave)) {
+            return response()->json([
+                'message' => 'You can only delete leave requests you created or requests filed for you.',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        foreach ($leave->resolveDocumentPaths() as $path) {
+            if (Storage::disk('public')->exists($path)) {
+                Storage::disk('public')->delete($path);
+            }
+        }
+
+        $leave->delete();
+
+        return response()->json([
+            'message' => 'Leave request deleted.',
+        ]);
+    }
+
     /**
      * HR admin may approve leave that spans scheduled rest days only with bypass + audited reason.
      *
@@ -692,7 +727,51 @@ class LeaveController extends Controller
         return [
             'actor_can_approve' => $this->leaveApprovalService->canApprove($actor, $leave),
             'actor_can_reject' => $this->leaveApprovalService->canReject($actor, $leave),
+            'actor_can_delete' => $this->canDeleteLeaveRequest($actor, $leave),
             'hr_wait_message' => $hrWait,
+        ];
+    }
+
+    private function canDeleteLeaveRequest(?User $actor, LeaveRequest $leave): bool
+    {
+        if ($actor === null || $leave->status !== LeaveRequest::STATUS_PENDING) {
+            return false;
+        }
+
+        $actorId = (int) $actor->id;
+
+        return $actorId === (int) $leave->filed_by
+            || $actorId === (int) $leave->user_id;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function leaveRequesterMeta(LeaveRequest $leave): array
+    {
+        $requester = ($leave->relationLoaded('filedBy') && $leave->filedBy) ? $leave->filedBy : $leave->user;
+        if (! $requester) {
+            return [
+                'requested_by_id' => null,
+                'requested_by_name' => null,
+                'requested_by_profile_image_url' => null,
+                'requested_by_position' => null,
+                'requested_by_hr_role' => null,
+                'requested_by_role_label' => null,
+            ];
+        }
+
+        $hr = $requester->isAdmin()
+            ? \App\Enums\HrRole::AdminHr
+            : $this->hrRoleResolver->resolveForApprovalSubject($requester);
+
+        return [
+            'requested_by_id' => $requester->id,
+            'requested_by_name' => $requester->name,
+            'requested_by_profile_image_url' => $requester->profile_image_url,
+            'requested_by_position' => $requester->position,
+            'requested_by_hr_role' => $hr->value,
+            'requested_by_role_label' => $hr->badgeLabel(),
         ];
     }
 
@@ -740,7 +819,7 @@ class LeaveController extends Controller
             })->values()->all(),
         ], $this->documentPayload($l));
 
-        return array_merge($base, $this->leaveActorFlags($l, $actor));
+        return array_merge($base, $this->leaveRequesterMeta($l), $this->leaveActorFlags($l, $actor));
     }
 
     /**

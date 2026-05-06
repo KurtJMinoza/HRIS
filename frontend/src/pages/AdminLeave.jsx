@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Paperclip,
   Eye,
+  Trash2,
   X,
 } from 'lucide-react'
 import { TableBodySkeleton } from '@/components/skeletons'
@@ -42,6 +43,7 @@ import {
   getEmployees,
   updateLeaveNotes,
   uploadAdminLeaveDocument,
+  deleteAdminLeaveRequest,
   profileImageUrl,
   validateAdminLeaveDateRange,
 } from '@/api'
@@ -174,6 +176,8 @@ export default function AdminLeave() {
   const [approveRangeValidating, setApproveRangeValidating] = useState(false)
   const [approveBypassRestDays, setApproveBypassRestDays] = useState(false)
   const [approveRestDayBypassReason, setApproveRestDayBypassReason] = useState('')
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, leave: null })
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLeave, setDetailLeave] = useState(null)
@@ -537,6 +541,21 @@ export default function AdminLeave() {
       toast({ title: 'Failed to reject leave', description: e.message, variant: 'error' })
     } finally {
       setRejectSubmitting(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteDialog.leave) return
+    setDeleteSubmitting(true)
+    try {
+      await deleteAdminLeaveRequest(deleteDialog.leave.id)
+      toast({ title: 'Leave deleted', variant: 'success' })
+      setDeleteDialog({ open: false, leave: null })
+      await fetchLeaves()
+    } catch (e) {
+      toast({ title: 'Failed to delete leave', description: e.message, variant: 'error' })
+    } finally {
+      setDeleteSubmitting(false)
     }
   }
 
@@ -986,16 +1005,30 @@ export default function AdminLeave() {
                         {leave.created_at ? formatDate(leave.created_at) : '—'}
                       </td>
                       <td className="px-4 py-4 text-right align-middle">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 gap-1.5 rounded-lg px-3 text-xs font-semibold text-foreground hover:bg-slate-100 dark:hover:bg-slate-800"
-                          onClick={() => openDetailDialog(leave)}
-                        >
-                          <Eye className="size-3.5" aria-hidden />
-                          Details
-                        </Button>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-9 gap-1.5 rounded-lg px-3 text-xs font-semibold text-foreground hover:bg-slate-100 dark:hover:bg-slate-800"
+                            onClick={() => openDetailDialog(leave)}
+                          >
+                            <Eye className="size-3.5" aria-hidden />
+                            Details
+                          </Button>
+                          {leave.actor_can_delete ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-9 gap-1.5 rounded-lg px-3 text-xs font-semibold text-destructive hover:bg-destructive/10"
+                              onClick={() => setDeleteDialog({ open: true, leave })}
+                            >
+                              <Trash2 className="size-3.5" aria-hidden />
+                              Delete
+                            </Button>
+                          ) : null}
+                        </div>
                       </td>
                       {(canApproveLeave || canLeaveNotes) && (
                       <td className="px-4 py-4 text-right align-middle">
@@ -1609,6 +1642,26 @@ export default function AdminLeave() {
         showEmployeeName
         resolveDocUrl={profileImageUrl}
       />
+
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, leave: null })}>
+        <DialogContent className={adminFormDialogContentClass('max-w-md')}>
+          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
+            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
+              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Delete leave request</DialogTitle>
+              <p className={ADMIN_FORM_DIALOG_DESC_CLASS}>Are you sure you want to delete this request?</p>
+            </DialogHeader>
+          </div>
+          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+            <Button type="button" variant="outline" onClick={() => setDeleteDialog({ open: false, leave: null })} disabled={deleteSubmitting}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleDelete} disabled={deleteSubmitting}>
+              {deleteSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

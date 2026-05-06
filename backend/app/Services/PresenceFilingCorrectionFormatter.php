@@ -234,6 +234,7 @@ class PresenceFilingCorrectionFormatter
         if ($actor !== null) {
             $row['actor_can_approve'] = $this->approvalService->canApprove($actor, $c);
             $row['actor_can_reject'] = $this->approvalService->canReject($actor, $c);
+            $row['actor_can_delete'] = $this->canDeletePendingRequest($actor, $c);
             $actorHr = $this->hrRoleResolver->resolve($actor) === HrRole::AdminHr;
             $stage = $c->approval_stage ?? AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
             $row['hr_wait_message'] = null;
@@ -256,6 +257,18 @@ class PresenceFilingCorrectionFormatter
         }
 
         return $row;
+    }
+
+    private function canDeletePendingRequest(User $actor, AttendanceCorrection $correction): bool
+    {
+        if (! $correction->pending_approval || $correction->approved || $correction->rejected_at) {
+            return false;
+        }
+
+        $actorId = (int) $actor->id;
+
+        return $actorId === (int) $correction->filed_by
+            || $actorId === (int) $correction->user_id;
     }
 
     private function formatLocalDateTime(\DateTimeInterface|string|null $dt, string $tz): string

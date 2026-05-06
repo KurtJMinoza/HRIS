@@ -103,8 +103,8 @@ class EmployeeLeaveController extends Controller
     private function mapEmployeeLeaveRow(LeaveRequest $l): array
     {
         $l->loadMissing([
-            'user:id,name,profile_image,department_id,department,branch_id,company_id',
-            'filedBy:id,name,profile_image',
+            'user:id,name,profile_image,position,role,department_id,department,branch_id,company_id',
+            'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
             'firstApprover:id,name,profile_image',
             'secondApprover:id,name,profile_image',
             'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
@@ -140,7 +140,52 @@ class EmployeeLeaveController extends Controller
                     'actor_name' => $a->actor?->name,
                 ];
             })->values()->all(),
-        ], $this->documentFieldsForLeave($l));
+        ], $this->documentFieldsForLeave($l), $this->leaveRequesterMeta($l), [
+            'actor_can_delete' => $this->canDeleteLeaveRequest($l->user, $l),
+        ]);
+    }
+
+    private function canDeleteLeaveRequest(?User $actor, LeaveRequest $leave): bool
+    {
+        if ($actor === null || $leave->status !== LeaveRequest::STATUS_PENDING) {
+            return false;
+        }
+
+        $actorId = (int) $actor->id;
+
+        return $actorId === (int) $leave->filed_by
+            || $actorId === (int) $leave->user_id;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function leaveRequesterMeta(LeaveRequest $leave): array
+    {
+        $requester = ($leave->relationLoaded('filedBy') && $leave->filedBy) ? $leave->filedBy : $leave->user;
+        if (! $requester) {
+            return [
+                'requested_by_id' => null,
+                'requested_by_name' => null,
+                'requested_by_profile_image_url' => null,
+                'requested_by_position' => null,
+                'requested_by_hr_role' => null,
+                'requested_by_role_label' => null,
+            ];
+        }
+
+        $hr = $requester->isAdmin()
+            ? \App\Enums\HrRole::AdminHr
+            : $this->hrRoleResolver->resolveForApprovalSubject($requester);
+
+        return [
+            'requested_by_id' => $requester->id,
+            'requested_by_name' => $requester->name,
+            'requested_by_profile_image_url' => $requester->profile_image_url,
+            'requested_by_position' => $requester->position,
+            'requested_by_hr_role' => $hr->value,
+            'requested_by_role_label' => $hr->badgeLabel(),
+        ];
     }
 
     /**
@@ -288,7 +333,7 @@ class EmployeeLeaveController extends Controller
         $query = LeaveRequest::query()
             ->where('user_id', $user->id)
             ->with([
-                'filedBy:id,name,profile_image',
+                'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
                 'firstApprover:id,name,profile_image',
                 'secondApprover:id,name,profile_image',
                 'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
@@ -694,8 +739,8 @@ class EmployeeLeaveController extends Controller
         });
 
         $leave->load([
-            'user:id,name,profile_image,department_id,department,branch_id,company_id',
-            'filedBy:id,name,profile_image',
+            'user:id,name,profile_image,position,role,department_id,department,branch_id,company_id',
+            'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
             'firstApprover:id,name,profile_image',
             'secondApprover:id,name,profile_image',
             'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
@@ -739,6 +784,42 @@ class EmployeeLeaveController extends Controller
         return response()->json([
             'message' => 'Document uploaded.',
             ...$this->documentFieldsForLeave($leave),
+        ]);
+    }
+
+    public function destroy(Request $request, int $id): JsonResponse
+    {
+        $user = $request->user();
+        $leave = LeaveRequest::query()
+            ->where('id', $id)
+            ->where(function ($query) use ($user) {
+                $query->where('user_id', $user->id)
+                    ->orWhere('filed_by', $user->id);
+            })
+            ->firstOrFail();
+
+        if ($leave->status !== LeaveRequest::STATUS_PENDING) {
+            throw ValidationException::withMessages([
+                'id' => ['Only pending leave requests can be deleted.'],
+            ]);
+        }
+
+        if (! $this->canDeleteLeaveRequest($user, $leave)) {
+            throw ValidationException::withMessages([
+                'id' => ['You can only delete leave requests you created or requests filed for you.'],
+            ]);
+        }
+
+        foreach ($leave->resolveDocumentPaths() as $path) {
+            if (Storage::disk('public')->exists($path)) {
+                Storage::disk('public')->delete($path);
+            }
+        }
+
+        $leave->delete();
+
+        return response()->json([
+            'message' => 'Leave request deleted.',
         ]);
     }
 }

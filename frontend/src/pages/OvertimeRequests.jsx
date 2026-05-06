@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   Timer,
+  Trash2,
   X,
   Inbox,
   Sparkles,
@@ -65,6 +66,7 @@ import {
   getAdminOvertime,
   getAdminOvertimeDetail,
   updateAdminOvertimeStatus,
+  deleteAdminOvertimeRequest,
   exportAdminOvertimeCsv,
 } from '@/api'
 import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
@@ -590,6 +592,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [editAttachment, setEditAttachment] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
   const [editError, setEditError] = useState(null)
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, row: null })
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
   const loadMine = useCallback(async () => {
     setLoadingMine(true)
@@ -984,15 +988,29 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     }
   }
 
-  async function handleCancel(row) {
-    if (!canEditPendingOvertime(row)) return
-    if (!window.confirm('Cancel this pending overtime request? This cannot be undone.')) return
+  async function handleDelete() {
+    const row = deleteDialog.row
+    if (!row?.id) return
+    if (!row.actor_can_delete) return
+    setDeleteSubmitting(true)
     try {
-      await cancelMyOvertimeRequest(row.id)
+      if (tab === 'all' && canSeeAllTab) {
+        await deleteAdminOvertimeRequest(row.id)
+      } else {
+        await cancelMyOvertimeRequest(row.id)
+      }
+      toast({ title: 'Deleted', description: 'The overtime request was deleted.', variant: 'success' })
+      setDeleteDialog({ open: false, row: null })
+      if (detail?.id && Number(detail.id) === Number(row.id)) {
+        setViewOpen(false)
+        setDetail(null)
+      }
       await loadMine()
       if (tab === 'all') await loadAll()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
+    } finally {
+      setDeleteSubmitting(false)
     }
   }
 
@@ -1500,17 +1518,20 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                                     <Button type="button" variant="ghost" size="sm" className="h-9 text-xs" onClick={() => openEdit(row)}>
                                       Edit
                                     </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-9 text-xs text-destructive"
-                                      onClick={() => handleCancel(row)}
-                                    >
-                                      Cancel
-                                    </Button>
                                   </>
                                 )}
+                                {row.actor_can_delete ? (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-9 gap-1 text-xs text-destructive"
+                                    onClick={() => setDeleteDialog({ open: true, row })}
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                    Delete
+                                  </Button>
+                                ) : null}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -2007,6 +2028,17 @@ export default function OvertimeRequests({ variant = 'employee' }) {
           <DialogFooter
             className={cn(ADMIN_FORM_DIALOG_FOOTER_CLASS, 'flex flex-col gap-3 @sm:flex-row @sm:flex-wrap @sm:items-center @sm:justify-end')}
           >
+            {detail && !detailLoading && detail.actor_can_delete ? (
+              <Button
+                type="button"
+                variant="destructive"
+                className="min-w-[100px]"
+                onClick={() => setDeleteDialog({ open: true, row: detail })}
+              >
+                <Trash2 className="size-4" />
+                Delete
+              </Button>
+            ) : null}
             {detail && !detailLoading && showOvertimeActions(detail, user, canApproveOvertime) ? (
               <div className="flex w-full flex-wrap gap-2 @sm:w-auto @sm:justify-end">
                 <Button
@@ -2094,6 +2126,24 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             >
               {actionSubmitting ? <Loader2 className="size-4 animate-spin" /> : null}
               Confirm reject
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, row: null })}>
+        <DialogContent className={adminFormDialogContentClass('max-w-md')}>
+          <DialogHeader>
+            <DialogTitle>Delete overtime request</DialogTitle>
+            <DialogDescription>Are you sure you want to delete this request?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteDialog({ open: false, row: null })} disabled={deleteSubmitting}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleDelete} disabled={deleteSubmitting}>
+              {deleteSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

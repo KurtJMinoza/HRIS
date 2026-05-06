@@ -23,6 +23,7 @@ import {
   LayoutList,
   CalendarDays,
   Printer,
+  Trash2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -70,6 +71,8 @@ import {
   rejectPresenceFiling,
   submitPresenceFiling,
   addPresenceFilingHrNote,
+  deleteAdminPresenceFiling,
+  deleteMyPresenceFiling,
 } from '@/api'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
@@ -258,6 +261,8 @@ export default function AttendanceCorrections() {
   const [hrNoteText, setHrNoteText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [hrNoteSubmitting, setHrNoteSubmitting] = useState(false)
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null })
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
   const [fileDate, setFileDate] = useState('')
   const [fileIssueKind, setFileIssueKind] = useState('missing_in')
@@ -607,6 +612,30 @@ export default function AttendanceCorrections() {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function submitDelete() {
+    if (!deleteDialog.item) return
+    setDeleteSubmitting(true)
+    try {
+      if (tab === 'all') {
+        await deleteAdminPresenceFiling(deleteDialog.item.id)
+      } else {
+        await deleteMyPresenceFiling(deleteDialog.item.id)
+      }
+      toast({ title: 'Deleted', description: 'The correction request was deleted.', variant: 'success' })
+      setDeleteDialog({ open: false, item: null })
+      if (selectedItem?.id && Number(selectedItem.id) === Number(deleteDialog.item.id)) {
+        setViewOpen(false)
+        setSelectedItem(null)
+      }
+      await loadMine()
+      if (canSeeAll) await loadAll()
+    } catch (e) {
+      toast({ title: 'Failed', description: e.message, variant: 'error' })
+    } finally {
+      setDeleteSubmitting(false)
     }
   }
 
@@ -1055,6 +1084,8 @@ export default function AttendanceCorrections() {
                               onApprove={() => openApprove(item)}
                               showReject={tab === 'all' && item.actor_can_reject}
                               onReject={() => openReject(item)}
+                              showDelete={Boolean(item.actor_can_delete)}
+                              onDelete={() => setDeleteDialog({ open: true, item })}
                             />
                           </div>
                         </div>
@@ -1164,6 +1195,8 @@ export default function AttendanceCorrections() {
                                   onApprove={() => openApprove(item)}
                                   showReject={tab === 'all' && item.actor_can_reject}
                                   onReject={() => openReject(item)}
+                                  showDelete={Boolean(item.actor_can_delete)}
+                                  onDelete={() => setDeleteDialog({ open: true, item })}
                                 />
                               </TableCell>
                             </TableRow>
@@ -1421,6 +1454,12 @@ export default function AttendanceCorrections() {
                 <p className="text-xs text-muted-foreground">
                   <kbd className="rounded border border-border bg-background px-1 font-mono text-[10px]">Esc</kbd> to close
                 </p>
+                {selectedItem.actor_can_delete ? (
+                  <Button type="button" variant="destructive" onClick={() => setDeleteDialog({ open: true, item: selectedItem })}>
+                    <Trash2 className="size-4" />
+                    Delete
+                  </Button>
+                ) : null}
                 <Button type="button" variant="outline" onClick={() => setViewOpen(false)}>
                   Close
                 </Button>
@@ -1596,6 +1635,26 @@ export default function AttendanceCorrections() {
             </Button>
             <Button type="button" className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS} onClick={submitFile} disabled={submitting}>
               {submitting ? <Loader2 className="size-4 animate-spin" /> : 'Submit correction request'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, item: null })}>
+        <DialogContent className={adminFormDialogContentClass('max-w-md')}>
+          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
+            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
+              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Delete correction request</DialogTitle>
+              <p className={ADMIN_FORM_DIALOG_DESC_CLASS}>Are you sure you want to delete this request?</p>
+            </DialogHeader>
+          </div>
+          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+            <Button type="button" variant="outline" onClick={() => setDeleteDialog({ open: false, item: null })} disabled={deleteSubmitting}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={submitDelete} disabled={deleteSubmitting}>
+              {deleteSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

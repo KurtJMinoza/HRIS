@@ -14,6 +14,7 @@ use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Validation\ValidationException;
 
 class MyScheduleController extends Controller
@@ -142,6 +143,30 @@ class MyScheduleController extends Controller
             'message' => 'Schedule request submitted.',
             'request' => $this->mapScheduleRequestRow($scheduleRequest, $user),
         ], 201);
+    }
+
+    public function destroy(Request $request, int $id): JsonResponse
+    {
+        $actor = $this->resolveSelfUser($request);
+        $scheduleRequest = ScheduleRequest::query()->findOrFail($id);
+
+        if ($scheduleRequest->status !== ScheduleRequest::STATUS_PENDING) {
+            return response()->json([
+                'message' => 'Only pending schedule requests can be deleted.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if (! $this->canDeleteScheduleRequest($actor, $scheduleRequest)) {
+            return response()->json([
+                'message' => 'You can only delete schedule requests you created or requests filed for you.',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        $scheduleRequest->delete();
+
+        return response()->json([
+            'message' => 'Schedule request deleted.',
+        ]);
     }
 
     /**
@@ -438,7 +463,20 @@ class MyScheduleController extends Controller
             })->values()->all(),
             'actor_can_approve' => $this->scheduleApprovalService->canApprove($actor, $request),
             'actor_can_reject' => $this->scheduleApprovalService->canReject($actor, $request),
+            'actor_can_delete' => $this->canDeleteScheduleRequest($actor, $request),
         ];
+    }
+
+    protected function canDeleteScheduleRequest(User $actor, ScheduleRequest $request): bool
+    {
+        if ($request->status !== ScheduleRequest::STATUS_PENDING) {
+            return false;
+        }
+
+        $actorId = (int) $actor->id;
+
+        return $actorId === (int) $request->filed_by
+            || $actorId === (int) $request->user_id;
     }
 
     /**

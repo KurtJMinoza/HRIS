@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Inbox, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
+import { Inbox, Loader2, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,7 @@ import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDeta
 import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
 import { ScheduleRequestStatusBadge } from '@/components/schedules/ScheduleRequestTableCells'
 import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
-import { approveScheduleRequest, getAdminScheduleRequests, rejectScheduleRequest } from '@/api'
+import { approveScheduleRequest, deleteAdminScheduleRequest, getAdminScheduleRequests, rejectScheduleRequest } from '@/api'
 import { cn } from '@/lib/utils'
 
 function formatDateTime(value) {
@@ -54,6 +54,7 @@ export default function ScheduleRequestsPage() {
   const [selectedRequest, setSelectedRequest] = useState(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [actionDialog, setActionDialog] = useState({ open: false, mode: 'approve', request: null })
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, request: null })
   const [remarks, setRemarks] = useState('')
   const [queueSearch, setQueueSearch] = useState('')
 
@@ -119,6 +120,21 @@ export default function ScheduleRequestsPage() {
       await loadData()
     } catch (error) {
       toast({ title: 'Schedule requests', description: error.message || 'Failed to update request', variant: 'destructive' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteDialog.request) return
+    setSaving(true)
+    try {
+      await deleteAdminScheduleRequest(deleteDialog.request.id)
+      toast({ title: 'Schedule requests', description: 'Request deleted.' })
+      setDeleteDialog({ open: false, request: null })
+      await loadData()
+    } catch (error) {
+      toast({ title: 'Schedule requests', description: error.message || 'Failed to delete request', variant: 'destructive' })
     } finally {
       setSaving(false)
     }
@@ -344,6 +360,8 @@ export default function ScheduleRequestsPage() {
                                 setActionDialog({ open: true, mode: 'reject', request: item })
                                 setRemarks('')
                               }}
+                              showDelete={Boolean(item.actor_can_delete)}
+                              onDelete={() => setDeleteDialog({ open: true, request: item })}
                             />
                           </TableCell>
                         </TableRow>
@@ -447,6 +465,24 @@ export default function ScheduleRequestsPage() {
             >
               {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
               {actionDialog.mode === 'approve' ? 'Approve' : 'Reject'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, request: null })}>
+        <DialogContent className="max-w-md border-border/60 bg-card shadow-2xl dark:border-border/50">
+          <DialogHeader>
+            <DialogTitle>Delete schedule request</DialogTitle>
+            <DialogDescription>Are you sure you want to delete this request?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" className="rounded-lg" onClick={() => setDeleteDialog({ open: false, request: null })} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" className="rounded-lg" onClick={handleDelete} disabled={saving}>
+              {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Trash2 className="mr-2 size-4" />}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Eye, Check, X, ExternalLink, Sparkles } from 'lucide-react'
+import { Eye, Check, X, ExternalLink, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -18,6 +18,8 @@ export function AdminDataTableActions({
   onApprove,
   showReject = false,
   onReject,
+  showDelete = false,
+  onDelete,
   showSubmitRecommendation = false,
   onSubmitRecommendation,
   disabled = false,
@@ -134,6 +136,25 @@ export function AdminDataTableActions({
         >
           <X className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
           <span className="hidden sm:inline">Reject</span>
+        </Button>
+      ) : null}
+
+      {showDelete && onDelete ? (
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          disabled={disabled}
+          className={cn(
+            'h-8 shrink-0 gap-1.5 rounded-lg px-2 text-xs font-semibold shadow-sm',
+            'focus-visible:ring-2 focus-visible:ring-destructive/30',
+          )}
+          onClick={stop(onDelete)}
+          title="Delete"
+          aria-label="Delete"
+        >
+          <Trash2 className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+          <span className="hidden sm:inline">Delete</span>
         </Button>
       ) : null}
     </div>

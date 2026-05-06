@@ -23,12 +23,13 @@ import {
   ArrowDown,
   FileText,
   Send,
+  Trash2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/use-toast'
-import { getMyPresenceFilings, submitPresenceFiling } from '@/api'
+import { deleteMyPresenceFiling, getMyPresenceFilings, submitPresenceFiling } from '@/api'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -325,6 +326,8 @@ export default function EmployeeCorrectionRequests() {
   const [fileTimeOut, setFileTimeOut] = useState('')
   const [fileRemarks, setFileRemarks] = useState('')
   const [fileSubmitting, setFileSubmitting] = useState(false)
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null })
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
   const [listSearch, setListSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -547,6 +550,25 @@ export default function EmployeeCorrectionRequests() {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
       setFileSubmitting(false)
+    }
+  }
+
+  async function submitDelete() {
+    if (!deleteDialog.item) return
+    setDeleteSubmitting(true)
+    try {
+      await deleteMyPresenceFiling(deleteDialog.item.id)
+      toast({ title: 'Deleted', description: 'The correction request was deleted.', variant: 'success' })
+      setDeleteDialog({ open: false, item: null })
+      if (selected?.id && Number(selected.id) === Number(deleteDialog.item.id)) {
+        setDetailOpen(false)
+        setSelected(null)
+      }
+      await load()
+    } catch (e) {
+      toast({ title: 'Failed', description: e.message, variant: 'error' })
+    } finally {
+      setDeleteSubmitting(false)
     }
   }
 
@@ -842,6 +864,8 @@ export default function EmployeeCorrectionRequests() {
                               <AdminDataTableActions
                                 onView={() => openDetail(row)}
                                 viewAriaLabel="View correction request details"
+                                showDelete={Boolean(row.actor_can_delete)}
+                                onDelete={() => setDeleteDialog({ open: true, item: row })}
                               />
                             </TableCell>
                           </TableRow>
@@ -857,8 +881,8 @@ export default function EmployeeCorrectionRequests() {
                     const tIn = row.requested_time_in ?? row.time_in
                     const tOut = row.requested_time_out ?? row.time_out
                     return (
+                      <div key={row.id} className="space-y-2">
                       <button
-                        key={row.id}
                         type="button"
                         onClick={() => openDetail(row)}
                         className="w-full rounded-2xl border border-border bg-card p-4 text-left text-card-foreground shadow-sm transition hover:border-primary/25 hover:bg-muted/20 hover:shadow-md active:scale-[0.99]"
@@ -909,6 +933,18 @@ export default function EmployeeCorrectionRequests() {
                           <RemarksPreviewCell text={row.remarks} />
                         </div>
                       </button>
+                      {row.actor_can_delete ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full gap-2 rounded-xl border-destructive/40 text-destructive hover:bg-destructive/10"
+                          onClick={() => setDeleteDialog({ open: true, item: row })}
+                        >
+                          <Trash2 className="size-4" />
+                          Delete
+                        </Button>
+                      ) : null}
+                      </div>
                     )
                   })}
                 </div>
@@ -1281,17 +1317,48 @@ export default function EmployeeCorrectionRequests() {
                   <Printer className="size-4" />
                   Print
                 </Button>
-                <Button
-                  type="button"
-                  variant="default"
-                  className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
-                  onClick={() => setDetailOpen(false)}
-                >
-                  Close
-                </Button>
+                <div className="flex flex-wrap justify-end gap-2">
+                  {selected.actor_can_delete ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="gap-2 rounded-xl"
+                      onClick={() => setDeleteDialog({ open: true, item: selected })}
+                    >
+                      <Trash2 className="size-4" />
+                      Delete
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="default"
+                    className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+                    onClick={() => setDetailOpen(false)}
+                  >
+                    Close
+                  </Button>
+                </div>
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, item: null })}>
+        <DialogContent className="max-w-md rounded-2xl border-border bg-card">
+          <DialogHeader>
+            <DialogTitle>Delete correction request</DialogTitle>
+            <DialogDescription>Are you sure you want to delete this request?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteDialog({ open: false, item: null })} disabled={deleteSubmitting}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={submitDelete} disabled={deleteSubmitting}>
+              {deleteSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Delete
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Motion.div>
