@@ -1356,6 +1356,10 @@ class PayrollCalculatorService
     public function resolveBasicSalaryForPayroll(User $employee, ?string $asOfDate = null): float
     {
         $asOfDate = $asOfDate ?: now()->toDateString();
+        if ($this->profileMonthlyBase($employee) <= 0.0) {
+            return 0.0;
+        }
+
         $assignment = collect($this->getActiveEmployeeCompensationComponents($employee, $asOfDate))
             ->first(fn (array $line) => strtoupper((string) ($line['code'] ?? '')) === 'BASIC_SALARY');
         if ($assignment) {
@@ -1491,7 +1495,7 @@ class PayrollCalculatorService
         $rows = $this->getActiveEmployeeCompensationRows($user, $asOfDate);
         if ($this->profileMonthlyBase($user) <= 0) {
             $rows = $rows
-                ->reject(fn (EmployeeCompensationComponent $row): bool => $this->isProfileBackedBasicSalaryRow($row))
+                ->reject(fn (EmployeeCompensationComponent $row): bool => strtoupper(trim((string) $row->code)) === 'BASIC_SALARY')
                 ->values();
         }
         $primaryBasicRow = $rows->first(

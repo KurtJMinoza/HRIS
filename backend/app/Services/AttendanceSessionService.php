@@ -66,9 +66,11 @@ class AttendanceSessionService
             $candidateIn = $clockIn->verified_at->copy()->timezone($tz);
             if ($candidateIn->toDateString() === $dateKey) {
                 $timeIn = $candidateIn;
+                $clockOutSearchEndUtc = $this->clockOutSearchEndUtc($user, $dateKey, $tz, $dayEnd);
                 $clockOut = AttendanceLog::query()
                     ->where('user_id', $user->id)
                     ->where('verified_at', '>=', $timeIn->copy()->setTimezone('UTC'))
+                    ->where('verified_at', '<=', $clockOutSearchEndUtc)
                     ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
                     ->orderBy('verified_at')
                     ->first();
@@ -91,10 +93,11 @@ class AttendanceSessionService
             // Missing-in corrections often provide only the approved time-in while the actual
             // device clock-out remains in attendance_logs. Payroll must merge those sources so
             // undertime days (e.g. 08:00 correction + 09:42 clock-out) pay actual worked time.
+            $clockOutSearchEndUtc = $this->clockOutSearchEndUtc($user, $dateKey, $tz, $dayEnd);
             $clockOut = AttendanceLog::query()
                 ->where('user_id', $user->id)
                 ->where('verified_at', '>=', $timeIn->copy()->setTimezone('UTC'))
-                ->where('verified_at', '<=', Carbon::parse($dateKey, $tz)->addDay()->endOfDay()->setTimezone('UTC'))
+                ->where('verified_at', '<=', $clockOutSearchEndUtc)
                 ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
                 ->orderBy('verified_at')
                 ->first();
@@ -112,6 +115,39 @@ class AttendanceSessionService
         }
 
         return [$timeIn, $timeOut];
+    }
+
+    private function clockOutSearchEndUtc(User $user, string $dateKey, string $tz, Carbon $dayEnd): Carbon
+    {
+        $end = $dayEnd->copy();
+
+        $user->loadMissing('workingSchedule');
+        $effectiveSchedule = EmployeeScheduleResolver::resolve($user);
+        $dayKey = EmployeeScheduleResolver::dayKeyForDate(Carbon::parse($dateKey, $tz));
+        $daySchedule = is_array($effectiveSchedule) ? ($effectiveSchedule[$dayKey] ?? null) : null;
+        if (is_array($daySchedule)) {
+            $inRaw = trim((string) ($daySchedule['in'] ?? ''));
+            $outRaw = trim((string) ($daySchedule['out'] ?? ''));
+            if ($inRaw !== '' && $outRaw !== '') {
+                try {
+                    $scheduledIn = Carbon::parse($dateKey.' '.$inRaw, $tz);
+                    $scheduledOut = Carbon::parse($dateKey.' '.$outRaw, $tz);
+                    if ($scheduledOut->lessThanOrEqualTo($scheduledIn)) {
+                        $scheduledOut->addDay();
+                        $end = $end->max($scheduledOut->copy()->addHours(4));
+                    }
+                } catch (\Throwable) {
+                    // Keep the same-day bound if a malformed schedule cannot be parsed.
+                }
+            }
+        }
+
+        $approvedOtEnd = $this->virtualTimeOutFromApprovedOvertime($user, $dateKey, $tz);
+        if ($approvedOtEnd !== null) {
+            $end = $end->max($approvedOtEnd->copy()->addHours(2));
+        }
+
+        return $end->setTimezone('UTC');
     }
 
     /**

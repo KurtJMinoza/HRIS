@@ -1523,7 +1523,7 @@ class PayrollComputationService
 
     /**
      * Monthly base for daily-rate derivation.
-     * Priority: Salary-tab monthly base -> payroll BASIC_SALARY fallback.
+     * The Salary tab is authoritative: an empty/zero monthly salary means no base pay.
      */
     private function resolveMonthlyBaseForDailyRate(User $user, string $asOfDate): float
     {
@@ -1532,7 +1532,7 @@ class PayrollComputationService
             return round($salaryTabBase, 2);
         }
 
-        return round(max(0.0, (float) $this->payrollCalculator->resolveBasicSalaryForPayroll($user, $asOfDate)), 2);
+        return 0.0;
     }
 
     /**

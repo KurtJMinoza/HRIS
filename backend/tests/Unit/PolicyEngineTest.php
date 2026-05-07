@@ -6,11 +6,15 @@ use App\Enums\PolicyConditionKey;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\Company;
+use App\Models\EmployeeCompensationComponent;
 use App\Models\Overtime;
+use App\Models\PayComponent;
 use App\Models\Policy;
 use App\Models\PolicyMultiplier;
 use App\Models\PolicyNdSetting;
 use App\Models\User;
+use App\Services\AttendanceSessionService;
+use App\Services\PayrollCalculatorService;
 use App\Services\PayrollComputationService;
 use App\Services\PayslipService;
 use App\Services\PolicyResolverService;
@@ -580,6 +584,94 @@ class PolicyEngineTest extends TestCase
         $this->assertSame('1 day, 0 hrs 0 mins', $line['units'] ?? null);
         $this->assertSame(800.0, $line['amount'] ?? null);
         $this->assertSame(480, $line['minutes_worked'] ?? null);
+    }
+
+    public function test_open_clock_in_is_not_paired_with_next_workday_clock_out(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $user = User::factory()->create([
+            'schedule' => [
+                'sun' => null,
+                'mon' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+                'tue' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+                'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+                'thu' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+                'fri' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+                'sat' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            ],
+        ]);
+
+        AttendanceLog::create([
+            'user_id' => $user->id,
+            'type' => AttendanceLog::TYPE_CLOCK_IN,
+            'verified_at' => Carbon::parse('2026-04-28 07:30', 'Asia/Manila')->utc(),
+        ]);
+        AttendanceLog::create([
+            'user_id' => $user->id,
+            'type' => AttendanceLog::TYPE_CLOCK_OUT,
+            'verified_at' => Carbon::parse('2026-04-29 17:05', 'Asia/Manila')->utc(),
+        ]);
+
+        [$timeIn, $timeOut] = app(AttendanceSessionService::class)
+            ->getTimesForDate($user, '2026-04-28', 'Asia/Manila');
+
+        $this->assertNull($timeIn);
+        $this->assertNull($timeOut);
+    }
+
+    public function test_empty_salary_tab_overrides_stale_basic_salary_assignment(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $user = User::factory()->create([
+            'monthly_salary' => null,
+            'monthly_rate' => null,
+            'daily_rate' => null,
+            'hourly_rate' => null,
+        ]);
+
+        $component = PayComponent::create([
+            'name' => 'Basic Salary',
+            'code' => 'BASIC_SALARY_TEST_'.$user->id,
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => 'Basic Salary',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'default_value' => 25000,
+            'is_taxable' => true,
+            'is_active' => true,
+        ]);
+
+        EmployeeCompensationComponent::create([
+            'user_id' => $user->id,
+            'pay_component_id' => $component->id,
+            'name' => 'Basic Salary',
+            'code' => 'BASIC_SALARY',
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => 'Basic Salary',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'value' => 25000,
+            'is_taxable' => true,
+            'is_active' => true,
+        ]);
+
+        $calculator = app(PayrollCalculatorService::class);
+        $calculator->forgetCompensationSummaryCacheForUser((int) $user->id);
+
+        $summary = $calculator->buildEmployeeCompensationSummary($user->fresh(), [
+            'as_of_date' => '2026-05-10',
+            'cache' => false,
+        ]);
+
+        $this->assertSame(0.0, $calculator->resolveBasicSalaryForPayroll($user->fresh(), '2026-05-10'));
+        $this->assertSame(0.0, (float) ($summary['basic_salary'] ?? -1));
+        $this->assertFalse(collect($summary['earnings'] ?? [])->contains(
+            fn (array $line) => strtoupper((string) ($line['code'] ?? '')) === 'BASIC_SALARY'
+        ));
     }
 
     public function test_payroll_attendance_session_merges_missing_in_correction_with_clock_out(): void
