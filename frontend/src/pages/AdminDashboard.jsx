@@ -361,11 +361,15 @@ export default function AdminDashboard() {
   const overtimePendingCount = Number(
     overtimePendingQuery.data?.summary?.pending_count
       ?? overtimePendingQuery.data?.summary?.pending
+      ?? overtimePendingQuery.data?.summary?.pending_requests
       ?? overtimePendingQuery.data?.pending_count
       ?? overtimePendingQuery.data?.pagination?.total
       ?? overtimePendingQuery.data?.meta?.total
       ?? 0,
   )
+  const pendingOvertimeRequest = Array.isArray(overtimePendingQuery.data?.overtimes)
+    ? overtimePendingQuery.data.overtimes[0] || null
+    : null
 
   const fetchDashboard = useCallback(async () => {
     const result = await dashboardQuery.refetch()
@@ -1264,7 +1268,10 @@ export default function AdminDashboard() {
           <OvertimeRequestsCard
             loading={(!canViewOvertime && loading) || overtimePendingQuery.isLoading}
             pendingCount={canViewOvertime ? overtimePendingCount : 0}
+            request={pendingOvertimeRequest}
             onViewAll={() => navigate(hrPanelPath(hrBase, 'overtime'))}
+            onViewDetails={() => navigate(hrPanelPath(hrBase, 'overtime'))}
+            onReviewRequest={() => navigate(hrPanelPath(hrBase, 'overtime'))}
           />
         </Motion.div>
 
