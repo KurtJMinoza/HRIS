@@ -186,32 +186,76 @@ class User extends Authenticatable
         });
     }
 
-    /**
-     * Start and end of "today" in attendance timezone, as UTC (for DB created_at queries).
-     * Ensures QR/scan "already timed in today" uses business day, not server/UTC day.
-     *
-     * @return array{0: Carbon, 1: Carbon}
-     */
-    protected function attendanceTodayRangeUtc(): array
+    protected function attendanceTimezone(): string
     {
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $today = Carbon::now($tz)->startOfDay();
-        $start = $today->copy()->setTimezone('UTC');
-        $end = $today->copy()->endOfDay()->setTimezone('UTC');
-
-        return [$start, $end];
+        return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
     }
 
     /**
-     * Last attendance log for this user on the current attendance day (by created_at in that day's UTC range).
+     * Current business date for attendance. Approved corrections must match this
+     * exact date before they can affect today's clock-in/out state.
+     */
+    protected function attendanceTodayDateKey(): string
+    {
+        return Carbon::now($this->attendanceTimezone())->toDateString();
+    }
+
+    /**
+     * Start and end of an attendance date in UTC.
+     *
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    protected function attendanceDateRangeUtc(string $dateKey): array
+    {
+        $day = Carbon::parse($dateKey, $this->attendanceTimezone())->startOfDay();
+
+        return [
+            $day->copy()->setTimezone('UTC'),
+            $day->copy()->endOfDay()->setTimezone('UTC'),
+        ];
+    }
+
+    /**
+     * Match logs by their effective punch timestamp: verified_at first, created_at
+     * only for legacy rows. This keeps approved corrections from another date out
+     * of today's status even if the row was inserted or updated later.
+     */
+    protected function attendanceLogEffectiveDateQuery($query, string $dateKey)
+    {
+        [$start, $end] = $this->attendanceDateRangeUtc($dateKey);
+
+        return $query->where(function ($q) use ($start, $end) {
+            $q->whereBetween('verified_at', [$start, $end])
+                ->orWhere(function ($fallback) use ($start, $end) {
+                    $fallback->whereNull('verified_at')
+                        ->whereBetween('created_at', [$start, $end]);
+                });
+        });
+    }
+
+    protected function approvedAttendanceCorrectionForDate(string $dateKey)
+    {
+        return AttendanceCorrection::where('user_id', $this->id)
+            ->where('approved', true)
+            ->where(function ($q) {
+                $q->where('pending_approval', false)->orWhereNull('pending_approval');
+            })
+            ->whereNull('rejected_at')
+            ->whereDate('date', $dateKey);
+    }
+
+    /**
+     * Last attendance log for this user on the current attendance day.
      */
     public function lastAttendanceToday(): ?AttendanceLog
     {
-        [$start, $end] = $this->attendanceTodayRangeUtc();
+        $todayDate = $this->attendanceTodayDateKey();
 
-        return AttendanceLog::where('user_id', $this->id)
-            ->whereBetween('created_at', [$start, $end])
-            ->orderByDesc('created_at')
+        return $this->attendanceLogEffectiveDateQuery(
+            AttendanceLog::where('user_id', $this->id),
+            $todayDate
+        )
+            ->orderByRaw('COALESCE(verified_at, created_at) DESC')
             ->first();
     }
 
@@ -222,22 +266,18 @@ class User extends Authenticatable
      */
     public function hasTimedInToday(): bool
     {
-        [$start, $end] = $this->attendanceTodayRangeUtc();
+        $todayDate = $this->attendanceTodayDateKey();
 
-        if (AttendanceLog::where('user_id', $this->id)
-            ->whereBetween('created_at', [$start, $end])
-            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
+        if ($this->attendanceLogEffectiveDateQuery(
+            AttendanceLog::where('user_id', $this->id),
+            $todayDate
+        )->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->exists()) {
             return true;
         }
 
-        // An approved manual correction with time_in counts as "timed in"
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $todayDate = Carbon::now($tz)->toDateString();
-
-        return AttendanceCorrection::where('user_id', $this->id)
-            ->where('approved', true)
-            ->whereDate('date', $todayDate)
+        // Date-specific: only today's approved correction can count as today's time-in.
+        return $this->approvedAttendanceCorrectionForDate($todayDate)
             ->whereNotNull('time_in')
             ->exists();
     }
@@ -254,14 +294,10 @@ class User extends Authenticatable
             return true;
         }
 
-        // An approved correction with only time_in (no time_out) means the employee
-        // clocked in via manual record and still needs to clock out
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $todayDate = Carbon::now($tz)->toDateString();
+        $todayDate = $this->attendanceTodayDateKey();
 
-        return AttendanceCorrection::where('user_id', $this->id)
-            ->where('approved', true)
-            ->whereDate('date', $todayDate)
+        // Date-specific: a previous day's approved correction cannot open/close today's session.
+        return $this->approvedAttendanceCorrectionForDate($todayDate)
             ->whereNotNull('time_in')
             ->whereNull('time_out')
             ->exists();
@@ -273,11 +309,12 @@ class User extends Authenticatable
      */
     public function hasClockOutToday(): bool
     {
-        [$start, $end] = $this->attendanceTodayRangeUtc();
+        $todayDate = $this->attendanceTodayDateKey();
 
-        return AttendanceLog::where('user_id', $this->id)
-            ->whereBetween('created_at', [$start, $end])
-            ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
+        return $this->attendanceLogEffectiveDateQuery(
+            AttendanceLog::where('user_id', $this->id),
+            $todayDate
+        )->where('type', AttendanceLog::TYPE_CLOCK_OUT)
             ->exists();
     }
 
@@ -288,14 +325,17 @@ class User extends Authenticatable
      */
     public function hasCompletedAttendanceToday(): bool
     {
-        [$start, $end] = $this->attendanceTodayRangeUtc();
+        $todayDate = $this->attendanceTodayDateKey();
 
-        $hasIn = AttendanceLog::where('user_id', $this->id)
-            ->whereBetween('created_at', [$start, $end])
+        $todayLogs = $this->attendanceLogEffectiveDateQuery(
+            AttendanceLog::where('user_id', $this->id),
+            $todayDate
+        );
+
+        $hasIn = (clone $todayLogs)
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->exists();
-        $hasOut = AttendanceLog::where('user_id', $this->id)
-            ->whereBetween('created_at', [$start, $end])
+        $hasOut = (clone $todayLogs)
             ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
             ->exists();
 
@@ -303,13 +343,8 @@ class User extends Authenticatable
             return true;
         }
 
-        // An approved manual correction with both time_in and time_out is a completed attendance day
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $todayDate = Carbon::now($tz)->toDateString();
-
-        return AttendanceCorrection::where('user_id', $this->id)
-            ->where('approved', true)
-            ->whereDate('date', $todayDate)
+        // Date-specific: only a completed correction filed for today's date completes today.
+        return $this->approvedAttendanceCorrectionForDate($todayDate)
             ->whereNotNull('time_in')
             ->whereNotNull('time_out')
             ->exists();

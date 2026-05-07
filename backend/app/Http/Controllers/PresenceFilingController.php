@@ -628,7 +628,8 @@ class PresenceFilingController extends Controller
                 'acted_at' => now(),
             ]);
 
-            // Sync approved correction times to attendance_logs so kiosk/recent views show corrected times
+            // Date-specific sync: the approved filing only rewrites/creates punches for $dateKey.
+            // Other attendance days must remain available for normal clock-in/out.
             $syncResult = $this->attendanceLogSyncService->syncApprovedCorrectionToLogs(
                 $employee,
                 $dateKey,
