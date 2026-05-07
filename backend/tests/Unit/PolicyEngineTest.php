@@ -520,6 +520,68 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(102, $line['minutes_worked'] ?? null);
     }
 
+    public function test_stored_payslip_snapshot_repair_excludes_holiday_premium_days_from_regular_pay(): void
+    {
+        $snapshot = [
+            'daily_rate' => 800,
+            'summary' => [
+                'daily_rate' => 800,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'units' => '2 days, 0 hrs 0 mins',
+                    'amount' => 1600,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-04-30',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'holiday_premium_pay' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => 100,
+                        'amount' => 800,
+                    ]],
+                ],
+                [
+                    'date' => '2026-05-01',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'holiday_premium_pay' => 1600,
+                    'breakdown' => [
+                        [
+                            'component' => 'regular_pay',
+                            'minutes' => 0,
+                            'rate' => 100,
+                            'amount' => 0,
+                        ],
+                        [
+                            'component' => 'holiday_premium',
+                            'minutes' => 480,
+                            'rate' => 100,
+                            'amount' => 1600,
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame('Regular pay', $line['label'] ?? null);
+        $this->assertSame('1 day, 0 hrs 0 mins', $line['units'] ?? null);
+        $this->assertSame(800.0, $line['amount'] ?? null);
+        $this->assertSame(480, $line['minutes_worked'] ?? null);
+    }
+
     public function test_payroll_attendance_session_merges_missing_in_correction_with_clock_out(): void
     {
         if (! $this->tablesExist()) {
