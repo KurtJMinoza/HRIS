@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Holiday;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 
@@ -10,8 +11,8 @@ use Illuminate\Support\Facades\Cache;
  * Canonical holiday calendar for payroll and admin using local data only:
  * `holidays` table + seeded fallback map (no external API call at runtime).
  *
- * **Recurring:** rows with `is_recurring = true` apply to every calendar year on the same month/day
- * (e.g. anchor 2026-01-01 → 2027-01-01) without inserting duplicate DB rows per year.
+ * Recurring rows with `is_recurring = true` apply to every calendar year on the same month/day
+ * without inserting duplicate DB rows per year.
  */
 class HolidayCalendarService
 {
@@ -22,8 +23,6 @@ class HolidayCalendarService
     /** @var array<int, array<string, array<string, mixed>>> */
     private array $mergedByYear = [];
 
-    public function __construct() {}
-
     public function flushMergedYearCaches(): void
     {
         $this->mergedByYear = [];
@@ -33,7 +32,8 @@ class HolidayCalendarService
     }
 
     /**
-     * Merged holidays keyed by Y-m-d. DB overrides API on the same date.
+     * Backward-compatible active holiday map keyed by date. If multiple scoped rows share a
+     * date, the most specific scope is selected for display-only callers.
      *
      * @return array<string, array<string, mixed>>
      */
@@ -46,26 +46,15 @@ class HolidayCalendarService
 
         $cacheKey = self::CACHE_KEY_PREFIX.$year;
         $this->mergedByYear[$year] = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($year) {
-            $customHolidays = Holiday::query()
-                ->whereYear('date', $year)
-                ->where(function ($q) {
-                    $q->whereNull('status')->orWhere('status', 'active');
-                })
-                ->orderBy('date')
-                ->get()
-                ->map(fn (Holiday $h) => $this->serializeHolidayRow($h))
-                ->keyBy('date')
-                ->all();
-
-            $map = $this->seededFallbackForYear($year);
-            foreach ($customHolidays as $date => $h) {
-                // DB rows always win over seeded defaults on same date.
-                $map[$date] = $h;
-            }
-
-            foreach ($this->recurringHolidayRowsForYear($year, array_keys($map)) as $dateKey => $row) {
-                if (! isset($map[$dateKey])) {
-                    $map[$dateKey] = $row;
+            $map = [];
+            foreach ($this->holidaysForYear($year) as $row) {
+                $date = (string) ($row['date'] ?? '');
+                $status = strtolower((string) ($row['status'] ?? 'active'));
+                if ($date === '' || $status !== 'active') {
+                    continue;
+                }
+                if (! isset($map[$date]) || $this->scopePrecedence($row) >= $this->scopePrecedence($map[$date])) {
+                    $map[$date] = $row;
                 }
             }
 
@@ -76,13 +65,63 @@ class HolidayCalendarService
     }
 
     /**
+     * Admin-facing yearly list. Keeps multiple scoped rows on the same date so scoped
+     * holidays can coexist.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function holidaysForYear(int $year): array
+    {
+        $year = max(2020, min(2035, $year));
+        $rows = [];
+        $explicitKeys = [];
+
+        $holidays = Holiday::query()
+            ->whereYear('date', $year)
+            ->orderBy('date')
+            ->orderBy('id')
+            ->get();
+
+        $customRows = [];
+        foreach ($holidays as $holiday) {
+            $row = $this->serializeHolidayRow($holiday);
+            $customRows[] = $row;
+            $explicitKeys[] = $this->overrideKey($row);
+        }
+
+        foreach (array_values($this->seededFallbackForYear($year)) as $row) {
+            if (! in_array($this->overrideKey($row), $explicitKeys, true)) {
+                $rows[] = $row;
+            }
+        }
+
+        foreach ($customRows as $row) {
+            $rows[] = $row;
+        }
+
+        foreach ($this->recurringHolidayRowsForYear($year, $explicitKeys) as $row) {
+            $rows[] = $row;
+        }
+
+        usort($rows, function (array $a, array $b) {
+            $dateCompare = strcmp((string) ($a['date'] ?? ''), (string) ($b['date'] ?? ''));
+            if ($dateCompare !== 0) {
+                return $dateCompare;
+            }
+
+            return $this->scopePrecedence($b) <=> $this->scopePrecedence($a);
+        });
+
+        return $rows;
+    }
+
+    /**
      * Local seeded fallback holidays (PH nationwide baseline).
      *
      * @return array<string, array<string, mixed>>
      */
     private function seededFallbackForYear(int $year): array
     {
-        // Dynamic movable holidays are expected to come from DB rows; this fallback avoids API dependency.
         $rows = [
             ['md' => '01-01', 'name' => "New Year's Day", 'type' => 'regular'],
             ['md' => '04-09', 'name' => 'Araw ng Kagitingan', 'type' => 'regular'],
@@ -107,10 +146,15 @@ class HolidayCalendarService
                 'name' => $r['name'],
                 'type' => $r['type'],
                 'scope' => 'nationwide',
+                'company_id' => null,
+                'branch_id' => null,
+                'department_id' => null,
+                'employee_id' => null,
                 'description' => null,
                 'regions' => null,
                 'is_recurring' => true,
                 'status' => 'active',
+                'source' => 'seeded',
             ];
         }
 
@@ -118,17 +162,14 @@ class HolidayCalendarService
     }
 
     /**
-     * @param  list<string>  $skipDates  Dates already filled (explicit rows win).
-     * @return array<string, array<string, mixed>>
+     * @param  list<string>  $explicitKeys
+     * @return list<array<string, mixed>>
      */
-    private function recurringHolidayRowsForYear(int $year, array $skipDates): array
+    private function recurringHolidayRowsForYear(int $year, array $explicitKeys): array
     {
         $out = [];
         $templates = Holiday::query()
             ->where('is_recurring', true)
-            ->where(function ($q) {
-                $q->whereNull('status')->orWhere('status', 'active');
-            })
             ->orderBy('date')
             ->get();
 
@@ -144,22 +185,15 @@ class HolidayCalendarService
                 continue;
             }
 
-            $key = $effective->format('Y-m-d');
-            if (in_array($key, $skipDates, true) || isset($out[$key])) {
+            $row = $this->serializeHolidayRow($h);
+            $row['date'] = $effective->format('Y-m-d');
+            $row['is_recurring'] = true;
+            $row['source'] = 'recurring';
+            if (in_array($this->overrideKey($row), $explicitKeys, true)) {
                 continue;
             }
 
-            $out[$key] = [
-                'id' => $h->id,
-                'date' => $key,
-                'name' => $h->name,
-                'type' => $h->type,
-                'scope' => $h->scope,
-                'description' => $h->description ?? null,
-                'regions' => $h->regions,
-                'is_recurring' => true,
-                'status' => $h->status ?? 'active',
-            ];
+            $out[] = $row;
         }
 
         return $out;
@@ -178,36 +212,142 @@ class HolidayCalendarService
             'name' => $h->name,
             'type' => $h->type,
             'scope' => $h->scope,
+            'company_id' => $h->company_id,
+            'branch_id' => $h->branch_id,
+            'department_id' => $h->department_id,
+            'employee_id' => $h->employee_id,
             'description' => $h->description ?? null,
             'regions' => $h->regions,
             'is_recurring' => (bool) ($h->is_recurring ?? false),
             'status' => $h->status ?? 'active',
+            'source' => 'custom',
         ];
     }
 
     /**
-     * Holiday row for payroll / rules engine (aligned with Admin → Holidays).
+     * Holiday row for payroll / rules engine.
      *
      * @return array{name: string, type: string, scope: string, description: ?string}|null
      */
-    public function holidayForDate(string $dateKey, ?int $companyId = null): ?array
-    {
+    public function holidayForDate(
+        string $dateKey,
+        ?int $companyId = null,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        ?int $employeeId = null
+    ): ?array {
         $year = (int) substr($dateKey, 0, 4);
         if ($year < 2000) {
             return null;
         }
 
-        $map = $this->mergedHolidaysForYear($year);
-        $row = $map[$dateKey] ?? null;
-        if (! $row) {
-            return null;
+        $matches = array_values(array_filter(
+            $this->holidaysForYear($year),
+            fn (array $row) => ($row['date'] ?? null) === $dateKey
+                && $this->rowAppliesToTarget($row, $companyId, $branchId, $departmentId, $employeeId)
+        ));
+
+        usort($matches, function (array $a, array $b) {
+            $scope = $this->scopePrecedence($b) <=> $this->scopePrecedence($a);
+            if ($scope !== 0) {
+                return $scope;
+            }
+
+            return $this->sourcePrecedence($b) <=> $this->sourcePrecedence($a);
+        });
+
+        foreach ($matches as $row) {
+            $status = strtolower((string) ($row['status'] ?? 'active'));
+            if ($status === 'active' || $status === '') {
+                return [
+                    'name' => (string) $row['name'],
+                    'type' => (string) $row['type'],
+                    'scope' => (string) ($row['scope'] ?? 'nationwide'),
+                    'description' => $row['description'] ?? null,
+                ];
+            }
+            if ($status === 'inactive') {
+                return null;
+            }
         }
 
-        return [
-            'name' => (string) $row['name'],
-            'type' => (string) $row['type'],
-            'scope' => (string) ($row['scope'] ?? 'nationwide'),
-            'description' => $row['description'] ?? null,
-        ];
+        return null;
+    }
+
+    /**
+     * @return array{name: string, type: string, scope: string, description: ?string}|null
+     */
+    public function holidayForUserDate(User $user, string $dateKey): ?array
+    {
+        return $this->holidayForDate(
+            $dateKey,
+            $user->getEffectiveCompanyId() !== null ? (int) $user->getEffectiveCompanyId() : null,
+            $user->branch_id !== null ? (int) $user->branch_id : null,
+            $user->department_id !== null ? (int) $user->department_id : null,
+            (int) $user->id
+        );
+    }
+
+    private function rowAppliesToTarget(
+        array $row,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $employeeId
+    ): bool {
+        $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
+        $rowCompany = isset($row['company_id']) ? (int) $row['company_id'] : 0;
+        $rowBranch = isset($row['branch_id']) ? (int) $row['branch_id'] : 0;
+        $rowDepartment = isset($row['department_id']) ? (int) $row['department_id'] : 0;
+        $rowEmployee = isset($row['employee_id']) ? (int) $row['employee_id'] : 0;
+
+        return match ($scope) {
+            'employee' => $rowEmployee > 0 && $employeeId !== null && $rowEmployee === (int) $employeeId,
+            'department' => $rowDepartment > 0
+                && $departmentId !== null
+                && $rowDepartment === (int) $departmentId
+                && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId))
+                && ($rowBranch <= 0 || ($branchId !== null && $rowBranch === (int) $branchId)),
+            'branch' => $rowBranch > 0
+                && $branchId !== null
+                && $rowBranch === (int) $branchId
+                && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId)),
+            'company' => $rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId),
+            'regional', 'nationwide' => true,
+            default => true,
+        };
+    }
+
+    private function scopePrecedence(array $row): int
+    {
+        return match (strtolower((string) ($row['scope'] ?? 'nationwide'))) {
+            'employee' => 60,
+            'department' => 50,
+            'branch' => 40,
+            'company' => 30,
+            'regional' => 20,
+            default => 10,
+        };
+    }
+
+    private function sourcePrecedence(array $row): int
+    {
+        return match ((string) ($row['source'] ?? 'custom')) {
+            'custom' => 30,
+            'recurring' => 20,
+            default => 10,
+        };
+    }
+
+    private function overrideKey(array $row): string
+    {
+        return implode('|', [
+            (string) ($row['date'] ?? ''),
+            strtolower((string) ($row['scope'] ?? 'nationwide')),
+            (string) ((int) ($row['company_id'] ?? 0)),
+            (string) ((int) ($row['branch_id'] ?? 0)),
+            (string) ((int) ($row['department_id'] ?? 0)),
+            (string) ((int) ($row['employee_id'] ?? 0)),
+        ]);
     }
 }

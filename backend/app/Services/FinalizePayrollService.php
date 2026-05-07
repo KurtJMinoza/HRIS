@@ -87,16 +87,27 @@ class FinalizePayrollService
             $perPage
         ) {
             $scopedEmployeesQuery = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor, $search);
-            $scopedCount = (int) (clone $scopedEmployeesQuery)->count();
-            $scopedEmployeeIds = (clone $scopedEmployeesQuery)
-                ->orderBy('name', 'asc')
+            $activeEmployeeIds = (clone $scopedEmployeesQuery)
                 ->pluck('id')
                 ->map(fn ($id) => (int) $id)
                 ->all();
+            $storedPayslipEmployeeIds = $this->previewStoredPayslipEmployeeIds(
+                $companyId,
+                $branchId,
+                $departmentId,
+                $singleEmployeeId,
+                $periodInput,
+                $actor,
+                $search
+            );
+            $scopedEmployeeIds = array_values(array_unique(array_merge($activeEmployeeIds, $storedPayslipEmployeeIds)));
+            $scopedCount = count($scopedEmployeeIds);
             $currentPage = max(1, $page);
             $limit = max(1, min(100, $perPage));
             $offset = ($currentPage - 1) * $limit;
-            $employees = (clone $scopedEmployeesQuery)
+            $employeesQuery = User::query()
+                ->whereIn('id', $scopedEmployeeIds);
+            $employees = $employeesQuery
                 // IMPORTANT: do not under-select here. Payroll computation and deduction schedules rely on
                 // core employee columns (company_id, pay_cycle_id, etc). Missing columns can silently zero out
                 // statutory deductions and break pay-date resolution.
@@ -1765,6 +1776,66 @@ class FinalizePayrollService
         }
 
         return $query;
+    }
+
+    /**
+     * Include employees represented by finalized/draft payslip rows for the selected window.
+     * Finalized payroll search must not depend only on the current active roster query because
+     * users can be deactivated, moved, or filtered differently after the payroll was locked.
+     *
+     * @param  array<string, mixed>  $periodInput
+     * @return list<int>
+     */
+    private function previewStoredPayslipEmployeeIds(
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $singleEmployeeId,
+        array $periodInput,
+        ?User $actor = null,
+        ?string $search = null
+    ): array {
+        $query = Payslip::query()
+            ->whereNotNull('user_id')
+            ->select('user_id');
+
+        $this->applyPreviewPeriodFiltersEloquent($query, $periodInput);
+
+        if ($companyId) {
+            $query->where('company_id', $companyId);
+        }
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
+        }
+        if ($departmentId) {
+            $query->where('department_id', $departmentId);
+        }
+        if ($singleEmployeeId) {
+            $query->where('user_id', $singleEmployeeId);
+        }
+        if ($actor !== null) {
+            $query->whereHas('employee', function ($employeeQuery) use ($actor) {
+                $this->dataScopeService->restrictEmployeeQuery($actor, $employeeQuery);
+            });
+        }
+        if (is_string($search) && trim($search) !== '') {
+            $needle = trim($search);
+            $query->whereHas('employee', function ($employeeQuery) use ($needle) {
+                $employeeQuery->where(function ($sub) use ($needle) {
+                    $sub->where('name', 'like', '%'.$needle.'%')
+                        ->orWhere('employee_code', 'like', '%'.$needle.'%')
+                        ->orWhere('department', 'like', '%'.$needle.'%');
+                });
+            });
+        }
+
+        return $query
+            ->distinct()
+            ->pluck('user_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->values()
+            ->all();
     }
 
     private function scopedEmployees(

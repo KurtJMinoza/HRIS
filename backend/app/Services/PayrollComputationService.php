@@ -122,9 +122,15 @@ class PayrollComputationService
      *
      * @return array{name: string, type: string}|null
      */
-    public function getHolidayForDate(string $dateKey, ?int $companyId = null): ?array
+    public function getHolidayForDate(
+        string $dateKey,
+        ?int $companyId = null,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        ?int $employeeId = null
+    ): ?array
     {
-        $row = $this->holidayCalendar->holidayForDate($dateKey, $companyId);
+        $row = $this->holidayCalendar->holidayForDate($dateKey, $companyId, $branchId, $departmentId, $employeeId);
         if (! $row) {
             return null;
         }
@@ -262,13 +268,25 @@ class PayrollComputationService
         $dayKey = $this->dayKeyForDate(Carbon::parse($dateKey, $tz));
         $daySchedule = $effectiveSchedule[$dayKey] ?? null;
         $isRestDay = $this->isRestDay($effectiveSchedule, Carbon::parse($dateKey, $tz));
-        $holiday = $this->getHolidayForDate($dateKey, $user->getEffectiveCompanyId());
+        $holiday = $this->getHolidayForDate(
+            $dateKey,
+            $user->getEffectiveCompanyId(),
+            $user->branch_id !== null ? (int) $user->branch_id : null,
+            $user->department_id !== null ? (int) $user->department_id : null,
+            (int) $user->id
+        );
 
         // Phase 2: Rules Engine – resolve rule code and multipliers (policy-aware)
         $companyId = $user->getEffectiveCompanyId();
         $branchId = $user->branch_id;
         $policy = $this->policyResolver->getActivePolicy($companyId, $branchId, $dateKey);
-        $resolvedHolidayType = $this->rulesEngine->getHolidayType($dateKey, $companyId);
+        $resolvedHolidayType = $this->rulesEngine->getHolidayType(
+            $dateKey,
+            $companyId,
+            $branchId !== null ? (int) $branchId : null,
+            $user->department_id !== null ? (int) $user->department_id : null,
+            (int) $user->id
+        );
         $ruleCode = $this->rulesEngine->resolveRuleCode($isRestDay, $resolvedHolidayType);
         $multipliers = $this->rulesEngine->getMultipliersForRule($ruleCode, $policy);
         $first8 = $multipliers['first_8'];

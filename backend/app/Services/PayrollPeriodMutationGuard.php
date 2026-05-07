@@ -17,8 +17,14 @@ final class PayrollPeriodMutationGuard
         PayrollPeriodLock::assertMutableForUserWindow($userId, $from, $to);
     }
 
-    public function assertCalendarDateMutableForPayroll(Carbon $date): void
+    public function assertCalendarDateMutableForPayroll(
+        Carbon $date,
+        ?int $companyId = null,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        ?int $employeeId = null
+    ): void
     {
-        PayrollPeriodLock::assertCalendarDateMutableForPayroll($date);
+        PayrollPeriodLock::assertCalendarDateMutableForPayroll($date, $companyId, $branchId, $departmentId, $employeeId);
     }
 }

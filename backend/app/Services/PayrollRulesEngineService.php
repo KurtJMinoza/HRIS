@@ -150,9 +150,15 @@ class PayrollRulesEngineService
      * Get holiday classification for a date (rules engine).
      * Returns: "regular" | "special" | "double" | null — must align with resolveRuleCode().
      */
-    public function getHolidayType(string $dateKey, ?int $companyId = null): ?string
+    public function getHolidayType(
+        string $dateKey,
+        ?int $companyId = null,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        ?int $employeeId = null
+    ): ?string
     {
-        $holiday = $this->holidayCalendar->holidayForDate($dateKey, $companyId);
+        $holiday = $this->holidayCalendar->holidayForDate($dateKey, $companyId, $branchId, $departmentId, $employeeId);
 
         if (! $holiday) {
             return null;

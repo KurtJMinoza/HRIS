@@ -11,6 +11,10 @@ class Holiday extends Model
         'name',
         'type',
         'scope',
+        'company_id',
+        'branch_id',
+        'department_id',
+        'employee_id',
         'description',
         'regions',
         'is_recurring',
@@ -21,5 +25,9 @@ class Holiday extends Model
         'date' => 'date:Y-m-d',
         'regions' => 'array',
         'is_recurring' => 'boolean',
+        'company_id' => 'integer',
+        'branch_id' => 'integer',
+        'department_id' => 'integer',
+        'employee_id' => 'integer',
     ];
 }

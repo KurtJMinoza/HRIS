@@ -27,7 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
-import { getAdminHolidays, deleteAdminHoliday } from '@/api'
+import { createAdminHoliday, getAdminHolidays, deleteAdminHoliday, swapAdminHoliday, swapSeededAdminHoliday } from '@/api'
 import { HolidayFormModal } from '@/components/holidays/HolidayFormModal'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -356,6 +356,16 @@ function getCalendarCells(year, month, holidayMap) {
   return cells
 }
 
+function holidayScopeLabel(holiday) {
+  const scope = holiday?.scope || 'nationwide'
+  if (scope === 'company') return 'Company - all'
+  if (scope === 'branch') return 'Branch'
+  if (scope === 'department') return 'Department'
+  if (scope === 'employee') return 'Employee'
+  if (scope === 'regional') return 'Regional'
+  return 'Nationwide'
+}
+
 function CalendarCell({ cell, todayKey, onSelect, typeFilter, isSelected }) {
   const { day, dateStr, isAdjacent, holiday, month: cellMonth } = cell
   const isToday = dateStr === todayKey
@@ -527,8 +537,14 @@ export default function AdminHoliday() {
     return list.sort((a, b) => a.date.localeCompare(b.date))
   }, [allHolidays, holidaySearch, typeFilter, yearFilter, dateFrom, dateTo])
 
+  const activeFilteredHolidays = useMemo(
+    () => filteredHolidays.filter((h) => (h.status || 'active') === 'active'),
+    [filteredHolidays]
+  )
+
   const holidaysInViewMonth = useMemo(() => {
     return allHolidays.filter((h) => {
+      if ((h.status || 'active') !== 'active') return false
       const d = new Date(`${h.date}T12:00:00`)
       return d.getFullYear() === year && d.getMonth() === month
     }).length
@@ -536,9 +552,11 @@ export default function AdminHoliday() {
 
   const holidayMap = useMemo(() => {
     const m = new Map()
-    filteredHolidays.forEach((h) => m.set(h.date, h))
+    activeFilteredHolidays.forEach((h) => {
+      if (!m.has(h.date)) m.set(h.date, h)
+    })
     return m
-  }, [filteredHolidays])
+  }, [activeFilteredHolidays])
 
   const calendarCells = useMemo(
     () => getCalendarCells(year, month, holidayMap),
@@ -548,7 +566,7 @@ export default function AdminHoliday() {
   const upcomingHolidays = useMemo(() => {
     const now = new Date()
     return allHolidays
-      .filter((h) => new Date(h.date) >= now)
+      .filter((h) => (h.status || 'active') === 'active' && new Date(h.date) >= now)
       .sort((a, b) => a.date.localeCompare(b.date))
       .slice(0, 8)
   }, [allHolidays])
@@ -558,6 +576,7 @@ export default function AdminHoliday() {
     const in30 = new Date(now)
     in30.setDate(in30.getDate() + 30)
     return allHolidays.filter((h) => {
+      if ((h.status || 'active') !== 'active') return false
       const d = new Date(h.date)
       return d >= now && d <= in30
     }).length
@@ -594,24 +613,59 @@ export default function AdminHoliday() {
     setMonth(today.getMonth())
   }
 
-  const blockedHolidayDates = useMemo(() => {
-    const s = new Set(allHolidays.map((h) => h.date))
-    if (holidayModalId != null) {
-      const row = allHolidays.find((h) => h.id === holidayModalId)
-      if (row) s.delete(row.date)
-    }
-    return s
-  }, [allHolidays, holidayModalId])
+  const holidayOverridePayload = useCallback((holiday, patch = {}) => ({
+    name: holiday.name,
+    date: holiday.date || selectedCell?.dateStr,
+    type: holiday.type,
+    scope: holiday.scope || 'nationwide',
+    company_id: holiday.company_id ?? undefined,
+    branch_id: holiday.branch_id ?? undefined,
+    department_id: holiday.department_id ?? undefined,
+    employee_id: holiday.employee_id ?? undefined,
+    regions: Array.isArray(holiday.regions) ? holiday.regions : undefined,
+    description: holiday.description || undefined,
+    is_recurring: Boolean(holiday.is_recurring),
+    ...patch,
+  }), [selectedCell?.dateStr])
 
-  const handleDeleteHoliday = async (id) => {
+  const handleDeleteHoliday = async (holidayOrId) => {
     try {
-      await deleteAdminHoliday(id)
+      if (typeof holidayOrId === 'number') {
+        await deleteAdminHoliday(holidayOrId)
+      } else if (holidayOrId?.id) {
+        await deleteAdminHoliday(holidayOrId.id)
+      } else if (holidayOrId) {
+        await createAdminHoliday(holidayOverridePayload(holidayOrId, { status: 'inactive' }))
+      }
       await refetchHolidays({ silent: true })
       setSelectedCell(null)
       toast.success('Holiday deleted successfully')
     } catch (err) {
       const msg = err.message || 'Failed to delete holiday'
       toast.error('Failed to delete holiday', { description: msg })
+    }
+  }
+
+  const handleSwapHoliday = async (holiday) => {
+    if (!holiday) return
+    const nextDate = window.prompt('Move this holiday to which date? Use YYYY-MM-DD.', holiday.date || selectedCell?.dateStr || '')
+    if (!nextDate) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+      toast.error('Invalid date', { description: 'Use YYYY-MM-DD format.' })
+      return
+    }
+    try {
+      if (holiday.id) {
+        await swapAdminHoliday(holiday.id, { date: nextDate })
+      } else {
+        await swapSeededAdminHoliday(holidayOverridePayload(holiday, { new_date: nextDate }))
+      }
+      await refetchHolidays({ silent: true })
+      setSelectedCell(null)
+      toast.success('Holiday swapped', { description: `Moved to ${nextDate}` })
+    } catch (err) {
+      const msg = err.message || 'Failed to swap holiday'
+      toast.error('Failed to swap holiday', { description: msg })
     }
   }
 
@@ -975,7 +1029,7 @@ export default function AdminHoliday() {
                                     : 'Company'}
                             </Badge>
                           </td>
-                          <td className="px-3 py-3 align-middle capitalize text-muted-foreground">{h.scope || 'nationwide'}</td>
+                          <td className="px-3 py-3 align-middle text-muted-foreground">{holidayScopeLabel(h)}</td>
                         </tr>
                       ))
                     )}
@@ -1011,7 +1065,6 @@ export default function AdminHoliday() {
         mode={holidayModalMode}
         editingId={holidayModalId}
         initial={holidayModalInitial}
-        blockedDates={blockedHolidayDates}
         onSaved={async () => {
           await refetchHolidays({ silent: true })
         }}
@@ -1051,7 +1104,7 @@ export default function AdminHoliday() {
                             : 'Company Event'}
                     </Badge>
                     <span className="text-xs text-muted-foreground">
-                      {(selectedCell.holiday.scope || 'nationwide').charAt(0).toUpperCase() + (selectedCell.holiday.scope || 'nationwide').slice(1)}
+                      {holidayScopeLabel(selectedCell.holiday)}
                     </span>
                   </div>
                   <h2 className="text-2xl font-bold tracking-tight text-foreground">{selectedCell.holiday.name}</h2>
@@ -1076,7 +1129,7 @@ export default function AdminHoliday() {
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Description</h3>
                   <p className="text-sm leading-relaxed text-foreground/90">
                     {selectedCell.holiday.type === 'company'
-                      ? (selectedCell.holiday.description || `Company event. Annual observance for ${selectedCell.holiday.scope === 'company' ? 'the company' : 'all branches'}. No DOLE payroll premium applies.`)
+                      ? (selectedCell.holiday.description || `Company event. Annual observance for ${holidayScopeLabel(selectedCell.holiday).toLowerCase()}. No DOLE payroll premium applies.`)
                       : (HOLIDAY_DESCRIPTIONS[selectedCell.holiday.name] || 'Philippine holiday per DOLE guidelines. Employees may receive premium pay depending on work conditions.')}
                   </p>
                 </section>
@@ -1178,21 +1231,32 @@ export default function AdminHoliday() {
 
                 {/* Actions — primary Edit, secondary Delete, ghost Close */}
                 <div className="flex flex-col gap-2 pt-2">
-                  {typeof selectedCell.holiday.id === 'number' && (
+                  {selectedCell.holiday && (
                     <div className="flex gap-2">
+                      {typeof selectedCell.holiday.id === 'number' && (
+                        <Button
+                          size="sm"
+                          className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-500 text-white"
+                          onClick={() => openHolidayEdit({ ...selectedCell.holiday, date: selectedCell.dateStr })}
+                        >
+                          <Pencil className="size-3.5" />
+                          Edit
+                        </Button>
+                      )}
                       <Button
+                        variant="outline"
                         size="sm"
-                        className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-500 text-white"
-                        onClick={() => openHolidayEdit({ ...selectedCell.holiday, date: selectedCell.dateStr })}
+                        className="flex-1 gap-2"
+                        onClick={() => handleSwapHoliday({ ...selectedCell.holiday, date: selectedCell.dateStr })}
                       >
-                        <Pencil className="size-3.5" />
-                        Edit
+                        <RotateCcw className="size-3.5" />
+                        Swap
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
                         className="flex-1 gap-2 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                        onClick={() => handleDeleteHoliday(selectedCell.holiday.id)}
+                        onClick={() => handleDeleteHoliday({ ...selectedCell.holiday, date: selectedCell.dateStr })}
                       >
                         <Trash2 className="size-3.5" />
                         Delete

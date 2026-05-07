@@ -3626,6 +3626,36 @@ export async function updateAdminHoliday(id, payload) {
 }
 
 /**
+ * Move a custom holiday to another date while preserving scope and pay settings.
+ * @param {number} id - holiday id
+ * @param {{ date: string }} payload
+ */
+export async function swapAdminHoliday(id, payload) {
+  const res = await authenticatedFetch(`/admin/holidays/${id}/swap`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || data.errors?.date?.[0] || 'Failed to swap holiday')
+  return data
+}
+
+/**
+ * Swap a seeded fallback holiday by creating an inactive override on the old date
+ * and a custom active holiday on the new date.
+ * @param {{ name: string, date: string, new_date: string, type: string, scope: string }} payload
+ */
+export async function swapSeededAdminHoliday(payload) {
+  const res = await authenticatedFetch('/admin/holidays/seeded/swap', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || data.errors?.new_date?.[0] || data.errors?.date?.[0] || 'Failed to swap holiday')
+  return data
+}
+
+/**
  * Delete a custom holiday/event.
  * @param {number} id - holiday id
  */

@@ -34,7 +34,14 @@ import {
   holidayImpactPreview,
 } from '@/lib/holidayConstants'
 import { HolidayPayReferenceAccordion } from '@/components/holidays/HolidayPayReferenceAccordion'
-import { createAdminHoliday, updateAdminHoliday } from '@/api'
+import {
+  createAdminHoliday,
+  getBranchDepartments,
+  getCompanies,
+  getCompanyBranches,
+  getEmployees,
+  updateAdminHoliday,
+} from '@/api'
 
 const formSchema = z
   .object({
@@ -42,7 +49,11 @@ const formSchema = z
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a valid date'),
     type: z.enum(['regular', 'special', 'special_working', 'company']),
     description: z.string().max(1000).optional().or(z.literal('')),
-    scope: z.enum(['nationwide', 'regional', 'company']),
+    scope: z.enum(['nationwide', 'regional', 'company', 'branch', 'department', 'employee']),
+    companyId: z.string().optional().or(z.literal('')),
+    branchId: z.string().optional().or(z.literal('')),
+    departmentId: z.string().optional().or(z.literal('')),
+    employeeId: z.string().optional().or(z.literal('')),
     regions: z.array(z.string()).optional(),
     isRecurring: z.boolean(),
     status: z.enum(['active', 'inactive', 'draft']),
@@ -55,6 +66,18 @@ const formSchema = z
         path: ['regions'],
       })
     }
+    if (['company', 'branch', 'department', 'employee'].includes(data.scope) && !data.companyId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select a company', path: ['companyId'] })
+    }
+    if (data.scope === 'branch' && !data.branchId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select a branch', path: ['branchId'] })
+    }
+    if (data.scope === 'department' && !data.departmentId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select a department', path: ['departmentId'] })
+    }
+    if (data.scope === 'employee' && !data.employeeId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select an employee', path: ['employeeId'] })
+    }
   })
 
 function emptyForm() {
@@ -64,6 +87,10 @@ function emptyForm() {
     type: 'regular',
     description: '',
     scope: 'nationwide',
+    companyId: '',
+    branchId: '',
+    departmentId: '',
+    employeeId: '',
     regions: [],
     isRecurring: false,
     status: 'active',
@@ -77,16 +104,19 @@ function emptyForm() {
  *   mode: 'create' | 'edit',
  *   editingId: number | null,
  *   initial: Partial<Record<string, unknown>> | null,
- *   blockedDates: Set<string>,
  *   onSaved: () => Promise<void> | void,
  * }} props
  */
-export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial, blockedDates, onSaved }) {
+export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial, onSaved }) {
   const [values, setValues] = useState(emptyForm)
   const [fieldErrors, setFieldErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [calOpen, setCalOpen] = useState(false)
+  const [companies, setCompanies] = useState([])
+  const [branches, setBranches] = useState([])
+  const [departments, setDepartments] = useState([])
+  const [employees, setEmployees] = useState([])
 
   const selectedDate = useMemo(() => {
     if (!values.date) return undefined
@@ -103,13 +133,17 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
     setSubmitError('')
     setFieldErrors({})
     if (initial && (mode === 'edit' || Object.keys(initial).length)) {
-      const scope = initial.scope === 'regional' || initial.scope === 'company' ? initial.scope : 'nationwide'
+      const scope = ['regional', 'company', 'branch', 'department', 'employee'].includes(initial.scope) ? initial.scope : 'nationwide'
       setValues({
         name: initial.name ?? '',
         date: typeof initial.date === 'string' ? initial.date.slice(0, 10) : '',
         type: ['regular', 'special', 'special_working', 'company'].includes(initial.type) ? initial.type : 'regular',
         description: initial.description ?? '',
         scope,
+        companyId: initial.company_id != null ? String(initial.company_id) : '',
+        branchId: initial.branch_id != null ? String(initial.branch_id) : '',
+        departmentId: initial.department_id != null ? String(initial.department_id) : '',
+        employeeId: initial.employee_id != null ? String(initial.employee_id) : '',
         regions: Array.isArray(initial.regions) ? initial.regions : [],
         isRecurring: Boolean(initial.is_recurring),
         status: ['active', 'inactive', 'draft'].includes(initial.status) ? initial.status : 'active',
@@ -118,6 +152,72 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
       setValues(emptyForm())
     }
   }, [open, mode, initial])
+
+  const toList = useCallback((data, key) => {
+    if (Array.isArray(data)) return data
+    if (Array.isArray(data?.[key])) return data[key]
+    if (Array.isArray(data?.data)) return data.data
+    return []
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    getCompanies()
+      .then((data) => {
+        if (!cancelled) setCompanies(toList(data, 'companies'))
+      })
+      .catch(() => {
+        if (!cancelled) setCompanies([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, toList])
+
+  useEffect(() => {
+    if (!open || !values.companyId) {
+      setBranches([])
+      setEmployees([])
+      return
+    }
+    let cancelled = false
+    getCompanyBranches(values.companyId)
+      .then((data) => {
+        if (!cancelled) setBranches(toList(data, 'branches'))
+      })
+      .catch(() => {
+        if (!cancelled) setBranches([])
+      })
+    getEmployees({ company_id: values.companyId, per_page: 100, lite: true })
+      .then((data) => {
+        if (!cancelled) setEmployees(toList(data, 'employees'))
+      })
+      .catch(() => {
+        if (!cancelled) setEmployees([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, values.companyId, toList])
+
+  useEffect(() => {
+    if (!open || !values.branchId) {
+      setDepartments([])
+      return
+    }
+    let cancelled = false
+    getBranchDepartments(values.branchId)
+      .then((data) => {
+        if (!cancelled) setDepartments(toList(data, 'departments'))
+      })
+      .catch(() => {
+        if (!cancelled) setDepartments([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, values.branchId, toList])
 
   const set = useCallback((patch) => {
     setValues((v) => ({ ...v, ...patch }))
@@ -151,17 +251,16 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
     }
 
     const dateStr = parsed.data.date
-    if (blockedDates.has(dateStr)) {
-      setFieldErrors({ date: ['A holiday already exists on this date'] })
-      return
-    }
-
     const payload = {
       name: parsed.data.name,
       date: dateStr,
       type: parsed.data.type,
       description: parsed.data.description?.trim() || undefined,
       scope: parsed.data.scope,
+      company_id: parsed.data.companyId ? Number(parsed.data.companyId) : undefined,
+      branch_id: parsed.data.branchId ? Number(parsed.data.branchId) : undefined,
+      department_id: parsed.data.departmentId ? Number(parsed.data.departmentId) : undefined,
+      employee_id: parsed.data.employeeId ? Number(parsed.data.employeeId) : undefined,
       is_recurring: parsed.data.isRecurring,
       status: parsed.data.status,
       ...(parsed.data.scope === 'regional' ? { regions: parsed.data.regions ?? [] } : {}),
@@ -342,7 +441,16 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                   <Label className="text-sm font-medium">Coverage</Label>
                   <RadioGroup
                     value={values.scope}
-                    onValueChange={(v) => set({ scope: v, regions: v === 'regional' ? values.regions : [] })}
+                    onValueChange={(v) =>
+                      set({
+                        scope: v,
+                        regions: v === 'regional' ? values.regions : [],
+                        companyId: ['company', 'branch', 'department', 'employee'].includes(v) ? values.companyId : '',
+                        branchId: ['branch', 'department', 'employee'].includes(v) ? values.branchId : '',
+                        departmentId: ['department', 'employee'].includes(v) ? values.departmentId : '',
+                        employeeId: v === 'employee' ? values.employeeId : '',
+                      })
+                    }
                     className="grid gap-2"
                   >
                     <label className="flex cursor-pointer items-center gap-3">
@@ -355,9 +463,114 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                     </label>
                     <label className="flex cursor-pointer items-center gap-3">
                       <RadioGroupItem value="company" id="sc-co" />
-                      <span className="text-sm">Company-only</span>
+                      <span className="text-sm">Company - all branches</span>
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-3">
+                      <RadioGroupItem value="branch" id="sc-br" />
+                      <span className="text-sm">Branch</span>
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-3">
+                      <RadioGroupItem value="department" id="sc-de" />
+                      <span className="text-sm">Department</span>
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-3">
+                      <RadioGroupItem value="employee" id="sc-em" />
+                      <span className="text-sm">Employee only</span>
                     </label>
                   </RadioGroup>
+
+                  {['company', 'branch', 'department', 'employee'].includes(values.scope) && (
+                    <div className="grid gap-3 rounded-lg border border-border/40 bg-card/80 p-3 @sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="h-company" className="text-xs font-medium text-muted-foreground">
+                          Company
+                        </Label>
+                        <select
+                          id="h-company"
+                          value={values.companyId}
+                          onChange={(e) => set({ companyId: e.target.value, branchId: '', departmentId: '', employeeId: '' })}
+                          className={cn(FIELD_SELECT_CLASS, fieldErrors.companyId && 'border-red-500')}
+                        >
+                          <option value="">Select company</option>
+                          {companies.map((company) => (
+                            <option key={company.id} value={company.id}>
+                              {company.name}
+                            </option>
+                          ))}
+                        </select>
+                        {fieldErrors.companyId?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.companyId[0]}</p>}
+                      </div>
+
+                      {['branch', 'department'].includes(values.scope) && (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="h-branch" className="text-xs font-medium text-muted-foreground">
+                            Branch
+                          </Label>
+                          <select
+                            id="h-branch"
+                            value={values.branchId}
+                            onChange={(e) => set({ branchId: e.target.value, departmentId: '', employeeId: '' })}
+                            className={cn(FIELD_SELECT_CLASS, fieldErrors.branchId && 'border-red-500')}
+                            disabled={!values.companyId}
+                          >
+                            <option value="">Select branch</option>
+                            {branches.map((branch) => (
+                              <option key={branch.id} value={branch.id}>
+                                {branch.name}
+                              </option>
+                            ))}
+                          </select>
+                          {fieldErrors.branchId?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.branchId[0]}</p>}
+                        </div>
+                      )}
+
+                      {values.scope === 'department' && (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="h-department" className="text-xs font-medium text-muted-foreground">
+                            Department
+                          </Label>
+                          <select
+                            id="h-department"
+                            value={values.departmentId}
+                            onChange={(e) => set({ departmentId: e.target.value, employeeId: '' })}
+                            className={cn(FIELD_SELECT_CLASS, fieldErrors.departmentId && 'border-red-500')}
+                            disabled={!values.branchId}
+                          >
+                            <option value="">Select department</option>
+                            {departments.map((department) => (
+                              <option key={department.id} value={department.id}>
+                                {department.name}
+                              </option>
+                            ))}
+                          </select>
+                          {fieldErrors.departmentId?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.departmentId[0]}</p>}
+                        </div>
+                      )}
+
+                      {values.scope === 'employee' && (
+                        <div className="space-y-1.5 @sm:col-span-2">
+                          <Label htmlFor="h-employee" className="text-xs font-medium text-muted-foreground">
+                            Employee
+                          </Label>
+                          <select
+                            id="h-employee"
+                            value={values.employeeId}
+                            onChange={(e) => set({ employeeId: e.target.value })}
+                            className={cn(FIELD_SELECT_CLASS, fieldErrors.employeeId && 'border-red-500')}
+                            disabled={!values.companyId}
+                          >
+                            <option value="">Select employee</option>
+                            {employees.map((employee) => (
+                              <option key={employee.id} value={employee.id}>
+                                {employee.name || employee.employee_code || `Employee #${employee.id}`}
+                              </option>
+                            ))}
+                          </select>
+                          {fieldErrors.employeeId?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.employeeId[0]}</p>}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {values.scope === 'regional' && (
                     <div className="max-h-48 space-y-2 overflow-y-auto rounded-lg border border-border/40 bg-card/80 p-3">
