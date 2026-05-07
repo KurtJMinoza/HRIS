@@ -2354,19 +2354,22 @@ class AttendanceController extends Controller
 
     /**
      * Kiosk: list recent attendance logs (for display on login page DTR panel).
-     * Public, no auth. Returns merged logs + manual corrections (newest first) with employee name, time, status, and late_label.
-     * 
-     * NOTE: Approved corrections are automatically synced to attendance_logs with authentication_method='hr_approved_correction',
-     * so they appear in the main query. We still include recent manual corrections separately for immediate visibility
-     * after admin saves them, but we deduplicate by employee+date+type to avoid showing the same punch twice.
+     * Public, no auth. Returns real kiosk/employee punch activity only.
+     *
+     * Approved attendance corrections still update DTR/payroll, but they are intentionally
+     * hidden from the login Recent Activity feed so old approved filings do not look like
+     * fresh kiosk scans.
      */
     public function recentKiosk(Request $request): JsonResponse
     {
         $tz = $this->attendanceTimezone();
-        $todayDate = Carbon::now($tz)->toDateString();
 
-        // Regular attendance logs (includes HR-approved corrections synced via PresenceFilingAttendanceLogSyncService)
+        // Regular attendance logs only. Exclude synthetic HR-approved correction punches from the kiosk login feed.
         $logEntries = AttendanceLog::query()
+            ->where(function ($q) {
+                $q->whereNull('authentication_method')
+                    ->orWhere('authentication_method', '!=', AttendanceLog::AUTH_METHOD_HR_APPROVED_CORRECTION);
+            })
             ->with([
                 'user:id,name,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
                 'user.workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days',
@@ -2406,82 +2409,9 @@ class AttendanceController extends Controller
                 ];
             });
 
-        // Approved corrections for immediate visibility in kiosk Recent Activity.
-        // Even when already synced to attendance_logs, we still project them as recent events
-        // (sorted by approval/update timestamp) and deduplicate by employee+date+type.
-        $correctionRecentCutoff = Carbon::now('UTC')->subHours(48);
-        $correctionEntries = AttendanceCorrection::query()
-            ->where(function ($q) use ($todayDate, $correctionRecentCutoff) {
-                $q->whereDate('date', $todayDate)
-                    ->orWhere('approved_at', '>=', $correctionRecentCutoff)
-                    ->orWhere('updated_at', '>=', $correctionRecentCutoff);
-            })
-            // Only show fully approved corrections (HR-final approval)
-            ->where('approved', true)
-            ->orderByDesc('updated_at')
-            ->limit(50)
-            ->with([
-                'user:id,name,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
-                'user.workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days',
-                'user.companyHeadships:id,name,logo,company_head_id',
-                'user.company:id,name,logo',
-                'user.branch:id,company_id',
-                'user.branch.company:id,name,logo',
-                'user.departmentRelation:id,branch_id',
-                'user.departmentRelation.branch:id,company_id',
-                'user.departmentRelation.branch.company:id,name,logo',
-            ])
-            ->get()
-            ->flatMap(function (AttendanceCorrection $corr) use ($tz) {
-                $user = $corr->user;
-                $company = $user?->companyHeadships->first() ?? $user?->company ?? $user?->branch?->company ?? $user?->departmentRelation?->branch?->company;
-                $companyLogoUrl = $company && is_string($company->logo) && trim($company->logo) !== ''
-                    ? $this->publicMediaUrl($company->logo)
-                    : null;
-                $sortTs = ($corr->approved_at ?? $corr->updated_at ?? $corr->created_at ?? Carbon::now('UTC'))->timestamp;
-                $inStatus = null;
-                if ($user && $corr->time_in) {
-                    $inStatus = $this->kioskClockInDisplayStatus($user, $corr->time_in);
-                }
-                $baseCommon = [
-                    'employee_id' => $user?->id,
-                    'employee_name' => $user?->name ?? '—',
-                    'employee_profile_image_url' => $user?->profile_image_url,
-                    'employee_profile_image' => $user?->profile_image,
-                    'company' => ['name' => $company?->name, 'logo_url' => $companyLogoUrl],
-                ];
-                $entries = collect();
-                $dateKey = $corr->date->toDateString();
-                if ($corr->time_in) {
-                    $entries->push(array_merge($baseCommon, [
-                        'id' => 'manual-in-'.$corr->id,
-                        'type' => AttendanceLog::TYPE_CLOCK_IN,
-                        'created_at' => $corr->time_in->copy()->timezone($tz)->toIso8601String(),
-                        '_ts' => $sortTs,
-                        'status' => $inStatus['status'] ?? 'manual',
-                        'late_minutes' => $inStatus['late_minutes'] ?? null,
-                        'late_label' => $inStatus['late_label'] ?? null,
-                        '_dedup_key' => ((int)($user?->id ?? 0)).'|'.$dateKey.'|'.AttendanceLog::TYPE_CLOCK_IN,
-                    ]));
-                }
-                if ($corr->time_out) {
-                    $entries->push(array_merge($baseCommon, [
-                        'id' => 'manual-out-'.$corr->id,
-                        'type' => AttendanceLog::TYPE_CLOCK_OUT,
-                        'created_at' => $corr->time_out->copy()->timezone($tz)->toIso8601String(),
-                        '_ts' => $sortTs,
-                        'status' => null,
-                        'late_minutes' => null,
-                        'late_label' => null,
-                        '_dedup_key' => ((int)($user?->id ?? 0)).'|'.$dateKey.'|'.AttendanceLog::TYPE_CLOCK_OUT,
-                    ]));
-                }
-
-                return $entries;
-            });
-
-        // Merge both sources, sort newest first, deduplicate by employee+date+type, keep top 25
-        $merged = $logEntries->concat($correctionEntries)
+        // Keep the login Recent Activity feed limited to actual kiosk/employee punches.
+        // Approved correction requests are intentionally hidden here.
+        $merged = $logEntries
             ->sortByDesc('_ts')
             ->unique('_dedup_key')
             ->take(25)
