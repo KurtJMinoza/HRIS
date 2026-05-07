@@ -9,6 +9,7 @@ use App\Models\EmployeeCompensationComponent;
 use App\Models\PayComponent;
 use App\Models\User;
 use App\Services\PayrollCalculatorService;
+use App\Support\EmployeeProfileCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
@@ -157,14 +158,7 @@ class EmployeeCompensationController extends Controller
 
         $queuedIds = $employees->pluck('id')->unique()->values();
         foreach ($queuedIds as $uid) {
-            try {
-                ComputeCompensationSummaryJob::dispatch((int) $uid)->onQueue('default');
-            } catch (\Throwable $e) {
-                Log::warning('Failed to queue compensation summary after bulk assign', [
-                    'user_id' => $uid,
-                    'message' => $e->getMessage(),
-                ]);
-            }
+            $this->refreshCompensationCaches((int) $uid, 'bulk assign');
         }
 
         return response()->json([
@@ -224,14 +218,7 @@ class EmployeeCompensationController extends Controller
         $assignment->fill($validated);
         $assignment->save();
 
-        try {
-            ComputeCompensationSummaryJob::dispatch((int) $employee->id)->onQueue('default');
-        } catch (\Throwable $e) {
-            Log::warning('Failed to queue compensation summary after assignment update', [
-                'user_id' => $employee->id,
-                'message' => $e->getMessage(),
-            ]);
-        }
+        $this->refreshCompensationCaches((int) $employee->id, 'assignment update');
 
         return response()->json([
             'message' => 'Employee compensation updated successfully.',
@@ -269,14 +256,7 @@ class EmployeeCompensationController extends Controller
         $uid = (int) $employee->id;
         $assignment->delete();
 
-        try {
-            ComputeCompensationSummaryJob::dispatch($uid)->onQueue('default');
-        } catch (\Throwable $e) {
-            Log::warning('Failed to queue compensation summary after assignment delete', [
-                'user_id' => $uid,
-                'message' => $e->getMessage(),
-            ]);
-        }
+        $this->refreshCompensationCaches($uid, 'assignment delete');
 
         return response()->json([
             'message' => 'Employee compensation removed successfully.',
@@ -386,5 +366,20 @@ class EmployeeCompensationController extends Controller
         return response()->json([
             'message' => 'Employee compensation is not available yet because the database migration for employee_compensation_components has not been run.',
         ], 409);
+    }
+
+    private function refreshCompensationCaches(int $userId, string $reason): void
+    {
+        EmployeeProfileCache::invalidate($userId);
+        $this->calculator->forgetCompensationSummaryCacheForUser($userId);
+
+        try {
+            ComputeCompensationSummaryJob::dispatch($userId)->onQueue('default');
+        } catch (\Throwable $e) {
+            Log::warning('Failed to queue compensation summary after '.$reason, [
+                'user_id' => $userId,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 }

@@ -153,12 +153,39 @@ class PayslipService
         }
 
         if (! $payslip->pdf_path) {
-            return ['ok' => false, 'reason' => 'no_pdf'];
+            try {
+                $this->ensurePayslipPdfOnDisk($payslip, $employee);
+                $payslip->refresh();
+            } catch (Throwable $e) {
+                Log::error('Payslip send: PDF generation failed', [
+                    'payslip_id' => (int) $payslip->id,
+                    'user_id' => (int) $employee->id,
+                    'message' => $e->getMessage(),
+                ]);
+
+                return ['ok' => false, 'reason' => 'pdf_generation_failed'];
+            }
         }
 
         $full = storage_path('app/private/'.$payslip->pdf_path);
         if (! is_file($full)) {
-            return ['ok' => false, 'reason' => 'pdf_missing'];
+            try {
+                $this->ensurePayslipPdfOnDisk($payslip, $employee, true);
+                $payslip->refresh();
+                $full = storage_path('app/private/'.$payslip->pdf_path);
+            } catch (Throwable $e) {
+                Log::error('Payslip send: missing PDF regeneration failed', [
+                    'payslip_id' => (int) $payslip->id,
+                    'user_id' => (int) $employee->id,
+                    'message' => $e->getMessage(),
+                ]);
+
+                return ['ok' => false, 'reason' => 'pdf_missing'];
+            }
+
+            if (! is_file($full)) {
+                return ['ok' => false, 'reason' => 'pdf_missing'];
+            }
         }
 
         $now = now();

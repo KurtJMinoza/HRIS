@@ -1640,7 +1640,9 @@ class FinalizePayrollService
             ] : []),
         ]);
         try {
-            return $this->payslipService->generatePayslip($user, $payslipInput)['payslip'];
+            // Finalize should lock payroll quickly. PDF rendering is intentionally deferred to
+            // download/send paths because Chromium startup per employee is the slow part.
+            return $this->payslipService->generatePayslip($user, $payslipInput, withPdf: false)['payslip'];
         } catch (Throwable $e) {
             Log::error('Finalize payroll: PayslipService::generatePayslip failed', [
                 ...$baseLogContext,

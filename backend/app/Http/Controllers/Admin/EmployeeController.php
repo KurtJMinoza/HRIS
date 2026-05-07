@@ -5,13 +5,16 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\EmploymentStatus;
 use App\Enums\HrRole;
 use App\Http\Controllers\Controller;
+use App\Jobs\ComputeCompensationSummaryJob;
 use App\Jobs\ProcessFaceRegistrationJob;
 use App\Jobs\UpdateEmployeeProfileJob;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
 use App\Models\DuplicateFaceRegistrationAttempt;
+use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeTransferLog;
+use App\Models\PayComponent;
 use App\Models\User;
 use App\Models\UserAdminActivityLog;
 use App\Models\UserPhoneChangeLog;
@@ -23,8 +26,10 @@ use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
 use App\Services\PayCycleService;
+use App\Services\PayrollCalculatorService;
 use App\Services\RbacService;
 use App\Services\ScheduleRateService;
+use App\Support\EmployeeProfileCache;
 use App\Support\LeaveScheduleSupport;
 use App\Support\ManagementRole;
 use Illuminate\Contracts\Cache\LockTimeoutException;
@@ -1216,10 +1221,15 @@ class EmployeeController extends Controller
                     $employee->supervisor_id = $supervisor->id;
                 }
             }
+            $salaryProfileBaseRemoved = false;
+            $salaryProfileBaseChanged = false;
             if ($this->canEditSalaryViaProfile($request->user())) {
                 if ($this->requestHasInput($request, 'monthly_salary')) {
                     $raw = $request->input('monthly_salary');
-                    $employee->monthly_salary = ($raw === null || $raw === '') ? null : $raw;
+                    $parsed = is_numeric($raw) ? (float) $raw : null;
+                    $salaryProfileBaseRemoved = $raw === null || $raw === '' || $parsed === null || $parsed <= 0;
+                    $salaryProfileBaseChanged = true;
+                    $employee->monthly_salary = $salaryProfileBaseRemoved ? null : $raw;
                 }
                 if ($this->requestHasInput($request, 'salary_effectivity_date')) {
                     $raw = $request->input('salary_effectivity_date');
@@ -1230,8 +1240,22 @@ class EmployeeController extends Controller
                     $employee->monthly_rate = ($raw === null || $raw === '') ? null : $raw;
                 }
 
-                if ($this->requestHasInput($request, 'monthly_salary') || $this->requestHasInput($request, 'working_schedule_id')) {
+                if ($salaryProfileBaseRemoved) {
+                    $explicitMonthlyRate = $this->requestHasInput($request, 'monthly_rate')
+                        && is_numeric($request->input('monthly_rate'))
+                        && (float) $request->input('monthly_rate') > 0;
+                    if (! $explicitMonthlyRate) {
+                        $employee->monthly_rate = null;
+                    }
+                    $employee->daily_rate = null;
+                    $employee->hourly_rate = null;
+                    $employee->salary_effectivity_date = null;
+                    $this->deactivateBasicSalaryCompensationForEmployee($employee);
+                } elseif ($this->requestHasInput($request, 'monthly_salary') || $this->requestHasInput($request, 'working_schedule_id')) {
                     $this->applyScheduleDerivedRatesFromMonthlySalary($employee);
+                    if ($salaryProfileBaseChanged && $employee->monthly_salary !== null && (float) $employee->monthly_salary > 0) {
+                        $this->syncBasicSalaryCompensationFromProfile($employee);
+                    }
                 } elseif ($this->requestHasInput($request, 'hourly_rate')) {
                     $raw = $request->input('hourly_rate');
                     $employee->hourly_rate = ($raw === null || $raw === '') ? null : $raw;
@@ -1301,6 +1325,10 @@ class EmployeeController extends Controller
             $salaryAuditDirty = array_intersect_key($employee->getDirty(), array_flip($salaryAuditFieldKeys));
 
             $employee->save();
+
+            if ($salaryAuditDirty !== [] || $salaryProfileBaseRemoved || $salaryProfileBaseChanged) {
+                $this->forgetPayrollSalaryCaches((int) $employee->id);
+            }
 
             if ($salaryAuditDirty !== [] && $this->rbacService->can($request->user(), 'employees.sensitive')) {
                 UserAdminActivityLog::query()->create([
@@ -2335,6 +2363,68 @@ class EmployeeController extends Controller
 
         $employee->daily_rate = $computedRates['daily_rate'];
         $employee->hourly_rate = $computedRates['hourly_rate'];
+    }
+
+    private function deactivateBasicSalaryCompensationForEmployee(User $employee): void
+    {
+        if (! class_exists(EmployeeCompensationComponent::class)
+            || ! \Illuminate\Support\Facades\Schema::hasTable('employee_compensation_components')) {
+            return;
+        }
+
+        EmployeeCompensationComponent::query()
+            ->where('user_id', (int) $employee->id)
+            ->where('is_active', true)
+            ->whereRaw("upper(code) = 'BASIC_SALARY'")
+            ->update([
+                'is_active' => false,
+                'effective_to' => now()->toDateString(),
+            ]);
+    }
+
+    private function syncBasicSalaryCompensationFromProfile(User $employee): void
+    {
+        if (! class_exists(EmployeeCompensationComponent::class)
+            || ! \Illuminate\Support\Facades\Schema::hasTable('employee_compensation_components')
+            || $employee->monthly_salary === null
+            || (float) $employee->monthly_salary <= 0) {
+            return;
+        }
+
+        $monthlySalary = round((float) $employee->monthly_salary, 2);
+        $activeRows = EmployeeCompensationComponent::query()
+            ->where('user_id', (int) $employee->id)
+            ->where('is_active', true)
+            ->whereRaw("upper(code) = 'BASIC_SALARY'")
+            ->get();
+
+        foreach ($activeRows as $row) {
+            $metadata = is_array($row->metadata ?? null) ? $row->metadata : [];
+            $metadata['source'] = 'salary_profile';
+            $metadata['synced_at'] = now()->toIso8601String();
+            $row->forceFill([
+                'value' => $monthlySalary,
+                'calculation_type' => PayComponent::CALC_FIXED,
+                'type' => PayComponent::TYPE_EARNING,
+                'is_active' => true,
+                'metadata' => $metadata,
+            ])->save();
+        }
+    }
+
+    private function forgetPayrollSalaryCaches(int $employeeId): void
+    {
+        EmployeeProfileCache::invalidate($employeeId);
+        app(PayrollCalculatorService::class)->forgetCompensationSummaryCacheForUser($employeeId);
+
+        try {
+            ComputeCompensationSummaryJob::dispatch($employeeId)->onQueue('default');
+        } catch (\Throwable $e) {
+            Log::warning('Failed to queue compensation summary after salary edit', [
+                'user_id' => $employeeId,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 
     /** @var list<string> */

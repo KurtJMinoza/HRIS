@@ -1372,20 +1372,6 @@ class PayrollCalculatorService
             return $monthly;
         }
 
-        $monthlyRate = (float) ($employee->monthly_rate ?? 0);
-        if ($monthlyRate > 0) {
-            return $monthlyRate;
-        }
-
-        $daily = (float) ($employee->daily_rate ?? 0);
-        if ($daily > 0) {
-            $scheduleMetrics = app(ScheduleRateService::class)->describeForUser($employee);
-            $workingDaysPerMonth = (float) ($scheduleMetrics['working_days_per_month'] ?? 0);
-            if ($workingDaysPerMonth > 0) {
-                return round($daily * $workingDaysPerMonth, 2);
-            }
-        }
-
         return 0.0;
     }
 
@@ -1503,6 +1489,11 @@ class PayrollCalculatorService
         }
 
         $rows = $this->getActiveEmployeeCompensationRows($user, $asOfDate);
+        if ($this->profileMonthlyBase($user) <= 0) {
+            $rows = $rows
+                ->reject(fn (EmployeeCompensationComponent $row): bool => $this->isProfileBackedBasicSalaryRow($row))
+                ->values();
+        }
         $primaryBasicRow = $rows->first(
             fn ($r) => $r->type === PayComponent::TYPE_EARNING
                 && strtoupper(trim((string) $r->code)) === 'BASIC_SALARY'
@@ -1906,6 +1897,30 @@ class PayrollCalculatorService
 
             return collect();
         }
+    }
+
+    private function profileMonthlyBase(User $employee): float
+    {
+        $monthly = (float) ($employee->monthly_salary ?? 0);
+        if ($monthly > 0) {
+            return round($monthly, 2);
+        }
+
+        return 0.0;
+    }
+
+    private function isProfileBackedBasicSalaryRow(EmployeeCompensationComponent $row): bool
+    {
+        if (strtoupper(trim((string) $row->code)) !== 'BASIC_SALARY') {
+            return false;
+        }
+
+        $metadata = is_array($row->metadata ?? null) ? $row->metadata : [];
+        $source = strtolower(trim((string) ($metadata['source'] ?? '')));
+        $assignmentSource = strtolower(trim((string) ($metadata['assignment_source'] ?? '')));
+
+        return in_array($source, ['legacy_salary_fields', 'salary_profile'], true)
+            || in_array($assignmentSource, ['auto_backfill_basic_salary'], true);
     }
 
     private function computeCompensationAmount(

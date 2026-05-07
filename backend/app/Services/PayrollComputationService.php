@@ -1029,12 +1029,15 @@ class PayrollComputationService
         $dailyRateDivisorDays = $this->resolveStableScheduleMonthlyDivisor($effectiveSchedule);
         // Single source for daily rate across Daily Computation and payroll finalize/payslip:
         // prefer schedule-rate resolver (same path used by daily-computation listings), then payroll fallback.
-        $resolvedScheduleDailyRate = $this->scheduleRateService->resolveDailyRate(
-            $user,
-            $effectiveSchedule,
-            null,
-            $to->copy()->startOfDay()
-        );
+        $resolvedScheduleDailyRate = $monthlyBaseForRate > 0
+            ? $this->scheduleRateService->resolveDailyRate(
+                $user,
+                $effectiveSchedule,
+                null,
+                $to->copy()->startOfDay(),
+                $monthlyBaseForRate
+            )
+            : 0.0;
         $dailyRate = $overrideDailyRate
             ?? ($resolvedScheduleDailyRate > 0
                 ? $resolvedScheduleDailyRate
@@ -1504,13 +1507,17 @@ class PayrollComputationService
             }
         }
 
-        // Fallback when monthly base is missing or schedule is unresolved.
+        if ($monthlyBaseForRate <= 0) {
+            return 0.0;
+        }
+
+        // Fallback when schedule is unresolved.
         return $this->scheduleRateService->resolveDailyRate(
             $user,
             $effectiveSchedule,
             null,
             $reference,
-            $monthlyBaseForRate > 0 ? $monthlyBaseForRate : null,
+            $monthlyBaseForRate,
         );
     }
 
@@ -1520,7 +1527,7 @@ class PayrollComputationService
      */
     private function resolveMonthlyBaseForDailyRate(User $user, string $asOfDate): float
     {
-        $salaryTabBase = (float) ($user->monthly_salary ?? $user->monthly_rate ?? 0);
+        $salaryTabBase = (float) ($user->monthly_salary ?? 0);
         if ($salaryTabBase > 0) {
             return round($salaryTabBase, 2);
         }
