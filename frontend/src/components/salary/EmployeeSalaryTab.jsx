@@ -906,15 +906,6 @@ function formatCompCalculationType(value) {
   return map[value] || (value ? String(value).replace(/_/g, ' ') : '—')
 }
 
-function formatEffectiveRange(item) {
-  const from = item?.effective_from
-  const to = item?.effective_to
-  if (!from && !to) return '—'
-  if (from && to) return `${formatSalaryTabDate(from)} – ${formatSalaryTabDate(to)}`
-  if (from) return `From ${formatSalaryTabDate(from)}`
-  return `Until ${formatSalaryTabDate(to)}`
-}
-
 function componentTypeLabel(type) {
   const t = String(type || '').toLowerCase()
   if (t === 'earning') return 'Earning'
@@ -940,7 +931,6 @@ function payComponentsTableHeader() {
       <TableHead className={th}>Type</TableHead>
       <TableHead className={cn('text-right', th)}>Amount</TableHead>
       <TableHead className={th}>Schedule</TableHead>
-      <TableHead className={th}>Effective</TableHead>
     </TableRow>
   )
 }
@@ -990,7 +980,6 @@ export function SalaryPayComponentsBreakdownCard({
           <TableCell className="text-slate-600 dark:text-slate-400">{componentTypeLabel(item.type)}</TableCell>
           <TableCell className={cn('text-right tabular-nums font-semibold', amountClass)}>{formatSalaryTabPhp(item.computed_amount)}</TableCell>
           <TableCell className="text-slate-700 dark:text-slate-300">{schedLabel}</TableCell>
-          <TableCell className="text-slate-600 dark:text-slate-400">{formatEffectiveRange(item)}</TableCell>
         </TableRow>
       )
     })
