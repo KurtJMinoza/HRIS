@@ -42,8 +42,6 @@ const EMPTY_FORM = {
   calculation_type: 'fixed_amount',
   value: '0',
   formula: '',
-  effective_from: '',
-  effective_to: '',
   is_taxable: true,
   contributes_sss: false,
   contributes_philhealth: false,
@@ -209,8 +207,6 @@ export default function AdminEmployeeCompensationPage() {
       calculation_type: master.calculation_type,
       value: String(master.default_value ?? 0),
       formula: master.formula || '',
-      effective_from: master.effective_from || '',
-      effective_to: master.effective_to || '',
       is_taxable: Boolean(master.is_taxable),
       contributes_sss: Boolean(master.contributes_sss),
       contributes_philhealth: Boolean(master.contributes_philhealth),
@@ -224,6 +220,14 @@ export default function AdminEmployeeCompensationPage() {
   function addPendingAssignment(e) {
     e.preventDefault()
     if (!activeEmployee) return
+    if (!draftForm.pay_component_id) {
+      toast({
+        title: 'Employee compensation',
+        description: 'Select a pay component before adding it to pending changes.',
+        variant: 'destructive',
+      })
+      return
+    }
     setPendingAssignments((prev) => [
       ...prev,
       {
@@ -233,11 +237,9 @@ export default function AdminEmployeeCompensationPage() {
         value: Number(draftForm.value || 0),
         formula: draftForm.formula || null,
         pay_component_id: draftForm.pay_component_id || null,
-        effective_from: draftForm.effective_from || null,
-        effective_to: draftForm.effective_to || null,
         is_taxable: true,
         show_on_payslip: true,
-        is_custom: draftForm.is_custom || !draftForm.pay_component_id,
+        is_custom: false,
       },
     ])
     setDialogOpen(false)
@@ -635,16 +637,16 @@ export default function AdminEmployeeCompensationPage() {
                 Add Component to {activeEmployee?.name || 'Employee'}
               </DialogTitle>
               <DialogDescription className="text-sm text-slate-500">
-                Set the amount for a pay component and optionally define its effective date range.
+                Select a pay component from the catalog, then set the employee-specific amount.
               </DialogDescription>
             </DialogHeader>
           </div>
 
           <form onSubmit={addPendingAssignment} className="space-y-6 px-7 py-7">
-            <div className="grid gap-5 sm:grid-cols-2">
-              <Field label="Master Component">
-                <select value={draftForm.pay_component_id} onChange={(e) => applyMasterComponent(e.target.value)} className={inputClass}>
-                  <option value="">Custom / manual</option>
+            <div className="grid grid-cols-1 gap-5">
+              <Field label="Pay Component">
+                <select value={draftForm.pay_component_id} onChange={(e) => applyMasterComponent(e.target.value)} className={inputClass} required>
+                  <option value="" disabled>Select a pay component</option>
                   {components.map((component) => (
                     <option key={component.id} value={component.id}>
                       {component.name} ({component.code})
@@ -655,44 +657,26 @@ export default function AdminEmployeeCompensationPage() {
               <Field label="Name">
                 <input
                   value={draftForm.name}
-                  onChange={(e) => setDraftForm((prev) => ({ ...prev, name: e.target.value, is_custom: !prev.pay_component_id }))}
                   className={inputClass}
-                  placeholder="Component name"
-                  readOnly={Boolean(draftForm.pay_component_id)}
+                  placeholder="Select a pay component"
+                  readOnly
                   required
                 />
               </Field>
               <Field label="Amount / Value">
                 <input
                   value={draftForm.value}
-                  onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value, is_custom: !prev.pay_component_id }))}
+                  onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
                   className={inputClass}
                   inputMode="decimal"
                   placeholder="0.00"
                   required
                 />
               </Field>
-              <Field label="Effective From">
-                <input
-                  type="date"
-                  value={draftForm.effective_from}
-                  onChange={(e) => setDraftForm((prev) => ({ ...prev, effective_from: e.target.value }))}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="Effective To">
-                <input
-                  type="date"
-                  value={draftForm.effective_to}
-                  onChange={(e) => setDraftForm((prev) => ({ ...prev, effective_to: e.target.value }))}
-                  className={inputClass}
-                  min={draftForm.effective_from || undefined}
-                />
-              </Field>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
-              Taxable and visible-on-payslip defaults are applied automatically. Focus here is just the component amount and optional effective dates.
+              Component details come from the Pay Components catalog. You can only adjust the employee-specific amount here.
             </div>
 
             <DialogFooter className="border-t border-slate-200 pt-5">
