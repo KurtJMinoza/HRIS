@@ -1421,11 +1421,19 @@ export default function AdminEmployeeProfile() {
         include_leave_credits: false,
         include_leave_credits_history: false,
         include_compensation_summary: true,
-        include_pay_cycle_preview: false,
+        include_pay_cycle_preview: true,
       })
         .then((data) => {
           if (data?.user) {
             setEmployee((prev) => (prev ? { ...prev, ...data.user } : data.user))
+            setForm((prev) => ({
+              ...prev,
+              monthly_salary: data.user.monthly_salary != null && data.user.monthly_salary !== '' ? String(data.user.monthly_salary) : '',
+              hourly_rate: data.user.hourly_rate != null && data.user.hourly_rate !== '' ? String(data.user.hourly_rate) : '',
+              salary_effectivity_date: data.user.salary_effectivity_date || '',
+              daily_rate: data.user.daily_rate != null && data.user.daily_rate !== '' ? String(data.user.daily_rate) : '',
+              monthly_rate: data.user.monthly_rate != null && data.user.monthly_rate !== '' ? String(data.user.monthly_rate) : '',
+            }))
           }
           setCompensationSummary(data?.compensation_summary ?? null)
           setLeaveCreditsBlock((prev) =>
@@ -1437,10 +1445,12 @@ export default function AdminEmployeeProfile() {
         .catch(() => {})
     }
     window.addEventListener('hr:pay-components-changed', refreshCompensationSummary)
+    window.addEventListener('hr:employee-compensation-changed', refreshCompensationSummary)
     window.addEventListener('hr:deduction-schedule-changed', refreshCompensationSummary)
     window.addEventListener('hr:employee-deductions-changed', refreshCompensationSummary)
     return () => {
       window.removeEventListener('hr:pay-components-changed', refreshCompensationSummary)
+      window.removeEventListener('hr:employee-compensation-changed', refreshCompensationSummary)
       window.removeEventListener('hr:deduction-schedule-changed', refreshCompensationSummary)
       window.removeEventListener('hr:employee-deductions-changed', refreshCompensationSummary)
     }
@@ -1459,7 +1469,7 @@ export default function AdminEmployeeProfile() {
       include_leave_credits: false,
       include_leave_credits_history: false,
       include_compensation_summary: true,
-      include_pay_cycle_preview: false,
+      include_pay_cycle_preview: true,
     })
       .then((data) => {
         console.info('[AdminEmployeeProfile] Deferred salary data loaded', {
@@ -1467,6 +1477,17 @@ export default function AdminEmployeeProfile() {
           hasCompensationSummary: Boolean(data?.compensation_summary),
           hasLeaveCredits: Boolean(data?.leave_credits),
         })
+        if (data?.user) {
+          setEmployee((prev) => (prev ? { ...prev, ...data.user } : data.user))
+          setForm((prev) => ({
+            ...prev,
+            monthly_salary: data.user.monthly_salary != null && data.user.monthly_salary !== '' ? String(data.user.monthly_salary) : '',
+            hourly_rate: data.user.hourly_rate != null && data.user.hourly_rate !== '' ? String(data.user.hourly_rate) : '',
+            salary_effectivity_date: data.user.salary_effectivity_date || '',
+            daily_rate: data.user.daily_rate != null && data.user.daily_rate !== '' ? String(data.user.daily_rate) : '',
+            monthly_rate: data.user.monthly_rate != null && data.user.monthly_rate !== '' ? String(data.user.monthly_rate) : '',
+          }))
+        }
         setCompensationSummary(data?.compensation_summary ?? null)
         setLeaveCreditsBlock((prev) =>
           data?.leave_credits != null && typeof data.leave_credits === 'object'

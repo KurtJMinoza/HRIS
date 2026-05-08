@@ -8,7 +8,9 @@ use App\Jobs\ComputeCompensationSummaryJob;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\PayComponent;
 use App\Models\User;
+use App\Services\PayCycleService;
 use App\Services\PayrollCalculatorService;
+use App\Services\ScheduleRateService;
 use App\Support\EmployeeProfileCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -24,6 +26,8 @@ class EmployeeCompensationController extends Controller
 
     public function __construct(
         private readonly PayrollCalculatorService $calculator,
+        private readonly PayCycleService $payCycleService,
+        private readonly ScheduleRateService $scheduleRateService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -231,6 +235,7 @@ class EmployeeCompensationController extends Controller
 
         $assignment->fill($validated);
         $assignment->save();
+        $this->syncEmployeeSalaryProfileFromBasicSalaryAssignment($employee, $assignment);
 
         $this->refreshCompensationCaches((int) $employee->id, 'assignment update');
 
@@ -268,7 +273,11 @@ class EmployeeCompensationController extends Controller
         }
 
         $uid = (int) $employee->id;
+        $isBasicSalary = $this->isBasicSalaryAssignment($assignment);
         $assignment->delete();
+        if ($isBasicSalary) {
+            $this->clearEmployeeSalaryProfile($employee);
+        }
 
         $this->refreshCompensationCaches($uid, 'assignment delete');
 
@@ -328,13 +337,74 @@ class EmployeeCompensationController extends Controller
         if ($existingAssignment) {
             $existingAssignment->fill($payload);
             $existingAssignment->save();
+            $this->syncEmployeeSalaryProfileFromBasicSalaryAssignment($employee, $existingAssignment);
 
             return $existingAssignment->load('payComponent');
         }
 
         $assignment = EmployeeCompensationComponent::create($payload);
+        $this->syncEmployeeSalaryProfileFromBasicSalaryAssignment($employee, $assignment);
 
         return $assignment->load('payComponent');
+    }
+
+    private function syncEmployeeSalaryProfileFromBasicSalaryAssignment(User $employee, EmployeeCompensationComponent $assignment): void
+    {
+        if (! $this->isBasicSalaryAssignment($assignment)) {
+            return;
+        }
+
+        $monthlySalary = round(max(0.0, (float) ($assignment->value ?? 0)), 2);
+        if ($monthlySalary <= 0) {
+            $this->clearEmployeeSalaryProfile($employee);
+
+            return;
+        }
+
+        $computedRates = $this->scheduleRateService->calculateDailyAndHourlyRate((int) $employee->id, $monthlySalary);
+        $dailyRate = $computedRates['daily_rate'] ?? null;
+        $hourlyRate = $computedRates['hourly_rate'] ?? null;
+        if ($dailyRate === null || $hourlyRate === null) {
+            $dailyRate ??= round($monthlySalary / 22, 2);
+            $hourlyRate ??= round($dailyRate / 8, 2);
+        }
+        $profilePayload = [
+            'monthly_salary' => $monthlySalary,
+            'monthly_rate' => $monthlySalary,
+            'daily_rate' => $dailyRate,
+            'hourly_rate' => $hourlyRate,
+            'salary_effectivity_date' => $employee->salary_effectivity_date?->toDateString() ?: now()->toDateString(),
+        ];
+
+        if (! $employee->pay_cycle_id) {
+            $profilePayload['pay_cycle_id'] = $this->payCycleService->resolveForUser($employee)?->id;
+        }
+
+        $employee->forceFill($profilePayload)->save();
+
+        $metadata = is_array($assignment->metadata ?? null) ? $assignment->metadata : [];
+        $metadata['source'] = 'employee_compensation_basic_salary';
+        $metadata['synced_to_salary_profile_at'] = now()->toIso8601String();
+        $assignment->forceFill(['metadata' => $metadata])->save();
+    }
+
+    private function clearEmployeeSalaryProfile(User $employee): void
+    {
+        $employee->forceFill([
+            'monthly_salary' => null,
+            'monthly_rate' => null,
+            'daily_rate' => null,
+            'hourly_rate' => null,
+            'salary_effectivity_date' => null,
+        ])->save();
+    }
+
+    private function isBasicSalaryAssignment(EmployeeCompensationComponent $assignment): bool
+    {
+        return strtoupper(trim((string) ($assignment->code ?? ''))) === 'BASIC_SALARY'
+            || strcasecmp(trim((string) ($assignment->name ?? '')), 'Basic Salary') === 0
+            || strcasecmp(trim((string) ($assignment->category ?? '')), 'Basic Salary') === 0
+            || strtoupper(trim((string) ($assignment->payComponent?->code ?? ''))) === 'BASIC_SALARY';
     }
 
     private function assignmentResponse(EmployeeCompensationComponent $assignment): array

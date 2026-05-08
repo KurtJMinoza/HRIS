@@ -294,6 +294,7 @@ export default function AdminEmployeeCompensationPage() {
       toast({ title: 'Employee compensation', description: 'Compensation changes saved successfully.' })
       setPendingAssignments([])
       await refreshCompensation()
+      window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
     } catch (error) {
       toast({
         title: 'Employee compensation',
@@ -320,6 +321,7 @@ export default function AdminEmployeeCompensationPage() {
       setRemoveDialogOpen(false)
       setAssignmentToRemove(null)
       await refreshCompensation()
+      window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
     } catch (error) {
       const msg = String(error?.message || '')
       toast({
@@ -355,6 +357,7 @@ export default function AdminEmployeeCompensationPage() {
       setEditingId(null)
       setEditValue('')
       await refreshCompensation()
+      window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
     } catch (error) {
       toast({
         title: 'Update failed',
