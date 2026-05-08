@@ -30,6 +30,7 @@ import {
   getEmployeeCompensation,
   getEmployees,
   getPayComponents,
+  updateEmployeeCompensation,
 } from '@/api'
 
 const EMPTY_FORM = {
@@ -71,6 +72,9 @@ export default function AdminEmployeeCompensationPage() {
   const [removeDialogOpen, setRemoveDialogOpen] = useState(false)
   const [assignmentToRemove, setAssignmentToRemove] = useState(null)
   const [removing, setRemoving] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editValue, setEditValue] = useState('')
+  const [updatingValue, setUpdatingValue] = useState(false)
   const preselectedEmployeeId = Number(searchParams.get('employee_id') || 0)
 
   const loadLookups = useCallback(async (searchTerm = employeeSearch) => {
@@ -329,6 +333,37 @@ export default function AdminEmployeeCompensationPage() {
     }
   }
 
+  function startEditing(item) {
+    setEditingId(item.id)
+    setEditValue(String(item.configured_value ?? item.computed_amount ?? 0))
+  }
+
+  function cancelEditing() {
+    setEditingId(null)
+    setEditValue('')
+  }
+
+  async function saveEditedValue(item) {
+    if (!activeEmployee || !item?.id) return
+    const newValue = Number(editValue || 0)
+    setUpdatingValue(true)
+    try {
+      await updateEmployeeCompensation(activeEmployee.id, item.id, { value: newValue })
+      toast({ title: 'Compensation updated', description: `${item.name} value updated to ₱${newValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.` })
+      setEditingId(null)
+      setEditValue('')
+      await refreshCompensation()
+    } catch (error) {
+      toast({
+        title: 'Update failed',
+        description: error.message || 'Failed to update compensation value',
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingValue(false)
+    }
+  }
+
   const pendingForActive = pendingAssignments.filter((item) => item.employeeId === activeEmployeeId)
 
   return (
@@ -546,6 +581,13 @@ export default function AdminEmployeeCompensationPage() {
                       emptyLabel="No earning components assigned yet."
                       amountTone="earning"
                       onRemove={(assignment) => requestRemoveAssignment(activeEmployee.id, assignment)}
+                      editingId={editingId}
+                      editValue={editValue}
+                      onEditStart={startEditing}
+                      onEditChange={setEditValue}
+                      onEditSave={saveEditedValue}
+                      onEditCancel={cancelEditing}
+                      updatingValue={updatingValue}
                     />
                   </TabsContent>
 
@@ -555,6 +597,13 @@ export default function AdminEmployeeCompensationPage() {
                       emptyLabel="No deduction components assigned yet."
                       amountTone="deduction"
                       onRemove={(assignment) => requestRemoveAssignment(activeEmployee.id, assignment)}
+                      editingId={editingId}
+                      editValue={editValue}
+                      onEditStart={startEditing}
+                      onEditChange={setEditValue}
+                      onEditSave={saveEditedValue}
+                      onEditCancel={cancelEditing}
+                      updatingValue={updatingValue}
                     />
                   </TabsContent>
                 </Tabs>
@@ -725,7 +774,7 @@ function SummaryCard({ label, value }) {
   )
 }
 
-function CompTable({ items, emptyLabel, amountTone, onRemove }) {
+function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editValue, onEditStart, onEditChange, onEditSave, onEditCancel, updatingValue }) {
   return (
     <div className="overflow-x-auto">
       <Table className="min-w-[760px]">
@@ -747,45 +796,102 @@ function CompTable({ items, emptyLabel, amountTone, onRemove }) {
               </TableCell>
             </TableRow>
           ) : (
-            items.map((item) => (
-              <TableRow key={item.id} className="border-b border-slate-100 transition hover:bg-slate-50/80">
-                <TableCell className="px-3 py-3.5">
-                  <div className="font-medium text-slate-900">{item.name}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span>{item.code}{item.structure_name ? ` • ${item.structure_name}` : ''}</span>
-                    <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${getAssignmentSourceStyles(item).className}`}>
-                      {getAssignmentSourceStyles(item).label}
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell className="px-3 py-3.5">{formatCalculationType(item.calculation_type)}</TableCell>
-                <TableCell className="px-3 py-3.5">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
-                <TableCell className="px-3 py-3.5">{describeContributions(item)}</TableCell>
-                <TableCell className="px-3 py-3.5">
-                  <span className={amountTone === 'deduction' ? 'font-medium text-rose-700' : 'font-medium text-emerald-700'}>
-                    {formatPeso(item.computed_amount)}
-                  </span>
-                </TableCell>
-                <TableCell className="px-3 py-3.5 text-right">
-                  {item?.id ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="rounded-lg border-0 bg-rose-50 px-3 text-rose-600 hover:bg-rose-100 hover:text-rose-700"
-                      onClick={() => onRemove(item)}
-                    >
-                      <Trash2 className="mr-2 size-4" />
-                      Remove
-                    </Button>
-                  ) : (
-                    <span className="inline-flex rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-500">
-                      System item
-                    </span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))
+            items.map((item) => {
+              const isEditing = editingId === item.id
+              return (
+                <TableRow key={item.id} className="border-b border-slate-100 transition hover:bg-slate-50/80">
+                  <TableCell className="px-3 py-3.5">
+                    <div className="font-medium text-slate-900">{item.name}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span>{item.code}{item.structure_name ? ` • ${item.structure_name}` : ''}</span>
+                      <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${getAssignmentSourceStyles(item).className}`}>
+                        {getAssignmentSourceStyles(item).label}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="px-3 py-3.5">{formatCalculationType(item.calculation_type)}</TableCell>
+                  <TableCell className="px-3 py-3.5">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
+                  <TableCell className="px-3 py-3.5">{describeContributions(item)}</TableCell>
+                  <TableCell className="px-3 py-3.5">
+                    {isEditing ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm text-slate-500">₱</span>
+                        <input
+                          autoFocus
+                          value={editValue}
+                          onChange={(e) => onEditChange(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') onEditSave(item)
+                            if (e.key === 'Escape') onEditCancel()
+                          }}
+                          className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                          inputMode="decimal"
+                          disabled={updatingValue}
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => item?.id && onEditStart(item)}
+                        className={`group inline-flex items-center gap-1.5 rounded-lg px-2 py-1 transition ${item?.id ? 'cursor-pointer hover:bg-slate-100' : 'cursor-default'}`}
+                        disabled={!item?.id}
+                        title={item?.id ? 'Click to edit value' : undefined}
+                      >
+                        <span className={amountTone === 'deduction' ? 'font-medium text-rose-700' : 'font-medium text-emerald-700'}>
+                          {formatPeso(item.computed_amount)}
+                        </span>
+                        {item?.id ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="size-3.5 text-slate-400 opacity-0 transition group-hover:opacity-100">
+                            <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.262a1.75 1.75 0 0 0 0-2.474Z" />
+                            <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9A.75.75 0 0 1 14 9v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z" />
+                          </svg>
+                        ) : null}
+                      </button>
+                    )}
+                  </TableCell>
+                  <TableCell className="px-3 py-3.5 text-right">
+                    {isEditing ? (
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="rounded-lg px-3 text-slate-600 hover:bg-slate-100"
+                          onClick={onEditCancel}
+                          disabled={updatingValue}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="rounded-lg bg-slate-900 px-3 text-white hover:bg-slate-800"
+                          onClick={() => onEditSave(item)}
+                          disabled={updatingValue}
+                        >
+                          {updatingValue ? 'Saving...' : 'Save'}
+                        </Button>
+                      </div>
+                    ) : item?.id ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-lg border-0 bg-rose-50 px-3 text-rose-600 hover:bg-rose-100 hover:text-rose-700"
+                        onClick={() => onRemove(item)}
+                      >
+                        <Trash2 className="mr-2 size-4" />
+                        Remove
+                      </Button>
+                    ) : (
+                      <span className="inline-flex rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-500">
+                        System item
+                      </span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              )
+            })
           )}
         </TableBody>
       </Table>

@@ -215,6 +215,20 @@ class EmployeeCompensationController extends Controller
         if (isset($validated['code'])) {
             $validated['code'] = strtoupper(trim((string) $validated['code']));
         }
+
+        $metadata = is_array($assignment->metadata) ? $assignment->metadata : [];
+        $currentSource = $metadata['assignment_source'] ?? null;
+        if ($currentSource === 'auto_apply_all' || $currentSource === null) {
+            $metadata['assignment_source'] = 'manual_override';
+            $metadata['overridden_at'] = now()->toIso8601String();
+            $metadata['auto_applied'] = false;
+            $validated['metadata'] = array_merge($metadata, $validated['metadata'] ?? []);
+        } elseif ($currentSource === 'manual') {
+            $metadata['assignment_source'] = 'manual_override';
+            $metadata['overridden_at'] = now()->toIso8601String();
+            $validated['metadata'] = array_merge($metadata, $validated['metadata'] ?? []);
+        }
+
         $assignment->fill($validated);
         $assignment->save();
 

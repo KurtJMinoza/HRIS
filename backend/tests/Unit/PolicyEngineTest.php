@@ -646,7 +646,7 @@ class PolicyEngineTest extends TestCase
             'is_active' => true,
         ]);
 
-        EmployeeCompensationComponent::create([
+        $assignment = EmployeeCompensationComponent::create([
             'user_id' => $user->id,
             'pay_component_id' => $component->id,
             'name' => 'Basic Salary',
@@ -659,19 +659,24 @@ class PolicyEngineTest extends TestCase
             'is_active' => true,
         ]);
 
-        $calculator = app(PayrollCalculatorService::class);
-        $calculator->forgetCompensationSummaryCacheForUser((int) $user->id);
+        try {
+            $calculator = app(PayrollCalculatorService::class);
+            $calculator->forgetCompensationSummaryCacheForUser((int) $user->id);
 
-        $summary = $calculator->buildEmployeeCompensationSummary($user->fresh(), [
-            'as_of_date' => '2026-05-10',
-            'cache' => false,
-        ]);
+            $summary = $calculator->buildEmployeeCompensationSummary($user->fresh(), [
+                'as_of_date' => '2026-05-10',
+                'cache' => false,
+            ]);
 
-        $this->assertSame(0.0, $calculator->resolveBasicSalaryForPayroll($user->fresh(), '2026-05-10'));
-        $this->assertSame(0.0, (float) ($summary['basic_salary'] ?? -1));
-        $this->assertFalse(collect($summary['earnings'] ?? [])->contains(
-            fn (array $line) => strtoupper((string) ($line['code'] ?? '')) === 'BASIC_SALARY'
-        ));
+            $this->assertSame(0.0, $calculator->resolveBasicSalaryForPayroll($user->fresh(), '2026-05-10'));
+            $this->assertSame(0.0, (float) ($summary['basic_salary'] ?? -1));
+            $this->assertFalse(collect($summary['earnings'] ?? [])->contains(
+                fn (array $line) => strtoupper((string) ($line['code'] ?? '')) === 'BASIC_SALARY'
+            ));
+        } finally {
+            $assignment->forceDelete();
+            $component->forceDelete();
+        }
     }
 
     public function test_payroll_attendance_session_merges_missing_in_correction_with_clock_out(): void

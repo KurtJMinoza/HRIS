@@ -33,7 +33,8 @@ class PayComponentAssignmentService
                     ->first();
 
                 $metadata = (array) ($assignment?->metadata ?? []);
-                if (($metadata['assignment_source'] ?? null) === 'manual_override') {
+                $assignmentSource = $metadata['assignment_source'] ?? null;
+                if (in_array($assignmentSource, ['manual_override', 'manual'], true)) {
                     continue;
                 }
 
