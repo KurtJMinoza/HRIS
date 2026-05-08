@@ -142,6 +142,41 @@ body {
   background-color: var(--background);
 }
 
+/* Admin employees add modal: imported-modal visual language with token-driven dark mode. */
+.admin-add-employee-dialog input:not([type='file']),
+.admin-add-employee-dialog select {
+  height: 3rem;
+  min-height: 3rem;
+  border-radius: 0.875rem;
+  border-color: color-mix(in oklch, var(--border) 82%, transparent);
+  background-color: var(--background);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.05);
+}
+
+.admin-add-employee-dialog input:not([type='file'])::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.72;
+}
+
+.admin-add-employee-dialog select,
+.admin-add-employee-dialog input[type='date'] {
+  color-scheme: light;
+}
+
+.dark .admin-add-employee-dialog input:not([type='file']),
+.dark .admin-add-employee-dialog select {
+  border-color: var(--border);
+  background-color: color-mix(in oklch, var(--input) 68%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.22);
+}
+
+.dark .admin-add-employee-dialog select,
+.dark .admin-add-employee-dialog input[type='date'] {
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {

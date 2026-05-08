@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { cloneElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion as Motion } from 'framer-motion'
 import {
   UserPlus,
@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   Loader2,
+  Info,
+  UserRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,6 +35,7 @@ import ESignatureCard from '@/components/ESignatureCard'
 import SignaturePadDialog from '@/components/SignaturePadDialog'
 import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
 import { PasswordInput } from '@/components/ui/password-input'
+import { cn } from '@/lib/utils'
 
 function getAddEmployeeFriendlyError(error) {
   const raw = String(error?.message || '').toLowerCase()
@@ -106,6 +109,45 @@ const INITIAL_ADD_FORM = {
   working_schedule_id: '',
   password: '',
   profile_photo: null,
+}
+
+const ADD_EMPLOYEE_CONTROL_CLASS =
+  'h-12 rounded-xl border-border/70 bg-background px-4 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground/70 focus-visible:ring-[3px] focus-visible:ring-brand/25 dark:border-border/60 dark:bg-input/25 dark:placeholder:text-muted-foreground/60'
+
+function AddFormField({
+  id,
+  label,
+  optional = false,
+  required = false,
+  icon: Icon,
+  helper,
+  children,
+  className,
+}) {
+  return (
+    <div className={cn('grid gap-2', className)}>
+      <Label htmlFor={id} className="text-sm font-semibold text-foreground">
+        {label}
+        {required ? <span className="ml-1 text-foreground">*</span> : null}
+        {optional ? <span className="ml-2 text-xs font-normal text-muted-foreground">(optional)</span> : null}
+      </Label>
+      <div className="relative">
+        {Icon ? (
+          <Icon className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+        ) : null}
+        {cloneElement(children, {
+          id,
+          className: cn(children.props.className, ADD_EMPLOYEE_CONTROL_CLASS, Icon && 'pl-12'),
+        })}
+      </div>
+      {helper ? (
+        <div className="flex items-start gap-2 text-sm leading-relaxed text-muted-foreground">
+          <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>{helper}</span>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 /**
@@ -370,72 +412,81 @@ export function AdminAddEmployeeDialog({
           }
         }}
       >
-        <DialogContent className="max-w-4xl flex max-h-[min(90vh,880px)] flex-col gap-0 border border-border dark:border-border/50 bg-card shadow-2xl dark:shadow-black/40 p-0 overflow-hidden">
-          <DialogHeader className="gap-0.5 px-6 pt-5 pb-4 shrink-0">
-            <DialogTitle className="flex items-center gap-3 text-2xl">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-muted shrink-0">
-                <UserPlus className="size-5 text-foreground" />
+        <DialogContent
+          overlayClassName="bg-black/60 backdrop-blur-[3px]"
+          innerClassName="overflow-hidden p-0"
+          closeButtonClassName="right-5 top-5 size-10 rounded-2xl border-border/70 bg-background/95 text-foreground shadow-sm hover:bg-muted dark:bg-card/95"
+          className="admin-add-employee-dialog flex max-h-[min(88vh,800px)] w-[min(94vw,760px)]! max-w-[760px]! flex-col gap-0 overflow-hidden rounded-3xl border border-border/70 bg-card p-0 text-card-foreground shadow-2xl dark:shadow-black/50"
+        >
+          <DialogHeader className="shrink-0 gap-0 px-6 pb-4 pt-5 sm:px-8 sm:pt-6">
+            <DialogTitle className="flex items-center gap-4 text-2xl font-extrabold tracking-tight text-foreground">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-brand/10 text-brand shadow-inner ring-1 ring-brand/15">
+                <UserPlus className="size-7" aria-hidden />
               </div>
-              Add New Employee
+              <span>Add New Employee</span>
             </DialogTitle>
-            <DialogDescription className="mt-1 text-sm text-muted-foreground">
+            <DialogDescription className="mt-3 text-sm leading-relaxed text-muted-foreground">
               Step {addStep} of 5 &middot;{' '}
-              <span className="font-medium text-foreground">
+              <span className="font-bold text-foreground">
                 {addStepMeta[addStep - 1]?.label}
               </span>{' '}
               — Fill in the details to create a new HRIS record
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAddSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 space-y-6">
-              <div className="space-y-3">
-                <div className="flex items-center">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4 sm:px-8">
+              <div className="mb-6 border-b border-border/60">
+                <div className="flex items-start justify-between gap-2">
                   {addStepMeta.map((item, idx) => {
                     const Icon = item.icon
                     const active = addStep === item.step
                     const done = addStep > item.step
                     return (
-                      <div key={item.step} className="flex flex-1 items-center">
-                        <div className="w-full text-center">
-                          <div className={`mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl transition-all duration-200 ${
+                      <button
+                        key={item.step}
+                        type="button"
+                        className="group relative flex min-w-0 flex-1 flex-col items-center gap-2 px-1 pb-4 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+                        onClick={() => {
+                          if (item.step === addStep || item.step > addStep || addSubmitting) return
+                          setAddFormError('')
+                          setAddStepDir(item.step > addStep ? 1 : -1)
+                          setAddStep(item.step)
+                        }}
+                        disabled={item.step > addStep || addSubmitting}
+                        aria-current={active ? 'step' : undefined}
+                      >
+                        <span className={`flex size-11 items-center justify-center rounded-full transition-all duration-200 ${
                             active
-                              ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/25 ring-4 ring-zinc-900/15 dark:bg-white dark:text-zinc-950 dark:shadow-white/20 dark:ring-white/25'
+                              ? 'bg-brand text-brand-foreground shadow-lg shadow-brand/25 ring-4 ring-brand/15'
                               : done
-                                ? 'border border-border bg-muted text-foreground dark:border-border dark:bg-muted/80'
-                                : 'border border-border bg-muted text-muted-foreground'
+                                ? 'border border-brand/35 bg-brand/10 text-brand'
+                                : 'border border-border bg-muted/45 text-foreground/80 group-hover:border-brand/35 group-hover:bg-brand/5 group-hover:text-brand'
                           }`}>
                             {done
-                              ? <CheckCircle2 className="size-[18px] text-foreground dark:text-zinc-200" />
-                              : <Icon className="size-[18px]" />
+                              ? <CheckCircle2 className="size-5" aria-hidden />
+                              : <Icon className="size-5" aria-hidden />
                             }
-                          </div>
-                          <p className={`text-[10px] uppercase tracking-widest font-semibold ${
-                            active ? 'text-foreground' : done ? 'text-muted-foreground' : 'text-muted-foreground'
+                        </span>
+                        <span className={`truncate text-[11px] font-extrabold uppercase tracking-wide sm:text-xs ${
+                            active ? 'text-foreground' : done ? 'text-brand' : 'text-foreground/80'
                           }`}>
                             {item.label}
-                          </p>
-                        </div>
+                        </span>
+                        <span className={`absolute inset-x-0 -bottom-px h-0.5 rounded-full transition-all duration-300 ${
+                          active ? 'bg-brand' : done ? 'bg-brand/45' : 'bg-transparent'
+                        }`} />
                         {idx < addStepMeta.length - 1 ? (
-                          <div className="mx-1 mt-[-22px] h-0.5 flex-1 overflow-hidden rounded-full bg-border/60">
-                            <div className={`h-full rounded-full bg-zinc-900 transition-all duration-500 dark:bg-zinc-100 ${addStep > item.step ? 'w-full' : 'w-0'}`} />
-                          </div>
+                          <span className="pointer-events-none absolute right-0 top-5 hidden h-px w-full translate-x-1/2 bg-border/40 sm:block" aria-hidden />
                         ) : null}
-                      </div>
+                      </button>
                     )
                   })}
-                </div>
-                {/* Overall progress bar */}
-                <div className="relative h-1 w-full overflow-hidden rounded-full bg-border/50">
-                  <div
-                    className="absolute inset-y-0 left-0 rounded-full bg-linear-to-r from-zinc-900 to-zinc-700 transition-all duration-500 dark:from-zinc-200 dark:to-zinc-400"
-                    style={{ width: `${((addStep - 1) / (addStepMeta.length - 1)) * 100}%` }}
-                  />
                 </div>
               </div>
 
               {addFormError && (
-                <div className="flex items-start gap-2.5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400 dark:text-red-300" role="alert">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-400 dark:text-red-300" />
+                <div className="mb-5 flex items-start gap-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive dark:text-red-300" role="alert">
+                  <AlertTriangle className="mt-0.5 size-5 shrink-0" aria-hidden />
                   <span>{addFormError}</span>
                 </div>
               )}
@@ -450,64 +501,53 @@ export function AdminAddEmployeeDialog({
                   transition={{ duration: 0.18 }}
                   className="space-y-4"
                 >
-                  <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 dark:border-amber-500/25 dark:bg-amber-500/8">
-                    <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500 dark:text-amber-400" />
+                  <div className="flex items-start gap-4 rounded-2xl border border-brand/20 bg-brand/5 px-5 py-4 shadow-sm dark:border-brand/25 dark:bg-brand/10">
+                    <AlertTriangle className="mt-1 size-7 shrink-0 text-brand" aria-hidden />
                     <div>
-                      <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">Legal Name Match Required</p>
-                      <p className="mt-0.5 text-xs text-amber-600/90 dark:text-amber-400/80">
+                      <p className="text-base font-extrabold text-brand">Legal Name Match Required</p>
+                      <p className="mt-1 max-w-2xl text-sm leading-relaxed text-foreground">
                         Names must exactly match the employee&apos;s government-issued ID (passport, SSS, PhilSys). Incorrect entries may cause payroll and compliance issues.
                       </p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-4 @sm:grid-cols-3">
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="add-first_name" className="text-[13px] font-medium">First Name <span className="text-muted-foreground">*</span></Label>
+                  <div className="grid grid-cols-1 gap-4">
+                    <AddFormField id="add-first_name" label="First Name" required icon={UserRound}>
                       <Input
-                        id="add-first_name"
                         value={addForm.first_name}
                         onChange={(e) => setAddForm((f) => ({ ...f, first_name: e.target.value }))}
                         placeholder="e.g. Michael"
-                        className="h-9 focus-visible:ring-ring/50"
                         autoFocus
                         required
                       />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="add-middle_name" className="text-[13px] font-medium text-muted-foreground">Middle Name <span className="text-[10px] font-normal">(optional)</span></Label>
+                    </AddFormField>
+                    <AddFormField id="add-middle_name" label="Middle Name" optional icon={UserRound}>
                       <Input
-                        id="add-middle_name"
                         value={addForm.middle_name}
                         onChange={(e) => setAddForm((f) => ({ ...f, middle_name: e.target.value }))}
                         placeholder="Leave blank if none"
-                        className="h-9 focus-visible:ring-ring/50"
                       />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="add-last_name" className="text-[13px] font-medium">Last Name <span className="text-muted-foreground">*</span></Label>
+                    </AddFormField>
+                    <AddFormField id="add-last_name" label="Last Name" required icon={UserRound}>
                       <Input
-                        id="add-last_name"
                         value={addForm.last_name}
                         onChange={(e) => setAddForm((f) => ({ ...f, last_name: e.target.value }))}
                         placeholder="e.g. Scott"
-                        className="h-9 focus-visible:ring-ring/50"
                         required
                       />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="add-preferred_name" className="text-[13px] font-medium text-muted-foreground">
-                        Preferred Name <span className="text-[10px] font-normal">(optional)</span>
-                      </Label>
+                    </AddFormField>
+                    <AddFormField
+                      id="add-preferred_name"
+                      label="Preferred Name"
+                      optional
+                      icon={UserRound}
+                      helper="Used in clock-ins, payslips, and internal communications."
+                    >
                       <Input
-                        id="add-preferred_name"
                         value={addForm.preferred_name}
                         onChange={(e) => setAddForm((f) => ({ ...f, preferred_name: e.target.value }))}
                         placeholder="e.g. Mike"
-                        className="h-9 focus-visible:ring-ring/50"
                       />
-                      <p className="text-xs text-muted-foreground">Used in clock-ins, payslips, and internal communications.</p>
-                    </div>
+                    </AddFormField>
                   </div>
                 </Motion.div>
               )}
@@ -534,7 +574,7 @@ export function AdminAddEmployeeDialog({
                         type="date"
                         value={addForm.date_of_birth}
                         onChange={(e) => setAddForm((f) => ({ ...f, date_of_birth: e.target.value }))}
-                        className="h-9 dark:[color-scheme:dark]"
+                        className="h-9 dark:scheme-dark"
                       />
                     </div>
                     <div className="grid gap-1.5">
@@ -919,7 +959,7 @@ export function AdminAddEmployeeDialog({
                         type="date"
                         value={addForm.hire_date}
                         onChange={(e) => setAddForm((f) => ({ ...f, hire_date: e.target.value }))}
-                        className="h-9 dark:[color-scheme:dark]"
+                        className="h-9 dark:scheme-dark"
                       />
                     </div>
                     <div className="grid gap-1.5">
@@ -1052,11 +1092,11 @@ export function AdminAddEmployeeDialog({
               )}
               </AnimatePresence>
             </div>
-            <DialogFooter className="border-t border-border/30 px-6 py-4 shrink-0 bg-card flex items-center justify-between">
+            <DialogFooter className="shrink-0 flex-row items-center justify-between border-t border-border/60 bg-card px-6 py-4 sm:px-8">
               <Button
                 type="button"
                 variant="ghost"
-                className="h-9 text-muted-foreground hover:text-foreground"
+                className="h-11 rounded-2xl px-5 text-sm font-semibold text-foreground hover:bg-muted hover:text-foreground"
                 onClick={() => onOpenChange(false)}
               >
                 Cancel
@@ -1066,20 +1106,20 @@ export function AdminAddEmployeeDialog({
                   <Button
                     type="button"
                     variant="outline"
-                    className="h-9 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                    className="h-11 rounded-2xl border-border/70 px-5 text-sm font-semibold dark:border-border/60 dark:text-foreground dark:hover:bg-muted"
                     onClick={() => {
                       setAddFormError('')
                       setAddStepDir(-1)
                       setAddStep((s) => s - 1)
                     }}
                   >
-                    ← Back
+                    Back
                   </Button>
                 )}
                 {addStep < 5 ? (
                   <Button
                     type="button"
-                    className="h-9 bg-black text-white shadow-sm transition-all hover:bg-black/90 hover:shadow-md dark:bg-white dark:text-slate-900 dark:hover:bg-white/90"
+                    className="h-11 rounded-2xl bg-brand px-6 text-sm font-extrabold text-brand-foreground shadow-lg shadow-brand/20 transition-all hover:bg-brand-strong hover:shadow-xl hover:shadow-brand/25"
                     onClick={() => {
                       if (addStep === 1) {
                         if (!addForm.first_name.trim() || !addForm.last_name.trim()) {
@@ -1107,13 +1147,14 @@ export function AdminAddEmployeeDialog({
                       setAddStep((s) => s + 1)
                     }}
                   >
-                    Next Step →
+                    Next Step
+                    <span aria-hidden>→</span>
                   </Button>
                 ) : (
                   <Button
                     type="submit"
                     disabled={addSubmitting}
-                    className="h-9 min-w-[140px] bg-black text-white shadow-sm transition-all hover:bg-black/90 hover:shadow-md disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-white/90"
+                    className="h-11 min-w-[155px] rounded-2xl bg-brand px-6 text-sm font-extrabold text-brand-foreground shadow-lg shadow-brand/20 transition-all hover:bg-brand-strong hover:shadow-xl hover:shadow-brand/25 disabled:opacity-60"
                   >
                     {addSubmitting
                       ? <><Loader2 className="size-4 animate-spin" /> Adding…</>
