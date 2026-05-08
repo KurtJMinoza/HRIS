@@ -647,8 +647,7 @@ class DashboardController extends Controller
                 continue;
             }
 
-            $firstAt = $firstClockIn->get($user->id)?->first_at;
-            if ($firstAt) {
+            if ($logsByUserForDay->has($user->id) || $firstClockIn->has($user->id)) {
                 continue;
             }
 

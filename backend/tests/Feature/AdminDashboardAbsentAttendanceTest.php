@@ -45,6 +45,12 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             'is_active' => true,
             'schedule' => $schedule,
         ]);
+        $clockOutOnly = User::factory()->create([
+            'name' => 'Clock Out Only Employee',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'schedule' => $schedule,
+        ]);
         $onLeave = User::factory()->create([
             'name' => 'Leave Employee',
             'role' => User::ROLE_EMPLOYEE,
@@ -62,6 +68,11 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             'user_id' => $present->id,
             'type' => AttendanceLog::TYPE_CLOCK_IN,
             'verified_at' => Carbon::parse('2026-05-08 08:01:00', 'Asia/Manila')->utc(),
+        ]);
+        AttendanceLog::create([
+            'user_id' => $clockOutOnly->id,
+            'type' => AttendanceLog::TYPE_CLOCK_OUT,
+            'verified_at' => Carbon::parse('2026-05-08 17:01:00', 'Asia/Manila')->utc(),
         ]);
         LeaveRequest::create([
             'user_id' => $onLeave->id,
@@ -81,6 +92,7 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             $this->assertTrue((bool) $rowsById->get($absent->id)['is_absent']);
             $this->assertSame('Absent', $rowsById->get($absent->id)['absent_label']);
             $this->assertFalse((bool) $rowsById->get($present->id)['is_absent']);
+            $this->assertFalse((bool) $rowsById->get($clockOutOnly->id)['is_absent']);
             $this->assertFalse($rowsById->has($onLeave->id));
             $this->assertFalse($rowsById->has($restDay->id));
         } finally {
