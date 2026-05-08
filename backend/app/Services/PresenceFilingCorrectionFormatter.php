@@ -166,6 +166,18 @@ class PresenceFilingCorrectionFormatter
             $empRole = $this->hrRoleResolver->resolveForApprovalSubject($c->user);
             $row['employee_hr_role'] = $empRole->value;
             $row['employee_role_label'] = $empRole->badgeLabel();
+            $deptRel = $c->user->relationLoaded('departmentRelation') ? $c->user->departmentRelation : null;
+            $row['department'] = $deptRel?->name ?? (is_string($c->user->department ?? null) ? $c->user->department : null);
+            if ($c->user->relationLoaded('branch') && $c->user->branch) {
+                $row['branch'] = $c->user->branch->name;
+            } else {
+                $row['branch'] = ($deptRel && $deptRel->relationLoaded('branch') && $deptRel->branch)
+                    ? $deptRel->branch->name
+                    : null;
+            }
+            $row['company'] = ($c->user->relationLoaded('company') && $c->user->company)
+                ? $c->user->company->name
+                : null;
         }
 
         if ($includeDisplayFields) {

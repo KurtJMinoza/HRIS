@@ -225,9 +225,22 @@ class AttendanceCorrectionApprovalService
     {
         $actorRole = $this->roleResolver->resolve($actor);
 
+        $displayWith = [
+            'user.departmentRelation.branch',
+            'user.branch',
+            'user.company',
+            'filedBy',
+            'firstApprover',
+            'secondApprover',
+            'attendanceLogsSyncedBy',
+            'rejectedBy',
+            'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
+            'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
+        ];
+
         if ($actorRole === HrRole::AdminHr) {
             return AttendanceCorrection::query()
-                ->with(['user', 'filedBy', 'firstApprover'])
+                ->with($displayWith)
                 ->where('pending_approval', true)
                 ->where('approved', false)
                 ->whereNull('rejected_at')
@@ -237,7 +250,7 @@ class AttendanceCorrectionApprovalService
         }
 
         $query = AttendanceCorrection::query()
-            ->with(['user', 'filedBy'])
+            ->with($displayWith)
             ->where('pending_approval', true)
             ->where('approved', false)
             ->whereNull('rejected_at')

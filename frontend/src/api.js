@@ -1204,10 +1204,9 @@ export async function getDashboardData() {
     // Widget payloads (required by dashboard cards).
     upcoming_regularizations: Array.isArray(raw.upcoming_regularizations) ? raw.upcoming_regularizations : [],
     expiring_contracts: Array.isArray(raw.expiring_contracts) ? raw.expiring_contracts : [],
-    required_confirmation_actions: Array.isArray(raw.required_confirmation_actions)
-      ? raw.required_confirmation_actions
-      : [],
     employment_settings: raw.employment_settings ?? null,
+    pending_attendance_corrections: Number(raw.pending_attendance_corrections ?? 0) || 0,
+    pending_attendance_correction_preview: raw.pending_attendance_correction_preview ?? null,
   }
 }
 

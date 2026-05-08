@@ -17,6 +17,8 @@ use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
 use App\Services\EmployeeStatusService;
 use App\Services\HrRoleResolver;
+use App\Services\PresenceFilingCorrectionFormatter;
+use App\Services\PresenceFilingService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,6 +33,8 @@ class DashboardController extends Controller
         private readonly AttendanceCorrectionApprovalService $attendanceCorrectionApprovalService,
         private readonly EmployeeStatusService $employeeStatusService,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly PresenceFilingCorrectionFormatter $correctionFormatter,
+        private readonly PresenceFilingService $presenceFilingService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -124,10 +128,21 @@ class DashboardController extends Controller
         $todayLeaves = $this->todayLeaves($today, $activeScopeIds);
         $upcomingRegularizations = $this->upcomingRegularizations($actor, 5);
         $expiringContracts = $this->expiringContracts($actor, 5);
-        $requiredConfirmationActions = $this->requiredConfirmationActions($actor, 5);
         $employmentSettings = $this->employeeStatusService->getAutomationSettings();
 
-        $pendingAttendanceCorrections = $this->attendanceCorrectionApprovalService->getPendingForApprover($actor)->count();
+        $pendingCorrectionsCollection = $this->attendanceCorrectionApprovalService->getPendingForApprover($actor);
+        $pendingAttendanceCorrections = $pendingCorrectionsCollection->count();
+        $tz = $this->presenceFilingService->attendanceTimezone();
+        $pendingAttendanceCorrectionPreview = null;
+        if ($pendingCorrectionsCollection->isNotEmpty()) {
+            $pendingAttendanceCorrectionPreview = $this->correctionFormatter->format(
+                $pendingCorrectionsCollection->first(),
+                $tz,
+                includeEmployee: true,
+                actor: $actor,
+                includeDisplayFields: true
+            );
+        }
 
         $response = [
             'stats' => $statsToday,
@@ -141,9 +156,9 @@ class DashboardController extends Controller
             'today_leaves' => $todayLeaves,
             'upcoming_regularizations' => $upcomingRegularizations,
             'expiring_contracts' => $expiringContracts,
-            'required_confirmation_actions' => $requiredConfirmationActions,
             'employment_settings' => $employmentSettings,
             'pending_attendance_corrections' => $pendingAttendanceCorrections,
+            'pending_attendance_correction_preview' => $pendingAttendanceCorrectionPreview,
         ];
 
         Log::info('Admin dashboard payload prepared', [
@@ -327,71 +342,6 @@ class DashboardController extends Controller
             ['days_remaining', 'asc'],
             ['name', 'asc'],
         ])->values();
-
-        return $rows->take($limit)->all();
-    }
-
-    private function requiredConfirmationActions(User $actor, int $limit = 5): array
-    {
-        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
-        $today = Carbon::now($tz)->startOfDay();
-        $autoMonths = (int) ($this->employeeStatusService->getAutomationSettings()['auto_regularization_months'] ?? 6);
-
-        $query = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
-            ->with(['departmentRelation:id,name,branch_id', 'departmentRelation.branch:id,name', 'branch:id,name']);
-        $this->dataScopeService->restrictEmployeeQuery($actor, $query);
-
-        // Always recompute from latest DB snapshot (not from milestone-window lists)
-        // so status flips (e.g. Regular -> Probationary) are reflected immediately.
-        $rows = $query->get()
-            ->filter(function (User $employee): bool {
-                $canonicalEmploymentLabel = EmploymentStatus::normalizeToCanonicalLabel($employee->employment_status);
-                if ($canonicalEmploymentLabel === null) {
-                    $canonicalEmploymentLabel = EmploymentStatus::Probationary->label();
-                }
-
-                return $canonicalEmploymentLabel === EmploymentStatus::Probationary->label();
-            })
-            ->map(function (User $employee) use ($today, $autoMonths) {
-                $actions = $this->employeeStatusService->getRequiredActions($employee);
-                if ((bool) ($actions['all_completed'] ?? false)) {
-                    return null;
-                }
-
-                $hireDate = $employee->hire_date?->copy()->startOfDay();
-                $probationEnd = $hireDate?->copy()->addMonths($autoMonths);
-                $daysRemainingLabel = null;
-                if ($probationEnd) {
-                    $daysRemaining = (int) $today->diffInDays($probationEnd, false);
-                    $daysRemainingLabel = $daysRemaining < 0
-                        ? abs($daysRemaining).' days overdue'
-                        : ($daysRemaining === 0 ? 'Due today' : $daysRemaining.' days left');
-                }
-
-                return [
-                    'id' => $employee->id,
-                    'name' => $employee->name,
-                    'profile_image_url' => $employee->profile_image_url,
-                    'department' => $employee->departmentRelation?->name ?? $employee->department ?? null,
-                    'branch' => $employee->branch?->name ?? $employee->departmentRelation?->branch?->name ?? null,
-                    'hire_date' => $hireDate?->toDateString(),
-                    'probation_end_date' => $probationEnd?->toDateString(),
-                    'days_remaining_label' => $daysRemainingLabel,
-                    'performance_review_completed' => (bool) ($actions['performance_review_completed'] ?? false),
-                    'checklist_completed' => (bool) ($actions['checklist_completed'] ?? false),
-                    'training_completed' => (bool) ($actions['training_completed'] ?? false),
-                    'documents_submitted' => (bool) ($actions['documents_submitted'] ?? false),
-                    'manager_recommendation_received' => (bool) ($actions['manager_recommendation_received'] ?? false),
-                ];
-            })
-            ->filter()
-            ->sortBy([
-                ['probation_end_date', 'asc'],
-                ['name', 'asc'],
-            ])
-            ->values();
 
         return $rows->take($limit)->all();
     }

@@ -68,6 +68,7 @@ import { hrPanelPath } from '@/lib/hrRoutes'
 import { cn } from '@/lib/utils'
 import { DIALOG_CONTENT_CLASS } from '@/lib/fieldClasses'
 import { OvertimeRequestsCard } from '@/components/dashboard/OvertimeRequestsCard'
+import { AttendanceCorrectionsCard } from '@/components/dashboard/AttendanceCorrectionsCard'
 
 const CARD_ICONS = {
   total: Users,
@@ -295,6 +296,7 @@ export default function AdminDashboard() {
   const perms = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canViewCompanyDirectory = useMemo(() => perms.has('org.company.view'), [perms])
   const canViewOvertime = useMemo(() => perms.has('overtime.view'), [perms])
+  const canApproveAttendanceCorrections = useMemo(() => perms.has('attendance.corrections.approve'), [perms])
   const hrRole = String(user?.hr_role || '').trim()
   const isHrAdmin = hrRole === 'admin_hr' || String(user?.role || '').toLowerCase() === 'admin'
   const dashboardScopeLabel =
@@ -664,9 +666,13 @@ export default function AdminDashboard() {
     ? data.upcoming_regularizations
     : []
   const expiringContracts = Array.isArray(data?.expiring_contracts) ? data.expiring_contracts : []
-  const requiredConfirmationActions = Array.isArray(data?.required_confirmation_actions)
-    ? data.required_confirmation_actions
-    : []
+  const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
+    ? Number(data?.pending_attendance_corrections ?? 0) || 0
+    : 0
+  const pendingAttendanceCorrectionPreview =
+    canApproveAttendanceCorrections && pendingAttendanceCorrectionsCount > 0
+      ? data?.pending_attendance_correction_preview ?? null
+      : null
   const todayLeavesPreview = todayLeaves.slice(0, 1)
   // Used by other dashboard sections; keep available for future copy changes.
   // eslint-disable-next-line no-unused-vars
@@ -1271,111 +1277,19 @@ export default function AdminDashboard() {
           />
         </Motion.div>
 
-        {/* 4. Required Actions Before Confirmation */}
+        {/* 4. Attendance corrections (approval queue) */}
         <Motion.div variants={itemVariants} className="self-stretch">
-          <Card className={cn(
-            'admin-dashboard-card h-[400px] max-h-[400px] min-h-[400px] w-full max-w-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px] @xl:max-h-[420px] @xl:min-h-[420px]',
-          )}>
-            <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
-              <div className="flex flex-col gap-3 @md:flex-row @md:items-start @md:justify-between @md:gap-4">
-                <div className="min-w-0">
-                  <CardTitle className="mb-3 flex min-w-0 flex-wrap items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
-                    <LayoutList className="size-4 shrink-0 text-brand" aria-hidden="true" />
-                    <span className="min-w-0 wrap-break-word">Required Actions Before Confirmation</span>
-                    {requiredConfirmationActions.length > 0 ? (
-                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand/12 px-1.5 text-[11px] font-semibold text-brand">
-                        {requiredConfirmationActions.length}
-                      </span>
-                    ) : null}
-                  </CardTitle>
-                  <CardDescription className="mt-0 text-xs font-normal leading-relaxed text-muted-foreground">
-                    Pending performance reviews and checklist items.
-                  </CardDescription>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 w-full rounded-md border-border/70 bg-background/70 px-3 text-xs font-medium shadow-sm shadow-black/5 transition-[background-color,box-shadow,color] duration-200 hover:bg-accent/55 hover:shadow-black/10 @md:mt-1 @md:w-auto @md:shrink-0"
-                  onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
-                >
-                  View All
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
-              {loading && !data ? (
-                <div className="rounded-xl border border-border/70 bg-muted/15 p-4 text-xs font-normal leading-relaxed text-muted-foreground sm:rounded-2xl sm:p-5 sm:text-sm sm:leading-[1.55]">
-                  Loading required actions...
-                </div>
-              ) : requiredConfirmationActions.length === 0 ? (
-                <div className="rounded-xl border border-border/70 bg-muted/15 p-4 text-sm font-normal leading-relaxed text-muted-foreground sm:rounded-2xl sm:p-5 sm:text-base sm:leading-[1.55]">
-                  No required actions pending.
-                </div>
-              ) : (
-                <div className="space-y-2.5 @sm:space-y-3">
-                  {requiredConfirmationActions.map((emp) => (
-                    <div
-                      key={emp.id}
-                      className="group rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm transition-[transform,box-shadow,background-color,border-color] duration-200 hover:-translate-y-px hover:border-brand/30 hover:bg-accent/25 hover:shadow-md @sm:p-3"
-                    >
-                      <div className="flex flex-col gap-2.5 @lg:flex-row @lg:items-start @lg:justify-between @lg:gap-3">
-                        <div className="flex min-w-0 flex-1 items-start gap-2.5 @sm:gap-3">
-                          <Avatar className="size-9 border border-border/70 shadow-md shadow-black/10 ring-1 ring-border/60 @sm:size-10 @md:size-11">
-                            <AvatarImage src={profileImageUrl(emp.profile_image_url)} alt="" className="object-cover" />
-                            <AvatarFallback>{String(emp.name || 'U').slice(0, 1)}</AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-1.5 @sm:gap-2">
-                              <p className="wrap-break-word text-sm font-semibold leading-snug tracking-[-0.012em] text-foreground @sm:text-base">{emp.name}</p>
-                              <span className="inline-flex rounded-full border border-rose-500/20 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-[-0.01em] text-rose-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200 @sm:px-2.5 @sm:py-1 @sm:text-[11px]">
-                                {formatDaysLabel(emp.days_remaining_label) || 'Pending timeline'}
-                              </span>
-                            </div>
-                            <p className="mt-0.5 wrap-break-word text-xs leading-snug text-muted-foreground @sm:mt-1 @sm:text-[13px] @sm:leading-relaxed">
-                              {emp.department || 'Unassigned'}{emp.branch ? ` / ${emp.branch}` : ''}
-                            </p>
-                            <p className="mt-0.5 wrap-break-word text-xs leading-snug text-muted-foreground @sm:mt-1 @sm:text-[13px] @sm:leading-relaxed">
-                              Hired {formatDate(emp.hire_date)} • Probation end {formatDate(emp.probation_end_date)}
-                            </p>
-                            <div className="mt-2 flex flex-wrap gap-1.5 @sm:mt-2.5 @sm:gap-2">
-                              {!emp.performance_review_completed && (
-                            <span
-                              className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200 @sm:px-2.5 @sm:text-[11px]"
-                            >
-                              Performance Review Pending
-                            </span>
-                              )}
-                              {!emp.checklist_completed && (
-                            <span
-                              className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200 @sm:px-2.5 @sm:text-[11px]"
-                            >
-                              Checklist Pending
-                            </span>
-                              )}
-                              {emp.performance_review_completed && emp.checklist_completed ? (
-                                <span className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:border-emerald-400/20 dark:text-emerald-300">
-                                  All required checks completed
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-8 w-full rounded-md border border-brand/30 bg-brand px-3 text-xs font-semibold tracking-[-0.01em] text-brand-foreground shadow-[0_10px_24px_rgba(217,119,6,0.22)] transition-[background-color,box-shadow,transform] duration-200 hover:bg-brand-strong hover:shadow-[0_16px_30px_rgba(217,119,6,0.3)] active:translate-y-px @sm:h-9 @sm:px-4 @lg:w-auto"
-                          onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
-                        >
-                          Review Actions
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <AttendanceCorrectionsCard
+            loading={
+              (!canApproveAttendanceCorrections && loading) ||
+              (canApproveAttendanceCorrections && dashboardQuery.isLoading)
+            }
+            pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
+            request={pendingAttendanceCorrectionPreview}
+            onViewAll={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
+            onViewDetails={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
+            onReviewRequest={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
+          />
         </Motion.div>
       </Motion.div>
 
@@ -1652,111 +1566,17 @@ export default function AdminDashboard() {
         </Motion.div>
 
         <Motion.div variants={itemVariants}>
-          <Card className="h-full overflow-hidden border border-border/80 bg-card/95 shadow-md transition-all duration-150 hover:shadow-xl">
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <CardTitle className="truncate text-lg font-semibold">Required Actions Before Confirmation</CardTitle>
-                  <CardDescription className="mt-0.5 text-xs leading-relaxed">Pending performance reviews and checklist items.</CardDescription>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
-                >
-                  View All
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-3">
-              {loading && !data ? (
-                <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
-                  Loading required actions...
-                </div>
-              ) : requiredConfirmationActions.length === 0 ? (
-                <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
-                  No required actions pending.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                {requiredConfirmationActions.map((emp) => (
-                  <div key={emp.id} className="rounded-xl border border-border/70 bg-card/70 px-3.5 py-3 transition-all hover:shadow-sm">
-                    <div className="flex items-start gap-3">
-                      <Avatar className="h-10 w-10 border border-border/60">
-                        <AvatarImage src={profileImageUrl(emp.profile_image_url)} alt="" className="object-cover" />
-                        <AvatarFallback>{String(emp.name || 'U').slice(0, 1)}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-foreground">{emp.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {emp.department || 'Unassigned'}{emp.branch ? ` / ${emp.branch}` : ''}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Hired: {formatDate(emp.hire_date)} • Probation end: {formatDate(emp.probation_end_date)}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <span className={cn(
-                            'inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium',
-                            emp.performance_review_completed
-                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                              : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-                          )}>
-                            Performance Review: {emp.performance_review_completed ? 'Completed' : 'Pending'}
-                          </span>
-                          <span className={cn(
-                            'inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium',
-                            emp.checklist_completed
-                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                              : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-                          )}>
-                            Checklist: {emp.checklist_completed ? 'Completed' : 'Pending'}
-                          </span>
-                          <span className={cn(
-                            'inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium',
-                            emp.training_completed
-                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                              : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-                          )}>
-                            Training: {emp.training_completed ? 'Completed' : 'Pending'}
-                          </span>
-                          <span className={cn(
-                            'inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium',
-                            emp.documents_submitted
-                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                              : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-                          )}>
-                            Documents: {emp.documents_submitted ? 'Submitted' : 'Pending'}
-                          </span>
-                          <span className={cn(
-                            'inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium',
-                            emp.manager_recommendation_received
-                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                              : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-                          )}>
-                            Manager Recommendation: {emp.manager_recommendation_received ? 'Received' : 'Pending'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs text-muted-foreground">{formatDaysLabel(emp.days_remaining_label) || 'Pending timeline'}</span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
-                      >
-                        Review Actions
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <AttendanceCorrectionsCard
+            loading={
+              (!canApproveAttendanceCorrections && loading) ||
+              (canApproveAttendanceCorrections && dashboardQuery.isLoading)
+            }
+            pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
+            request={pendingAttendanceCorrectionPreview}
+            onViewAll={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
+            onViewDetails={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
+            onReviewRequest={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
+          />
         </Motion.div>
       </Motion.div>
 
