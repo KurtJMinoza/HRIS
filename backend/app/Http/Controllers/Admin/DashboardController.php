@@ -101,7 +101,7 @@ class DashboardController extends Controller
             $undertimeThresholdMinutes,
             $tz,
             $now,
-            true
+            false
         );
         $statsYesterday = $this->computeDailyStats(
             $yesterday,
@@ -1361,6 +1361,29 @@ class DashboardController extends Controller
     /**
      * @param  array<int, int>  $scopedActiveUserIds
      */
+    private function dashboardAttendanceBaseRow(User $user): array
+    {
+        $company = $user->companyHeadships->first() ?? $user->company ?? $user->branch?->company ?? $user->departmentRelation?->branch?->company;
+        $companyName = $company?->name ?? null;
+        $companyLogoUrl = $company?->logo ? $this->departmentLogoUrl($company->logo) : null;
+
+        return [
+            'id' => $user->id,
+            'employee_name' => $user->name ?? '-',
+            'profile_image' => $user->profile_image_url,
+            'department' => $user->department ?? '-',
+            'company_name' => $companyName,
+            'company_logo_url' => $companyLogoUrl,
+            'time_in' => null,
+            'time_out' => null,
+            'is_late' => false,
+            'late_label' => null,
+            'is_half_day' => false,
+            'is_absent' => false,
+            'absent_label' => null,
+        ];
+    }
+
     private function todayAttendanceLogs($today, string $dayKey, array $scopedActiveUserIds): array
     {
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
@@ -1407,6 +1430,8 @@ class DashboardController extends Controller
                     'is_late' => false,
                     'late_label' => null,
                     'is_half_day' => false,
+                    'is_absent' => false,
+                    'absent_label' => null,
                 ];
                 $schedules[$userId] = $this->resolveEffectiveSchedule($user);
             }
@@ -1464,6 +1489,8 @@ class DashboardController extends Controller
                     'is_late' => false,
                     'late_label' => null,
                     'is_half_day' => false,
+                    'is_absent' => false,
+                    'absent_label' => null,
                 ];
                 $schedules[$userId] = $this->resolveEffectiveSchedule($user);
             }
@@ -1485,6 +1512,39 @@ class DashboardController extends Controller
             ->get()
             ->keyBy('user_id')
             ->all();
+
+        $leaveUserIds = LeaveRequest::query()
+            ->whereIn('user_id', $scopedActiveUserIds)
+            ->where('status', LeaveRequest::STATUS_APPROVED)
+            ->whereDate('start_date', '<=', $dateKey)
+            ->whereDate('end_date', '>=', $dateKey)
+            ->pluck('user_id')
+            ->unique()
+            ->all();
+        $leaveSet = array_fill_keys($leaveUserIds, true);
+
+        $scheduledUsers = User::query()
+            ->whereIn('id', $scopedActiveUserIds)
+            ->where('is_active', true)
+            ->with(['workingSchedule', 'companyHeadships:id,name,logo,company_head_id', 'company:id,name,logo', 'branch:id,company_id', 'branch.company:id,name,logo', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id', 'departmentRelation.branch.company:id,name,logo'])
+            ->get();
+
+        foreach ($scheduledUsers as $user) {
+            if (isset($grouped[$user->id]) || isset($leaveSet[$user->id])) {
+                continue;
+            }
+
+            $schedule = $this->resolveEffectiveSchedule($user);
+            $todaySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
+            if (! $todaySchedule || empty($todaySchedule['in'])) {
+                continue;
+            }
+
+            $grouped[$user->id] = $this->dashboardAttendanceBaseRow($user);
+            $grouped[$user->id]['is_absent'] = true;
+            $grouped[$user->id]['absent_label'] = 'Absent';
+            $schedules[$user->id] = $schedule;
+        }
 
         foreach ($grouped as $userId => &$row) {
             // No clock-out yet: use approved OT expected end (same as Attendance session / Reports).

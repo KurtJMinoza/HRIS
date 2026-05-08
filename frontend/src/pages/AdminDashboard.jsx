@@ -233,8 +233,8 @@ function exportTableCsv(logs, formatTimeFn) {
     `"${l.company_name ?? ''}"`,
     l.time_in ? formatTimeFn(l.time_in) : '',
     l.time_out ? formatTimeFn(l.time_out) : '',
-    l.is_late ? (l.late_label || 'Late') : l.time_in ? 'On time' : '',
-    l.time_in && !l.time_out ? 'Clocked in' : l.time_in && l.time_out ? 'Completed' : 'No activity',
+    l.is_absent ? 'Absent' : l.is_late ? (l.late_label || 'Late') : l.time_in ? 'On time' : '',
+    l.is_absent ? 'Absent' : l.time_in && !l.time_out ? 'Clocked in' : l.time_in && l.time_out ? 'Completed' : 'No activity',
   ].join(','))
   const csv = [headers.join(','), ...rows].join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -314,7 +314,7 @@ export default function AdminDashboard() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null)
   const [expandedRowId, setExpandedRowId] = useState(null)
   const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' })
-  const [showOnlyLate, setShowOnlyLate] = useState(false)
+  const [attendanceFilter, setAttendanceFilter] = useState('all')
   const [compact, setCompact] = useState(false)
   const toLocalDateString = useCallback((d) => {
     const y = d.getFullYear()
@@ -481,7 +481,12 @@ export default function AdminDashboard() {
   const todayLogs = useMemo(() => data?.today_logs ?? [], [data?.today_logs])
 
   const filteredSortedLogs = useMemo(() => {
-    let logs = showOnlyLate ? todayLogs.filter((l) => l.is_late) : todayLogs
+    let logs = todayLogs
+    if (attendanceFilter === 'late') {
+      logs = todayLogs.filter((l) => l.is_late)
+    } else if (attendanceFilter === 'absent') {
+      logs = todayLogs.filter((l) => l.is_absent)
+    }
     if (sortConfig.key) {
       logs = [...logs].sort((a, b) => {
         let aVal, bVal
@@ -504,7 +509,7 @@ export default function AdminDashboard() {
       })
     }
     return logs
-  }, [todayLogs, showOnlyLate, sortConfig])
+  }, [todayLogs, attendanceFilter, sortConfig])
 
   const companyLogoMap = useMemo(() => {
     const map = {}
@@ -662,6 +667,7 @@ export default function AdminDashboard() {
       ? (todaysPresent ?? 0) / todaysHeadcount
       : null
   const lateTodayCount = typeof stats.late_today === 'number' ? stats.late_today : 0
+  const absentTodayLogsCount = todayLogs.filter((l) => l.is_absent).length
   const upcomingRegularizations = Array.isArray(data?.upcoming_regularizations)
     ? data.upcoming_regularizations
     : []
@@ -693,6 +699,12 @@ export default function AdminDashboard() {
   )
   const logsStart = totalLogs === 0 ? 0 : (effectiveLogsPage - 1) * LOGS_PER_PAGE + 1
   const logsEnd = Math.min(effectiveLogsPage * LOGS_PER_PAGE, totalLogs)
+  const emptyLogsMessage =
+    attendanceFilter === 'late'
+      ? 'No late employees today.'
+      : attendanceFilter === 'absent'
+        ? 'No absent employees today.'
+        : 'No attendance logs today yet.'
 
   function handleSort(key) {
     setSortConfig((prev) =>
@@ -2108,26 +2120,39 @@ export default function AdminDashboard() {
               <span className="text-[11px] font-normal uppercase tracking-wide text-muted-foreground">Filter</span>
               <button
                 type="button"
-                onClick={() => { setShowOnlyLate(false); setLogsPage(1) }}
+                onClick={() => { setAttendanceFilter('all'); setLogsPage(1) }}
                 className={[
                   'inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs transition-all',
-                  !showOnlyLate
+                  attendanceFilter === 'all'
                     ? 'border border-brand bg-brand font-bold text-brand-foreground shadow-md'
                     : 'border-border/60 bg-transparent font-normal text-muted-foreground hover:border-border hover:text-foreground',
                 ].join(' ')}
-              >All {!showOnlyLate && `(${todayLogs.length})`}</button>
+              >All {attendanceFilter === 'all' && `(${todayLogs.length})`}</button>
               <button
                 type="button"
-                onClick={() => { setShowOnlyLate(true); setLogsPage(1) }}
+                onClick={() => { setAttendanceFilter('late'); setLogsPage(1) }}
                 className={[
                   'inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs transition-all',
-                  showOnlyLate
+                  attendanceFilter === 'late'
                     ? 'border-2 border-rose-500/60 bg-rose-500/20 font-bold text-rose-800 shadow-md dark:text-rose-200'
                     : 'border-border/60 bg-transparent font-normal text-muted-foreground hover:border-rose-500/40 hover:text-rose-600 dark:hover:text-rose-400',
                 ].join(' ')}
               >
                 <span className="inline-flex size-1.5 rounded-full bg-rose-500" />
                 Late only {lateTodayCount > 0 && `(${lateTodayCount})`}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAttendanceFilter('absent'); setLogsPage(1) }}
+                className={[
+                  'inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs transition-all',
+                  attendanceFilter === 'absent'
+                    ? 'border-2 border-red-500/60 bg-red-500/20 font-bold text-red-800 shadow-md dark:text-red-200'
+                    : 'border-border/60 bg-transparent font-normal text-muted-foreground hover:border-red-500/40 hover:text-red-600 dark:hover:text-red-400',
+                ].join(' ')}
+              >
+                <span className="inline-flex size-1.5 rounded-full bg-red-500" />
+                Absent {absentTodayLogsCount > 0 && `(${absentTodayLogsCount})`}
               </button>
               <div className="ml-auto flex items-center gap-1.5">
                 <Button
@@ -2160,7 +2185,7 @@ export default function AdminDashboard() {
             <div className="md:hidden">
               {paginatedLogs.length === 0 ? (
                 <div className="px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
-                  No attendance logs today yet.
+                  {emptyLogsMessage}
                 </div>
               ) : (
                 <ul className="divide-y divide-border/40">
@@ -2173,11 +2198,13 @@ export default function AdminDashboard() {
                       .toUpperCase()
                       .slice(0, 2) || '?'
 
-                    const statusPill = log.time_in && !log.time_out
-                      ? { icon: LogIn, label: 'Clock In', cls: 'text-emerald-700 dark:text-emerald-300 border-emerald-500/30 bg-emerald-500/10' }
-                      : log.time_in && log.time_out
-                        ? { icon: LogOut, label: 'Completed', cls: 'text-amber-700 dark:text-amber-300 border-amber-500/30 bg-amber-500/10' }
-                        : { icon: Clock, label: 'No activity', cls: 'text-muted-foreground border-border/60 bg-muted/30' }
+                    const statusPill = log.is_absent
+                      ? { icon: UserX, label: 'Absent', cls: 'text-red-700 dark:text-red-300 border-red-500/30 bg-red-500/10' }
+                      : log.time_in && !log.time_out
+                        ? { icon: LogIn, label: 'Clock In', cls: 'text-emerald-700 dark:text-emerald-300 border-emerald-500/30 bg-emerald-500/10' }
+                        : log.time_in && log.time_out
+                          ? { icon: LogOut, label: 'Completed', cls: 'text-amber-700 dark:text-amber-300 border-amber-500/30 bg-amber-500/10' }
+                          : { icon: Clock, label: 'No activity', cls: 'text-muted-foreground border-border/60 bg-muted/30' }
                     const StatusIcon = statusPill.icon
 
                     return (
@@ -2225,7 +2252,11 @@ export default function AdminDashboard() {
                         </div>
 
                         <div className="mt-2">
-                          {log.time_in ? (
+                          {log.is_absent ? (
+                            <span className="inline-flex items-center rounded-full border border-red-400/60 bg-linear-to-r from-red-500/20 via-red-500/10 to-red-500/0 px-2.5 py-1 text-xs font-medium text-red-800 shadow-sm dark:border-red-500/70 dark:bg-red-500/20 dark:text-red-100">
+                              Absent
+                            </span>
+                          ) : log.time_in ? (
                             log.is_half_day ? (
                               <span className="inline-flex items-center rounded-full border border-sky-400/60 bg-linear-to-r from-sky-500/20 via-sky-500/10 to-sky-500/0 px-2.5 py-1 text-xs font-medium text-sky-800 shadow-sm dark:border-sky-500/70 dark:bg-sky-500/20 dark:text-sky-100">
                                 Half Day
@@ -2291,7 +2322,7 @@ export default function AdminDashboard() {
                   {paginatedLogs.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
-                        No attendance logs today yet.
+                        {emptyLogsMessage}
                       </td>
                     </tr>
                   ) : (
@@ -2305,15 +2336,17 @@ export default function AdminDashboard() {
                         .slice(0, 2) || '?'
                       const isEven = rowIndex % 2 === 1
                       const isExpanded = expandedRowId === log.id
-                      const rowBase = log.is_late
-                        ? 'bg-amber-50/60 dark:bg-amber-950/50 hover:bg-amber-100/70 dark:hover:bg-amber-950/70'
-                        : log.time_in
-                          ? isEven
-                            ? 'bg-emerald-50/30 dark:bg-emerald-950/30 hover:bg-emerald-100/40 dark:hover:bg-emerald-950/50'
-                            : 'bg-background dark:bg-transparent hover:bg-emerald-50/25 dark:hover:bg-emerald-950/25'
-                          : isEven
-                            ? 'bg-muted/20 dark:bg-white/2 hover:bg-muted/50 dark:hover:bg-white/5'
-                            : 'bg-background dark:bg-transparent hover:bg-muted/40 dark:hover:bg-white/4'
+                      const rowBase = log.is_absent
+                        ? 'bg-red-50/60 dark:bg-red-950/35 hover:bg-red-100/70 dark:hover:bg-red-950/50'
+                        : log.is_late
+                          ? 'bg-amber-50/60 dark:bg-amber-950/50 hover:bg-amber-100/70 dark:hover:bg-amber-950/70'
+                          : log.time_in
+                            ? isEven
+                              ? 'bg-emerald-50/30 dark:bg-emerald-950/30 hover:bg-emerald-100/40 dark:hover:bg-emerald-950/50'
+                              : 'bg-background dark:bg-transparent hover:bg-emerald-50/25 dark:hover:bg-emerald-950/25'
+                            : isEven
+                              ? 'bg-muted/20 dark:bg-white/2 hover:bg-muted/50 dark:hover:bg-white/5'
+                              : 'bg-background dark:bg-transparent hover:bg-muted/40 dark:hover:bg-white/4'
                       return [
                         (
                           <tr
@@ -2377,7 +2410,11 @@ export default function AdminDashboard() {
                               {log.time_in ? formatTime(log.time_in) : '—'}
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle`}>
-                              {log.time_in ? (
+                              {log.is_absent ? (
+                                <span className="inline-flex items-center rounded-full border border-red-400/60 bg-linear-to-r from-red-500/20 via-red-500/10 to-red-500/0 px-2.5 py-0.5 text-[11px] font-medium text-red-800 shadow-sm dark:border-red-500/70 dark:bg-red-500/20 dark:text-red-100">
+                                  Absent
+                                </span>
+                              ) : log.time_in ? (
                                 log.is_half_day ? (
                                   <span className="inline-flex items-center rounded-full border border-sky-400/60 bg-linear-to-r from-sky-500/20 via-sky-500/10 to-sky-500/0 px-2.5 py-0.5 text-[11px] font-medium text-sky-800 shadow-sm dark:border-sky-500/70 dark:bg-sky-500/20 dark:text-sky-100">
                                     Half Day
@@ -2397,7 +2434,12 @@ export default function AdminDashboard() {
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle`}>
                               <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 dark:bg-white/6 px-2.5 py-1 text-[11px] font-medium shadow-sm">
-                                {log.time_in && !log.time_out ? (
+                                {log.is_absent ? (
+                                  <>
+                                    <UserX className="size-3.5 text-red-600 dark:text-red-400" />
+                                    <span className="text-red-700 dark:text-red-300">Absent</span>
+                                  </>
+                                ) : log.time_in && !log.time_out ? (
                                   <>
                                     <LogIn className="size-3.5 text-emerald-600 dark:text-emerald-400" />
                                     <span className="text-emerald-700 dark:text-emerald-300">Clocked In</span>
@@ -2451,6 +2493,14 @@ export default function AdminDashboard() {
                                       Late status:{' '}
                                       <span className="font-medium text-rose-600 dark:text-rose-300">
                                         {log.late_label}
+                                      </span>
+                                    </p>
+                                  )}
+                                  {log.is_absent && (
+                                    <p>
+                                      Attendance status:{' '}
+                                      <span className="font-medium text-red-600 dark:text-red-300">
+                                        Absent
                                       </span>
                                     </p>
                                   )}
