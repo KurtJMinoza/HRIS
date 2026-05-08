@@ -1063,7 +1063,7 @@ export default function AdminDashboard() {
         {/* 1. Today's Leaves */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="self-stretch">
           <Card className={cn(
-            'admin-dashboard-card h-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px]',
+            'admin-dashboard-card h-[400px] max-h-[400px] min-h-[400px] gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px] @xl:max-h-[420px] @xl:min-h-[420px]',
           )}>
             <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
               <div className="flex items-start justify-between gap-4">
@@ -1080,7 +1080,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
               {todayLeaves.length === 0 ? (
                 <div className="flex min-h-[172px] flex-col items-center justify-center rounded-lg border border-emerald-500/10 bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.14),rgba(16,185,129,0.04)_58%,transparent)] p-5 text-center dark:border-emerald-400/15">
                   <span className="mb-4 flex size-9 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
@@ -1274,7 +1274,7 @@ export default function AdminDashboard() {
         {/* 4. Required Actions Before Confirmation */}
         <Motion.div variants={itemVariants} className="self-stretch">
           <Card className={cn(
-            'admin-dashboard-card h-full w-full max-w-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px]',
+            'admin-dashboard-card h-[400px] max-h-[400px] min-h-[400px] w-full max-w-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px] @xl:max-h-[420px] @xl:min-h-[420px]',
           )}>
             <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
               <div className="flex flex-col gap-3 @md:flex-row @md:items-start @md:justify-between @md:gap-4">
@@ -1303,7 +1303,7 @@ export default function AdminDashboard() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
               {loading && !data ? (
                 <div className="rounded-xl border border-border/70 bg-muted/15 p-4 text-xs font-normal leading-relaxed text-muted-foreground sm:rounded-2xl sm:p-5 sm:text-sm sm:leading-[1.55]">
                   Loading required actions...
