@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Loader2, User, UserRound, Briefcase, Gift, IdCard, Users, ShieldCheck, MapPin, Calendar, Clock, FileText, Phone, Zap, Plus, Upload, Eye, Pencil, Trash2, CheckCircle2, X, Mail, Flag, Home, Hash, Heart, Folder, FileUp, FileDown, Archive, AlertTriangle, Award, Gavel, HeartPulse, LineChart, Camera, FilePenLine, CircleDollarSign, Wallet } from 'lucide-react'
+import { Loader2, User, UserRound, Briefcase, IdCard, Users, ShieldCheck, MapPin, Calendar, Clock, FileText, Phone, Zap, Plus, Upload, Eye, Pencil, Trash2, CheckCircle2, X, Mail, Flag, Home, Hash, Heart, Folder, FileUp, FileDown, Archive, AlertTriangle, Award, Gavel, HeartPulse, LineChart, Camera, FilePenLine, CircleDollarSign, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -769,7 +769,6 @@ export default function EmployeeProfile() {
     [applyMappedHomeAddress]
   )
 
-  const [benefits, setBenefits] = useState([])
   const [leaveCreditsInfo, setLeaveCreditsInfo] = useState(null)
   const [leaveCreditsLoading, setLeaveCreditsLoading] = useState(false)
 
@@ -851,7 +850,6 @@ export default function EmployeeProfile() {
           is_primary: !!item.is_primary,
         }))
       : [])
-    setBenefits(Array.isArray(data?.benefits) ? data.benefits : [])
     setCompensationSummary(data?.compensation_summary && typeof data.compensation_summary === 'object' ? data.compensation_summary : null)
     setPayCyclePreview(data?.pay_cycle_preview || data?.compensation_summary?.pay_cycle_preview || null)
     if (data?.government_ids && typeof data.government_ids === 'object' && !Array.isArray(data.government_ids)) {
@@ -2432,8 +2430,7 @@ export default function EmployeeProfile() {
     const base = [
       { id: 'profile', label: 'Profile', icon: User },
       { id: 'employment', label: 'Employment', icon: Briefcase },
-      { id: 'salary', label: 'Salary', icon: CircleDollarSign },
-      { id: 'benefits', label: 'Benefits', icon: Gift },
+      { id: 'salary', label: 'Salary & Contributions', icon: CircleDollarSign },
       { id: 'documents', label: 'Documents', icon: FileText },
       { id: 'government', label: 'Government IDs', icon: IdCard },
       { id: 'emergency', label: 'Emergency Contacts', icon: Users },
@@ -2446,6 +2443,7 @@ export default function EmployeeProfile() {
 
   useEffect(() => {
     if (isReadOnly && activeTab === 'account') setActiveTab('profile')
+    if (activeTab === 'benefits') setActiveTab('profile')
   }, [isReadOnly, activeTab])
 
   if (loading) {
@@ -3318,7 +3316,6 @@ export default function EmployeeProfile() {
                 { label: 'Gross pay', value: formatSalaryPhp(compensationSummary?.totals?.gross_earnings), sub: 'Incl. earnings' },
                 { label: 'Daily rate', value: formatSalaryPhp(salaryViewRates.daily), sub: 'From schedule' },
                 { label: 'Hourly rate', value: formatSalaryPhp(salaryViewRates.hourly), sub: 'From schedule' },
-                { label: 'Effectivity', value: formatDate(displayUser?.salary_effectivity_date), sub: 'Salary structure' },
               ].map((row) => (
                 <div key={row.label} className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#111318]">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{row.label}</p>
@@ -3360,37 +3357,6 @@ export default function EmployeeProfile() {
             </SalaryTabNotice>
           </SalaryTabShell>
         </div>
-      )}
-
-      {activeTab === 'benefits' && (
-        <Card className="border border-border/60 shadow-sm dark:border-white/8 dark:bg-[#111827]">
-          <CardHeader>
-            <CardTitle>Benefits</CardTitle>
-            <CardDescription>Your assigned company benefits.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {benefits.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No benefits assigned.</p>
-            ) : (
-              <ul className="space-y-2">
-                {benefits.map((b) => (
-                  <li key={b.id} className="rounded-lg border border-border/60 bg-muted/40 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="font-semibold">{b.name || 'Benefit'}</p>
-                        <p className="text-xs text-muted-foreground">{b.type || '—'}</p>
-                      </div>
-                      <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium">
-                        {b.status || '—'}
-                      </span>
-                    </div>
-                    {b.description && <p className="mt-2 text-sm text-muted-foreground">{b.description}</p>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
       )}
 
       {activeTab === 'documents' && (

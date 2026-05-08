@@ -1744,7 +1744,7 @@ export default function AdminEmployeeProfile() {
   const tabs = [
     { id: 'personal-info', label: 'Personal' },
     { id: 'employment', label: 'Employment' },
-    { id: 'salary', label: 'Salary' },
+    { id: 'salary', label: 'Salary & Contributions' },
     { id: 'benefits', label: 'Benefits' },
     { id: 'documents', label: 'Documents' },
     { id: 'government-ids', label: 'Gov IDs' },
@@ -3910,7 +3910,6 @@ export default function AdminEmployeeProfile() {
         working_schedule_id: form.working_schedule_id ? Number(form.working_schedule_id) : null,
         monthly_salary: parseSalaryNumber(form.monthly_salary),
         hourly_rate: salaryDerived.hourly_rate !== '' ? parseSalaryNumber(salaryDerived.hourly_rate) : parseSalaryNumber(form.hourly_rate),
-        salary_effectivity_date: hasText(form.salary_effectivity_date) ? form.salary_effectivity_date.trim() : null,
         daily_rate: salaryDerived.daily_rate !== '' ? parseSalaryNumber(salaryDerived.daily_rate) : parseSalaryNumber(form.daily_rate),
         monthly_rate: salaryDerived.monthly_rate !== '' ? parseSalaryNumber(salaryDerived.monthly_rate) : parseSalaryNumber(form.monthly_rate),
       }
@@ -3922,7 +3921,6 @@ export default function AdminEmployeeProfile() {
               hourly_rate: _hr,
               daily_rate: _dr,
               monthly_rate: _mr,
-              salary_effectivity_date: _sed,
               ...rest
             } = payload
             return rest
@@ -5192,7 +5190,7 @@ export default function AdminEmployeeProfile() {
                 }
               />
 
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="admin-salary-hourly">Hourly rate</Label>
                   <div className="flex rounded-lg border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#111318]">
@@ -5226,20 +5224,6 @@ export default function AdminEmployeeProfile() {
                     />
                   </div>
                   <FieldHint>From schedule.</FieldHint>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="admin-salary-effective" className="flex items-center gap-2">
-                    <Calendar className="size-3.5 text-muted-foreground" aria-hidden />
-                    Effectivity date
-                  </Label>
-                  <Input
-                    id="admin-salary-effective"
-                    type="date"
-                    className="border-slate-200 dark:border-white/10"
-                    value={form.salary_effectivity_date || ''}
-                    onChange={(e) => setForm((f) => ({ ...f, salary_effectivity_date: e.target.value }))}
-                    disabled={!canEditSalaryDetails}
-                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="admin-salary-monthly-rate">Monthly rate</Label>

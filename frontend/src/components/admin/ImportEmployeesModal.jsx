@@ -1,7 +1,19 @@
 import { Fragment, useMemo, useRef, useState } from 'react'
 import ExcelJS from 'exceljs'
 import { AnimatePresence, motion } from 'framer-motion'
-import { UploadCloud, FileSpreadsheet, AlertTriangle, CheckCircle2, Loader2, FileUp } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronRight,
+  CheckCircle2,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  FileUp,
+  FolderOpen,
+  Loader2,
+  Lightbulb,
+  UploadCloud,
+} from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -9,10 +21,72 @@ import { Progress } from '@/components/ui/progress'
 import { importEmployees, previewEmployeeImport, rollbackEmployeeImport } from '@/api'
 import { cn } from '@/lib/utils'
 
+const MotionDiv = motion.div
+const MotionSpan = motion.span
+
 const IMPORT_WIZARD_STEPS = [
   { id: 1, title: 'Upload', hint: 'Add file', Icon: UploadCloud },
   { id: 2, title: 'Preview', hint: 'Validate rows', Icon: FileSpreadsheet },
   { id: 3, title: 'Import', hint: 'Save to HR', Icon: FileUp },
+]
+
+const ACCEPTED_IMPORT_EXTENSIONS = ['.xlsx', '.xls', '.csv']
+const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024
+
+const EMPLOYEE_IMPORT_TEMPLATE_HEADERS = [
+  'Employee ID',
+  'Full Name',
+  'First Name',
+  'Middle Name',
+  'Last Name',
+  'Date of Birth',
+  'Gender',
+  'Marital Status',
+  'Nationality',
+  'Email',
+  'Username',
+  'Phone Number',
+  'Home Address',
+  'Street',
+  'Barangay',
+  'City',
+  'Province',
+  'Postal Code',
+  'Employment Type',
+  'Employment Status',
+  'Employment Status Effective Date',
+  'Date Hired',
+  'Contract Start Date',
+  'Contract End Date',
+  'Position',
+  'Department',
+  'Branch',
+  'Company',
+  'Supervisor',
+  'Working Schedule',
+  'Working Time In',
+  'Working Time Out',
+  'Rest Days',
+  'Pay Schedule',
+  'Basic Salary',
+  'Monthly Rate',
+  'Daily Rate',
+  'Hourly Rate',
+  'Salary Effectivity Date',
+  'Rice Allowance',
+  'Transportation Allowance',
+  'Other Pay Components (Active)',
+  'Allowances (Active)',
+  'Compensation Deductions (Active)',
+  'Automated Deductions/Loans (Active)',
+  'SSS Number',
+  'PhilHealth Number',
+  'Pag-IBIG Number',
+  'TIN Number',
+  'Tax Regime',
+  'Withholding Method',
+  'Dependents',
+  'Active Account',
 ]
 
 const HEADER_ALIASES = {
@@ -238,6 +312,81 @@ function validatePreviewRows(rows) {
   })
 }
 
+function csvCell(value) {
+  const text = String(value ?? '')
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+function downloadEmployeeImportTemplate() {
+  const exampleRow = [
+    'EMP-0001',
+    'Juan Dela Cruz',
+    'Juan',
+    '',
+    'Dela Cruz',
+    '1995-01-31',
+    'Male',
+    'Single',
+    'Filipino',
+    'juan.delacruz@example.com',
+    'juan.delacruz',
+    "'09171234567",
+    '123 Sample Street, Quezon City',
+    'Sample Street',
+    'Bagong Pag-asa',
+    'Quezon City',
+    'Metro Manila',
+    '1105',
+    'Full-time',
+    'Probationary',
+    '2026-01-01',
+    '2026-01-01',
+    '',
+    '',
+    'HR Staff',
+    'Human Resources',
+    'Main Branch',
+    'AGCTEK',
+    '',
+    'Regular Day Shift',
+    '08:00',
+    '17:00',
+    'sunday',
+    'Semi-monthly',
+    '25000.00',
+    '25000.00',
+    '',
+    '',
+    '2026-01-01',
+    '1500.00',
+    '1000.00',
+    '',
+    'Rice Allowance:1500.00 | Transportation Allowance:1000.00',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    'compensation',
+    'monthly',
+    '0',
+    '1',
+  ]
+  const csv = [EMPLOYEE_IMPORT_TEMPLATE_HEADERS, exampleRow]
+    .map((row) => row.map(csvCell).join(','))
+    .join('\r\n')
+  const blob = new Blob([`\uFEFF${csv}\r\n`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'employee_import_template.csv'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 export default function ImportEmployeesModal({ open, onOpenChange, onImported, toast, canUndoImport = false }) {
   const [step, setStep] = useState(1)
   const [file, setFile] = useState(null)
@@ -311,8 +460,12 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
   const handleFilePicked = async (nextFile) => {
     if (!(nextFile instanceof File)) return
     const lower = nextFile.name.toLowerCase()
-    if (!lower.endsWith('.csv') && !lower.endsWith('.xlsx')) {
-      toast?.({ title: 'Unsupported file', description: 'Only .csv and .xlsx are supported.', variant: 'destructive' })
+    if (!ACCEPTED_IMPORT_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
+      toast?.({ title: 'Unsupported file', description: 'Only .csv, .xls, and .xlsx files are supported.', variant: 'destructive' })
+      return
+    }
+    if (nextFile.size > MAX_IMPORT_FILE_BYTES) {
+      toast?.({ title: 'File too large', description: 'Employee imports must be 10 MB or smaller.', variant: 'destructive' })
       return
     }
 
@@ -425,121 +578,113 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
     <Dialog open={open} onOpenChange={closeModal}>
       <DialogContent
         overlayClassName="bg-black/60 backdrop-blur-[3px]"
-        className={`${modalSizeClass} overflow-hidden border-0 bg-white p-0 text-black shadow-xl transition-[width,max-width] duration-300 ease-out`}
+        innerClassName="overflow-hidden p-0"
+        closeButtonClassName="right-4 top-4 border-border/70 bg-background/95 text-foreground hover:bg-muted"
+        className={cn(
+          modalSizeClass,
+          'overflow-hidden rounded-[1.75rem] border border-border/70 bg-card p-0 text-card-foreground shadow-2xl transition-[width,max-width] duration-300 ease-out',
+        )}
       >
-        <motion.div
+        <MotionDiv
           initial={{ opacity: 0, scale: 0.985, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.985, y: 8 }}
           transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          className="flex h-full max-h-[92vh] flex-col"
+          className="flex h-full max-h-[92vh] min-h-0 flex-col bg-card"
         >
-          <DialogHeader className="bg-white px-5 py-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <DialogTitle className="text-xl font-semibold tracking-tight">Import Employees</DialogTitle>
-                <DialogDescription className="mt-1 text-sm">
-                  Upload, review, and import employee records with full-column preview and validation checks.
-                </DialogDescription>
+          <DialogHeader className="border-b border-border/60 bg-card px-5 py-5 pr-16 sm:px-8 sm:py-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex gap-4">
+                <div className="hidden size-14 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand shadow-inner sm:flex">
+                  <UploadCloud className="size-7" aria-hidden />
+                </div>
+                <div>
+                  <DialogTitle className="text-2xl font-bold tracking-tight text-foreground">Import Employees</DialogTitle>
+                  <DialogDescription className="mt-1 max-w-xl text-sm text-muted-foreground">
+                    Upload, review, and import employee records with full-column preview and validation checks.
+                  </DialogDescription>
+                </div>
               </div>
-              <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-fit border-brand/40 bg-brand/5 text-brand hover:bg-brand/10 hover:text-brand dark:bg-brand/10 dark:hover:bg-brand/15"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={parsing || importing || rollingBack}
+              >
+                <Download className="size-4" aria-hidden />
                 Bulk Import
-              </Badge>
+              </Button>
             </div>
           </DialogHeader>
 
-          <div className="border-b border-slate-100 bg-gradient-to-b from-slate-50/80 to-white px-4 py-4 sm:px-5">
-            <div className="flex items-stretch gap-0 sm:gap-1">
+          <div className="border-b border-border/60 bg-linear-to-b from-muted/35 to-card px-4 py-4 sm:px-8">
+            <div className="flex items-stretch gap-2 sm:gap-5">
               {IMPORT_WIZARD_STEPS.map((item, index) => {
                 const isDone = step > item.id
                 const isCurrent = step === item.id
                 const Icon = item.Icon
                 return (
                   <Fragment key={item.id}>
-                    <motion.div
+                    <MotionDiv
                       layout
-                      className="relative z-[1] flex min-w-0 flex-1 flex-col"
-                      initial={false}
-                      animate={{ opacity: 1 }}
+                      className="relative z-1 flex min-w-0 flex-1 flex-col"
                       transition={{ layout: { type: 'spring', stiffness: 380, damping: 34 } }}
                     >
-                      <motion.div
+                      <MotionDiv
                         layout
                         className={cn(
-                          'relative flex flex-col items-center gap-2 rounded-2xl border-2 px-2 py-3 text-center sm:px-3 sm:py-3.5',
-                          isDone && 'border-emerald-400/50 bg-gradient-to-b from-emerald-50/95 to-white text-slate-900 shadow-sm',
-                          isCurrent && !isDone && 'border-primary bg-gradient-to-b from-primary/[0.12] to-white text-slate-900 shadow-md ring-2 ring-primary/15',
-                          !isDone && !isCurrent && 'border-slate-200/90 bg-white text-slate-500 shadow-sm',
+                          'relative flex min-h-28 flex-col items-center justify-center gap-2 rounded-2xl border px-2 py-4 text-center transition-colors sm:min-h-32 sm:px-4',
+                          isDone && 'border-emerald-400/50 bg-emerald-500/10 text-foreground shadow-sm',
+                          isCurrent && !isDone && 'border-brand/70 bg-brand/5 text-foreground shadow-md ring-2 ring-brand/10',
+                          !isDone && !isCurrent && 'border-border bg-background/65 text-muted-foreground shadow-sm',
                         )}
                         animate={
                           isCurrent
                             ? {
                                 boxShadow: [
-                                  '0 4px 14px -2px rgba(99, 102, 241, 0.18)',
-                                  '0 8px 22px -4px rgba(99, 102, 241, 0.28)',
-                                  '0 4px 14px -2px rgba(99, 102, 241, 0.18)',
+                                  '0 10px 30px -18px rgba(249, 115, 22, 0.35)',
+                                  '0 18px 44px -20px rgba(249, 115, 22, 0.5)',
+                                  '0 10px 30px -18px rgba(249, 115, 22, 0.35)',
                                 ],
                               }
                             : { boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)' }
                         }
-                        transition={
-                          isCurrent
-                            ? { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }
-                            : { duration: 0.22 }
-                        }
+                        transition={isCurrent ? { duration: 2.2, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.22 }}
                       >
-                        {isCurrent && (
-                          <motion.span
-                            layoutId="import-step-glow"
-                            className="pointer-events-none absolute inset-0 rounded-2xl bg-primary/[0.06]"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: [0.45, 0.75, 0.45] }}
-                            transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                          />
-                        )}
-                        <span className="absolute left-2 top-2 rounded-md bg-slate-900/90 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white shadow-sm sm:left-2.5 sm:top-2.5 sm:text-[11px]">
+                        <span
+                          className={cn(
+                            'absolute left-3 top-3 flex size-6 items-center justify-center rounded-full text-xs font-bold tabular-nums shadow-sm',
+                            isCurrent ? 'bg-brand text-brand-foreground' : isDone ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground',
+                          )}
+                        >
                           {item.id}
                         </span>
-                        <div className="relative flex items-center justify-center pt-1">
-                          <motion.div
-                            className={cn(
-                              'flex size-10 items-center justify-center rounded-full border sm:size-11',
-                              isDone && 'border-emerald-200 bg-emerald-500 text-white shadow-inner',
-                              isCurrent && !isDone && 'border-primary/35 bg-primary text-white shadow-md',
-                              !isDone && !isCurrent && 'border-slate-200 bg-slate-50 text-slate-400',
-                            )}
-                            animate={isCurrent ? { scale: [1, 1.06, 1] } : { scale: 1 }}
-                            transition={{ duration: 1.8, repeat: isCurrent ? Infinity : 0, ease: 'easeInOut' }}
-                          >
-                            {isDone ? (
-                              <motion.span
-                                initial={{ scale: 0.5, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                transition={{ type: 'spring', stiffness: 420, damping: 22 }}
-                              >
-                                <CheckCircle2 className="size-5 sm:size-[1.35rem]" aria-hidden />
-                              </motion.span>
-                            ) : (
-                              <Icon className="size-5 sm:size-[1.35rem]" aria-hidden strokeWidth={isCurrent ? 2.25 : 2} />
-                            )}
-                          </motion.div>
+                        <div
+                          className={cn(
+                            'flex size-14 items-center justify-center rounded-full transition-colors sm:size-16',
+                            isDone && 'bg-emerald-500 text-white',
+                            isCurrent && !isDone && 'bg-brand text-brand-foreground shadow-lg shadow-brand/20',
+                            !isDone && !isCurrent && 'bg-muted text-muted-foreground',
+                          )}
+                        >
+                          {isDone ? <CheckCircle2 className="size-7" aria-hidden /> : <Icon className="size-7" aria-hidden />}
                         </div>
-                        <div className="relative space-y-0.5">
-                          <p className="text-xs font-semibold tracking-tight sm:text-sm">{item.title}</p>
-                          <p className="hidden text-[10px] text-muted-foreground sm:block sm:text-[11px]">{item.hint}</p>
+                        <div>
+                          <p className="text-sm font-bold tracking-tight sm:text-base">{item.title}</p>
+                          <p className="text-xs text-muted-foreground">{item.hint}</p>
                         </div>
-                      </motion.div>
-                    </motion.div>
+                      </MotionDiv>
+                    </MotionDiv>
                     {index < IMPORT_WIZARD_STEPS.length - 1 && (
-                      <div className="relative z-0 flex min-w-[10px] max-w-[72px] flex-[0.22] items-center self-center py-8 sm:flex-[0.18] sm:py-9">
-                        <div className="h-[3px] w-full overflow-hidden rounded-full bg-slate-200/95">
-                          <motion.div
-                            className="h-full rounded-full bg-gradient-to-r from-primary via-indigo-500 to-emerald-500"
-                            initial={false}
-                            animate={{ width: step > item.id ? '100%' : '0%' }}
-                            transition={{ type: 'spring', stiffness: 260, damping: 30 }}
-                          />
-                        </div>
+                      <div className="hidden min-w-5 max-w-10 items-center justify-center text-muted-foreground sm:flex">
+                        <MotionSpan
+                          initial={false}
+                          animate={{ color: step > item.id ? 'var(--brand)' : 'var(--muted-foreground)' }}
+                          className="leading-none"
+                        >
+                          <ChevronRight className="size-7" aria-hidden />
+                        </MotionSpan>
                       </div>
                     )}
                   </Fragment>
@@ -548,65 +693,97 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-hidden px-4 py-4">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const picked = e.target.files?.[0]
+              e.target.value = ''
+              handleFilePicked(picked)
+            }}
+          />
+
+          <div className="min-h-0 flex-1 overflow-hidden px-4 py-5 sm:px-8">
             <AnimatePresence mode="wait">
               {step === 1 && (
-                <motion.div
+                <MotionDiv
                   key="step-upload"
                   initial={{ opacity: 0, y: 14, scale: 0.995 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -10, scale: 0.995 }}
                   transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                  className="mx-auto w-full max-w-2xl space-y-5"
+                  className="mx-auto flex h-full w-full max-w-5xl flex-col gap-5"
                 >
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault()
-                setIsDragging(false)
-                handleFilePicked(e.dataTransfer.files?.[0])
-              }}
-                    className={`w-full rounded-3xl border border-dashed px-8 py-16 text-center transition-all duration-300 ${
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setIsDragging(true)
+                    }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      setIsDragging(false)
+                      handleFilePicked(e.dataTransfer.files?.[0])
+                    }}
+                    disabled={parsing}
+                    className={cn(
+                      'group flex min-h-72 w-full flex-1 flex-col items-center justify-center rounded-3xl border border-dashed px-6 py-10 text-center transition-all duration-300',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-card',
                       isDragging
-                        ? 'border-primary bg-primary/12 shadow-[0_0_0_6px_rgba(99,102,241,0.08)]'
-                        : 'border-slate-300/80 bg-white hover:border-primary/30 hover:bg-slate-50'
-              }`}
-            >
-                    <div className="mx-auto mb-5 flex size-20 items-center justify-center rounded-full bg-primary/10 shadow-inner">
-                      <UploadCloud className="size-10 text-primary" />
-              </div>
-                    <p className="text-xl font-semibold text-foreground">Drag and drop your XLSX/CSV file</p>
-                    <p className="mt-2 text-sm text-muted-foreground">Supported formats: `.xlsx`, `.csv` · Max size: 10 MB</p>
-                    <div className="mt-6">
-                      <span className="inline-flex items-center rounded-md border border-slate-300 bg-white px-6 py-2.5 text-sm font-medium shadow-sm">
-                  Browse files
-                </span>
-              </div>
-            </button>
+                        ? 'border-brand bg-brand/10 shadow-[0_0_0_6px_rgba(249,115,22,0.10)]'
+                        : 'border-brand/45 bg-background/55 hover:border-brand/70 hover:bg-brand/5',
+                    )}
+                  >
+                    <div className="mb-5 flex size-20 items-center justify-center rounded-full bg-brand/10 text-brand shadow-inner transition-transform group-hover:scale-105">
+                      {parsing ? <Loader2 className="size-9 animate-spin" aria-hidden /> : <UploadCloud className="size-10" aria-hidden />}
+                    </div>
+                    <p className="text-xl font-bold tracking-tight text-foreground">Drag and drop your XLSX/CSV file</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Supported formats: .xlsx, .xls, .csv <span className="mx-1 text-brand" aria-hidden>&bull;</span> Max size: 10 MB
+                    </p>
+                    <span className="mt-6 inline-flex items-center gap-2 rounded-lg bg-brand px-6 py-3 text-sm font-semibold text-brand-foreground shadow-lg shadow-brand/20 transition-colors group-hover:bg-brand-strong">
+                      <FolderOpen className="size-4" aria-hidden />
+                      Browse files
+                    </span>
+                  </button>
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx"
-              className="hidden"
-              onChange={(e) => handleFilePicked(e.target.files?.[0])}
-            />
+                  {file && (
+                    <div className="flex items-center gap-3 rounded-xl border border-border bg-background/75 px-4 py-3 text-sm shadow-sm">
+                      <FileSpreadsheet className="size-5 shrink-0 text-brand" aria-hidden />
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-foreground">{file.name}</p>
+                        <p className="text-xs text-muted-foreground">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                      </div>
+                      {parsing && <Loader2 className="ml-auto size-4 animate-spin text-muted-foreground" aria-hidden />}
+                    </div>
+                  )}
 
-            {file && (
-                    <div className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm">
-                <FileSpreadsheet className="size-4 text-primary" />
-                <span className="truncate">{file.name}</span>
-                {parsing && <Loader2 className="ml-auto size-4 animate-spin text-muted-foreground" />}
-              </div>
-            )}
-                </motion.div>
+                  <div className="flex flex-col gap-3 rounded-2xl border border-brand/15 bg-brand/5 px-5 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-3 text-muted-foreground">
+                      <Lightbulb className="mt-0.5 size-5 shrink-0 text-brand" aria-hidden />
+                      <p>
+                        <span className="font-semibold text-foreground">Tip:</span> Download our sample template to ensure correct formatting.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="justify-start text-brand hover:bg-brand/10 hover:text-brand sm:justify-center"
+                      onClick={downloadEmployeeImportTemplate}
+                    >
+                      <Download className="size-4" aria-hidden />
+                      Download template
+                    </Button>
+                  </div>
+                </MotionDiv>
               )}
 
               {step === 2 && (
-                <motion.div
+                <MotionDiv
                   key="step-preview"
                   initial={{ opacity: 0, y: 14, scale: 0.995 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -614,214 +791,231 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
                   transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                   className="flex h-full min-h-0 flex-col space-y-4"
                 >
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">Total: {metrics.total}</Badge>
-              <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">All rows eligible to import</Badge>
-              {metrics.withNotes > 0 ? (
-                <Badge variant="outline">Notes on {metrics.withNotes} row(s)</Badge>
-              ) : null}
-              <Badge variant="outline">Estimated success: {metrics.successRate}%</Badge>
-            </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">Total: {metrics.total}</Badge>
+                    <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">All rows eligible to import</Badge>
+                    {metrics.withNotes > 0 ? <Badge variant="outline">Notes on {metrics.withNotes} row(s)</Badge> : null}
+                    <Badge variant="outline">Estimated success: {metrics.successRate}%</Badge>
+                    {file ? (
+                      <Badge variant="outline" className="max-w-full gap-1">
+                        <FileText className="size-3" aria-hidden />
+                        <span className="truncate">{file.name}</span>
+                      </Badge>
+                    ) : null}
+                  </div>
 
-                  <div className="h-[64vh] max-h-[64vh] overflow-auto rounded-xl border border-slate-200 bg-white overscroll-contain">
+                  <div className="h-[64vh] max-h-[64vh] overflow-auto rounded-2xl border border-border bg-background overscroll-contain shadow-sm">
                     <table className="w-max min-w-[2600px] border-collapse text-sm text-foreground">
-                <thead className="sticky top-0 z-20">
+                      <thead className="sticky top-0 z-20">
                         {groupedHeaderSegments.length > 0 && (
-                          <tr className="border-b border-slate-200">
-                            <th className="sticky left-0 z-30 w-14 bg-white px-4 py-3 text-left text-xs font-semibold text-slate-500">Sections</th>
+                          <tr className="border-b border-border">
+                            <th className="sticky left-0 z-30 w-14 bg-background px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Sections</th>
                             {groupedHeaderSegments.map((seg, idx) => (
                               <th
                                 key={`${seg.groupId}-${idx}`}
                                 colSpan={seg.span}
-                                className="bg-slate-50 px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-600"
+                                className="bg-muted px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                               >
                                 {seg.label}
                               </th>
                             ))}
-                            <th className="bg-slate-50 px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-600">Validation</th>
+                            <th className="bg-muted px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">Validation</th>
                           </tr>
                         )}
-                  <tr className="border-b border-slate-200 bg-white">
-                          <th className="sticky left-0 z-30 w-14 bg-white px-4 py-3 text-left">#</th>
-                    {previewHeaders.map((header) => (
-                            <th key={header} className="whitespace-nowrap bg-white px-4 py-3 text-left font-semibold">{header}</th>
-                    ))}
-                          <th className="min-w-72 bg-white px-4 py-3 text-left font-semibold">Validation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {previewRows.map((item) => (
-                    <tr key={item.id} className="border-b border-slate-100">
-                            <td className="sticky left-0 z-10 bg-white px-4 py-2.5">{item.index}</td>
-                      {previewHeaders.map((header) => {
-                        const value = String(item.row[header] ?? '').trim()
-                        return (
-                          <td key={`${item.id}-${header}`} className="px-4 py-2.5">
-                            {value || <span className="text-muted-foreground">—</span>}
-                          </td>
-                        )
-                      })}
-                      <td className="px-4 py-2.5">
-                        <div className="space-y-1">
-                          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-300">
-                            <CheckCircle2 className="size-4" /> Ready
-                          </span>
-                          {item.issues.length > 0 && (
-                            <p className="max-w-xs text-xs leading-snug text-muted-foreground">
-                              {item.issues.join(' · ')}
-                            </p>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-muted-foreground">Scroll vertically for rows and horizontally for all columns.</p>
-                </motion.div>
+                        <tr className="border-b border-border">
+                          <th className="sticky left-0 z-30 w-14 bg-background px-4 py-3 text-left">#</th>
+                          {previewHeaders.map((header) => (
+                            <th key={header} className="whitespace-nowrap bg-background px-4 py-3 text-left font-semibold">
+                              {header}
+                            </th>
+                          ))}
+                          <th className="min-w-72 bg-background px-4 py-3 text-left font-semibold">Validation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewRows.length > 0 ? (
+                          previewRows.map((item) => (
+                            <tr key={item.id} className="border-b border-border/70 hover:bg-muted/35">
+                              <td className="sticky left-0 z-10 bg-background px-4 py-2.5">{item.index}</td>
+                              {previewHeaders.map((header) => {
+                                const value = String(item.row[header] ?? '').trim()
+                                return (
+                                  <td key={`${item.id}-${header}`} className="px-4 py-2.5">
+                                    {value || <span className="text-muted-foreground">-</span>}
+                                  </td>
+                                )
+                              })}
+                              <td className="px-4 py-2.5">
+                                <div className="space-y-1">
+                                  <span className="inline-flex items-center gap-1 font-medium text-emerald-600 dark:text-emerald-300">
+                                    <CheckCircle2 className="size-4" aria-hidden /> Ready
+                                  </span>
+                                  {item.issues.length > 0 && (
+                                    <p className="max-w-xs text-xs leading-snug text-muted-foreground">
+                                      {item.issues.join(' / ')}
+                                    </p>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td className="px-4 py-12 text-center text-muted-foreground" colSpan={Math.max(2, previewHeaders.length + 2)}>
+                              No employee rows were found in this file.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Scroll vertically for rows and horizontally for all columns.</p>
+                </MotionDiv>
               )}
 
               {step === 3 && (
-                <motion.div
+                <MotionDiv
                   key="step-import"
                   initial={{ opacity: 0, y: 14, scale: 0.995 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -10, scale: 0.995 }}
                   transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                  className="mx-auto w-full max-w-xl space-y-4"
+                  className="mx-auto w-full max-w-2xl space-y-4"
                 >
-            <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80 p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-3">
-                <motion.div
-                  className={`flex size-11 shrink-0 items-center justify-center rounded-full ${
-                    importing
-                      ? 'bg-primary/15 text-primary'
-                      : importHasFailures
-                        ? 'bg-amber-100 text-amber-700'
-                        : backendResult
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-primary/15 text-primary'
-                  }`}
-                  animate={importing ? { scale: [1, 1.06, 1] } : { scale: 1 }}
-                  transition={{ duration: 1.2, repeat: importing ? Infinity : 0, ease: 'easeInOut' }}
-                >
-                  {importing ? (
-                    <Loader2 className="size-5 animate-spin" aria-hidden />
-                  ) : importHasFailures ? (
-                    <AlertTriangle className="size-5" aria-hidden />
-                  ) : backendResult ? (
-                    <CheckCircle2 className="size-5" aria-hidden />
-                  ) : (
-                    <Loader2 className="size-5 text-muted-foreground" aria-hidden />
-                  )}
-                </motion.div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">
-                    {importing ? 'Importing employees' : backendResult ? 'Import finished' : 'Import status'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {importing ? importingLabel : backendResult ? 'Review the summary below.' : 'Waiting…'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-200/90">
-                {importing && (
-                  <motion.div
-                    className="pointer-events-none absolute inset-y-0 w-1/3 rounded-full bg-gradient-to-r from-transparent via-white/70 to-transparent"
-                    initial={{ x: '-40%' }}
-                    animate={{ x: ['-40%', '140%'] }}
-                    transition={{ duration: 1.35, repeat: Infinity, ease: 'linear' }}
-                    aria-hidden
-                  />
-                )}
-                <motion.div
-                  className="absolute inset-y-0 left-0 rounded-full bg-primary"
-                  initial={false}
-                  animate={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
-                  transition={{ type: 'spring', stiffness: 120, damping: 22 }}
-                />
-              </div>
-              <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                <span>{importing ? 'Please keep this window open…' : ' '}</span>
-                <span className="font-mono font-medium tabular-nums text-foreground">{Math.round(progress)}%</span>
-              </div>
-              <Progress value={progress} className="sr-only" indicatorClassName="bg-primary" />
-            </div>
-
-            {backendResult && (
-              <div className="space-y-2 rounded-md border border-slate-300 bg-white p-4">
-                <div className="flex flex-wrap gap-2 text-sm">
-                  <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Success: {backendResult.imported || 0}</Badge>
-                  <Badge variant="destructive">Failed: {backendResult.failed || 0}</Badge>
-                  <Badge variant="secondary">Skipped: {Math.max((metrics.total || 0) - (backendResult.total_rows || 0), 0)}</Badge>
-                </div>
-                {Array.isArray(backendResult.errors) && backendResult.errors.length > 0 && (
-                  <div className="max-h-40 overflow-auto rounded border border-slate-300 bg-white p-2 text-xs text-muted-foreground">
-                    {backendResult.errors.slice(0, 30).map((err, idx) => (
-                      <p key={`${err.row || 0}-${idx}`}>Row {err.row || '-'}: {err.message}</p>
-                    ))}
-                  </div>
-                )}
-                {canUndoImport &&
-                  backendResult.import_batch_id &&
-                  (backendResult.imported || 0) > 0 &&
-                  !importing && (
-                    <div className="flex flex-col gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:items-center sm:justify-between">
-                      <p className="text-xs text-muted-foreground">
-                        Remove every employee record created in this import run (same as deleting each one).
-                      </p>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="sm"
-                        className="shrink-0"
-                        disabled={rollingBack}
-                        onClick={undoLastImport}
-                      >
-                        {rollingBack ? (
-                          <>
-                            <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-                            Removing…
-                          </>
-                        ) : (
-                          <>Remove this import ({backendResult.imported || 0})</>
+                  <div className="relative overflow-hidden rounded-2xl border border-border bg-background/75 p-5 shadow-sm">
+                    <div className="mb-4 flex items-center gap-3">
+                      <MotionDiv
+                        className={cn(
+                          'flex size-12 shrink-0 items-center justify-center rounded-full',
+                          importing && 'bg-brand/10 text-brand',
+                          !importing && importHasFailures && 'bg-amber-500/10 text-amber-600 dark:text-amber-300',
+                          !importing && backendResult && !importHasFailures && 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
+                          !importing && !backendResult && 'bg-muted text-muted-foreground',
                         )}
-                      </Button>
+                        animate={importing ? { scale: [1, 1.06, 1] } : { scale: 1 }}
+                        transition={{ duration: 1.2, repeat: importing ? Infinity : 0, ease: 'easeInOut' }}
+                      >
+                        {importing ? (
+                          <Loader2 className="size-5 animate-spin" aria-hidden />
+                        ) : importHasFailures ? (
+                          <AlertTriangle className="size-5" aria-hidden />
+                        ) : backendResult ? (
+                          <CheckCircle2 className="size-5" aria-hidden />
+                        ) : (
+                          <Loader2 className="size-5 text-muted-foreground" aria-hidden />
+                        )}
+                      </MotionDiv>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">
+                          {importing ? 'Importing employees' : backendResult ? 'Import finished' : 'Import status'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {importing ? importingLabel : backendResult ? 'Review the summary below.' : 'Waiting...'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="relative h-3 w-full overflow-hidden rounded-full bg-muted">
+                      {importing && (
+                        <MotionDiv
+                          className="pointer-events-none absolute inset-y-0 w-1/3 rounded-full bg-linear-to-r from-transparent via-white/70 to-transparent dark:via-white/25"
+                          initial={{ x: '-40%' }}
+                          animate={{ x: ['-40%', '140%'] }}
+                          transition={{ duration: 1.35, repeat: Infinity, ease: 'linear' }}
+                          aria-hidden
+                        />
+                      )}
+                      <MotionDiv
+                        className="absolute inset-y-0 left-0 rounded-full bg-brand"
+                        initial={false}
+                        animate={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+                        transition={{ type: 'spring', stiffness: 120, damping: 22 }}
+                      />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{importing ? 'Please keep this window open...' : ' '}</span>
+                      <span className="font-mono font-medium tabular-nums text-foreground">{Math.round(progress)}%</span>
+                    </div>
+                    <Progress value={progress} className="sr-only" indicatorClassName="bg-brand" />
+                  </div>
+
+                  {backendResult && (
+                    <div className="space-y-3 rounded-2xl border border-border bg-background/75 p-4 shadow-sm">
+                      <div className="flex flex-wrap gap-2 text-sm">
+                        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Success: {backendResult.imported || 0}</Badge>
+                        <Badge variant="destructive">Failed: {backendResult.failed || 0}</Badge>
+                        <Badge variant="secondary">Skipped: {Math.max((metrics.total || 0) - (backendResult.total_rows || 0), 0)}</Badge>
+                      </div>
+                      {Array.isArray(backendResult.errors) && backendResult.errors.length > 0 && (
+                        <div className="max-h-40 overflow-auto rounded-xl border border-border bg-card p-3 text-xs text-muted-foreground">
+                          {backendResult.errors.slice(0, 30).map((err, idx) => (
+                            <p key={`${err.row || 0}-${idx}`}>Row {err.row || '-'}: {err.message}</p>
+                          ))}
+                        </div>
+                      )}
+                      {canUndoImport &&
+                        backendResult.import_batch_id &&
+                        (backendResult.imported || 0) > 0 &&
+                        !importing && (
+                          <div className="flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-xs text-muted-foreground">
+                              Remove every employee record created in this import run (same as deleting each one).
+                            </p>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              className="shrink-0"
+                              disabled={rollingBack}
+                              onClick={undoLastImport}
+                            >
+                              {rollingBack ? (
+                                <>
+                                  <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+                                  Removing...
+                                </>
+                              ) : (
+                                <>Remove this import ({backendResult.imported || 0})</>
+                              )}
+                            </Button>
+                          </div>
+                        )}
                     </div>
                   )}
-              </div>
-            )}
-                </motion.div>
+                </MotionDiv>
               )}
             </AnimatePresence>
           </div>
 
-          <DialogFooter className="bg-white px-5 py-3">
-          {step === 1 && (
-            <Button type="button" variant="outline" onClick={() => closeModal(false)}>
-              Cancel
-            </Button>
-          )}
-          {step === 2 && (
-            <>
-              <Button type="button" variant="outline" onClick={() => setStep(1)}>
-                Back
+          <DialogFooter className="border-t border-border/60 bg-card px-5 py-4 sm:px-8">
+            {step === 1 && (
+              <Button type="button" variant="outline" onClick={() => closeModal(false)}>
+                Cancel
               </Button>
-                <Button type="button" className="bg-[#0f172a] text-white hover:bg-[#111827]" onClick={startImport} disabled={importing || !(file instanceof File)}>
-                {importing ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : null}
-                Import Now
+            )}
+            {step === 2 && (
+              <>
+                <Button type="button" variant="outline" onClick={() => setStep(1)}>
+                  Back
+                </Button>
+                <Button
+                  type="button"
+                  className="bg-brand text-brand-foreground hover:bg-brand-strong"
+                  onClick={startImport}
+                  disabled={importing || !(file instanceof File) || metrics.total === 0}
+                >
+                  {importing ? <Loader2 className="mr-1.5 size-4 animate-spin" aria-hidden /> : null}
+                  Import Now
+                </Button>
+              </>
+            )}
+            {step === 3 && (
+              <Button type="button" variant="outline" onClick={() => closeModal(false)} disabled={importing}>
+                {backendResult ? 'Done' : 'Close'}
               </Button>
-            </>
-          )}
-          {step === 3 && (
-            <Button type="button" variant="outline" onClick={() => closeModal(false)} disabled={importing}>
-              {backendResult ? 'Done' : 'Close'}
-            </Button>
-          )}
-        </DialogFooter>
-        </motion.div>
+            )}
+          </DialogFooter>
+        </MotionDiv>
       </DialogContent>
     </Dialog>
   )
