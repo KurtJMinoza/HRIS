@@ -28,6 +28,7 @@ import {
   XCircle,
   CircleDashed,
   Fingerprint,
+  Funnel,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -1328,20 +1329,22 @@ export default function AdminEmployees() {
 
   return (
     <motion.div
-      className="space-y-6"
+      className="admin-employees-page space-y-7 text-foreground"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={pageTransition}
     >
       <div className="flex flex-col gap-4 @sm:flex-row @sm:items-center @sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Employees</h2>
-          <CardDescription>Add employees, issue QR codes, assign schedule, and activate or deactivate.</CardDescription>
+          <h2 className="text-[30px] font-extrabold leading-tight tracking-tight text-foreground">Employees</h2>
+          <CardDescription className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            Add employees, issue QR codes, assign schedule, and activate or deactivate.
+          </CardDescription>
         </div>
         <div className="flex items-center @sm:justify-end">
           <Button
             type="button"
-            className="h-9 bg-[#0A0A0A] text-white hover:bg-[#171717]"
+            className="h-12 rounded-md bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_14px_28px_rgba(255,107,0,0.24)] hover:bg-brand-strong dark:shadow-[0_16px_36px_rgba(0,0,0,0.35)]"
             onClick={openAddEmployeeModal}
           >
             <Plus className="mr-1.5 size-4" />
@@ -1413,30 +1416,39 @@ export default function AdminEmployees() {
         </DialogContent>
       </Dialog>
 
-      <Card className="border-0 bg-card shadow-sm overflow-hidden">
-          <CardHeader className="border-b border-border/40 bg-muted/20 dark:border-border/50 dark:bg-muted/30">
-            <div className="flex flex-col gap-3 @md:flex-row @md:items-center @md:justify-between">
+      <Card className="overflow-hidden rounded-lg border border-border/70 bg-card py-0 shadow-[0_1px_0_rgba(15,23,42,0.03),0_16px_36px_rgba(15,23,42,0.06)] dark:border-border dark:bg-card dark:shadow-[0_18px_44px_rgba(0,0,0,0.32)]">
+          <CardHeader className="border-b border-border/60 bg-card px-5 py-6 dark:bg-card">
+            <div className="grid gap-4 @lg:grid-cols-[minmax(14rem,1fr)_minmax(18rem,30rem)_auto] @lg:items-start">
               <div>
-                <CardTitle className="text-lg font-semibold">Employee Directory</CardTitle>
-                <CardDescription>
+                <CardTitle className="text-lg font-extrabold tracking-tight text-foreground">Employee Directory</CardTitle>
+                <CardDescription className="mt-1 text-sm text-muted-foreground">
                   {filteredEmployees.length} of {pagination.total} employee(s)
                 </CardDescription>
               </div>
-              <div className="flex flex-wrap items-center gap-2 @md:justify-end">
-                <div className="relative w-full @md:w-64">
+              <div className="relative w-full">
                   <Input
                     type="text"
-                    className="h-9 pl-8 text-sm"
-                    placeholder="Search name, username, email, department"
+                    className="h-10 rounded-md border-border/70 bg-background pl-10 pr-10 text-sm shadow-inner placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-brand/25 dark:bg-background/70"
+                    placeholder="Search by name, username, or email..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground opacity-90 dark:text-primary/65" />
+                  <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md border border-border/60 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                    title="Search filters"
+                    onClick={() => setSearchModalOpen(true)}
+                  >
+                    <Funnel className="size-3.5" />
+                  </button>
                 </div>
+              <div className="flex flex-col items-stretch gap-3 @lg:items-end">
+                <div className="flex flex-wrap items-center gap-2 @lg:justify-end">
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-9"
+                  className="h-10 rounded-md border-brand/70 px-4 text-xs font-bold text-brand hover:bg-brand/8 hover:text-brand"
                   onClick={() => setImportOpen(true)}
                   disabled={!canCreateEmployees}
                   title={canCreateEmployees ? 'Import employees from CSV/XLSX' : 'No create permission'}
@@ -1447,7 +1459,7 @@ export default function AdminEmployees() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-9"
+                  className="h-10 rounded-md border-brand/70 px-4 text-xs font-bold text-brand hover:bg-brand/8 hover:text-brand"
                   onClick={handleExportAllCsv}
                   disabled={!canExportEmployees || exportingCsv}
                   title={canExportEmployees ? 'Export all employees to CSV' : 'No export permission'}
@@ -1455,22 +1467,23 @@ export default function AdminEmployees() {
                   {exportingCsv ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Download className="mr-1.5 size-4" />}
                   Export All to CSV
                 </Button>
+                </div>
                 {/* Density toggle */}
                 <button
                   type="button"
                   title={density === 'comfortable' ? 'Switch to compact view' : 'Switch to comfortable view'}
                   onClick={() => setDensity((d) => d === 'comfortable' ? 'compact' : 'comfortable')}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-md border border-input bg-transparent px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground dark:border-border/50 dark:bg-input/30"
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-transparent bg-transparent px-3 text-xs font-semibold text-foreground transition-colors hover:border-border/60 hover:bg-muted/50 dark:text-foreground"
                 >
                   <LayoutList className="size-3.5" />
-                  {density === 'comfortable' ? 'Comfortable' : 'Compact'}
+                  Customize
                 </button>
               </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
             {selectedIds.length > 0 && canMutateRows && (
-              <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-border/40 bg-muted/30 dark:border-sky-400/25 dark:bg-primary/10 px-4 py-2.5">
+              <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-brand/8 px-5 py-3 dark:bg-brand/12">
                 <p className="text-sm font-medium text-foreground">
                   {selectedIds.length} Employee{selectedIds.length !== 1 ? 's' : ''} Selected
                 </p>
@@ -1526,9 +1539,9 @@ export default function AdminEmployees() {
             ) : (
               <>
                 {/* Filter chips bar — glass */}
-                <div className="border-b border-border/30 bg-white/80 px-4 py-2.5 backdrop-blur-sm dark:border-border/40 dark:bg-muted/45 dark:backdrop-blur-md">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">Filter:</span>
+                <div className="border-b border-border/60 bg-background/55 px-5 py-4 backdrop-blur-sm dark:bg-background/25">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Filter:</span>
 
                     {/* Company — neutral chip styling (matches Status/Inactive); avoids sky-on-sky + native option contrast issues */}
                     <div className="relative inline-flex items-center">
@@ -1536,11 +1549,11 @@ export default function AdminEmployees() {
                         value={filterCompany}
                         onChange={(e) => setFilterCompany(e.target.value)}
                         className={cn(
-                          'h-7 min-w-36 max-w-56 truncate appearance-none rounded-full border pl-3 text-[11px] font-semibold transition-all focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer bg-background text-foreground dark:scheme-dark',
+                          'h-10 min-w-40 max-w-60 truncate appearance-none rounded-md border pl-3 text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-brand/25 cursor-pointer bg-card text-foreground dark:scheme-dark',
                           filterCompany ? 'pr-17' : 'pr-8',
                           filterCompany
-                            ? 'border-zinc-400/55 bg-zinc-500/10 text-foreground dark:border-zinc-500/50 dark:bg-zinc-500/15 dark:text-zinc-100'
-                            : 'border-border/60 bg-muted/30 text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground dark:border-border/50',
+                            ? 'border-brand/50 bg-brand/8 text-foreground dark:border-brand/45 dark:bg-brand/12'
+                            : 'border-border/70 bg-card text-foreground hover:border-border hover:bg-muted/35 dark:border-border',
                         )}
                       >
                         <option value="">All companies</option>
@@ -1568,12 +1581,12 @@ export default function AdminEmployees() {
                         type="button"
                         onClick={() => setFilterStatus(filterStatus === val ? '' : val)}
                         className={[
-                          'inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition-all',
+                          'inline-flex h-10 items-center gap-1.5 rounded-md border px-4 text-sm font-medium transition-all',
                           filterStatus === val
                             ? color === 'emerald'
-                              ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-700 dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-emerald-300'
+                              ? 'border-brand/70 bg-brand/8 text-brand dark:border-brand/60 dark:bg-brand/12 dark:text-brand'
                               : 'border-zinc-500/60 bg-zinc-500/15 text-zinc-700 dark:border-zinc-400/50 dark:bg-zinc-500/20 dark:text-zinc-300'
-                            : 'border-border/60 bg-transparent text-muted-foreground hover:border-border hover:text-foreground',
+                            : 'border-border/70 bg-card text-foreground hover:border-brand/50 hover:bg-brand/5 hover:text-brand dark:bg-card',
                         ].join(' ')}
                       >
                         {filterStatus === val
@@ -1589,12 +1602,12 @@ export default function AdminEmployees() {
                         type="button"
                         onClick={() => setFilterSchedule(filterSchedule === val ? '' : val)}
                         className={[
-                          'inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition-all',
+                          'inline-flex h-10 items-center gap-1.5 rounded-md border px-4 text-sm font-medium transition-all',
                           filterSchedule === val
                             ? color === 'indigo'
                               ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-700 dark:border-indigo-400/50 dark:bg-indigo-500/20 dark:text-indigo-300'
                               : 'border-amber-500/60 bg-amber-500/15 text-amber-700 dark:border-amber-400/50 dark:bg-amber-500/20 dark:text-amber-300'
-                            : 'border-border/60 bg-transparent text-muted-foreground hover:border-border hover:text-foreground',
+                            : 'border-border/70 bg-card text-foreground hover:border-brand/50 hover:bg-brand/5 hover:text-brand dark:bg-card',
                         ].join(' ')}
                       >
                         {filterSchedule === val
@@ -1610,12 +1623,12 @@ export default function AdminEmployees() {
                         type="button"
                         onClick={() => setFilterFace(filterFace === val ? '' : val)}
                         className={[
-                          'inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] font-semibold transition-all',
+                          'inline-flex h-10 items-center gap-1.5 rounded-md border px-4 text-sm font-medium transition-all',
                           filterFace === val
                             ? color === 'emerald'
                               ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-700 dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-emerald-300'
                               : 'border-rose-500/60 bg-rose-500/15 text-rose-700 dark:border-rose-400/50 dark:bg-rose-500/20 dark:text-rose-300'
-                            : 'border-border/60 bg-transparent text-muted-foreground hover:border-border hover:text-foreground',
+                            : 'border-border/70 bg-card text-foreground hover:border-brand/50 hover:bg-brand/5 hover:text-brand dark:bg-card',
                         ].join(' ')}
                       >
                         {filterFace === val
@@ -1629,8 +1642,9 @@ export default function AdminEmployees() {
                       <button
                         type="button"
                         onClick={() => { setFilterCompany(''); setFilterStatus(''); setFilterSchedule(''); setFilterFace('') }}
-                        className="ml-1 text-[11px] font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+                        className="ml-auto inline-flex h-10 items-center gap-1 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                       >
+                        <X className="size-3.5" />
                         Clear all
                       </button>
                     )}
@@ -1638,10 +1652,10 @@ export default function AdminEmployees() {
                 </div>
                 <div className="overflow-x-auto bg-card">
                   <table className="w-full text-sm text-foreground">
-                    <thead className="sticky top-0 z-10 border-b border-border/30 bg-[#f1f5f9] dark:border-border/50 dark:bg-card shadow-[0_1px_0_0_var(--border)]">
+                    <thead className="sticky top-0 z-10 border-b border-border/60 bg-muted/35 shadow-[0_1px_0_0_var(--border)] dark:border-border dark:bg-background/35">
                       <tr>
                         {canMutateRows && (
-                          <th className="w-12 min-w-12 max-w-12 pl-4 pr-2 py-3 text-center">
+                          <th className="w-12 min-w-12 max-w-12 py-4 pl-4 pr-2 text-center">
                             <Checkbox
                               checked={allVisibleSelected}
                               onCheckedChange={toggleSelectAllVisible}
@@ -1655,7 +1669,7 @@ export default function AdminEmployees() {
                           </th>
                         )}
                         <th
-                          className="cursor-pointer text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 select-none transition-colors"
+                          className="cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
                           onClick={() => toggleSort('name')}
                         >
                           <span className="inline-flex items-center gap-1">
@@ -1664,7 +1678,7 @@ export default function AdminEmployees() {
                           </span>
                         </th>
                         <th
-                          className="cursor-pointer text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 w-[150px] max-w-[150px] hover:text-slate-700 dark:hover:text-slate-200 select-none transition-colors"
+                          className="w-[150px] max-w-[150px] cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
                           onClick={() => toggleSort('company_name')}
                         >
                           <span className="inline-flex items-center gap-1">
@@ -1672,10 +1686,10 @@ export default function AdminEmployees() {
                             {sortBy === 'company_name' ? (sortDir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUp className="size-3 opacity-20" />}
                           </span>
                         </th>
-                        <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Position</th>
-                        <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Branch</th>
+                        <th className="px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Position</th>
+                        <th className="px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Branch</th>
                         <th
-                          className="cursor-pointer text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 w-[128px] max-w-[140px] hover:text-slate-700 dark:hover:text-slate-200 select-none transition-colors"
+                          className="w-[128px] max-w-[140px] cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
                           onClick={() => toggleSort('employment_status')}
                         >
                           <span className="inline-flex items-center gap-1">
@@ -1683,13 +1697,13 @@ export default function AdminEmployees() {
                             {sortBy === 'employment_status' ? (sortDir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUp className="size-3 opacity-20" />}
                           </span>
                         </th>
-                        <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Hire Date</th>
-                        <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        <th className="px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Hire Date</th>
+                        <th className="whitespace-nowrap px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                           Leave credits
                         </th>
-                        <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">QR</th>
+                        <th className="px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">QR</th>
                         <th
-                          className="cursor-pointer text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 select-none transition-colors"
+                          className="cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
                           onClick={() => toggleSort('schedule')}
                         >
                           <span className="inline-flex items-center gap-1">
@@ -1698,7 +1712,7 @@ export default function AdminEmployees() {
                           </span>
                         </th>
                         <th
-                          className="cursor-pointer text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 select-none transition-colors"
+                          className="cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
                           onClick={() => toggleSort('face')}
                         >
                           <span className="inline-flex items-center gap-1">
@@ -1707,7 +1721,7 @@ export default function AdminEmployees() {
                           </span>
                         </th>
                         <th
-                          className="cursor-pointer text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 select-none transition-colors"
+                          className="cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
                           onClick={() => toggleSort('status')}
                         >
                           <span className="inline-flex items-center gap-1">
@@ -1715,7 +1729,7 @@ export default function AdminEmployees() {
                             {sortBy === 'status' ? (sortDir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUp className="size-3 opacity-20" />}
                           </span>
                         </th>
-                        <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Actions</th>
+                        <th className="px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Actions</th>
                       </tr>
                     </thead>
                   <tbody>
@@ -1739,15 +1753,15 @@ export default function AdminEmployees() {
                           initial={false}
                           transition={{ duration: 0.15 }}
                           className={[
-                            'group cursor-pointer border-b border-border/20 transition-all duration-150 dark:border-border/40',
-                            density === 'compact' ? '[&>td]:py-2' : '[&>td]:py-5',
+                            'group cursor-pointer border-b border-border/45 transition-all duration-150 dark:border-border/55',
+                            density === 'compact' ? '[&>td]:py-2.5' : '[&>td]:py-5',
                             isSelected
-                              ? 'bg-sky-50 dark:bg-primary/10 [&>td:first-child]:shadow-[inset_3px_0_0_rgba(14,165,233,0.7)]'
+                              ? 'bg-brand/7 dark:bg-brand/10 [&>td:first-child]:shadow-[inset_3px_0_0_var(--brand)]'
                               : isActive
-                              ? 'bg-primary/5 dark:bg-primary/10 [&>td:first-child]:shadow-[inset_3px_0_0_rgba(99,102,241,0.7)]'
+                              ? 'bg-brand/5 dark:bg-brand/10 [&>td:first-child]:shadow-[inset_3px_0_0_var(--brand)]'
                               : isEven
-                              ? 'bg-white dark:bg-muted/30 hover:bg-slate-50 dark:hover:bg-muted/45 [&:hover>td:first-child]:shadow-[inset_3px_0_0_rgba(20,184,166,0.55)]'
-                              : 'bg-[#f8fafc] dark:bg-card hover:bg-slate-50 dark:hover:bg-muted/40 [&:hover>td:first-child]:shadow-[inset_3px_0_0_rgba(20,184,166,0.55)]',
+                              ? 'bg-card hover:bg-muted/25 dark:bg-card dark:hover:bg-muted/30 [&:hover>td:first-child]:shadow-[inset_3px_0_0_var(--brand)]'
+                              : 'bg-card hover:bg-muted/25 dark:bg-card dark:hover:bg-muted/30 [&:hover>td:first-child]:shadow-[inset_3px_0_0_var(--brand)]',
                           ].join(' ')}
                         >
                           {canMutateRows && (
@@ -1766,7 +1780,7 @@ export default function AdminEmployees() {
                           {/* Employee cell — avatar + name hierarchy */}
                           <td className="px-4">
                             <div className="flex items-center gap-3">
-                              <Avatar className={`shrink-0 rounded-full shadow-sm ring-2 ring-border/20 transition-all group-hover:ring-teal-500/30 ${density === 'compact' ? 'size-8' : 'size-11'}`}>
+                              <Avatar className={`shrink-0 rounded-full shadow-sm ring-2 ring-border/40 transition-all group-hover:ring-brand/30 ${density === 'compact' ? 'size-8' : 'size-11'}`}>
                                 <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" className="object-cover" />
                                 <AvatarFallback className={`rounded-full font-bold ${density === 'compact' ? 'text-xs' : 'text-sm'} ${getAvatarColor(emp.id, emp.name)}`}>
                                   {initials}
@@ -1774,12 +1788,12 @@ export default function AdminEmployees() {
                               </Avatar>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  <p className="font-bold text-[14.5px] leading-tight text-slate-900 dark:text-slate-100 truncate max-w-[190px]">{emp.name}</p>
+                                  <p className="max-w-[190px] truncate text-[14.5px] font-bold leading-tight text-foreground">{emp.name}</p>
                                   <RoleBadge user={emp} size={density === 'compact' ? 'xs' : 'sm'} />
                                 </div>
-                                <p className="truncate text-[11px] text-slate-500 dark:text-slate-500 max-w-[190px]">{emp.email}</p>
+                                <p className="max-w-[190px] truncate text-[11px] text-muted-foreground">{emp.email}</p>
                                 {emp.phone_number && density !== 'compact' && (
-                                  <p className="text-[10.5px] text-slate-400 dark:text-slate-600">{emp.phone_number}</p>
+                                  <p className="text-[10.5px] text-muted-foreground/70">{emp.phone_number}</p>
                                 )}
                               </div>
                             </div>
@@ -1804,7 +1818,7 @@ export default function AdminEmployees() {
                                       {emp.company_name[0].toUpperCase()}
                                     </span>
                                   )}
-                                  <span className="truncate text-[12.5px] text-slate-600 dark:text-slate-300" title={emp.company_name}>
+                                  <span className="truncate text-[12.5px] text-foreground/75" title={emp.company_name}>
                                     {emp.company_name}
                                   </span>
                                 </div>
@@ -2102,8 +2116,8 @@ export default function AdminEmployees() {
             )}
           </CardContent>
           {pagination.total > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 px-5 py-3 text-xs text-muted-foreground">
-              <div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 bg-card px-5 py-5 text-sm text-muted-foreground">
+              <div className="font-medium">
                 {(() => {
                   const { total, perPage } = pagination
                   const first = total === 0 ? 0 : (page - 1) * perPage + 1
@@ -2115,25 +2129,25 @@ export default function AdminEmployees() {
                   )
                 })()}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-4">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-7 px-2"
+                  className="h-10 rounded-md px-4 text-sm"
                   disabled={page <= 1}
                   onClick={() => fetchEmployees(page - 1)}
                 >
                   Previous
                 </Button>
-                <span className="text-muted-foreground">
+                <span className="min-w-20 text-center text-sm font-medium text-foreground">
                   Page {page} of {pagination.lastPage || 1}
                 </span>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-7 px-2"
+                  className="h-10 rounded-md border-brand/70 px-4 text-sm font-bold text-brand hover:bg-brand/8 hover:text-brand"
                   disabled={page >= pagination.lastPage}
                   onClick={() => fetchEmployees(page + 1)}
                 >
