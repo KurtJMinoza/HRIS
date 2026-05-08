@@ -1745,7 +1745,6 @@ export default function AdminEmployeeProfile() {
     { id: 'personal-info', label: 'Personal' },
     { id: 'employment', label: 'Employment' },
     { id: 'salary', label: 'Salary & Contributions' },
-    { id: 'benefits', label: 'Benefits' },
     { id: 'documents', label: 'Documents' },
     { id: 'government-ids', label: 'Gov IDs' },
     { id: 'emergency-contacts', label: 'Emergency' },
