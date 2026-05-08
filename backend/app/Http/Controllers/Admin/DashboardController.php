@@ -552,6 +552,7 @@ class DashboardController extends Controller
         $firstClockIn = AttendanceLog::query()
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->whereBetween('created_at', [$rangeStart, $rangeEnd])
+            ->whereIn('user_id', $activeEmployeeIds)
             ->select('user_id', DB::raw('MIN(created_at) as first_at'))
             ->groupBy('user_id')
             ->get()
@@ -1079,11 +1080,17 @@ class DashboardController extends Controller
             ->with(['workingSchedule', 'companyHeadships:id,company_head_id', 'company:id,name', 'branch:id,company_id', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $activeEmployeesQuery);
         $activeEmployees = $activeEmployeesQuery->get();
+        
+        // Ensure company filter respects the actor's scope
+        if ($companyIds !== null && $companyIds !== []) {
+            $scopedCompanyIds = $activeEmployees->map(fn (User $u) => $u->getEffectiveCompanyId())->filter()->unique()->values()->all();
+            $companyIds = array_intersect($companyIds, $scopedCompanyIds);
+        }
 
+        // Filter to selected companies (already validated against scope above)
         if ($companyIds !== null && $companyIds !== []) {
             $activeEmployees = $activeEmployees->filter(function (User $u) use ($companyIds) {
                 $cid = $u->getEffectiveCompanyId();
-
                 return $cid !== null && in_array($cid, $companyIds, true);
             });
         }
@@ -1112,6 +1119,7 @@ class DashboardController extends Controller
         $firstClockIn = AttendanceLog::query()
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->whereBetween('created_at', [$rangeStart, $rangeEnd])
+            ->whereIn('user_id', $activeEmployeeIds)
             ->select('user_id', DB::raw('MIN(created_at) as first_at'))
             ->groupBy('user_id')
             ->get()
