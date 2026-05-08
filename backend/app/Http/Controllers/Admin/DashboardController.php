@@ -132,12 +132,12 @@ class DashboardController extends Controller
 
         $pendingCorrectionsCollection = $this->attendanceCorrectionApprovalService->getPendingForApprover($actor);
         $pendingAttendanceCorrections = $pendingCorrectionsCollection->count();
-        $tz = $this->presenceFilingService->attendanceTimezone();
+        $correctionDisplayTz = $this->presenceFilingService->attendanceTimezone();
         $pendingAttendanceCorrectionPreview = null;
         if ($pendingCorrectionsCollection->isNotEmpty()) {
             $pendingAttendanceCorrectionPreview = $this->correctionFormatter->format(
                 $pendingCorrectionsCollection->first(),
-                $tz,
+                $correctionDisplayTz,
                 includeEmployee: true,
                 actor: $actor,
                 includeDisplayFields: true
