@@ -9,7 +9,18 @@ import {
   AlertCircle,
   Info,
   Search,
-  Sparkles,
+  Plus,
+  ShieldCheck,
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  CheckCircle2,
+  Send,
+  Star,
+  GraduationCap,
+  FileCheck2,
+  UserRound,
+  CircleCheckBig,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -90,6 +101,26 @@ const STATUS_TABS = [
   { value: 'history', label: 'History' },
 ]
 
+const REGULARIZATION_CARD_CLASS =
+  'rounded-lg border border-border/70 bg-card py-0 shadow-[0_1px_0_rgba(15,23,42,0.03),0_16px_36px_rgba(15,23,42,0.06)] dark:border-border dark:bg-card dark:shadow-[0_18px_44px_rgba(0,0,0,0.32)]'
+
+const REGULARIZATION_TABLE_HEAD_CLASS =
+  'border-b border-border/60 bg-muted/35 hover:bg-muted/35 dark:border-border dark:bg-background/35 dark:hover:bg-background/35'
+
+const REGULARIZATION_TABLE_ROW_CLASS =
+  'border-b border-border/45 text-sm leading-snug transition-colors hover:bg-muted/25 dark:border-border/55 dark:hover:bg-muted/30'
+
+const UPCOMING_PAGE_SIZE = 20
+const SUBMIT_NOTES_MAX_LENGTH = 500
+
+const REGULARIZATION_ACTION_ITEMS = [
+  { key: 'performance_review_completed', label: 'Performance Review Completed', Icon: Star },
+  { key: 'training_completed', label: 'Training / Orientation Checklist Completed', Icon: GraduationCap },
+  { key: 'documents_submitted', label: 'Documents Submitted (ID, clearances, etc.)', Icon: FileCheck2 },
+  { key: 'manager_recommendation_received', label: 'Manager Recommendation Received', Icon: UserRound },
+  { key: 'checklist_completed', label: 'Checklist Completion', Icon: CircleCheckBig },
+]
+
 // Persisted server-side recommendation types.
 const RECOMMENDATION_TYPES = [
   { value: 'probation_to_regular', label: 'Probation to Regular' },
@@ -152,6 +183,16 @@ function formatDateTimeSubmitted(iso) {
 function employmentTypeLabel(v) {
   if (!v) return '—'
   return String(v).replace(/_/g, ' ')
+}
+
+function employeeInitials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (parts.length === 0) return '??'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
 }
 
 function recommenderRoleBadgeClass(hrRole) {
@@ -343,6 +384,7 @@ export default function AdminRegularization() {
   const [upcoming, setUpcoming] = useState([])
   const [upcomingLoading, setUpcomingLoading] = useState(true)
   const [daysAhead, setDaysAhead] = useState('30')
+  const [upcomingPage, setUpcomingPage] = useState(1)
 
   const [recs, setRecs] = useState([])
   const [recsLoading, setRecsLoading] = useState(true)
@@ -371,6 +413,19 @@ export default function AdminRegularization() {
   const [viewOpen, setViewOpen] = useState(false)
   const [viewRec, setViewRec] = useState(null)
 
+  const upcomingTotalPages = Math.max(1, Math.ceil(upcoming.length / UPCOMING_PAGE_SIZE))
+  const upcomingCurrentPage = Math.min(upcomingPage, upcomingTotalPages)
+  const paginatedUpcoming = useMemo(
+    () =>
+      upcoming.slice(
+        (upcomingCurrentPage - 1) * UPCOMING_PAGE_SIZE,
+        upcomingCurrentPage * UPCOMING_PAGE_SIZE,
+      ),
+    [upcoming, upcomingCurrentPage],
+  )
+  const upcomingRangeStart = upcoming.length === 0 ? 0 : (upcomingCurrentPage - 1) * UPCOMING_PAGE_SIZE + 1
+  const upcomingRangeEnd = Math.min(upcomingCurrentPage * UPCOMING_PAGE_SIZE, upcoming.length)
+
   const selectedSubmitEmployee = useMemo(() => {
     const uid = Number(submitUserId)
     if (!uid) return null
@@ -379,15 +434,23 @@ export default function AdminRegularization() {
 
   const submitActionsPendingCount = useMemo(() => {
     const a = submitRequiredActions || {}
-    const keys = [
-      'performance_review_completed',
-      'training_completed',
-      'documents_submitted',
-      'manager_recommendation_received',
-      'checklist_completed',
-    ]
-    return keys.reduce((acc, k) => acc + (a[k] ? 0 : 1), 0)
+    return REGULARIZATION_ACTION_ITEMS.reduce((acc, item) => acc + (a[item.key] ? 0 : 1), 0)
   }, [submitRequiredActions])
+
+  const submitEffectiveHint = useMemo(() => {
+    const emp = selectedSubmitEmployee
+    const m = emp?.milestones || {}
+    if (submitRecType === 'probation_auto_6mo') {
+      return `Auto path: 6-month target is ${m.six_months || submitEffectiveDate || 'not set'}.`
+    }
+    if (submitRecType === 'probation_early_3mo') {
+      return `Early path: 3-month target is ${m.three_months || submitEffectiveDate || 'not set'} (requires HR approval).`
+    }
+    if (['contract_renewal', 'contract_extension', 'project_extension'].includes(submitRecType)) {
+      return 'Use the start date of the renewed/extended period.'
+    }
+    return submitEffectiveDate ? `Recommended effective date is ${submitEffectiveDate}.` : 'Adjust if needed.'
+  }, [selectedSubmitEmployee, submitEffectiveDate, submitRecType])
 
   useEffect(() => {
     let cancelled = false
@@ -453,6 +516,14 @@ export default function AdminRegularization() {
       cancelled = true
     }
   }, [approveOpen, activeRec, canApproveRegularization])
+
+  useEffect(() => {
+    setUpcomingPage(1)
+  }, [daysAhead])
+
+  useEffect(() => {
+    setUpcomingPage((page) => Math.min(page, upcomingTotalPages))
+  }, [upcomingTotalPages])
 
   async function toggleApproveRequiredAction(key, next) {
     const uid = Number(activeRec?.employee_id)
@@ -781,40 +852,40 @@ export default function AdminRegularization() {
 
   return (
     <Motion.div
-      className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full space-y-6 overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
+      className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full space-y-7 overflow-x-hidden px-1 py-4 text-foreground @sm:px-0 @sm:py-6"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22 }}
     >
-      <div className="w-full max-w-none space-y-6 px-1 @sm:px-0">
-        <header className="relative overflow-hidden rounded-3xl border border-border/70 bg-card/60 p-5 shadow-[0_1px_0_rgba(0,0,0,0.03),0_18px_60px_rgba(0,0,0,0.06)] backdrop-blur @lg:p-6 dark:bg-card/40 dark:shadow-[0_1px_0_rgba(255,255,255,0.03),0_18px_60px_rgba(0,0,0,0.35)]">
-          <div className="flex flex-col gap-4 @lg:flex-row @lg:items-end @lg:justify-between">
+      <div className="w-full max-w-none space-y-7 px-1 @sm:px-0">
+        <header className="relative">
+          <div className="flex flex-col gap-5 @lg:flex-row @lg:items-start @lg:justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <p className="text-xs font-extrabold uppercase tracking-[0.28em] text-brand">
               Employee status
             </p>
-            <h1 className="text-3xl font-bold tracking-tight text-foreground @lg:text-[34px]">Regularization</h1>
+            <h1 className="text-[30px] font-extrabold leading-tight tracking-tight text-foreground @lg:text-[34px]">Regularization</h1>
             <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
               Monitor hire-date milestones (3-, 5-, and 6-month), review eligible employees, and run the HR-only regularization
               workflow. Use the <strong className="font-medium text-foreground">History</strong> tab for a full audit log (all
               statuses) in your scope. Five-month listing is an alert; six-month requires explicit HR action (no automatic Regular).
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 self-start">
+          <div className="flex flex-wrap items-center gap-2 self-start @lg:pt-2">
             {canSubmitRegularization ? (
               <Button
                 type="button"
-                className="h-10 gap-2 rounded-xl shadow-[0_10px_26px_rgba(0,0,0,0.12)] transition-shadow hover:shadow-[0_14px_36px_rgba(0,0,0,0.16)]"
+                className="h-12 gap-2 rounded-md bg-brand px-5 text-sm font-bold text-brand-foreground shadow-[0_14px_28px_rgba(255,107,0,0.24)] hover:bg-brand-strong dark:shadow-[0_16px_36px_rgba(0,0,0,0.35)]"
                 onClick={() => handleOpenSubmit()}
               >
-                <Sparkles className="size-4" />
+                <Plus className="size-4" />
                 Submit New Recommendation
               </Button>
             ) : null}
             <Button
               type="button"
               variant="outline"
-              className="h-10 gap-2 rounded-xl border-border/70 bg-background/60 shadow-sm transition hover:bg-accent/40"
+              className="h-12 gap-2 rounded-md border-border/70 bg-card px-4 text-sm font-semibold shadow-sm transition hover:bg-muted/50"
               onClick={() => refreshAll()}
               disabled={upcomingLoading && recsLoading}
             >
@@ -829,52 +900,67 @@ export default function AdminRegularization() {
           </div>
         </header>
 
-          <div className="rounded-2xl border border-border/70 bg-muted/15 px-4 py-3 text-sm text-foreground/90 shadow-[0_1px_0_rgba(0,0,0,0.03)] dark:bg-muted/10">
+          <div className="flex items-start gap-3 rounded-lg border border-brand/35 bg-brand/5 px-5 py-4 text-sm leading-relaxed text-foreground shadow-[0_1px_0_rgba(255,107,0,0.08)] dark:border-brand/30 dark:bg-brand/10">
+            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand">
+              <Info className="size-4" aria-hidden />
+            </div>
+            <p>
             <strong className="font-semibold">Roles:</strong> Department Heads, Branch Heads, and Company Heads may{' '}
             <strong className="font-medium">submit</strong> recommendations for employees in their scope.{' '}
             <strong className="font-medium">Only HR (Admin)</strong> may approve or reject. Processing after approval follows the
             3-month hire-date rule (immediate Regular if already eligible, otherwise on the anniversary).
+            </p>
           </div>
 
-          <div className="grid gap-4 @lg:grid-cols-3">
-            <Card className="rounded-3xl border-border/70 bg-card/60 shadow-[0_1px_0_rgba(0,0,0,0.03),0_18px_50px_rgba(0,0,0,0.06)] dark:bg-card/40 @lg:col-span-1">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                  <Sparkles className="size-5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+          <div className="grid gap-5 @lg:grid-cols-2">
+            <Card className={REGULARIZATION_CARD_CLASS}>
+              <CardHeader className="relative min-h-[176px] px-6 py-6">
+                <div className="absolute right-6 top-6 flex size-14 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                  <UserCheck className="size-7" aria-hidden />
+                </div>
+                <CardTitle className="pr-20 text-lg font-extrabold tracking-tight text-foreground">
+                  <span className="sr-only">Regularization queue</span>
                   Nearing regularization (3–6 months)
                 </CardTitle>
-                <CardDescription>Probationary employees in the key decision window.</CardDescription>
+                <CardDescription className="max-w-sm text-sm">Probationary employees in the key decision window.</CardDescription>
               </CardHeader>
-              <CardContent>
-                <p className="text-4xl font-black tabular-nums text-emerald-700 dark:text-emerald-300">
+              <CardContent className="px-6 pb-6 pt-0">
+                <p className="text-[34px] font-black leading-none tabular-nums text-brand">
                   {nearingRegularizationCount}
                 </p>
-                <p className="mt-2 text-xs text-muted-foreground">
+                <p className="mt-4 max-w-sm text-xs leading-relaxed text-muted-foreground">
                   Based on the upcoming milestones table below. Use it to prioritize reviews and submissions.
                 </p>
               </CardContent>
             </Card>
-            <Card className="rounded-3xl border-border/70 bg-card/60 shadow-[0_1px_0_rgba(0,0,0,0.03)] dark:bg-card/40 @lg:col-span-2">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Stay proactive</CardTitle>
-                <CardDescription className="text-sm leading-relaxed">
-                  When no items are pending, switch to <strong className="text-foreground">Approved</strong> or{' '}
-                  <strong className="text-foreground">Rejected</strong> to audit history, or submit a new recommendation for an
+            <Card className={REGULARIZATION_CARD_CLASS}>
+              <CardHeader className="relative min-h-[176px] px-6 py-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-3">
+                <CardTitle className="text-lg font-extrabold tracking-tight text-foreground">Stay proactive</CardTitle>
+                <CardDescription className="max-w-xl text-sm leading-relaxed">
+                  When no items are pending, switch to <strong className="font-bold text-foreground">Approved</strong> or{' '}
+                  <strong className="font-bold text-foreground">Rejected</strong> to audit history, or submit a new recommendation for an
                   eligible probationary employee using the button above.
                 </CardDescription>
+                  </div>
+                  <div className="flex size-14 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                    <ShieldCheck className="size-7" aria-hidden />
+                  </div>
+                </div>
               </CardHeader>
             </Card>
           </div>
 
-          <Card className="rounded-3xl border-border/70 bg-card/60 shadow-[0_1px_0_rgba(0,0,0,0.03)] dark:bg-card/40">
-            <CardHeader className="pb-2">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 rounded-xl border border-primary/15 bg-primary/5 p-2 shadow-sm">
-                  <Info className="size-5 text-primary" aria-hidden />
+          <Card className={REGULARIZATION_CARD_CLASS}>
+            <CardHeader className="px-6 py-6">
+              <div className="flex items-start gap-4">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                  <Info className="size-5" aria-hidden />
                 </div>
                 <div>
-                  <CardTitle className="text-base">How it works</CardTitle>
-                  <CardDescription className="mt-1 text-sm leading-relaxed">
+                  <CardTitle className="text-base font-extrabold">How it works</CardTitle>
+                  <CardDescription className="mt-4 text-sm leading-relaxed">
                     <strong className="text-foreground">5 months:</strong> employees appear here for review (system alert).
                     <strong className="text-foreground"> 6 months:</strong> HR must confirm Regular or extended probation — status does
                     not flip automatically. <strong className="text-foreground">3 months:</strong> HR may submit a recommendation; upon
@@ -887,11 +973,11 @@ export default function AdminRegularization() {
           </Card>
 
         <AnimatedSection>
-          <Card className="overflow-hidden rounded-3xl border-border/70 bg-card/60 shadow-[0_1px_0_rgba(0,0,0,0.03),0_18px_60px_rgba(0,0,0,0.06)] dark:bg-card/40">
-            <CardHeader className="flex flex-col gap-4 border-b border-border/50 bg-muted/10 @sm:flex-row @sm:items-center @sm:justify-between">
+          <Card className={cn('overflow-hidden', REGULARIZATION_CARD_CLASS)}>
+            <CardHeader className="flex flex-col gap-4 border-b border-border/60 px-6 py-6 @sm:flex-row @sm:items-center @sm:justify-between">
               <div>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <CalendarClock className="size-5 text-primary" aria-hidden />
+                <CardTitle className="flex items-center gap-2 text-lg font-extrabold">
+                  <CalendarClock className="size-5 text-brand" aria-hidden />
                   Upcoming milestones
                 </CardTitle>
                 <CardDescription>
@@ -903,7 +989,7 @@ export default function AdminRegularization() {
                   Window
                 </Label>
                 <Select value={daysAhead} onValueChange={setDaysAhead}>
-                  <SelectTrigger id="reg-days" className="h-10 w-44 rounded-xl bg-background/60">
+                  <SelectTrigger id="reg-days" className="h-11 w-44 rounded-md border-border/70 bg-background">
                     <SelectValue placeholder="Window" />
                   </SelectTrigger>
                   <SelectContent>
@@ -932,10 +1018,11 @@ export default function AdminRegularization() {
                   </p>
                 </div>
               ) : (
-                <div className="w-full min-w-0 touch-pan-x overflow-x-auto px-4 pb-6 pt-2 sm:px-6 md:px-8">
+                <>
+                <div className="w-full min-w-0 touch-pan-x overflow-x-auto">
                   <Table className="w-full min-w-[920px] xl:min-w-[1024px]">
                     <TableHeader>
-                      <TableRow className="border-b border-border/60 bg-muted/20 hover:bg-muted/20 dark:bg-muted/15 dark:hover:bg-muted/15">
+                      <TableRow className={REGULARIZATION_TABLE_HEAD_CLASS}>
                         <TableHead className="min-w-[200px] py-3.5 pl-2 sm:pl-3 xl:min-w-[220px]">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Employee</span>
                         </TableHead>
@@ -969,7 +1056,7 @@ export default function AdminRegularization() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {upcoming.map((row, rowIdx) => {
+                      {paginatedUpcoming.map((row, rowIdx) => {
                         const m = row.milestones || {}
                         const hireIso = m.hire_date || row.hire_date
                         const primary = getPrimaryMilestone(row)
@@ -986,8 +1073,8 @@ export default function AdminRegularization() {
                           <TableRow
                             key={row.id}
                             className={cn(
-                              'border-b border-border/50 text-[15px] leading-snug transition-colors hover:bg-muted/25',
-                              rowIdx % 2 === 1 ? 'bg-card/40' : 'bg-muted/10 dark:bg-muted/10',
+                              REGULARIZATION_TABLE_ROW_CLASS,
+                              rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/15 dark:bg-muted/10',
                             )}
                           >
                             <TableCell className={cn('align-top', cellPad)}>
@@ -1059,18 +1146,59 @@ export default function AdminRegularization() {
                     </TableBody>
                   </Table>
                 </div>
+                <div className="flex flex-col gap-3 border-t border-border/60 px-6 py-5 text-sm text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between">
+                  <span>
+                    Showing {upcomingRangeStart}-{upcomingRangeEnd} of {upcoming.length} employees
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 gap-1 rounded-md border-border/70 bg-card px-3"
+                      disabled={upcomingCurrentPage <= 1}
+                      onClick={() => setUpcomingPage((page) => Math.max(1, page - 1))}
+                    >
+                      <ChevronLeft className="size-4" />
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 min-w-9 rounded-md border-brand/60 bg-brand/10 px-3 font-bold text-brand hover:bg-brand/15"
+                    >
+                      {upcomingCurrentPage}
+                    </Button>
+                    {upcomingTotalPages > 1 ? (
+                      <span className="px-1 text-xs text-muted-foreground">/ {upcomingTotalPages}</span>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 gap-1 rounded-md border-border/70 bg-card px-3"
+                      disabled={upcomingCurrentPage >= upcomingTotalPages}
+                      onClick={() => setUpcomingPage((page) => Math.min(upcomingTotalPages, page + 1))}
+                    >
+                      Next
+                      <ChevronRight className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+                </>
               )}
             </CardContent>
           </Card>
         </AnimatedSection>
 
         <AnimatedSection>
-          <Card className="overflow-hidden rounded-3xl border-border/70 bg-card/60 shadow-[0_1px_0_rgba(0,0,0,0.03),0_18px_60px_rgba(0,0,0,0.06)] dark:bg-card/40">
-            <CardHeader className="flex flex-col gap-4 border-b border-border/50 bg-muted/10">
+          <Card className={cn('overflow-hidden', REGULARIZATION_CARD_CLASS)}>
+            <CardHeader className="flex flex-col gap-5 border-b border-border/60 px-6 py-6">
               <div className="flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between">
                 <div>
-                  <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
-                    <UserCheck className="size-5 text-primary" aria-hidden />
+                  <CardTitle className="flex flex-wrap items-center gap-2 text-lg font-extrabold">
+                    <FileText className="size-5 text-brand" aria-hidden />
                     Regularization recommendations
                     {canAccessRegularizationModule && !recsLoading ? (
                       <Badge variant="secondary" className="ml-1 rounded-full capitalize">
@@ -1090,26 +1218,26 @@ export default function AdminRegularization() {
                 {canSubmitRegularization ? (
                   <Button
                     type="button"
-                    className="h-10 shrink-0 gap-2 rounded-xl shadow-[0_10px_26px_rgba(0,0,0,0.12)] transition-shadow hover:shadow-[0_14px_36px_rgba(0,0,0,0.16)] @lg:self-center"
+                    className="h-11 shrink-0 gap-2 rounded-md bg-foreground px-4 font-bold text-background shadow-[0_12px_28px_rgba(0,0,0,0.16)] transition hover:bg-foreground/90 dark:bg-brand dark:text-brand-foreground dark:hover:bg-brand-strong @lg:self-center"
                     onClick={() => handleOpenSubmit()}
                   >
-                    <Sparkles className="size-4" />
+                    <Plus className="size-4" />
                     Submit New Recommendation
                   </Button>
                 ) : null}
               </div>
               {canAccessRegularizationModule ? (
-                <nav className="flex flex-wrap gap-1.5 border-t border-border/40 pt-4" aria-label="Filter by status">
+                <nav className="flex flex-wrap gap-7 border-t border-border/50 pt-4" aria-label="Filter by status">
                   {STATUS_TABS.map((tab) => (
                     <button
                       key={tab.value}
                       type="button"
                       onClick={() => setRecFilter(tab.value)}
                       className={cn(
-                        'rounded-full px-4 py-2 text-sm font-medium transition-colors',
+                        'border-b-2 px-0 py-2 text-sm font-bold transition-colors',
                         recFilter === tab.value
-                          ? 'bg-foreground text-background shadow-[0_10px_24px_rgba(0,0,0,0.14)] dark:bg-foreground dark:text-background'
-                          : 'bg-muted/40 text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+                          ? 'border-brand text-brand'
+                          : 'border-transparent text-muted-foreground hover:text-foreground',
                       )}
                     >
                       {tab.label}
@@ -1130,9 +1258,9 @@ export default function AdminRegularization() {
                   <p className="text-sm">Loading recommendations…</p>
                 </div>
               ) : recs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-4 px-6 py-14 text-center">
-                  <div className="flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-muted/15 shadow-sm">
-                    <UserCheck className="size-7 text-muted-foreground/70" aria-hidden />
+                <div className="flex flex-col items-center justify-center gap-5 px-6 py-20 text-center">
+                  <div className="flex size-20 items-center justify-center rounded-full border border-brand/20 bg-brand/10 text-brand shadow-sm">
+                    <FileText className="size-9" aria-hidden />
                   </div>
                   <div className="space-y-2">
                     <p className="text-base font-semibold text-foreground">No recommendations in this view</p>
@@ -1157,19 +1285,20 @@ export default function AdminRegularization() {
                   {canSubmitRegularization ? (
                     <Button
                       type="button"
-                      className="gap-2 rounded-xl shadow-[0_10px_26px_rgba(0,0,0,0.12)] transition-shadow hover:shadow-[0_14px_36px_rgba(0,0,0,0.16)]"
+                      variant="outline"
+                      className="h-11 gap-2 rounded-md border-brand/70 px-5 font-bold text-brand hover:bg-brand/10"
                       onClick={() => handleOpenSubmit()}
                     >
-                      <Sparkles className="size-4" />
+                      <Plus className="size-4" />
                       Submit New Recommendation
                     </Button>
                   ) : null}
                 </div>
               ) : recFilter === 'history' ? (
-                <div className="w-full min-w-0 touch-pan-x overflow-x-auto px-4 pb-6 pt-2 sm:px-6 md:px-8">
+                <div className="w-full min-w-0 touch-pan-x overflow-x-auto">
                   <Table className="w-full min-w-[1100px] xl:min-w-[1280px]">
                     <TableHeader>
-                      <TableRow className="border-b border-border/60 bg-muted/20 hover:bg-muted/20 dark:bg-muted/15 dark:hover:bg-muted/15">
+                      <TableRow className={REGULARIZATION_TABLE_HEAD_CLASS}>
                         <TableHead className="min-w-[4.5rem] py-3.5 pl-2 sm:pl-3">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">ID</span>
                         </TableHead>
@@ -1221,8 +1350,8 @@ export default function AdminRegularization() {
                           <TableRow
                             key={rec.id}
                             className={cn(
-                              'border-b border-border/50 text-[15px] leading-snug transition-colors hover:bg-muted/25',
-                              rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10',
+                              REGULARIZATION_TABLE_ROW_CLASS,
+                              rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/15 dark:bg-muted/10',
                             )}
                           >
                             <TableCell className={cn('align-middle font-mono text-xs font-semibold tabular-nums', cellPad)}>
@@ -1290,10 +1419,10 @@ export default function AdminRegularization() {
                   </Table>
                 </div>
               ) : (
-                <div className="w-full min-w-0 touch-pan-x overflow-x-auto bg-card px-4 pb-6 pt-2 sm:px-6 md:px-8">
+                <div className="w-full min-w-0 touch-pan-x overflow-x-auto bg-card">
                   <Table className="w-full min-w-[980px] xl:min-w-[1100px]">
                     <TableHeader>
-                      <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25 dark:hover:bg-muted/25">
+                      <TableRow className={REGULARIZATION_TABLE_HEAD_CLASS}>
                         <TableHead className="min-w-[200px] py-3.5 pl-2 sm:pl-3 xl:min-w-[220px]">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Employee</span>
                         </TableHead>
@@ -1348,8 +1477,8 @@ export default function AdminRegularization() {
                           <TableRow
                             key={rec.id}
                             className={cn(
-                              'border-b border-border/50 text-[15px] leading-snug transition-colors hover:bg-muted/25',
-                              rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10',
+                              REGULARIZATION_TABLE_ROW_CLASS,
+                              rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/15 dark:bg-muted/10',
                             )}
                           >
                             <TableCell className={cn('align-top', cellPad)}>
@@ -1592,40 +1721,63 @@ export default function AdminRegularization() {
       </Dialog>
 
       <Dialog open={submitOpen} onOpenChange={setSubmitOpen}>
-        <DialogContent showCloseButton className={adminFormDialogContentClass('max-w-lg')}>
-          <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <div className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Submit new recommendation</DialogTitle>
-              <DialogDescription className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Choose an eligible probationary employee, set the recommendation type and target effective date, and document
-                your rationale. Submission follows your configured HR workflow (including auto-approval when enabled).
-              </DialogDescription>
+        <DialogContent
+          showCloseButton
+          overlayClassName="bg-black/60 backdrop-blur-[3px]"
+          innerClassName="gap-0 overflow-hidden p-0"
+          closeButtonClassName="right-7 top-7 size-12 rounded-xl border-border/70 bg-background/95 text-foreground hover:bg-muted"
+          className="flex max-h-[min(92vh,980px)] w-[min(94vw,900px)]! max-w-[900px]! flex-col gap-0 overflow-hidden rounded-[1.75rem] border border-border/70 bg-card p-0 text-card-foreground shadow-2xl dark:shadow-black/50"
+        >
+          <DialogHeader className="bg-card px-6 pb-4 pt-8 pr-20 sm:px-12 sm:pt-12">
+            <div className="flex max-w-3xl gap-5">
+              <div className="flex size-16 shrink-0 items-center justify-center rounded-xl border border-brand/25 bg-brand/10 text-brand shadow-inner sm:size-[4.5rem]">
+                <FileText className="size-8" aria-hidden />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">
+                  Submit New Recommendation
+                </DialogTitle>
+                <DialogDescription className="mt-3 max-w-2xl text-base leading-relaxed text-muted-foreground">
+                  Choose an eligible probationary employee, set the recommendation type and target effective date, and document
+                  your rationale. Submission follows your configured HR workflow (including auto-approval when enabled).
+                </DialogDescription>
+              </div>
             </div>
           </DialogHeader>
-          <div className={ADMIN_FORM_DIALOG_BODY_CLASS}>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="reg-emp-search">Employee</Label>
-                <p className="text-xs text-muted-foreground">Only employees eligible for regularization (e.g. approaching 3- or 6-month milestones).</p>
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <div className="min-h-0 flex-1 overflow-y-auto bg-card px-6 pb-6 pt-4 sm:px-12">
+            <div className="w-full space-y-8">
+              <div className="flex w-full items-center gap-4 rounded-lg border border-border/50 bg-muted/30 px-5 py-4 text-sm text-muted-foreground dark:bg-background/35">
+                <Info className="size-5 shrink-0 text-brand" aria-hidden />
+                <span>{submitEffectiveHint}</span>
+              </div>
+              <div className="w-full space-y-3">
+                <div>
+                  <Label htmlFor="reg-emp-search" className="text-lg font-extrabold text-foreground">
+                    Employee
+                  </Label>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Only employees eligible for regularization (e.g. approaching 3- or 6-month milestones).
+                  </p>
+                </div>
+                <div className="relative w-full">
+                  <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" aria-hidden />
                   <Input
                     id="reg-emp-search"
                     value={submitEmpSearch}
                     onChange={(e) => setSubmitEmpSearch(e.target.value)}
                     placeholder="Search by name or employee code…"
-                    className="rounded-lg pl-9"
+                    className="h-12 w-full rounded-xl border-border/70 bg-background pl-12 text-base shadow-sm"
                     autoComplete="off"
                   />
                 </div>
                 {eligibleLoading ? (
-                  <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" />
+                  <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-muted/20 px-5 py-8 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin text-brand" />
                     Loading eligible employees…
                   </div>
                 ) : (
                   <div
-                    className="max-h-48 overflow-y-auto rounded-xl border border-border bg-muted/20 p-1"
+                    className="max-h-72 w-full overflow-y-auto rounded-xl border border-border/80 bg-card shadow-sm"
                     role="listbox"
                     aria-label="Eligible employees"
                   >
@@ -1646,16 +1798,35 @@ export default function AdminRegularization() {
                             aria-selected={selected}
                             onClick={() => setSubmitUserId(String(e.id))}
                             className={cn(
-                              'flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left text-sm transition-colors',
-                              selected ? 'bg-primary text-primary-foreground' : 'hover:bg-muted',
+                              'group flex w-full items-center gap-4 border-b border-border/60 px-5 py-4 text-left transition-colors last:border-b-0',
+                              selected
+                                ? 'bg-brand/8 text-foreground ring-1 ring-inset ring-brand/25 dark:bg-brand/12'
+                                : 'hover:bg-muted/35',
                             )}
                           >
-                            <span className="font-medium">{e.name}</span>
-                            <span className={cn('text-xs', selected ? 'text-primary-foreground/90' : 'text-muted-foreground')}>
-                              {e.employee_code ? `${e.employee_code} · ` : ''}
-                              {e.months_since_hire != null ? `${e.months_since_hire} mo` : ''}
-                              {target ? ` · 3-mo ${target}` : ''}
+                            <span
+                              className={cn(
+                                'flex size-12 shrink-0 items-center justify-center rounded-full border text-base font-bold',
+                                selected
+                                  ? 'border-brand/30 bg-brand/10 text-brand'
+                                  : 'border-border bg-muted/35 text-foreground',
+                              )}
+                            >
+                              {employeeInitials(e.name)}
                             </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-base font-bold text-foreground">{e.name}</span>
+                              <span className="mt-1 block truncate text-sm text-muted-foreground">
+                                {e.employee_code ? `${e.employee_code} - ` : ''}
+                                {e.months_since_hire != null ? `${Number(e.months_since_hire).toFixed(1)} mo - ` : ''}
+                                {target ? `3-mo - ${target}` : 'Eligible'}
+                              </span>
+                            </span>
+                            {selected ? (
+                              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-sm">
+                                <CheckCircle2 className="size-5" aria-hidden />
+                              </span>
+                            ) : null}
                           </button>
                         )
                       })
@@ -1663,10 +1834,12 @@ export default function AdminRegularization() {
                   </div>
                 )}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="reg-type">Recommendation type</Label>
+              <div className="w-full space-y-3">
+                <Label htmlFor="reg-type" className="text-lg font-extrabold text-foreground">
+                  Recommendation type
+                </Label>
                 <Select value={submitRecType} onValueChange={setSubmitRecType}>
-                  <SelectTrigger id="reg-type" className="rounded-lg">
+                  <SelectTrigger id="reg-type" className="h-12 w-full rounded-xl border-brand/70 bg-background px-4 text-base shadow-sm focus:ring-brand">
                     <SelectValue placeholder="Type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1701,7 +1874,7 @@ export default function AdminRegularization() {
 
               {selectedSubmitEmployee &&
               ['contractual', 'project_based'].includes(normalizeEmploymentStatus(selectedSubmitEmployee?.employment_status)) ? (
-                <div className="rounded-xl border border-border/70 bg-muted/15 p-3">
+                <div className="w-full rounded-xl border border-border/80 bg-card p-6 shadow-sm dark:bg-background/20">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-foreground">Current contract status</p>
@@ -1718,40 +1891,30 @@ export default function AdminRegularization() {
                   </div>
                 </div>
               ) : null}
-              <div className="space-y-2">
-                <Label htmlFor="reg-effective">Recommended effective date</Label>
+              <div className="w-full space-y-3">
+                <Label htmlFor="reg-effective" className="text-lg font-extrabold text-foreground">
+                  Recommended effective date
+                </Label>
                 <Input
                   id="reg-effective"
                   type="date"
                   value={submitEffectiveDate}
                   onChange={(e) => setSubmitEffectiveDate(e.target.value)}
-                  className="rounded-lg"
+                  className="h-12 w-full rounded-xl border-border/70 bg-background px-4 text-base shadow-sm focus-visible:ring-brand"
                 />
-                <p className="text-xs text-muted-foreground">
-                  {(() => {
-                    const emp = eligibleEmployees.find((e) => String(e.id) === String(submitUserId))
-                    const m = emp?.milestones || {}
-                    if (submitRecType === 'probation_auto_6mo') {
-                      return `Auto path: 6-month target is ${m.six_months || '—'}.`
-                    }
-                    if (submitRecType === 'probation_early_3mo') {
-                      return `Early path: 3-month target is ${m.three_months || '—'} (requires HR approval).`
-                    }
-                    if (['contract_renewal', 'contract_extension', 'project_extension'].includes(submitRecType)) {
-                      return 'Use the start date of the renewed/extended period.'
-                    }
-                    return 'Adjust if needed.'
-                  })()}
+                <p className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <Info className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
+                  {submitEffectiveHint}
                 </p>
               </div>
 
               {selectedSubmitEmployee &&
               ['probationary', 'contractual', 'project_based'].includes(normalizeEmploymentStatus(selectedSubmitEmployee?.employment_status)) ? (
-                <div className="rounded-xl border border-border/70 bg-muted/15 p-3">
+                <div className="w-full rounded-xl border border-border/80 bg-card p-6 shadow-sm dark:bg-background/20">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-foreground">Required Actions Before Confirmation</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
+                      <p className="text-lg font-extrabold text-foreground">Required Actions Before Confirmation</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
                         {requiredActionsBusy
                           ? 'Loading checklist…'
                           : submitActionsPendingCount === 0
@@ -1761,27 +1924,22 @@ export default function AdminRegularization() {
                     </div>
                     {submitActionsPendingCount === 0 ? (
                       <Badge
-                        className="h-6 shrink-0 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                        className="h-9 shrink-0 rounded-full bg-emerald-500/12 px-4 text-sm font-bold text-emerald-700 dark:text-emerald-300"
                         variant="secondary"
                       >
                         Completed
                       </Badge>
                     ) : (
-                      <Badge className="h-6 shrink-0 bg-rose-500/12 text-rose-700 dark:text-rose-300" variant="secondary">
+                      <Badge className="h-9 shrink-0 rounded-full bg-brand/10 px-4 text-sm font-bold text-brand" variant="secondary">
                         Pending
                       </Badge>
                     )}
                   </div>
 
-                  <div className="mt-3 grid gap-2">
-                    {[
-                      { key: 'performance_review_completed', label: 'Performance Review Completed' },
-                      { key: 'training_completed', label: 'Training / Orientation Checklist Completed' },
-                      { key: 'documents_submitted', label: 'Documents Submitted (ID, clearances, etc.)' },
-                      { key: 'manager_recommendation_received', label: 'Manager Recommendation Received' },
-                      { key: 'checklist_completed', label: 'Checklist Completion' },
-                    ].map((item) => {
+                  <div className="mt-5 divide-y divide-border/70 border-t border-border/70">
+                    {REGULARIZATION_ACTION_ITEMS.map((item) => {
                       const done = !!submitRequiredActions?.[item.key]
+                      const ActionIcon = item.Icon
                       return (
                         <button
                           key={item.key}
@@ -1789,18 +1947,32 @@ export default function AdminRegularization() {
                           disabled={requiredActionsBusy || !canSubmitRegularization}
                           onClick={() => toggleRequiredAction(item.key, !done)}
                           className={cn(
-                            'flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors',
+                            'flex w-full items-center justify-between gap-4 py-4 text-left transition-colors hover:bg-muted/25',
                             done
-                              ? 'border-emerald-500/30 bg-emerald-500/8 hover:bg-emerald-500/10'
-                              : 'border-rose-500/25 bg-rose-500/6 hover:bg-rose-500/8',
+                              ? 'text-foreground'
+                              : 'text-foreground',
                             (requiredActionsBusy || !canSubmitRegularization) && 'opacity-60',
                           )}
                         >
-                          <span className="text-sm text-foreground">{item.label}</span>
+                          <span className="flex min-w-0 items-center gap-4">
+                            <span
+                              className={cn(
+                                'flex size-10 shrink-0 items-center justify-center rounded-full border',
+                                done
+                                  ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
+                                  : 'border-brand/20 bg-brand/10 text-brand',
+                              )}
+                            >
+                              <ActionIcon className="size-5" aria-hidden />
+                            </span>
+                            <span className="min-w-0 text-base font-medium text-foreground">{item.label}</span>
+                          </span>
                           <span
                             className={cn(
-                              'text-xs font-semibold',
-                              done ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300',
+                              'shrink-0 rounded-full px-4 py-2 text-sm font-bold',
+                              done
+                                ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-300'
+                                : 'bg-brand/10 text-brand',
                             )}
                           >
                             {done ? 'Completed' : 'Pending'}
@@ -1813,8 +1985,8 @@ export default function AdminRegularization() {
               ) : null}
 
               {['contract_renewal', 'contract_extension', 'project_extension'].includes(submitRecType) ? (
-                <div className="space-y-2">
-                  <Label htmlFor="reg-expiration">
+                <div className="w-full space-y-3">
+                  <Label htmlFor="reg-expiration" className="text-lg font-extrabold text-foreground">
                     {submitRecType === 'project_extension' ? 'Project End Date' : 'Contract End Date'}
                   </Label>
                   <Input
@@ -1822,33 +1994,57 @@ export default function AdminRegularization() {
                     type="date"
                     value={submitExpirationDate}
                     onChange={(e) => setSubmitExpirationDate(e.target.value)}
-                    className="rounded-lg"
+                    className="h-12 w-full rounded-xl border-border/70 bg-background px-4 text-base shadow-sm focus-visible:ring-brand"
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sm text-muted-foreground">
                     Expiration Date is required for Contractual and Project-based recommendations.
                   </p>
                 </div>
               ) : null}
-              <div className="space-y-2">
-                <Label htmlFor="reg-notes">Reason / remarks *</Label>
+              <div className="w-full space-y-3">
+                <Label htmlFor="reg-notes" className="text-lg font-extrabold text-foreground">
+                  Reason / remarks <span className="text-brand">*</span>
+                </Label>
                 <Textarea
                   id="reg-notes"
                   value={submitNotes}
-                  onChange={(e) => setSubmitNotes(e.target.value)}
+                  onChange={(e) => setSubmitNotes(e.target.value.slice(0, SUBMIT_NOTES_MAX_LENGTH))}
                   rows={4}
                   required
                   placeholder="Document the basis for this recommendation (performance, policy alignment, etc.)."
-                  className="min-h-[100px] resize-y rounded-lg"
+                  maxLength={SUBMIT_NOTES_MAX_LENGTH}
+                  className="min-h-32 w-full resize-y rounded-xl border-border/70 bg-background p-4 text-base shadow-sm focus-visible:ring-brand"
                 />
+                <p className="text-right text-sm tabular-nums text-muted-foreground">
+                  {submitNotes.length} / {SUBMIT_NOTES_MAX_LENGTH}
+                </p>
               </div>
             </div>
           </div>
-          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button type="button" variant="outline" onClick={() => setSubmitOpen(false)} disabled={submitBusy}>
+          <DialogFooter className="border-t border-border/60 bg-card px-6 py-6 sm:px-12">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 w-full rounded-xl border-foreground/80 bg-background px-6 text-base font-semibold text-foreground hover:bg-muted sm:w-auto sm:min-w-32"
+              onClick={() => setSubmitOpen(false)}
+              disabled={submitBusy}
+            >
               Cancel
             </Button>
-            <Button type="button" className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS} onClick={handleSubmitRecommendation} disabled={submitBusy}>
-              {submitBusy ? <Loader2 className="size-4 animate-spin" /> : 'Submit Recommendation'}
+            <Button
+              type="button"
+              className="h-12 w-full gap-3 rounded-xl bg-brand px-7 text-base font-bold text-brand-foreground shadow-[0_14px_30px_rgba(255,107,0,0.28)] hover:bg-brand-strong sm:w-auto sm:min-w-72"
+              onClick={handleSubmitRecommendation}
+              disabled={submitBusy}
+            >
+              {submitBusy ? (
+                <Loader2 className="size-5 animate-spin" />
+              ) : (
+                <>
+                  <Send className="size-5" aria-hidden />
+                  Submit Recommendation
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
