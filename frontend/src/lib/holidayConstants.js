@@ -44,7 +44,7 @@ export const HOLIDAY_TYPE_OPTIONS = [
     value: 'special_working',
     label: 'Special Working Day',
     short: 'SWD',
-    hint: 'Declared “no holiday” — pay as ordinary day unless employer policy says otherwise.',
+    hint: 'Declared "no holiday" — pay as ordinary day unless employer policy says otherwise.',
   },
   {
     value: 'company',
@@ -52,6 +52,34 @@ export const HOLIDAY_TYPE_OPTIONS = [
     short: 'Co',
     hint: 'Internal observance — follow company policy; no default statutory premium.',
   },
+]
+
+export const SWAP_HOLIDAY_TYPE_OPTIONS = [
+  {
+    value: 'regular',
+    label: 'Regular Holiday',
+    short: 'RH',
+    hint: '200% daily rate for first 8h — highest statutory premium. Used for proclaimed swap holidays.',
+  },
+  {
+    value: 'special',
+    label: 'Special Non-Working Holiday',
+    short: 'SNW',
+    hint: '130% if worked. Common for government-proclaimed date swaps.',
+  },
+  {
+    value: 'company',
+    label: 'Company Holiday',
+    short: 'Co',
+    hint: 'Company-level swap — internal policy applies, no default statutory premium.',
+  },
+]
+
+export const COVERAGE_TYPE_OPTIONS = [
+  { value: 'company', label: 'Company-wide', desc: 'All employees in selected companies' },
+  { value: 'branches', label: 'Selected Branches', desc: 'Employees in specific branches' },
+  { value: 'departments', label: 'Selected Departments', desc: 'Employees in specific departments' },
+  { value: 'employees', label: 'Selected Employees', desc: 'Specific individual employees' },
 ]
 
 export const HOLIDAY_STATUS_OPTIONS = [

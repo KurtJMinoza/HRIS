@@ -198,7 +198,7 @@ function SidebarContent({
             onClick={() => setManualExpanded((prev) => ({ ...prev, [key]: !isOpen }))}
           >
             {item.icon ? <item.icon className="mr-3 mt-0.5 size-5 shrink-0" /> : <span className="mr-3 mt-0.5 inline-block size-5 shrink-0" />}
-            <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{item.label}</span>
+            <span className="min-w-0 flex-1 whitespace-normal wrap-break-word leading-snug">{item.label}</span>
             {isOpen ? <ChevronDown className="mt-1 size-4 shrink-0" /> : <ChevronRight className="mt-1 size-4 shrink-0" />}
           </button>
           {isOpen && (
@@ -229,7 +229,7 @@ function SidebarContent({
         style={depth > 0 ? { paddingLeft: `${12 + depth * 16}px` } : undefined}
       >
         {item.icon ? <item.icon className="mt-0.5 size-4 shrink-0" /> : <span className="mt-0.5 inline-block size-4 shrink-0" />}
-        <span className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{item.label}</span>
+        <span className="min-w-0 flex-1 whitespace-normal wrap-break-word leading-snug">{item.label}</span>
       </NavLink>
     )
   }
@@ -1112,7 +1112,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           className={cn(
             /* Tight horizontal inset so main content sits closer to the sidebar on md+; vertical rhythm unchanged */
             'flex-1 px-3 py-4 @sm:px-4 @md:py-5 @lg:px-5 @lg:py-6',
-            isDashboardRoute && 'py-4 @md:py-5 @lg:py-6',
+            isDashboardRoute && 'py-2 @md:py-3 @lg:py-3',
             'bg-white dark:bg-background'
           )}
         >

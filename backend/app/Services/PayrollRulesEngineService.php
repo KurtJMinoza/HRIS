@@ -31,6 +31,7 @@ class PayrollRulesEngineService
         private readonly TimeSegmentationService $timeSegmentation,
         private readonly AttendanceSessionService $attendanceSession,
         private readonly HolidayCalendarService $holidayCalendar,
+        private readonly HolidayService $holidayService,
         private readonly PolicyResolverService $policyResolver,
     ) {}
 
@@ -149,6 +150,7 @@ class PayrollRulesEngineService
     /**
      * Get holiday classification for a date (rules engine).
      * Returns: "regular" | "special" | "double" | null — must align with resolveRuleCode().
+     * Checks both standard holidays and swap holidays with coverage.
      */
     public function getHolidayType(
         string $dateKey,
@@ -166,7 +168,35 @@ class PayrollRulesEngineService
 
         $raw = strtolower(trim($holiday['type'] ?? ''));
         if ($raw === '') {
-            return 'special'; // default
+            return 'special';
+        }
+
+        $map = config('payroll.holiday_types', [
+            'regular' => 'regular',
+            'special' => 'special',
+            'special_non_working' => 'special',
+            'special_working' => 'special',
+            'double' => 'double',
+            'company' => 'special',
+        ]);
+
+        return $map[$raw] ?? 'special';
+    }
+
+    /**
+     * Get holiday type for a specific user, including swap holiday coverage checks.
+     */
+    public function getHolidayTypeForUser(User $user, string $dateKey): ?string
+    {
+        $holiday = $this->holidayService->resolveHolidayForPayroll($user, $dateKey);
+
+        if (! $holiday) {
+            return null;
+        }
+
+        $raw = strtolower(trim($holiday['type'] ?? ''));
+        if ($raw === '') {
+            return 'special';
         }
 
         $map = config('payroll.holiday_types', [
@@ -210,7 +240,7 @@ class PayrollRulesEngineService
 
         $effectiveSchedule = $this->resolveEffectiveSchedule($user);
         $isRestDay = $effectiveSchedule ? $this->isRestDay($effectiveSchedule, $date) : false;
-        $holidayType = $this->getHolidayType($dateKey, $user->getEffectiveCompanyId());
+        $holidayType = $this->getHolidayTypeForUser($user, $dateKey);
 
         [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey);
 

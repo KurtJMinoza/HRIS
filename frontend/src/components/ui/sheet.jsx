@@ -82,7 +82,7 @@ function SheetContent({
           initial={{ opacity: 0.6 }}
           animate={{ opacity: 1 }}
           transition={{ duration: SHEET_DURATION, ease: SHEET_EASE }}
-          className="relative flex h-full w-full flex-col gap-4 overflow-hidden"
+          className="relative flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden"
         >
           {children}
         </motion.div>

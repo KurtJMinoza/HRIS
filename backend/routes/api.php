@@ -205,8 +205,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:holiday.view')->get('/admin/holidays', [HolidayController::class, 'index']);
         Route::middleware('permission:holiday.manage')->post('/admin/holidays', [HolidayController::class, 'store']);
+        Route::middleware('permission:holiday.manage')->post('/admin/holidays/swap', [HolidayController::class, 'storeSwap']);
         Route::middleware('permission:holiday.manage')->post('/admin/holidays/seeded/swap', [HolidayController::class, 'swapSeeded']);
         Route::middleware('permission:holiday.manage')->post('/admin/holidays/{id}/swap', [HolidayController::class, 'swap']);
+        Route::middleware('permission:holiday.manage')->patch('/admin/holidays/{id}/swap', [HolidayController::class, 'updateSwap']);
         Route::middleware('permission:holiday.manage')->patch('/admin/holidays/{id}', [HolidayController::class, 'update']);
         Route::middleware('permission:holiday.manage')->delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
 

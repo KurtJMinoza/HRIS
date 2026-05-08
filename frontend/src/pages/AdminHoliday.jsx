@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
+  ArrowRightLeft,
   Calendar,
   CalendarDays,
   ChevronLeft,
@@ -23,15 +24,25 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
-import { createAdminHoliday, getAdminHolidays, deleteAdminHoliday, swapAdminHoliday, swapSeededAdminHoliday } from '@/api'
+import { createAdminHoliday, getAdminHolidays, deleteAdminHoliday, swapAdminHoliday, swapSeededAdminHoliday, companyLogoUrl } from '@/api'
 import { HolidayFormModal } from '@/components/holidays/HolidayFormModal'
+import { SwapHolidayModal } from '@/components/holidays/SwapHolidayModal'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+
+const AGCTEK_BRAND = {
+  badge: 'border-orange-500/25 bg-orange-50 text-orange-700 dark:border-orange-400/30 dark:bg-orange-500/10 dark:text-orange-200',
+  panel: 'rounded-l-[2rem] border-slate-950/10 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)] dark:border-orange-500/20 dark:bg-slate-950',
+  section: 'rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-slate-900/85',
+  sectionTitle: 'mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-300',
+  orangeText: 'text-orange-600 dark:text-orange-300',
+}
 
 const TYPES = [
   { value: 'regular', label: 'Regular Holiday' },
@@ -44,12 +55,12 @@ const HOLIDAY_TYPE_META = {
   regular: {
     shortLabel: 'Regular',
     multiplier: '2.00×',
-    legendDot: 'bg-teal-600',
+    legendDot: 'bg-orange-500',
     cell:
       'border-teal-700/45 bg-teal-600/[0.14] text-teal-950 shadow-sm dark:border-teal-500/40 dark:bg-teal-950/55 dark:text-teal-50 dark:shadow-none',
     cellAdjacent:
       'border-teal-700/25 bg-teal-600/[0.08] text-teal-900/90 opacity-[0.88] dark:border-teal-600/25 dark:bg-teal-950/40 dark:text-teal-100/90',
-    badge: 'bg-teal-700 text-white shadow-sm dark:bg-teal-600',
+    badge: 'bg-orange-600 text-white shadow-sm dark:bg-orange-500 dark:text-white',
     typePill: 'bg-teal-800/15 text-[10px] font-bold uppercase tracking-wide text-teal-900 dark:bg-teal-400/15 dark:text-teal-100',
     title:
       'Regular holiday — 200% daily rate if worked (ordinary day). Higher rates apply on rest day or overtime per DOLE.',
@@ -57,12 +68,12 @@ const HOLIDAY_TYPE_META = {
   special: {
     shortLabel: 'Special',
     multiplier: '1.30×',
-    legendDot: 'bg-amber-600',
+    legendDot: 'bg-orange-600',
     cell:
       'border-amber-700/50 bg-amber-500/[0.17] text-amber-950 shadow-sm dark:border-amber-500/45 dark:bg-amber-950/50 dark:text-amber-50 dark:shadow-none',
     cellAdjacent:
       'border-amber-700/28 bg-amber-500/[0.10] text-amber-950/90 opacity-[0.88] dark:border-amber-600/30 dark:bg-amber-950/38 dark:text-amber-50/95',
-    badge: 'bg-amber-600 text-white shadow-sm dark:bg-amber-500',
+    badge: 'bg-orange-600 text-white shadow-sm dark:bg-orange-500 dark:text-white',
     typePill: 'bg-amber-800/15 text-[10px] font-bold uppercase tracking-wide text-amber-950 dark:bg-amber-400/15 dark:text-amber-100',
     title:
       'Special non-working day — 130% if worked; typically no pay if unworked (check monthly vs daily rules).',
@@ -70,12 +81,12 @@ const HOLIDAY_TYPE_META = {
   special_working: {
     shortLabel: 'Sp. Work',
     multiplier: '1.00×',
-    legendDot: 'bg-slate-500',
+    legendDot: 'bg-slate-950 dark:bg-orange-300',
     cell:
       'border-slate-600/35 bg-slate-500/[0.10] text-slate-950 shadow-sm dark:border-slate-500/35 dark:bg-slate-950/45 dark:text-slate-50 dark:shadow-none',
     cellAdjacent:
       'border-slate-600/20 bg-slate-500/[0.06] text-slate-900/90 opacity-[0.88] dark:border-slate-600/20 dark:bg-slate-950/30 dark:text-slate-100/95',
-    badge: 'bg-slate-600 text-white shadow-sm dark:bg-slate-500',
+    badge: 'bg-orange-600 text-white shadow-sm dark:bg-orange-500 dark:text-white',
     typePill: 'bg-slate-800/15 text-[10px] font-bold uppercase tracking-wide text-slate-900 dark:bg-slate-400/15 dark:text-slate-100',
     title:
       'Special working day — pay as ordinary day (no statutory holiday premium) unless policy/CBA adds benefits.',
@@ -83,12 +94,12 @@ const HOLIDAY_TYPE_META = {
   company: {
     shortLabel: 'Company',
     multiplier: '—',
-    legendDot: 'bg-violet-600',
+    legendDot: 'bg-orange-700',
     cell:
       'border-violet-600/40 bg-violet-500/[0.11] text-violet-950 shadow-sm dark:border-violet-500/40 dark:bg-violet-950/45 dark:text-violet-50 dark:shadow-none',
     cellAdjacent:
       'border-violet-600/22 bg-violet-500/[0.07] text-violet-950/90 opacity-[0.88] dark:border-violet-600/25 dark:bg-violet-950/32 dark:text-violet-100/95',
-    badge: 'bg-violet-700 text-white shadow-sm dark:bg-violet-600',
+    badge: 'bg-orange-600 text-white shadow-sm dark:bg-orange-500 dark:text-white',
     typePill: 'bg-violet-800/15 text-[10px] font-bold uppercase tracking-wide text-violet-900 dark:bg-violet-400/15 dark:text-violet-100',
     title: 'Company / custom event — no default statutory premium; follow your payroll policy.',
   },
@@ -162,85 +173,79 @@ function HolidayLegendBar() {
   )
 }
 
-function HolidayInsightPanel({ nextHoliday, daysUntilNextHoliday, holidaysInNext30, onViewList }) {
+function HolidayInsightPanel({ nextHoliday, daysUntilNextHoliday, onViewList }) {
+  const nextTypeMeta = nextHoliday?.type && HOLIDAY_TYPE_META[nextHoliday.type] ? HOLIDAY_TYPE_META[nextHoliday.type] : null
+
   return (
-    <div className="max-w-full overflow-hidden rounded-2xl border border-border/60 bg-card p-4 shadow-md ring-1 ring-border/40 dark:border-border/50 dark:bg-card/90 dark:ring-border/30 md:p-5">
-      <div className="space-y-5">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
-              Next holiday
+    <div className="space-y-4">
+      <div className="max-w-full overflow-hidden rounded-3xl border border-border/70 bg-card p-4 shadow-[0_18px_45px_rgba(15,23,42,0.08)] ring-1 ring-border/25 dark:border-border/50 dark:bg-card/95 dark:shadow-none md:p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded-full bg-brand/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-brand dark:bg-brand/15">
+            Next holiday
+          </span>
+          {nextHoliday && daysUntilNextHoliday != null && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1 text-[11px] font-bold tabular-nums text-muted-foreground dark:bg-muted/25">
+              <Clock className="size-3 shrink-0 opacity-70" aria-hidden />
+              {daysUntilNextHoliday === 0 ? 'Today' : `${daysUntilNextHoliday} day${daysUntilNextHoliday === 1 ? '' : 's'}`}
             </span>
-            {nextHoliday && daysUntilNextHoliday != null && (
-              <span
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold tabular-nums',
-                  daysUntilNextHoliday === 0
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
-                    : 'border-border/60 bg-muted/50 text-muted-foreground dark:bg-muted/30'
-                )}
-              >
-                <Clock className="size-3 shrink-0 opacity-70" aria-hidden />
-                {daysUntilNextHoliday === 0 ? 'Today' : `${daysUntilNextHoliday} day${daysUntilNextHoliday === 1 ? '' : 's'}`}
-              </span>
-            )}
-          </div>
-          {nextHoliday ? (
-            <>
-              <h3 className="mt-3 break-words text-lg font-bold tracking-tight text-foreground">{nextHoliday.name}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {new Date(nextHoliday.date).toLocaleDateString('en-PH', {
-                  weekday: 'long',
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
-              </p>
-              <Badge
-                variant="outline"
-                className={cn(
-                  'mt-3 text-[11px] font-semibold',
-                  nextHoliday.type === 'regular' &&
-                    'border-teal-600/50 bg-teal-600/10 text-teal-900 dark:border-teal-500/40 dark:bg-teal-950/50 dark:text-teal-200',
-                  nextHoliday.type === 'special' &&
-                    'border-amber-600/50 bg-amber-600/10 text-amber-950 dark:border-amber-600/40 dark:bg-amber-950/45 dark:text-amber-100',
-                  nextHoliday.type === 'special_working' &&
-                    'border-slate-500/50 bg-slate-600/10 text-slate-900 dark:border-slate-500/40 dark:bg-slate-950/45 dark:text-slate-100',
-                  nextHoliday.type === 'company' && 'border-violet-600/40 bg-violet-600/10 text-violet-900 dark:bg-violet-900/30 dark:text-violet-100'
-                )}
-              >
-                {nextHoliday.type === 'regular'
-                  ? 'Regular'
-                  : nextHoliday.type === 'special'
-                    ? 'Special'
-                    : nextHoliday.type === 'special_working'
-                      ? 'Sp. work'
-                      : 'Company'}
-              </Badge>
-            </>
-          ) : (
-            <p className="mt-3 text-sm text-muted-foreground">No upcoming holidays in this schedule.</p>
           )}
-          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-            Tap a date on the calendar for pay rules and premium simulation.
-          </p>
-          <Button type="button" variant="secondary" size="sm" className="mt-3 w-full" onClick={onViewList}>
-            <List className="mr-2 size-4" />
-            View full schedule
-          </Button>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl border border-border/50 bg-muted/30 px-3 py-3 text-center dark:bg-muted/20">
-            <p className="text-2xl font-bold tabular-nums text-foreground">{holidaysInNext30}</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Next 30 days</p>
+        <div className="mt-5 flex items-start gap-3">
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-brand/25 bg-brand/10 text-brand shadow-sm dark:bg-brand/15">
+            <Calendar className="size-6" aria-hidden />
           </div>
-          <div className="rounded-xl border border-border/50 bg-muted/30 px-3 py-3 text-center dark:bg-muted/20">
-            <Users className="mx-auto size-5 text-muted-foreground" aria-hidden />
-            <p className="mt-2 text-xs font-semibold text-foreground">All employees</p>
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Impact scope</p>
+          <div className="min-w-0 flex-1">
+            {nextHoliday ? (
+              <>
+                <h3 className="wrap-break-word text-lg font-black tracking-tight text-foreground">{nextHoliday.name}</h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  {new Date(nextHoliday.date).toLocaleDateString('en-PH', {
+                    weekday: 'long',
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
+                </p>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'mt-3 rounded-full border px-2.5 py-1 text-[11px] font-bold',
+                    nextHoliday.type === 'regular' &&
+                      'border-teal-600/35 bg-teal-600/10 text-teal-800 dark:border-teal-500/35 dark:bg-teal-500/10 dark:text-teal-200',
+                    nextHoliday.type === 'special' &&
+                      'border-amber-600/35 bg-amber-500/10 text-amber-900 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100',
+                    nextHoliday.type === 'special_working' &&
+                      'border-slate-500/35 bg-slate-500/10 text-slate-700 dark:border-slate-400/30 dark:bg-white/5 dark:text-slate-200',
+                    nextHoliday.type === 'company' &&
+                      'border-violet-600/35 bg-violet-500/10 text-violet-800 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-100'
+                  )}
+                >
+                  {nextTypeMeta?.shortLabel || 'Holiday'} Holiday
+                </Badge>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-black tracking-tight text-foreground">No upcoming holidays</h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">Create a holiday or change filters to see schedule details.</p>
+              </>
+            )}
           </div>
         </div>
+
+        <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
+          Tap a date on the calendar for pay rules and premium simulation.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-4 h-10 w-full gap-2 border-brand/35 bg-brand/5 font-bold text-brand hover:bg-brand/10 dark:border-brand/45 dark:bg-brand/10 dark:text-brand"
+          onClick={onViewList}
+        >
+          <List className="size-4" />
+          View full schedule
+        </Button>
       </div>
     </div>
   )
@@ -294,7 +299,7 @@ function HolidaySkeleton() {
           </div>
         ))}
         {Array.from({ length: 42 }).map((_, i) => (
-          <div key={i} className="flex min-h-[5.5rem] bg-card p-2 dark:bg-card">
+          <div key={i} className="flex min-h-22 bg-card p-2 dark:bg-card">
             <div className="flex w-full flex-col gap-2 rounded-xl border border-border/60 bg-[#f8fafc] p-2 dark:border-border/40 dark:bg-muted/15">
               <div className="h-3 w-5 rounded bg-muted" />
               <div className="flex-1 space-y-2">
@@ -358,12 +363,97 @@ function getCalendarCells(year, month, holidayMap) {
 
 function holidayScopeLabel(holiday) {
   const scope = holiday?.scope || 'nationwide'
-  if (scope === 'company') return 'Company - all'
+  const entries = Array.isArray(holiday?.holidays) ? holiday.holidays : []
+  if (entries.length > 1) {
+    const labels = entries
+      .map((entry) => holidayTargetLabel(entry))
+      .filter(Boolean)
+      .filter((label, idx, list) => list.indexOf(label) === idx)
+    const visible = labels.slice(0, 2).join(', ')
+    const suffix = labels.length > 2 ? ` +${labels.length - 2}` : ''
+    if (visible) return `${visible}${suffix}`
+    if (scope === 'company') return `${entries.length} companies`
+    if (scope === 'branch') return `${entries.length} branches`
+    if (scope === 'department') return `${entries.length} departments`
+    if (scope === 'employee') return `${entries.length} employees`
+    return `${entries.length} scoped targets`
+  }
+  if (scope === 'company') return holiday.company_name || (holiday.company_id ? `Company #${holiday.company_id}` : 'Company')
+  if (scope === 'branch') return holiday.branch_name || (holiday.branch_id ? `Branch #${holiday.branch_id}` : 'Branch')
+  if (scope === 'department') return holiday.department_name || (holiday.department_id ? `Department #${holiday.department_id}` : 'Department')
+  if (scope === 'employee') return holiday.employee_name || holiday.employee_code || (holiday.employee_id ? `Employee #${holiday.employee_id}` : 'Employee')
+  if (scope === 'regional') return 'Selected regions'
+  return 'All employees'
+}
+
+function holidayScopeTypeLabel(holiday) {
+  const scope = holiday?.scope || 'nationwide'
+  if (scope === 'company') return 'Company'
   if (scope === 'branch') return 'Branch'
   if (scope === 'department') return 'Department'
   if (scope === 'employee') return 'Employee'
   if (scope === 'regional') return 'Regional'
   return 'Nationwide'
+}
+
+function holidayTargetLabel(holiday) {
+  if (!holiday) return 'Target'
+  if (holiday.scope === 'employee') {
+    return [holiday.employee_name || holiday.employee_code || `Employee #${holiday.employee_id}`, holiday.department_name, holiday.company_name]
+      .filter(Boolean)
+      .join(' · ')
+  }
+  if (holiday.scope === 'department') {
+    return [holiday.department_name || `Department #${holiday.department_id}`, holiday.branch_name, holiday.company_name].filter(Boolean).join(' · ')
+  }
+  if (holiday.scope === 'branch') {
+    return [holiday.branch_name || `Branch #${holiday.branch_id}`, holiday.company_name].filter(Boolean).join(' · ')
+  }
+  if (holiday.scope === 'company') return holiday.company_name || `Company #${holiday.company_id}`
+  return holidayScopeLabel(holiday)
+}
+
+function targetLogoUrl(holiday) {
+  return holiday?.company_logo_url || companyLogoUrl({ logo_url: holiday?.company_logo_url })
+}
+
+function groupHolidayRows(rows) {
+  const groups = new Map()
+  rows.forEach((holiday) => {
+    const key = [
+      holiday.date,
+      holiday.name,
+      holiday.type,
+      holiday.scope || 'nationwide',
+      holiday.description || '',
+      holiday.status || 'active',
+      holiday.source || 'custom',
+    ].join('|')
+    const existing = groups.get(key)
+    if (existing) {
+      existing.holidays.push(holiday)
+      existing.company_ids = [...new Set([...existing.company_ids, holiday.company_id].filter((id) => id != null))]
+      existing.branch_ids = [...new Set([...existing.branch_ids, holiday.branch_id].filter((id) => id != null))]
+      existing.department_ids = [...new Set([...existing.department_ids, holiday.department_id].filter((id) => id != null))]
+      existing.employee_ids = [...new Set([...existing.employee_ids, holiday.employee_id].filter((id) => id != null))]
+      return
+    }
+    groups.set(key, {
+      ...holiday,
+      id: holiday.id,
+      holidays: [holiday],
+      company_ids: holiday.company_id != null ? [holiday.company_id] : [],
+      branch_ids: holiday.branch_id != null ? [holiday.branch_id] : [],
+      department_ids: holiday.department_id != null ? [holiday.department_id] : [],
+      employee_ids: holiday.employee_id != null ? [holiday.employee_id] : [],
+    })
+  })
+
+  return Array.from(groups.values()).map((group) => ({
+    ...group,
+    id: group.holidays.length === 1 ? group.id : undefined,
+    company_logos: Array.from(new Set(group.holidays.map(targetLogoUrl).filter(Boolean))),
+  }))
 }
 
 function CalendarCell({ cell, todayKey, onSelect, typeFilter, isSelected }) {
@@ -389,6 +479,8 @@ function CalendarCell({ cell, todayKey, onSelect, typeFilter, isSelected }) {
   const monthShort = MONTHS[cellMonth]?.slice(0, 3) ?? ''
 
   const tooltip = holiday && meta ? `${holiday.name} — ${meta.title}` : undefined
+  const targetEntries = Array.isArray(holiday?.holidays) ? holiday.holidays : []
+  const logos = Array.isArray(holiday?.company_logos) ? holiday.company_logos.slice(0, 3) : []
 
   return (
     <button
@@ -396,31 +488,31 @@ function CalendarCell({ cell, todayKey, onSelect, typeFilter, isSelected }) {
       title={tooltip}
       onClick={() => onSelect?.(cell)}
       className={cn(
-        'touch-manipulation group relative flex h-full min-h-[4.25rem] w-full min-w-0 max-w-full flex-col rounded-lg border border-border/25 p-1.5 text-left @sm:min-h-[5.25rem] @sm:rounded-xl @sm:p-2',
-        'transition-all duration-200 ease-out focus:outline-none focus-visible:ring-[3px] focus-visible:ring-primary/40 focus-visible:ring-offset-2 ring-offset-background',
-        'hover:shadow-md active:scale-[0.99] @lg:hover:z-[1] @lg:hover:scale-[1.03]',
-        isAdjacent && !holiday && 'border-border/20 bg-muted/35 text-muted-foreground dark:border-border/30 dark:bg-muted/20',
-        isAdjacent && holiday && meta && meta.cellAdjacent,
-        !isAdjacent && !holiday && 'border-border/25 bg-card text-foreground shadow-sm dark:border-border/30 dark:bg-card',
-        !isAdjacent && !holiday && 'hover:border-primary/30 hover:bg-muted/30 dark:hover:bg-muted/25',
-        !isAdjacent && holiday && meta && meta.cell,
+        'touch-manipulation group relative flex h-full min-h-[4.65rem] w-full min-w-0 max-w-full flex-col rounded-2xl border p-2 text-left @sm:min-h-[5.9rem] @sm:p-2.5',
+        'transition-all duration-200 ease-out focus:outline-none focus-visible:ring-[3px] focus-visible:ring-orange-500/35 focus-visible:ring-offset-2 ring-offset-background',
+        'hover:-translate-y-0.5 hover:shadow-[0_14px_30px_rgba(15,23,42,0.10)] active:scale-[0.99] dark:hover:shadow-none',
+        isAdjacent && !holiday && 'border-border/25 bg-muted/20 text-muted-foreground dark:border-border/25 dark:bg-background/30',
+        isAdjacent && holiday && 'border-border/45 bg-card/70 text-foreground opacity-80 dark:bg-card/70',
+        !isAdjacent && !holiday && 'border-slate-200 bg-white text-slate-950 shadow-sm dark:border-white/10 dark:bg-slate-950/80 dark:text-white',
+        !isAdjacent && !holiday && 'hover:border-orange-500/45 hover:bg-white dark:hover:bg-slate-950',
+        !isAdjacent && holiday && 'border-slate-200 bg-white text-slate-950 shadow-sm ring-1 ring-slate-950/5 dark:border-white/10 dark:bg-slate-950/95 dark:text-white dark:ring-white/10',
         isToday &&
-          'ring-2 ring-primary/60 ring-offset-2 ring-offset-background dark:ring-primary/50',
+          'ring-2 ring-orange-500/60 ring-offset-2 ring-offset-background dark:ring-orange-400/55',
         isSelected &&
-          'z-[2] scale-[1.02] border-primary shadow-[0_0_0_3px_hsl(var(--primary)/0.18)] dark:shadow-[0_0_0_3px_hsl(var(--primary)/0.28)]',
+          'z-2 scale-[1.02] border-orange-500 shadow-[0_0_0_3px_rgba(249,115,22,0.18)] dark:shadow-[0_0_0_3px_rgba(251,146,60,0.28)]',
         filteredOut && 'opacity-40'
       )}
     >
       <div className="flex items-start justify-between gap-1">
         <span
           className={cn(
-            'text-[15px] font-bold tabular-nums leading-none tracking-tight @sm:text-lg',
+            'text-[14px] font-black tabular-nums leading-none tracking-tight @sm:text-base',
             isAdjacent && !holiday && 'text-muted-foreground/80',
             holiday && meta && 'text-current/95 dark:text-current'
           )}
         >
-          {isToday ? (
-            <span className="inline-flex min-w-7 items-center justify-center rounded-md bg-primary px-1 py-0.5 text-sm font-bold text-primary-foreground shadow-sm @sm:rounded-lg @sm:px-1.5 @sm:text-base">
+          {isToday || isSelected ? (
+            <span className="inline-flex min-w-7 items-center justify-center rounded-lg bg-orange-600 px-1.5 py-1 text-sm font-black text-white shadow-sm ring-1 ring-orange-300/70 @sm:text-base dark:bg-orange-500 dark:text-white">
               {day}
             </span>
           ) : (
@@ -428,29 +520,43 @@ function CalendarCell({ cell, todayKey, onSelect, typeFilter, isSelected }) {
           )}
         </span>
         {isAdjacent && (
-          <span className="shrink-0 rounded bg-background/40 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground dark:bg-background/20">
+          <span className="shrink-0 rounded-md bg-muted/45 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-muted-foreground dark:bg-background/35">
             {monthShort}
           </span>
+        )}
+        {holiday && meta && (
+          <span className={cn('size-2.5 shrink-0 rounded-full shadow-sm ring-2 ring-orange-100 dark:ring-slate-950', meta.legendDot)} />
         )}
       </div>
 
       {holiday && meta ? (
-        <div className="mt-1 flex min-h-0 min-w-0 flex-1 flex-col @sm:mt-1.5">
-          <p className="line-clamp-2 break-words text-[10px] font-semibold leading-tight tracking-tight @sm:text-[13px] @sm:leading-snug">
+        <div className="mt-2 flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.70)] dark:border-white/10 dark:bg-slate-900/70 dark:shadow-none @sm:mt-2.5">
+          <p className="line-clamp-2 wrap-break-word text-[10px] font-black leading-tight tracking-tight text-slate-950 dark:text-white @sm:text-[12px] @sm:leading-snug">
+            {holiday.is_swap && <span className="mr-0.5 inline-block text-[9px] text-orange-600 dark:text-orange-300">↔</span>}
             {holiday.name}
           </p>
-          <span
-            className={cn(
-              'mt-0.5 inline-flex w-fit max-w-full truncate rounded px-1 py-0.5 text-[8px] @sm:mt-1 @sm:px-1.5 @sm:text-[10px]',
-              meta.typePill
-            )}
-          >
-            {meta.shortLabel}
+          <span className="mt-0.5 truncate text-[9px] font-bold leading-tight text-slate-500 dark:text-slate-300 @sm:text-[10px]">
+            {holiday.is_swap ? 'Swap' : targetEntries.length > 1 ? `${targetEntries.length} targets` : meta.shortLabel}
           </span>
-          <div className="mt-auto flex justify-end pt-1 @sm:pt-1.5">
+          <div className="mt-auto flex items-end justify-between gap-1 pt-1.5">
+            {logos.length > 0 ? (
+              <div className="flex -space-x-1 overflow-hidden">
+                {logos.map((logo, logoIdx) => (
+                  <img
+                    key={`${logo}-${logoIdx}`}
+                    src={logo}
+                    alt=""
+                    className="size-5 rounded-full border border-background bg-background object-cover @sm:size-6"
+                    loading="lazy"
+                  />
+                ))}
+              </div>
+            ) : (
+              <span />
+            )}
             <span
               className={cn(
-                'inline-flex min-h-7 min-w-9 shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-xs font-black tabular-nums leading-none tracking-tight @sm:min-h-8 @sm:min-w-11 @sm:px-2 @sm:py-1 @sm:text-base',
+                'inline-flex min-h-5 min-w-8 shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-black tabular-nums leading-none tracking-tight @sm:min-h-6 @sm:min-w-9 @sm:text-xs',
                 meta.badge
               )}
             >
@@ -487,6 +593,13 @@ export default function AdminHoliday() {
   const [holidayModalMode, setHolidayModalMode] = useState('create')
   const [holidayModalId, setHolidayModalId] = useState(null)
   const [holidayModalInitial, setHolidayModalInitial] = useState(null)
+  const [swapModalOpen, setSwapModalOpen] = useState(false)
+  const [swapModalMode, setSwapModalMode] = useState('create')
+  const [swapModalId, setSwapModalId] = useState(null)
+  const [swapModalInitial, setSwapModalInitial] = useState(null)
+  const [swapDialogOpen, setSwapDialogOpen] = useState(false)
+  const [swapTargetHoliday, setSwapTargetHoliday] = useState(null)
+  const [swapDate, setSwapDate] = useState('')
   const [holidays, setHolidays] = useState([]) // Merged from API (includes custom DB holidays)
   const [loading, setLoading] = useState(true)
 
@@ -509,10 +622,19 @@ export default function AdminHoliday() {
     refetchHolidays()
   }, [refetchHolidays])
 
+  // Keep impact cards fresh as roster, rates, or payroll daily records change elsewhere.
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      refetchHolidays({ silent: true })
+    }, 60000)
+
+    return () => window.clearInterval(interval)
+  }, [refetchHolidays])
+
   // Holidays from API (Time and Date API + custom DB)
   const allHolidays = useMemo(() => {
     const base = holidays.map((h) => ({ ...h, scope: h.scope || 'nationwide' }))
-    return base.sort((a, b) => a.date.localeCompare(b.date))
+    return groupHolidayRows(base).sort((a, b) => a.date.localeCompare(b.date))
   }, [holidays])
 
   const filteredHolidays = useMemo(() => {
@@ -571,17 +693,6 @@ export default function AdminHoliday() {
       .slice(0, 8)
   }, [allHolidays])
 
-  const holidaysInNext30 = useMemo(() => {
-    const now = new Date()
-    const in30 = new Date(now)
-    in30.setDate(in30.getDate() + 30)
-    return allHolidays.filter((h) => {
-      if ((h.status || 'active') !== 'active') return false
-      const d = new Date(h.date)
-      return d >= now && d <= in30
-    }).length
-  }, [allHolidays])
-
   const nextHoliday = upcomingHolidays[0] ?? null
   const daysUntilNextHoliday = useMemo(() => {
     if (!nextHoliday?.date) return null
@@ -632,6 +743,10 @@ export default function AdminHoliday() {
     try {
       if (typeof holidayOrId === 'number') {
         await deleteAdminHoliday(holidayOrId)
+      } else if (Array.isArray(holidayOrId?.holidays) && holidayOrId.holidays.length > 1) {
+        await Promise.all(holidayOrId.holidays.map((entry) => (
+          entry?.id ? deleteAdminHoliday(entry.id) : createAdminHoliday(holidayOverridePayload(entry, { status: 'inactive' }))
+        )))
       } else if (holidayOrId?.id) {
         await deleteAdminHoliday(holidayOrId.id)
       } else if (holidayOrId) {
@@ -648,26 +763,40 @@ export default function AdminHoliday() {
 
   const handleSwapHoliday = async (holiday) => {
     if (!holiday) return
-    const nextDate = window.prompt('Move this holiday to which date? Use YYYY-MM-DD.', holiday.date || selectedCell?.dateStr || '')
-    if (!nextDate) return
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+    const nextDate = swapDate
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate || '')) {
       toast.error('Invalid date', { description: 'Use YYYY-MM-DD format.' })
       return
     }
     try {
-      if (holiday.id) {
+      if (Array.isArray(holiday?.holidays) && holiday.holidays.length > 1) {
+        await Promise.all(holiday.holidays.map((entry) => {
+          if (entry?.id) return swapAdminHoliday(entry.id, { date: nextDate })
+          return swapSeededAdminHoliday(holidayOverridePayload(entry, { new_date: nextDate }))
+        }))
+      } else if (holiday.id) {
         await swapAdminHoliday(holiday.id, { date: nextDate })
       } else {
         await swapSeededAdminHoliday(holidayOverridePayload(holiday, { new_date: nextDate }))
       }
       await refetchHolidays({ silent: true })
       setSelectedCell(null)
+      setSwapDialogOpen(false)
+      setSwapTargetHoliday(null)
+      setSwapDate('')
       toast.success('Holiday swapped', { description: `Moved to ${nextDate}` })
     } catch (err) {
       const msg = err.message || 'Failed to swap holiday'
       toast.error('Failed to swap holiday', { description: msg })
     }
   }
+
+  const openSwapDialog = useCallback((holiday) => {
+    const initialDate = holiday?.date || selectedCell?.dateStr || ''
+    setSwapTargetHoliday(holiday)
+    setSwapDate(initialDate)
+    setSwapDialogOpen(true)
+  }, [selectedCell?.dateStr])
 
   const openHolidayCreate = useCallback((prefill = {}) => {
     setHolidayModalMode('create')
@@ -697,16 +826,16 @@ export default function AdminHoliday() {
 
   return (
     <Motion.div
-      className="min-w-0 max-w-full space-y-4 overflow-x-hidden @sm:space-y-6"
+      className="min-w-0 max-w-full space-y-5 overflow-x-hidden @sm:space-y-6"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
     >
-      <div className="flex flex-col gap-4 @sm:flex-row @sm:items-center @sm:justify-between">
+      <div className="flex flex-col gap-2 @sm:flex-row @sm:items-start @sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Holidays</h2>
-          <CardDescription>
-            Nationwide, company, and custom observances. Premium pay follows DOLE rules and your payroll policy.
+          <h2 className="text-3xl font-black tracking-tight text-foreground">Holidays</h2>
+          <CardDescription className="mt-1 text-sm text-muted-foreground">
+            Company, branch, department, and employee observances. Premium pay follows DOLE rules and your payroll policy.
           </CardDescription>
         </div>
       </div>
@@ -715,9 +844,9 @@ export default function AdminHoliday() {
 
       <div className="flex min-w-0 flex-col gap-4 @sm:gap-6 @lg:flex-row @lg:items-start @lg:gap-6">
         <div className="min-w-0 flex-1">
-        <Card className="overflow-hidden border-0 bg-card shadow-sm">
-            <CardHeader className="bg-muted/20 dark:bg-muted/30">
-              <CardTitle className="text-lg font-semibold">Calendar &amp; list</CardTitle>
+        <Card className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-border/50 dark:bg-card/95 dark:shadow-none">
+            <CardHeader className="border-b border-border/50 bg-card px-4 py-5 dark:bg-card/95 md:px-6">
+              <CardTitle className="text-xl font-black tracking-tight">Calendar &amp; list</CardTitle>
               <CardDescription>Browse by month or use a filtered list view.</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -727,18 +856,18 @@ export default function AdminHoliday() {
                 </div>
               ) : (
                 <AnimatedSection staggerChildren={0.06} duration={0.5}>
-                  <div className="bg-white/80 px-3 py-3 backdrop-blur-sm dark:bg-muted/45 dark:backdrop-blur-md @sm:px-4 md:px-6">
-                    <div className="flex flex-col gap-3">
+                  <div className="bg-card px-4 py-4 dark:bg-card/95 md:px-6">
+                    <div className="flex flex-col gap-4">
                       {/* Row 1: View mode — full width on narrow screens */}
                       <div className="flex w-full min-w-0 justify-center @sm:justify-start">
-                        <div className="inline-flex rounded-full border border-border/60 bg-muted/30 p-0.5 dark:border-border/50 dark:bg-muted/40">
+                        <div className="inline-flex rounded-full border border-border/60 bg-muted/30 p-1 dark:border-border/50 dark:bg-muted/30">
                           <button
                             type="button"
                             onClick={() => setActiveView('calendar')}
                             className={cn(
                               'flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold transition-colors @sm:gap-2 @sm:px-4',
                               activeView === 'calendar'
-                                ? 'border border-primary/30 bg-primary/15 text-primary dark:bg-primary/20'
+                                ? 'border border-brand/25 bg-brand text-brand-foreground shadow-sm'
                                 : 'border border-transparent text-muted-foreground hover:text-foreground'
                             )}
                           >
@@ -751,7 +880,7 @@ export default function AdminHoliday() {
                             className={cn(
                               'flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold transition-colors @sm:gap-2 @sm:px-4',
                               activeView === 'list'
-                                ? 'border border-primary/30 bg-primary/15 text-primary dark:bg-primary/20'
+                                ? 'border border-brand/25 bg-brand text-brand-foreground shadow-sm'
                                 : 'border border-transparent text-muted-foreground hover:text-foreground'
                             )}
                           >
@@ -763,11 +892,11 @@ export default function AdminHoliday() {
 
                       {/* Row 2: Month navigation (calendar only) */}
                       {activeView === 'calendar' && (
-                        <div className="flex w-full min-w-0 items-center justify-center gap-0.5 rounded-xl bg-muted/30 p-1 dark:bg-muted/35">
+                        <div className="flex w-full min-w-0 items-center justify-center gap-0.5 rounded-2xl border border-border/60 bg-background/70 p-1 dark:bg-background/35">
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="size-9 shrink-0 rounded-lg hover:bg-background/80 @sm:size-10"
+                            className="size-9 shrink-0 rounded-xl hover:bg-brand/8 @sm:size-10"
                             onClick={goPrevMonth}
                             aria-label="Previous month"
                           >
@@ -776,14 +905,15 @@ export default function AdminHoliday() {
                           <button
                             type="button"
                             onClick={goToday}
-                            className="min-w-0 flex-1 truncate px-1 py-2 text-center text-sm font-bold tracking-tight text-foreground hover:bg-background/60 dark:hover:bg-background/10 @sm:px-4 @sm:text-base"
+                            className="flex min-w-0 flex-1 items-center justify-center gap-2 truncate rounded-xl px-1 py-2 text-center text-sm font-black tracking-tight text-foreground hover:bg-muted/35 dark:hover:bg-muted/20 @sm:px-4 @sm:text-base"
                           >
+                            <Calendar className="size-4 text-muted-foreground" aria-hidden />
                             {MONTHS[month]} {year}
                           </button>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="size-9 shrink-0 rounded-lg hover:bg-background/80 @sm:size-10"
+                            className="size-9 shrink-0 rounded-xl hover:bg-brand/8 @sm:size-10"
                             onClick={goNextMonth}
                             aria-label="Next month"
                           >
@@ -799,8 +929,8 @@ export default function AdminHoliday() {
                           type="search"
                           value={holidaySearch}
                           onChange={(e) => setHolidaySearch(e.target.value)}
-                          placeholder="Search holidays…"
-                          className="h-10 w-full min-w-0 border-border/60 bg-background/80 pl-9 text-sm dark:bg-background/40"
+                          placeholder="Search holidays..."
+                          className="h-11 w-full min-w-0 rounded-xl border-border/60 bg-background/70 pl-9 text-sm shadow-sm dark:bg-background/35"
                           aria-label="Search holidays"
                         />
                       </div>
@@ -819,9 +949,9 @@ export default function AdminHoliday() {
                               type="button"
                               onClick={() => setTypeFilter((f) => (f === value ? '' : value))}
                               className={cn(
-                                'rounded-full border px-2.5 py-1.5 text-xs font-bold transition-colors @sm:px-3',
+                                'rounded-full border px-3 py-1.5 text-xs font-bold transition-colors @sm:px-3.5',
                                 typeFilter === value
-                                  ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                                  ? 'border-brand bg-brand text-brand-foreground shadow-sm'
                                   : 'border-border/60 bg-transparent text-muted-foreground hover:border-border hover:text-foreground'
                               )}
                             >
@@ -832,7 +962,7 @@ export default function AdminHoliday() {
                         <div className="flex w-full min-w-0 flex-wrap items-center gap-2 @sm:ml-auto @sm:w-auto @sm:justify-end">
                           <Popover open={filtersSheetOpen} onOpenChange={setFiltersSheetOpen}>
                             <PopoverTrigger asChild>
-                              <Button variant="outline" size="sm" className="h-10 shrink-0 gap-2">
+                              <Button variant="outline" size="sm" className="h-11 shrink-0 gap-2 rounded-xl border-border/70 bg-background/70 font-bold shadow-sm dark:bg-background/35">
                                 <SlidersHorizontal className="size-4" />
                                 Filters
                                 {hasFilters && <span className="size-2 rounded-full bg-primary" />}
@@ -910,7 +1040,7 @@ export default function AdminHoliday() {
                           </Popover>
                           <Button
                             onClick={() => openHolidayCreate()}
-                            className="h-10 min-w-0 shrink-0 gap-2 px-3 @sm:px-4"
+                            className="h-11 min-w-0 shrink-0 gap-2 rounded-xl bg-brand px-3 font-bold text-brand-foreground shadow-sm hover:bg-brand-strong @sm:px-4"
                           >
                             <Plus className="size-4 shrink-0" />
                             <span className="truncate">Add Holiday</span>
@@ -935,10 +1065,10 @@ export default function AdminHoliday() {
             {/* Calendar View */}
             {activeView === 'calendar' && (
               <>
-                <div className="mt-2 space-y-3 px-3 pb-4 @sm:px-4 md:pb-6">
-                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/25 px-3 py-2 text-xs @sm:text-sm dark:bg-muted/20">
-                    <p className="text-muted-foreground">
-                      <span className="font-bold tabular-nums text-foreground">{holidaysInViewMonth}</span>
+                <div className="space-y-3 px-4 pb-5 md:px-6 md:pb-6">
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-0 text-xs @sm:text-sm">
+                    <p className="font-semibold text-brand">
+                      <span className="font-black tabular-nums text-brand">{holidaysInViewMonth}</span>
                       <span className="mx-1">holiday{holidaysInViewMonth === 1 ? '' : 's'}</span>
                       <span className="text-muted-foreground/90">in {MONTHS[month]} {year}</span>
                     </p>
@@ -947,17 +1077,17 @@ export default function AdminHoliday() {
                     )}
                   </div>
                   <div className="w-full min-w-0 overflow-x-auto @sm:overflow-x-visible">
-                    <div className="grid w-full min-w-[280px] grid-cols-[repeat(7,minmax(0,1fr))] grid-rows-[auto_repeat(6,minmax(4.25rem,1fr))] gap-2 @sm:min-w-0 @sm:grid-rows-[auto_repeat(6,minmax(5.25rem,1fr))]">
+                    <div className="grid w-full min-w-[280px] grid-cols-7 grid-rows-[auto_repeat(6,minmax(4.25rem,1fr))] gap-2 @sm:min-w-0 @sm:grid-rows-[auto_repeat(6,minmax(5.25rem,1fr))]">
                   {WEEKDAYS.map((w) => (
                     <div
                       key={w}
-                      className="min-w-0 rounded-lg bg-muted/50 px-0.5 py-2 text-center text-[9px] font-bold uppercase leading-tight tracking-wide text-muted-foreground @sm:px-2 @sm:py-2.5 @sm:text-[11px] @sm:tracking-wider"
+                      className="min-w-0 rounded-xl bg-muted/35 px-0.5 py-2 text-center text-[9px] font-black uppercase leading-tight tracking-wide text-muted-foreground @sm:px-2 @sm:py-2.5 @sm:text-[11px] @sm:tracking-wider"
                     >
                       {w}
                     </div>
                   ))}
                   {calendarCells.map((cell, idx) => (
-                    <div key={idx} className="flex min-h-[4.25rem] min-w-0 @sm:min-h-[5.25rem]">
+                    <div key={idx} className="flex min-h-17 min-w-0 @sm:min-h-21">
                       <CalendarCell
                         cell={cell}
                         todayKey={todayKey}
@@ -995,7 +1125,7 @@ export default function AdminHoliday() {
                     ) : (
                       filteredHolidays.map((h, rowIdx) => (
                         <tr
-                          key={h.id || h.date}
+                          key={h.id || `${h.date}-${h.name}-${h.scope}-${rowIdx}`}
                           className={cn(
                             'transition-colors hover:bg-muted/25',
                             rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10'
@@ -1029,7 +1159,14 @@ export default function AdminHoliday() {
                                     : 'Company'}
                             </Badge>
                           </td>
-                          <td className="px-3 py-3 align-middle text-muted-foreground">{holidayScopeLabel(h)}</td>
+                          <td className="px-3 py-3 align-middle">
+                            <div className="min-w-0">
+                              <p className="wrap-break-word font-medium text-foreground">{holidayScopeLabel(h)}</p>
+                              <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                {holidayScopeTypeLabel(h)}
+                              </p>
+                            </div>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -1047,7 +1184,6 @@ export default function AdminHoliday() {
           <HolidayInsightPanel
             nextHoliday={nextHoliday}
             daysUntilNextHoliday={daysUntilNextHoliday}
-            holidaysInNext30={holidaysInNext30}
             onViewList={() => setActiveView('list')}
           />
         </aside>
@@ -1070,256 +1206,340 @@ export default function AdminHoliday() {
         }}
       />
 
+      <SwapHolidayModal
+        open={swapModalOpen}
+        onOpenChange={(o) => {
+          setSwapModalOpen(o)
+          if (!o) {
+            setSwapModalId(null)
+            setSwapModalInitial(null)
+          }
+        }}
+        mode={swapModalMode}
+        editingId={swapModalId}
+        initial={swapModalInitial}
+        onSaved={async () => {
+          await refetchHolidays({ silent: true })
+        }}
+      />
+
       {/* Date click → Detail panel (premium SaaS modal) */}
       <Sheet open={!!selectedCell} onOpenChange={(open) => !open && setSelectedCell(null)}>
         <SheetContent
           side="right"
-          className="flex h-full max-h-screen w-full max-w-[520px] flex-col overflow-y-auto border-l border-border bg-card p-0 sm:max-w-[520px]"
+          className={cn('h-full max-h-dvh w-[min(100vw-0.5rem,38rem)] gap-0 p-0 sm:w-[min(100vw-1rem,42rem)] sm:max-w-none', AGCTEK_BRAND.panel)}
           showCloseButton={false}
         >
           {selectedCell?.holiday ? (
-            /* Holiday detail modal — 2026 premium: no redundancy, unified accent, compact rules */
-            <div className="flex flex-col">
-              {/* Header: title + date + scope pill + close — no duplicate type */}
-              <div className="flex items-start justify-between gap-4 px-6 py-6">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        'text-xs font-medium',
-                        selectedCell.holiday.type === 'regular' && 'border-teal-500/25 bg-teal-500/10 text-teal-800 dark:border-teal-500/30 dark:bg-teal-500/15 dark:text-teal-200',
-                        selectedCell.holiday.type === 'special' && 'border-amber-500/25 bg-amber-500/10 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-100',
-                        selectedCell.holiday.type === 'special_working' &&
-                          'border-slate-500/25 bg-slate-500/10 text-slate-900 dark:border-slate-500/30 dark:bg-slate-950/40 dark:text-slate-100',
-                        selectedCell.holiday.type === 'company' && 'border-violet-500/25 bg-violet-500/10 text-violet-900 dark:border-violet-500/30 dark:bg-violet-950/40 dark:text-violet-100'
-                      )}
-                    >
-                      {selectedCell.holiday.type === 'regular'
-                        ? 'Regular Holiday'
-                        : selectedCell.holiday.type === 'special'
-                          ? 'Special Non-Working'
-                          : selectedCell.holiday.type === 'special_working'
-                            ? 'Special Working Day'
-                            : 'Company Event'}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {holidayScopeLabel(selectedCell.holiday)}
-                    </span>
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="relative overflow-hidden border-b border-slate-950/8 bg-white px-6 py-6 pr-5 dark:border-orange-500/15 dark:bg-slate-950">
+                <div className="pointer-events-none absolute -right-14 -top-16 size-36 rounded-full bg-orange-500/10 blur-2xl" />
+                <div className="relative flex shrink-0 items-start justify-between gap-4">
+                  <div className="flex min-w-0 flex-1 items-start gap-4">
+                    {targetLogoUrl((Array.isArray(selectedCell.holiday.holidays) && selectedCell.holiday.holidays[0]) || selectedCell.holiday) ? (
+                      <img
+                        src={targetLogoUrl((Array.isArray(selectedCell.holiday.holidays) && selectedCell.holiday.holidays[0]) || selectedCell.holiday)}
+                        alt=""
+                        className="size-16 shrink-0 rounded-full border-4 border-orange-100 bg-white object-cover shadow-sm dark:border-orange-500/20 dark:bg-slate-900"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="flex size-16 shrink-0 items-center justify-center rounded-full border-4 border-orange-100 bg-orange-50 text-xl font-black text-orange-700 shadow-sm dark:border-orange-500/20 dark:bg-orange-500/10 dark:text-orange-300">
+                        {(selectedCell.holiday.name || 'H').slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1 pt-0.5">
+                      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            'rounded-full px-2 py-0.5 text-[10px] font-black leading-tight',
+                            AGCTEK_BRAND.badge
+                          )}
+                        >
+                          {selectedCell.holiday.type === 'regular'
+                            ? 'Regular'
+                            : selectedCell.holiday.type === 'special'
+                              ? 'Special'
+                              : selectedCell.holiday.type === 'special_working'
+                                ? 'Sp. work'
+                                : 'Company'}
+                        </Badge>
+                        <span className="truncate text-xs font-semibold text-slate-500 dark:text-slate-300">
+                          {holidayTargetLabel((Array.isArray(selectedCell.holiday.holidays) && selectedCell.holiday.holidays[0]) || selectedCell.holiday)}
+                        </span>
+                      </div>
+                      <h2 className="wrap-break-word text-2xl font-black leading-tight tracking-tight text-slate-950 dark:text-white">{selectedCell.holiday.name}</h2>
+                      <p className="mt-1.5 flex items-center gap-1.5 text-sm font-semibold text-slate-500 dark:text-slate-300">
+                        <Calendar className="size-4 shrink-0 text-slate-400" aria-hidden />
+                        {new Date(selectedCell.dateStr).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                      </p>
+                    </div>
                   </div>
-                  <h2 className="text-2xl font-bold tracking-tight text-foreground">{selectedCell.holiday.name}</h2>
-                  <p className="mt-1.5 text-sm text-muted-foreground flex items-center gap-1.5">
-                    <Calendar className="size-3.5 shrink-0" />
-                    {new Date(selectedCell.dateStr).toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCell(null)}
+                    className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-slate-950/10 bg-white text-slate-950 shadow-sm transition-colors hover:border-orange-500/35 hover:bg-orange-50 hover:text-orange-700 dark:border-white/10 dark:bg-slate-900 dark:text-white dark:hover:bg-orange-500/10 dark:hover:text-orange-300"
+                    aria-label="Close"
+                  >
+                    <X className="size-5" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedCell(null)}
-                  className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  aria-label="Close"
-                >
-                  <X className="size-5" />
-                </button>
               </div>
 
-              <div className="px-6 pb-6 space-y-6">
-                {/* Description — clearer hierarchy */}
-                <section className="rounded-xl border border-border/60 bg-muted/20 dark:bg-white/5 p-4 backdrop-blur-sm">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Description</h3>
-                  <p className="text-sm leading-relaxed text-foreground/90">
-                    {selectedCell.holiday.type === 'company'
-                      ? (selectedCell.holiday.description || `Company event. Annual observance for ${holidayScopeLabel(selectedCell.holiday).toLowerCase()}. No DOLE payroll premium applies.`)
-                      : (HOLIDAY_DESCRIPTIONS[selectedCell.holiday.name] || 'Philippine holiday per DOLE guidelines. Employees may receive premium pay depending on work conditions.')}
-                  </p>
-                </section>
-
-                {selectedCell.holiday.type === 'special_working' && (
-                  <section className="rounded-xl border border-border/60 bg-muted/20 p-4 text-sm text-foreground/90">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Pay rates</h3>
-                    <p>
-                      Special working days are treated as <strong>ordinary working days</strong> for statutory holiday
-                      premium. Follow ordinary / rest day / OT rules from your payroll policy.
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain bg-white px-6 py-5 [scrollbar-gutter:stable] dark:bg-slate-950">
+                <div className="space-y-5">
+                  <section className={AGCTEK_BRAND.section}>
+                    <h3 className={AGCTEK_BRAND.sectionTitle}>Description</h3>
+                    <p className="text-sm leading-relaxed text-slate-800 dark:text-slate-100/90">
+                      {selectedCell.holiday.type === 'company'
+                        ? (selectedCell.holiday.description || `Company event for ${holidayScopeLabel(selectedCell.holiday).toLowerCase()}. No DOLE premium by default.`)
+                        : (HOLIDAY_DESCRIPTIONS[selectedCell.holiday.name] || 'Philippine holiday per DOLE guidelines. Premium pay depends on work conditions.')}
                     </p>
                   </section>
-                )}
 
-                {/* Rules — compact table, single accent (emerald) */}
-                {(selectedCell.holiday.type === 'regular' || selectedCell.holiday.type === 'special') && (
-                  <section>
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Pay rates</h3>
-                    <div className="rounded-xl border border-border/60 overflow-hidden">
-                      <table className="w-full text-sm">
-                        <tbody>
-                          {selectedCell.holiday.type === 'regular' ? (
-                            <>
-                              <tr className="border-b border-border/50 bg-emerald-500/5 dark:bg-emerald-500/10">
-                                <td className="py-2.5 px-4 font-medium">Worked</td>
-                                <td className="py-2.5 px-4 text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">2.00×</td>
-                              </tr>
-                              <tr className="border-b border-border/50 bg-emerald-500/5 dark:bg-emerald-500/10">
-                                <td className="py-2.5 px-4 font-medium">Rest day</td>
-                                <td className="py-2.5 px-4 text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">2.60×</td>
-                              </tr>
-                              <tr className="border-b border-border/50 bg-emerald-500/5 dark:bg-emerald-500/10">
-                                <td className="py-2.5 px-4 font-medium">Overtime</td>
-                                <td className="py-2.5 px-4 text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">3.38×</td>
-                              </tr>
-                              <tr>
-                                <td className="py-2.5 px-4 font-medium text-muted-foreground">Not worked</td>
-                                <td className="py-2.5 px-4 text-right tabular-nums text-muted-foreground">100%</td>
-                              </tr>
-                            </>
-                          ) : (
-                            <>
-                              <tr className="border-b border-border/50 bg-emerald-500/5 dark:bg-emerald-500/10">
-                                <td className="py-2.5 px-4 font-medium">Worked</td>
-                                <td className="py-2.5 px-4 text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">1.30×</td>
-                              </tr>
-                              <tr>
-                                <td className="py-2.5 px-4 font-medium text-muted-foreground">Not worked</td>
-                                <td className="py-2.5 px-4 text-right tabular-nums text-muted-foreground">No pay</td>
-                              </tr>
-                            </>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-                )}
-
-                {/* Impact — glass card, unified styling */}
-                <section>
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Impact</h3>
-                  <div className="rounded-xl border border-border/60 bg-white/80 dark:bg-white/5 p-4 backdrop-blur-sm space-y-2">
-                    {selectedCell.holiday.type === 'company' ? (
-                      <>
-                        <p className="text-sm flex items-center gap-2 text-muted-foreground">
-                          <span className="size-1.5 rounded-full bg-muted-foreground/50" />
-                          No payroll premium applied
+                  {selectedCell.holiday.is_swap && (
+                    <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-800 shadow-sm dark:border-white/10 dark:bg-slate-900/85 dark:text-slate-100">
+                      <h3 className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-orange-700 dark:text-orange-300">
+                        <ArrowRightLeft className="size-3" /> Swap Holiday
+                      </h3>
+                      <p className="leading-snug">
+                        Coverage: <strong>{selectedCell.holiday.coverage_type || 'company'}</strong>
+                        {selectedCell.holiday.original_date && (
+                          <span className="ml-1 text-muted-foreground">(moved from {selectedCell.holiday.original_date})</span>
+                        )}
+                      </p>
+                      {Array.isArray(selectedCell.holiday.coverage_ids) && selectedCell.holiday.coverage_ids.length > 0 && (
+                        <p className="mt-1 text-muted-foreground">
+                          {selectedCell.holiday.coverage_ids.length} {selectedCell.holiday.coverage_type === 'employees' ? 'employees' : selectedCell.holiday.coverage_type === 'departments' ? 'departments' : selectedCell.holiday.coverage_type === 'branches' ? 'branches' : 'companies'} covered
                         </p>
-                        <p className="text-sm flex items-center gap-2 text-muted-foreground">
-                          <span className="size-1.5 rounded-full bg-muted-foreground/50" />
-                          Internal observance only
-                        </p>
-                      </>
-                    ) : selectedCell.holiday.type === 'special_working' ? (
-                      <>
-                        <p className="text-sm flex items-center gap-2 text-foreground">
-                          <Users className="size-4 shrink-0 text-slate-500 dark:text-slate-300" />
-                          Ordinary workday rates (no statutory holiday premium)
-                        </p>
-                        <p className="text-sm flex items-center gap-2 text-muted-foreground">
-                          <Zap className="size-4 shrink-0 text-slate-500" />
-                          Confirm proclamation &amp; CBA — policy may still grant extras
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-sm flex items-center gap-2 text-foreground">
-                          <Users className="size-4 shrink-0 text-emerald-500 dark:text-emerald-400" />
-                          Affects all employees in scope
-                        </p>
-                        <p className="text-sm flex items-center gap-2 text-foreground">
-                          <Zap className="size-4 shrink-0 text-emerald-500 dark:text-emerald-400" />
-                          {selectedCell.holiday.type === 'regular' ? 'High OT probability' : 'Standard premium rate'}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                </section>
-
-                {/* Actions — primary Edit, secondary Delete, ghost Close */}
-                <div className="flex flex-col gap-2 pt-2">
-                  {selectedCell.holiday && (
-                    <div className="flex gap-2">
-                      {typeof selectedCell.holiday.id === 'number' && (
-                        <Button
-                          size="sm"
-                          className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-500 text-white"
-                          onClick={() => openHolidayEdit({ ...selectedCell.holiday, date: selectedCell.dateStr })}
-                        >
-                          <Pencil className="size-3.5" />
-                          Edit
-                        </Button>
                       )}
                       <Button
                         variant="outline"
                         size="sm"
-                        className="flex-1 gap-2"
-                        onClick={() => handleSwapHoliday({ ...selectedCell.holiday, date: selectedCell.dateStr })}
+                        className="mt-3 h-8 gap-1 rounded-xl border-orange-500/30 px-3 text-xs font-black text-orange-700 hover:bg-orange-500/10 dark:text-orange-300"
+                        onClick={() => {
+                          setSwapModalMode('edit')
+                          setSwapModalId(selectedCell.holiday.id)
+                          setSwapModalInitial(selectedCell.holiday)
+                          setSwapModalOpen(true)
+                          setSelectedCell(null)
+                        }}
                       >
-                        <RotateCcw className="size-3.5" />
-                        Swap
+                        <Pencil className="size-3" /> Edit Swap
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 gap-2 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                        onClick={() => handleDeleteHoliday({ ...selectedCell.holiday, date: selectedCell.dateStr })}
-                      >
-                        <Trash2 className="size-3.5" />
-                        Delete
-                      </Button>
-                    </div>
+                    </section>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full text-muted-foreground"
-                    onClick={() => setSelectedCell(null)}
-                  >
-                    Close
-                  </Button>
+
+                  {selectedCell.holiday.type === 'special_working' && (
+                    <section className={cn(AGCTEK_BRAND.section, 'text-sm text-slate-800 dark:text-slate-100/90')}>
+                      <h3 className={AGCTEK_BRAND.sectionTitle}>Pay rates</h3>
+                      <p className="leading-relaxed">
+                        Treated as <strong>ordinary working days</strong> for statutory holiday premium. Follow your payroll policy for OT/rest day.
+                      </p>
+                    </section>
+                  )}
+
+                  {Array.isArray(selectedCell.holiday.holidays) && selectedCell.holiday.holidays.length > 0 && (
+                    <section>
+                      <h3 className={AGCTEK_BRAND.sectionTitle}>
+                        Coverage ({selectedCell.holiday.holidays.length})
+                      </h3>
+                      <div className="max-h-[min(32vh,12.5rem)] space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-white/10 dark:bg-slate-900/85">
+                        {selectedCell.holiday.holidays.map((entry) => {
+                          const logo = targetLogoUrl(entry)
+                          return (
+                            <div
+                              key={entry.id || `${entry.scope}-${holidayTargetLabel(entry)}`}
+                              className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-white/10 dark:bg-slate-950/60"
+                            >
+                              {logo ? (
+                                <img src={logo} alt="" className="size-6 shrink-0 rounded-full border border-background object-cover" loading="lazy" />
+                              ) : (
+                                <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-orange-500/10 text-[10px] font-black text-orange-700 dark:text-orange-300">
+                                  {(entry.company_name || entry.branch_name || entry.department_name || entry.employee_name || 'H').slice(0, 1).toUpperCase()}
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="wrap-break-word text-xs font-black leading-snug text-slate-950 dark:text-white">{holidayTargetLabel(entry)}</p>
+                                <p className="text-[10px] font-bold capitalize leading-tight text-orange-700 dark:text-orange-300">{entry.scope || 'nationwide'}</p>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  )}
+
+                  {(selectedCell.holiday.type === 'regular' || selectedCell.holiday.type === 'special') && (
+                    <section>
+                      <h3 className={AGCTEK_BRAND.sectionTitle}>Pay rates</h3>
+                      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/85">
+                        <table className="w-full text-sm">
+                          <tbody>
+                            {selectedCell.holiday.type === 'regular' ? (
+                              <>
+                                <tr className="border-b border-slate-200 bg-slate-50/70 dark:border-white/10 dark:bg-white/5">
+                                  <td className="px-4 py-3 font-black text-slate-950 dark:text-white"><Clock className="mr-3 inline size-4 text-orange-600 dark:text-orange-300" />Worked</td>
+                                  <td className="px-4 py-3 text-right font-black tabular-nums text-slate-950 dark:text-white">2.00×</td>
+                                </tr>
+                                <tr className="border-b border-slate-200 bg-slate-50/70 dark:border-white/10 dark:bg-white/5">
+                                  <td className="px-4 py-3 font-black text-slate-950 dark:text-white"><CalendarDays className="mr-3 inline size-4 text-orange-600 dark:text-orange-300" />Rest day</td>
+                                  <td className="px-4 py-3 text-right font-black tabular-nums text-slate-950 dark:text-white">2.60×</td>
+                                </tr>
+                                <tr className="border-b border-slate-200 bg-slate-50/70 dark:border-white/10 dark:bg-white/5">
+                                  <td className="px-4 py-3 font-black text-slate-950 dark:text-white"><Zap className="mr-3 inline size-4 text-orange-600 dark:text-orange-300" />Overtime</td>
+                                  <td className="px-4 py-3 text-right font-black tabular-nums text-slate-950 dark:text-white">3.38×</td>
+                                </tr>
+                                <tr>
+                                  <td className="px-4 py-3 font-bold text-slate-500 dark:text-slate-300"><X className="mr-3 inline size-4 text-slate-400" />Not worked</td>
+                                  <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-500 dark:text-slate-300">100%</td>
+                                </tr>
+                              </>
+                            ) : (
+                              <>
+                                <tr className="border-b border-slate-200 bg-slate-50/70 dark:border-white/10 dark:bg-white/5">
+                                  <td className="px-4 py-3 font-black text-slate-950 dark:text-white"><Clock className="mr-3 inline size-4 text-orange-600 dark:text-orange-300" />Worked</td>
+                                  <td className="px-4 py-3 text-right font-black tabular-nums text-slate-950 dark:text-white">1.30×</td>
+                                </tr>
+                                <tr>
+                                  <td className="px-4 py-3 font-bold text-slate-500 dark:text-slate-300"><X className="mr-3 inline size-4 text-slate-400" />Not worked</td>
+                                  <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-500 dark:text-slate-300">No pay</td>
+                                </tr>
+                              </>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  )}
+
+                  <section>
+                    <h3 className={AGCTEK_BRAND.sectionTitle}>Impact</h3>
+                    <div className="space-y-3 rounded-2xl border border-slate-950/10 bg-white p-4 shadow-sm dark:border-orange-500/15 dark:bg-slate-900/85">
+                      {selectedCell.holiday.type === 'company' ? (
+                        <>
+                          <p className="flex items-start gap-3 text-sm font-semibold text-slate-600 dark:text-slate-300">
+                            <span className="mt-1.5 size-2 shrink-0 rounded-full bg-orange-500/70" />
+                            No payroll premium applied
+                          </p>
+                          <p className="flex items-start gap-3 text-sm font-semibold text-slate-600 dark:text-slate-300">
+                            <span className="mt-1.5 size-2 shrink-0 rounded-full bg-orange-500/70" />
+                            Internal observance only
+                          </p>
+                        </>
+                      ) : selectedCell.holiday.type === 'special_working' ? (
+                        <>
+                          <p className="flex items-start gap-3 text-sm font-semibold text-slate-950 dark:text-white">
+                            <Users className="mt-0.5 size-4 shrink-0 text-orange-600 dark:text-orange-300" />
+                            Ordinary rates (no statutory holiday premium)
+                          </p>
+                          <p className="flex items-start gap-3 text-sm font-semibold text-slate-600 dark:text-slate-300">
+                            <Zap className="mt-0.5 size-4 shrink-0 text-orange-600 dark:text-orange-300" />
+                            Confirm proclamation &amp; CBA
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="flex items-start gap-3 text-sm font-semibold text-slate-950 dark:text-white">
+                            <Users className="mt-0.5 size-4 shrink-0 text-orange-600 dark:text-orange-300" />
+                            Affects employees in scope
+                          </p>
+                          <p className="flex items-start gap-3 text-sm font-semibold text-slate-950 dark:text-white">
+                            <Zap className="mt-0.5 size-4 shrink-0 text-orange-600 dark:text-orange-300" />
+                            {selectedCell.holiday.type === 'regular' ? 'High OT probability' : 'Standard premium rate'}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </section>
                 </div>
+              </div>
+
+              <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-950/10 bg-white/95 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur supports-backdrop-filter:bg-white/90 dark:border-orange-500/15 dark:bg-slate-950/95">
+                {selectedCell.holiday && (
+                  <div className="grid grid-cols-3 gap-3">
+                    {typeof selectedCell.holiday.id === 'number' && (
+                      <Button
+                        size="sm"
+                        className="h-11 gap-2 rounded-xl bg-orange-600 px-3 text-sm font-black text-white shadow-sm hover:bg-orange-700"
+                        onClick={() => openHolidayEdit({ ...selectedCell.holiday, date: selectedCell.dateStr })}
+                      >
+                        <Pencil className="size-4" />
+                        Edit
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-11 gap-2 rounded-xl border-slate-950/30 px-3 text-sm font-black text-slate-950 hover:border-orange-500/40 hover:bg-orange-50 dark:border-white/30 dark:text-white dark:hover:bg-orange-500/10"
+                      onClick={() => openSwapDialog({ ...selectedCell.holiday, date: selectedCell.dateStr })}
+                    >
+                      <RotateCcw className="size-4" />
+                      Swap
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-11 gap-2 rounded-xl border-rose-300 px-3 text-sm font-black text-rose-600 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                      onClick={() => handleDeleteHoliday({ ...selectedCell.holiday, date: selectedCell.dateStr })}
+                    >
+                      <Trash2 className="size-4" />
+                      Delete
+                    </Button>
+                  </div>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3 h-10 w-full rounded-xl border-slate-950/35 text-sm font-black text-slate-950 hover:bg-slate-50 dark:border-white/25 dark:text-white dark:hover:bg-white/5"
+                  onClick={() => setSelectedCell(null)}
+                >
+                  Close
+                </Button>
               </div>
             </div>
           ) : selectedCell ? (
-            /* Empty date - Add Holiday CTA (compact, no dead space) */
-            <div className="flex flex-col">
-              <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
-                <div className="flex items-center gap-2">
-                  <div className="flex size-10 items-center justify-center rounded-xl bg-muted/50">
-                    <Calendar className="size-5 text-muted-foreground" />
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-border/60 px-3 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50">
+                    <Calendar className="size-4 text-muted-foreground" />
                   </div>
-                  <div>
-                    <h2 className="text-lg font-bold text-foreground">
-                      {new Date(selectedCell.dateStr).toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-bold leading-snug text-foreground">
+                      {new Date(selectedCell.dateStr).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
                     </h2>
-                    <p className="text-sm text-muted-foreground">No holiday on this date</p>
+                    <p className="text-[11px] text-muted-foreground">No holiday on this date</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setSelectedCell(null)}
-                  className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/30 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   aria-label="Close"
                 >
-                  <X className="size-5" />
+                  <X className="size-4" />
                 </button>
               </div>
-              <div className="flex flex-col gap-4 px-6 py-6">
-                <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 py-8 dark:border-border/50 dark:bg-muted/15">
-                  <p className="mb-4 text-center text-sm text-muted-foreground">
-                    Add a company event or observe a special day on this date
-                  </p>
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+                <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 py-5 dark:border-border/50 dark:bg-muted/15">
+                  <p className="mb-3 px-2 text-center text-xs text-muted-foreground">Add a holiday on this date</p>
                   <Button
+                    size="sm"
+                    className="mx-auto flex h-8 gap-1.5 text-xs"
                     onClick={() => {
                       openHolidayCreate({ date: selectedCell.dateStr })
                       setSelectedCell(null)
                     }}
-                    className="mx-auto flex gap-2"
                   >
-                    <Plus className="size-4" />
+                    <Plus className="size-3.5" />
                     Add Holiday
                   </Button>
                 </div>
-                <Button
-                  variant="secondary"
-                  size="default"
-                  className="w-full"
-                  onClick={() => setSelectedCell(null)}
-                >
+              </div>
+              <div className="sticky bottom-0 z-10 shrink-0 border-t border-border/60 bg-card/95 px-3 py-2.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur supports-backdrop-filter:bg-card/90">
+                <Button variant="secondary" size="sm" className="h-8 w-full text-xs" onClick={() => setSelectedCell(null)}>
                   Close
                 </Button>
               </div>
@@ -1327,6 +1547,50 @@ export default function AdminHoliday() {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={swapDialogOpen}
+        onOpenChange={(open) => {
+          setSwapDialogOpen(open)
+          if (!open) {
+            setSwapTargetHoliday(null)
+            setSwapDate('')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Swap holiday date</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Move <span className="font-semibold text-foreground">{swapTargetHoliday?.name || 'holiday'}</span> to:
+            </p>
+            <Input
+              type="date"
+              value={swapDate}
+              onChange={(e) => setSwapDate(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSwapDialogOpen(false)
+                setSwapTargetHoliday(null)
+                setSwapDate('')
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => handleSwapHoliday(swapTargetHoliday)}
+            >
+              Confirm swap
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Motion.div>
   )
 }

@@ -1,6 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
-import { ExternalLink } from 'lucide-react'
+import { BarChart3, BookOpen, ExternalLink, Scale, Timer } from 'lucide-react'
 
 /**
  * DOLE-aligned reference for admins. Aligns with backend PhPayrollReference + Labor Code Arts. 87, 93, 94.
@@ -8,30 +8,37 @@ import { ExternalLink } from 'lucide-react'
  */
 export function HolidayPayReferenceAccordion() {
   return (
-    <div className="rounded-xl border border-indigo-500/10 bg-gradient-to-br from-indigo-500/[0.03] via-teal-500/[0.02] to-transparent p-4 dark:from-indigo-500/10 dark:via-teal-950/20">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold tracking-tight text-foreground">
+    <div className="h-full">
+      <div className="mb-4">
+        <h3 className="text-base font-black leading-tight tracking-tight text-foreground">
           Holiday Pay Rules Reference (DOLE / Labor Code — 2026)
         </h3>
         <a
           href="https://www.dole.gov.ph/"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline dark:text-teal-400"
+          className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-brand hover:underline"
         >
           DOLE website
           <ExternalLink className="size-3.5" aria-hidden />
         </a>
       </div>
-      <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+      <p className="mb-5 text-xs leading-relaxed text-foreground/80">
         This panel summarizes statutory premium factors used by the payroll rules engine. For individual cases, refer to
         proclamations, CBAs, and internal policy. Multipliers below apply to the <strong>first 8 hours</strong> (ordinary
         workday) unless otherwise noted.
       </p>
 
-      <Accordion type="multiple" className="w-full rounded-lg border border-border/50 bg-card/50">
-        <AccordionItem value="legal">
-          <AccordionTrigger className="px-3 text-xs @sm:text-sm">Legal basis &amp; hierarchy</AccordionTrigger>
+      <Accordion type="multiple" className="w-full space-y-3">
+        <AccordionItem value="legal" className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm dark:bg-card/80">
+          <AccordionTrigger className="px-4 py-3 text-left text-xs font-black hover:no-underline @sm:text-sm">
+            <span className="flex items-center gap-3">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                <Scale className="size-4" aria-hidden />
+              </span>
+              Legal basis &amp; hierarchy
+            </span>
+          </AccordionTrigger>
           <AccordionContent className="space-y-2 px-3 text-xs leading-relaxed">
             <ul className="list-disc space-y-1 pl-4">
               <li>Philippine Labor Code — Articles 87, 93, 94 (holiday &amp; premium pay).</li>
@@ -45,9 +52,14 @@ export function HolidayPayReferenceAccordion() {
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="matrix">
-          <AccordionTrigger className="px-3 text-xs @sm:text-sm">
-            First 8 hours — matrix (key statutory rates)
+        <AccordionItem value="matrix" className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm dark:bg-card/80">
+          <AccordionTrigger className="px-4 py-3 text-left text-xs font-black hover:no-underline @sm:text-sm">
+            <span className="flex items-center gap-3">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                <BarChart3 className="size-4" aria-hidden />
+              </span>
+              First 8 hours — matrix (key statutory rates)
+            </span>
           </AccordionTrigger>
           <AccordionContent className="px-3">
             <div className="max-w-full overflow-x-auto rounded-lg border border-border/60">
@@ -120,8 +132,15 @@ export function HolidayPayReferenceAccordion() {
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="ot">
-          <AccordionTrigger className="px-3 text-xs @sm:text-sm">Overtime (beyond 8h) — rule codes</AccordionTrigger>
+        <AccordionItem value="ot" className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm dark:bg-card/80">
+          <AccordionTrigger className="px-4 py-3 text-left text-xs font-black hover:no-underline @sm:text-sm">
+            <span className="flex items-center gap-3">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                <Timer className="size-4" aria-hidden />
+              </span>
+              Overtime (beyond 8h) — rule codes
+            </span>
+          </AccordionTrigger>
           <AccordionContent className="space-y-2 px-3 text-xs leading-relaxed">
             <p>
               OT rates use the payroll rules engine (`ORD`, `RD`, `RH`, `RHRD`, `SH`, `SHRD`, `DH`, `DHRD`). Example: RH
@@ -133,8 +152,15 @@ export function HolidayPayReferenceAccordion() {
           </AccordionContent>
         </AccordionItem>
 
-        <AccordionItem value="terms">
-          <AccordionTrigger className="px-3 text-xs @sm:text-sm">Terminology</AccordionTrigger>
+        <AccordionItem value="terms" className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm dark:bg-card/80">
+          <AccordionTrigger className="px-4 py-3 text-left text-xs font-black hover:no-underline @sm:text-sm">
+            <span className="flex items-center gap-3">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                <BookOpen className="size-4" aria-hidden />
+              </span>
+              Terminology
+            </span>
+          </AccordionTrigger>
           <AccordionContent className="space-y-2 px-3 text-xs leading-relaxed">
             <p>
               <strong>Regular Holiday (RH):</strong> statutory list / proclamations — premium pay if worked.

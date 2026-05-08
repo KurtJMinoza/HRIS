@@ -11,6 +11,7 @@ use App\Models\EmployeeGovernmentId;
 use App\Models\Holiday;
 use App\Models\User;
 use App\Services\HolidayCalendarService;
+use App\Services\HolidayService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
@@ -23,6 +24,9 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(HolidayCalendarService::class, fn () => new HolidayCalendarService);
+        $this->app->singleton(HolidayService::class, fn ($app) => new HolidayService(
+            $app->make(HolidayCalendarService::class)
+        ));
     }
 
     /**
@@ -77,8 +81,20 @@ class AppServiceProvider extends ServiceProvider
             }
         });
 
-        Holiday::saved(fn () => app(HolidayCalendarService::class)->flushMergedYearCaches());
-        Holiday::deleted(fn () => app(HolidayCalendarService::class)->flushMergedYearCaches());
+        Holiday::saved(function (Holiday $h) {
+            app(HolidayCalendarService::class)->flushMergedYearCaches();
+            if ($h->is_swap) {
+                $dateKey = $h->date instanceof \Carbon\Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
+                app(HolidayService::class)->flushCoverageForDate($dateKey);
+            }
+        });
+        Holiday::deleted(function (Holiday $h) {
+            app(HolidayCalendarService::class)->flushMergedYearCaches();
+            if ($h->is_swap) {
+                $dateKey = $h->date instanceof \Carbon\Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
+                app(HolidayService::class)->flushCoverageForDate($dateKey);
+            }
+        });
 
         Event::listen(ScheduleUpdated::class, RecalculatePayrollDailyRecords::class);
     }

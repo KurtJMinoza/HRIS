@@ -86,7 +86,7 @@ class BranchController extends Controller
      */
     public function departments(Request $request, int $id): JsonResponse
     {
-        $branchQuery = Branch::query()->whereKey($id);
+        $branchQuery = Branch::query()->with('company:id,name,logo')->whereKey($id);
         $this->dataScopeService->restrictBranchQuery($request->user(), $branchQuery);
         $branch = $branchQuery->firstOrFail();
         $departments = $branch->departments()
@@ -97,6 +97,12 @@ class BranchController extends Controller
             ->map(fn ($d) => [
                 'id' => $d->id,
                 'name' => $d->name,
+                'branch_id' => $branch->id,
+                'branch_name' => $branch->name,
+                'company_id' => $branch->company_id,
+                'company_name' => $branch->company?->name,
+                'company_logo_url' => $this->companyLogoUrl($branch->company?->logo),
+                'logo_url' => $this->companyLogoUrl($branch->company?->logo),
                 'office_location' => $d->office_location,
                 'department_head_id' => $d->department_head_id,
                 'department_head_name' => $d->departmentHead?->name,
@@ -104,7 +110,13 @@ class BranchController extends Controller
             ]);
 
         return response()->json([
-            'branch' => ['id' => $branch->id, 'name' => $branch->name],
+            'branch' => [
+                'id' => $branch->id,
+                'name' => $branch->name,
+                'company_id' => $branch->company_id,
+                'company_name' => $branch->company?->name,
+                'company_logo_url' => $this->companyLogoUrl($branch->company?->logo),
+            ],
             'departments' => $departments,
         ]);
     }

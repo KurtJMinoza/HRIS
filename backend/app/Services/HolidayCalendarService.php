@@ -77,6 +77,22 @@ class HolidayCalendarService
         $explicitKeys = [];
 
         $holidays = Holiday::query()
+            ->with([
+                'company:id,name,logo',
+                'branch:id,name,company_id',
+                'branch.company:id,name,logo',
+                'department:id,name,branch_id',
+                'department.branch:id,name,company_id',
+                'department.branch.company:id,name,logo',
+                'employee:id,name,employee_code,company_id,branch_id,department_id',
+                'employee.companyHeadships:id,name,logo,company_head_id',
+                'employee.company:id,name,logo',
+                'employee.branch:id,name,company_id',
+                'employee.branch.company:id,name,logo',
+                'employee.departmentRelation:id,name,branch_id',
+                'employee.departmentRelation.branch:id,name,company_id',
+                'employee.departmentRelation.branch.company:id,name,logo',
+            ])
             ->whereYear('date', $year)
             ->orderBy('date')
             ->orderBy('id')
@@ -169,6 +185,22 @@ class HolidayCalendarService
     {
         $out = [];
         $templates = Holiday::query()
+            ->with([
+                'company:id,name,logo',
+                'branch:id,name,company_id',
+                'branch.company:id,name,logo',
+                'department:id,name,branch_id',
+                'department.branch:id,name,company_id',
+                'department.branch.company:id,name,logo',
+                'employee:id,name,employee_code,company_id,branch_id,department_id',
+                'employee.companyHeadships:id,name,logo,company_head_id',
+                'employee.company:id,name,logo',
+                'employee.branch:id,name,company_id',
+                'employee.branch.company:id,name,logo',
+                'employee.departmentRelation:id,name,branch_id',
+                'employee.departmentRelation.branch:id,name,company_id',
+                'employee.departmentRelation.branch.company:id,name,logo',
+            ])
             ->where('is_recurring', true)
             ->orderBy('date')
             ->get();
@@ -205,6 +237,13 @@ class HolidayCalendarService
     private function serializeHolidayRow(Holiday $h): array
     {
         $d = $h->date instanceof Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
+        $company = $h->company
+            ?? $h->branch?->company
+            ?? $h->department?->branch?->company
+            ?? $h->employee?->companyHeadships?->first()
+            ?? $h->employee?->company
+            ?? $h->employee?->branch?->company
+            ?? $h->employee?->departmentRelation?->branch?->company;
 
         return [
             'id' => $h->id,
@@ -216,6 +255,18 @@ class HolidayCalendarService
             'branch_id' => $h->branch_id,
             'department_id' => $h->department_id,
             'employee_id' => $h->employee_id,
+            'coverage_type' => $h->coverage_type,
+            'coverage_ids' => is_array($h->coverage_ids) ? $h->coverage_ids : [],
+            'is_swap' => (bool) ($h->is_swap ?? false),
+            'original_date' => $h->original_date instanceof Carbon
+                ? $h->original_date->format('Y-m-d')
+                : ($h->original_date ? (string) $h->original_date : null),
+            'company_name' => $company?->name,
+            'company_logo_url' => $this->publicMediaUrl($company?->logo),
+            'branch_name' => $h->branch?->name ?? $h->employee?->branch?->name,
+            'department_name' => $h->department?->name ?? $h->employee?->departmentRelation?->name,
+            'employee_name' => $h->employee?->name,
+            'employee_code' => $h->employee?->employee_code,
             'description' => $h->description ?? null,
             'regions' => $h->regions,
             'is_recurring' => (bool) ($h->is_recurring ?? false),
@@ -295,6 +346,12 @@ class HolidayCalendarService
         ?int $departmentId,
         ?int $employeeId
     ): bool {
+        $coverageType = $row['coverage_type'] ?? null;
+        $coverageIds = $row['coverage_ids'] ?? [];
+        if ($coverageType !== null && is_array($coverageIds) && ! empty($coverageIds)) {
+            return $this->coverageAppliesToTarget($coverageType, $coverageIds, $companyId, $branchId, $departmentId, $employeeId);
+        }
+
         $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
         $rowCompany = isset($row['company_id']) ? (int) $row['company_id'] : 0;
         $rowBranch = isset($row['branch_id']) ? (int) $row['branch_id'] : 0;
@@ -315,6 +372,28 @@ class HolidayCalendarService
             'company' => $rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId),
             'regional', 'nationwide' => true,
             default => true,
+        };
+    }
+
+    /**
+     * Check if a coverage-based holiday applies to the given target IDs.
+     */
+    private function coverageAppliesToTarget(
+        string $coverageType,
+        array $coverageIds,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $employeeId
+    ): bool {
+        $coverageIds = array_map('intval', $coverageIds);
+
+        return match ($coverageType) {
+            'company' => $companyId !== null && in_array($companyId, $coverageIds, true),
+            'branches' => $branchId !== null && in_array($branchId, $coverageIds, true),
+            'departments' => $departmentId !== null && in_array($departmentId, $coverageIds, true),
+            'employees' => $employeeId !== null && in_array($employeeId, $coverageIds, true),
+            default => false,
         };
     }
 
@@ -349,5 +428,30 @@ class HolidayCalendarService
             (string) ((int) ($row['department_id'] ?? 0)),
             (string) ((int) ($row['employee_id'] ?? 0)),
         ]);
+    }
+
+    private function encodeStoragePath(string $path): string
+    {
+        $segments = explode('/', trim($path, '/'));
+        $encoded = array_map(static fn (string $segment) => rawurlencode($segment), $segments);
+
+        return implode('/', $encoded);
+    }
+
+    private function publicMediaUrl(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+        $normalized = trim($path);
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            return $normalized;
+        }
+        $normalized = ltrim($normalized, '/');
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+
+        return '/api/media/public/'.$this->encodeStoragePath($normalized);
     }
 }

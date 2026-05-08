@@ -776,7 +776,7 @@ export default function AdminDashboard() {
 
   return (
     <Motion.div
-      className="admin-dashboard space-y-4 text-foreground dark:text-zinc-50 @md:space-y-5"
+      className="admin-dashboard space-y-3 text-foreground dark:text-zinc-50 @md:space-y-4"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
@@ -886,7 +886,7 @@ export default function AdminDashboard() {
 
       {/* Top stats cards */}
       <Motion.div
-        className="mt-1 grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-5"
+        className="mt-0 grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-5"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1063,13 +1063,12 @@ export default function AdminDashboard() {
         {/* 1. Today's Leaves */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="self-stretch">
           <Card className={cn(
-            'admin-dashboard-card h-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[330px]',
-            todayLeaves.length > 0 ? 'max-h-[420px]' : 'max-h-none',
+            'admin-dashboard-card h-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px]',
           )}>
-            <CardHeader className="px-5 pb-5 pt-6">
+            <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
+                  <CardTitle className="mb-3 flex min-w-0 flex-wrap items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
                     <CalendarDays className="size-4 shrink-0 text-brand" aria-hidden="true" />
                     <span className="truncate">Today&apos;s Leaves</span>
                   </CardTitle>
@@ -1081,10 +1080,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className={cn(
-              'min-h-0 space-y-5 px-5 pb-5 pt-0',
-              todayLeaves.length > 0 ? 'overflow-hidden' : 'overflow-visible',
-            )}>
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
               {todayLeaves.length === 0 ? (
                 <div className="flex min-h-[172px] flex-col items-center justify-center rounded-lg border border-emerald-500/10 bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.14),rgba(16,185,129,0.04)_58%,transparent)] p-5 text-center dark:border-emerald-400/15">
                   <span className="mb-4 flex size-9 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
@@ -1096,24 +1092,24 @@ export default function AdminDashboard() {
                   </p>
                 </div>
               ) : (
-                <div className="flex gap-3 overflow-x-auto pb-1 pr-1 @xl:overflow-visible">
+                <div className="space-y-2.5 @sm:space-y-3">
                   {todayLeavesPreview.map((leave) => {
                     const profileSrc = leave.profile_image_url || profileImageUrl(leave.profile_image) || undefined
                     const secondary = [leave.department, leave.position].filter(Boolean).join(' / ') || 'Unassigned'
                     return (
-                      <div
+                      <article
                         key={`${leave.leave_request_id}-${leave.user_id}`}
-                        className="min-w-[260px] rounded-xl border border-border/70 bg-background/55 p-3.5 shadow-sm transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-px hover:border-border hover:shadow-md @xl:min-w-0"
+                        className="rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm transition-[border-color,box-shadow,transform] duration-200 hover:border-brand/25 hover:shadow-md @sm:p-3"
                       >
                         <div className="flex items-start gap-3">
-                          <Avatar className="size-10 shrink-0 rounded-full border border-border/70 ring-2 ring-primary/10">
+                          <Avatar className="size-9 shrink-0 rounded-full border border-border/70 ring-2 ring-primary/10 @sm:size-10">
                             <AvatarImage src={profileSrc} alt={leave.employee_name || 'Employee'} />
                             <AvatarFallback>{(leave.employee_name || '—').slice(0, 2).toUpperCase()}</AvatarFallback>
                           </Avatar>
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold text-foreground">{leave.employee_name || '—'}</p>
-                            <p className="mt-0.5 truncate text-xs text-muted-foreground">{secondary}</p>
-                            <div className="mt-2 flex items-center gap-2">
+                            <p className="wrap-break-word text-sm font-semibold leading-snug text-foreground">{leave.employee_name || '—'}</p>
+                            <p className="mt-0.5 wrap-break-word text-xs leading-snug text-muted-foreground">{secondary}</p>
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 @sm:gap-2">
                               <span className="inline-flex items-center rounded-full border border-violet-500/35 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300">
                                 {leave.leave_type || 'Leave'}
                               </span>
@@ -1121,7 +1117,7 @@ export default function AdminDashboard() {
                             </div>
                           </div>
                         </div>
-                      </div>
+                      </article>
                     )
                   })}
                 </div>
@@ -1278,15 +1274,14 @@ export default function AdminDashboard() {
         {/* 4. Required Actions Before Confirmation */}
         <Motion.div variants={itemVariants} className="self-stretch">
           <Card className={cn(
-            'admin-dashboard-card h-full w-full max-w-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[330px]',
-            requiredConfirmationActions.length > 0 ? 'max-h-[420px]' : 'max-h-none',
+            'admin-dashboard-card h-full w-full max-w-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px]',
           )}>
-            <CardHeader className="px-5 pb-5 pt-6">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
+              <div className="flex flex-col gap-3 @md:flex-row @md:items-start @md:justify-between @md:gap-4">
                 <div className="min-w-0">
-                  <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
+                  <CardTitle className="mb-3 flex min-w-0 flex-wrap items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
                     <LayoutList className="size-4 shrink-0 text-brand" aria-hidden="true" />
-                    <span className="truncate">Required Actions Before Confirmation</span>
+                    <span className="min-w-0 wrap-break-word">Required Actions Before Confirmation</span>
                     {requiredConfirmationActions.length > 0 ? (
                       <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand/12 px-1.5 text-[11px] font-semibold text-brand">
                         {requiredConfirmationActions.length}
@@ -1301,17 +1296,14 @@ export default function AdminDashboard() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 w-full rounded-md border-border/70 bg-background/70 px-3 text-xs font-medium shadow-sm shadow-black/5 transition-[background-color,box-shadow,color] duration-200 hover:bg-accent/55 hover:shadow-black/10 sm:mt-1 sm:w-auto sm:shrink-0"
+                  className="h-8 w-full rounded-md border-border/70 bg-background/70 px-3 text-xs font-medium shadow-sm shadow-black/5 transition-[background-color,box-shadow,color] duration-200 hover:bg-accent/55 hover:shadow-black/10 @md:mt-1 @md:w-auto @md:shrink-0"
                   onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
                 >
                   View All
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className={cn(
-              'flex min-h-0 flex-1 flex-col gap-4 px-5 pb-5 pt-0 pr-3',
-              requiredConfirmationActions.length > 0 ? 'overflow-y-auto' : 'overflow-visible',
-            )}>
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
               {loading && !data ? (
                 <div className="rounded-xl border border-border/70 bg-muted/15 p-4 text-xs font-normal leading-relaxed text-muted-foreground sm:rounded-2xl sm:p-5 sm:text-sm sm:leading-[1.55]">
                   Loading required actions...
@@ -1321,42 +1313,42 @@ export default function AdminDashboard() {
                   No required actions pending.
                 </div>
               ) : (
-                <div className="space-y-4 sm:space-y-5">
+                <div className="space-y-2.5 @sm:space-y-3">
                   {requiredConfirmationActions.map((emp) => (
                     <div
                       key={emp.id}
-                      className="group rounded-lg border border-border/70 bg-background/50 p-3 shadow-sm transition-[transform,box-shadow,background-color,border-color] duration-200 hover:-translate-y-px hover:border-brand/30 hover:bg-accent/25 hover:shadow-md sm:p-4"
+                      className="group rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm transition-[transform,box-shadow,background-color,border-color] duration-200 hover:-translate-y-px hover:border-brand/30 hover:bg-accent/25 hover:shadow-md @sm:p-3"
                     >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-                        <div className="flex min-w-0 flex-1 items-start gap-2.5 sm:gap-3">
-                          <Avatar className="h-10 w-10 border border-border/70 shadow-md shadow-black/10 ring-1 ring-border/60 sm:h-11 sm:w-11">
+                      <div className="flex flex-col gap-2.5 @lg:flex-row @lg:items-start @lg:justify-between @lg:gap-3">
+                        <div className="flex min-w-0 flex-1 items-start gap-2.5 @sm:gap-3">
+                          <Avatar className="size-9 border border-border/70 shadow-md shadow-black/10 ring-1 ring-border/60 @sm:size-10 @md:size-11">
                             <AvatarImage src={profileImageUrl(emp.profile_image_url)} alt="" className="object-cover" />
                             <AvatarFallback>{String(emp.name || 'U').slice(0, 1)}</AvatarFallback>
                           </Avatar>
                           <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-base font-semibold tracking-[-0.012em] text-foreground">{emp.name}</p>
-                              <span className="inline-flex rounded-full border border-rose-500/20 bg-rose-500/10 px-2.5 py-1 text-[11px] font-semibold tracking-[-0.01em] text-rose-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200">
+                            <div className="flex flex-wrap items-center gap-1.5 @sm:gap-2">
+                              <p className="wrap-break-word text-sm font-semibold leading-snug tracking-[-0.012em] text-foreground @sm:text-base">{emp.name}</p>
+                              <span className="inline-flex rounded-full border border-rose-500/20 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-[-0.01em] text-rose-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200 @sm:px-2.5 @sm:py-1 @sm:text-[11px]">
                                 {formatDaysLabel(emp.days_remaining_label) || 'Pending timeline'}
                               </span>
                             </div>
-                            <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+                            <p className="mt-0.5 wrap-break-word text-xs leading-snug text-muted-foreground @sm:mt-1 @sm:text-[13px] @sm:leading-relaxed">
                               {emp.department || 'Unassigned'}{emp.branch ? ` / ${emp.branch}` : ''}
                             </p>
-                            <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+                            <p className="mt-0.5 wrap-break-word text-xs leading-snug text-muted-foreground @sm:mt-1 @sm:text-[13px] @sm:leading-relaxed">
                               Hired {formatDate(emp.hire_date)} • Probation end {formatDate(emp.probation_end_date)}
                             </p>
-                            <div className="mt-2.5 flex flex-wrap gap-2">
+                            <div className="mt-2 flex flex-wrap gap-1.5 @sm:mt-2.5 @sm:gap-2">
                               {!emp.performance_review_completed && (
                             <span
-                              className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200"
+                              className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200 @sm:px-2.5 @sm:text-[11px]"
                             >
                               Performance Review Pending
                             </span>
                               )}
                               {!emp.checklist_completed && (
                             <span
-                              className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200"
+                              className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/12 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200 @sm:px-2.5 @sm:text-[11px]"
                             >
                               Checklist Pending
                             </span>
@@ -1372,7 +1364,7 @@ export default function AdminDashboard() {
                         <Button
                           type="button"
                           size="sm"
-                          className="h-9 w-full rounded-md border border-brand/30 bg-brand px-4 text-xs font-semibold tracking-[-0.01em] text-brand-foreground shadow-[0_10px_24px_rgba(217,119,6,0.22)] transition-[background-color,box-shadow,transform] duration-200 hover:bg-brand-strong hover:shadow-[0_16px_30px_rgba(217,119,6,0.3)] active:translate-y-px sm:w-auto"
+                          className="h-8 w-full rounded-md border border-brand/30 bg-brand px-3 text-xs font-semibold tracking-[-0.01em] text-brand-foreground shadow-[0_10px_24px_rgba(217,119,6,0.22)] transition-[background-color,box-shadow,transform] duration-200 hover:bg-brand-strong hover:shadow-[0_16px_30px_rgba(217,119,6,0.3)] active:translate-y-px @sm:h-9 @sm:px-4 @lg:w-auto"
                           onClick={() => navigate(hrPanelPath(hrBase, 'regularization'))}
                         >
                           Review Actions

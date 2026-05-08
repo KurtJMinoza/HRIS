@@ -18,6 +18,7 @@ export function OvertimeRequestsCard({
   const employeePosition = activeRequest?.requested_by_position || activeRequest?.position || activeRequest?.department || 'Employee'
   const employeeId = activeRequest?.employee_id || activeRequest?.requested_by_id
   const employeeCode = activeRequest?.employee_code || (employeeId ? `EMP-${employeeId}` : 'EMP-—')
+  const employeeMeta = buildEmployeeMeta(activeRequest)
   const avatarSrc = activeRequest?.requested_by_profile_image_url || activeRequest?.employee_profile_image || undefined
   const startTime = activeRequest?.start_time || activeRequest?.schedule_end
   const endTime = activeRequest?.end_time || activeRequest?.expected_end_time || activeRequest?.time_out
@@ -37,19 +38,18 @@ export function OvertimeRequestsCard({
         }
       }}
       className={cn(
-        'admin-dashboard-card h-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[330px]',
-        hasPending ? 'max-h-[420px]' : 'max-h-none',
+        'admin-dashboard-card h-full gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px]',
         'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
       )}
     >
-      <CardHeader className="px-5 pb-4 pt-6">
-        <div className="flex items-start justify-between gap-4">
+      <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
+        <div className="flex flex-col gap-2.5 @sm:flex-row @sm:items-start @sm:justify-between @sm:gap-4">
           <div className="min-w-0">
-            <CardTitle className="mb-2.5 flex items-center gap-2.5 truncate text-base font-extrabold leading-snug tracking-tight text-foreground">
+            <CardTitle className="mb-2.5 flex min-w-0 flex-wrap items-center gap-2.5 text-base font-extrabold leading-snug tracking-tight text-foreground">
               <span className="flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-brand/80 text-brand">
                 <Clock3 className="size-4.5" aria-hidden />
               </span>
-              <span className="truncate">Overtime Requests</span>
+              <span className="min-w-0 wrap-break-word">Overtime Requests</span>
               {hasPending ? (
                 <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand/10 px-1.5 text-[11px] font-semibold text-brand shadow-[0_0_20px_rgba(255,107,0,0.16)]">
                   {pendingCount}
@@ -66,7 +66,7 @@ export function OvertimeRequestsCard({
             variant="outline"
             size="sm"
             className={cn(
-              'mt-1 h-8 shrink-0 rounded-md border-border/70 bg-background/70 px-3',
+              'h-8 w-full shrink-0 rounded-md border-border/70 bg-background/70 px-3 @sm:mt-1 @sm:w-auto',
               'text-xs font-medium',
               'shadow-sm shadow-black/5 hover:bg-accent/55 hover:shadow-black/10',
               'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
@@ -83,10 +83,7 @@ export function OvertimeRequestsCard({
         </div>
       </CardHeader>
 
-      <CardContent className={cn(
-        'flex min-h-0 flex-1 flex-col gap-4 px-5 pb-5 pt-0 pr-3',
-        hasPending ? 'overflow-y-auto' : 'overflow-visible',
-      )}>
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
         {loading ? (
           <div className="rounded-2xl border border-border/70 bg-muted/15 p-5 text-sm font-normal leading-[1.55] text-muted-foreground">
             Loading overtime requests...
@@ -102,14 +99,14 @@ export function OvertimeRequestsCard({
         ) : (
           <article
             className={cn(
-              'rounded-lg border border-border/70 bg-background/70 p-3 shadow-sm',
+              'rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm @sm:p-3',
               'transition-[border-color,box-shadow,transform] duration-200 hover:border-brand/25 hover:shadow-md',
             )}
           >
-            <div className="flex flex-col gap-3 @md:flex-row @md:items-start @md:justify-between">
+            <div className="flex flex-col gap-2.5 @sm:flex-row @sm:items-start @sm:justify-between">
               <div className="flex min-w-0 items-start gap-3">
                 <div className="relative shrink-0">
-                  <Avatar className="size-12 border-2 border-background shadow-md ring-1 ring-border/70">
+                  <Avatar className="size-10 border-2 border-background shadow-md ring-1 ring-border/70 @md:size-11">
                     <AvatarImage src={avatarSrc} alt="" className="object-cover" />
                     <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">
                       {initials(employeeName)}
@@ -118,8 +115,11 @@ export function OvertimeRequestsCard({
                   <span className="absolute bottom-0.5 right-0.5 size-3 rounded-full border-2 border-background bg-brand shadow-sm" />
                 </div>
                 <div className="min-w-0 pt-0.5">
-                  <p className="truncate text-sm font-bold tracking-tight text-foreground">{employeeName}</p>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{employeePosition}</p>
+                  <p className="wrap-break-word text-sm font-bold tracking-tight text-foreground">{employeeName}</p>
+                  <p className="mt-0.5 wrap-break-word text-xs text-muted-foreground">{employeePosition}</p>
+                  {employeeMeta ? (
+                    <p className="mt-0.5 wrap-break-word text-[11px] leading-relaxed text-muted-foreground/90">{employeeMeta}</p>
+                  ) : null}
                   <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     <IdCard className="size-3.5" aria-hidden />
                     {employeeCode}
@@ -133,9 +133,9 @@ export function OvertimeRequestsCard({
               </span>
             </div>
 
-            <div className="my-3.5 h-px bg-border/70" />
+            <div className="my-3 h-px bg-border/70 @md:my-3.5" />
 
-            <div className="grid gap-3 @md:grid-cols-3 @md:divide-x @md:divide-border/60">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-2.5">
               <InfoBlock
                 icon={CalendarDays}
                 label="Date"
@@ -156,11 +156,11 @@ export function OvertimeRequestsCard({
               />
             </div>
 
-            <div className="mt-3.5 flex flex-col gap-2.5 border-t border-border/70 pt-3.5 @md:flex-row @md:justify-end">
+            <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] gap-2 border-t border-border/70 pt-3">
               <Button
                 type="button"
                 variant="outline"
-                className="h-9 rounded-lg px-4 text-xs font-medium"
+                className="h-9 w-full rounded-lg px-4 text-xs font-medium"
                 onClick={(e) => {
                   e.stopPropagation()
                   onViewDetails?.(activeRequest)
@@ -171,7 +171,7 @@ export function OvertimeRequestsCard({
               </Button>
               <Button
                 type="button"
-                className="h-9 rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"
+                className="h-9 w-full rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"
                 onClick={(e) => {
                   e.stopPropagation()
                   onReviewRequest?.(activeRequest)
@@ -188,16 +188,17 @@ export function OvertimeRequestsCard({
   )
 }
 
-function InfoBlock({ icon: Icon, label, value, subvalue }) {
+function InfoBlock({ icon, label, value, subvalue }) {
+  const IconComponent = icon
   return (
-    <div className="flex min-w-0 items-start gap-2.5 @md:px-3 @md:first:pl-0 @md:last:pr-0">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
-        <Icon className="size-4" aria-hidden />
+    <div className="flex min-w-0 items-start gap-2 rounded-lg border border-border/45 bg-muted/15 px-2.5 py-2">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand @md:size-9">
+        <IconComponent className="size-3.5 @md:size-4" aria-hidden />
       </span>
       <div className="min-w-0">
         <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
-        <p className="mt-0.5 truncate text-xs font-bold text-foreground">{value}</p>
-        {subvalue ? <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{subvalue}</p> : null}
+        <p className="mt-0.5 wrap-break-word text-xs font-bold text-foreground">{value}</p>
+        {subvalue ? <p className="mt-0.5 wrap-break-word text-[11px] text-muted-foreground">{subvalue}</p> : null}
       </div>
     </div>
   )
@@ -253,4 +254,17 @@ function formatHours(row) {
     return `${minutes}m`
   }
   return ''
+}
+
+function buildEmployeeMeta(row) {
+  if (!row || typeof row !== 'object') return ''
+  const chunks = [
+    row.requested_by_role_label,
+    row.department,
+    row.branch,
+    row.company,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+  return chunks.join(' • ')
 }

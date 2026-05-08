@@ -33,6 +33,7 @@ class PayrollComputationService
         private readonly TimeSegmentationService $timeSegmentation,
         private readonly AttendanceSessionService $attendanceSession,
         private readonly HolidayCalendarService $holidayCalendar,
+        private readonly HolidayService $holidayService,
         private readonly PolicyResolverService $policyResolver,
         private readonly DataScopeService $dataScopeService,
         private readonly DeductionScheduleService $deductionScheduleService,
@@ -119,6 +120,7 @@ class PayrollComputationService
 
     /**
      * Get holiday for a date (regular, special, company, double).
+     * Also checks swap holidays with coverage.
      *
      * @return array{name: string, type: string}|null
      */
@@ -136,6 +138,25 @@ class PayrollComputationService
         }
 
         return ['name' => $row['name'], 'type' => $row['type']];
+    }
+
+    /**
+     * Get holiday for a date with full swap coverage resolution for a specific user.
+     *
+     * @return array{name: string, type: string, is_swap?: bool}|null
+     */
+    public function getHolidayForUserDate(User $user, string $dateKey): ?array
+    {
+        $row = $this->holidayService->resolveHolidayForPayroll($user, $dateKey);
+        if (! $row) {
+            return null;
+        }
+
+        return [
+            'name' => $row['name'],
+            'type' => $row['type'],
+            'is_swap' => $row['is_swap'] ?? false,
+        ];
     }
 
     /**
@@ -268,25 +289,27 @@ class PayrollComputationService
         $dayKey = $this->dayKeyForDate(Carbon::parse($dateKey, $tz));
         $daySchedule = $effectiveSchedule[$dayKey] ?? null;
         $isRestDay = $this->isRestDay($effectiveSchedule, Carbon::parse($dateKey, $tz));
-        $holiday = $this->getHolidayForDate(
-            $dateKey,
-            $user->getEffectiveCompanyId(),
-            $user->branch_id !== null ? (int) $user->branch_id : null,
-            $user->department_id !== null ? (int) $user->department_id : null,
-            (int) $user->id
-        );
+        $holiday = $this->getHolidayForUserDate($user, $dateKey)
+            ?? $this->getHolidayForDate(
+                $dateKey,
+                $user->getEffectiveCompanyId(),
+                $user->branch_id !== null ? (int) $user->branch_id : null,
+                $user->department_id !== null ? (int) $user->department_id : null,
+                (int) $user->id
+            );
 
         // Phase 2: Rules Engine – resolve rule code and multipliers (policy-aware)
         $companyId = $user->getEffectiveCompanyId();
         $branchId = $user->branch_id;
         $policy = $this->policyResolver->getActivePolicy($companyId, $branchId, $dateKey);
-        $resolvedHolidayType = $this->rulesEngine->getHolidayType(
-            $dateKey,
-            $companyId,
-            $branchId !== null ? (int) $branchId : null,
-            $user->department_id !== null ? (int) $user->department_id : null,
-            (int) $user->id
-        );
+        $resolvedHolidayType = $this->rulesEngine->getHolidayTypeForUser($user, $dateKey)
+            ?? $this->rulesEngine->getHolidayType(
+                $dateKey,
+                $companyId,
+                $branchId !== null ? (int) $branchId : null,
+                $user->department_id !== null ? (int) $user->department_id : null,
+                (int) $user->id
+            );
         $ruleCode = $this->rulesEngine->resolveRuleCode($isRestDay, $resolvedHolidayType);
         $multipliers = $this->rulesEngine->getMultipliersForRule($ruleCode, $policy);
         $first8 = $multipliers['first_8'];

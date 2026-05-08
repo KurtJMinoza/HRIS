@@ -2446,8 +2446,9 @@ export async function getEmployees(params = {}) {
   if (params.assignable_to_company_id != null && params.assignable_to_company_id !== '') query.set('assignable_to_company_id', String(params.assignable_to_company_id))
   if (params.for_department_assignment) query.set('for_department_assignment', '1')
   if (params.assignment_branch_id != null && params.assignment_branch_id !== '') query.set('assignment_branch_id', String(params.assignment_branch_id))
+  if (params.fresh) query.set('_ts', String(Date.now()))
   const path = `/admin/employees${query.toString() ? `?${query.toString()}` : ''}`
-  return cachedAuthenticatedGetJson(path, { ttlMs: 6000 })
+  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 6000 })
 }
 
 /**
@@ -3656,6 +3657,35 @@ export async function swapSeededAdminHoliday(payload) {
 }
 
 /**
+ * Create a Swap Holiday with coverage targeting.
+ * @param {{ name: string, date: string, type: string, coverage_type: string, coverage_ids: number[], original_date?: string, description?: string }} payload
+ */
+export async function createSwapHoliday(payload) {
+  const res = await authenticatedFetch('/admin/holidays/swap', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to create swap holiday')
+  return data
+}
+
+/**
+ * Update a Swap Holiday's coverage.
+ * @param {number} id
+ * @param {object} payload
+ */
+export async function updateSwapHoliday(id, payload) {
+  const res = await authenticatedFetch(`/admin/holidays/${id}/swap`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update swap holiday')
+  return data
+}
+
+/**
  * Delete a custom holiday/event.
  * @param {number} id - holiday id
  */
@@ -4264,8 +4294,9 @@ export function companyLogoUrl(company) {
   return `${apiOrigin()}/${path}`
 }
 
-export async function getCompanies() {
-  return cachedAuthenticatedGetJson('/admin/companies', { ttlMs: 5 * 60 * 1000 })
+export async function getCompanies(params = {}) {
+  const path = params.fresh ? `/admin/companies?_ts=${Date.now()}` : '/admin/companies'
+  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
 }
 
 export async function createCompany(payload) {

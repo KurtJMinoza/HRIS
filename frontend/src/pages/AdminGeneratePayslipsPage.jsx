@@ -68,6 +68,15 @@ const CARD_SHELL =
   'rounded-2xl border border-slate-200/90 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-950 dark:hover:shadow-lg'
 const SELECT_TRIGGER =
   'h-11 rounded-lg border-slate-200/90 bg-white text-base font-medium text-[#0A0A0A] shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100'
+const DEMO_ORG_NAME_PATTERN = /^(company\s+[ab]|acme\s+(corp|group))$/i
+
+function isDemoOrganization(item) {
+  return DEMO_ORG_NAME_PATTERN.test(String(item?.name || '').trim())
+}
+
+function sortByName(a, b) {
+  return String(a?.name || '').localeCompare(String(b?.name || ''))
+}
 
 function parsePayDate(value) {
   if (value == null || value === '') return null
@@ -302,8 +311,12 @@ export default function AdminGeneratePayslipsPage() {
 
   const loadMeta = useCallback(async () => {
     try {
-      const [cRes, cyRes] = await Promise.all([getCompanies(), getPayCycles()])
-      setCompanies(Array.isArray(cRes?.companies) ? cRes.companies : [])
+      const [cRes, cyRes] = await Promise.all([getCompanies({ fresh: true }), getPayCycles()])
+      setCompanies(
+        (Array.isArray(cRes?.companies) ? cRes.companies : [])
+          .filter((company) => company?.id != null && !isDemoOrganization(company))
+          .sort(sortByName)
+      )
       setCycles(Array.isArray(cyRes?.data) ? cyRes.data : [])
     } catch (e) {
       toast({ title: 'Payslips', description: e.message || 'Failed to load form data', variant: 'destructive' })
@@ -317,7 +330,7 @@ export default function AdminGeneratePayslipsPage() {
     }
     try {
       const res = await getBranches({ company_id: cid })
-      setBranches(Array.isArray(res?.data) ? res.data : [])
+      setBranches((Array.isArray(res?.data) ? res.data : []).sort(sortByName))
     } catch {
       setBranches([])
     }
@@ -330,7 +343,7 @@ export default function AdminGeneratePayslipsPage() {
     }
     try {
       const res = await getDepartments({ branch_id: bid })
-      setDepartments(Array.isArray(res?.data) ? res.data : [])
+      setDepartments((Array.isArray(res?.data) ? res.data : []).sort(sortByName))
     } catch {
       setDepartments([])
     }
@@ -348,6 +361,14 @@ export default function AdminGeneratePayslipsPage() {
   }, [isAdmin, user?.company_id])
 
   useEffect(() => {
+    if (!companyId || companies.length === 0) return
+    if (companies.some((company) => String(company.id) === String(companyId))) return
+    setCompanyId('')
+    setBranchId('')
+    setDepartmentId('')
+  }, [companies, companyId])
+
+  useEffect(() => {
     if (companyId) loadBranches(companyId)
     else {
       setBranches([])
@@ -356,12 +377,25 @@ export default function AdminGeneratePayslipsPage() {
   }, [companyId, loadBranches])
 
   useEffect(() => {
+    if (!branchId || branches.length === 0) return
+    if (branches.some((branch) => String(branch.id) === String(branchId))) return
+    setBranchId('')
+    setDepartmentId('')
+  }, [branches, branchId])
+
+  useEffect(() => {
     if (branchId) loadDepartments(branchId)
     else {
       setDepartments([])
       setDepartmentId('')
     }
   }, [branchId, loadDepartments])
+
+  useEffect(() => {
+    if (!departmentId || departments.length === 0) return
+    if (departments.some((department) => String(department.id) === String(departmentId))) return
+    setDepartmentId('')
+  }, [departments, departmentId])
 
   const scopeReady = Boolean(companyId || branchId || departmentId)
   const finalizeReady = !isAdmin || scopeReady || Boolean(String(employeeId || '').trim())
@@ -1111,7 +1145,7 @@ export default function AdminGeneratePayslipsPage() {
           {/* ── RIGHT: Live Processing Summary (30%) ── */}
           <div className="lg:sticky lg:top-6">
             <Card className={cn(CARD_SHELL, 'overflow-hidden')}>
-              <div className="bg-gradient-to-br from-foreground/[0.02] via-transparent to-emerald-500/[0.03] dark:from-foreground/[0.04] dark:to-emerald-500/[0.06]">
+              <div className="bg-linear-to-br from-foreground/2 via-transparent to-emerald-500/3 dark:from-foreground/4 dark:to-emerald-500/6">
                 <CardHeader className="border-b border-slate-100 pb-4 dark:border-slate-800">
                   <div className="flex items-center justify-between">
                     <div>

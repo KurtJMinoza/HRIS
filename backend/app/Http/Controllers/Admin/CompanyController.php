@@ -147,6 +147,10 @@ class CompanyController extends Controller
             ->map(fn ($b) => [
                 'id' => $b->id,
                 'name' => $b->name,
+                'company_id' => $company->id,
+                'company_name' => $company->name,
+                'company_logo_url' => $this->publicMediaUrl($company->logo),
+                'logo_url' => $this->publicMediaUrl($company->logo),
                 'address' => $b->address,
                 'branch_manager_id' => $b->branch_manager_id,
                 'branch_manager_name' => $b->branchManager?->name,
