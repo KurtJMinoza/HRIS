@@ -51,7 +51,7 @@ const EMPTY_FORM = {
   is_proratable: false,
   show_on_payslip: true,
   is_custom: false,
-  schedule_override: 'default',
+  schedule_override: 'second_run',
 }
 
 export default function AdminEmployeeCompensationPage() {
@@ -233,7 +233,7 @@ export default function AdminEmployeeCompensationPage() {
       is_proratable: Boolean(master.is_proratable),
       show_on_payslip: true,
       is_custom: false,
-      schedule_override: 'default',
+      schedule_override: 'second_run',
     })
   }
 
@@ -265,7 +265,7 @@ export default function AdminEmployeeCompensationPage() {
         pay_component_id: draftForm.pay_component_id || null,
         show_on_payslip: true,
         is_custom: false,
-        schedule_override: draftForm.schedule_override !== 'default' ? draftForm.schedule_override : null,
+        schedule_override: draftForm.schedule_override,
       },
     ])
     setDialogOpen(false)
@@ -315,7 +315,7 @@ export default function AdminEmployeeCompensationPage() {
             contributes_pagibig: item.contributes_pagibig,
             is_proratable: item.is_proratable,
             is_custom: item.is_custom,
-            schedule_override: item.schedule_override !== 'default' ? item.schedule_override : null,
+            schedule_override: item.schedule_override,
           })),
         })
       }
@@ -817,14 +817,12 @@ export default function AdminEmployeeCompensationPage() {
                     onChange={(e) => setDraftForm((prev) => ({ ...prev, schedule_override: e.target.value }))}
                     className={inputClass}
                   >
-                    <option value="default">Use Default Schedule</option>
-                    <option value="first_run">15th only / First run</option>
-                    <option value="second_run">30th only / Second run</option>
-                    <option value="split">Split / 15-30</option>
-                    <option value="monthly">Monthly / Full run</option>
+                    <option value="first_run">15th</option>
+                    <option value="split">Split 15/30</option>
+                    <option value="second_run">End of month</option>
                   </select>
                   <p className="mt-1.5 text-xs text-slate-500">
-                    Controls when this component appears in payroll. Default uses the global schedule from Deduction Schedule Settings.
+                    When this should be paid for semi-monthly payroll (overrides the company default from Deduction Schedule Settings for this employee only).
                   </p>
                 </Field>
               ) : null}
@@ -1121,14 +1119,14 @@ function getAssignmentSourceStyles(item) {
 }
 
 function formatScheduleOverride(value) {
-  if (!value || value === 'default') return 'Default'
+  if (!value || value === 'default') return 'Use default'
   const map = {
-    first_run: '15th only',
-    second_run: '30th only',
-    split: 'Split',
-    monthly: 'Monthly',
+    first_run: '15th',
+    second_run: 'End of month',
+    split: 'Split 15/30',
+    monthly: 'Monthly / full run',
   }
-  return map[value] || 'Default'
+  return map[value] || 'Use default'
 }
 
 function getScheduleBadgeStyles(value) {

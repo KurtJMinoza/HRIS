@@ -1540,6 +1540,8 @@ class PayrollCalculatorService
             $line = [
                 'id' => $row->id,
                 'pay_component_id' => $row->pay_component_id,
+                /** Used by {@see attachPayScheduleTypes} so schedule metadata matches this assignment row. */
+                'assignment_schedule_override' => $row->schedule_override,
                 'structure_name' => $row->structure_name,
                 'name' => $row->name,
                 'code' => $row->code,
@@ -1856,9 +1858,45 @@ class PayrollCalculatorService
 
         return array_map(function (array $line) use ($svc, $companyId, $userId) {
             $pcId = $line['pay_component_id'] ?? null;
-            $line['pay_schedule_type'] = $pcId
-                ? $svc->resolveScheduleType('pay_component:'.((int) $pcId), $companyId, $userId, (int) $pcId)
-                : null;
+            if ($pcId) {
+                $usesLoadedAssignmentRow = \array_key_exists('assignment_schedule_override', $line);
+                $loadedOverride = $usesLoadedAssignmentRow ? ($line['assignment_schedule_override'] ?? null) : null;
+                $brk = $svc->resolveEmployeePayComponentSchedule(
+                    (int) $pcId,
+                    $companyId,
+                    $userId,
+                    $usesLoadedAssignmentRow,
+                    $loadedOverride,
+                );
+                $line['pay_schedule_type'] = $brk['resolved_schedule'];
+                $line['schedule_override'] = $brk['schedule_override'];
+                $line['default_schedule'] = $brk['default_schedule'];
+                $line['resolved_schedule'] = $brk['resolved_schedule'];
+                $line['schedule_source'] = $brk['schedule_source'];
+
+                Log::debug('payroll.pay_component_schedule_resolution', [
+                    'employee_id' => $userId,
+                    'pay_component_id' => (int) $pcId,
+                    'comp_assignment_id' => $line['id'] ?? null,
+                    'uses_loaded_assignment_row' => $usesLoadedAssignmentRow,
+                    'loaded_assignment_schedule_override' => $loadedOverride,
+                    'saved_schedule_override' => $brk['schedule_override'],
+                    'default_schedule_settings' => $brk['default_schedule'],
+                    'resolved_schedule' => $brk['resolved_schedule'],
+                    'schedule_source' => $brk['schedule_source'],
+                    'line_computed_monthly_amount' => $line['computed_amount'] ?? null,
+                ]);
+
+                unset($line['assignment_schedule_override']);
+
+                return $line;
+            }
+            $line['pay_schedule_type'] = null;
+            $line['schedule_override'] = null;
+            $line['default_schedule'] = null;
+            $line['resolved_schedule'] = null;
+            $line['schedule_source'] = null;
+            unset($line['assignment_schedule_override']);
 
             return $line;
         }, $lines);

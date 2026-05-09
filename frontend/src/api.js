@@ -1073,7 +1073,8 @@ export async function getEmployeeProfileSnapshot(employeeId, options = {}) {
   if (options.include_compensation_summary != null) qs.set('include_compensation_summary', options.include_compensation_summary ? '1' : '0')
   if (options.include_pay_cycle_preview != null) qs.set('include_pay_cycle_preview', options.include_pay_cycle_preview ? '1' : '0')
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  return cachedAuthenticatedGetJson(`/admin/employees/${employeeId}/profile${suffix}`, { ttlMs: 90 * 1000 })
+  const ttlMs = options.include_compensation_summary ? 0 : 90 * 1000
+  return cachedAuthenticatedGetJson(`/admin/employees/${employeeId}/profile${suffix}`, { ttlMs })
 }
 
 /**

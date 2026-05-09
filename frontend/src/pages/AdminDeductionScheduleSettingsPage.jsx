@@ -577,6 +577,9 @@ export default function AdminDeductionScheduleSettingsPage() {
                 })}
               </TabsContent>
               <TabsContent value="earnings" className="mt-0 px-4 pb-6 pt-4 focus-visible:outline-none sm:px-6">
+                <p className="mb-3 text-xs text-muted-foreground">
+                  Default schedule for each earning/allowance. Employees may override these in Employee Compensation.
+                </p>
                 {renderTable(earningRows, {
                   firstLabel: 'Allowance / earning',
                   emptyHint: 'Earning-type pay components (allowances, bonuses, etc.) will appear here when configured.',
@@ -627,7 +630,17 @@ export default function AdminDeductionScheduleSettingsPage() {
                 <>
                   <span className="font-medium text-[#0A0A0A] dark:text-slate-100">{activeRow.name}</span>
                   <span className="block pt-1">
-                    Choose the default schedule for this {activeRow.type === 'Earning' ? 'earning/allowance' : 'deduction'}. Employees may override this schedule in Employee Compensation.
+                    {activeRow.type === 'Earning' ? (
+                      <>
+                        Choose the default schedule for this earning/allowance. Employees may override this schedule in Employee
+                        Compensation.
+                      </>
+                    ) : (
+                      <>
+                        Choose the default schedule for this deduction. Employees may override earning/allowance schedules in
+                        Employee Compensation.
+                      </>
+                    )}
                   </span>
                 </>
               ) : null}

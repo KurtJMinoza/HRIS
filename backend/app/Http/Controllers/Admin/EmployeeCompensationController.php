@@ -239,6 +239,17 @@ class EmployeeCompensationController extends Controller
         $assignment->save();
         $this->syncEmployeeSalaryProfileFromBasicSalaryAssignment($employee, $assignment);
 
+        if (\array_key_exists('schedule_override', $validated)) {
+            Log::debug('employee_compensation.schedule_persist', [
+                'employee_id' => (int) $employee->id,
+                'pay_component_id' => $assignment->pay_component_id,
+                'assignment_id' => $assignment->id,
+                'request_schedule_override' => $validated['schedule_override'],
+                'persisted_schedule_override' => $assignment->schedule_override,
+                'context' => 'assignment_update',
+            ]);
+        }
+
         $this->refreshCompensationCaches((int) $employee->id, 'assignment update');
 
         return response()->json([
@@ -369,12 +380,26 @@ class EmployeeCompensationController extends Controller
             $existingAssignment->fill($payload);
             $existingAssignment->save();
             $this->syncEmployeeSalaryProfileFromBasicSalaryAssignment($employee, $existingAssignment);
+            Log::debug('employee_compensation.schedule_persist', [
+                'employee_id' => (int) $employee->id,
+                'pay_component_id' => $payload['pay_component_id'] ?? null,
+                'assignment_id' => $existingAssignment->id,
+                'request_schedule_override' => $componentPayload['schedule_override'] ?? null,
+                'persisted_schedule_override' => $existingAssignment->schedule_override,
+            ]);
 
             return $existingAssignment->load('payComponent');
         }
 
         $assignment = EmployeeCompensationComponent::create($payload);
         $this->syncEmployeeSalaryProfileFromBasicSalaryAssignment($employee, $assignment);
+        Log::debug('employee_compensation.schedule_persist', [
+            'employee_id' => (int) $employee->id,
+            'pay_component_id' => $payload['pay_component_id'] ?? null,
+            'assignment_id' => $assignment->id,
+            'request_schedule_override' => $componentPayload['schedule_override'] ?? null,
+            'persisted_schedule_override' => $assignment->schedule_override,
+        ]);
 
         return $assignment->load('payComponent');
     }

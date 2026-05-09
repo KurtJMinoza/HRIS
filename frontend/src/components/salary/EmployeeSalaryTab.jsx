@@ -61,6 +61,50 @@ export function formatDeductionScheduleTypeShort(value) {
   return t || '—'
 }
 
+/** Labels for Deduction Schedule Settings defaults when shown as employee "Use default: …". */
+export function formatDefaultPayComponentScheduleLabel(settingValue) {
+  const t = String(settingValue || '').trim()
+  if (t === '15th') return '15th'
+  if (t === '30th') return 'End of month'
+  if (t === 'both') return 'Split 15/30'
+  return formatDeductionScheduleTypeShort(settingValue)
+}
+
+/** Employee-specific override codes saved on assignments (matches backend `schedule_override`). */
+export function formatEmployeeScheduleOverrideShort(override) {
+  const o = String(override || '').trim()
+  const map = {
+    first_run: '15th',
+    second_run: 'End of month',
+    split: 'Split 15/30',
+    monthly: 'Monthly / full run',
+  }
+  return map[o] || (o || null)
+}
+
+/**
+ * Schedule column for compensation-summary earning/deduction rows (respects employee override vs global default).
+ *
+ * @param {Record<string, unknown>} item
+ */
+export function formatPayProfileComponentScheduleCell(item) {
+  if (!item || typeof item !== 'object') return '—'
+  const src = item.schedule_source
+  if (src === 'employee_override') {
+    const lbl = formatEmployeeScheduleOverrideShort(item.schedule_override)
+    if (lbl) return lbl
+    const r = item.resolved_schedule
+    return r ? formatDefaultPayComponentScheduleLabel(r) : '—'
+  }
+  if (src === 'default_schedule') {
+    const def = item.default_schedule
+    const inner = def ? formatDefaultPayComponentScheduleLabel(def) : null
+    return inner ? `Use default: ${inner}` : 'Use default'
+  }
+  const sched = item.resolved_schedule ?? item.pay_schedule_type
+  return sched ? formatDefaultPayComponentScheduleLabel(sched) : '—'
+}
+
 function catalogRowTypeLabel(row) {
   if (row?.type === 'Government') return 'Government'
   if (row?.type === 'Earning') return 'Earning'
@@ -967,8 +1011,7 @@ export function SalaryPayComponentsBreakdownCard({
 
   const renderRows = (items, tone) =>
     items.map((item, index) => {
-      const sched = item?.pay_schedule_type
-      const schedLabel = sched ? formatDeductionScheduleTypeShort(sched) : '—'
+      const schedLabel = formatPayProfileComponentScheduleCell(item)
       const amountClass =
         tone === 'deduction' ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-800 dark:text-emerald-300'
       return (
