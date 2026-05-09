@@ -51,7 +51,7 @@ const EMPTY_FORM = {
   is_proratable: false,
   show_on_payslip: true,
   is_custom: false,
-  schedule_override: 'second_run',
+  schedule_override: 'default',
 }
 
 export default function AdminEmployeeCompensationPage() {
@@ -233,7 +233,7 @@ export default function AdminEmployeeCompensationPage() {
       is_proratable: Boolean(master.is_proratable),
       show_on_payslip: true,
       is_custom: false,
-      schedule_override: 'second_run',
+      schedule_override: 'default',
     })
   }
 
@@ -315,7 +315,7 @@ export default function AdminEmployeeCompensationPage() {
             contributes_pagibig: item.contributes_pagibig,
             is_proratable: item.is_proratable,
             is_custom: item.is_custom,
-            schedule_override: item.schedule_override,
+            schedule_override: item.schedule_override !== 'default' ? item.schedule_override : null,
           })),
         })
       }
@@ -817,12 +817,15 @@ export default function AdminEmployeeCompensationPage() {
                     onChange={(e) => setDraftForm((prev) => ({ ...prev, schedule_override: e.target.value }))}
                     className={inputClass}
                   >
+                    <option value="default">
+                      Default — from Deduction Schedule Settings (this allowance / pay component)
+                    </option>
                     <option value="first_run">15th</option>
                     <option value="split">Split 15/30</option>
                     <option value="second_run">End of month</option>
                   </select>
                   <p className="mt-1.5 text-xs text-slate-500">
-                    When this should be paid for semi-monthly payroll (overrides the company default from Deduction Schedule Settings for this employee only).
+                    Default follows Compensation → Deduction Schedule Settings for the selected pay component. Other options override that schedule for this employee only.
                   </p>
                 </Field>
               ) : null}
