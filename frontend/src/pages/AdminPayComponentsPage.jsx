@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Archive, Calculator, Check, Copy, Pencil, Plus, Search, Trash2, WalletCards } from 'lucide-react'
+import {
+  Archive,
+  Calculator,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Pencil,
+  PieChart,
+  Plus,
+  Search,
+  Trash2,
+  Users,
+  WalletCards,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
@@ -22,6 +36,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/use-toast'
 import { createPayComponent, deletePayComponent, getPayComponents, updatePayComponent } from '@/api'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
@@ -29,7 +44,6 @@ import { cn } from '@/lib/utils'
 import {
   APP_MODAL_DESCRIPTION_CLASS,
   APP_MODAL_FORM_BODY,
-  APP_MODAL_HEADER,
   APP_MODAL_INNER_FLUSH,
   APP_MODAL_OUTLINE_BUTTON_CLASS,
   APP_MODAL_PRIMARY_BUTTON_CLASS,
@@ -92,6 +106,8 @@ const FILTERS = [
   { id: 'contributory', label: 'Contributory' },
 ]
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50]
+
 export default function AdminPayComponentsPage() {
   const hrBase = useHrBasePath()
   const { toast } = useToast()
@@ -101,6 +117,8 @@ export default function AdminPayComponentsPage() {
   const [components, setComponents] = useState([])
   const [query, setQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [codeTouched, setCodeTouched] = useState(false)
@@ -159,10 +177,44 @@ export default function AdminPayComponentsPage() {
   }, [activeFilter, components, query])
 
   const stats = useMemo(() => ([
-    { label: 'Total Components', value: components.length },
-    { label: 'Taxable Items', value: components.filter((item) => item.is_taxable).length },
-    { label: 'Contributory', value: components.filter((item) => item.contributes_sss || item.contributes_philhealth || item.contributes_pagibig).length },
+    {
+      label: 'Total Components',
+      value: components.length,
+      helper: 'All components',
+      icon: 'wallet',
+    },
+    {
+      label: 'Taxable Items',
+      value: components.filter((item) => item.is_taxable).length,
+      helper: 'Marked as taxable',
+      icon: 'taxable',
+    },
+    {
+      label: 'Contributory',
+      value: components.filter((item) => item.contributes_sss || item.contributes_philhealth || item.contributes_pagibig).length,
+      helper: 'Contributory items',
+      icon: 'contributory',
+    },
   ]), [components])
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const safePage = Math.min(page, pageCount)
+  const pageStart = filtered.length === 0 ? 0 : (safePage - 1) * pageSize + 1
+  const pageEnd = Math.min(filtered.length, safePage * pageSize)
+  const paginated = useMemo(() => {
+    const start = (safePage - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, pageSize, safePage])
+
+  useEffect(() => {
+    setPage(1)
+  }, [activeFilter, pageSize, query])
+
+  useEffect(() => {
+    if (page > pageCount) {
+      setPage(pageCount)
+    }
+  }, [page, pageCount])
 
   function openCreateDialog() {
     setEditingId(null)
@@ -421,267 +473,332 @@ export default function AdminPayComponentsPage() {
   const categoryOptions = form.type === 'deduction' ? DEDUCTION_CATEGORY_OPTIONS : CATEGORY_OPTIONS
 
   return (
-    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 text-[#0A0A0A] sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6 dark:bg-background dark:text-foreground">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-border dark:bg-card">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-              <WalletCards className="size-3.5" />
-              Compensation
+    <div className="w-full min-w-0 max-w-none bg-background px-3 py-4 text-foreground sm:px-4 md:px-5 lg:px-6 lg:py-5 3xl:px-10 3xl:py-6">
+      <section className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-card shadow-sm">
+        <div className="px-5 py-6 sm:px-7 lg:px-8 lg:py-8">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-2 rounded-full bg-brand/10 px-3 py-1 text-xs font-semibold text-brand">
+                <WalletCards className="size-3.5" aria-hidden />
+                Compensation
+              </div>
+              <h1 className="mt-5 text-3xl font-bold tracking-tight text-foreground md:text-4xl">Pay Components</h1>
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground md:text-base">
+                Manage the earning and deduction components used across employee compensation and payroll.
+              </p>
             </div>
-            <h1 className="hr-page-title mt-3 text-slate-900">Pay Components</h1>
-            <p className="mt-2 max-w-2xl text-sm text-slate-600">
-              Manage the earning and deduction components used across employee compensation and payroll.
-            </p>
-          </div>
 
-          <Button type="button" onClick={openCreateDialog} className="rounded-xl bg-slate-900 text-white hover:bg-slate-800">
-            <Plus className="mr-2 size-4" />
-            New Component
-          </Button>
-        </div>
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-3">
-          {stats.map((card) => (
-            <div key={card.label} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{card.label}</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-900">{card.value}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-border dark:bg-card">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Component List</h2>
-            <p className="mt-1 text-sm text-slate-500">Search and maintain your pay component catalog.</p>
-          </div>
-
-          <div className="flex w-full flex-col gap-3 lg:w-auto lg:min-w-[420px] lg:flex-row">
-            <label className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className={`${inputClass} pl-10`}
-                placeholder="Search component name, code, category"
-              />
-            </label>
-          </div>
-        </div>
-
-        {duplicateWarnings.length > 0 ? (
-          <div
-            className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
-            role="status"
-          >
-            <p className="font-semibold text-amber-900">Duplicate pay components detected</p>
-            <p className="mt-1 text-amber-900/90">
-              Multiple catalog rows share the same code or duplicate &quot;Basic Salary&quot; names. Payroll uses a single Basic
-              Salary; merge duplicates in the database or contact support. Warnings: {duplicateWarnings.length}.
-            </p>
-            <ul className="mt-2 list-inside list-disc text-xs text-amber-900/85">
-              {duplicateWarnings.map((w, i) => (
-                <li key={i}>
-                  {w.kind === 'duplicate_basic_salary_name'
-                    ? `Duplicate "Basic Salary" name (ids: ${(w.ids || []).join(', ')})`
-                    : `Duplicate code ${w.code} (ids: ${(w.ids || []).join(', ')})`}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          {FILTERS.map((filter) => (
-            <button
-              key={filter.id}
+            <Button
               type="button"
-              onClick={() => setActiveFilter(filter.id)}
-              className={`rounded-full px-3 py-2 text-sm transition ${
-                activeFilter === filter.id
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
+              onClick={openCreateDialog}
+              className="h-12 shrink-0 rounded-xl bg-brand px-5 font-semibold text-brand-foreground shadow-lg shadow-brand/20 hover:bg-brand-strong"
             >
-              {filter.label}
-            </button>
-          ))}
+              <Plus className="mr-2 size-4" aria-hidden />
+              New Component
+            </Button>
+          </div>
+
+          <div className="mt-8 grid gap-4 lg:grid-cols-3">
+            {stats.map(({ label, value, helper, icon }) => (
+              <div
+                key={label}
+                className="flex min-h-36 items-center gap-6 rounded-2xl border border-border/70 bg-background/70 px-6 py-5 shadow-sm dark:bg-muted/10"
+              >
+                <div className="flex size-16 shrink-0 items-center justify-center rounded-2xl border border-brand/15 bg-brand/10 text-brand shadow-inner">
+                  {renderStatIcon(icon)}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+                  <p className="mt-2 text-3xl font-bold text-foreground">{value}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">{helper}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="mt-5 overflow-x-auto">
-          <Table className="min-w-[960px]">
-            <TableHeader className="[&_tr]:border-b-0">
-              <TableRow>
-                <TableHead className="min-w-[240px] px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Component</TableHead>
-                <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Code</TableHead>
-                <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Type</TableHead>
-                <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Calculation</TableHead>
-                <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Taxability</TableHead>
-                <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Contributory</TableHead>
-                <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Status</TableHead>
-                <TableHead className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, index) => (
-                  <TableRow key={`skeleton-${index}`} className="border-b border-slate-100">
-                    {Array.from({ length: 8 }).map((__, cellIndex) => (
-                      <TableCell key={cellIndex} className="px-3 py-3">
-                        <div className="h-4 animate-pulse rounded bg-slate-100" />
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              ) : filtered.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="px-3 py-12 text-center text-sm text-slate-500">
-                    No pay components matched your filters.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filtered.map((item) => (
-                  <TableRow key={item.id} className="border-b border-slate-100 transition hover:bg-slate-50/80">
-                    <TableCell className="px-3 py-3.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-slate-900">{item.name}</span>
-                        {item.type === 'deduction' && (item.is_loan || String(item.category || '').toLowerCase() === 'loan') ? (
-                          <Badge className="h-5 bg-amber-100 text-amber-900">Loan</Badge>
-                        ) : null}
-                        {(item.component_type || 'user') === 'system' || item.is_system_protected ? (
-                          <Badge
-                            variant="secondary"
-                            className="h-5 rounded border border-slate-200 bg-slate-100 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700"
-                          >
-                            System
-                          </Badge>
-                        ) : null}
-                        {isCoreBasicSalaryComponent(item) ? (
-                          <Badge className="h-5 border border-slate-300 bg-slate-900 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-slate-900">
-                            Core payroll
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500">{item.category || 'Uncategorized'}</div>
-                      <div className="mt-1 text-[11px] text-slate-500">
-                        {(item.component_type || 'user') === 'system' || item.is_system_protected
-                          ? 'Integrated with payroll; code is fixed.'
-                          : 'User-defined component'}
-                      </div>
-                      <div className="mt-1.5">
-                        <Link
-                          to={
-                            item.type === 'earning'
-                              ? `${hrBase}/compensation/deduction-schedule-settings#earnings`
-                              : `${hrBase}/compensation/deduction-schedule-settings`
-                          }
-                          className="text-[11px] font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline dark:text-slate-400 dark:hover:text-slate-200"
-                        >
-                          {item.type === 'earning' ? 'Earnings pay schedule' : 'Deduction pay schedule'}
-                        </Link>
-                      </div>
-                    </TableCell>
-                    <TableCell className="px-3 py-3.5">
-                      <code className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">{item.code}</code>
-                    </TableCell>
-                    <TableCell className="px-3 py-3.5">
-                      <Badge className={item.type === 'deduction' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}>
-                        {item.type === 'deduction' ? 'Deduction' : 'Earning'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="px-3 py-3.5">
-                      <div className="flex items-center gap-2 text-slate-700">
-                        <Calculator className="size-4 text-slate-400" />
-                        <span>{formatCalculationType(item.calculation_type)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="px-3 py-3.5">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
-                    <TableCell className="px-3 py-3.5">{describeContributions(item)}</TableCell>
-                    <TableCell className="px-3 py-3.5">{item.is_active ? 'Active' : 'Inactive'}</TableCell>
-                    <TableCell className="px-3 py-3.5 text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="rounded-lg border-0 bg-slate-100 px-3 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
-                          onClick={() => openEditDialog(item)}
-                        >
-                          <Pencil className="mr-2 size-4" />
-                          Edit
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="rounded-lg border-0 bg-slate-100 px-3 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
-                          onClick={() => onDuplicate(item)}
-                          disabled={isCoreBasicSalaryComponent(item)}
-                          title={isCoreBasicSalaryComponent(item) ? 'Basic Salary cannot be duplicated' : undefined}
-                        >
-                          <Copy className="mr-2 size-4" />
-                          Duplicate
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="rounded-lg border-0 bg-slate-100 px-3 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
-                          onClick={() => onArchive(item)}
-                          disabled={!item.is_active}
-                        >
-                          <Archive className="mr-2 size-4" />
-                          Archive
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="rounded-lg border-0 bg-rose-50 px-3 text-rose-600 hover:bg-rose-100 hover:text-rose-700"
-                          onClick={() => requestDelete(item)}
-                          disabled={isCoreBasicSalaryComponent(item)}
-                          title={isCoreBasicSalaryComponent(item) ? 'Basic Salary cannot be deleted (archive instead)' : undefined}
-                        >
-                          <Trash2 className="mr-2 size-4" />
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+        <div className="px-4 pb-5 sm:px-6 lg:px-7 lg:pb-7">
+          <section className="rounded-2xl border border-border/70 bg-background/80 p-4 shadow-sm dark:bg-muted/10 sm:p-6">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-xl font-bold tracking-tight text-foreground">Component List</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Search and maintain your pay component catalog.</p>
+              </div>
+
+              <label className="relative w-full xl:max-w-md">
+                <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className={cn(inputClass, 'h-12 rounded-xl pl-12 shadow-sm')}
+                  placeholder="Search component name, code, category"
+                />
+              </label>
+            </div>
+
+            {duplicateWarnings.length > 0 ? (
+              <div
+                className="mt-5 rounded-xl border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+                role="status"
+              >
+                <p className="font-semibold">Duplicate pay components detected</p>
+                <p className="mt-1 opacity-90">
+                  Multiple catalog rows share the same code or duplicate &quot;Basic Salary&quot; names. Payroll uses a single Basic
+                  Salary; merge duplicates in the database or contact support. Warnings: {duplicateWarnings.length}.
+                </p>
+                <ul className="mt-2 list-inside list-disc text-xs opacity-85">
+                  {duplicateWarnings.map((w, i) => (
+                    <li key={i}>
+                      {w.kind === 'duplicate_basic_salary_name'
+                        ? `Duplicate "Basic Salary" name (ids: ${(w.ids || []).join(', ')})`
+                        : `Duplicate code ${w.code} (ids: ${(w.ids || []).join(', ')})`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              {FILTERS.map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  onClick={() => setActiveFilter(filter.id)}
+                  className={cn(
+                    'h-10 rounded-full border px-4 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25',
+                    activeFilter === filter.id
+                      ? 'border-brand bg-brand text-brand-foreground shadow-md shadow-brand/20'
+                      : 'border-border/70 bg-card text-foreground hover:border-brand/45 hover:bg-brand/5 hover:text-brand',
+                  )}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6 overflow-x-auto rounded-xl border border-border/60 bg-card">
+              <TooltipProvider>
+                <Table className="min-w-[1120px]">
+                  <TableHeader className="[&_tr]:border-b-0">
+                    <TableRow className="bg-muted/35 hover:bg-muted/35">
+                      <TableHead className="min-w-[300px] px-5 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Component</TableHead>
+                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Code</TableHead>
+                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Type</TableHead>
+                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Calculation</TableHead>
+                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Taxability</TableHead>
+                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Contributory</TableHead>
+                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Status</TableHead>
+                      <TableHead className="px-5 py-4 text-right text-xs font-bold uppercase tracking-wide text-muted-foreground">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      Array.from({ length: 6 }).map((_, index) => (
+                        <TableRow key={`skeleton-${index}`} className="border-b border-border/60">
+                          {Array.from({ length: 8 }).map((__, cellIndex) => (
+                            <TableCell key={cellIndex} className="px-4 py-5">
+                              <div className="h-4 animate-pulse rounded bg-muted" />
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    ) : filtered.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="px-5 py-16 text-center text-sm text-muted-foreground">
+                          No pay components matched your filters.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      paginated.map((item) => (
+                        <TableRow key={item.id} className="border-b border-border/60 transition hover:bg-muted/35">
+                          <TableCell className="px-5 py-5">
+                            <div className="flex items-start gap-4">
+                              <div className="mt-0.5 flex size-12 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand">
+                                <WalletCards className="size-5" aria-hidden />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-semibold text-foreground">{item.name}</span>
+                                  {item.type === 'deduction' && (item.is_loan || String(item.category || '').toLowerCase() === 'loan') ? (
+                                    <Badge className="h-5 bg-amber-100 text-amber-900 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-200">Loan</Badge>
+                                  ) : null}
+                                  {(item.component_type || 'user') === 'system' || item.is_system_protected ? (
+                                    <Badge className="h-5 rounded-md bg-brand/10 px-1.5 text-[10px] font-bold uppercase tracking-wide text-brand hover:bg-brand/10">
+                                      System
+                                    </Badge>
+                                  ) : null}
+                                  {isCoreBasicSalaryComponent(item) ? (
+                                    <Badge className="h-5 rounded-md bg-foreground px-1.5 text-[10px] font-bold uppercase tracking-wide text-background hover:bg-foreground">
+                                      Core payroll
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <p className="mt-2 text-sm text-muted-foreground">{item.category || 'Uncategorized'}</p>
+                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                  {(item.component_type || 'user') === 'system' || item.is_system_protected
+                                    ? 'Integrated with payroll; code is fixed.'
+                                    : 'User-defined component'}
+                                </p>
+                                <Link
+                                  to={
+                                    item.type === 'earning'
+                                      ? `${hrBase}/compensation/deduction-schedule-settings#earnings`
+                                      : `${hrBase}/compensation/deduction-schedule-settings`
+                                  }
+                                  className="mt-2 inline-flex text-xs font-medium text-muted-foreground underline-offset-2 hover:text-brand hover:underline"
+                                >
+                                  {item.type === 'earning' ? 'Earnings pay schedule' : 'Deduction pay schedule'}
+                                </Link>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-4 py-5">
+                            <code className="rounded-md bg-muted px-2.5 py-1.5 text-xs font-semibold text-foreground">{item.code}</code>
+                          </TableCell>
+                          <TableCell className="px-4 py-5">
+                            <Badge className={cn(
+                              'rounded-md font-semibold',
+                              item.type === 'deduction'
+                                ? 'bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-200'
+                                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-200',
+                            )}>
+                              {item.type === 'deduction' ? 'Deduction' : 'Earning'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="px-4 py-5">
+                            <div className="flex items-center gap-2 text-sm text-foreground">
+                              <Calculator className="size-4 text-muted-foreground" aria-hidden />
+                              <span>{formatCalculationType(item.calculation_type)}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-4 py-5 text-sm text-foreground">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
+                          <TableCell className="px-4 py-5 text-sm text-foreground">{describeContributions(item)}</TableCell>
+                          <TableCell className="px-4 py-5">
+                            <span className="inline-flex items-center gap-2 text-sm text-foreground">
+                              <span className={cn('size-2 rounded-full', item.is_active ? 'bg-emerald-500' : 'bg-muted-foreground')} aria-hidden />
+                              {item.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </TableCell>
+                          <TableCell className="px-5 py-5 text-right">
+                            <div className="flex justify-end gap-2">
+                              <IconAction label="Edit" onClick={() => openEditDialog(item)}>
+                                <Pencil className="size-4" aria-hidden />
+                              </IconAction>
+                              <IconAction
+                                label={isCoreBasicSalaryComponent(item) ? 'Basic Salary cannot be duplicated' : 'Duplicate'}
+                                onClick={() => onDuplicate(item)}
+                                disabled={isCoreBasicSalaryComponent(item)}
+                              >
+                                <Copy className="size-4" aria-hidden />
+                              </IconAction>
+                              <IconAction label="Archive" onClick={() => onArchive(item)} disabled={!item.is_active}>
+                                <Archive className="size-4" aria-hidden />
+                              </IconAction>
+                              <IconAction
+                                label={isCoreBasicSalaryComponent(item) ? 'Basic Salary cannot be deleted' : 'Delete'}
+                                onClick={() => requestDelete(item)}
+                                disabled={isCoreBasicSalaryComponent(item)}
+                                destructive
+                              >
+                                <Trash2 className="size-4" aria-hidden />
+                              </IconAction>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TooltipProvider>
+            </div>
+
+            <div className="mt-5 flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <p>
+                Showing {pageStart} to {pageEnd} of {filtered.length} component{filtered.length === 1 ? '' : 's'}
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-10 rounded-lg border-border/70 bg-card"
+                    onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                    disabled={safePage <= 1}
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="size-4" aria-hidden />
+                  </Button>
+                  <div className="flex size-10 items-center justify-center rounded-lg border border-brand/60 bg-brand/5 text-sm font-semibold text-brand">
+                    {safePage}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-10 rounded-lg border-border/70 bg-card"
+                    onClick={() => setPage((prev) => Math.min(pageCount, prev + 1))}
+                    disabled={safePage >= pageCount}
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="size-4" aria-hidden />
+                  </Button>
+                </div>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="h-10 rounded-lg border border-border/70 bg-card px-3 text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
+                  aria-label="Rows per page"
+                >
+                  {PAGE_SIZE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option} / page
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 
       <Dialog
-  open={dialogOpen}
-  onOpenChange={(open) => {
-    setDialogOpen(open)
-    if (!open) resetFormState()
-  }}
->
-  <DialogContent
-    innerClassName={cn(APP_MODAL_INNER_FLUSH, 'min-h-0 overflow-y-hidden')}
-    className={appModalDialogContentClass({ size: 'md' })}
-  >
-    <DialogHeader className={APP_MODAL_HEADER}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Badge className="rounded-md bg-foreground px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-background hover:bg-foreground">
-          Payroll
-        </Badge>
-        <Badge variant="outline" className="rounded-md border-border/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-          Component
-        </Badge>
-      </div>
-      <DialogTitle className={APP_MODAL_TITLE_CLASS}>{editingId ? 'Edit pay component' : 'New pay component'}</DialogTitle>
-      <DialogDescription className={APP_MODAL_DESCRIPTION_CLASS}>
-        Fixed amount, effective dates, and optional tax, contributions, and assignment rules.
-      </DialogDescription>
-    </DialogHeader>
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open)
+          if (!open) resetFormState()
+        }}
+      >
+        <DialogContent
+          overlayClassName="bg-black/60 backdrop-blur-[3px]"
+          innerClassName={cn(APP_MODAL_INNER_FLUSH, 'min-h-0 overflow-y-hidden')}
+          closeButtonClassName="right-4 top-4 border-border/70 bg-background/95 text-foreground hover:bg-muted"
+          className={appModalDialogContentClass({
+            size: 'md',
+            className: 'rounded-[1.75rem] border-border/70',
+          })}
+        >
+          <DialogHeader className="border-b border-border/60 bg-card px-5 py-5 pr-16 sm:px-8 sm:py-6">
+            <div className="flex gap-4">
+              <div className="hidden size-14 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand shadow-inner sm:flex">
+                <WalletCards className="size-7" aria-hidden />
+              </div>
+              <div className="min-w-0">
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  <Badge className="rounded-md bg-brand/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand hover:bg-brand/10">
+                    Payroll
+                  </Badge>
+                  <Badge variant="outline" className="rounded-md border-border/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    Component
+                  </Badge>
+                </div>
+                <DialogTitle className={APP_MODAL_TITLE_CLASS}>{editingId ? 'Edit pay component' : 'New pay component'}</DialogTitle>
+                <DialogDescription className={APP_MODAL_DESCRIPTION_CLASS}>
+                  Fixed amount, effective dates, and optional tax, contributions, and assignment rules.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
 
     <form onSubmit={onSubmit} className="flex max-h-[min(78vh,820px)] min-h-0 flex-col">
       <div ref={dialogBodyRef} className={cn(APP_MODAL_FORM_BODY, 'space-y-4 bg-muted/15')}>
@@ -792,27 +909,27 @@ export default function AdminPayComponentsPage() {
               </Field>
             ) : null}
 
-            <div className="flex flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50/80 p-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+            <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-background/70 p-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4 dark:bg-muted/10">
               <div className="min-w-0 flex-1">
                 <Field label="Default value" hint="Starting amount when assigned.">
                   <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-500">
-                      ₱
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">
+                      PHP
                     </span>
                     <input
                       value={form.default_value}
                       onChange={(e) => updateForm({ default_value: e.target.value })}
-                      className={`${inputClass} pl-9`}
+                      className={`${inputClass} pl-12`}
                       inputMode="decimal"
                       placeholder="0.00"
                     />
                   </div>
                 </Field>
               </div>
-              <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 sm:flex-col sm:items-stretch sm:py-2.5">
+              <div className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-3 py-2 sm:flex-col sm:items-stretch sm:py-2.5">
                 <div className="min-w-0 sm:text-right">
-                  <p className="text-xs font-semibold text-slate-800">Active</p>
-                  <p className="hidden text-[10px] text-slate-500 sm:block">Available for payroll</p>
+                  <p className="text-xs font-semibold text-foreground">Active</p>
+                  <p className="hidden text-[10px] text-muted-foreground sm:block">Available for payroll</p>
                 </div>
                 <Switch checked={form.is_active} onCheckedChange={(checked) => updateForm({ is_active: checked })} />
               </div>
@@ -916,18 +1033,21 @@ export default function AdminPayComponentsPage() {
                   </div>
 
                   <div
-                    className={`rounded-lg border p-3 ${
-                      isBasicSalaryComponent ? 'border-amber-200 bg-amber-50/90' : 'border-slate-200 bg-slate-50/80'
-                    }`}
+                    className={cn(
+                      'rounded-xl border p-3',
+                      isBasicSalaryComponent
+                        ? 'border-amber-300/70 bg-amber-50/90 dark:border-amber-500/30 dark:bg-amber-500/10'
+                        : 'border-border/60 bg-background/70 dark:bg-muted/10',
+                    )}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 space-y-1">
-                        <p className="text-sm font-semibold text-slate-900">Apply to all employees</p>
-                        <p className="text-xs leading-relaxed text-slate-600">
+                        <p className="text-sm font-semibold text-foreground">Apply to all employees</p>
+                        <p className="text-xs leading-relaxed text-muted-foreground">
                           Auto-assign with the default value. You can override per employee later.
                         </p>
                         {isBasicSalaryComponent ? (
-                          <p className="text-xs font-medium text-amber-800">
+                          <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
                             Basic Salary must be assigned per employee.
                           </p>
                         ) : null}
@@ -947,11 +1067,11 @@ export default function AdminPayComponentsPage() {
         </section>
       </div>
 
-      <DialogFooter className="flex flex-col gap-3 border-t border-border/60 bg-muted/15 px-8 py-6 sm:flex-row sm:items-center sm:justify-between dark:border-border/50">
+      <DialogFooter className="flex flex-col gap-3 border-t border-border/60 bg-card px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
         <Button type="button" variant="outline" className={APP_MODAL_OUTLINE_BUTTON_CLASS} onClick={() => setDialogOpen(false)}>
           Cancel
         </Button>
-        <Button type="submit" disabled={saving} className={APP_MODAL_PRIMARY_BUTTON_CLASS}>
+        <Button type="submit" disabled={saving} className={cn(APP_MODAL_PRIMARY_BUTTON_CLASS, 'bg-brand text-brand-foreground hover:bg-brand-strong dark:bg-brand dark:text-brand-foreground dark:hover:bg-brand-strong')}>
           {saving ? 'Saving...' : editingId ? 'Save changes' : 'Create component'}
         </Button>
       </DialogFooter>
@@ -1027,14 +1147,38 @@ export default function AdminPayComponentsPage() {
 
 function Field({ label, hint, required = false, children }) {
   return (
-    <label className="block text-sm font-medium text-slate-700">
+    <label className="block text-sm font-medium text-foreground">
       <span className="mb-1.5 block">
         {label}
         {required ? <span className="ml-1 text-rose-500">*</span> : null}
       </span>
       {children}
-      {hint ? <span className="mt-1.5 block text-xs font-normal text-slate-500">{hint}</span> : null}
+      {hint ? <span className="mt-1.5 block text-xs font-normal text-muted-foreground">{hint}</span> : null}
     </label>
+  )
+}
+
+function IconAction({ label, onClick, disabled = false, destructive = false, children }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className={cn(
+            'size-10 rounded-lg border border-border/70 bg-background text-foreground shadow-sm hover:bg-muted hover:text-foreground disabled:opacity-45',
+            destructive && 'border-rose-200/80 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:bg-rose-500/15',
+          )}
+          onClick={onClick}
+          disabled={disabled}
+          aria-label={label}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -1042,12 +1186,12 @@ function RadioCard({ id, value, title, description }) {
   return (
     <label
       htmlFor={id}
-      className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 transition hover:border-slate-300 hover:bg-slate-50/80"
+      className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-border/60 bg-background px-3 py-2.5 transition hover:border-brand/40 hover:bg-brand/5 dark:bg-muted/10"
     >
-      <RadioGroupItem id={id} value={value} className="mt-0.5 border-slate-400 text-slate-900" />
+      <RadioGroupItem id={id} value={value} className="mt-0.5 border-muted-foreground text-brand" />
       <div className="min-w-0">
-        <div className="text-sm font-semibold text-slate-900">{title}</div>
-        {description ? <div className="mt-0.5 text-[11px] leading-snug text-slate-500">{description}</div> : null}
+        <div className="text-sm font-semibold text-foreground">{title}</div>
+        {description ? <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{description}</div> : null}
       </div>
     </label>
   )
@@ -1056,17 +1200,22 @@ function RadioCard({ id, value, title, description }) {
 function ToggleCard({ title, description, checked, onChange, disabled = false }) {
   return (
     <div
-      className={`rounded-lg border px-3 py-2.5 transition ${
-        disabled ? 'border-slate-200 bg-slate-50 opacity-70' : checked ? 'border-slate-900/20 bg-slate-50' : 'border-slate-200 bg-white'
-      }`}
+      className={cn(
+        'rounded-xl border px-3 py-2.5 transition',
+        disabled
+          ? 'border-border/60 bg-muted/30 opacity-70'
+          : checked
+            ? 'border-brand/30 bg-brand/5'
+            : 'border-border/60 bg-background dark:bg-muted/10',
+      )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="text-sm font-semibold text-slate-900">{title}</span>
+            <span className="text-sm font-semibold text-foreground">{title}</span>
             {checked && !disabled ? <Check className="size-3.5 text-emerald-600" /> : null}
           </div>
-          {description ? <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{description}</p> : null}
+          {description ? <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{description}</p> : null}
         </div>
         <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
       </div>
@@ -1084,6 +1233,12 @@ function formatCalculationType(value) {
     hourly: 'Hourly',
   }
   return map[value] || value
+}
+
+function renderStatIcon(icon) {
+  if (icon === 'taxable') return <PieChart className="size-8" aria-hidden />
+  if (icon === 'contributory') return <Users className="size-8" aria-hidden />
+  return <WalletCards className="size-8" aria-hidden />
 }
 
 function describeContributions(item) {
@@ -1116,4 +1271,4 @@ function generateComponentCode(name) {
 }
 
 const inputClass =
-  'w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm text-foreground outline-none transition focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20'
+  'w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm text-foreground shadow-sm outline-none transition placeholder:text-muted-foreground/75 focus-visible:border-brand/60 focus-visible:ring-2 focus-visible:ring-brand/20 dark:bg-muted/10'
