@@ -1867,6 +1867,7 @@ class PayrollCalculatorService
                     $userId,
                     $usesLoadedAssignmentRow,
                     $loadedOverride,
+                    isset($line['id']) ? (int) $line['id'] : null,
                 );
                 $line['pay_schedule_type'] = $brk['resolved_schedule'];
                 $line['schedule_override'] = $brk['schedule_override'];

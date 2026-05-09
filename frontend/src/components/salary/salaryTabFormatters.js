@@ -1,3 +1,5 @@
+import { labelForResolvedSchedule, SCHEDULE_OVERRIDE_LABELS } from '@/lib/payComponentSchedule'
+
 export function formatSalaryTabPhp(value) {
   const n = Number(value)
   if (!Number.isFinite(n)) return '—'
@@ -29,22 +31,12 @@ export function formatDeductionScheduleTypeShort(value) {
 }
 
 export function formatDefaultPayComponentScheduleLabel(settingValue) {
-  const t = String(settingValue || '').trim()
-  if (t === '15th') return '15th'
-  if (t === '30th') return 'End of month'
-  if (t === 'both') return 'Split 15/30'
-  return formatDeductionScheduleTypeShort(settingValue)
+  return labelForResolvedSchedule(settingValue)
 }
 
 export function formatEmployeeScheduleOverrideShort(override) {
   const o = String(override || '').trim()
-  const map = {
-    first_run: '15th',
-    second_run: 'End of month',
-    split: 'Split 15/30',
-    monthly: 'Monthly / full run',
-  }
-  return map[o] || (o || null)
+  return SCHEDULE_OVERRIDE_LABELS[o] || (o || null)
 }
 
 export function formatPayProfileComponentScheduleCell(item) {
@@ -54,15 +46,15 @@ export function formatPayProfileComponentScheduleCell(item) {
     const lbl = formatEmployeeScheduleOverrideShort(item.schedule_override)
     if (lbl) return lbl
     const r = item.resolved_schedule
-    return r ? formatDefaultPayComponentScheduleLabel(r) : '—'
+    return r ? labelForResolvedSchedule(r) : '—'
   }
   if (src === 'default_schedule') {
     const def = item.default_schedule
-    const inner = def ? formatDefaultPayComponentScheduleLabel(def) : null
+    const inner = def ? labelForResolvedSchedule(def) : null
     return inner ? `Use default: ${inner}` : 'Use default'
   }
   const sched = item.resolved_schedule ?? item.pay_schedule_type
-  return sched ? formatDefaultPayComponentScheduleLabel(sched) : '—'
+  return sched ? labelForResolvedSchedule(sched) : '—'
 }
 
 function isGovernmentIdTypeTin(idType) {

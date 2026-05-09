@@ -12,6 +12,7 @@ use App\Services\PayCycleService;
 use App\Services\PayrollCalculatorService;
 use App\Services\ScheduleRateService;
 use App\Support\EmployeeProfileCache;
+use App\Support\PayComponentSchedule;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
@@ -141,7 +142,7 @@ class EmployeeCompensationController extends Controller
             'components.*.is_proratable' => ['nullable', 'boolean'],
             'components.*.is_active' => ['nullable', 'boolean'],
             'components.*.is_custom' => ['nullable', 'boolean'],
-            'components.*.schedule_override' => ['nullable', 'string', Rule::in(['default', 'first_run', 'second_run', 'split', 'monthly'])],
+            'components.*.schedule_override' => ['nullable', 'string', Rule::in(PayComponentSchedule::validationSlugs())],
             'components.*.metadata' => ['nullable', 'array'],
         ]);
 
@@ -214,12 +215,20 @@ class EmployeeCompensationController extends Controller
             'effective_from' => ['nullable', 'date'],
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
             'is_active' => ['sometimes', 'boolean'],
-            'schedule_override' => ['nullable', 'string', Rule::in(['default', 'first_run', 'second_run', 'split', 'monthly'])],
+            'schedule_override' => ['nullable', 'string', Rule::in(PayComponentSchedule::validationSlugs())],
             'metadata' => ['nullable', 'array'],
         ]);
 
         if (isset($validated['code'])) {
             $validated['code'] = strtoupper(trim((string) $validated['code']));
+        }
+
+        if (\array_key_exists('schedule_override', $validated)) {
+            $validated['schedule_override'] = PayComponentSchedule::normalizeForStorage(
+                isset($validated['schedule_override']) && $validated['schedule_override'] !== null
+                    ? (string) $validated['schedule_override']
+                    : null
+            );
         }
 
         $metadata = is_array($assignment->metadata) ? $assignment->metadata : [];
@@ -348,6 +357,7 @@ class EmployeeCompensationController extends Controller
             $resolvedHours = (float) $masterMeta['default_days'];
         }
 
+        $scheduleIncoming = \array_key_exists('schedule_override', $componentPayload);
         $payload = [
             'user_id' => $employee->id,
             'pay_component_id' => $master?->id,
@@ -370,11 +380,21 @@ class EmployeeCompensationController extends Controller
             'effective_from' => $validated['effective_from'] ?? $master?->effective_from?->toDateString(),
             'effective_to' => $validated['effective_to'] ?? $master?->effective_to?->toDateString(),
             'is_active' => (bool) ($componentPayload['is_active'] ?? true),
-            'schedule_override' => isset($componentPayload['schedule_override']) && $componentPayload['schedule_override'] !== 'default'
-                ? $componentPayload['schedule_override']
-                : null,
             'metadata' => $metadata,
         ];
+        if ($scheduleIncoming) {
+            $payload['schedule_override'] = PayComponentSchedule::normalizeForStorage(
+                isset($componentPayload['schedule_override']) && $componentPayload['schedule_override'] !== null && $componentPayload['schedule_override'] !== ''
+                    ? (string) $componentPayload['schedule_override']
+                    : null
+            );
+        } elseif ($existingAssignment) {
+            $payload['schedule_override'] = PayComponentSchedule::normalizeForStorage(
+                \is_string($existingAssignment->schedule_override) ? $existingAssignment->schedule_override : null
+            );
+        } else {
+            $payload['schedule_override'] = null;
+        }
 
         if ($existingAssignment) {
             $existingAssignment->fill($payload);
@@ -488,7 +508,9 @@ class EmployeeCompensationController extends Controller
             'effective_from' => $assignment->effective_from?->toDateString(),
             'effective_to' => $assignment->effective_to?->toDateString(),
             'is_active' => (bool) $assignment->is_active,
-            'schedule_override' => $assignment->schedule_override,
+            'schedule_override' => PayComponentSchedule::normalizeForStorage(
+                \is_string($assignment->schedule_override) ? $assignment->schedule_override : null
+            ),
             'metadata' => $assignment->metadata,
             'pay_component' => $assignment->payComponent ? [
                 'id' => $assignment->payComponent->id,

@@ -1420,12 +1420,14 @@ class PayrollComputationService
             return strtoupper(trim((string) ($line['code'] ?? ''))) === 'BASIC_SALARY';
         });
         $basicPayComponentId = $basicLine['pay_component_id'] ?? null;
+        $basicAssignmentId = isset($basicLine['id']) && is_numeric($basicLine['id']) ? (int) $basicLine['id'] : null;
         if ($basicPayComponentId) {
             $basicScheduleType = $this->deductionScheduleService->resolveScheduleType(
                 'pay_component:'.((int) $basicPayComponentId),
                 $companyId,
                 (int) $user->id,
-                (int) $basicPayComponentId
+                (int) $basicPayComponentId,
+                $basicAssignmentId,
             );
         }
         $basicFactor = $this->deductionScheduleService->factorForScheduleInPeriod(

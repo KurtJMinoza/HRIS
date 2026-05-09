@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\PayComponent;
 use App\Models\User;
+use App\Support\PayComponentSchedule;
 use Illuminate\Support\Facades\Schema;
 
 class PayComponentAssignmentService
@@ -39,8 +40,10 @@ class PayComponentAssignmentService
                 }
 
                 $payload = $this->buildAssignmentPayload($component, $metadata);
-
                 if ($assignment) {
+                    $payload['schedule_override'] = PayComponentSchedule::normalizeForStorage(
+                        \is_string($assignment->schedule_override) ? $assignment->schedule_override : null
+                    );
                     $assignment->fill($payload);
                     $assignment->save();
                 } else {

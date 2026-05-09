@@ -54,6 +54,21 @@ const EMPTY_FORM = {
   schedule_override: 'default',
 }
 
+/** Options for pay-component schedule override (PATCH / assign); must stay aligned with backend validation. */
+const PAY_COMPONENT_SCHEDULE_OPTIONS = [
+  { value: 'default', label: 'Default — from Deduction Schedule Settings' },
+  { value: 'first_run', label: '15th' },
+  { value: 'split', label: 'Split 15/30' },
+  { value: 'second_run', label: 'End of month' },
+  { value: 'monthly', label: 'Monthly / full run (legacy)' },
+]
+
+function normalizedScheduleSelectValue(scheduleOverride) {
+  const v = scheduleOverride
+  if (v == null || v === '' || v === 'default') return 'default'
+  return String(v).trim()
+}
+
 export default function AdminEmployeeCompensationPage() {
   const { toast } = useToast()
   const navigate = useNavigate()
@@ -76,6 +91,7 @@ export default function AdminEmployeeCompensationPage() {
   const [editingId, setEditingId] = useState(null)
   const [editValue, setEditValue] = useState('')
   const [updatingValue, setUpdatingValue] = useState(false)
+  const [updatingScheduleId, setUpdatingScheduleId] = useState(null)
   const preselectedEmployeeId = Number(searchParams.get('employee_id') || 0)
 
   const loadLookups = useCallback(async (searchTerm = employeeSearch) => {
@@ -159,6 +175,12 @@ export default function AdminEmployeeCompensationPage() {
     refreshCompensation()
   }, [activeEmployeeId, effectiveFrom, refreshCompensation])
 
+  useEffect(() => {
+    setEditingId(null)
+    setEditValue('')
+    setUpdatingScheduleId(null)
+  }, [activeEmployeeId])
+
   const activeEmployee = useMemo(
     () => employees.find((employee) => employee.id === activeEmployeeId) || null,
     [activeEmployeeId, employees],
@@ -195,6 +217,16 @@ export default function AdminEmployeeCompensationPage() {
     setDialogOpen(true)
   }
 
+  const debugSchedule = useCallback((selection, payload) => {
+    const dev =
+      typeof import.meta !== 'undefined' &&
+      import.meta.env !== undefined &&
+      Boolean(import.meta.env.DEV)
+    if (!dev) return
+    // eslint-disable-next-line no-console
+    console.debug('[hr] compensation.schedule', selection, payload)
+  }, [])
+
   function applyMasterComponent(componentId) {
     const master = components.find((item) => String(item.id) === String(componentId))
     if (!master) {
@@ -215,6 +247,10 @@ export default function AdminEmployeeCompensationPage() {
     } else if (calc === 'percent_basic' || calc === 'percent_gross') {
       initValue = meta.default_percent != null ? String(meta.default_percent) : String(master.default_value ?? 0)
     }
+    debugSchedule('apply_master_prefill_default', {
+      draft_schedule_override: 'default',
+      pay_component_id: master.id,
+    })
     setDraftForm({
       pay_component_id: master.id,
       name: master.name,
@@ -293,6 +329,13 @@ export default function AdminEmployeeCompensationPage() {
       }, {})
 
       for (const group of Object.values(grouped)) {
+        debugSchedule('employee_compensation.schedule_assign_payload', {
+          employee_id: Number(group.employeeId),
+          items: group.items.map((item) => ({
+            pay_component_id: item.pay_component_id,
+            schedule_override: item.schedule_override !== 'default' ? item.schedule_override : null,
+          })),
+        })
         await assignEmployeeCompensation({
           employee_ids: [Number(group.employeeId)],
           structure_name: null,
@@ -367,6 +410,7 @@ export default function AdminEmployeeCompensationPage() {
   }
 
   function startEditing(item) {
+    if (updatingScheduleId === item?.id) return
     setEditingId(item.id)
     setEditValue(String(item.configured_value ?? item.computed_amount ?? 0))
   }
@@ -376,8 +420,45 @@ export default function AdminEmployeeCompensationPage() {
     setEditValue('')
   }
 
+  const saveScheduleOverride = useCallback(async (item, selectValue) => {
+    if (!activeEmployee?.id || !item?.id || !item.pay_component_id) return
+    const incoming = normalizedScheduleSelectValue(selectValue)
+    const current = normalizedScheduleSelectValue(item.schedule_override)
+    if (incoming === current) return
+
+    const payloadSlug = incoming === 'default' ? 'default' : incoming
+    setUpdatingScheduleId(item.id)
+    try {
+      debugSchedule('employee_compensation.schedule_patch', {
+        employee_id: activeEmployee.id,
+        assignment_id: item.id,
+        pay_component_id: item.pay_component_id,
+        payload_schedule_override: payloadSlug,
+        previous_normalized: current,
+      })
+      await updateEmployeeCompensation(activeEmployee.id, item.id, {
+        schedule_override: payloadSlug,
+      })
+      toast({
+        title: 'Schedule updated',
+        description: `${item.name}: ${PAY_COMPONENT_SCHEDULE_OPTIONS.find((o) => o.value === incoming)?.label ?? incoming}.`,
+      })
+      await refreshCompensation(activeEmployee.id)
+      window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
+    } catch (error) {
+      toast({
+        title: 'Schedule update failed',
+        description: error.message || 'Failed to update pay component schedule',
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingScheduleId(null)
+    }
+  }, [activeEmployee, debugSchedule, refreshCompensation, toast])
+
   async function saveEditedValue(item) {
     if (!activeEmployee || !item?.id) return
+    if (updatingScheduleId === item.id) return
     const newValue = Number(editValue || 0)
     setUpdatingValue(true)
     try {
@@ -631,6 +712,8 @@ export default function AdminEmployeeCompensationPage() {
                       onEditSave={saveEditedValue}
                       onEditCancel={cancelEditing}
                       updatingValue={updatingValue}
+                      updatingScheduleId={updatingScheduleId}
+                      onScheduleChange={saveScheduleOverride}
                     />
                   </TabsContent>
 
@@ -647,6 +730,8 @@ export default function AdminEmployeeCompensationPage() {
                       onEditSave={saveEditedValue}
                       onEditCancel={cancelEditing}
                       updatingValue={updatingValue}
+                      updatingScheduleId={updatingScheduleId}
+                      onScheduleChange={saveScheduleOverride}
                     />
                   </TabsContent>
                 </Tabs>
@@ -814,15 +899,24 @@ export default function AdminEmployeeCompensationPage() {
                 <Field label="Pay Component Schedule">
                   <select
                     value={draftForm.schedule_override}
-                    onChange={(e) => setDraftForm((prev) => ({ ...prev, schedule_override: e.target.value }))}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      debugSchedule('employee_compensation.schedule_selected', {
+                        schedule_override: value,
+                        employee_id: activeEmployee?.id,
+                      })
+                      setDraftForm((prev) => ({ ...prev, schedule_override: value }))
+                    }}
                     className={inputClass}
                   >
                     <option value="default">
                       Default — from Deduction Schedule Settings (this allowance / pay component)
                     </option>
-                    <option value="first_run">15th</option>
-                    <option value="split">Split 15/30</option>
-                    <option value="second_run">End of month</option>
+                    {PAY_COMPONENT_SCHEDULE_OPTIONS.filter((o) => o.value !== 'default').map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </select>
                   <p className="mt-1.5 text-xs text-slate-500">
                     Default follows Compensation → Deduction Schedule Settings for the selected pay component. Other options override that schedule for this employee only.
@@ -914,7 +1008,21 @@ function SummaryCard({ label, value }) {
   )
 }
 
-function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editValue, onEditStart, onEditChange, onEditSave, onEditCancel, updatingValue }) {
+function CompTable({
+  items,
+  emptyLabel,
+  amountTone,
+  onRemove,
+  editingId,
+  editValue,
+  onEditStart,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
+  updatingValue,
+  updatingScheduleId = null,
+  onScheduleChange,
+}) {
   return (
     <div className="overflow-x-auto">
       <Table className="min-w-[820px]">
@@ -923,7 +1031,9 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Component</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Category</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Calculation</TableHead>
-            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Schedule</TableHead>
+            <TableHead className="min-w-48 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Schedule
+            </TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Taxability</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Contributory</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</TableHead>
@@ -954,9 +1064,27 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
                   <TableCell className="px-3 py-3.5 text-slate-600">{item.category || '—'}</TableCell>
                   <TableCell className="px-3 py-3.5">{formatCalculationType(item.calculation_type)}</TableCell>
                   <TableCell className="px-3 py-3.5">
-                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getScheduleBadgeStyles(item.schedule_override)}`}>
-                      {formatScheduleOverride(item.schedule_override)}
-                    </span>
+                    {item.pay_component_id ? (
+                      <select
+                        aria-label={`Pay component schedule for ${item.name ?? 'component'}`}
+                        className="max-w-[min(260px,calc(100vw-220px))] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:opacity-60 dark:border-border dark:bg-background"
+                        value={normalizedScheduleSelectValue(item.schedule_override)}
+                        disabled={!item?.id || updatingScheduleId === item.id || (updatingValue && editingId === item.id)}
+                        title={item?.id ? undefined : 'System line — edit schedule via employee assignment'}
+                        onChange={(e) => onScheduleChange?.(item, e.target.value)}
+                      >
+                        {PAY_COMPONENT_SCHEDULE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.value === 'default' ? 'Use default (company settings)' : opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-xs text-slate-400 dark:text-slate-500">—</span>
+                    )}
+                    {item?.id && item.pay_component_id && updatingScheduleId === item.id ? (
+                      <span className="mt-1 block text-[11px] text-slate-500">Saving…</span>
+                    ) : null}
                   </TableCell>
                   <TableCell className="px-3 py-3.5">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
                   <TableCell className="px-3 py-3.5">{describeContributions(item)}</TableCell>
@@ -974,7 +1102,7 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
                           }}
                           className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                           inputMode="decimal"
-                          disabled={updatingValue}
+                          disabled={updatingValue || updatingScheduleId === item.id}
                         />
                       </div>
                     ) : (
@@ -982,8 +1110,14 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
                         type="button"
                         onClick={() => item?.id && onEditStart(item)}
                         className={`group inline-flex items-center gap-1.5 rounded-lg px-2 py-1 transition ${item?.id ? 'cursor-pointer hover:bg-slate-100' : 'cursor-default'}`}
-                        disabled={!item?.id}
-                        title={item?.id ? 'Click to edit value' : undefined}
+                        disabled={!item?.id || updatingScheduleId === item.id}
+                        title={
+                          !item?.id
+                            ? undefined
+                            : updatingScheduleId === item.id
+                              ? 'Saving schedule…'
+                              : 'Click to edit value'
+                        }
                       >
                         <span className={amountTone === 'deduction' ? 'font-medium text-rose-700' : 'font-medium text-emerald-700'}>
                           {formatPeso(item.computed_amount)}
@@ -1006,7 +1140,7 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
                           size="sm"
                           className="rounded-lg px-3 text-slate-600 hover:bg-slate-100"
                           onClick={onEditCancel}
-                          disabled={updatingValue}
+                          disabled={updatingValue || updatingScheduleId === item.id}
                         >
                           Cancel
                         </Button>
@@ -1015,7 +1149,7 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
                           size="sm"
                           className="rounded-lg bg-slate-900 px-3 text-white hover:bg-slate-800"
                           onClick={() => onEditSave(item)}
-                          disabled={updatingValue}
+                          disabled={updatingValue || updatingScheduleId === item.id}
                         >
                           {updatingValue ? 'Saving...' : 'Save'}
                         </Button>
@@ -1027,6 +1161,7 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
                         size="sm"
                         className="rounded-lg border-0 bg-rose-50 px-3 text-rose-600 hover:bg-rose-100 hover:text-rose-700"
                         onClick={() => onRemove(item)}
+                        disabled={updatingScheduleId === item.id || updatingValue}
                       >
                         <Trash2 className="mr-2 size-4" />
                         Remove
@@ -1119,26 +1254,6 @@ function getAssignmentSourceStyles(item) {
     label: 'Manual',
     className: 'bg-emerald-50 text-emerald-700',
   }
-}
-
-function formatScheduleOverride(value) {
-  if (!value || value === 'default') return 'Use default'
-  const map = {
-    first_run: '15th',
-    second_run: 'End of month',
-    split: 'Split 15/30',
-    monthly: 'Monthly / full run',
-  }
-  return map[value] || 'Use default'
-}
-
-function getScheduleBadgeStyles(value) {
-  if (!value || value === 'default') return 'bg-slate-100 text-slate-600'
-  if (value === 'first_run') return 'bg-blue-50 text-blue-700'
-  if (value === 'second_run') return 'bg-purple-50 text-purple-700'
-  if (value === 'split') return 'bg-emerald-50 text-emerald-700'
-  if (value === 'monthly') return 'bg-amber-50 text-amber-700'
-  return 'bg-slate-100 text-slate-600'
 }
 
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100'
