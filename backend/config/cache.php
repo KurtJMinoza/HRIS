@@ -34,6 +34,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Payroll compensation preview cache
+    |--------------------------------------------------------------------------
+    |
+    | Employee compensation summaries MUST read/write/forgot from the same store. Historically forced to `file`;
+    | on production behind load balancers, per-server disk caches do not invalidate together and PATCH schedule
+    | overrides appeared to "fall back" to default until expiry.
+    |
+    | Leave CACHE_PAYROLL_COMP_SUMMARY_STORE unset to use Laravel's default driver (recommended: redis or database).
+    | Pin to `file` only when you knowingly run one app instance and prefer isolated disk TTL.
+    |
+    */
+
+    'payroll_compensation_summary_store' => env('CACHE_PAYROLL_COMP_SUMMARY_STORE'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cache Stores
     |--------------------------------------------------------------------------
     |

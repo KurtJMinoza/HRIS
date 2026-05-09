@@ -13,6 +13,7 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
+use Illuminate\Contracts\Cache\Repository as CacheRepositoryContract;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
@@ -1408,7 +1409,20 @@ class PayrollCalculatorService
     }
 
     /**
-     * Drop file-cached {@see buildEmployeeCompensationSummary} entries for a user.
+     * Same cache repository used for {@see buildEmployeeCompensationSummary} get/put/forget (default driver unless overridden).
+     */
+    private function compensationSummaryCacheRepository(): CacheRepositoryContract
+    {
+        $name = config('cache.payroll_compensation_summary_store');
+        if (\is_string($name) && $name !== '') {
+            return Cache::store($name);
+        }
+
+        return Cache::driver();
+    }
+
+    /**
+     * Drop cached {@see buildEmployeeCompensationSummary} entries for a user.
      * Must run when {@see EmployeeCompensationComponent} rows change; otherwise the UI can show
      * stale earning line ids and PATCH/DELETE will 404 after a delete.
      */
@@ -1418,7 +1432,7 @@ class PayrollCalculatorService
             return;
         }
 
-        $store = Cache::store('file');
+        $store = $this->compensationSummaryCacheRepository();
         $prorationFactors = [1.0];
         $hoursVariants = [0.0];
         $catalogFlags = [0, 1];
@@ -1470,7 +1484,7 @@ class PayrollCalculatorService
         $this->ensureBaselineBasicSalaryAssignment($user, $asOfDate);
 
         if ($cacheEnabled) {
-            $cacheStore = Cache::store('file');
+            $cacheStore = $this->compensationSummaryCacheRepository();
             $cacheKey = sprintf(
                 'payroll.compensation_summary.employee.%d.as_of.%s.proration.%s.hours.%s.catalog.%d',
                 (int) $user->id,
