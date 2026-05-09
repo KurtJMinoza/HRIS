@@ -6,6 +6,7 @@ use App\Enums\PolicyConditionKey;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\Company;
+use App\Models\DeductionScheduleSetting;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\Overtime;
 use App\Models\PayComponent;
@@ -820,11 +821,40 @@ class PolicyEngineTest extends TestCase
             $this->assertSame(486.25, (float) ($allowanceLine['amount'] ?? 0));
             $this->assertSame(4.8625, (float) data_get($allowanceLine, 'allowance_proration.worked_day_units'));
             $this->assertSame(26.0, (float) data_get($allowanceLine, 'allowance_proration.monthly_divisor_days'));
+            $this->assertSame(13.0, (float) data_get($allowanceLine, 'allowance_proration.base_divisor_days'));
+            $this->assertSame(1300.0, (float) data_get($allowanceLine, 'allowance_proration.allowance_base_before_proration'));
             $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
             $this->assertTrue(collect(data_get($allowanceLine, 'allowance_proration.attendance_excluded', []))
                 ->contains(fn ($row) => ($row['date'] ?? null) === '2026-05-09'
                     && ($row['reason'] ?? null) === 'incomplete_attendance_without_approved_correction'));
+
+            DeductionScheduleSetting::query()->create([
+                'company_id' => null,
+                'deduction_key' => 'pay_component:'.$component->id,
+                'schedule_type' => DeductionScheduleSetting::SCHEDULE_30TH,
+            ]);
+
+            $secondRunOnlyPayroll = app(PayrollComputationService::class)->computeEmployeePayroll(
+                $user->fresh(),
+                Carbon::parse('2026-05-04', 'Asia/Manila'),
+                Carbon::parse('2026-05-09', 'Asia/Manila'),
+                null,
+                [
+                    'pay_period_start' => '2026-05-04',
+                    'pay_period_end' => '2026-05-09',
+                    'selected_pay_date' => '2026-05-15',
+                ]
+            );
+            $secondRunOnlyAllowanceLine = collect($secondRunOnlyPayroll['summary']['payslip_earning_lines'] ?? [])
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
+            $this->assertNotNull($secondRunOnlyAllowanceLine);
+            $this->assertSame(0.0, (float) ($secondRunOnlyAllowanceLine['amount'] ?? -1));
+            $this->assertFalse((bool) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.is_applicable_in_run'));
+            $this->assertSame(0.0, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.allowance_base_before_proration'));
         } finally {
+            DeductionScheduleSetting::query()
+                ->where('deduction_key', 'pay_component:'.$component->id)
+                ->delete();
             $assignment->forceDelete();
             $component->forceDelete();
         }

@@ -510,7 +510,13 @@ class DeductionScheduleService
             $allowanceProration = null;
             $allowanceMode = $this->resolveAllowanceProrationType($e, $isBasic);
             if ($allowanceMode === 'attendance_prorated') {
-                $allowanceProration = $this->computeAttendanceProratedAllowanceAmount($e, $attendanceProration);
+                $allowanceProration = $this->computeAttendanceProratedAllowanceAmount(
+                    $e,
+                    $attendanceProration,
+                    $sched,
+                    $factor,
+                    $segment
+                );
                 $thisAmt = (float) ($allowanceProration['amount'] ?? 0.0);
                 $lineAttendanceFactor = (float) ($allowanceProration['effective_factor'] ?? 0.0);
                 $this->logAllowanceProration($user, $e, $sched, $periodStartRaw, $periodEndRaw, $allowanceProration);
@@ -605,15 +611,22 @@ class DeductionScheduleService
     }
 
     /**
-     * Attendance-prorated allowances use the monthly allowance as the source amount and the
-     * employee's stable schedule divisor as the daily allowance rate.
+     * Attendance-prorated allowances first honor the pay-component schedule, then prorate the
+     * scheduled base by valid attendance day units in the cutoff.
      *
-     * Example: 2600 monthly / 26 working days * 4.8625 present day units = 486.25.
+     * Example, split schedule: 2600 monthly * 0.5 = 1300 base; 1300 / 13 scheduled
+     * divisor days * 4.8625 present day units = 486.25.
      *
      * @param  array<string, mixed>|null  $attendanceProration
      * @return array<string, mixed>
      */
-    private function computeAttendanceProratedAllowanceAmount(array $line, ?array $attendanceProration): array
+    private function computeAttendanceProratedAllowanceAmount(
+        array $line,
+        ?array $attendanceProration,
+        string $scheduleType,
+        float $scheduleFactor,
+        ?string $currentRunType
+    ): array
     {
         $allowanceMeta = is_array($attendanceProration['allowance'] ?? null)
             ? $attendanceProration['allowance']
@@ -621,13 +634,25 @@ class DeductionScheduleService
         $monthlyAmount = round(max(0.0, (float) ($line['computed_amount'] ?? 0)), 2);
         $monthlyDivisor = max(1.0, (float) ($allowanceMeta['monthly_divisor_days'] ?? 0));
         $workedDayUnits = max(0.0, (float) ($allowanceMeta['worked_day_units'] ?? 0));
-        $dailyRate = $monthlyDivisor > 0 ? round($monthlyAmount / $monthlyDivisor, 6) : 0.0;
+        $scheduleFactor = max(0.0, min(1.0, $scheduleFactor));
+        $isApplicable = $scheduleFactor > 0.0;
+        $allowanceBase = $isApplicable ? round($monthlyAmount * $scheduleFactor, 2) : 0.0;
+        $baseDivisorDays = $this->resolveAllowanceBaseDivisorDays($monthlyDivisor, $scheduleType, $scheduleFactor);
+        $dailyRate = ($isApplicable && $baseDivisorDays > 0)
+            ? round($allowanceBase / $baseDivisorDays, 6)
+            : 0.0;
         $amount = round($dailyRate * $workedDayUnits, 2);
 
         return [
             'allowance_type' => 'attendance_prorated',
             'configured_monthly_amount' => round($monthlyAmount, 2),
+            'schedule_configuration' => $scheduleType,
+            'current_payroll_run_type' => $currentRunType,
+            'schedule_factor' => round($scheduleFactor, 6),
+            'is_applicable_in_run' => $isApplicable,
+            'allowance_base_before_proration' => $allowanceBase,
             'monthly_divisor_days' => round($monthlyDivisor, 4),
+            'base_divisor_days' => round($baseDivisorDays, 4),
             'daily_allowance_rate' => round($dailyRate, 6),
             'worked_day_units' => round($workedDayUnits, 6),
             'worked_minutes' => (int) ($allowanceMeta['worked_minutes'] ?? 0),
@@ -639,6 +664,19 @@ class DeductionScheduleService
             'effective_factor' => $monthlyAmount > 0 ? round($amount / $monthlyAmount, 6) : 0.0,
             'amount' => $amount,
         ];
+    }
+
+    private function resolveAllowanceBaseDivisorDays(float $monthlyDivisor, string $scheduleType, float $scheduleFactor): float
+    {
+        if ($scheduleFactor <= 0.0) {
+            return 0.0;
+        }
+
+        if ($scheduleType === DeductionScheduleSetting::SCHEDULE_BOTH) {
+            return max(1.0, $monthlyDivisor * $scheduleFactor);
+        }
+
+        return max(1.0, $monthlyDivisor);
     }
 
     private function logAllowanceProration(
@@ -663,7 +701,13 @@ class DeductionScheduleService
             'schedule_type' => $scheduleType,
             'allowance_type' => $allowanceProration['allowance_type'] ?? null,
             'configured_monthly_amount' => $allowanceProration['configured_monthly_amount'] ?? null,
+            'schedule_configuration' => $allowanceProration['schedule_configuration'] ?? null,
+            'current_payroll_run_type' => $allowanceProration['current_payroll_run_type'] ?? null,
+            'schedule_factor' => $allowanceProration['schedule_factor'] ?? null,
+            'is_applicable_in_run' => $allowanceProration['is_applicable_in_run'] ?? null,
+            'allowance_base_before_proration' => $allowanceProration['allowance_base_before_proration'] ?? null,
             'monthly_divisor_days' => $allowanceProration['monthly_divisor_days'] ?? null,
+            'base_divisor_days' => $allowanceProration['base_divisor_days'] ?? null,
             'daily_allowance_rate' => $allowanceProration['daily_allowance_rate'] ?? null,
             'worked_day_units' => $allowanceProration['worked_day_units'] ?? null,
             'converted_hours' => $allowanceProration['converted_hours'] ?? null,
