@@ -141,6 +141,7 @@ class EmployeeCompensationController extends Controller
             'components.*.is_proratable' => ['nullable', 'boolean'],
             'components.*.is_active' => ['nullable', 'boolean'],
             'components.*.is_custom' => ['nullable', 'boolean'],
+            'components.*.schedule_override' => ['nullable', 'string', Rule::in(['default', 'first_run', 'second_run', 'split', 'monthly'])],
             'components.*.metadata' => ['nullable', 'array'],
         ]);
 
@@ -213,6 +214,7 @@ class EmployeeCompensationController extends Controller
             'effective_from' => ['nullable', 'date'],
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
             'is_active' => ['sometimes', 'boolean'],
+            'schedule_override' => ['nullable', 'string', Rule::in(['default', 'first_run', 'second_run', 'split', 'monthly'])],
             'metadata' => ['nullable', 'array'],
         ]);
 
@@ -357,6 +359,9 @@ class EmployeeCompensationController extends Controller
             'effective_from' => $validated['effective_from'] ?? $master?->effective_from?->toDateString(),
             'effective_to' => $validated['effective_to'] ?? $master?->effective_to?->toDateString(),
             'is_active' => (bool) ($componentPayload['is_active'] ?? true),
+            'schedule_override' => isset($componentPayload['schedule_override']) && $componentPayload['schedule_override'] !== 'default'
+                ? $componentPayload['schedule_override']
+                : null,
             'metadata' => $metadata,
         ];
 
@@ -458,6 +463,7 @@ class EmployeeCompensationController extends Controller
             'effective_from' => $assignment->effective_from?->toDateString(),
             'effective_to' => $assignment->effective_to?->toDateString(),
             'is_active' => (bool) $assignment->is_active,
+            'schedule_override' => $assignment->schedule_override,
             'metadata' => $assignment->metadata,
             'pay_component' => $assignment->payComponent ? [
                 'id' => $assignment->payComponent->id,

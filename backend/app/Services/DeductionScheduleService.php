@@ -25,14 +25,42 @@ class DeductionScheduleService
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
     }
 
-    public function resolveScheduleType(string $deductionKey, ?int $companyId): string
+    /**
+     * Resolve schedule type with employee-specific override support.
+     * Priority: employee component schedule_override > global/default schedule.
+     *
+     * @param  string  $deductionKey  'pay_component:123' or 'government:SSS'
+     * @param  int|null  $companyId
+     * @param  int|null  $userId  Employee ID for override lookup
+     * @param  int|null  $payComponentId  Pay component ID for override lookup
+     */
+    public function resolveScheduleType(string $deductionKey, ?int $companyId, ?int $userId = null, ?int $payComponentId = null): string
     {
+        // Check employee-specific override first
+        if ($userId && $payComponentId) {
+            $override = \App\Models\EmployeeCompensationComponent::query()
+                ->where('user_id', $userId)
+                ->where('pay_component_id', $payComponentId)
+                ->where('is_active', true)
+                ->whereNotNull('schedule_override')
+                ->value('schedule_override');
+
+            if ($override && in_array($override, [
+                'first_run',
+                'second_run',
+                'split',
+                'monthly',
+            ], true)) {
+                return $this->normalizeScheduleOverrideToScheduleType($override);
+            }
+        }
+
+        // Fallback to global/default schedule
         $row = DeductionScheduleSetting::query()
             ->where('deduction_key', $deductionKey)
             ->when($companyId !== null, fn ($q) => $q->where(function ($sub) use ($companyId) {
                 $sub->where('company_id', $companyId)->orWhereNull('company_id');
             }), fn ($q) => $q->whereNull('company_id'))
-            // Prefer company-specific row over global fallback (company_id null).
             ->orderByRaw('CASE WHEN company_id IS NOT NULL THEN 0 ELSE 1 END')
             ->first();
 
@@ -45,6 +73,20 @@ class DeductionScheduleService
         }
 
         return DeductionScheduleSetting::SCHEDULE_BOTH;
+    }
+
+    /**
+     * Normalize schedule_override values to DeductionScheduleSetting constants.
+     */
+    private function normalizeScheduleOverrideToScheduleType(string $override): string
+    {
+        return match ($override) {
+            'first_run' => DeductionScheduleSetting::SCHEDULE_15TH,
+            'second_run' => DeductionScheduleSetting::SCHEDULE_30TH,
+            'split' => DeductionScheduleSetting::SCHEDULE_BOTH,
+            'monthly' => DeductionScheduleSetting::SCHEDULE_BOTH,
+            default => DeductionScheduleSetting::SCHEDULE_BOTH,
+        };
     }
 
     /**
@@ -464,7 +506,7 @@ class DeductionScheduleService
             if ($metaSched !== null) {
                 $sched = $metaSched;
             } elseif ($pcId) {
-                $sched = $this->resolveScheduleType('pay_component:'.((int) $pcId), $companyId);
+                $sched = $this->resolveScheduleType('pay_component:'.((int) $pcId), $companyId, (int) $user->id, (int) $pcId);
             } else {
                 $sched = DeductionScheduleSetting::SCHEDULE_BOTH;
             }
@@ -500,7 +542,7 @@ class DeductionScheduleService
             $isBasic = $code === 'BASIC_SALARY';
             $pcId = $e['pay_component_id'] ?? null;
             if ($pcId) {
-                $sched = $this->resolveScheduleType('pay_component:'.((int) $pcId), $companyId);
+                $sched = $this->resolveScheduleType('pay_component:'.((int) $pcId), $companyId, (int) $user->id, (int) $pcId);
             } else {
                 $sched = DeductionScheduleSetting::SCHEDULE_BOTH;
             }
@@ -687,13 +729,25 @@ class DeductionScheduleService
             return;
         }
 
+        $pcId = $line['pay_component_id'] ?? null;
+        $employeeOverride = null;
+        if ($pcId) {
+            $employeeOverride = \App\Models\EmployeeCompensationComponent::query()
+                ->where('user_id', $user->id)
+                ->where('pay_component_id', $pcId)
+                ->where('is_active', true)
+                ->value('schedule_override');
+        }
+
         Log::info('payroll.allowance_proration', [
             'employee_id' => (int) $user->id,
-            'pay_component_id' => $line['pay_component_id'] ?? null,
+            'pay_component_id' => $pcId,
             'code' => $line['code'] ?? null,
             'name' => $line['name'] ?? null,
             'period_start' => $periodStartRaw,
             'period_end' => $periodEndRaw,
+            'employee_schedule_override' => $employeeOverride,
+            'resolved_schedule_type' => $scheduleType,
             'schedule_type' => $scheduleType,
             'allowance_type' => $allowanceProration['allowance_type'] ?? null,
             'configured_monthly_amount' => $allowanceProration['configured_monthly_amount'] ?? null,

@@ -32,6 +32,7 @@ class EmployeeCompensationComponent extends Model
         'effective_to',
         'is_active',
         'metadata',
+        'schedule_override',
     ];
 
     protected static function booted(): void

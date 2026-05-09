@@ -51,6 +51,7 @@ const EMPTY_FORM = {
   is_proratable: false,
   show_on_payslip: true,
   is_custom: false,
+  schedule_override: 'default',
 }
 
 export default function AdminEmployeeCompensationPage() {
@@ -232,6 +233,7 @@ export default function AdminEmployeeCompensationPage() {
       is_proratable: Boolean(master.is_proratable),
       show_on_payslip: true,
       is_custom: false,
+      schedule_override: 'default',
     })
   }
 
@@ -263,6 +265,7 @@ export default function AdminEmployeeCompensationPage() {
         pay_component_id: draftForm.pay_component_id || null,
         show_on_payslip: true,
         is_custom: false,
+        schedule_override: draftForm.schedule_override !== 'default' ? draftForm.schedule_override : null,
       },
     ])
     setDialogOpen(false)
@@ -312,6 +315,7 @@ export default function AdminEmployeeCompensationPage() {
             contributes_pagibig: item.contributes_pagibig,
             is_proratable: item.is_proratable,
             is_custom: item.is_custom,
+            schedule_override: item.schedule_override !== 'default' ? item.schedule_override : null,
           })),
         })
       }
@@ -805,6 +809,25 @@ export default function AdminEmployeeCompensationPage() {
                   </Field>
                 </>
               ) : null}
+
+              {draftForm.type === 'earning' || draftForm.type === 'deduction' ? (
+                <Field label="Pay Component Schedule">
+                  <select
+                    value={draftForm.schedule_override}
+                    onChange={(e) => setDraftForm((prev) => ({ ...prev, schedule_override: e.target.value }))}
+                    className={inputClass}
+                  >
+                    <option value="default">Use Default Schedule</option>
+                    <option value="first_run">15th only / First run</option>
+                    <option value="second_run">30th only / Second run</option>
+                    <option value="split">Split / 15-30</option>
+                    <option value="monthly">Monthly / Full run</option>
+                  </select>
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    Controls when this component appears in payroll. Default uses the global schedule from Deduction Schedule Settings.
+                  </p>
+                </Field>
+              ) : null}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
@@ -899,6 +922,7 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Component</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Category</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Calculation</TableHead>
+            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Schedule</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Taxability</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Contributory</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</TableHead>
@@ -908,7 +932,7 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
         <TableBody>
           {items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="px-3 py-10 text-center text-sm text-slate-500">
+              <TableCell colSpan={8} className="px-3 py-10 text-center text-sm text-slate-500">
                 {emptyLabel}
               </TableCell>
             </TableRow>
@@ -928,6 +952,11 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
                   </TableCell>
                   <TableCell className="px-3 py-3.5 text-slate-600">{item.category || '—'}</TableCell>
                   <TableCell className="px-3 py-3.5">{formatCalculationType(item.calculation_type)}</TableCell>
+                  <TableCell className="px-3 py-3.5">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getScheduleBadgeStyles(item.schedule_override)}`}>
+                      {formatScheduleOverride(item.schedule_override)}
+                    </span>
+                  </TableCell>
                   <TableCell className="px-3 py-3.5">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
                   <TableCell className="px-3 py-3.5">{describeContributions(item)}</TableCell>
                   <TableCell className="px-3 py-3.5">
@@ -1089,6 +1118,26 @@ function getAssignmentSourceStyles(item) {
     label: 'Manual',
     className: 'bg-emerald-50 text-emerald-700',
   }
+}
+
+function formatScheduleOverride(value) {
+  if (!value || value === 'default') return 'Default'
+  const map = {
+    first_run: '15th only',
+    second_run: '30th only',
+    split: 'Split',
+    monthly: 'Monthly',
+  }
+  return map[value] || 'Default'
+}
+
+function getScheduleBadgeStyles(value) {
+  if (!value || value === 'default') return 'bg-slate-100 text-slate-600'
+  if (value === 'first_run') return 'bg-blue-50 text-blue-700'
+  if (value === 'second_run') return 'bg-purple-50 text-purple-700'
+  if (value === 'split') return 'bg-emerald-50 text-emerald-700'
+  if (value === 'monthly') return 'bg-amber-50 text-amber-700'
+  return 'bg-slate-100 text-slate-600'
 }
 
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100'

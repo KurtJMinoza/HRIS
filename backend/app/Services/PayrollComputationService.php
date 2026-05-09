@@ -1423,7 +1423,9 @@ class PayrollComputationService
         if ($basicPayComponentId) {
             $basicScheduleType = $this->deductionScheduleService->resolveScheduleType(
                 'pay_component:'.((int) $basicPayComponentId),
-                $companyId
+                $companyId,
+                (int) $user->id,
+                (int) $basicPayComponentId
             );
         }
         $basicFactor = $this->deductionScheduleService->factorForScheduleInPeriod(
