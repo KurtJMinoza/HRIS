@@ -818,16 +818,44 @@ class PolicyEngineTest extends TestCase
             $allowanceLine = collect($payroll['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
             $this->assertNotNull($allowanceLine);
-            $this->assertSame(486.25, (float) ($allowanceLine['amount'] ?? 0));
+            // Default pay component schedule is Split (both): full-month attendance proration × 0.5 for this run.
+            $this->assertSame(243.13, (float) ($allowanceLine['amount'] ?? 0));
             $this->assertSame(4.8625, (float) data_get($allowanceLine, 'allowance_proration.worked_day_units'));
             $this->assertSame(26.0, (float) data_get($allowanceLine, 'allowance_proration.monthly_divisor_days'));
-            $this->assertSame(13.0, (float) data_get($allowanceLine, 'allowance_proration.base_divisor_days'));
-            $this->assertSame(1300.0, (float) data_get($allowanceLine, 'allowance_proration.allowance_base_before_proration'));
+            $this->assertSame(26.0, (float) data_get($allowanceLine, 'allowance_proration.base_divisor_days'));
+            $this->assertSame(2600.0, (float) data_get($allowanceLine, 'allowance_proration.allowance_base_before_proration'));
+            $this->assertSame(486.25, (float) data_get($allowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
             $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
+            $this->assertSame(2.0, (float) data_get($allowanceLine, 'allowance_proration.schedule_adjustment_divisor'));
             $this->assertTrue(collect(data_get($allowanceLine, 'allowance_proration.attendance_excluded', []))
                 ->contains(fn ($row) => ($row['date'] ?? null) === '2026-05-09'
                     && ($row['reason'] ?? null) === 'incomplete_attendance_without_approved_correction'));
 
+            DeductionScheduleSetting::query()->updateOrCreate(
+                [
+                    'company_id' => null,
+                    'deduction_key' => 'pay_component:'.$component->id,
+                ],
+                ['schedule_type' => DeductionScheduleSetting::SCHEDULE_15TH]
+            );
+            $fifteenthOnlyPayroll = app(PayrollComputationService::class)->computeEmployeePayroll(
+                $user->fresh(),
+                Carbon::parse('2026-05-04', 'Asia/Manila'),
+                Carbon::parse('2026-05-09', 'Asia/Manila'),
+                null,
+                [
+                    'pay_period_start' => '2026-05-04',
+                    'pay_period_end' => '2026-05-09',
+                    'selected_pay_date' => '2026-05-15',
+                ]
+            );
+            $fifteenthAllowanceLine = collect($fifteenthOnlyPayroll['summary']['payslip_earning_lines'] ?? [])
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
+            $this->assertNotNull($fifteenthAllowanceLine);
+            $this->assertSame(486.25, (float) ($fifteenthAllowanceLine['amount'] ?? 0));
+            $this->assertSame(1.0, (float) data_get($fifteenthAllowanceLine, 'allowance_proration.schedule_adjustment_multiplier'));
+
+            DeductionScheduleSetting::query()->where('deduction_key', 'pay_component:'.$component->id)->delete();
             DeductionScheduleSetting::query()->create([
                 'company_id' => null,
                 'deduction_key' => 'pay_component:'.$component->id,
@@ -851,6 +879,7 @@ class PolicyEngineTest extends TestCase
             $this->assertSame(0.0, (float) ($secondRunOnlyAllowanceLine['amount'] ?? -1));
             $this->assertFalse((bool) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.is_applicable_in_run'));
             $this->assertSame(0.0, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.allowance_base_before_proration'));
+            $this->assertSame(486.25, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
         } finally {
             DeductionScheduleSetting::query()
                 ->where('deduction_key', 'pay_component:'.$component->id)
