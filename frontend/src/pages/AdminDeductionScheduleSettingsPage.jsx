@@ -627,7 +627,7 @@ export default function AdminDeductionScheduleSettingsPage() {
                 <>
                   <span className="font-medium text-[#0A0A0A] dark:text-slate-100">{activeRow.name}</span>
                   <span className="block pt-1">
-                    Choose the default schedule for this {activeRow.type === 'Earning' ? 'earning/allowance' : 'deduction'}. Employees can still use their own schedule override in Employee Compensation.
+                    Choose the default schedule for this {activeRow.type === 'Earning' ? 'earning/allowance' : 'deduction'}. Employees may override this schedule in Employee Compensation.
                   </span>
                 </>
               ) : null}

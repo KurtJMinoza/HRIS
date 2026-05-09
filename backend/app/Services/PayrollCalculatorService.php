@@ -1851,12 +1851,13 @@ class PayrollCalculatorService
     private function attachPayScheduleTypes(User $user, array $lines): array
     {
         $companyId = $user->getEffectiveCompanyId();
+        $userId = (int) $user->id;
         $svc = app(DeductionScheduleService::class);
 
-        return array_map(function (array $line) use ($svc, $companyId) {
+        return array_map(function (array $line) use ($svc, $companyId, $userId) {
             $pcId = $line['pay_component_id'] ?? null;
             $line['pay_schedule_type'] = $pcId
-                ? $svc->resolveScheduleType('pay_component:'.((int) $pcId), $companyId)
+                ? $svc->resolveScheduleType('pay_component:'.((int) $pcId), $companyId, $userId, (int) $pcId)
                 : null;
 
             return $line;
