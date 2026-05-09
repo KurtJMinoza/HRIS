@@ -44,8 +44,8 @@ import {
   SalaryTaxInfoCard,
   SalaryTabNotice,
   SalaryTabShell,
-  resolveTinForSalaryDisplay,
 } from '@/components/salary/EmployeeSalaryTab'
+import { resolveTinForSalaryDisplay } from '@/components/salary/salaryTabFormatters'
 
 
 function field(value) {

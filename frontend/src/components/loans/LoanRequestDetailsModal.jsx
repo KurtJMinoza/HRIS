@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { computeLoanEstimatePreview, normalizeInterestProfile } from '@/lib/loanRequestEstimate'
-import { formatDeductionScheduleTypeShort } from '@/components/salary/EmployeeSalaryTab'
+import { formatDeductionScheduleTypeShort } from '@/components/salary/salaryTabFormatters'
 import { cn } from '@/lib/utils'
 
 function formatPhp(n) {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { createElement, useState } from 'react'
 import {
   BadgeCheck,
   Banknote,
@@ -25,85 +25,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
+import {
+  formatDeductionScheduleTypeShort,
+  formatPayProfileComponentScheduleCell,
+  formatSalaryTabDate,
+  formatSalaryTabPhp,
+  resolveTinForSalaryDisplay,
+  resolveWithholdingStatutoryPresentation,
+} from './salaryTabFormatters'
 
 /** Primary foreground for salary cards — must stay readable in dark mode (avoid near-black on dark surfaces). */
 const TEXT = 'text-[#0A0A0A] dark:text-slate-100'
 
-export function formatSalaryTabPhp(value) {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return '—'
-  return `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-
-export function formatSalaryTabDate(value) {
-  const raw = String(value || '').trim()
-  if (!raw) return '—'
-  const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) return raw
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-}
-
-/** HR default withholding schedule label (matches `DeductionScheduleSetting` API values). */
-export function formatDeductionScheduleType(value) {
-  const t = String(value || '').trim()
-  if (t === '15th') return 'First semi-monthly run'
-  if (t === '30th') return 'End of month'
-  if (t === 'both') return '50/50 split'
-  return t || '—'
-}
-
-/** Compact labels for tables (matches admin Deduction Schedule Settings). */
-export function formatDeductionScheduleTypeShort(value) {
-  const t = String(value || '').trim()
-  if (t === '15th') return 'First semi-monthly run'
-  if (t === '30th') return 'End of month'
-  if (t === 'both') return '50/50 split'
-  return t || '—'
-}
-
-/** Labels for Deduction Schedule Settings defaults when shown as employee "Use default: …". */
-export function formatDefaultPayComponentScheduleLabel(settingValue) {
-  const t = String(settingValue || '').trim()
-  if (t === '15th') return '15th'
-  if (t === '30th') return 'End of month'
-  if (t === 'both') return 'Split 15/30'
-  return formatDeductionScheduleTypeShort(settingValue)
-}
-
-/** Employee-specific override codes saved on assignments (matches backend `schedule_override`). */
-export function formatEmployeeScheduleOverrideShort(override) {
-  const o = String(override || '').trim()
-  const map = {
-    first_run: '15th',
-    second_run: 'End of month',
-    split: 'Split 15/30',
-    monthly: 'Monthly / full run',
-  }
-  return map[o] || (o || null)
-}
-
-/**
- * Schedule column for compensation-summary earning/deduction rows (respects employee override vs global default).
- *
- * @param {Record<string, unknown>} item
- */
-export function formatPayProfileComponentScheduleCell(item) {
-  if (!item || typeof item !== 'object') return '—'
-  const src = item.schedule_source
-  if (src === 'employee_override') {
-    const lbl = formatEmployeeScheduleOverrideShort(item.schedule_override)
-    if (lbl) return lbl
-    const r = item.resolved_schedule
-    return r ? formatDefaultPayComponentScheduleLabel(r) : '—'
-  }
-  if (src === 'default_schedule') {
-    const def = item.default_schedule
-    const inner = def ? formatDefaultPayComponentScheduleLabel(def) : null
-    return inner ? `Use default: ${inner}` : 'Use default'
-  }
-  const sched = item.resolved_schedule ?? item.pay_schedule_type
-  return sched ? formatDefaultPayComponentScheduleLabel(sched) : '—'
-}
 
 function catalogRowTypeLabel(row) {
   if (row?.type === 'Government') return 'Government'
@@ -403,112 +336,6 @@ function taxCategoryLabel(summary) {
   return 'Compensation income (TRAIN)'
 }
 
-/**
- * Gov IDs tab stores uploads in `EmployeeGovernmentIdDocument` (`getMyGovernmentIdDocuments`).
- * Profile payload may also include `tin_number` on `employee_government_ids` (legacy / HR form).
- *
- * @param {Array<{ id_type?: string, id_number?: string, status?: string }>|null|undefined} govIdDocuments
- * @param {string|null|undefined} profileTinNumber
- * @param {{ loading?: boolean }} [opts]
- * @returns {{
- *   displayValue: string | null,
- *   variant: 'approved_document' | 'profile_record' | 'pending' | 'rejected' | 'missing' | 'loading',
- *   cardDescription: string,
- *   tinHelperText: string | null,
- *   loading: boolean,
- *   showVerifiedBadge: boolean,
- * }}
- */
-/** Matches Gov IDs tab types (e.g. "TIN ID", "Tax Identification Number", legacy "TIN"). */
-function isGovernmentIdTypeTin(idType) {
-  const t = String(idType || '').trim().toLowerCase()
-  if (!t) return false
-  if (/\btin\b/.test(t)) return true
-  if (t.includes('tax identification')) return true
-  if (t.includes('bir') && t.includes('tin')) return true
-  return false
-}
-
-function isDocStatusApproved(status) {
-  return String(status || '')
-    .trim()
-    .toLowerCase() === 'approved'
-}
-
-export function resolveTinForSalaryDisplay(govIdDocuments, profileTinNumber, opts = {}) {
-  const loading = !!opts.loading
-  const docs = Array.isArray(govIdDocuments) ? govIdDocuments : []
-
-  const approved = docs.find((d) => isGovernmentIdTypeTin(d?.id_type) && isDocStatusApproved(d?.status))
-  if (approved?.id_number && String(approved.id_number).trim()) {
-    return {
-      displayValue: String(approved.id_number).trim(),
-      variant: 'approved_document',
-      cardDescription: 'Verified Tax Identification Number from your Gov IDs.',
-      tinHelperText: null,
-      loading: false,
-      showVerifiedBadge: true,
-    }
-  }
-
-  const profileTin = profileTinNumber != null && String(profileTinNumber).trim() !== '' ? String(profileTinNumber).trim() : ''
-  if (profileTin) {
-    return {
-      displayValue: profileTin,
-      variant: 'profile_record',
-      cardDescription: 'Withholding treatment and BIR identifiers from HR records.',
-      tinHelperText: null,
-      loading: false,
-      showVerifiedBadge: false,
-    }
-  }
-
-  if (loading) {
-    return {
-      displayValue: null,
-      variant: 'loading',
-      cardDescription: 'Loading government ID records…',
-      tinHelperText: null,
-      loading: true,
-      showVerifiedBadge: false,
-    }
-  }
-
-  const rejected = docs.find((d) => isGovernmentIdTypeTin(d?.id_type) && String(d?.status || '').toLowerCase() === 'rejected')
-  if (rejected) {
-    return {
-      displayValue: '—',
-      variant: 'rejected',
-      cardDescription: 'Your TIN submission needs to be updated in Gov IDs.',
-      tinHelperText: rejected?.rejection_reason
-        ? `Previous submission was not accepted: ${String(rejected.rejection_reason)}`
-        : 'Previous TIN submission was not accepted. Please upload a corrected entry in Gov IDs.',
-      loading: false,
-      showVerifiedBadge: false,
-    }
-  }
-
-  const pending = docs.find((d) => isGovernmentIdTypeTin(d?.id_type) && String(d?.status || '').toLowerCase() === 'pending')
-  if (pending) {
-    return {
-      displayValue: '—',
-      variant: 'pending',
-      cardDescription: 'Your TIN is awaiting verification in Gov IDs.',
-      tinHelperText: 'Pending admin verification — the number will appear here once approved.',
-      loading: false,
-      showVerifiedBadge: false,
-    }
-  }
-
-  return {
-    displayValue: '—',
-    variant: 'missing',
-    cardDescription: 'Add your TIN under Gov IDs to align withholding and BIR records.',
-    tinHelperText: 'No TIN on file. Please update in the Gov IDs tab.',
-    loading: false,
-    showVerifiedBadge: false,
-  }
-}
 
 /**
  * Pay cycle + base pay + next cut-off (from `payCyclePreview` / `compensation_summary.pay_cycle_preview`, {@see PayCycleService}).
@@ -720,7 +547,7 @@ export function SalaryPayrollHistoryCard({ periods, loading, error, onViewAll, c
   )
 }
 
-function StatutoryMiniCard({ icon: Icon, title, amount, subtitle, status = 'matched', footer = 'Employee share (estimated from current rules)' }) {
+function StatutoryMiniCard({ icon, title, amount, subtitle, status = 'matched', footer = 'Employee share (estimated from current rules)' }) {
   const matchedBadge = (
     <Badge className="border-emerald-200 bg-emerald-50 font-medium text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800/50 dark:bg-emerald-950/40 dark:text-emerald-200">
       Matched
@@ -737,7 +564,7 @@ function StatutoryMiniCard({ icon: Icon, title, amount, subtitle, status = 'matc
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#0A0A0A]/10 text-[#0A0A0A] dark:bg-white/10 dark:text-slate-100">
-            <Icon className="size-4" aria-hidden />
+            {createElement(icon, { className: 'size-4', 'aria-hidden': true })}
           </div>
           <div className="min-w-0">
             <p className={cn('text-sm font-semibold leading-snug', TEXT)}>{title}</p>
@@ -755,41 +582,6 @@ function StatutoryMiniCard({ icon: Icon, title, amount, subtitle, status = 'matc
 /**
  * @param {{ withholding: object | null | undefined, compensationSummary: object | null | undefined }} args
  */
-export function resolveWithholdingStatutoryPresentation(withholding, compensationSummary) {
-  const whtRaw = compensationSummary?.totals?.withholding_tax ?? withholding?.withholding_per_month
-  const wht = whtRaw != null && whtRaw !== '' ? Number(whtRaw) : NaN
-  const basic = Number(compensationSummary?.basic_salary ?? 0)
-  const monthlyTaxable = Number(withholding?.monthly_taxable_compensation ?? 0)
-  const mweNote = withholding?.metadata?.mwe_note
-  const mweMisconfigured = typeof mweNote === 'string' && mweNote.includes('no monthly ceiling')
-
-  if (!withholding && !compensationSummary) {
-    return { amountLabel: '—', status: 'pending', showGovIdsLink: true }
-  }
-
-  if (mweMisconfigured) {
-    return {
-      amountLabel: Number.isFinite(wht) ? formatSalaryTabPhp(wht) : '—',
-      status: 'pending',
-      showGovIdsLink: true,
-    }
-  }
-
-  const hasCompBase = basic > 0 || monthlyTaxable > 0
-  if (!hasCompBase && !Number.isFinite(wht)) {
-    return { amountLabel: '—', status: 'pending', showGovIdsLink: true }
-  }
-
-  if (!Number.isFinite(wht)) {
-    return { amountLabel: '—', status: 'pending', showGovIdsLink: true }
-  }
-
-  return {
-    amountLabel: formatSalaryTabPhp(wht),
-    status: 'matched',
-    showGovIdsLink: false,
-  }
-}
 
 /**
  * @param {{

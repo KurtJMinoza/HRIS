@@ -28,7 +28,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/use-toast'
 import { createEmployeeLoanRequest, getEmployeeLoanRequestContext, getEmployeeNextDeductionDates } from '@/api'
-import { formatDeductionScheduleTypeShort } from '@/components/salary/EmployeeSalaryTab'
+import { formatDeductionScheduleTypeShort } from '@/components/salary/salaryTabFormatters'
 import {
   computeLoanEstimatePreview,
   EMPTY_REQUEST_LOAN_FORM,

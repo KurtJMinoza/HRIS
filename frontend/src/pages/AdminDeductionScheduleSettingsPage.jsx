@@ -31,7 +31,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
 import { getAdminNextDeductionDates, getDeductionScheduleSettings, updateDeductionScheduleSettingsBatch } from '@/api'
-import { formatDeductionScheduleTypeShort } from '@/components/salary/EmployeeSalaryTab'
+import { formatDeductionScheduleTypeShort } from '@/components/salary/salaryTabFormatters'
 import { cn } from '@/lib/utils'
 import {
   APP_MODAL_DESCRIPTION_CLASS,
