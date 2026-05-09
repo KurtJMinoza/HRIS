@@ -302,8 +302,8 @@ export default function AdminDeductionScheduleSettingsPage() {
         settings: entries.map(([deduction_key, schedule_type]) => ({ deduction_key, schedule_type })),
       })
       toast({
-        title: 'Schedules saved',
-        description: 'Updates apply to all employees on the next payroll run, daily computation, and payslip previews.',
+        title: 'Default schedules saved',
+        description: 'These defaults apply to employees without custom schedule overrides. Changes take effect on the next payroll run.',
       })
       setPendingEdits({})
       await load()
@@ -449,8 +449,7 @@ export default function AdminDeductionScheduleSettingsPage() {
             <div className="space-y-2">
               <h1 className={cn('hr-page-title', TEXT)}>Deduction schedule settings</h1>
               <p className={cn('max-w-2xl text-sm leading-relaxed', TEXT)}>
-                Control when statutory deductions, loans, and recurring earnings or allowances are paid (15th, month-end, or split). Settings apply company-wide and
-                align with pay cycles, daily computation, payslip previews, and employee salary views.
+                Set default schedules for when statutory deductions, loans, and recurring earnings or allowances are paid (15th, month-end, or split). These are company-wide defaults—individual employees can override them in Employee Compensation.
               </p>
             </div>
           </div>
@@ -511,7 +510,7 @@ export default function AdminDeductionScheduleSettingsPage() {
         <CardHeader className="border-b border-border/60 space-y-1 bg-card pb-5 dark:border-border/50">
           <CardTitle className={cn('text-xl', TEXT)}>Schedules</CardTitle>
           <CardDescription className={cn('text-sm leading-relaxed', TEXT)}>
-            Edit schedules in the table, then use <span className="font-semibold">Save changes</span> to apply for all employees.
+            Set the default schedule for when deductions and earnings are applied. Individual employees can override these defaults in Employee Compensation → Pay Components.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0 pt-2">
@@ -627,7 +626,9 @@ export default function AdminDeductionScheduleSettingsPage() {
               {activeRow ? (
                 <>
                   <span className="font-medium text-[#0A0A0A] dark:text-slate-100">{activeRow.name}</span>
-                  <span className="block pt-1">Choose a schedule, then save to apply for everyone.</span>
+                  <span className="block pt-1">
+                    Choose the default schedule for this {activeRow.type === 'Earning' ? 'earning/allowance' : 'deduction'}. Employees can still use their own schedule override in Employee Compensation.
+                  </span>
                 </>
               ) : null}
             </DialogDescription>
