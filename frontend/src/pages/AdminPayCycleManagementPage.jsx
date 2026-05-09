@@ -39,7 +39,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { APP_MODAL_OUTLINE_BUTTON_CLASS, APP_MODAL_PRIMARY_BUTTON_CLASS, appModalDialogContentClass } from '@/lib/appModalStyles'
+import { APP_MODAL_OUTLINE_BUTTON_CLASS, appModalDialogContentClass } from '@/lib/appModalStyles'
 import { useToast } from '@/components/ui/use-toast'
 import { createPayCycle, deletePayCycle, getCompanies, getPayCycles, previewPayCycle, updatePayCycle } from '@/api'
 
@@ -87,13 +87,16 @@ export default function AdminPayCycleManagementPage() {
   const [lastLoadedAt, setLastLoadedAt] = useState(null)
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false)
   const [companySearch, setCompanySearch] = useState('')
+  const [selectedCycleId, setSelectedCycleId] = useState(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [cyclesRes, companiesRes] = await Promise.all([getPayCycles(), getCompanies()])
-      setCycles(Array.isArray(cyclesRes?.data) ? cyclesRes.data : [])
+      const nextCycles = Array.isArray(cyclesRes?.data) ? cyclesRes.data : []
+      setCycles(nextCycles)
       setCompanies(Array.isArray(companiesRes?.companies) ? companiesRes.companies : [])
+      setSelectedCycleId((current) => (current && nextCycles.some((cycle) => String(cycle.id) === String(current)) ? current : nextCycles[0]?.id ?? null))
       setLastLoadedAt(new Date())
     } catch (error) {
       toast({ title: 'Pay cycles', description: error.message || 'Failed to load pay cycles', variant: 'destructive' })
@@ -164,7 +167,12 @@ export default function AdminPayCycleManagementPage() {
     })
   }, [activeFilter, cycles, query])
 
-  const featuredPreview = preview || filteredCycles[0]?.preview || cycles[0]?.preview || null
+  const selectedCycle = useMemo(
+    () => cycles.find((cycle) => String(cycle.id) === String(selectedCycleId)) || null,
+    [cycles, selectedCycleId],
+  )
+  const featuredCycle = selectedCycle || filteredCycles[0] || cycles[0] || null
+  const featuredPreview = preview || featuredCycle?.preview || null
   const formPreview = useMemo(() => {
     if (!dialogOpen) return null
     return generatePreviewPeriods(form)
@@ -324,10 +332,10 @@ export default function AdminPayCycleManagementPage() {
   return (
     <TooltipProvider>
       <div className="space-y-6">
-        <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm dark:border-border/50">
+        <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm dark:border-border/50 dark:bg-card/85">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
             <div className="max-w-3xl space-y-2">
-              <Badge variant="outline" className="w-fit rounded-full border-border/70 bg-background px-3 py-1 text-[11px] font-medium tracking-wide text-muted-foreground">
+              <Badge variant="outline" className="w-fit rounded-full border-brand/20 bg-brand/10 px-3 py-1 text-[11px] font-semibold tracking-wide text-brand">
                 Payroll Configuration
               </Badge>
               <div className="space-y-2">
@@ -338,7 +346,7 @@ export default function AdminPayCycleManagementPage() {
               </div>
             </div>
             <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-              <div className="rounded-lg border border-border/60 bg-background px-4 py-3 shadow-sm dark:border-border/50">
+              <div className="rounded-lg border border-border/60 bg-background px-4 py-3 shadow-sm dark:border-border/50 dark:bg-muted/20">
                 <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Last updated</p>
                 <p className="mt-1 text-sm font-medium text-foreground">
                   {lastLoadedAt ? lastLoadedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}
@@ -346,7 +354,7 @@ export default function AdminPayCycleManagementPage() {
               </div>
               <Button
                 onClick={openCreate}
-                className="h-11 rounded-lg px-5"
+                className="h-11 rounded-lg bg-brand px-5 text-brand-foreground shadow-lg shadow-brand/20 hover:bg-brand-strong"
               >
                 <Plus className="mr-2 size-4" />
                 New Pay Cycle
@@ -371,11 +379,12 @@ export default function AdminPayCycleManagementPage() {
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <div className="relative min-w-[240px]">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="Search cycle, company, or timing…"
-                      className="h-11 rounded-lg border-border/60 bg-background pl-4 shadow-sm"
+                      className="h-11 rounded-lg border-border/60 bg-background pl-9 shadow-sm"
                     />
                   </div>
                   <Select value={activeFilter} onValueChange={setActiveFilter}>
@@ -432,13 +441,22 @@ export default function AdminPayCycleManagementPage() {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ) : filteredCycles.map((cycle) => (
-                      <TableRow key={cycle.id} className="group border-b border-border/60 transition-colors hover:bg-muted/30 dark:border-border/40 dark:hover:bg-muted/20">
+                    ) : filteredCycles.map((cycle) => {
+                      const isSelected = featuredCycle && String(featuredCycle.id) === String(cycle.id)
+                      return (
+                      <TableRow
+                        key={cycle.id}
+                        onClick={() => setSelectedCycleId(cycle.id)}
+                        className={cn(
+                          'group cursor-pointer border-b border-border/60 transition-colors hover:bg-brand/5 dark:border-border/40 dark:hover:bg-brand/10',
+                          isSelected && 'bg-brand/5 dark:bg-brand/10',
+                        )}
+                      >
                         <TableCell className="px-6 py-5">
                           <div className="space-y-2">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-semibold text-foreground">{cycle.name}</span>
-                              {cycle.is_default ? <Badge variant="secondary" className="rounded-full">Default</Badge> : null}
+                              {cycle.is_default ? <Badge variant="secondary" className="rounded-full border-brand/20 bg-brand/10 text-brand">Default</Badge> : null}
                               {!cycle.is_active ? <Badge variant="outline" className="rounded-full">Inactive</Badge> : null}
                             </div>
                             <p className="text-xs text-muted-foreground">{formatCompanyScope(cycle)}</p>
@@ -450,7 +468,7 @@ export default function AdminPayCycleManagementPage() {
                         <TableCell className="py-5 text-sm text-muted-foreground">{describeCutoff(cycle)}</TableCell>
                         <TableCell className="py-5 text-sm text-muted-foreground">{describePayRule(cycle)}</TableCell>
                         <TableCell className="py-5">
-                          <Badge variant="outline" className="rounded-full capitalize border-border/60 bg-background">
+                          <Badge variant="outline" className="rounded-full capitalize border-brand/25 bg-brand/5 text-brand">
                             {String(cycle.pro_ration_type || 'none').replace('_', ' ')}
                           </Badge>
                         </TableCell>
@@ -485,7 +503,7 @@ export default function AdminPayCycleManagementPage() {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    )})}
                   </TableBody>
                 </Table>
               </div>
@@ -511,9 +529,10 @@ export default function AdminPayCycleManagementPage() {
                         <div>
                           <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Current cycle</p>
                           <p className="mt-2 text-lg font-semibold text-foreground">{featuredPreview.cycle_label}</p>
+                          {featuredCycle?.name ? <p className="mt-1 text-xs font-medium text-brand">{featuredCycle.name}</p> : null}
                           <p className="mt-1 text-sm text-muted-foreground">{featuredPreview.cut_off_start_date} to {featuredPreview.cut_off_end_date}</p>
                         </div>
-                        <Badge className="rounded-full bg-sky-100 text-sky-800 hover:bg-sky-100 dark:bg-sky-500/15 dark:text-sky-200">
+                        <Badge className="rounded-full bg-brand/10 text-brand hover:bg-brand/10">
                           {String(featuredPreview.code || 'cycle').replace(/_/g, ' ')}
                         </Badge>
                       </div>
@@ -537,30 +556,39 @@ export default function AdminPayCycleManagementPage() {
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent
+            overlayClassName="bg-black/60 backdrop-blur-[3px]"
+            closeButtonClassName="right-4 top-4 border-border/70 bg-background/95 text-foreground hover:bg-muted"
             className={cn(
               appModalDialogContentClass({ size: 'lg' }),
-              'max-h-[min(88vh,680px)] overflow-hidden p-0',
+              'max-h-[92vh] overflow-hidden rounded-[1.75rem] border-border/70 p-0 shadow-2xl',
             )}
             innerClassName="gap-0 overflow-hidden p-0 pr-0"
           >
-            <div className="max-h-[min(88vh,680px)] min-h-0 overflow-y-auto overscroll-contain bg-card">
-                <DialogHeader className="border-b border-border/60 px-5 py-4">
-                  <DialogTitle className="text-lg font-semibold tracking-tight">{editing ? 'Edit pay cycle' : 'Create pay cycle'}</DialogTitle>
-                  <DialogDescription className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-                    Cut-off, pay dates, and proration — preview updates as you edit.
-                  </DialogDescription>
+            <div className="flex h-full max-h-[92vh] min-h-0 flex-col bg-card">
+                <DialogHeader className="shrink-0 border-b border-border/60 bg-card px-5 py-5 pr-16 sm:px-8 sm:py-7">
+                  <div className="flex items-start gap-4">
+                    <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-brand/15 bg-brand/10 text-brand shadow-inner">
+                      <CalendarRange className="size-7" aria-hidden />
+                    </div>
+                    <div className="min-w-0">
+                      <DialogTitle className="text-2xl font-bold tracking-tight text-foreground">{editing ? 'Edit pay cycle' : 'Create pay cycle'}</DialogTitle>
+                      <DialogDescription className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                        Cut-off, pay dates, and proration - preview updates as you edit.
+                      </DialogDescription>
+                    </div>
+                  </div>
                 </DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-3 px-5 py-4">
+                <form onSubmit={handleSubmit} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-5 sm:px-8">
                   <ConfiguratorSection
-                    eyebrow="Section 1"
+                    eyebrow="1"
                     title="Basic information"
                     description="Cycle name, frequency, and which companies can use this pay cycle."
                     compact
                   >
-                    <div className="grid grid-cols-1 gap-3">
+                    <div className="grid grid-cols-1 gap-4">
                       <Field label="Cycle Name" className="min-w-0" compact>
                         <Input
-                          className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm"
+                          className="h-12 w-full min-w-0 rounded-xl border-border/70 bg-background px-4 text-base shadow-sm dark:border-border/60 dark:bg-muted/20"
                           value={form.name}
                           onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
                           placeholder="Semi-monthly standard"
@@ -568,7 +596,7 @@ export default function AdminPayCycleManagementPage() {
                       </Field>
                       <Field label="Frequency" className="min-w-0" compact>
                         <Select value={form.code} onValueChange={handleFrequencyChange}>
-                          <SelectTrigger className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm">
+                          <SelectTrigger className="h-12 w-full min-w-0 rounded-xl border-border/70 bg-background px-4 text-base shadow-sm dark:border-border/60 dark:bg-muted/20">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="min-w-[220px]">
@@ -581,7 +609,7 @@ export default function AdminPayCycleManagementPage() {
                           </SelectContent>
                         </Select>
                       </Field>
-                      <Field label="Apply to Companies" className="min-w-0" compact>
+                      <Field label={<><span>Apply to Companies</span> <span className="font-normal text-muted-foreground">(optional)</span></>} className="min-w-0" compact>
                         <Popover
                           open={companyPickerOpen}
                           onOpenChange={(open) => {
@@ -592,12 +620,12 @@ export default function AdminPayCycleManagementPage() {
                           <PopoverTrigger asChild>
                             <button
                               type="button"
-                              className="flex min-h-9 w-full items-center justify-between gap-3 rounded-lg border border-border/60 bg-background px-3 py-2 text-left text-sm shadow-sm transition-colors hover:bg-muted/20"
+                              className="flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border border-border/70 bg-background px-4 py-3 text-left text-base shadow-sm transition-colors hover:bg-muted/20 dark:border-border/60 dark:bg-muted/20"
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
                                   <Building2 className="size-4 text-muted-foreground" />
-                                  <span className={cn('text-sm', selectedCompanies.length ? 'text-foreground' : 'text-muted-foreground')}>
+                                  <span className={cn('text-sm sm:text-base', selectedCompanies.length ? 'text-foreground' : 'text-muted-foreground')}>
                                     {selectedCompanies.length ? `${selectedCompanies.length} compan${selectedCompanies.length === 1 ? 'y' : 'ies'} selected` : 'Search and select companies'}
                                   </span>
                                 </div>
@@ -613,7 +641,7 @@ export default function AdminPayCycleManagementPage() {
                                   value={companySearch}
                                   onChange={(e) => setCompanySearch(e.target.value)}
                                   placeholder="Search company name..."
-                                  className="h-10 border-border/60 bg-background pl-9"
+                                  className="h-11 rounded-xl border-border/60 bg-background pl-9 dark:bg-muted/20"
                                   autoFocus
                                 />
                               </div>
@@ -688,9 +716,9 @@ export default function AdminPayCycleManagementPage() {
                   </ConfiguratorSection>
 
                   <ConfiguratorSection
-                    eyebrow="Section 2"
+                    eyebrow="2"
                     title="Cut-off & pay date"
-                    description="Fields match your frequency — check the live preview below."
+                    description="Fields match your frequency - check the live preview below."
                     compact
                   >
                     {form.code === 'semi_monthly' ? (
@@ -699,21 +727,21 @@ export default function AdminPayCycleManagementPage() {
                           Cut-off table: wide day inputs (w-24), roomy cells, flex range row so numbers stay readable.
                         */}
                         <div className="overflow-x-auto pb-0.5">
-                          <div className="min-w-[44rem] overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm dark:border-border/50">
-                          <div className="grid grid-cols-[minmax(10rem,1fr)_minmax(14rem,1.35fr)_minmax(9.5rem,1fr)_minmax(9.5rem,1fr)] gap-0 border-b border-border/60 bg-muted/30 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                            <div className="border-r border-border/40 px-4 py-2 last:border-r-0">Period</div>
-                            <div className="border-r border-border/40 px-4 py-2 last:border-r-0">Range</div>
-                            <div className="border-r border-border/40 px-4 py-2 last:border-r-0">Payout Rule</div>
-                            <div className="px-4 py-2">Value</div>
+                          <div className="min-w-[46rem] overflow-hidden rounded-2xl border border-border/70 bg-background shadow-sm dark:border-border/60 dark:bg-muted/10">
+                          <div className="grid grid-cols-[minmax(11rem,1fr)_minmax(15rem,1.35fr)_minmax(11rem,1fr)_minmax(11rem,1fr)] gap-0 border-b border-border/60 bg-muted/25 text-[11px] font-bold uppercase tracking-[0.08em] text-foreground dark:bg-muted/20">
+                            <div className="border-r border-border/40 px-5 py-3 last:border-r-0">Period</div>
+                            <div className="border-r border-border/40 px-5 py-3 last:border-r-0">Range</div>
+                            <div className="border-r border-border/40 px-5 py-3 last:border-r-0">Payout Rule</div>
+                            <div className="px-5 py-3">Value</div>
                           </div>
-                          <div className="grid grid-cols-[minmax(10rem,1fr)_minmax(14rem,1.35fr)_minmax(9.5rem,1fr)_minmax(9.5rem,1fr)] gap-0 border-b border-border/60">
-                            <div className="flex items-center border-r border-border/40 px-4 py-3 text-xs font-medium leading-snug text-foreground">
+                          <div className="grid grid-cols-[minmax(11rem,1fr)_minmax(15rem,1.35fr)_minmax(11rem,1fr)_minmax(11rem,1fr)] gap-0 border-b border-border/60">
+                            <div className="flex items-center border-r border-border/40 px-5 py-5 text-sm font-semibold leading-snug text-foreground">
                               First Cut-off Period
                             </div>
-                            <div className="flex flex-wrap items-end gap-x-4 gap-y-2 border-r border-border/40 px-4 py-3">
+                            <div className="flex flex-wrap items-end gap-x-6 gap-y-2 border-r border-border/40 px-5 py-5">
                               <Field label="Start Day" className="shrink-0" compact>
                                 <Input
-                                  className="h-10 w-24 min-w-[6rem] rounded-lg border-border/60 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm read-only:bg-muted/35 read-only:text-muted-foreground"
+                                  className="h-12 w-24 min-w-[6rem] rounded-xl border-border/70 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm read-only:bg-muted/35 read-only:text-muted-foreground dark:border-border/60 dark:bg-muted/20"
                                   type="number"
                                   min="1"
                                   max="31"
@@ -723,7 +751,7 @@ export default function AdminPayCycleManagementPage() {
                               </Field>
                               <Field label="End Day" className="shrink-0" compact>
                                 <Input
-                                  className="h-10 w-24 min-w-[6rem] rounded-lg border-border/60 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm"
+                                  className="h-12 w-24 min-w-[6rem] rounded-xl border-border/70 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm dark:border-border/60 dark:bg-muted/20"
                                   type="number"
                                   min="1"
                                   max="31"
@@ -732,9 +760,9 @@ export default function AdminPayCycleManagementPage() {
                                 />
                               </Field>
                             </div>
-                            <div className="border-r border-border/40 px-4 py-3">
+                            <div className="border-r border-border/40 px-5 py-5">
                               <Select value={form.pay_day_type === 'fixed_day' ? 'fixed_day' : 'offset'} onValueChange={(value) => setForm((prev) => ({ ...prev, pay_day_type: value }))}>
-                                <SelectTrigger className="h-10 w-full min-w-[8.5rem] rounded-lg border-border/60 bg-background px-3 text-sm shadow-sm">
+                                <SelectTrigger className="h-12 w-full min-w-[8.5rem] rounded-xl border-border/70 bg-background px-4 text-base shadow-sm dark:border-border/60 dark:bg-muted/20">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent className="min-w-[220px]">
@@ -743,10 +771,10 @@ export default function AdminPayCycleManagementPage() {
                                 </SelectContent>
                               </Select>
                             </div>
-                            <div className="px-4 py-3">
+                            <div className="flex items-center gap-3 px-5 py-5">
                               {form.pay_day_type === 'fixed_day' ? (
                                 <Input
-                                  className="h-10 w-full min-w-[6rem] max-w-[7rem] rounded-lg border-border/60 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm"
+                                  className="h-12 w-24 rounded-xl border-border/70 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm dark:border-border/60 dark:bg-muted/20"
                                   type="number"
                                   min="1"
                                   max="31"
@@ -755,7 +783,7 @@ export default function AdminPayCycleManagementPage() {
                                 />
                               ) : (
                                 <Input
-                                  className="h-10 w-full min-w-[6rem] max-w-[7rem] rounded-lg border-border/60 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm"
+                                  className="h-12 w-24 rounded-xl border-border/70 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm dark:border-border/60 dark:bg-muted/20"
                                   type="number"
                                   min="0"
                                   max="60"
@@ -763,16 +791,25 @@ export default function AdminPayCycleManagementPage() {
                                   onChange={(e) => setForm((prev) => ({ ...prev, first_pay_day_offset: e.target.value, pay_day_offset: e.target.value }))}
                                 />
                               )}
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-9 shrink-0 rounded-lg text-muted-foreground hover:bg-brand/10 hover:text-brand"
+                                onClick={() => toast({ title: 'Semi-monthly periods', description: 'A semi-monthly cycle requires two cut-off periods.' })}
+                              >
+                                <Trash2 className="size-4" aria-hidden />
+                              </Button>
                             </div>
                           </div>
-                          <div className="grid grid-cols-[minmax(10rem,1fr)_minmax(14rem,1.35fr)_minmax(9.5rem,1fr)_minmax(9.5rem,1fr)] gap-0">
-                            <div className="flex items-center border-r border-border/40 px-4 py-3 text-xs font-medium leading-snug text-foreground">
+                          <div className="grid grid-cols-[minmax(11rem,1fr)_minmax(15rem,1.35fr)_minmax(11rem,1fr)_minmax(11rem,1fr)] gap-0 border-b border-border/60">
+                            <div className="flex items-center border-r border-border/40 px-5 py-5 text-sm font-semibold leading-snug text-foreground">
                               Second Cut-off Period
                             </div>
-                            <div className="flex flex-wrap items-end gap-x-4 gap-y-2 border-r border-border/40 px-4 py-3">
+                            <div className="flex flex-wrap items-end gap-x-6 gap-y-2 border-r border-border/40 px-5 py-5">
                               <Field label="Start Day" className="shrink-0" compact>
                                 <Input
-                                  className="h-10 w-24 min-w-[6rem] rounded-lg border-border/60 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm read-only:bg-muted/35 read-only:text-muted-foreground"
+                                  className="h-12 w-24 min-w-[6rem] rounded-xl border-border/70 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm read-only:bg-muted/35 read-only:text-muted-foreground dark:border-border/60 dark:bg-muted/20"
                                   type="number"
                                   min="1"
                                   max="31"
@@ -782,7 +819,7 @@ export default function AdminPayCycleManagementPage() {
                               </Field>
                               <Field label="End Day" className="shrink-0" compact>
                                 <Input
-                                  className="h-10 w-24 min-w-[6rem] rounded-lg border-border/60 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm"
+                                  className="h-12 w-24 min-w-[6rem] rounded-xl border-border/70 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm dark:border-border/60 dark:bg-muted/20"
                                   type="number"
                                   min="1"
                                   max="31"
@@ -791,15 +828,21 @@ export default function AdminPayCycleManagementPage() {
                                 />
                               </Field>
                             </div>
-                            <div className="border-r border-border/40 px-4 py-3">
-                              <div className="flex h-10 items-center rounded-lg border border-border/60 bg-muted/25 px-3 text-xs font-medium text-muted-foreground">
-                                {form.pay_day_type === 'fixed_day' ? 'Fixed Day' : 'Offset'}
-                              </div>
+                            <div className="border-r border-border/40 px-5 py-5">
+                              <Select value={form.pay_day_type === 'fixed_day' ? 'fixed_day' : 'offset'} onValueChange={(value) => setForm((prev) => ({ ...prev, pay_day_type: value }))}>
+                                <SelectTrigger className="h-12 w-full min-w-[8.5rem] rounded-xl border-border/70 bg-background px-4 text-base shadow-sm dark:border-border/60 dark:bg-muted/20">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="min-w-[220px]">
+                                  <SelectItem value="offset">Offset</SelectItem>
+                                  <SelectItem value="fixed_day">Fixed Day</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </div>
-                            <div className="px-4 py-3">
+                            <div className="flex items-center gap-3 px-5 py-5">
                               {form.pay_day_type === 'fixed_day' ? (
                                 <Select value={String(form.second_pay_fixed_day)} onValueChange={(value) => setForm((prev) => ({ ...prev, second_pay_fixed_day: value }))}>
-                                  <SelectTrigger className="h-10 w-full min-w-0 rounded-lg border-border/60 bg-background px-3 text-sm shadow-sm">
+                                  <SelectTrigger className="h-12 w-32 rounded-xl border-border/70 bg-background px-4 text-base shadow-sm dark:border-border/60 dark:bg-muted/20">
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent className="min-w-[220px]">
@@ -812,7 +855,7 @@ export default function AdminPayCycleManagementPage() {
                                 </Select>
                               ) : (
                                 <Input
-                                  className="h-10 w-full min-w-[6rem] max-w-[7rem] rounded-lg border-border/60 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm"
+                                  className="h-12 w-24 rounded-xl border-border/70 bg-background px-3 text-center text-base font-semibold tabular-nums text-foreground shadow-sm dark:border-border/60 dark:bg-muted/20"
                                   type="number"
                                   min="0"
                                   max="60"
@@ -820,7 +863,27 @@ export default function AdminPayCycleManagementPage() {
                                   onChange={(e) => setForm((prev) => ({ ...prev, second_pay_day_offset: e.target.value }))}
                                 />
                               )}
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-9 shrink-0 rounded-lg text-muted-foreground hover:bg-brand/10 hover:text-brand"
+                                onClick={() => toast({ title: 'Semi-monthly periods', description: 'A semi-monthly cycle requires two cut-off periods.' })}
+                              >
+                                <Trash2 className="size-4" aria-hidden />
+                              </Button>
                             </div>
+                          </div>
+                          <div className="px-5 py-4">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="h-10 gap-2 rounded-xl px-3 text-sm font-semibold text-brand hover:bg-brand/10 hover:text-brand"
+                              onClick={() => toast({ title: 'Semi-monthly periods', description: 'This cycle type is limited to two cut-off periods.' })}
+                            >
+                              <Plus className="size-4" aria-hidden />
+                              Add cut-off period
+                            </Button>
                           </div>
                           </div>
                         </div>
@@ -913,15 +976,15 @@ export default function AdminPayCycleManagementPage() {
                   </ConfiguratorSection>
 
                   <ConfiguratorSection
-                    eyebrow="Additional"
+                    eyebrow="3"
                     title="Additional fields"
                     description="Proration, weekend handling, and whether this cycle is active or the company default."
                     compact
                   >
-                    <div className="grid grid-cols-1 gap-3">
-                      <Field label="Proration" className="min-w-0" compact>
+                    <div className="grid grid-cols-1 gap-0">
+                      <Field label="Proration" className="min-w-0 pb-4" compact>
                         <Select value={form.pro_ration_type} onValueChange={(value) => setForm((prev) => ({ ...prev, pro_ration_type: value }))}>
-                          <SelectTrigger className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm">
+                          <SelectTrigger className="h-12 w-full min-w-0 rounded-xl border-border/70 bg-background px-4 text-base shadow-sm dark:border-border/60 dark:bg-muted/20">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="min-w-[220px]">
@@ -955,22 +1018,22 @@ export default function AdminPayCycleManagementPage() {
                     </div>
                   </ConfiguratorSection>
 
-                  <div className="border-t border-border/60 bg-muted/15 py-4 dark:border-border/50 dark:bg-muted/10">
-                    <div className="space-y-3 px-5">
+                  <div className="rounded-2xl border border-border/70 bg-card py-5 shadow-sm dark:border-border/50">
+                    <div className="space-y-4 px-4 sm:px-5">
                       <div className="space-y-1">
-                        <Badge variant="outline" className="rounded-full border-border/70 bg-background text-[10px] text-muted-foreground">
+                        <Badge variant="outline" className="rounded-full border-brand/20 bg-brand/10 px-3 py-1 text-xs font-semibold text-brand">
                           Live preview
                         </Badge>
-                        <h3 className="text-base font-semibold text-foreground">Upcoming pay periods</h3>
-                        <p className="text-xs leading-snug text-muted-foreground">
-                          Updates as you edit — next cut-offs and pay dates.
+                        <h3 className="text-lg font-bold text-foreground">Upcoming pay periods</h3>
+                        <p className="text-sm leading-relaxed text-muted-foreground">
+                          Updates as you edit - next cut-offs and pay dates.
                         </p>
                       </div>
                       {formPreview ? (
                         <>
-                          <UpcomingPeriodsPanel preview={formPreview} compact />
+                          <PayCycleModalPreviewList preview={formPreview} compact />
                           {form.code !== 'project' ? (
-                            <WeekendAdjustmentNotice
+                            <PayCycleModalNotice
                               compact
                               note={formPreview.weekend_adjustment_note || 'When Pay Date falls on Saturday or Sunday, Pay Day will be moved to the previous Friday.'}
                             />
@@ -984,13 +1047,13 @@ export default function AdminPayCycleManagementPage() {
                     </div>
                   </div>
 
-                  <DialogFooter className="flex flex-col gap-2 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-border/50">
+                  <DialogFooter className="-mx-4 flex flex-col gap-2 border-t border-border/60 bg-card px-4 pt-4 sm:-mx-8 sm:flex-row sm:items-center sm:justify-between sm:px-8 dark:border-border/50">
                     <Button type="button" variant="outline" className={APP_MODAL_OUTLINE_BUTTON_CLASS} onClick={() => setDialogOpen(false)}>
                       Cancel
                     </Button>
                     <Button
                       type="submit"
-                      className={APP_MODAL_PRIMARY_BUTTON_CLASS}
+                      className="min-w-[140px] rounded-lg bg-brand text-brand-foreground shadow-lg shadow-brand/20 hover:bg-brand-strong"
                       disabled={saving || !form.name.trim()}
                     >
                       {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Plus className="mr-2 size-4" />}
@@ -1478,7 +1541,7 @@ function FrequencyBadge({ code }) {
   const label = String(code || '').replace(/_/g, ' ')
   const tone = {
     monthly: 'border-border/70 bg-background text-muted-foreground',
-    semi_monthly: 'border-sky-200/80 bg-sky-50 text-sky-900 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-100',
+    semi_monthly: 'border-brand/25 bg-brand/10 text-brand',
     weekly: 'border-border/70 bg-background text-muted-foreground',
     bi_weekly: 'border-border/70 bg-background text-muted-foreground',
     daily: 'border-border/70 bg-background text-muted-foreground',
@@ -1503,9 +1566,9 @@ function PreviewLine({ icon, label, value }) {
 function KpiCard({ label, value, icon, tone = 'blue', note }) {
   const KpiIcon = icon
   const iconTone = {
-    blue: 'bg-muted text-muted-foreground ring-1 ring-border/50',
-    teal: 'bg-muted text-muted-foreground ring-1 ring-border/50',
-    violet: 'bg-muted text-muted-foreground ring-1 ring-border/50',
+    blue: 'bg-brand/10 text-brand ring-1 ring-brand/15',
+    teal: 'bg-brand/10 text-brand ring-1 ring-brand/15',
+    violet: 'bg-brand/10 text-brand ring-1 ring-brand/15',
   }[tone]
 
   return (
@@ -1527,27 +1590,32 @@ function KpiCard({ label, value, icon, tone = 'blue', note }) {
 function Field({ label, children, className, compact }) {
   return (
     <div className={cn(compact ? 'space-y-1.5' : 'space-y-2', className)}>
-      <Label className={cn(compact ? 'text-xs font-medium' : 'text-sm font-medium', 'text-foreground')}>{label}</Label>
+      <Label className={cn(compact ? 'text-sm font-semibold' : 'text-sm font-medium', 'text-foreground')}>{label}</Label>
       {children}
     </div>
   )
 }
 
 function ConfiguratorSection({ eyebrow, title, description, children, compact }) {
+  const sectionNumber = String(eyebrow || '').match(/\d+/)?.[0] || null
+
   return (
     <section
       className={cn(
-        'rounded-lg border border-border/60 bg-card shadow-sm dark:border-border/50',
-        compact ? 'space-y-2.5 p-3.5' : 'space-y-4 p-5',
+        'rounded-2xl border border-border/70 bg-card shadow-sm dark:border-border/50',
+        compact ? 'space-y-5 p-5' : 'space-y-5 p-6',
       )}
     >
-      <div className={cn(compact ? 'space-y-0.5' : 'space-y-1')}>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{eyebrow}</p>
-        <div className="flex items-center gap-2">
-          <h3 className={cn(compact ? 'text-base font-semibold' : 'text-lg font-semibold', 'text-foreground')}>{title}</h3>
-          <ChevronRight className="size-4 text-muted-foreground" />
+      <div className="flex items-start gap-4">
+        {sectionNumber ? (
+          <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-bold text-brand-foreground shadow-sm shadow-brand/20">
+            {sectionNumber}
+          </span>
+        ) : null}
+        <div className={cn(compact ? 'space-y-1' : 'space-y-1.5')}>
+          <h3 className={cn(compact ? 'text-base font-bold' : 'text-lg font-bold', 'text-foreground')}>{title}</h3>
+          <p className={cn(compact ? 'text-sm leading-relaxed' : 'text-sm leading-relaxed', 'text-muted-foreground')}>{description}</p>
         </div>
-        <p className={cn(compact ? 'text-xs leading-snug' : 'text-sm leading-relaxed', 'text-muted-foreground')}>{description}</p>
       </div>
       {children}
     </section>
@@ -1558,15 +1626,19 @@ function ModernSwitchCard({ title, description, checked, onCheckedChange, compac
   return (
     <div
       className={cn(
-        'flex h-full items-center justify-between rounded-lg border border-border/60 bg-background shadow-sm dark:border-border/50',
-        compact ? 'px-3 py-2.5' : 'px-4 py-4',
+        'flex h-full items-center justify-between border-b border-border/60 bg-card last:border-b-0 dark:border-border/50',
+        compact ? 'py-4' : 'py-4',
       )}
     >
       <div className={cn(compact ? 'pr-2' : 'pr-4')}>
-        <p className={cn(compact ? 'text-sm font-medium' : 'font-medium', 'text-foreground')}>{title}</p>
-        <p className={cn(compact ? 'mt-0.5 text-[11px] leading-snug' : 'mt-1 text-xs leading-relaxed', 'text-muted-foreground')}>{description}</p>
+        <p className={cn(compact ? 'text-sm font-semibold' : 'font-medium', 'text-foreground')}>{title}</p>
+        <p className={cn(compact ? 'mt-1 text-xs leading-relaxed' : 'mt-1 text-xs leading-relaxed', 'text-muted-foreground')}>{description}</p>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        className="data-[state=checked]:bg-brand data-[state=unchecked]:bg-muted-foreground/25 dark:data-[state=unchecked]:bg-muted"
+      />
     </div>
   )
 }
@@ -1698,6 +1770,44 @@ function UpcomingPeriodsPanel({ preview, compact }) {
   )
 }
 
+function PayCycleModalPreviewList({ preview, compact }) {
+  const periods = Array.isArray(preview?.preview_periods) ? preview.preview_periods : []
+  if (periods.length === 0) return null
+
+  return (
+    <div className={cn('rounded-2xl border border-border/70 bg-card shadow-sm dark:border-border/50', compact ? 'p-4' : 'p-6')}>
+      <div className={compact ? 'mb-3' : 'mb-4'}>
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Upcoming pay periods</p>
+        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">From current settings.</p>
+      </div>
+      <div className="space-y-2">
+        {periods.slice(0, 6).map((period, index) => (
+          <div
+            key={`${period.preview_line || period.cut_off_start_date}-${index}`}
+            className="flex items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-3 shadow-sm transition-colors hover:bg-muted/25 dark:border-border/50 dark:bg-muted/10 dark:hover:bg-muted/20"
+          >
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+              <CalendarRange className="size-5" aria-hidden />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">
+                {period.preview_label || formatPreviewRange(period.cut_off_start_date, period.cut_off_end_date)}
+                <span className="mx-2 text-muted-foreground">|</span>
+                <span>Pay: {formatPreviewDate(period.pay_date)}</span>
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {period.period_days} day(s)
+                {period.weekend_adjusted ? ' - Fri adjust' : ''}
+              </p>
+            </div>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function WeekendAdjustmentNotice({ note, compact }) {
   return (
     <div
@@ -1710,6 +1820,23 @@ function WeekendAdjustmentNotice({ note, compact }) {
     </div>
   )
 }
+
+function PayCycleModalNotice({ note, compact }) {
+  return (
+    <div
+      className={cn(
+        'rounded-xl border border-brand/20 bg-brand/5 font-medium text-brand dark:border-brand/25 dark:bg-brand/10',
+        compact ? 'px-4 py-3 text-xs leading-relaxed' : 'px-4 py-3 text-sm',
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <Clock3 className="size-4 shrink-0" aria-hidden />
+        <span>{note}</span>
+      </div>
+    </div>
+  )
+}
+
 
 function formatPreviewDate(value) {
   if (!value) return '—'
