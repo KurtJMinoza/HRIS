@@ -73,6 +73,31 @@ class PayComponentAssignmentService
 
     private function buildAssignmentPayload(PayComponent $component, array $metadata = []): array
     {
+        $masterMeta = is_array($component->metadata ?? null) ? $component->metadata : [];
+        $calc = (string) $component->calculation_type;
+        $defaultValue = (float) $component->default_value;
+        $assignmentValue = $defaultValue;
+        $assignmentHourlyRate = null;
+        $assignmentHours = null;
+
+        if ($calc === PayComponent::CALC_HOURLY) {
+            $assignmentHourlyRate = isset($masterMeta['default_hourly_rate'])
+                ? (float) $masterMeta['default_hourly_rate']
+                : $defaultValue;
+            $assignmentHours = isset($masterMeta['default_hours'])
+                ? (float) $masterMeta['default_hours']
+                : null;
+            $assignmentValue = $assignmentHourlyRate;
+        } elseif ($calc === PayComponent::CALC_DAILY) {
+            $assignmentHours = isset($masterMeta['default_days'])
+                ? (float) $masterMeta['default_days']
+                : null;
+        } elseif ($calc === PayComponent::CALC_PERCENT_BASIC || $calc === PayComponent::CALC_PERCENT_GROSS) {
+            $assignmentValue = isset($masterMeta['default_percent'])
+                ? (float) $masterMeta['default_percent']
+                : $defaultValue;
+        }
+
         return [
             'structure_name' => null,
             'name' => $component->name,
@@ -80,9 +105,9 @@ class PayComponentAssignmentService
             'type' => $component->type,
             'category' => $component->category,
             'calculation_type' => $component->calculation_type,
-            'value' => (float) $component->default_value,
-            'hourly_rate' => null,
-            'hours' => null,
+            'value' => $assignmentValue,
+            'hourly_rate' => $assignmentHourlyRate,
+            'hours' => $assignmentHours,
             'formula' => $component->formula,
             'is_taxable' => (bool) $component->is_taxable,
             'contributes_sss' => (bool) $component->contributes_sss,

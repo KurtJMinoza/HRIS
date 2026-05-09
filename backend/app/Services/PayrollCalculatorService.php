@@ -1874,6 +1874,7 @@ class PayrollCalculatorService
 
         try {
             return EmployeeCompensationComponent::query()
+                ->with('payComponent')
                 ->where('user_id', $employee->id)
                 ->where('is_active', true)
                 ->where(function ($query) {
@@ -1935,18 +1936,53 @@ class PayrollCalculatorService
         float $hoursWorked
     ): float {
         $value = round((float) ($row->value ?? 0), 2);
-        $hours = $row->hours !== null ? (float) $row->hours : $hoursWorked;
-        $hourlyRate = $row->hourly_rate !== null ? (float) $row->hourly_rate : $value;
+        $masterMeta = [];
+        try {
+            $master = $row->payComponent;
+            if ($master && is_array($master->metadata ?? null)) {
+                $masterMeta = $master->metadata;
+            }
+        } catch (\Throwable) {
+            $masterMeta = [];
+        }
+
+        $assignmentHours = $row->hours !== null ? (float) $row->hours : null;
+        $assignmentHourlyRate = $row->hourly_rate !== null ? (float) $row->hourly_rate : null;
+
+        $calc = (string) $row->calculation_type;
+
+        $hourlyRate = $assignmentHourlyRate;
+        if ($hourlyRate === null) {
+            if ($calc === PayComponent::CALC_HOURLY) {
+                $hourlyRate = isset($masterMeta['default_hourly_rate'])
+                    ? (float) $masterMeta['default_hourly_rate']
+                    : $value;
+            } else {
+                $hourlyRate = $value;
+            }
+        }
+
+        $hours = $assignmentHours;
+        if ($hours === null) {
+            if ($calc === PayComponent::CALC_HOURLY && isset($masterMeta['default_hours'])) {
+                $hours = (float) $masterMeta['default_hours'];
+            } elseif ($calc === PayComponent::CALC_DAILY && isset($masterMeta['default_days'])) {
+                $hours = (float) $masterMeta['default_days'];
+            } else {
+                $hours = $hoursWorked;
+            }
+        }
+
         $dailyRate = $value;
-        if ($hourlyRate > 0 && $hours > 0) {
+        if ($calc === PayComponent::CALC_HOURLY && $hourlyRate > 0 && $hours > 0) {
             $dailyRate = $hourlyRate * $hours;
         }
 
-        $amount = match ($row->calculation_type) {
+        $amount = match ($calc) {
             PayComponent::CALC_PERCENT_BASIC => round($basicSalary * ($value / 100), 2),
             PayComponent::CALC_PERCENT_GROSS => round($grossBeforePercentOfGross * ($value / 100), 2),
-            PayComponent::CALC_DAILY => round($dailyRate, 2),
-            PayComponent::CALC_HOURLY => round($hourlyRate * max(0.0, $hours), 2),
+            PayComponent::CALC_DAILY => round($value * (max(1.0, $hours)), 2),
+            PayComponent::CALC_HOURLY => round(max(0.0, $hourlyRate) * max(0.0, $hours), 2),
             PayComponent::CALC_FORMULA => $this->evaluateCompensationFormula(
                 (string) ($row->formula ?? ''),
                 $basicSalary,

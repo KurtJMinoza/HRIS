@@ -927,6 +927,7 @@ function payComponentsTableHeader() {
   return (
     <TableRow className="border-b border-slate-100 bg-slate-50/80 hover:bg-slate-50/80 dark:border-white/10 dark:bg-white/5">
       <TableHead className={th}>Name</TableHead>
+      <TableHead className={th}>Category</TableHead>
       <TableHead className={th}>Calculation</TableHead>
       <TableHead className={th}>Type</TableHead>
       <TableHead className={cn('text-right', th)}>Amount</TableHead>
@@ -976,6 +977,7 @@ export function SalaryPayComponentsBreakdownCard({
           className="border-b border-slate-100 dark:border-white/10"
         >
           <TableCell className={cn('font-medium', TEXT)}>{item.name || item.code || '—'}</TableCell>
+          <TableCell className="text-slate-600 dark:text-slate-400">{item.category || '—'}</TableCell>
           <TableCell className="text-slate-600 dark:text-slate-400">{formatCompCalculationType(item.calculation_type)}</TableCell>
           <TableCell className="text-slate-600 dark:text-slate-400">{componentTypeLabel(item.type)}</TableCell>
           <TableCell className={cn('text-right tabular-nums font-semibold', amountClass)}>{formatSalaryTabPhp(item.computed_amount)}</TableCell>
@@ -1027,7 +1029,7 @@ export function SalaryPayComponentsBreakdownCard({
                 <TableBody>
                   {e.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-10 text-center text-slate-500 dark:text-slate-400">
+                      <TableCell colSpan={7} className="py-10 text-center text-slate-500 dark:text-slate-400">
                         No earnings with a payable amount on file.
                       </TableCell>
                     </TableRow>
@@ -1046,7 +1048,7 @@ export function SalaryPayComponentsBreakdownCard({
                 <TableBody>
                   {d.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-10 text-center text-slate-500 dark:text-slate-400">
+                      <TableCell colSpan={7} className="py-10 text-center text-slate-500 dark:text-slate-400">
                         No loan or deduction components assigned with a non-zero amount.
                       </TableCell>
                     </TableRow>

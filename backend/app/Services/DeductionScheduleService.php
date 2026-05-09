@@ -440,6 +440,9 @@ class DeductionScheduleService
             ?? $this->resolveSemiMonthSegmentForPayrollContext($user, $selectedPayDate, $payCyclePreview);
         $gov = $this->buildGovernmentSchedulePreview($user, $selectedPayDate, $statutory, $withholdingMonthly, $payCyclePreview, $segment);
 
+        $attendanceProration = $compensationSummary['_attendance_proration'] ?? null;
+        $attendanceFactor = $this->normalizeAttendanceProrationFactor($attendanceProration);
+
         $customFull = 0.0;
         $customThisPeriod = 0.0;
         $customLines = [];
@@ -470,11 +473,17 @@ class DeductionScheduleService
             } else {
                 $factor = $this->resolvePeriodAwareFactor($user, $sched, $segment, $ref, $selectedPayDate, $periodStartRaw, $periodEndRaw);
                 $thisAmt = round($amt * $factor, 2);
+                if (! empty($d['is_proratable'])) {
+                    $thisAmt = round($thisAmt * $attendanceFactor, 2);
+                }
             }
             $customThisPeriod += $thisAmt;
             $customLines[] = array_merge($d, [
                 'deduction_schedule_type' => $sched,
                 'scheduled_this_period' => $thisAmt,
+                'attendance_proration_factor' => (! empty($d['is_proratable']) && $amortizedInstallment === null)
+                    ? $attendanceFactor
+                    : 1.0,
             ]);
         }
 
@@ -492,6 +501,10 @@ class DeductionScheduleService
             }
             $factor = $this->resolvePeriodAwareFactor($user, $sched, $segment, $ref, $selectedPayDate, $periodStartRaw, $periodEndRaw);
             $thisAmt = round($amt * $factor, 2);
+            $lineAttendanceFactor = (! $isBasic && ! empty($e['is_proratable'])) ? $attendanceFactor : 1.0;
+            if ($lineAttendanceFactor < 1.0 - 1.0e-9) {
+                $thisAmt = round($thisAmt * $lineAttendanceFactor, 2);
+            }
             if (! $isBasic) {
                 $nonBasicEarningsThisPeriod += $thisAmt;
             }
@@ -499,6 +512,7 @@ class DeductionScheduleService
                 'earning_schedule_type' => $sched,
                 'scheduled_this_period' => $thisAmt,
                 'is_basic_salary_line' => $isBasic,
+                'attendance_proration_factor' => $lineAttendanceFactor,
             ]);
         }
 
@@ -513,7 +527,29 @@ class DeductionScheduleService
             'non_basic_earnings_this_period' => round($nonBasicEarningsThisPeriod, 2),
             'employee_statutory_this_period' => $gov['employee_statutory_this_period'],
             'withholding_this_period' => $gov['withholding_this_period'],
+            'attendance_proration' => is_array($attendanceProration) ? array_merge([
+                'factor' => $attendanceFactor,
+            ], $attendanceProration) : [
+                'factor' => 1.0,
+                'scheduled_workdays' => 0.0,
+                'credited_day_units' => 0.0,
+            ],
         ];
+    }
+
+    /**
+     * Clamp attendance proration factor from payroll period context (see DeductionScheduleService inputs).
+     *
+     * @param  array<string, mixed>|null  $meta
+     */
+    public function normalizeAttendanceProrationFactor(?array $meta): float
+    {
+        if (! is_array($meta)) {
+            return 1.0;
+        }
+        $f = (float) ($meta['factor'] ?? 1.0);
+
+        return max(0.0, min(1.0, $f));
     }
 
     /**

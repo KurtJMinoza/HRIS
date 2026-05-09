@@ -1107,6 +1107,11 @@ class PayrollComputationService
                     'total_regular_night_minutes' => 0,
                     'total_ot_day_minutes' => 0,
                     'total_ot_night_minutes' => 0,
+                    'attendance_proration' => [
+                        'factor' => 1.0,
+                        'scheduled_workdays' => 0.0,
+                        'credited_day_units' => 0.0,
+                    ],
                 ],
             ];
         }
@@ -1343,6 +1348,8 @@ class PayrollComputationService
             ];
         }
 
+        $attendanceProration = $this->computeScheduleAttendanceProrationForPeriod($days);
+
         $compensationSummary = $this->payrollCalculator->buildEmployeeCompensationSummary($user, [
             'as_of_date' => $to->toDateString(),
             'proration_factor' => 1,
@@ -1419,6 +1426,7 @@ class PayrollComputationService
             $user,
             $refForSchedule,
             array_merge($compensationSummary, [
+                '_attendance_proration' => $attendanceProration,
                 'totals' => array_merge($compensationSummary['totals'] ?? [], [
                     'withholding_tax' => $withholdingMonthlyFull,
                 ]),
@@ -1518,7 +1526,41 @@ class PayrollComputationService
                 'total_ot_day_minutes' => $totalOtDay,
                 'total_ot_night_minutes' => $totalOtNight,
                 'daily_rate_divisor_days' => $dailyRateDivisorDays,
+                'attendance_proration' => $deductionSchedule['attendance_proration'] ?? $attendanceProration,
             ],
+        ];
+    }
+
+    /**
+     * For each scheduled workday in the pay period (non-rest with required minutes > 0), credit
+     * min(1, paid_regular_minutes / required_minutes). Paid leave / undertime are already reflected
+     * in regular_day/regular_night minutes from {@see computeDayPayroll()}.
+     *
+     * Used only when a pay component has is_proratable — others keep full semi-monthly schedule amounts.
+     *
+     * @param  array<int, array<string, mixed>>  $days
+     * @return array{factor: float, scheduled_workdays: float, credited_day_units: float}
+     */
+    private function computeScheduleAttendanceProrationForPeriod(array $days): array
+    {
+        $scheduled = 0.0;
+        $credited = 0.0;
+        foreach ($days as $d) {
+            $isRest = (bool) ($d['is_rest_day'] ?? false);
+            $required = (int) ($d['required_minutes'] ?? 0);
+            if ($isRest || $required <= 0) {
+                continue;
+            }
+            $scheduled += 1.0;
+            $regularPaid = (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0));
+            $credited += min(1.0, $regularPaid / $required);
+        }
+        $factor = $scheduled > 0.0 ? max(0.0, min(1.0, $credited / $scheduled)) : 1.0;
+
+        return [
+            'factor' => round($factor, 6),
+            'scheduled_workdays' => round($scheduled, 4),
+            'credited_day_units' => round($credited, 4),
         ];
     }
 

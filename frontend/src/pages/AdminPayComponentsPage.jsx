@@ -58,6 +58,10 @@ const EMPTY_FORM = {
   category: 'Fixed Allowance',
   calculation_type: 'fixed_amount',
   default_value: '0',
+  default_hourly_rate: '',
+  default_hours: '',
+  default_days: '',
+  default_percent: '',
   formula: '',
   is_taxable: true,
   contributes_sss: false,
@@ -94,6 +98,79 @@ const DEDUCTION_CATEGORY_OPTIONS = [
   'Penalty & Adjustment',
   'Other Deduction',
 ]
+
+const CATEGORY_PRESETS = {
+  'Basic Salary': {
+    description: 'Recurring base monthly pay. One per employee, locked to BASIC_SALARY code.',
+    defaults: { is_taxable: true, is_proratable: true, contributes_sss: false, contributes_philhealth: false, contributes_pagibig: false },
+    suggestedCalc: 'fixed_amount',
+  },
+  'Fixed Allowance': {
+    description: 'Recurring allowances paid as a fixed peso amount each cycle (e.g. transportation, meal).',
+    defaults: { is_taxable: true, is_proratable: true, contributes_sss: false, contributes_philhealth: false, contributes_pagibig: false },
+    suggestedCalc: 'fixed_amount',
+  },
+  'Variable Allowance': {
+    description: 'Allowances that change per period (e.g. mobile load, field allowance). Use Daily/Hourly or Formula for variable amounts.',
+    defaults: { is_taxable: true, is_proratable: true },
+    suggestedCalc: 'daily_rate',
+  },
+  'Commission & Incentive': {
+    description: 'Sales commissions and performance incentives. Typically computed as % of basic, % of gross, or formula.',
+    defaults: { is_taxable: true, is_proratable: false },
+    suggestedCalc: 'percent_basic',
+  },
+  Bonus: {
+    description: '13th month, mid-year, year-end, performance bonus. PH treats up to ₱90,000/year as non-taxable.',
+    defaults: { is_taxable: false, is_proratable: true },
+    suggestedCalc: 'percent_basic',
+  },
+  'Hazard Pay': {
+    description: 'Risk premium for hazardous work. Often non-taxable for minimum wage earners.',
+    defaults: { is_taxable: true, is_proratable: true },
+    suggestedCalc: 'hourly',
+  },
+  'Project Compensation': {
+    description: 'Project-based or output-based pay (per delivery, per milestone). Use Formula or Daily for unit-based.',
+    defaults: { is_taxable: true, is_proratable: false },
+    suggestedCalc: 'formula',
+  },
+  'Deduction & Adjustment': {
+    description: 'Earning-side adjustments (negative or positive). Use Fixed Amount or Formula.',
+    defaults: { is_taxable: true, is_proratable: false },
+    suggestedCalc: 'fixed_amount',
+  },
+  Loan: {
+    description: 'Loanable pay component. Eligible for employee loan requests with optional installment schedules.',
+    defaults: { is_taxable: false, is_proratable: false, is_loan: true },
+    suggestedCalc: 'fixed_amount',
+  },
+  Deduction: {
+    description: 'General deductions configured by HR (e.g. uniform fee, equipment refund).',
+    defaults: { is_taxable: false, is_proratable: false },
+    suggestedCalc: 'fixed_amount',
+  },
+  'Government Deduction': {
+    description: 'Statutory deductions (SSS, PhilHealth, Pag-IBIG, Withholding Tax). System-managed; do not duplicate.',
+    defaults: { is_taxable: false, is_proratable: false },
+    suggestedCalc: 'formula',
+  },
+  'Loan Repayment': {
+    description: 'Periodic repayment of an approved loan (auto-managed by Loan module after approval).',
+    defaults: { is_taxable: false, is_proratable: false },
+    suggestedCalc: 'fixed_amount',
+  },
+  'Penalty & Adjustment': {
+    description: 'Disciplinary or correction deductions (e.g. tardiness penalty, overpayment recovery).',
+    defaults: { is_taxable: false, is_proratable: false },
+    suggestedCalc: 'fixed_amount',
+  },
+  'Other Deduction': {
+    description: 'Any deduction not covered above (e.g. cooperative dues, voluntary contributions).',
+    defaults: { is_taxable: false, is_proratable: false },
+    suggestedCalc: 'fixed_amount',
+  },
+}
 
 const FILTERS = [
   { id: 'all', label: 'All' },
@@ -225,13 +302,23 @@ export default function AdminPayComponentsPage() {
 
   function openEditDialog(item) {
     setEditingId(item.id)
+    const meta = item.metadata && typeof item.metadata === 'object' ? item.metadata : {}
+    const calc = item.calculation_type || 'fixed_amount'
     setForm({
       name: item.name || '',
       code: item.code || '',
       type: item.type || 'earning',
       category: item.category || 'Fixed Allowance',
-      calculation_type: item.calculation_type || 'fixed_amount',
+      calculation_type: calc,
       default_value: String(item.default_value ?? 0),
+      default_hourly_rate: meta.default_hourly_rate != null && meta.default_hourly_rate !== ''
+        ? String(meta.default_hourly_rate)
+        : (calc === 'hourly' ? String(item.default_value ?? '') : ''),
+      default_hours: meta.default_hours != null && meta.default_hours !== '' ? String(meta.default_hours) : '',
+      default_days: meta.default_days != null && meta.default_days !== '' ? String(meta.default_days) : '',
+      default_percent: meta.default_percent != null && meta.default_percent !== ''
+        ? String(meta.default_percent)
+        : (calc === 'percent_basic' || calc === 'percent_gross' ? String(item.default_value ?? '') : ''),
       formula: item.formula || '',
       is_taxable: Boolean(item.is_taxable),
       contributes_sss: Boolean(item.contributes_sss),
@@ -284,17 +371,57 @@ export default function AdminPayComponentsPage() {
         ? (DEDUCTION_CATEGORY_OPTIONS.includes(prev.category) ? prev.category : 'Deduction')
         : (CATEGORY_OPTIONS.includes(prev.category) ? prev.category : 'Fixed Allowance')
 
+      const preset = CATEGORY_PRESETS[nextCategory] || {}
+      const presetDefaults = preset.defaults || {}
+
       return {
         ...prev,
         type: value,
         category: nextCategory,
+        is_taxable: presetDefaults.is_taxable !== undefined ? presetDefaults.is_taxable : prev.is_taxable,
+        is_proratable: presetDefaults.is_proratable !== undefined ? presetDefaults.is_proratable : prev.is_proratable,
         contributes_sss: value === 'deduction' ? false : prev.contributes_sss,
         contributes_philhealth: value === 'deduction' ? false : prev.contributes_philhealth,
         contributes_pagibig: value === 'deduction' ? false : prev.contributes_pagibig,
-        is_loan: value === 'earning' ? false : prev.is_loan,
+        is_loan: value === 'earning' ? false : (presetDefaults.is_loan ?? prev.is_loan),
         is_amortized: value === 'earning' ? false : prev.is_amortized,
         default_term_months: value === 'earning' ? '' : prev.default_term_months,
       }
+    })
+  }
+
+  function handleCategoryChange(category) {
+    const preset = CATEGORY_PRESETS[category] || {}
+    const presetDefaults = preset.defaults || {}
+    setForm((prev) => ({
+      ...prev,
+      category,
+      is_taxable: presetDefaults.is_taxable !== undefined ? presetDefaults.is_taxable : prev.is_taxable,
+      is_proratable: presetDefaults.is_proratable !== undefined ? presetDefaults.is_proratable : prev.is_proratable,
+      is_loan: prev.type === 'deduction' ? (presetDefaults.is_loan ?? prev.is_loan) : false,
+      calculation_type: preset.suggestedCalc && prev.calculation_type === 'fixed_amount'
+        ? preset.suggestedCalc
+        : prev.calculation_type,
+    }))
+  }
+
+  function handleCalculationTypeChange(nextCalc) {
+    setForm((prev) => {
+      const next = { ...prev, calculation_type: nextCalc }
+      if (nextCalc === 'percent_basic' || nextCalc === 'percent_gross') {
+        if (!prev.default_percent && Number(prev.default_value) > 0) {
+          next.default_percent = String(prev.default_value)
+        }
+      } else if (nextCalc === 'hourly') {
+        if (!prev.default_hourly_rate && Number(prev.default_value) > 0) {
+          next.default_hourly_rate = String(prev.default_value)
+        }
+      } else if (nextCalc === 'daily_rate') {
+        if (!prev.default_value || Number(prev.default_value) === 0) {
+          next.default_value = prev.default_value || '0'
+        }
+      }
+      return next
     })
   }
 
@@ -302,20 +429,53 @@ export default function AdminPayComponentsPage() {
     e.preventDefault()
     setSaving(true)
     try {
+      const calc = form.calculation_type
+      let defaultValueOut = Number(form.default_value || 0)
+      if (calc === 'percent_basic' || calc === 'percent_gross') {
+        defaultValueOut = Number(form.default_percent || form.default_value || 0)
+      } else if (calc === 'hourly') {
+        defaultValueOut = Number(form.default_hourly_rate || form.default_value || 0)
+      }
+
+      const metadata = {}
+      if (calc === 'hourly') {
+        if (form.default_hourly_rate !== '' && form.default_hourly_rate !== null) {
+          metadata.default_hourly_rate = Number(form.default_hourly_rate)
+        }
+        if (form.default_hours !== '' && form.default_hours !== null) {
+          metadata.default_hours = Number(form.default_hours)
+        }
+      } else if (calc === 'daily_rate') {
+        if (form.default_days !== '' && form.default_days !== null) {
+          metadata.default_days = Number(form.default_days)
+        }
+      } else if (calc === 'percent_basic' || calc === 'percent_gross') {
+        if (form.default_percent !== '' && form.default_percent !== null) {
+          metadata.default_percent = Number(form.default_percent)
+        }
+      }
+
+      const isLoanComp = form.type === 'deduction' && Boolean(form.is_loan)
+      const termMonthsRaw = String(form.default_term_months || '').trim()
+      const termMonthsOut = isLoanComp && termMonthsRaw !== '' ? Number(termMonthsRaw) : null
+
       const payload = {
         ...form,
         code: form.code.trim().toUpperCase(),
-        default_value: Number(form.default_value || 0),
+        default_value: defaultValueOut,
         formula: form.formula || null,
         effective_from: form.effective_from || null,
         effective_to: form.effective_to || null,
-        is_loan: form.type === 'deduction' ? Boolean(form.is_loan) : false,
-        is_amortized: form.type === 'deduction' ? Boolean(form.is_amortized) : false,
-        default_term_months:
-          form.type === 'deduction' && form.is_loan && String(form.default_term_months || '').trim() !== ''
-            ? Number(form.default_term_months)
-            : null,
+        is_loan: isLoanComp,
+        is_amortized: isLoanComp && termMonthsOut !== null && termMonthsOut > 0,
+        default_term_months: termMonthsOut,
+        metadata: Object.keys(metadata).length > 0 ? metadata : null,
       }
+      delete payload.default_hourly_rate
+      delete payload.default_hours
+      delete payload.default_days
+      delete payload.default_percent
+
       const response = editingId
         ? await updatePayComponent(editingId, payload)
         : await createPayComponent(payload)
@@ -794,7 +954,7 @@ export default function AdminPayComponentsPage() {
                 </div>
                 <DialogTitle className={APP_MODAL_TITLE_CLASS}>{editingId ? 'Edit pay component' : 'New pay component'}</DialogTitle>
                 <DialogDescription className={APP_MODAL_DESCRIPTION_CLASS}>
-                  Fixed amount, effective dates, and optional tax, contributions, and assignment rules.
+                  Configure a fixed amount, % of basic/gross, daily rate, hourly rate, or custom formula. Choose a category to align taxability and contributions.
                 </DialogDescription>
               </div>
             </div>
@@ -868,11 +1028,11 @@ export default function AdminPayComponentsPage() {
             <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
               <Field
                 label="Category"
-                hint={form.type === 'deduction' ? 'Used for filters and reporting.' : 'Matches how payroll uses this item.'}
+                hint={CATEGORY_PRESETS[form.category]?.description || (form.type === 'deduction' ? 'Used for filters and reporting.' : 'Matches how payroll uses this item.')}
               >
                 <select
                   value={form.category}
-                  onChange={(e) => updateForm({ category: e.target.value })}
+                  onChange={(e) => handleCategoryChange(e.target.value)}
                   className={inputClass}
                 >
                   {categoryOptions.map((option) => (
@@ -883,10 +1043,10 @@ export default function AdminPayComponentsPage() {
                 </select>
               </Field>
 
-              <Field label="Calculation" hint="Controls how the component amount is computed.">
+              <Field label="Calculation" hint={describeCalculationHint(form.calculation_type)}>
                 <select
                   value={form.calculation_type}
-                  onChange={(e) => updateForm({ calculation_type: e.target.value })}
+                  onChange={(e) => handleCalculationTypeChange(e.target.value)}
                   className={inputClass}
                 >
                   {['fixed_amount', 'percent_basic', 'percent_gross', 'daily_rate', 'hourly', 'formula'].map((value) => (
@@ -898,24 +1058,67 @@ export default function AdminPayComponentsPage() {
               </Field>
             </div>
 
+            {/* Calculation-specific inputs */}
             {form.calculation_type === 'formula' ? (
-              <Field label="Formula" hint="Allowed tokens: BASIC, GROSS, DEFAULT_VALUE, HOURS, HOURLY_RATE, DAILY_RATE.">
+              <Field label="Formula" hint="Allowed tokens: BASIC, GROSS, DEFAULT_VALUE, HOURS, HOURLY_RATE, DAILY_RATE. Operators: + - * / ( ).">
                 <input
                   value={form.formula}
                   onChange={(e) => updateForm({ formula: e.target.value })}
-                  className={inputClass}
+                  className={`${inputClass} font-mono text-xs`}
                   placeholder="(BASIC * 0.05) + DEFAULT_VALUE"
                 />
               </Field>
             ) : null}
 
-            <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-background/70 p-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4 dark:bg-muted/10">
-              <div className="min-w-0 flex-1">
-                <Field label="Default value" hint="Starting amount when assigned.">
+            {form.calculation_type === 'percent_basic' || form.calculation_type === 'percent_gross' ? (
+              <Field
+                label={form.calculation_type === 'percent_basic' ? 'Percentage of Basic Salary' : 'Percentage of Gross Pay'}
+                hint="Enter the rate (e.g. 5 for 5%). Applied per pay period."
+              >
+                <div className="relative">
+                  <input
+                    value={form.default_percent}
+                    onChange={(e) => updateForm({ default_percent: e.target.value, default_value: e.target.value })}
+                    className={`${inputClass} pr-10`}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">%</span>
+                </div>
+              </Field>
+            ) : null}
+
+            {form.calculation_type === 'hourly' ? (
+              <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+                <Field label="Hourly rate" hint="Default rate per hour. Editable per employee on assignment.">
                   <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">
-                      PHP
-                    </span>
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">PHP</span>
+                    <input
+                      value={form.default_hourly_rate}
+                      onChange={(e) => updateForm({ default_hourly_rate: e.target.value, default_value: e.target.value })}
+                      className={`${inputClass} pl-12`}
+                      inputMode="decimal"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </Field>
+                <Field label="Default hours per pay period" hint="Used as fallback when no employee-specific hours are set.">
+                  <input
+                    value={form.default_hours}
+                    onChange={(e) => updateForm({ default_hours: e.target.value })}
+                    className={inputClass}
+                    inputMode="decimal"
+                    placeholder="e.g. 40"
+                  />
+                </Field>
+              </div>
+            ) : null}
+
+            {form.calculation_type === 'daily_rate' ? (
+              <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+                <Field label="Daily rate" hint="Amount per workday. Final amount = daily rate × days.">
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">PHP</span>
                     <input
                       value={form.default_value}
                       onChange={(e) => updateForm({ default_value: e.target.value })}
@@ -925,21 +1128,60 @@ export default function AdminPayComponentsPage() {
                     />
                   </div>
                 </Field>
+                <Field label="Default days per pay period" hint="Fallback days count when not set per employee.">
+                  <input
+                    value={form.default_days}
+                    onChange={(e) => updateForm({ default_days: e.target.value })}
+                    className={inputClass}
+                    inputMode="decimal"
+                    placeholder="e.g. 22"
+                  />
+                </Field>
               </div>
-              <div className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-3 py-2 sm:flex-col sm:items-stretch sm:py-2.5">
-                <div className="min-w-0 sm:text-right">
+            ) : null}
+
+            {form.calculation_type === 'fixed_amount' || form.calculation_type === 'formula' ? (
+              <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-background/70 p-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4 dark:bg-muted/10">
+                <div className="min-w-0 flex-1">
+                  <Field
+                    label={form.calculation_type === 'formula' ? 'Default value (DEFAULT_VALUE token)' : 'Default amount'}
+                    hint={form.calculation_type === 'formula' ? 'Used in the formula via the DEFAULT_VALUE token.' : 'Starting peso amount when assigned to an employee.'}
+                  >
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">PHP</span>
+                      <input
+                        value={form.default_value}
+                        onChange={(e) => updateForm({ default_value: e.target.value })}
+                        className={`${inputClass} pl-12`}
+                        inputMode="decimal"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </Field>
+                </div>
+                <div className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-3 py-2 sm:flex-col sm:items-stretch sm:py-2.5">
+                  <div className="min-w-0 sm:text-right">
+                    <p className="text-xs font-semibold text-foreground">Active</p>
+                    <p className="hidden text-[10px] text-muted-foreground sm:block">Available for payroll</p>
+                  </div>
+                  <Switch checked={form.is_active} onCheckedChange={(checked) => updateForm({ is_active: checked })} />
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-3 py-2.5">
+                <div className="min-w-0">
                   <p className="text-xs font-semibold text-foreground">Active</p>
-                  <p className="hidden text-[10px] text-muted-foreground sm:block">Available for payroll</p>
+                  <p className="text-[10px] text-muted-foreground">Available for payroll</p>
                 </div>
                 <Switch checked={form.is_active} onCheckedChange={(checked) => updateForm({ is_active: checked })} />
               </div>
-            </div>
+            )}
 
             {form.type === 'deduction' ? (
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-1">
                 <ToggleCard
                   title="Loan pay component"
-                  description="Eligible for employee loan requests and payroll loan deductions."
+                  description="Eligible for employee loan requests and payroll loan deductions. Amortization is enabled automatically when a default term is provided."
                   checked={Boolean(form.is_loan)}
                   onChange={(checked) =>
                     updateForm({
@@ -950,30 +1192,21 @@ export default function AdminPayComponentsPage() {
                     })
                   }
                 />
-                <ToggleCard
-                  title="Amortized schedule (Phase 2)"
-                  description="Reserved for future amortization rules."
-                  checked={Boolean(form.is_amortized)}
-                  disabled={!form.is_loan}
-                  onChange={(checked) => updateForm({ is_amortized: checked })}
-                />
                 {form.is_loan ? (
-                  <div className="sm:col-span-2">
-                    <Field
-                      label="Suggested term (months)"
-                      hint="Optional. Shown as a hint on loan requests; does not auto-enforce repayment."
-                    >
-                      <input
-                        type="number"
-                        min="1"
-                        max="600"
-                        value={form.default_term_months}
-                        onChange={(e) => updateForm({ default_term_months: e.target.value })}
-                        className={inputClass}
-                        placeholder="e.g. 12"
-                      />
-                    </Field>
-                  </div>
+                  <Field
+                    label="Default repayment term (months)"
+                    hint="Optional. When set, repayments use an installment schedule on approved loans. Leave blank for one-off deductions."
+                  >
+                    <input
+                      type="number"
+                      min="1"
+                      max="600"
+                      value={form.default_term_months}
+                      onChange={(e) => updateForm({ default_term_months: e.target.value })}
+                      className={inputClass}
+                      placeholder="e.g. 12"
+                    />
+                  </Field>
                 ) : null}
               </div>
             ) : null}
@@ -1026,7 +1259,7 @@ export default function AdminPayComponentsPage() {
 
                     <ToggleCard
                       title="Pro-ratable"
-                      description="Adjust with days worked."
+                      description="When on, payroll scales this component by attendance vs scheduled workdays in the pay period (after 15th/30th rules). Salary tab preview stays full-month unless a payroll period is run."
                       checked={form.is_proratable}
                       onChange={(checked) => updateForm({ is_proratable: checked })}
                     />
@@ -1233,6 +1466,25 @@ function formatCalculationType(value) {
     hourly: 'Hourly',
   }
   return map[value] || value
+}
+
+function describeCalculationHint(calc) {
+  switch (calc) {
+    case 'fixed_amount':
+      return 'A flat peso amount applied each pay period.'
+    case 'percent_basic':
+      return 'Computed as a percentage of the basic salary.'
+    case 'percent_gross':
+      return 'Computed as a percentage of total gross earnings (basic + other earnings).'
+    case 'daily_rate':
+      return 'Daily rate × days worked. Used for per-diem, project days, holiday work.'
+    case 'hourly':
+      return 'Hourly rate × hours. Useful for overtime-like premiums or hourly-paid roles.'
+    case 'formula':
+      return 'Custom expression using BASIC, GROSS, DEFAULT_VALUE, HOURS, HOURLY_RATE, DAILY_RATE.'
+    default:
+      return 'Controls how the component amount is computed.'
+  }
 }
 
 function renderStatIcon(icon) {

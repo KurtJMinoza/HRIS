@@ -41,6 +41,8 @@ const EMPTY_FORM = {
   category: 'Fixed Allowance',
   calculation_type: 'fixed_amount',
   value: '0',
+  hourly_rate: '',
+  hours: '',
   formula: '',
   is_taxable: true,
   contributes_sss: false,
@@ -198,14 +200,30 @@ export default function AdminEmployeeCompensationPage() {
       setDraftForm(EMPTY_FORM)
       return
     }
+    const meta = master.metadata && typeof master.metadata === 'object' ? master.metadata : {}
+    const calc = master.calculation_type || 'fixed_amount'
+    let initValue = String(master.default_value ?? 0)
+    let initHourlyRate = ''
+    let initHours = ''
+    if (calc === 'hourly') {
+      initHourlyRate = meta.default_hourly_rate != null ? String(meta.default_hourly_rate) : String(master.default_value ?? '')
+      initHours = meta.default_hours != null ? String(meta.default_hours) : ''
+      initValue = initHourlyRate || '0'
+    } else if (calc === 'daily_rate') {
+      initHours = meta.default_days != null ? String(meta.default_days) : ''
+    } else if (calc === 'percent_basic' || calc === 'percent_gross') {
+      initValue = meta.default_percent != null ? String(meta.default_percent) : String(master.default_value ?? 0)
+    }
     setDraftForm({
       pay_component_id: master.id,
       name: master.name,
       code: master.code,
       type: master.type,
       category: master.category || 'Fixed Allowance',
-      calculation_type: master.calculation_type,
-      value: String(master.default_value ?? 0),
+      calculation_type: calc,
+      value: initValue,
+      hourly_rate: initHourlyRate,
+      hours: initHours,
       formula: master.formula || '',
       is_taxable: Boolean(master.is_taxable),
       contributes_sss: Boolean(master.contributes_sss),
@@ -235,9 +253,14 @@ export default function AdminEmployeeCompensationPage() {
         employeeName: activeEmployee.name,
         ...draftForm,
         value: Number(draftForm.value || 0),
+        hourly_rate: draftForm.hourly_rate !== '' && draftForm.hourly_rate !== null
+          ? Number(draftForm.hourly_rate)
+          : null,
+        hours: draftForm.hours !== '' && draftForm.hours !== null
+          ? Number(draftForm.hours)
+          : null,
         formula: draftForm.formula || null,
         pay_component_id: draftForm.pay_component_id || null,
-        is_taxable: true,
         show_on_payslip: true,
         is_custom: false,
       },
@@ -280,6 +303,8 @@ export default function AdminEmployeeCompensationPage() {
             category: item.category,
             calculation_type: item.calculation_type,
             value: Number(item.value || 0),
+            hourly_rate: item.hourly_rate != null ? Number(item.hourly_rate) : null,
+            hours: item.hours != null ? Number(item.hours) : null,
             formula: item.formula || null,
             is_taxable: item.is_taxable,
             contributes_sss: item.contributes_sss,
@@ -352,8 +377,17 @@ export default function AdminEmployeeCompensationPage() {
     const newValue = Number(editValue || 0)
     setUpdatingValue(true)
     try {
-      await updateEmployeeCompensation(activeEmployee.id, item.id, { value: newValue })
-      toast({ title: 'Compensation updated', description: `${item.name} value updated to ₱${newValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.` })
+      const payload = { value: newValue }
+      if (item.calculation_type === 'hourly') {
+        payload.hourly_rate = newValue
+      }
+      await updateEmployeeCompensation(activeEmployee.id, item.id, payload)
+      const formatted = `₱${newValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+      const calc = item.calculation_type
+      const label = calc === 'percent_basic' || calc === 'percent_gross'
+        ? `${newValue}%`
+        : (calc === 'hourly' ? `${formatted}/hr` : formatted)
+      toast({ title: 'Compensation updated', description: `${item.name} value updated to ${label}.` })
       setEditingId(null)
       setEditValue('')
       await refreshCompensation()
@@ -657,29 +691,124 @@ export default function AdminEmployeeCompensationPage() {
                   ))}
                 </select>
               </Field>
-              <Field label="Name">
-                <input
-                  value={draftForm.name}
-                  className={inputClass}
-                  placeholder="Select a pay component"
-                  readOnly
-                  required
-                />
-              </Field>
-              <Field label="Amount / Value">
-                <input
-                  value={draftForm.value}
-                  onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
-                  className={inputClass}
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  required
-                />
-              </Field>
+
+              {draftForm.pay_component_id ? (
+                <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm sm:grid-cols-3">
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Type</p>
+                    <p className="mt-1 font-semibold text-slate-900 capitalize">{draftForm.type}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Category</p>
+                    <p className="mt-1 font-semibold text-slate-900">{draftForm.category || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Calculation</p>
+                    <p className="mt-1 font-semibold text-slate-900">{formatCalculationType(draftForm.calculation_type)}</p>
+                  </div>
+                </div>
+              ) : null}
+
+              {draftForm.calculation_type === 'fixed_amount' ? (
+                <Field label="Amount (₱)">
+                  <input
+                    value={draftForm.value}
+                    onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
+                    className={inputClass}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    required
+                  />
+                </Field>
+              ) : null}
+
+              {draftForm.calculation_type === 'percent_basic' || draftForm.calculation_type === 'percent_gross' ? (
+                <Field label={draftForm.calculation_type === 'percent_basic' ? 'Percentage of Basic (%)' : 'Percentage of Gross (%)'}>
+                  <input
+                    value={draftForm.value}
+                    onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
+                    className={inputClass}
+                    inputMode="decimal"
+                    placeholder="e.g. 5"
+                    required
+                  />
+                </Field>
+              ) : null}
+
+              {draftForm.calculation_type === 'hourly' ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Hourly Rate (₱)">
+                    <input
+                      value={draftForm.hourly_rate}
+                      onChange={(e) => setDraftForm((prev) => ({ ...prev, hourly_rate: e.target.value, value: e.target.value }))}
+                      className={inputClass}
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      required
+                    />
+                  </Field>
+                  <Field label="Hours per Pay Period">
+                    <input
+                      value={draftForm.hours}
+                      onChange={(e) => setDraftForm((prev) => ({ ...prev, hours: e.target.value }))}
+                      className={inputClass}
+                      inputMode="decimal"
+                      placeholder="e.g. 40"
+                      required
+                    />
+                  </Field>
+                </div>
+              ) : null}
+
+              {draftForm.calculation_type === 'daily_rate' ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Daily Rate (₱)">
+                    <input
+                      value={draftForm.value}
+                      onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
+                      className={inputClass}
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      required
+                    />
+                  </Field>
+                  <Field label="Days per Pay Period">
+                    <input
+                      value={draftForm.hours}
+                      onChange={(e) => setDraftForm((prev) => ({ ...prev, hours: e.target.value }))}
+                      className={inputClass}
+                      inputMode="decimal"
+                      placeholder="e.g. 22"
+                    />
+                  </Field>
+                </div>
+              ) : null}
+
+              {draftForm.calculation_type === 'formula' ? (
+                <>
+                  <Field label="Default value (DEFAULT_VALUE token)">
+                    <input
+                      value={draftForm.value}
+                      onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
+                      className={inputClass}
+                      inputMode="decimal"
+                      placeholder="0.00"
+                    />
+                  </Field>
+                  <Field label="Formula">
+                    <input
+                      value={draftForm.formula}
+                      onChange={(e) => setDraftForm((prev) => ({ ...prev, formula: e.target.value }))}
+                      className={`${inputClass} font-mono text-xs`}
+                      placeholder="(BASIC * 0.05) + DEFAULT_VALUE"
+                    />
+                  </Field>
+                </>
+              ) : null}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
-              Component details come from the Pay Components catalog. You can only adjust the employee-specific amount here.
+              Component definition (calculation type, taxability, contributions) is set in the Pay Components catalog. Use this dialog to capture the employee-specific amount or rate.
             </div>
 
             <DialogFooter className="border-t border-slate-200 pt-5">
@@ -764,10 +893,11 @@ function SummaryCard({ label, value }) {
 function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editValue, onEditStart, onEditChange, onEditSave, onEditCancel, updatingValue }) {
   return (
     <div className="overflow-x-auto">
-      <Table className="min-w-[760px]">
+      <Table className="min-w-[820px]">
         <TableHeader className="[&_tr]:border-b-0">
           <TableRow>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Component</TableHead>
+            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Category</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Calculation</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Taxability</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Contributory</TableHead>
@@ -778,7 +908,7 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
         <TableBody>
           {items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="px-3 py-10 text-center text-sm text-slate-500">
+              <TableCell colSpan={7} className="px-3 py-10 text-center text-sm text-slate-500">
                 {emptyLabel}
               </TableCell>
             </TableRow>
@@ -796,6 +926,7 @@ function CompTable({ items, emptyLabel, amountTone, onRemove, editingId, editVal
                       </span>
                     </div>
                   </TableCell>
+                  <TableCell className="px-3 py-3.5 text-slate-600">{item.category || '—'}</TableCell>
                   <TableCell className="px-3 py-3.5">{formatCalculationType(item.calculation_type)}</TableCell>
                   <TableCell className="px-3 py-3.5">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
                   <TableCell className="px-3 py-3.5">{describeContributions(item)}</TableCell>
@@ -916,6 +1047,7 @@ function formatCalculationType(value) {
     fixed_amount: 'Fixed Amount',
     percent_basic: '% of Basic',
     percent_gross: '% of Gross',
+    daily_rate: 'Daily Rate',
     formula: 'Formula',
     hourly: 'Hourly',
   }

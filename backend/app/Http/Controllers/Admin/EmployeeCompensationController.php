@@ -309,6 +309,32 @@ class EmployeeCompensationController extends Controller
         }
         $metadata['auto_applied'] = false;
 
+        $masterMeta = is_array($master?->metadata ?? null) ? $master->metadata : [];
+        $calc = strtolower((string) ($componentPayload['calculation_type'] ?? $master?->calculation_type ?? PayComponent::CALC_FIXED));
+
+        $resolvedValue = isset($componentPayload['value'])
+            ? (float) $componentPayload['value']
+            : (isset($componentPayload['default_value'])
+                ? (float) $componentPayload['default_value']
+                : (float) ($master?->default_value ?? 0));
+
+        $resolvedHourlyRate = null;
+        $resolvedHours = null;
+        if (isset($componentPayload['hourly_rate']) && $componentPayload['hourly_rate'] !== null && $componentPayload['hourly_rate'] !== '') {
+            $resolvedHourlyRate = (float) $componentPayload['hourly_rate'];
+        } elseif ($calc === PayComponent::CALC_HOURLY) {
+            $resolvedHourlyRate = isset($masterMeta['default_hourly_rate'])
+                ? (float) $masterMeta['default_hourly_rate']
+                : $resolvedValue;
+        }
+        if (isset($componentPayload['hours']) && $componentPayload['hours'] !== null && $componentPayload['hours'] !== '') {
+            $resolvedHours = (float) $componentPayload['hours'];
+        } elseif ($calc === PayComponent::CALC_HOURLY && isset($masterMeta['default_hours'])) {
+            $resolvedHours = (float) $masterMeta['default_hours'];
+        } elseif ($calc === PayComponent::CALC_DAILY && isset($masterMeta['default_days'])) {
+            $resolvedHours = (float) $masterMeta['default_days'];
+        }
+
         $payload = [
             'user_id' => $employee->id,
             'pay_component_id' => $master?->id,
@@ -317,10 +343,10 @@ class EmployeeCompensationController extends Controller
             'code' => strtoupper(trim((string) ($componentPayload['code'] ?? $master?->code ?? ''))),
             'type' => strtolower((string) ($componentPayload['type'] ?? $master?->type ?? PayComponent::TYPE_EARNING)),
             'category' => $componentPayload['category'] ?? $master?->category,
-            'calculation_type' => strtolower((string) ($componentPayload['calculation_type'] ?? $master?->calculation_type ?? PayComponent::CALC_FIXED)),
-            'value' => (float) ($componentPayload['value'] ?? $componentPayload['default_value'] ?? $master?->default_value ?? 0),
-            'hourly_rate' => isset($componentPayload['hourly_rate']) ? (float) $componentPayload['hourly_rate'] : null,
-            'hours' => isset($componentPayload['hours']) ? (float) $componentPayload['hours'] : null,
+            'calculation_type' => $calc,
+            'value' => $resolvedValue,
+            'hourly_rate' => $resolvedHourlyRate,
+            'hours' => $resolvedHours,
             'formula' => $componentPayload['formula'] ?? $master?->formula,
             'is_taxable' => (bool) ($componentPayload['is_taxable'] ?? $master?->is_taxable ?? true),
             'contributes_sss' => (bool) ($componentPayload['contributes_sss'] ?? $master?->contributes_sss ?? false),
