@@ -1910,8 +1910,15 @@ class PayslipService
      *
      * @return array{payslip_count: int, total_net_pay: float, generated_at: ?\Carbon\Carbon, finalized_count: int, payslip_ids: list<int>, company_id: ?int}
      */
-    public function aggregateForBatchRun(PayrollBatchRun $run): array
+    public function aggregateForBatchRun(PayrollBatchRun $run, bool $recomputeDraftTotals = false): array
     {
+        if ($recomputeDraftTotals) {
+            $live = $this->aggregateLiveDraftForBatchRun($run);
+            if (is_array($live)) {
+                return $live;
+            }
+        }
+
         $q = Payslip::query()
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
             ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
@@ -1965,6 +1972,115 @@ class PayslipService
             'finalized_count' => $finalized,
             'payslip_ids' => $rows->pluck('id')->values()->all(),
             'company_id' => $resolvedCompanyId,
+        ];
+    }
+
+    /**
+     * Recompute draft batch totals from current payroll inputs for real-time Recent Payslips display.
+     *
+     * Finalized batches remain immutable and queued/processing batches use their persisted progress.
+     *
+     * @return array{payslip_count: int, total_net_pay: float, generated_at: ?\Carbon\Carbon, finalized_count: int, payslip_ids: list<int>, company_id: ?int, total_gross_pay: float, total_deductions: float}|null
+     */
+    private function aggregateLiveDraftForBatchRun(PayrollBatchRun $run): ?array
+    {
+        if ((string) $run->status !== PayrollBatchRun::STATUS_DRAFT) {
+            return null;
+        }
+        if ($run->pay_period_start === null || $run->pay_period_end === null) {
+            return null;
+        }
+
+        $stored = $this->aggregateForBatchRun($run, false);
+        if ((int) ($stored['finalized_count'] ?? 0) > 0) {
+            return null;
+        }
+
+        $userIds = $this->employeeIdsForBatchScope($run);
+        if ($userIds === []) {
+            return $stored;
+        }
+
+        $users = User::query()
+            ->whereIn('id', $userIds)
+            ->orderBy('id')
+            ->get();
+        if ($users->isEmpty()) {
+            return $stored;
+        }
+
+        $users->loadMissing([
+            'company',
+            'branch',
+            'payCycle',
+            'governmentIds',
+            'workingSchedule',
+        ]);
+
+        $periodInput = [
+            'from_date' => $run->pay_period_start->toDateString(),
+            'to_date' => $run->pay_period_end->toDateString(),
+            'pay_cycle_id' => $run->pay_cycle_id,
+            'reference_date' => $run->reference_date?->toDateString(),
+            'payroll_period_id' => $run->payroll_period_id,
+            'is_final_pay' => (bool) $run->is_final_pay,
+            'password_protect' => (bool) $run->password_protect,
+        ];
+
+        $grossTotal = 0.0;
+        $deductionsTotal = 0.0;
+        $netTotal = 0.0;
+
+        try {
+            foreach ($users as $user) {
+                [$from, $to, $cyclePreview] = $this->resolveComputationWindow($user, $periodInput);
+                $computed = $this->payrollComputation->computeEmployeePayroll(
+                    $user,
+                    $from,
+                    $to,
+                    null,
+                    [
+                        'pay_period_start' => $from->toDateString(),
+                        'pay_period_end' => $to->toDateString(),
+                        'selected_pay_date' => is_array($cyclePreview) ? ($cyclePreview['pay_date'] ?? null) : null,
+                    ]
+                );
+                $summary = is_array($computed['summary'] ?? null) ? $computed['summary'] : [];
+                $gross = round(
+                    (float) ($summary['gross_pay_this_period']
+                        ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
+                    2
+                );
+                $deductions = round(
+                    (float) ($summary['employee_statutory_this_period'] ?? 0)
+                    + (float) ($summary['custom_deductions_this_period'] ?? 0)
+                    + (float) ($summary['withholding_tax_this_period_estimate'] ?? 0),
+                    2
+                );
+                $net = round((float) ($summary['net_pay_after_withholding_estimate'] ?? 0), 2);
+
+                $grossTotal += $gross;
+                $deductionsTotal += $deductions;
+                $netTotal += $net;
+            }
+        } catch (Throwable $e) {
+            Log::warning('Payslip draft batch live aggregate failed; using persisted totals', [
+                'payroll_batch_run_id' => (int) $run->id,
+                'message' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        return [
+            'payslip_count' => $users->count(),
+            'total_net_pay' => round($netTotal, 2),
+            'total_gross_pay' => round($grossTotal, 2),
+            'total_deductions' => round($deductionsTotal, 2),
+            'generated_at' => $stored['generated_at'] ?? $run->completed_at ?? $run->created_at,
+            'finalized_count' => 0,
+            'payslip_ids' => $stored['payslip_ids'] ?? [],
+            'company_id' => $run->company_id !== null ? (int) $run->company_id : ($stored['company_id'] ?? null),
         ];
     }
 

@@ -167,7 +167,7 @@ class PayslipController extends Controller
         }
 
         $rows = $q->get()->map(function (PayrollBatchRun $run) {
-            $agg = $this->payslipService->aggregateForBatchRun($run);
+            $agg = $this->payslipService->aggregateForBatchRun($run, recomputeDraftTotals: true);
             $resolvedCompanyId = $run->company_id !== null
                 ? (int) $run->company_id
                 : (isset($agg['company_id']) ? (int) $agg['company_id'] : null);
