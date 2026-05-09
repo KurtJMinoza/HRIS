@@ -543,8 +543,7 @@ export default function AdminPayCycleManagementPage() {
             )}
             innerClassName="gap-0 overflow-hidden p-0 pr-0"
           >
-            <div className="grid max-h-[min(88vh,680px)] min-h-0 overflow-hidden xl:grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)]">
-              <div className="min-h-0 overflow-y-auto overscroll-contain bg-card">
+            <div className="max-h-[min(88vh,680px)] min-h-0 overflow-y-auto overscroll-contain bg-card">
                 <DialogHeader className="border-b border-border/60 px-5 py-4">
                   <DialogTitle className="text-lg font-semibold tracking-tight">{editing ? 'Edit pay cycle' : 'Create pay cycle'}</DialogTitle>
                   <DialogDescription className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
@@ -558,7 +557,7 @@ export default function AdminPayCycleManagementPage() {
                     description="Cycle name, frequency, and which companies can use this pay cycle."
                     compact
                   >
-                    <div className="grid gap-3 lg:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-3">
                       <Field label="Cycle Name" className="min-w-0" compact>
                         <Input
                           className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm"
@@ -582,7 +581,7 @@ export default function AdminPayCycleManagementPage() {
                           </SelectContent>
                         </Select>
                       </Field>
-                      <Field label="Apply to Companies" className="min-w-0 lg:col-span-2" compact>
+                      <Field label="Apply to Companies" className="min-w-0" compact>
                         <Popover
                           open={companyPickerOpen}
                           onOpenChange={(open) => {
@@ -691,7 +690,7 @@ export default function AdminPayCycleManagementPage() {
                   <ConfiguratorSection
                     eyebrow="Section 2"
                     title="Cut-off & pay date"
-                    description="Fields match your frequency — check the live preview on the right."
+                    description="Fields match your frequency — check the live preview below."
                     compact
                   >
                     {form.code === 'semi_monthly' ? (
@@ -827,8 +826,8 @@ export default function AdminPayCycleManagementPage() {
                         </div>
                       </div>
                     ) : form.code === 'monthly' ? (
-                      <div className="grid gap-3 lg:grid-cols-2">
-                        <Field label="Monthly cut-off" className="min-w-0 lg:col-span-2" compact>
+                      <div className="grid grid-cols-1 gap-3">
+                        <Field label="Monthly cut-off" className="min-w-0" compact>
                           <div className="flex h-9 items-center rounded-lg border border-border/60 bg-muted/20 px-3 text-xs text-muted-foreground">
                             1st day to last day of the month
                           </div>
@@ -838,7 +837,7 @@ export default function AdminPayCycleManagementPage() {
                         </Field>
                       </div>
                     ) : form.code === 'weekly' ? (
-                      <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3">
                         <Field label="Week starts on" className="min-w-0" compact>
                           <Select value={form.weekly_anchor_day} onValueChange={(value) => setForm((prev) => ({ ...prev, weekly_anchor_day: value }))}>
                             <SelectTrigger className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm">
@@ -856,7 +855,7 @@ export default function AdminPayCycleManagementPage() {
                         </Field>
                       </div>
                     ) : form.code === 'bi_weekly' ? (
-                      <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3">
                         <Field label="Cycle start date" className="min-w-0" compact>
                           <Input className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm" type="date" value={form.biweekly_start_date} onChange={(e) => setForm((prev) => ({ ...prev, biweekly_start_date: e.target.value }))} />
                         </Field>
@@ -865,8 +864,8 @@ export default function AdminPayCycleManagementPage() {
                         </Field>
                       </div>
                     ) : form.code === 'daily' ? (
-                      <div className="grid gap-3 lg:grid-cols-2">
-                        <Field label="Daily cut-off" className="min-w-0 lg:col-span-2" compact>
+                      <div className="grid grid-cols-1 gap-3">
+                        <Field label="Daily cut-off" className="min-w-0" compact>
                           <div className="flex h-9 items-center rounded-lg border border-border/60 bg-muted/20 px-3 text-xs text-muted-foreground">
                             Every calendar day
                           </div>
@@ -876,19 +875,19 @@ export default function AdminPayCycleManagementPage() {
                         </Field>
                       </div>
                     ) : form.code === 'project' ? (
-                      <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3">
                         <Field label="Project / milestone start date" className="min-w-0" compact>
                           <Input className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm" type="date" value={form.project_start_date} onChange={(e) => setForm((prev) => ({ ...prev, project_start_date: e.target.value }))} />
                         </Field>
                         <Field label="Project / milestone end date" className="min-w-0" compact>
                           <Input className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm" type="date" value={form.project_end_date} onChange={(e) => setForm((prev) => ({ ...prev, project_end_date: e.target.value }))} />
                         </Field>
-                        <Field label="Pay date" className="min-w-0 lg:col-span-2" compact>
+                        <Field label="Pay date" className="min-w-0" compact>
                           <Input className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm" type="date" value={form.project_pay_date} onChange={(e) => setForm((prev) => ({ ...prev, project_pay_date: e.target.value }))} />
                         </Field>
                       </div>
                     ) : (
-                      <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3">
                         <Field label="Pay day rule" className="min-w-0" compact>
                           <Select value={form.pay_day_type} onValueChange={(value) => setForm((prev) => ({ ...prev, pay_day_type: value }))}>
                             <SelectTrigger className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm">
@@ -919,7 +918,7 @@ export default function AdminPayCycleManagementPage() {
                     description="Proration, weekend handling, and whether this cycle is active or the company default."
                     compact
                   >
-                    <div className="grid gap-3 lg:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-3">
                       <Field label="Proration" className="min-w-0" compact>
                         <Select value={form.pro_ration_type} onValueChange={(value) => setForm((prev) => ({ ...prev, pro_ration_type: value }))}>
                           <SelectTrigger className="h-9 w-full min-w-0 rounded-lg border-border/60 bg-background text-sm shadow-sm">
@@ -956,6 +955,35 @@ export default function AdminPayCycleManagementPage() {
                     </div>
                   </ConfiguratorSection>
 
+                  <div className="border-t border-border/60 bg-muted/15 py-4 dark:border-border/50 dark:bg-muted/10">
+                    <div className="space-y-3 px-5">
+                      <div className="space-y-1">
+                        <Badge variant="outline" className="rounded-full border-border/70 bg-background text-[10px] text-muted-foreground">
+                          Live preview
+                        </Badge>
+                        <h3 className="text-base font-semibold text-foreground">Upcoming pay periods</h3>
+                        <p className="text-xs leading-snug text-muted-foreground">
+                          Updates as you edit — next cut-offs and pay dates.
+                        </p>
+                      </div>
+                      {formPreview ? (
+                        <>
+                          <UpcomingPeriodsPanel preview={formPreview} compact />
+                          {form.code !== 'project' ? (
+                            <WeekendAdjustmentNotice
+                              compact
+                              note={formPreview.weekend_adjustment_note || 'When Pay Date falls on Saturday or Sunday, Pay Day will be moved to the previous Friday.'}
+                            />
+                          ) : null}
+                        </>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-border/60 bg-background p-4 text-xs text-muted-foreground dark:border-border/50">
+                          Configure the cycle to see period and pay date preview.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   <DialogFooter className="flex flex-col gap-2 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-border/50">
                     <Button type="button" variant="outline" className={APP_MODAL_OUTLINE_BUTTON_CLASS} onClick={() => setDialogOpen(false)}>
                       Cancel
@@ -970,36 +998,6 @@ export default function AdminPayCycleManagementPage() {
                     </Button>
                   </DialogFooter>
                 </form>
-              </div>
-
-              <div className="min-h-0 overflow-y-auto overscroll-contain border-t border-border/60 bg-muted/15 p-4 lg:border-t-0 lg:border-l dark:border-border/50 dark:bg-muted/10">
-                <div className="sticky top-0 space-y-3">
-                  <div className="space-y-1">
-                    <Badge variant="outline" className="rounded-full border-border/70 bg-background text-[10px] text-muted-foreground">
-                      Live preview
-                    </Badge>
-                    <h3 className="text-base font-semibold text-foreground">Upcoming pay periods</h3>
-                    <p className="text-xs leading-snug text-muted-foreground">
-                      Updates as you edit — next cut-offs and pay dates.
-                    </p>
-                  </div>
-                  {formPreview ? (
-                    <>
-                      <UpcomingPeriodsPanel preview={formPreview} compact />
-                      {form.code !== 'project' ? (
-                        <WeekendAdjustmentNotice
-                          compact
-                          note={formPreview.weekend_adjustment_note || 'When Pay Date falls on Saturday or Sunday, Pay Day will be moved to the previous Friday.'}
-                        />
-                      ) : null}
-                    </>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border/60 bg-background p-4 text-xs text-muted-foreground dark:border-border/50">
-                      Configure the cycle to see period and pay date preview.
-                    </div>
-                  )}
-                </div>
-              </div>
             </div>
           </DialogContent>
         </Dialog>
