@@ -1380,6 +1380,34 @@ class PayrollCalculatorService
     }
 
     /**
+     * All calendar variants that compensation summaries might be cached under (UI often sends UTC dates while the app uses a local TZ).
+     *
+     * @return list<string>
+     */
+    private function compensationSummaryAsOfDateKeysForCacheInvalidation(): array
+    {
+        $zones = array_values(array_unique(array_filter([
+            \is_string(config('app.timezone')) ? config('app.timezone') : null,
+            \is_string(config('attendance.timezone')) ? config('attendance.timezone') : null,
+            'UTC',
+        ])));
+        $out = [];
+
+        foreach ($zones as $zone) {
+            try {
+                $base = Carbon::now($zone)->startOfDay();
+                for ($d = -35; $d <= 35; $d++) {
+                    $out[] = $base->copy()->addDays($d)->toDateString();
+                }
+            } catch (\Throwable) {
+                // Ignore invalid TZ configuration.
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    /**
      * Drop file-cached {@see buildEmployeeCompensationSummary} entries for a user.
      * Must run when {@see EmployeeCompensationComponent} rows change; otherwise the UI can show
      * stale earning line ids and PATCH/DELETE will 404 after a delete.
@@ -1395,8 +1423,7 @@ class PayrollCalculatorService
         $hoursVariants = [0.0];
         $catalogFlags = [0, 1];
 
-        for ($d = -21; $d <= 21; $d++) {
-            $asOfDate = Carbon::now()->addDays($d)->toDateString();
+        foreach ($this->compensationSummaryAsOfDateKeysForCacheInvalidation() as $asOfDate) {
             foreach ($prorationFactors as $pf) {
                 foreach ($hoursVariants as $hw) {
                     foreach ($catalogFlags as $catalog) {

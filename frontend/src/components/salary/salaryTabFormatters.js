@@ -36,7 +36,8 @@ export function formatDefaultPayComponentScheduleLabel(settingValue) {
 
 export function formatEmployeeScheduleOverrideShort(override) {
   const o = String(override || '').trim()
-  return SCHEDULE_OVERRIDE_LABELS[o] || (o || null)
+  const key = o === 'monthly' ? 'split' : o
+  return SCHEDULE_OVERRIDE_LABELS[key] || (o || null)
 }
 
 export function formatPayProfileComponentScheduleCell(item) {

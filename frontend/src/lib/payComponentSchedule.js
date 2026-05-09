@@ -7,13 +7,13 @@ export const SCHEDULE_OVERRIDE_LABELS = {
   first_run: '15th',
   second_run: 'End of month',
   split: '15/30 Split',
-  monthly: 'Monthly / full run',
 }
 
 /** @param {unknown} slug */
 export function labelForStoredOverride(slug, emptyLabel = 'Use default') {
-  const key = slug != null ? String(slug).trim() : ''
+  let key = slug != null ? String(slug).trim() : ''
   if (!key || key === 'default') return emptyLabel
+  if (key === 'monthly') key = 'split'
   return SCHEDULE_OVERRIDE_LABELS[key] || emptyLabel
 }
 
@@ -31,7 +31,6 @@ export function badgeClassForStoredOverride(slug) {
   if (!key || key === 'default') return 'bg-slate-100 text-slate-600'
   if (key === 'first_run') return 'bg-blue-50 text-blue-700'
   if (key === 'second_run') return 'bg-purple-50 text-purple-700'
-  if (key === 'split') return 'bg-emerald-50 text-emerald-700'
-  if (key === 'monthly') return 'bg-amber-50 text-amber-700'
+  if (key === 'split' || key === 'monthly') return 'bg-emerald-50 text-emerald-700'
   return 'bg-slate-100 text-slate-600'
 }

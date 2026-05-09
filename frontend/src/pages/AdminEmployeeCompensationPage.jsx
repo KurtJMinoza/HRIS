@@ -60,13 +60,82 @@ const PAY_COMPONENT_SCHEDULE_OPTIONS = [
   { value: 'first_run', label: '15th' },
   { value: 'split', label: 'Split 15/30' },
   { value: 'second_run', label: 'End of month' },
-  { value: 'monthly', label: 'Monthly / full run (legacy)' },
 ]
 
 function normalizedScheduleSelectValue(scheduleOverride) {
   const v = scheduleOverride
   if (v == null || v === '' || v === 'default') return 'default'
-  return String(v).trim()
+  const s = String(v).trim()
+  // Legacy DB value — same timing as split; keep select controlled without a duplicate option.
+  if (s === 'monthly') return 'split'
+  return s
+}
+
+/** YYYY-MM-DD for company payroll context (must match typical API as_of_date); avoids UTC drift from toISOString().slice. */
+function payrollCalendarDateYmd(timeZone = 'Asia/Manila') {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date())
+  } catch {
+    return new Date().toISOString().slice(0, 10)
+  }
+}
+
+/** Mirrors backend PayComponentSchedule → DeductionScheduleSetting schedule_type tokens on summary lines */
+function resolvedScheduleFromStoredOverride(slug) {
+  const s = slug == null ? '' : String(slug).trim()
+  if (!s) return null
+  if (s === 'first_run') return '15th'
+  if (s === 'second_run') return '30th'
+  if (s === 'split' || s === 'monthly') return 'both'
+  return null
+}
+
+function patchCompensationRowSchedule(row, assignment) {
+  const raw = assignment?.schedule_override
+  const hasExplicit = raw != null && String(raw).trim() !== ''
+  const resolved = hasExplicit ? resolvedScheduleFromStoredOverride(raw) : null
+  const defaultSchedule = row.default_schedule
+  const nextResolved = resolved ?? defaultSchedule ?? row.resolved_schedule ?? row.pay_schedule_type
+  return {
+    ...row,
+    schedule_override: hasExplicit ? raw : null,
+    schedule_source: hasExplicit ? 'employee_override' : 'default_schedule',
+    resolved_schedule: nextResolved,
+    pay_schedule_type: nextResolved,
+  }
+}
+
+/** Inline schedule PATCH: merge server assignment into cached summary so the UI updates before the next fetch finishes. */
+function mergeSchedulePatchIntoCompensationData(prevEmployees, employeeId, assignment) {
+  const aid = Number(assignment?.id)
+  const eid = Number(employeeId)
+  if (!Number.isFinite(aid) || aid <= 0 || !Number.isFinite(eid)) return prevEmployees
+  if (!Array.isArray(prevEmployees)) return prevEmployees
+
+  return prevEmployees.map((entry) => {
+    if (Number(entry?.employee?.id) !== eid) return entry
+    const summary = entry.summary
+    if (!summary || typeof summary !== 'object') return entry
+
+    const patchLines = (lines) => {
+      if (!Array.isArray(lines)) return lines
+      return lines.map((line) => (Number(line?.id) === aid ? patchCompensationRowSchedule(line, assignment) : line))
+    }
+
+    return {
+      ...entry,
+      summary: {
+        ...summary,
+        earnings: patchLines(summary.earnings),
+        deductions: patchLines(summary.deductions),
+      },
+    }
+  })
 }
 
 export default function AdminEmployeeCompensationPage() {
@@ -78,7 +147,7 @@ export default function AdminEmployeeCompensationPage() {
   const [components, setComponents] = useState([])
   const [compensationData, setCompensationData] = useState([])
   const [employeeSearch, setEmployeeSearch] = useState('')
-  const [effectiveFrom] = useState(new Date().toISOString().slice(0, 10))
+  const [effectiveFrom] = useState(() => payrollCalendarDateYmd())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [activeEmployeeId, setActiveEmployeeId] = useState(null)
@@ -436,14 +505,19 @@ export default function AdminEmployeeCompensationPage() {
         payload_schedule_override: payloadSlug,
         previous_normalized: current,
       })
-      await updateEmployeeCompensation(activeEmployee.id, item.id, {
+      const patchRes = await updateEmployeeCompensation(activeEmployee.id, item.id, {
         schedule_override: payloadSlug,
       })
+      const assignment = patchRes?.assignment
       toast({
         title: 'Schedule updated',
         description: `${item.name}: ${PAY_COMPONENT_SCHEDULE_OPTIONS.find((o) => o.value === incoming)?.label ?? incoming}.`,
       })
       await refreshCompensation(activeEmployee.id)
+      // Merge after GET: cached compensation summaries may still be stale briefly; PATCH `assignment` is source of truth.
+      if (assignment && typeof assignment === 'object') {
+        setCompensationData((prev) => mergeSchedulePatchIntoCompensationData(prev, activeEmployee.id, assignment))
+      }
       window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
     } catch (error) {
       toast({
