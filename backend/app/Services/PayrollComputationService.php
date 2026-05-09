@@ -1068,6 +1068,13 @@ class PayrollComputationService
         $monthlyBaseForRate = $this->resolveMonthlyBaseForDailyRate($user, $to->toDateString());
         [$effectiveSchedule] = $this->resolveEffectiveScheduleForDailyComputation($user);
         $dailyRateDivisorDays = $this->resolveStableScheduleMonthlyDivisor($effectiveSchedule);
+        $scheduleMetrics = $this->scheduleRateService->describeForUser(
+            $user,
+            $monthlyBaseForRate > 0 ? $monthlyBaseForRate : null,
+            $to->copy()->startOfDay(),
+            $effectiveSchedule
+        );
+        $scheduledDailyHours = max(0.0, (float) ($scheduleMetrics['working_hours_per_day'] ?? 0));
         // Single source for daily rate across Daily Computation and payroll finalize/payslip:
         // prefer schedule-rate resolver (same path used by daily-computation listings), then payroll fallback.
         $resolvedScheduleDailyRate = $monthlyBaseForRate > 0
@@ -1121,6 +1128,7 @@ class PayrollComputationService
         while ($cursor->lessThanOrEqualTo($to)) {
             $dateKey = $cursor->toDateString();
             [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey, $tz);
+            $allowanceAttendance = $this->resolveAllowanceAttendanceValidity($user, $dateKey, $timeIn, $timeOut, $tz);
             $dayPayroll = $this->computeDayPayroll(
                 $user,
                 $dateKey,
@@ -1130,6 +1138,9 @@ class PayrollComputationService
                 $dailyRate,
                 $tz
             );
+            $dayPayroll['allowance_attendance_valid'] = $allowanceAttendance['valid'];
+            $dayPayroll['allowance_attendance_reason'] = $allowanceAttendance['reason'];
+            $dayPayroll['allowance_attendance_sources'] = $allowanceAttendance['sources'];
             $days[] = $dayPayroll;
             $cursor->addDay();
         }
@@ -1348,7 +1359,11 @@ class PayrollComputationService
             ];
         }
 
-        $attendanceProration = $this->computeScheduleAttendanceProrationForPeriod($days);
+        $attendanceProration = $this->computeScheduleAttendanceProrationForPeriod(
+            $days,
+            $dailyRateDivisorDays,
+            $scheduledDailyHours > 0.0 ? $scheduledDailyHours : 8.0
+        );
 
         $compensationSummary = $this->payrollCalculator->buildEmployeeCompensationSummary($user, [
             'as_of_date' => $to->toDateString(),
@@ -1540,28 +1555,113 @@ class PayrollComputationService
      * Used only when a pay component has is_proratable — others keep full semi-monthly schedule amounts.
      *
      * @param  array<int, array<string, mixed>>  $days
-     * @return array{factor: float, scheduled_workdays: float, credited_day_units: float}
+     * @return array{factor: float, scheduled_workdays: float, credited_day_units: float, allowance: array<string, mixed>}
      */
-    private function computeScheduleAttendanceProrationForPeriod(array $days): array
+    private function computeScheduleAttendanceProrationForPeriod(
+        array $days,
+        int $monthlyDivisorDays,
+        float $scheduledDailyHours
+    ): array
     {
         $scheduled = 0.0;
         $credited = 0.0;
+        $allowanceEligibleMinutes = 0;
+        $allowanceWorkedDayUnits = 0.0;
+        $attendanceCounted = [];
+        $attendanceExcluded = [];
+
         foreach ($days as $d) {
+            $dateKey = (string) ($d['date'] ?? '');
             $isRest = (bool) ($d['is_rest_day'] ?? false);
             $required = (int) ($d['required_minutes'] ?? 0);
             if ($isRest || $required <= 0) {
+                if ($dateKey !== '') {
+                    $attendanceExcluded[] = [
+                        'date' => $dateKey,
+                        'status' => (string) ($d['status'] ?? ''),
+                        'reason' => $isRest ? 'rest_day' : 'no_required_minutes',
+                    ];
+                }
                 continue;
             }
             $scheduled += 1.0;
             $regularPaid = (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0));
             $credited += min(1.0, $regularPaid / $required);
+
+            $status = strtolower(trim((string) ($d['status'] ?? '')));
+            if ($status !== 'worked') {
+                if ($dateKey !== '') {
+                    $attendanceExcluded[] = [
+                        'date' => $dateKey,
+                        'status' => $status,
+                        'required_minutes' => $required,
+                        'paid_regular_minutes' => $regularPaid,
+                        'reason' => $status === 'leave' ? 'leave_not_attendance_allowance' : 'not_worked',
+                    ];
+                }
+                continue;
+            }
+
+            if (! (bool) ($d['allowance_attendance_valid'] ?? false)) {
+                if ($dateKey !== '') {
+                    $attendanceExcluded[] = [
+                        'date' => $dateKey,
+                        'status' => $status,
+                        'required_minutes' => $required,
+                        'paid_regular_minutes' => $regularPaid,
+                        'reason' => (string) ($d['allowance_attendance_reason'] ?? 'invalid_attendance_session'),
+                        'sources' => $d['allowance_attendance_sources'] ?? [],
+                    ];
+                }
+                continue;
+            }
+
+            $breakdown = is_array($d['breakdown'] ?? null) ? $d['breakdown'] : [];
+            $regularPayMinutes = collect($breakdown)
+                ->filter(fn ($entry) => strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay')
+                ->sum(fn ($entry) => (int) ($entry['minutes'] ?? 0));
+
+            if ($regularPayMinutes <= 0) {
+                if ($dateKey !== '') {
+                    $attendanceExcluded[] = [
+                        'date' => $dateKey,
+                        'status' => $status,
+                        'required_minutes' => $required,
+                        'paid_regular_minutes' => $regularPaid,
+                        'reason' => 'no_regular_pay_minutes',
+                    ];
+                }
+                continue;
+            }
+
+            $dayUnit = min(1.0, $regularPayMinutes / $required);
+            $allowanceEligibleMinutes += $regularPayMinutes;
+            $allowanceWorkedDayUnits += $dayUnit;
+            $attendanceCounted[] = [
+                'date' => $dateKey,
+                'status' => $status,
+                'required_minutes' => $required,
+                'allowance_minutes' => $regularPayMinutes,
+                'worked_day_unit' => round($dayUnit, 6),
+            ];
         }
         $factor = $scheduled > 0.0 ? max(0.0, min(1.0, $credited / $scheduled)) : 1.0;
+        $monthlyDivisorDays = max(1, $monthlyDivisorDays);
 
         return [
             'factor' => round($factor, 6),
             'scheduled_workdays' => round($scheduled, 4),
             'credited_day_units' => round($credited, 4),
+            'allowance' => [
+                'worked_day_units' => round($allowanceWorkedDayUnits, 6),
+                'worked_minutes' => $allowanceEligibleMinutes,
+                'converted_hours' => round($allowanceEligibleMinutes / 60, 4),
+                'daily_hours' => round(max(0.0, $scheduledDailyHours), 4),
+                'monthly_divisor_days' => $monthlyDivisorDays,
+                'divisor_source' => 'stable_schedule_monthly',
+                'attendance_counted' => $attendanceCounted,
+                'attendance_excluded' => $attendanceExcluded,
+            ],
         ];
     }
 
@@ -1572,6 +1672,86 @@ class PayrollComputationService
      * - 5-day schedule => round(5 * 52 / 12) = 22
      * - 6-day schedule => round(6 * 52 / 12) = 26
      * This avoids month-to-month drift from raw calendar weekday counts (20-23 for 5-day schedules).
+     *
+     * @param  Carbon  $from  Retained for call-site compatibility.
+     */
+    /**
+     * Allowance eligibility is stricter than payroll's payable-time fallback:
+     * actual attendance must have a valid IN and OUT from raw logs and/or approved correction.
+     * Approved OT virtual time-outs may pay OT in payroll, but must not turn an incomplete log
+     * into an allowance day.
+     *
+     * @return array{valid: bool, reason: string, sources: array<string, bool>}
+     */
+    private function resolveAllowanceAttendanceValidity(
+        User $user,
+        string $dateKey,
+        ?Carbon $timeIn,
+        ?Carbon $timeOut,
+        string $tz
+    ): array {
+        $sources = [
+            'raw_clock_in' => false,
+            'raw_clock_out' => false,
+            'approved_correction_time_in' => false,
+            'approved_correction_time_out' => false,
+        ];
+
+        if (! $timeIn || ! $timeOut) {
+            return [
+                'valid' => false,
+                'reason' => 'missing_clock_in_or_out',
+                'sources' => $sources,
+            ];
+        }
+
+        $correction = AttendanceCorrection::query()
+            ->where('user_id', $user->id)
+            ->whereDate('date', $dateKey)
+            ->where('approved', true)
+            ->where(function ($q) {
+                $q->where('pending_approval', false)->orWhereNull('pending_approval');
+            })
+            ->whereNull('rejected_at')
+            ->orderByDesc('approved_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($correction) {
+            $sources['approved_correction_time_in'] = $correction->time_in !== null;
+            $sources['approved_correction_time_out'] = $correction->time_out !== null;
+        }
+
+        $dayStartUtc = Carbon::parse($dateKey, $tz)->startOfDay()->setTimezone('UTC');
+        $dayEndUtc = Carbon::parse($dateKey, $tz)->endOfDay()->setTimezone('UTC');
+        $sources['raw_clock_in'] = AttendanceLog::query()
+            ->where('user_id', $user->id)
+            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
+            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
+            ->exists();
+
+        $timeInUtc = $timeIn->copy()->setTimezone('UTC');
+        $timeOutUtc = $timeOut->copy()->setTimezone('UTC');
+        $sources['raw_clock_out'] = AttendanceLog::query()
+            ->where('user_id', $user->id)
+            ->where('verified_at', '>=', $timeInUtc)
+            ->where('verified_at', '<=', $timeOutUtc)
+            ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
+            ->exists();
+
+        $hasValidIn = $sources['raw_clock_in'] || $sources['approved_correction_time_in'];
+        $hasValidOut = $sources['raw_clock_out'] || $sources['approved_correction_time_out'];
+
+        return [
+            'valid' => $hasValidIn && $hasValidOut,
+            'reason' => $hasValidIn && $hasValidOut ? 'valid_attendance_session' : 'incomplete_attendance_without_approved_correction',
+            'sources' => $sources,
+        ];
+    }
+
+    /**
+     * Monthly basic to daily rate for payroll. Uses a stable schedule divisor:
+     * 5 days/week => 22, 6 days/week => 26.
      *
      * @param  Carbon  $from  Retained for call-site compatibility.
      */

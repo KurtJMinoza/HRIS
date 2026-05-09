@@ -712,6 +712,124 @@ class PolicyEngineTest extends TestCase
         $this->assertSame('09:42', $timeOut?->format('H:i'));
     }
 
+    public function test_attendance_prorated_allowance_uses_monthly_schedule_divisor_and_present_minutes(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $workday = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_period_minutes' => 0,
+            'early_timeout_minutes' => null,
+            'overtime_buffer_minutes' => 15,
+        ];
+        $schedule = [
+            'sun' => null,
+            'mon' => $workday,
+            'tue' => $workday,
+            'wed' => $workday,
+            'thu' => $workday,
+            'fri' => $workday,
+            'sat' => $workday,
+        ];
+
+        $user = User::factory()->create([
+            'monthly_salary' => 26000,
+            'schedule' => $schedule,
+            'is_active' => true,
+        ]);
+
+        $component = PayComponent::create([
+            'name' => 'Allowance',
+            'code' => 'ALLOWANCE_TEST_'.$user->id,
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => 'Fixed Allowance',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'default_value' => 2600,
+            'is_taxable' => true,
+            'is_proratable' => true,
+            'is_active' => true,
+        ]);
+
+        $assignment = EmployeeCompensationComponent::create([
+            'user_id' => $user->id,
+            'pay_component_id' => $component->id,
+            'name' => 'Allowance',
+            'code' => 'ALLOWANCE_TEST_'.$user->id,
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => 'Fixed Allowance',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'value' => 2600,
+            'is_taxable' => true,
+            'is_proratable' => true,
+            'is_active' => true,
+        ]);
+
+        try {
+            foreach ([
+                '2026-05-04' => ['08:00', '17:00'],
+                '2026-05-05' => ['08:00', '17:00'],
+                '2026-05-06' => ['08:00', '17:00'],
+                '2026-05-07' => ['08:00', '17:00'],
+                '2026-05-08' => ['08:00', '15:54'],
+            ] as $dateKey => [$in, $out]) {
+                AttendanceLog::create([
+                    'user_id' => $user->id,
+                    'type' => AttendanceLog::TYPE_CLOCK_IN,
+                    'verified_at' => Carbon::parse("{$dateKey} {$in}", 'Asia/Manila')->utc(),
+                ]);
+                AttendanceLog::create([
+                    'user_id' => $user->id,
+                    'type' => AttendanceLog::TYPE_CLOCK_OUT,
+                    'verified_at' => Carbon::parse("{$dateKey} {$out}", 'Asia/Manila')->utc(),
+                ]);
+            }
+            AttendanceLog::create([
+                'user_id' => $user->id,
+                'type' => AttendanceLog::TYPE_CLOCK_IN,
+                'verified_at' => Carbon::parse('2026-05-09 08:00', 'Asia/Manila')->utc(),
+            ]);
+            Overtime::create([
+                'user_id' => $user->id,
+                'date' => '2026-05-09',
+                'schedule_end' => '17:00:00',
+                'computed_minutes' => 60,
+                'computed_hours' => 1.0,
+                'status' => Overtime::STATUS_APPROVED,
+            ]);
+
+            $payroll = app(PayrollComputationService::class)->computeEmployeePayroll(
+                $user->fresh(),
+                Carbon::parse('2026-05-04', 'Asia/Manila'),
+                Carbon::parse('2026-05-09', 'Asia/Manila'),
+                null,
+                [
+                    'pay_period_start' => '2026-05-04',
+                    'pay_period_end' => '2026-05-09',
+                    'selected_pay_date' => '2026-05-15',
+                ]
+            );
+
+            $allowanceLine = collect($payroll['summary']['payslip_earning_lines'] ?? [])
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
+            $this->assertNotNull($allowanceLine);
+            $this->assertSame(486.25, (float) ($allowanceLine['amount'] ?? 0));
+            $this->assertSame(4.8625, (float) data_get($allowanceLine, 'allowance_proration.worked_day_units'));
+            $this->assertSame(26.0, (float) data_get($allowanceLine, 'allowance_proration.monthly_divisor_days'));
+            $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
+            $this->assertTrue(collect(data_get($allowanceLine, 'allowance_proration.attendance_excluded', []))
+                ->contains(fn ($row) => ($row['date'] ?? null) === '2026-05-09'
+                    && ($row['reason'] ?? null) === 'incomplete_attendance_without_approved_correction'));
+        } finally {
+            $assignment->forceDelete();
+            $component->forceDelete();
+        }
+    }
+
     private function tablesExist(): bool
     {
         try {

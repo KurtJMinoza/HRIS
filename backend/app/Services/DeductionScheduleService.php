@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\DeductionScheduleSetting;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Central HR-configured rules for when employee deductions are withheld (15th / end-of-month / split).
@@ -342,7 +343,7 @@ class DeductionScheduleService
                 : $fullMonthly;
             $pcId = $line['pay_component_id'] ?? null;
             $key = $pcId ? 'pay_component:'.((int) $pcId) : 'earning:'.md5($label);
-            $out[] = [
+            $row = [
                 'key' => $key,
                 'label' => $label,
                 'schedule_type' => $sched,
@@ -350,6 +351,10 @@ class DeductionScheduleService
                 'full_monthly' => round(max(0.0, $fullMonthly), 2),
                 'display' => $this->formatPayslipEarningLineDisplay($label, $fullMonthly, $sched),
             ];
+            if (is_array($line['allowance_proration'] ?? null)) {
+                $row['allowance_proration'] = $line['allowance_proration'];
+            }
+            $out[] = $row;
         }
 
         return $out;
@@ -502,7 +507,14 @@ class DeductionScheduleService
             $factor = $this->resolvePeriodAwareFactor($user, $sched, $segment, $ref, $selectedPayDate, $periodStartRaw, $periodEndRaw);
             $thisAmt = round($amt * $factor, 2);
             $lineAttendanceFactor = (! $isBasic && ! empty($e['is_proratable'])) ? $attendanceFactor : 1.0;
-            if ($lineAttendanceFactor < 1.0 - 1.0e-9) {
+            $allowanceProration = null;
+            $allowanceMode = $this->resolveAllowanceProrationType($e, $isBasic);
+            if ($allowanceMode === 'attendance_prorated') {
+                $allowanceProration = $this->computeAttendanceProratedAllowanceAmount($e, $attendanceProration);
+                $thisAmt = (float) ($allowanceProration['amount'] ?? 0.0);
+                $lineAttendanceFactor = (float) ($allowanceProration['effective_factor'] ?? 0.0);
+                $this->logAllowanceProration($user, $e, $sched, $periodStartRaw, $periodEndRaw, $allowanceProration);
+            } elseif ($lineAttendanceFactor < 1.0 - 1.0e-9) {
                 $thisAmt = round($thisAmt * $lineAttendanceFactor, 2);
             }
             if (! $isBasic) {
@@ -513,6 +525,7 @@ class DeductionScheduleService
                 'scheduled_this_period' => $thisAmt,
                 'is_basic_salary_line' => $isBasic,
                 'attendance_proration_factor' => $lineAttendanceFactor,
+                'allowance_proration' => $allowanceProration,
             ]);
         }
 
@@ -550,6 +563,115 @@ class DeductionScheduleService
         $f = (float) ($meta['factor'] ?? 1.0);
 
         return max(0.0, min(1.0, $f));
+    }
+
+    /**
+     * Allowance components can be configured through existing pay-component fields:
+     * - fixed monthly/semi-monthly/cutoff allowance: `is_proratable = false`, schedule controls timing.
+     * - attendance-prorated allowance: `is_proratable = true` and allowance category/name/code, or
+     *   `metadata.allowance_proration_type = attendance_prorated`.
+     * - legacy cutoff-prorated allowance: `metadata.allowance_proration_type = cutoff_prorated`.
+     */
+    private function resolveAllowanceProrationType(array $line, bool $isBasic): string
+    {
+        if ($isBasic || empty($line['is_proratable'])) {
+            return 'scheduled_fixed';
+        }
+
+        $metaMode = strtolower(trim((string) data_get($line, 'metadata.allowance_proration_type', '')));
+        $metaMode = str_replace(['-', ' '], '_', $metaMode);
+        if (in_array($metaMode, ['attendance_prorated', 'attendance_based', 'actual_attendance'], true)) {
+            return 'attendance_prorated';
+        }
+        if (in_array($metaMode, ['cutoff_prorated', 'period_prorated', 'scheduled_prorated'], true)) {
+            return 'cutoff_prorated';
+        }
+        if (in_array($metaMode, ['monthly_fixed', 'semi_monthly_fixed', 'scheduled_fixed'], true)) {
+            return 'scheduled_fixed';
+        }
+
+        return $this->isAllowanceLine($line) ? 'attendance_prorated' : 'cutoff_prorated';
+    }
+
+    private function isAllowanceLine(array $line): bool
+    {
+        $haystack = strtolower(implode(' ', array_filter([
+            (string) ($line['category'] ?? ''),
+            (string) ($line['name'] ?? ''),
+            (string) ($line['code'] ?? ''),
+        ])));
+
+        return str_contains($haystack, 'allowance');
+    }
+
+    /**
+     * Attendance-prorated allowances use the monthly allowance as the source amount and the
+     * employee's stable schedule divisor as the daily allowance rate.
+     *
+     * Example: 2600 monthly / 26 working days * 4.8625 present day units = 486.25.
+     *
+     * @param  array<string, mixed>|null  $attendanceProration
+     * @return array<string, mixed>
+     */
+    private function computeAttendanceProratedAllowanceAmount(array $line, ?array $attendanceProration): array
+    {
+        $allowanceMeta = is_array($attendanceProration['allowance'] ?? null)
+            ? $attendanceProration['allowance']
+            : [];
+        $monthlyAmount = round(max(0.0, (float) ($line['computed_amount'] ?? 0)), 2);
+        $monthlyDivisor = max(1.0, (float) ($allowanceMeta['monthly_divisor_days'] ?? 0));
+        $workedDayUnits = max(0.0, (float) ($allowanceMeta['worked_day_units'] ?? 0));
+        $dailyRate = $monthlyDivisor > 0 ? round($monthlyAmount / $monthlyDivisor, 6) : 0.0;
+        $amount = round($dailyRate * $workedDayUnits, 2);
+
+        return [
+            'allowance_type' => 'attendance_prorated',
+            'configured_monthly_amount' => round($monthlyAmount, 2),
+            'monthly_divisor_days' => round($monthlyDivisor, 4),
+            'daily_allowance_rate' => round($dailyRate, 6),
+            'worked_day_units' => round($workedDayUnits, 6),
+            'worked_minutes' => (int) ($allowanceMeta['worked_minutes'] ?? 0),
+            'converted_hours' => round((float) ($allowanceMeta['converted_hours'] ?? 0), 4),
+            'daily_hours' => round((float) ($allowanceMeta['daily_hours'] ?? 8), 4),
+            'divisor_source' => (string) ($allowanceMeta['divisor_source'] ?? 'stable_schedule_monthly'),
+            'attendance_counted' => is_array($allowanceMeta['attendance_counted'] ?? null) ? $allowanceMeta['attendance_counted'] : [],
+            'attendance_excluded' => is_array($allowanceMeta['attendance_excluded'] ?? null) ? $allowanceMeta['attendance_excluded'] : [],
+            'effective_factor' => $monthlyAmount > 0 ? round($amount / $monthlyAmount, 6) : 0.0,
+            'amount' => $amount,
+        ];
+    }
+
+    private function logAllowanceProration(
+        User $user,
+        array $line,
+        string $scheduleType,
+        mixed $periodStartRaw,
+        mixed $periodEndRaw,
+        ?array $allowanceProration
+    ): void {
+        if (! is_array($allowanceProration)) {
+            return;
+        }
+
+        Log::info('payroll.allowance_proration', [
+            'employee_id' => (int) $user->id,
+            'pay_component_id' => $line['pay_component_id'] ?? null,
+            'code' => $line['code'] ?? null,
+            'name' => $line['name'] ?? null,
+            'period_start' => $periodStartRaw,
+            'period_end' => $periodEndRaw,
+            'schedule_type' => $scheduleType,
+            'allowance_type' => $allowanceProration['allowance_type'] ?? null,
+            'configured_monthly_amount' => $allowanceProration['configured_monthly_amount'] ?? null,
+            'monthly_divisor_days' => $allowanceProration['monthly_divisor_days'] ?? null,
+            'daily_allowance_rate' => $allowanceProration['daily_allowance_rate'] ?? null,
+            'worked_day_units' => $allowanceProration['worked_day_units'] ?? null,
+            'converted_hours' => $allowanceProration['converted_hours'] ?? null,
+            'daily_hours' => $allowanceProration['daily_hours'] ?? null,
+            'attendance_counted' => $allowanceProration['attendance_counted'] ?? [],
+            'attendance_excluded' => $allowanceProration['attendance_excluded'] ?? [],
+            'amount' => $allowanceProration['amount'] ?? null,
+        ]);
     }
 
     /**
