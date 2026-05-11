@@ -283,6 +283,7 @@ export default function AdminReports() {
 
   const summaryQuery = useQuery({
     queryKey: ['admin-reports-summary', isEmployeeSelfReport, summaryParams],
+    enabled: !isEmployeeSelfReport || tab !== 'detailed',
     queryFn: async () => {
       const fetchSummary = isEmployeeSelfReport ? getEmployeeReportsSummary : getAdminReportsSummary
       return fetchSummary(summaryParams)
@@ -324,6 +325,12 @@ export default function AdminReports() {
     setReportError(null)
     const { from, to } = effectiveDateRange()
     try {
+      if (isEmployeeSelfReport && tab === 'detailed') {
+        await detailedQuery.refetch()
+        setLoading(false)
+        setReportError(null)
+        return
+      }
       const q = await summaryQuery.refetch()
       const res = q.data || {}
       setData({
@@ -377,6 +384,38 @@ export default function AdminReports() {
   }, [isEmployeeSelfReport, filterEmployeesQuery.data])
 
   useEffect(() => {
+    if (!isEmployeeSelfReport || tab !== 'detailed') return
+    const d = detailedQuery.data
+    if (!d) return
+    setData((prev) => ({
+      ...prev,
+      from_date: d.from_date ?? prev.from_date,
+      to_date: d.to_date ?? prev.to_date,
+    }))
+  }, [isEmployeeSelfReport, tab, detailedQuery.data])
+
+  useEffect(() => {
+    if (!isEmployeeSelfReport) return
+    if (tab === 'detailed') {
+      const busy = detailedQuery.isLoading || detailedQuery.isFetching
+      setLoading(busy && !detailedQuery.data)
+    } else {
+      setLoading(summaryQuery.isLoading || summaryQuery.isFetching)
+    }
+  }, [
+    isEmployeeSelfReport,
+    tab,
+    detailedQuery.isLoading,
+    detailedQuery.isFetching,
+    detailedQuery.data,
+    summaryQuery.isLoading,
+    summaryQuery.isFetching,
+  ])
+
+  useEffect(() => {
+    if (isEmployeeSelfReport && tab === 'detailed') {
+      return
+    }
     const { from, to } = effectiveDateRange()
     if (summaryQuery.data) {
       const res = summaryQuery.data
@@ -394,7 +433,15 @@ export default function AdminReports() {
     } else if (summaryQuery.isLoading) {
       setLoading(true)
     }
-  }, [summaryQuery.data, summaryQuery.error, summaryQuery.isLoading, fromDate, toDate])
+  }, [
+    summaryQuery.data,
+    summaryQuery.error,
+    summaryQuery.isLoading,
+    fromDate,
+    toDate,
+    isEmployeeSelfReport,
+    tab,
+  ])
 
   useEffect(() => {
     if (tab !== 'detailed') return
@@ -1207,9 +1254,14 @@ export default function AdminReports() {
               size="sm"
               className="gap-1.5 shadow-sm"
               onClick={() => {
-                load()
+                // Employee → Detailed: `load()` already refetches detailed only; avoid double fetch.
+                if (isEmployeeSelfReport && tab === 'detailed') {
+                  void load()
+                  return
+                }
+                void load()
                 if (tab === 'detailed') void detailedQuery.refetch()
-                if (tab === 'premium') loadPremium()
+                if (tab === 'premium') void loadPremium()
               }}
             >
               <Filter className="size-3.5" />
@@ -1221,9 +1273,13 @@ export default function AdminReports() {
               size="sm"
               className="gap-1.5 text-muted-foreground hover:bg-primary/5"
               onClick={() => {
-                load()
+                if (isEmployeeSelfReport && tab === 'detailed') {
+                  void load()
+                  return
+                }
+                void load()
                 if (tab === 'detailed') void detailedQuery.refetch()
-                if (tab === 'premium') loadPremium()
+                if (tab === 'premium') void loadPremium()
               }}
             >
               <RefreshCw className="size-3.5" />

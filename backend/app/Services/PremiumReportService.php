@@ -130,6 +130,55 @@ class PremiumReportService
     }
 
     /**
+     * Reusable premium context for one employee (avoid re-resolving rates/schedules per day).
+     *
+     * @return array{effective_schedule: ?array, company_id: ?int, hourly_rate: float}
+     */
+    public function premiumContextForEmployee(User $user): array
+    {
+        return [
+            'effective_schedule' => $this->rulesEngine->resolveEffectiveSchedule($user),
+            'company_id' => $user->getEffectiveCompanyId(),
+            'hourly_rate' => (float) $this->scheduleRateService->resolveHourlyRate($user),
+        ];
+    }
+
+    /**
+     * Premium row for detailed reports using already-resolved clock times (matches session service order).
+     * Avoids {@see AttendanceSessionService::getTimesForDate()} N+1 queries when the caller has times.
+     *
+     * @param  array{effective_schedule: ?array, company_id: ?int, hourly_rate: float}  $context
+     * @return array|null null if no paired attendance times
+     */
+    public function computeDayPremiumFromResolvedTimes(
+        array $context,
+        string $dateKey,
+        $timeIn,
+        $timeOut,
+        ?Overtime $approvedOt,
+        string $tz
+    ): ?array {
+        if (! $timeIn || ! $timeOut) {
+            return null;
+        }
+
+        $effectiveSchedule = $context['effective_schedule'] ?? null;
+        $companyId = $context['company_id'] ?? null;
+        $hourlyRate = (float) ($context['hourly_rate'] ?? 0.0);
+
+        return $this->buildDailyBreakdownFromTimes(
+            $dateKey,
+            $timeIn instanceof Carbon ? $timeIn : Carbon::parse($timeIn),
+            $timeOut instanceof Carbon ? $timeOut : Carbon::parse($timeOut),
+            $effectiveSchedule,
+            $companyId,
+            $hourlyRate,
+            $approvedOt,
+            $tz
+        );
+    }
+
+    /**
      * Compute daily premium breakdown for one date.
      *
      * @return array|null null if no attendance that day
@@ -149,6 +198,31 @@ class PremiumReportService
             return null;
         }
 
+        return $this->buildDailyBreakdownFromTimes(
+            $dateKey,
+            $timeIn,
+            $timeOut,
+            $effectiveSchedule,
+            $companyId,
+            $hourlyRate,
+            $approvedOt,
+            $tz
+        );
+    }
+
+    /**
+     * Core premium math given resolved in/out instants (attendance timezone).
+     */
+    private function buildDailyBreakdownFromTimes(
+        string $dateKey,
+        Carbon $timeIn,
+        Carbon $timeOut,
+        ?array $effectiveSchedule,
+        ?int $companyId,
+        float $hourlyRate,
+        ?Overtime $approvedOt,
+        string $tz
+    ): ?array {
         $date = Carbon::parse($dateKey, $tz);
         $dayKey = self::DAY_KEYS[(int) $date->format('w')];
         $daySchedule = is_array($effectiveSchedule) && isset($effectiveSchedule[$dayKey])

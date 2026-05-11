@@ -187,7 +187,7 @@ const TIMEOUT_ERROR_MSG =
   'Server request timed out. Check if the backend API is running and reachable.'
 
 /** Page size enforced by Laravel for Admin Reports (detailed) list endpoints. */
-export const REPORTS_AND_ATTENDANCE_PAGE_SIZE = 10
+export const REPORTS_AND_ATTENDANCE_PAGE_SIZE = 50
 
 /** Admin → Attendance monitoring list (matches backend AttendanceMonitoringController::ROWS_PER_PAGE). */
 export const ADMIN_ATTENDANCE_PAGE_SIZE = 20
@@ -1410,6 +1410,7 @@ export async function getAdminReportsSummary(params = {}) {
   if (params.to_date) query.set('to_date', params.to_date)
   if (params.department) query.set('department', params.department)
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
+  if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
   if (params.employee_id != null && params.employee_id !== '') query.set('employee_id', String(params.employee_id))
   if (params.status) query.set('status', params.status)
 
@@ -1433,13 +1434,17 @@ export async function getAdminReportsDetailed(params = {}) {
   if (params.to_date) query.set('to_date', params.to_date)
   if (params.department) query.set('department', params.department)
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
+  if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
   if (params.employee_id != null && params.employee_id !== '') query.set('employee_id', String(params.employee_id))
   if (params.status) query.set('status', params.status)
   if (params.leave_type) query.set('leave_type', params.leave_type)
   if (params.overtime_status) query.set('overtime_status', params.overtime_status)
   const p = Number(params.page)
   query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
-  query.set('per_page', String(REPORTS_AND_ATTENDANCE_PAGE_SIZE))
+  const pp = Number(params.per_page)
+  const perPage =
+    Number.isFinite(pp) && pp >= 25 && pp <= 100 ? Math.floor(pp) : REPORTS_AND_ATTENDANCE_PAGE_SIZE
+  query.set('per_page', String(perPage))
   if (params.search) query.set('search', String(params.search).trim())
 
   const path = `/admin/reports/detailed${query.toString() ? `?${query.toString()}` : ''}`
@@ -1451,13 +1456,13 @@ export async function getAdminReportsDetailed(params = {}) {
 
 /** All detailed rows for exports by paging fixed-size pages server-side. */
 export async function fetchAllAdminReportsDetailedRows(params = {}) {
-  const first = await getAdminReportsDetailed({ ...params, page: 1 })
+  const first = await getAdminReportsDetailed({ ...params, page: 1, per_page: 100 })
   const meta = first.meta || {}
   const lastPage = Math.max(1, Number(meta.last_page) || 1)
   const rows = [...(first.rows || [])]
   let page = 2
   while (page <= lastPage) {
-    const chunk = await getAdminReportsDetailed({ ...params, page })
+    const chunk = await getAdminReportsDetailed({ ...params, page, per_page: 100 })
     rows.push(...(chunk.rows || []))
     page++
   }
@@ -1465,13 +1470,13 @@ export async function fetchAllAdminReportsDetailedRows(params = {}) {
 }
 
 export async function fetchAllEmployeeReportsDetailedRows(params = {}) {
-  const first = await getEmployeeReportsDetailed({ ...params, page: 1 })
+  const first = await getEmployeeReportsDetailed({ ...params, page: 1, per_page: 100 })
   const meta = first.meta || {}
   const lastPage = Math.max(1, Number(meta.last_page) || 1)
   const rows = [...(first.rows || [])]
   let page = 2
   while (page <= lastPage) {
-    const chunk = await getEmployeeReportsDetailed({ ...params, page })
+    const chunk = await getEmployeeReportsDetailed({ ...params, page, per_page: 100 })
     rows.push(...(chunk.rows || []))
     page++
   }
@@ -1503,7 +1508,10 @@ export async function getEmployeeReportsDetailed(params = {}) {
   if (params.to_date) query.set('to_date', params.to_date)
   const p = Number(params.page)
   query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
-  query.set('per_page', String(REPORTS_AND_ATTENDANCE_PAGE_SIZE))
+  const pp = Number(params.per_page)
+  const perPage =
+    Number.isFinite(pp) && pp >= 25 && pp <= 100 ? Math.floor(pp) : REPORTS_AND_ATTENDANCE_PAGE_SIZE
+  query.set('per_page', String(perPage))
   if (params.search) query.set('search', String(params.search).trim())
 
   const path = `/employee/reports/detailed${query.toString() ? `?${query.toString()}` : ''}`

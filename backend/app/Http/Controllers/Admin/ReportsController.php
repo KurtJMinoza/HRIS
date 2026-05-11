@@ -24,18 +24,26 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class ReportsController extends Controller
 {
-    /** Fixed page size for detailed report list responses; incoming per_page query is ignored. */
-    private const DETAILED_ROWS_PER_PAGE = 10;
+    /** Employee self-service detailed report response cache (short TTL; narrows repeated filter churn). */
+    private const EMPLOYEE_DETAILED_CACHE_TTL_SECONDS = 90;
+
+    /** Default page size for detailed report list responses; overridden by per_page (25–100). */
+    private const DETAILED_ROWS_PER_PAGE_DEFAULT = 50;
+
+    /** Maximum calendar span for detailed report (admin dashboards; exports use separate flows). */
+    private const DETAILED_MAX_RANGE_DAYS = 186;
 
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly AttendancePresenceDisplayService $presenceDisplay,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PayrollComputationService $payrollComputation,
+        private readonly PremiumReportService $premiumReport,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -239,6 +247,7 @@ class ReportsController extends Controller
      */
     public function summary(Request $request): JsonResponse
     {
+        $summaryStartedAt = microtime(true);
         $routeName = $request->route()?->getName();
         $isEmployeeSelfRoute = $routeName === 'employee.reports.summary';
         if ($isEmployeeSelfRoute) {
@@ -253,6 +262,7 @@ class ReportsController extends Controller
             'to_date' => ['nullable', 'date'],
             'department' => ['nullable', 'string', 'max:255'],
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
             'status' => ['nullable', 'string', 'in:present,late,absent,halfday,leave,undertime,incomplete,all'],
         ]);
@@ -264,6 +274,13 @@ class ReportsController extends Controller
         $validated['status'] = isset($validated['status']) && $validated['status'] !== ''
             ? strtolower(trim($validated['status']))
             : null;
+
+        // Employee self-service: org-wide filters must not apply.
+        if ($isEmployeeSelfRoute) {
+            $validated['department'] = null;
+            $validated['company_id'] = null;
+            $validated['branch_id'] = null;
+        }
 
         // Parse dates as calendar dates in attendance timezone so the UTC log range is correct.
         $attendanceTz = $this->attendanceTimezone();
@@ -289,54 +306,66 @@ class ReportsController extends Controller
             $statusFilter = null;
         }
 
-        $employeesQuery = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
-
-        // Department filter: match employees by departmentRelation.name or legacy department.
-        if (! empty($validated['department'])) {
-            $deptName = $validated['department'];
-            $employeesQuery->where(function ($q) use ($deptName) {
-                $q->where('department', $deptName)
-                    ->orWhereHas('departmentRelation', fn ($d) => $d->where('name', $deptName));
-            });
-        }
-
-        // Company filter: match employees who belong to the given company via any path.
-        if (! empty($validated['company_id'])) {
-            $cid = (int) $validated['company_id'];
-            $employeesQuery->where(function ($q) use ($cid) {
-                $q->where('company_id', $cid)
-                    ->orWhereHas('branch', fn ($b) => $b->where('company_id', $cid))
-                    ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->where('company_id', $cid)))
-                    ->orWhereHas('companyHeadships', fn ($c) => $c->where('id', $cid));
-            });
-        }
-
-        if (! empty($validated['employee_id'])) {
-            $employeesQuery->where('id', $validated['employee_id']);
-        }
+        $summaryEmployeeRelations = [
+            'workingSchedule',
+            'companyHeadships:id,name,company_head_id',
+            'company:id,name',
+            'branch:id,company_id',
+            'branch.company:id,name',
+            'departmentRelation:id,name,branch_id',
+            'departmentRelation.branch:id,company_id',
+            'departmentRelation.branch.company:id,name',
+        ];
 
         if ($isEmployeeSelfRoute) {
-            $employeesQuery->where('id', $request->user()->id);
+            /** @var \Illuminate\Support\Collection<int, User> $employees */
+            $employees = User::query()
+                ->whereKey($request->user()->id)
+                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->where('is_active', true)
+                ->with($summaryEmployeeRelations)
+                ->get();
         } else {
-            $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeesQuery);
-        }
+            $employeesQuery = User::query()
+                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->where('is_active', true);
 
-        /** @var \Illuminate\Support\Collection<int, User> $employees */
-        $employees = $employeesQuery
-            ->orderBy('name')
-            ->with([
-                'workingSchedule',
-                'companyHeadships:id,name,company_head_id',
-                'company:id,name',
-                'branch:id,company_id',
-                'branch.company:id,name',
-                'departmentRelation:id,name,branch_id',
-                'departmentRelation.branch:id,company_id',
-                'departmentRelation.branch.company:id,name',
-            ])
-            ->get();
+            // Department filter: match employees by departmentRelation.name or legacy department.
+            if (! empty($validated['department'])) {
+                $deptName = $validated['department'];
+                $employeesQuery->where(function ($q) use ($deptName) {
+                    $q->where('department', $deptName)
+                        ->orWhereHas('departmentRelation', fn ($d) => $d->where('name', $deptName));
+                });
+            }
+
+            // Company filter: match employees who belong to the given company via any path.
+            if (! empty($validated['company_id'])) {
+                $cid = (int) $validated['company_id'];
+                $employeesQuery->where(function ($q) use ($cid) {
+                    $q->where('company_id', $cid)
+                        ->orWhereHas('branch', fn ($b) => $b->where('company_id', $cid))
+                        ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->where('company_id', $cid)))
+                        ->orWhereHas('companyHeadships', fn ($c) => $c->where('id', $cid));
+                });
+            }
+
+            if (! empty($validated['branch_id'])) {
+                $employeesQuery->where('branch_id', (int) $validated['branch_id']);
+            }
+
+            if (! empty($validated['employee_id'])) {
+                $employeesQuery->where('id', $validated['employee_id']);
+            }
+
+            $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeesQuery);
+
+            /** @var \Illuminate\Support\Collection<int, User> $employees */
+            $employees = $employeesQuery
+                ->orderBy('name')
+                ->with($summaryEmployeeRelations)
+                ->get();
+        }
 
         $viewer = $request->user();
 
@@ -361,6 +390,8 @@ class ReportsController extends Controller
 
         $userIds = $employees->pluck('id')->all();
 
+        $summaryPreloadStart = microtime(true);
+
         // verified_at is stored in UTC; convert the attendance-TZ range to UTC
         // so that e.g. "Feb 26" in Manila includes logs from 2026-02-25 16:00 UTC to 2026-02-26 15:59 UTC.
         $fromUtc = $from->copy()->setTimezone('UTC');
@@ -368,6 +399,7 @@ class ReportsController extends Controller
 
         /** @var \Illuminate\Support\Collection<int, AttendanceLog> $logs */
         $logsQuery = AttendanceLog::query()
+            ->select(['id', 'user_id', 'type', 'verified_at', 'created_at'])
             ->whereIn('user_id', $userIds)
             // Strictly constrain by the punch timestamp (`verified_at`, UTC in DB)
             // so seeded attendance + attendance module match exactly.
@@ -429,6 +461,9 @@ class ReportsController extends Controller
                 $cursorLeave->addDay();
             }
         }
+
+        $summaryPreloadMs = (int) round((microtime(true) - $summaryPreloadStart) * 1000);
+        $summaryAggregateStart = microtime(true);
 
         $results = [];
         $departmentAggregates = [];
@@ -814,6 +849,25 @@ class ReportsController extends Controller
             ];
         }
 
+        $summaryAggregateMs = (int) round((microtime(true) - $summaryAggregateStart) * 1000);
+        $summaryTotalMs = (int) round((microtime(true) - $summaryStartedAt) * 1000);
+
+        Log::info('Reports summary prepared', [
+            'actor_user_id' => (int) $request->user()->id,
+            'employee_self' => $isEmployeeSelfRoute,
+            'employee_count' => count($userIds),
+            'query_preload_ms' => $summaryPreloadMs,
+            'aggregate_ms' => $summaryAggregateMs,
+            'total_response_ms' => $summaryTotalMs,
+            'rows_returned' => count($results),
+        ]);
+        if ($summaryTotalMs > 500) {
+            Log::warning('Reports summary slow', [
+                'duration_ms' => $summaryTotalMs,
+                'employee_self' => $isEmployeeSelfRoute,
+            ]);
+        }
+
         // Response dates always YYYY-MM-DD (toDateString()) for consistent filtering with frontend.
         return response()->json([
             'from_date' => $from->toDateString(),
@@ -906,12 +960,13 @@ class ReportsController extends Controller
             'to_date' => ['nullable', 'date'],
             'department' => ['nullable', 'string', 'max:255'],
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
             'status' => ['nullable', 'string', 'in:present,late,absent,halfday,leave,undertime,incomplete,all'],
             'leave_type' => ['nullable', 'string', 'max:50'],
             'overtime_status' => ['nullable', 'string', 'max:50'],
             'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer'], // ignored — fixed DETAILED_ROWS_PER_PAGE
+            'per_page' => ['nullable', 'integer', 'min:25', 'max:100'],
             'search' => ['nullable', 'string', 'max:200'],
         ]);
 
@@ -932,9 +987,16 @@ class ReportsController extends Controller
         if ($queryCompanyId !== null && $queryCompanyId !== '') {
             $validated['company_id'] = (int) $queryCompanyId;
         }
-        $queryEmployeeId = $request->query('employee_id');
-        if ($queryEmployeeId !== null && $queryEmployeeId !== '') {
-            $validated['employee_id'] = (int) $queryEmployeeId;
+        $queryBranchId = $request->query('branch_id');
+        if ($queryBranchId !== null && $queryBranchId !== '') {
+            $validated['branch_id'] = (int) $queryBranchId;
+        }
+
+        // Employee self-service: never apply org-wide filters (ignore forged query params).
+        if ($isEmployeeSelfRoute) {
+            $validated['department'] = null;
+            $validated['company_id'] = null;
+            $validated['branch_id'] = null;
         }
 
         $attendanceTzForValidation = $this->attendanceTimezone();
@@ -951,64 +1013,123 @@ class ReportsController extends Controller
             $from = $fromSwap;
             $to = $toSwap;
         }
-        if ($from->copy()->startOfDay()->diffInDays($to->copy()->startOfDay()) > 31) {
+        $rangeDays = $from->copy()->startOfDay()->diffInDays($to->copy()->startOfDay());
+        if ($rangeDays > self::DETAILED_MAX_RANGE_DAYS) {
             return response()->json([
-                'message' => 'Date range cannot exceed 31 days for detailed report.',
+                'message' => 'Date range cannot exceed '.self::DETAILED_MAX_RANGE_DAYS.' days for detailed report.',
             ], 422);
         }
 
         $attendanceTz = $attendanceTzForValidation;
 
+        $perPage = (int) ($validated['per_page'] ?? self::DETAILED_ROWS_PER_PAGE_DEFAULT);
+        $perPage = min(100, max(25, $perPage));
+        $pagePref = max(1, (int) ($validated['page'] ?? 1));
+
+        $employeeDetailedCacheKey = null;
+        if ($isEmployeeSelfRoute) {
+            $employeeDetailedCacheKey = sprintf(
+                'reports:employee:detailed:v2:%d:%s:%s:%d:%d:%s:%s:%s:%s:%s',
+                (int) $request->user()->id,
+                $from->toDateString(),
+                $to->toDateString(),
+                $perPage,
+                $pagePref,
+                $validated['status'] ?? '',
+                $validated['leave_type'] ?? '',
+                $validated['overtime_status'] ?? '',
+                strtolower(trim((string) ($validated['search'] ?? ''))),
+                hash('xxh128', implode('|', [
+                    (string) ($validated['from_date'] ?? ''),
+                    (string) ($validated['to_date'] ?? ''),
+                ]), false)
+            );
+            $cachedDetailed = Cache::get($employeeDetailedCacheKey);
+            if (is_array($cachedDetailed)) {
+                $cacheHitMs = (int) round((microtime(true) - $startedAt) * 1000);
+                Log::info('Employee detailed attendance report cache hit', [
+                    'actor_user_id' => (int) $request->user()->id,
+                    'cache_key_suffix' => substr((string) $employeeDetailedCacheKey, -32),
+                    'rows_returned' => count($cachedDetailed['rows'] ?? []),
+                    'total_response_ms' => $cacheHitMs,
+                ]);
+                if ($cacheHitMs > 500) {
+                    Log::warning('Employee detailed attendance report cache hit slow', [
+                        'duration_ms' => $cacheHitMs,
+                        'rows_returned' => count($cachedDetailed['rows'] ?? []),
+                    ]);
+                }
+
+                return response()->json($cachedDetailed);
+            }
+        }
+
         // Apply both department AND employee filters together (AND condition).
         // When both are set: only the selected employee in the selected department is included.
         $requestedEmployeeId = isset($validated['employee_id']) ? (int) $validated['employee_id'] : null;
 
-        $employeesQuery = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $employeeWithRelations = [
+            'workingSchedule',
+            'companyHeadships:id,name,company_head_id',
+            'company:id,name',
+            'branch:id,company_id',
+            'branch.company:id,name',
+            'departmentRelation:id,name,branch_id',
+            'departmentRelation.branch:id,company_id',
+            'departmentRelation.branch.company:id,name',
+        ];
 
-        if ($validated['department'] !== null && $validated['department'] !== '') {
-            $deptName = $validated['department'];
-            $employeesQuery->where(function ($q) use ($deptName) {
-                $q->where('department', $deptName)
-                    ->orWhereHas('departmentRelation', fn ($d) => $d->where('name', $deptName));
-            });
-        }
-
-        if (! empty($validated['company_id'])) {
-            $cid = (int) $validated['company_id'];
-            $employeesQuery->where(function ($q) use ($cid) {
-                $q->where('company_id', $cid)
-                    ->orWhereHas('branch', fn ($b) => $b->where('company_id', $cid))
-                    ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->where('company_id', $cid)))
-                    ->orWhereHas('companyHeadships', fn ($c) => $c->where('id', $cid));
-            });
-        }
-
-        if ($requestedEmployeeId > 0) {
-            $employeesQuery->where('id', $requestedEmployeeId);
-        }
+        $employeesLoadStartedAt = microtime(true);
 
         if ($isEmployeeSelfRoute) {
-            $employeesQuery->where('id', $request->user()->id);
+            /** @var \Illuminate\Support\Collection<int, User> $employees */
+            $employees = User::query()
+                ->whereKey($request->user()->id)
+                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->where('is_active', true)
+                ->with($employeeWithRelations)
+                ->get();
         } else {
+            $employeesQuery = User::query()
+                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->where('is_active', true);
+
+            if ($validated['department'] !== null && $validated['department'] !== '') {
+                $deptName = $validated['department'];
+                $employeesQuery->where(function ($q) use ($deptName) {
+                    $q->where('department', $deptName)
+                        ->orWhereHas('departmentRelation', fn ($d) => $d->where('name', $deptName));
+                });
+            }
+
+            if (! empty($validated['company_id'])) {
+                $cid = (int) $validated['company_id'];
+                $employeesQuery->where(function ($q) use ($cid) {
+                    $q->where('company_id', $cid)
+                        ->orWhereHas('branch', fn ($b) => $b->where('company_id', $cid))
+                        ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->where('company_id', $cid)))
+                        ->orWhereHas('companyHeadships', fn ($c) => $c->where('id', $cid));
+                });
+            }
+
+            if (! empty($validated['branch_id'])) {
+                $employeesQuery->where('branch_id', (int) $validated['branch_id']);
+            }
+
+            if ($requestedEmployeeId > 0) {
+                $employeesQuery->where('id', $requestedEmployeeId);
+            }
+
             $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeesQuery);
+
+            /** @var \Illuminate\Support\Collection<int, User> $employees */
+            $employees = $employeesQuery
+                ->orderBy('name')
+                ->with($employeeWithRelations)
+                ->get();
         }
 
-        /** @var \Illuminate\Support\Collection<int, User> $employees */
-        $employees = $employeesQuery
-            ->orderBy('name')
-            ->with([
-                'workingSchedule',
-                'companyHeadships:id,name,company_head_id',
-                'company:id,name',
-                'branch:id,company_id',
-                'branch.company:id,name',
-                'departmentRelation:id,name,branch_id',
-                'departmentRelation.branch:id,company_id',
-                'departmentRelation.branch.company:id,name',
-            ])
-            ->get();
+        $employeesLoadMs = (int) round((microtime(true) - $employeesLoadStartedAt) * 1000);
 
         $viewer = $request->user();
 
@@ -1029,7 +1150,7 @@ class ReportsController extends Controller
                 'meta' => [
                     'current_page' => 1,
                     'last_page' => 1,
-                    'per_page' => self::DETAILED_ROWS_PER_PAGE,
+                    'per_page' => $perPage,
                     'total' => 0,
                 ],
             ]);
@@ -1054,6 +1175,7 @@ class ReportsController extends Controller
 
         /** @var \Illuminate\Support\Collection<int, AttendanceLog> $logs */
         $logsQuery = AttendanceLog::query()
+            ->select(['id', 'user_id', 'type', 'verified_at', 'created_at'])
             ->whereIn('user_id', $userIds)
             // Use an inclusive whereBetween on verified_at (UTC in DB) so
             // that logs are strictly limited to the requested date window.
@@ -1062,6 +1184,8 @@ class ReportsController extends Controller
         if (! empty($validated['employee_id'])) {
             $logsQuery->where('user_id', $validated['employee_id']);
         }
+
+        $queryStartedAt = microtime(true);
 
         $logs = $logsQuery
             ->orderBy('verified_at')
@@ -1076,18 +1200,22 @@ class ReportsController extends Controller
             $logsByUserDate[$userId][$dateKey] = ($logsByUserDate[$userId][$dateKey] ?? collect())->push($log);
         }
 
-        // Preload approved corrections so manual attendance entries appear in detailed rows.
-        $correctionsDetailed = AttendanceCorrection::query()
-            ->whereIn('user_id', $userIds)
-            ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
-            ->where('approved', true)
-            ->get()
-            ->groupBy(fn ($c) => $c->user_id.'|'.$c->date->toDateString());
+        $queryExecuteMs = (int) round((microtime(true) - $queryStartedAt) * 1000);
+        if ($queryExecuteMs > 500) {
+            Log::warning('Reports detailed: slow preload query', ['query_execute_ms' => $queryExecuteMs, 'user_ids' => count($userIds)]);
+        }
 
-        $correctionsMeta = AttendanceCorrection::query()
+        // Preload corrections, leaves, overtime in bounded round-trips (no per-row queries).
+        $eagerRelStartedAt = microtime(true);
+        $correctionsByKey = AttendanceCorrection::query()
             ->whereIn('user_id', $userIds)
             ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
-            ->get()
+            ->orderByDesc('approved_at')
+            ->orderByDesc('id')
+            ->get([
+                'id', 'user_id', 'date', 'time_in', 'time_out', 'approved', 'approved_at',
+                'pending_approval', 'rejected_at', 'issue_kind', 'reason_code', 'approval_stage',
+            ])
             ->groupBy(fn ($c) => $c->user_id.'|'.$c->date->toDateString());
 
         // Leaves by user/date with type + status + duration (all statuses).
@@ -1100,7 +1228,9 @@ class ReportsController extends Controller
             $leavesQuery->where('user_id', $validated['employee_id']);
         }
 
-        $leaves = $leavesQuery->get();
+        $leaves = $leavesQuery->get([
+            'id', 'user_id', 'type', 'status', 'start_date', 'end_date', 'undertime_time', 'half_type',
+        ]);
 
         /** @var array<int, array<string, array{type: string, status: string, start_date: string, end_date: string, duration_days: int, undertime_time?: string|null, half_type?: string|null}>> $leaveByUserDate */
         $leaveByUserDate = [];
@@ -1150,7 +1280,9 @@ class ReportsController extends Controller
             $overtimesQuery->where('user_id', $validated['employee_id']);
         }
 
-        $overtimes = $overtimesQuery->get();
+        $overtimes = $overtimesQuery->get([
+            'id', 'user_id', 'date', 'status', 'computed_hours',
+        ]);
 
         /** @var array<int, array<string, Overtime>> $overtimeByUserDate */
         $overtimeByUserDate = [];
@@ -1158,17 +1290,20 @@ class ReportsController extends Controller
             $overtimeByUserDate[$ot->user_id][$ot->date->toDateString()] = $ot;
         }
 
-        // Pre-compute premium pay (ND, OT) per employee per date for detailed rows.
-        $premiumReport = app(PremiumReportService::class);
-        $premiumByEmployeeDate = [];
-        foreach ($employees as $emp) {
-            $result = $premiumReport->computeForEmployee($emp, $from->copy(), $to->copy());
-            foreach ($result['days'] ?? [] as $day) {
-                $premiumByEmployeeDate[$emp->id][$day['date']] = $day;
-            }
+        $eagerLoadMs = (int) round((microtime(true) - $eagerRelStartedAt) * 1000);
+        if ($eagerLoadMs > 500) {
+            Log::warning('Reports detailed: slow related preload (correct + leave + OT)', ['eager_load_ms' => $eagerLoadMs, 'user_ids' => count($userIds)]);
         }
 
-        $rows = [];
+        $aggregateStartedAt = microtime(true);
+        $totalMatches = 0;
+        $pagedRows = [];
+        $page = $pagePref;
+        $offset = ($page - 1) * $perPage;
+        /** @var array<string, int> */
+        $payrollImpactMemo = [];
+        /** @var array<int, array{effective_schedule: ?array, company_id: ?int, hourly_rate: float}> */
+        $premiumCtxCache = [];
 
         /** @var User $employee */
         foreach ($employees as $employee) {
@@ -1189,7 +1324,7 @@ class ReportsController extends Controller
                 // Overlay approved correction: overrides log times and recalculates worked minutes
                 // deducting the schedule's break period (e.g. 08:00–17:00 = 8 h net, not 9 h raw).
                 $correctionKey = $employee->id.'|'.$dateKey;
-                $correctionD = $correctionsDetailed->get($correctionKey)?->first();
+                $correctionD = $this->pickApprovedDetailedCorrection($correctionsByKey, $correctionKey);
                 if ($correctionD) {
                     if ($correctionD->time_in) {
                         $timeIn = $correctionD->time_in;
@@ -1421,7 +1556,7 @@ class ReportsController extends Controller
                     $status = 'present';
                 }
 
-                $correctionMeta = $correctionsMeta->get($correctionKey)?->first();
+                $correctionMeta = $this->pickCorrectionMetaRow($correctionsByKey, $correctionKey);
                 $todayDateRow = now($attendanceTz)->toDateString();
                 $isFutureRow = $dateKey > $todayDateRow;
                 $qualifiedRow = $this->presenceDisplay->qualify(
@@ -1485,6 +1620,21 @@ class ReportsController extends Controller
                     }
                 }
 
+                $searchNorm = isset($validated['search']) ? strtolower(trim((string) $validated['search'])) : '';
+                if ($searchNorm !== '') {
+                    $haystack = strtolower(implode(' ', array_filter([
+                        $employee->name,
+                        $employee->departmentRelation?->name ?? $employee->department,
+                        $detailedEmployeeCompanyNames[$employee->id] ?? null,
+                        $dateKey,
+                    ], fn ($v) => $v !== null && $v !== '')));
+                    if (! str_contains($haystack, $searchNorm)) {
+                        $cursor->addDay();
+
+                        continue;
+                    }
+                }
+
                 // Leave duration: half_day = 0.5 day; undertime is time-based so duration is not expressed in days.
                 $leaveDurationDays = null;
                 if ($leaveInfo && ($leaveInfo['status'] ?? null) === LeaveRequest::STATUS_APPROVED) {
@@ -1540,24 +1690,49 @@ class ReportsController extends Controller
                     : 0.0;
 
                 // Payroll Impact (hrs): {@see PayrollComputationService::payrollImpactMinutesForAttendanceDisplay}
-                // — payslip-parity (paid regular + paid OT). Avoids schedule caps / synthetic undertime-leave hours.
+                // — payslip-parity (paid regular + paid OT). Premium + payroll engine run only for the current page slice.
+                $totalMatches++;
+                $needsHeavy = ($totalMatches > $offset) && (count($pagedRows) < $perPage);
+
                 $payrollImpactMinutes = 0;
                 $payrollImpactHours = 0.0;
-                if ($todaySchedule && ! empty($todaySchedule['in'])) {
-                    $tInPayroll = $effectiveTimeIn
-                        ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
+                $premiumDay = null;
+                if ($needsHeavy) {
+                    if ($todaySchedule && ! empty($todaySchedule['in'])) {
+                        $tInPayroll = $effectiveTimeIn
+                            ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
+                            : null;
+                        $tOutPayroll = $effectiveTimeOut
+                            ? ($effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut))
+                            : null;
+                        $memoKey = $employee->id.'|'.$dateKey.'|'.($tInPayroll?->getTimestamp() ?? 'x').'|'.($tOutPayroll?->getTimestamp() ?? 'x');
+                        if (! isset($payrollImpactMemo[$memoKey])) {
+                            $payrollImpactMemo[$memoKey] = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
+                                $employee,
+                                $dateKey,
+                                $tInPayroll,
+                                $tOutPayroll,
+                                $attendanceTz
+                            );
+                        }
+                        $payrollImpactMinutes = $payrollImpactMemo[$memoKey];
+                        $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
+                    }
+
+                    $approvedOtForPremium = ($approvedOtForDetailedRow && $approvedOtForDetailedRow->status === Overtime::STATUS_APPROVED)
+                        ? $approvedOtForDetailedRow
                         : null;
-                    $tOutPayroll = $effectiveTimeOut
-                        ? ($effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut))
-                        : null;
-                    $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
-                        $employee,
+                    if (! isset($premiumCtxCache[$employee->id])) {
+                        $premiumCtxCache[$employee->id] = $this->premiumReport->premiumContextForEmployee($employee);
+                    }
+                    $premiumDay = $this->premiumReport->computeDayPremiumFromResolvedTimes(
+                        $premiumCtxCache[$employee->id],
                         $dateKey,
-                        $tInPayroll,
-                        $tOutPayroll,
+                        $effectiveTimeIn,
+                        $effectiveTimeOut,
+                        $approvedOtForPremium,
                         $attendanceTz
                     );
-                    $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
                 }
                 $clockVal = $clockOtHours ?? 0.0;
                 $approvedOtRequestedHours = $approvedFromFiling;
@@ -1569,90 +1744,86 @@ class ReportsController extends Controller
                     $unapprovedOtHours = 0.0;
                 }
 
-                $rows[] = array_merge([
-                    'employee_id' => $employee->id,
-                    'employee_name' => $employee->name,
-                    'department' => $employee->departmentRelation?->name ?? $employee->department,
-                    'company_id' => $detailedEmployeeCompanyIds[$employee->id] ?? null,
-                    'company_name' => $detailedEmployeeCompanyNames[$employee->id] ?? null,
-                    'profile_image' => $employee->profile_image_url,
-                    'date' => $dateKey,
-                    'schedule' => $scheduleLabel,
-                    'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
-                    'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
-                    'early_out_time' => $earlyOutTime,
-                    // Scheduled shift length (e.g. 8.00) — use for "Duration"; not inflated by early clock-in.
-                    'scheduled_duration_hours' => $scheduledDurationHours,
-                    'total_hours' => $effectiveWorkedMinutes !== null
-                        ? round($effectiveWorkedMinutes / 60, 2)
-                        : null,
-                    'total_rendered_hours' => $effectiveWorkedMinutes !== null
-                        ? round($effectiveWorkedMinutes / 60, 2)
-                        : null,
-                    'late_minutes' => $lateMinutes,
-                    'late_label' => $lateLabel,
-                    'undertime_minutes' => $undertimeMinutes,
-                    'payroll_impact_minutes' => $payrollImpactMinutes,
-                    'payroll_impact_hours' => $payrollImpactHours,
-                    // OT minutes: from clock-out vs schedule buffer, or from approved OT end when no punch-out exists.
-                    'overtime_minutes' => $otMinutesForRow,
-                    'unapproved_overtime_hours' => $unapprovedOtHours,
-                    'approved_overtime_hours' => $approvedOtHours,
-                    'virtual_time_out_from_ot' => $virtualClockOutFromOt,
-                    'status' => $status,
-                    'presence_label' => $presenceLabel,
-                    'presence_issue' => $presenceIssue,
-                    'leave_type' => $leaveInfo['type'] ?? null,
-                    'leave_status' => $leaveInfo['status'] ?? null,
-                    'undertime_filing_status' => $undertimeFilingStatus,
-                    'leave_start_date' => $leaveInfo['start_date'] ?? null,
-                    'leave_end_date' => $leaveInfo['end_date'] ?? null,
-                    'leave_duration_days' => $leaveDurationDays,
-                    // Only meaningful statuses from the Overtime module (no "approved" with 0h and no ghost approvals).
-                    'overtime_filed' => $ot !== null,
-                    'overtime_status' => $this->normalizeOvertimeModuleStatusForDisplay($ot),
-                    'overtime_hours_requested' => $ot !== null ? round((float) ($ot->computed_hours ?? 0), 2) : null,
-                    'night_hours' => $premiumByEmployeeDate[$employee->id][$dateKey]['night_hours'] ?? null,
-                    'night_differential_pay' => $premiumByEmployeeDate[$employee->id][$dateKey]['night_differential_pay'] ?? null,
-                    'overtime_hours' => $premiumByEmployeeDate[$employee->id][$dateKey]['overtime_hours'] ?? null,
-                    'overtime_pay' => $premiumByEmployeeDate[$employee->id][$dateKey]['overtime_pay'] ?? null,
-                    'total_premium_pay' => isset($premiumByEmployeeDate[$employee->id][$dateKey])
-                        ? (($premiumByEmployeeDate[$employee->id][$dateKey]['overtime_pay'] ?? 0) + ($premiumByEmployeeDate[$employee->id][$dateKey]['night_differential_pay'] ?? 0))
-                        : null,
-                    'work_condition' => $this->ruleLabelForRow($premiumByEmployeeDate[$employee->id][$dateKey] ?? null, 0),
-                    'pay_rule' => $this->ruleLabelForRow($premiumByEmployeeDate[$employee->id][$dateKey] ?? null, 1),
-                    'multiplier' => $this->ruleLabelForRow($premiumByEmployeeDate[$employee->id][$dateKey] ?? null, 2),
-                ], $this->employmentFieldsForReport($employee, $viewer));
+                if ($needsHeavy) {
+                    $pagedRows[] = array_merge([
+                        'employee_id' => $employee->id,
+                        'employee_name' => $employee->name,
+                        'department' => $employee->departmentRelation?->name ?? $employee->department,
+                        'company_id' => $detailedEmployeeCompanyIds[$employee->id] ?? null,
+                        'company_name' => $detailedEmployeeCompanyNames[$employee->id] ?? null,
+                        'profile_image' => $employee->profile_image_url,
+                        'date' => $dateKey,
+                        'schedule' => $scheduleLabel,
+                        'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
+                        'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
+                        'early_out_time' => $earlyOutTime,
+                        // Scheduled shift length (e.g. 8.00) — use for "Duration"; not inflated by early clock-in.
+                        'scheduled_duration_hours' => $scheduledDurationHours,
+                        'total_hours' => $effectiveWorkedMinutes !== null
+                            ? round($effectiveWorkedMinutes / 60, 2)
+                            : null,
+                        'total_rendered_hours' => $effectiveWorkedMinutes !== null
+                            ? round($effectiveWorkedMinutes / 60, 2)
+                            : null,
+                        'late_minutes' => $lateMinutes,
+                        'late_label' => $lateLabel,
+                        'undertime_minutes' => $undertimeMinutes,
+                        'payroll_impact_minutes' => $payrollImpactMinutes,
+                        'payroll_impact_hours' => $payrollImpactHours,
+                        // OT minutes: from clock-out vs schedule buffer, or from approved OT end when no punch-out exists.
+                        'overtime_minutes' => $otMinutesForRow,
+                        'unapproved_overtime_hours' => $unapprovedOtHours,
+                        'approved_overtime_hours' => $approvedOtHours,
+                        'virtual_time_out_from_ot' => $virtualClockOutFromOt,
+                        'status' => $status,
+                        'presence_label' => $presenceLabel,
+                        'presence_issue' => $presenceIssue,
+                        'leave_type' => $leaveInfo['type'] ?? null,
+                        'leave_status' => $leaveInfo['status'] ?? null,
+                        'undertime_filing_status' => $undertimeFilingStatus,
+                        'leave_start_date' => $leaveInfo['start_date'] ?? null,
+                        'leave_end_date' => $leaveInfo['end_date'] ?? null,
+                        'leave_duration_days' => $leaveDurationDays,
+                        // Only meaningful statuses from the Overtime module (no "approved" with 0h and no ghost approvals).
+                        'overtime_filed' => $ot !== null,
+                        'overtime_status' => $this->normalizeOvertimeModuleStatusForDisplay($ot),
+                        'overtime_hours_requested' => $ot !== null ? round((float) ($ot->computed_hours ?? 0), 2) : null,
+                        'night_hours' => $premiumDay['night_hours'] ?? null,
+                        'night_differential_pay' => $premiumDay['night_differential_pay'] ?? null,
+                        'overtime_hours' => $premiumDay['overtime_hours'] ?? null,
+                        'overtime_pay' => $premiumDay['overtime_pay'] ?? null,
+                        'total_premium_pay' => $premiumDay !== null
+                            ? (($premiumDay['overtime_pay'] ?? 0) + ($premiumDay['night_differential_pay'] ?? 0))
+                            : null,
+                        'work_condition' => $this->ruleLabelForRow($premiumDay, 0),
+                        'pay_rule' => $this->ruleLabelForRow($premiumDay, 1),
+                        'multiplier' => $this->ruleLabelForRow($premiumDay, 2),
+                    ], $this->employmentFieldsForReport($employee, $viewer));
+                }
 
                 $cursor->addDay();
             }
         }
 
-        // Ensure only one detailed row per employee per date, even if
-        // upstream data (e.g. joins or duplicated logs) would otherwise
-        // produce duplicates.
-        $rows = collect($rows)
+        $aggregateMs = (int) round((microtime(true) - $aggregateStartedAt) * 1000);
+
+        $transformStartedAt = microtime(true);
+
+        $pagedRows = collect($pagedRows)
             ->unique(fn (array $row): string => $row['employee_id'].'|'.$row['date'])
             ->values()
             ->all();
 
-        // When a specific employee was requested, return only that employee's rows (strict filter).
         if ($requestedEmployeeId > 0) {
-            $rows = array_values(array_filter($rows, function (array $row) use ($requestedEmployeeId) {
+            $pagedRows = array_values(array_filter($pagedRows, function (array $row) use ($requestedEmployeeId) {
                 return (int) ($row['employee_id'] ?? 0) === $requestedEmployeeId;
             }));
         }
 
-        $rows = $this->applyDetailedReportSearchFilter($rows, $validated['search'] ?? null);
+        $transformMs = (int) round((microtime(true) - $transformStartedAt) * 1000);
 
-        // Response dates always YYYY-MM-DD so the frontend filter and report period match.
-        $perPage = self::DETAILED_ROWS_PER_PAGE;
-        $page = max(1, (int) ($validated['page'] ?? 1));
-        $total = count($rows);
+        $total = $totalMatches;
         $lastPage = max(1, (int) ceil($total / $perPage));
-        $page = min($page, $lastPage);
-        $offset = ($page - 1) * $perPage;
-        $pagedRows = array_slice($rows, $offset, $perPage);
 
         $response = [
             'from_date' => $from->toDateString(),
@@ -1666,42 +1837,81 @@ class ReportsController extends Controller
             ],
         ];
 
+        $totalResponseMs = (int) round((microtime(true) - $startedAt) * 1000);
         Log::info('Detailed attendance report prepared', [
             'actor_user_id' => (int) $request->user()->id,
             'from_date' => $from->toDateString(),
             'to_date' => $to->toDateString(),
             'employee_count' => count($userIds),
-            'rows_count' => count($response['rows']),
+            'rows_returned' => count($pagedRows),
+            'matching_rows_total' => $totalMatches,
             'paginated' => true,
-            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'employees_load_ms' => $employeesLoadMs,
+            'query_execute_ms' => $queryExecuteMs,
+            'eager_load_ms' => $eagerLoadMs,
+            'aggregate_ms' => $aggregateMs,
+            'transform_ms' => $transformMs,
+            'total_response_ms' => $totalResponseMs,
         ]);
+        if ($queryExecuteMs > 500) {
+            Log::warning('Reports detailed: slow attendance logs query', ['query_execute_ms' => $queryExecuteMs]);
+        }
+        if ($aggregateMs > 500) {
+            Log::warning('Reports detailed: slow aggregate phase', ['aggregate_ms' => $aggregateMs, 'range_days' => $rangeDays]);
+        }
+        if ($totalResponseMs > 500) {
+            Log::warning('Detailed attendance report slow', [
+                'duration_ms' => $totalResponseMs,
+                'employee_count' => count($userIds),
+                'range_days' => $rangeDays,
+            ]);
+        }
+
+        if ($employeeDetailedCacheKey !== null) {
+            Cache::put($employeeDetailedCacheKey, $response, now()->addSeconds(self::EMPLOYEE_DETAILED_CACHE_TTL_SECONDS));
+        }
 
         return response()->json($response);
     }
 
     /**
-     * Narrow detailed rows before pagination (substring match employee, department, company).
-     *
-     * @param  list<array<string,mixed>>  $rows
-     * @return list<array<string,mixed>>
+     * Approved correction for overlaying log times (parity with attendance session / detailed rows).
      */
-    private function applyDetailedReportSearchFilter(array $rows, ?string $search): array
+    private function pickApprovedDetailedCorrection(Collection $grouped, string $key): ?AttendanceCorrection
     {
-        $q = $search !== null ? strtolower(trim($search)) : '';
-        if ($q === '') {
-            return $rows;
+        $items = $grouped->get($key);
+        if ($items === null || $items->isEmpty()) {
+            return null;
         }
 
-        return array_values(array_filter($rows, function (array $row) use ($q): bool {
-            $haystack = strtolower(implode(' ', [
-                (string) ($row['employee_name'] ?? ''),
-                (string) ($row['department'] ?? ''),
-                (string) ($row['company_name'] ?? ''),
-                (string) ($row['date'] ?? ''),
-            ]));
+        return $items->first(function (AttendanceCorrection $c) {
+            if (! $c->approved) {
+                return false;
+            }
+            if ($c->rejected_at !== null) {
+                return false;
+            }
+            if ($c->pending_approval === true) {
+                return false;
+            }
 
-            return str_contains($haystack, $q);
-        }));
+            return true;
+        });
+    }
+
+    /**
+     * Latest correction row for presence qualification / filing metadata.
+     */
+    private function pickCorrectionMetaRow(Collection $grouped, string $key): ?AttendanceCorrection
+    {
+        $items = $grouped->get($key);
+        if ($items === null || $items->isEmpty()) {
+            return null;
+        }
+
+        return $items->sortByDesc(function (AttendanceCorrection $c) {
+            return (($c->approved_at?->getTimestamp() ?? 0) * 100000) + $c->id;
+        })->first();
     }
 
     /**
