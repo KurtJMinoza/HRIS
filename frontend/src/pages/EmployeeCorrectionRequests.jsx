@@ -24,6 +24,9 @@ import {
   FileText,
   Send,
   Trash2,
+  Info,
+  MessageSquareText,
+  UsersRound,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -37,7 +40,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { cn } from '@/lib/utils'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
 import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
-import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
 import {
   Dialog,
   DialogContent,
@@ -68,6 +70,7 @@ import {
   RemarksPreviewCell,
   IssueTypeCell,
   TimeCell,
+  getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
 
 const ISSUE_KIND_OPTIONS = [
@@ -95,6 +98,13 @@ function formatAttendanceDate(isoDate) {
   } catch {
     return isoDate
   }
+}
+
+function formatDetailDate(date) {
+  if (!date) return '—'
+  const d = new Date(`${date}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return date
+  return d.toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 /** Short date for dense tables (list view). */
@@ -280,35 +290,177 @@ function ApprovalTimeline({ steps }) {
 function AttendanceTimesBlock({ timeIn, timeOut }) {
   const inLabel = timeIn
     ? new Date(timeIn).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
-    : '—'
+    : '?'
   const outLabel = timeOut
     ? new Date(timeOut).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
-    : '—'
+    : '?'
   return (
-    <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
-      <div className="rounded-2xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50/90 to-white p-4 dark:border-emerald-800/50 dark:from-emerald-950/40 dark:to-background/90">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800/80 dark:text-emerald-300/90">
-              Time in
-            </p>
-            <p className="mt-1 font-mono text-xl font-bold tabular-nums text-foreground">{inLabel}</p>
+    <div className="divide-y divide-border/70 dark:divide-white/10">
+      <div className="flex min-h-14 items-center justify-between gap-4 py-2">
+        <p className="text-[15px] font-bold text-foreground">Time In</p>
+        <div className="flex items-center gap-4">
+          <p className="font-mono text-xl font-black tabular-nums tracking-tight text-foreground">{inLabel}</p>
+          <div className="flex size-10 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
+            <LogIn className="size-5" aria-hidden />
           </div>
-          <LogIn className="size-8 shrink-0 text-emerald-600/80 dark:text-emerald-400/90" aria-hidden />
         </div>
       </div>
-      <div className="rounded-2xl border border-sky-200/60 bg-gradient-to-br from-sky-50/90 to-white p-4 dark:border-sky-800/50 dark:from-sky-950/40 dark:to-background/90">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-sky-800/80 dark:text-sky-300/90">
-              Time out
-            </p>
-            <p className="mt-1 font-mono text-xl font-bold tabular-nums text-foreground">{outLabel}</p>
+      <div className="flex min-h-14 items-center justify-between gap-4 py-4">
+        <p className="text-[15px] font-bold text-foreground">Time Out</p>
+        <div className="flex items-center gap-4">
+          <p className="font-mono text-xl font-black tabular-nums tracking-tight text-foreground">{outLabel}</p>
+          <div className="flex size-10 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
+            <LogOut className="size-5" aria-hidden />
           </div>
-          <LogOut className="size-8 shrink-0 text-sky-600/80 dark:text-sky-400/90" aria-hidden />
         </div>
       </div>
     </div>
+  )
+}
+
+function CorrectionDetailSection({ icon: Icon, title, children, className }) {
+  return (
+    <section
+      className={cn(
+        'rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
+        className
+      )}
+    >
+      <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
+        {Icon ? <Icon className="size-5 shrink-0" aria-hidden /> : null}
+        {title}
+      </h3>
+      {children}
+    </section>
+  )
+}
+
+function CorrectionInitialsAvatar({ name, className }) {
+  return (
+    <div
+      className={cn(
+        'flex size-12 shrink-0 items-center justify-center rounded-full border border-brand/15 bg-brand/10 text-sm font-black uppercase text-brand shadow-sm dark:border-brand/25 dark:bg-brand/15',
+        className
+      )}
+      aria-hidden
+    >
+      {getInitials(name)}
+    </div>
+  )
+}
+
+function approvalStepName(step) {
+  if (step?.key === 'submitted') return step.submitter_name || '?'
+  return step?.approver_name || step?.approver_role_label || '?'
+}
+
+function approvalStepRole(step) {
+  if (step?.key === 'submitted') return 'Requester'
+  return step?.approver_role_label || step?.approver_role || ''
+}
+
+function CorrectionApprovalChain({ steps }) {
+  if (!Array.isArray(steps) || steps.length === 0) return null
+
+  return (
+    <CorrectionDetailSection icon={UsersRound} title="Approval chain">
+      <ol className="space-y-4">
+        {steps.map((step, idx) => {
+          const name = approvalStepName(step)
+          const role = approvalStepRole(step)
+          const statusLabel = humanStepStatus(step.status)
+          const statusLine =
+            step.acted_at != null && step.acted_at !== ''
+              ? `${statusLabel} ? ${formatDateTime(step.acted_at)}`
+              : statusLabel
+          const remarks = sanitizeApprovalDisplayText(step?.remarks)
+
+          return (
+            <li key={step.key || `approval-step-${idx}`}>
+              <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-brand">
+                <span className="tabular-nums">{idx + 1}. </span>
+                {step.label}
+              </p>
+              <div
+                className={cn(
+                  'rounded-xl border border-border/70 bg-background/70 p-4 shadow-sm dark:border-white/10 dark:bg-background/35',
+                  step.status === 'current' &&
+                    'border-amber-400/70 bg-amber-50/80 ring-2 ring-amber-500/20 dark:border-amber-400/35 dark:bg-amber-950/25'
+                )}
+              >
+                <div className="flex gap-4">
+                  <CorrectionInitialsAvatar name={name} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[15px] font-bold leading-snug text-foreground">{name}</p>
+                    {role ? <p className="mt-1 text-sm font-medium text-foreground/85">{role}</p> : null}
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{statusLine}</p>
+                    {remarks ? (
+                      <p className="mt-3 text-sm leading-relaxed text-foreground">
+                        <span className="font-semibold">Remarks: </span>
+                        {remarks}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </CorrectionDetailSection>
+  )
+}
+
+function correctionHistoryActionLabel(action) {
+  switch (action) {
+    case 'hr_remark':
+      return 'HR internal remark'
+    case 'approve_first':
+      return 'Line manager approval'
+    case 'approve_final':
+      return 'HR final approval'
+    case 'reject':
+      return 'Rejected'
+    case 'file':
+      return 'Request filed'
+    case 'attendance_sync':
+      return 'Attendance synchronized'
+    default:
+      return action || 'Action'
+  }
+}
+
+function CorrectionHistoryTimeline({ history }) {
+  if (!Array.isArray(history) || history.length === 0) return null
+
+  return (
+    <CorrectionDetailSection icon={Clock} title="Approval history">
+      <ol className="relative ml-1 border-l-2 border-border/70 pl-6 dark:border-white/10">
+        {[...history]
+          .sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
+          .map((item, idx) => {
+            const actionLabel = correctionHistoryActionLabel(item.action)
+            const details = sanitizeApprovalDisplayText(item?.details)
+            const headline = [item.actor_name, item.approver_role].filter(Boolean).join(' ? ') || actionLabel
+            return (
+              <li key={`${item.at}-${idx}-${item.action}`} className="relative pb-7 last:pb-0">
+                <span className="absolute -left-[1.95rem] top-3 size-2.5 rounded-full bg-brand ring-4 ring-card dark:ring-card" />
+                <div className="rounded-xl border border-border/70 bg-background/70 px-4 py-4 shadow-sm dark:border-white/10 dark:bg-background/35">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+                    <p className="text-sm font-bold text-foreground">{headline}</p>
+                    <time className="text-xs tabular-nums text-foreground/85" dateTime={item.at || undefined}>
+                      {item.at ? formatDateTime(item.at) : '?'}
+                    </time>
+                  </div>
+                  {details ? (
+                    <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">{details}</p>
+                  ) : null}
+                </div>
+              </li>
+            )
+          })}
+      </ol>
+    </CorrectionDetailSection>
   )
 }
 
@@ -1135,180 +1287,107 @@ export default function EmployeeCorrectionRequests() {
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent
           showCloseButton
-          closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
+          closeButtonClassName="right-4 top-4 size-10 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted dark:border-white/10 dark:bg-card"
           innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
-          className="max-h-[92vh] max-w-lg flex flex-col overflow-hidden rounded-2xl border border-border bg-card p-0 text-card-foreground scheme-light @sm:max-w-2xl dark:scheme-dark"
+          className="max-h-[92vh] max-w-[min(100vw-1rem,38rem)] flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light dark:border-white/10 dark:bg-card dark:scheme-dark"
         >
+          <DialogHeader className="sr-only">
+            <DialogTitle>Correction request details</DialogTitle>
+            <DialogDescription>Approval chain, attendance, and approval history.</DialogDescription>
+          </DialogHeader>
           {selected && (
             <>
-              <DialogHeader className="shrink-0 border-b border-border bg-muted/20 px-6 py-6 text-left">
-                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                  Correction request
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  <DialogTitle className="font-mono text-3xl font-black tracking-tight text-foreground">
-                    #{selected.id}
-                  </DialogTitle>
-                  <EmployeeStatusPill displayStatus={selected.display_status} status={selected.status} />
-                </div>
-                <DialogDescription className="mt-3 text-left text-sm text-muted-foreground">
-                  Summary, requested times, attendance times, remarks, and approval progress.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-6 py-6">
-                <section className="rounded-2xl border border-border bg-muted/15 p-4 shadow-sm">
-                  <h3 className="mb-3 flex items-center gap-2 border-b border-border pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                    <CalendarDays className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
-                    Summary
-                  </h3>
-                  <div className="grid grid-cols-1 gap-3 text-sm @sm:grid-cols-2">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Attendance date
-                      </p>
-                      <p className="mt-0.5 font-semibold tabular-nums text-foreground">
-                        {selected.date ? formatAttendanceDate(selected.date) : '—'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Issue type
-                      </p>
-                      <div className="mt-1">
-                        <Badge
-                          variant="secondary"
-                          className="rounded-lg border border-border bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground"
-                        >
-                          {issueLabel(selected.issue_type)}
-                        </Badge>
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Requested time start
-                      </p>
-                      <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                        {formatTimeOnly(selected.requested_time_in ?? selected.time_in)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Requested time end
-                      </p>
-                      <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                        {formatTimeOnly(selected.requested_time_out ?? selected.time_out)}
-                      </p>
-                    </div>
-                    <div className="@sm:col-span-2">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Filed</p>
-                      <p className="mt-0.5 tabular-nums text-foreground/90">
-                        {selected.filed_at ? formatDateTime(selected.filed_at) : '—'}
-                      </p>
-                    </div>
+              <div className="shrink-0 border-b border-border/70 bg-card px-7 pb-7 pt-8 text-left dark:border-white/10">
+                <div className="space-y-5">
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-brand">Correction request</p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
+                      #{selected.id}
+                    </span>
+                    <EmployeeStatusPill displayStatus={selected.display_status} status={selected.status} />
                   </div>
-                </section>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    Review summary, attendance times, approval chain, and history below.
+                  </p>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-7 py-6 text-sm dark:bg-card">
+                <CorrectionDetailSection icon={CalendarDays} title="Summary">
+                  <dl className="grid grid-cols-[minmax(0,12.5rem)_1fr] gap-x-4 gap-y-4 text-sm">
+                    <dt className="text-muted-foreground">Attendance date</dt>
+                    <dd className="font-bold tabular-nums text-foreground">{formatDetailDate(selected.date)}</dd>
+                    <dt className="text-muted-foreground">Issue type</dt>
+                    <dd>
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-brand/25 bg-brand/10 px-3 py-1 font-bold text-brand dark:border-brand/30 dark:bg-brand/15"
+                      >
+                        {issueLabel(selected.issue_type)}
+                      </Badge>
+                    </dd>
+                    <dt className="text-muted-foreground">Requested time start</dt>
+                    <dd className="font-mono font-bold tabular-nums text-foreground">
+                      {formatTimeOnly(selected.requested_time_in ?? selected.time_in)}
+                    </dd>
+                    <dt className="text-muted-foreground">Requested time end</dt>
+                    <dd className="font-mono font-bold tabular-nums text-foreground">
+                      {formatTimeOnly(selected.requested_time_out ?? selected.time_out)}
+                    </dd>
+                    <dt className="text-muted-foreground">Filed</dt>
+                    <dd className="tabular-nums text-foreground">{formatDateTime(selected.filed_at)}</dd>
+                    <dt className="text-muted-foreground">Last updated</dt>
+                    <dd className="tabular-nums text-foreground">{formatDateTime(selected.last_updated)}</dd>
+                  </dl>
+                </CorrectionDetailSection>
 
                 {selected.attendance_logs_synced_at ? (
-                  <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/90 px-4 py-3 text-sm shadow-sm dark:border-emerald-800 dark:bg-emerald-950/35">
-                    <p className="font-semibold text-emerald-950 dark:text-emerald-50">Applied to your attendance (DTR)</p>
-                    <p className="mt-1 text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/85">
-                      The approved correction times (only requested missing punches) were saved to your official attendance record on{' '}
+                  <div
+                    role="status"
+                    className="rounded-xl border border-brand/20 bg-brand/10 px-5 py-4 text-sm text-foreground shadow-sm dark:border-brand/25 dark:bg-brand/15"
+                  >
+                    <p className="flex items-center gap-2 font-black text-brand">
+                      <Info className="size-5" aria-hidden />
+                      Applied to your attendance
+                    </p>
+                    <p className="mt-2 leading-relaxed">
+                      The approved correction times were saved to your official attendance record on{' '}
                       {formatDateTime(selected.attendance_logs_synced_at)}
-                      {selected.attendance_logs_synced_by_name
-                        ? ` (${selected.attendance_logs_synced_by_name})`
-                        : ''}
-                      . The Attendance module now shows these times.
+                      {selected.attendance_logs_synced_by_name ? ` by ${selected.attendance_logs_synced_by_name}` : ''}.
+                      The Attendance module now shows these times.
                     </p>
                   </div>
                 ) : null}
 
-                <section>
-                  <h3 className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    <Clock className="size-4" aria-hidden />
-                    Attendance times
-                  </h3>
-                  <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-                    {selected.display_status === 'HR Approved'
-                      ? 'Final approved correction times on this request (only requested missing punches were applied).'
-                      : 'Filed correction times on this request (only requested missing punches will be applied after final approval).'}
-                  </p>
+                <CorrectionDetailSection icon={Clock} title="Attendance times">
                   <AttendanceTimesBlock timeIn={selected.time_in} timeOut={selected.time_out} />
-                </section>
+                </CorrectionDetailSection>
 
                 {selected.remarks ? (
-                  <section className="rounded-2xl border border-border bg-muted/20 p-4">
-                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Your remarks</h3>
+                  <CorrectionDetailSection icon={MessageSquareText} title="Your remarks">
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{selected.remarks}</p>
-                  </section>
+                  </CorrectionDetailSection>
                 ) : null}
 
-                {Array.isArray(selected.approval_progress) && selected.approval_progress.length > 0 ? (
-                  <section>
-                    <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Approval chain</h3>
-                    <ApprovalChainDetailView steps={selected.approval_progress} />
-                  </section>
-                ) : null}
-
-                {Array.isArray(selected.approval_history) && selected.approval_history.length > 0 ? (
-                  <section className="rounded-2xl border border-border bg-muted/15 p-4">
-                    <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Approval history</h3>
-                    <ol className="relative ml-0.5 border-l-2 border-emerald-200/80 pl-6 dark:border-emerald-900/50">
-                      {[...selected.approval_history]
-                        .sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
-                        .map((h, idx) => {
-                          const actionLabel =
-                            h.action === 'hr_remark'
-                              ? 'HR internal remark'
-                              : h.action === 'approve_first'
-                                ? 'Line manager approval'
-                                : h.action === 'approve_final'
-                                  ? 'HR final approval'
-                                  : h.action === 'reject'
-                                    ? 'Rejected'
-                                    : h.action === 'file'
-                                      ? 'Request filed'
-                                      : h.action || 'Action'
-                          const headline = [h.actor_name, h.approver_role || actionLabel].filter(Boolean).join(' · ')
-                          return (
-                            <li key={`${h.at}-${idx}-${h.action}`} className="relative pb-5 last:pb-0">
-                              <span className="absolute -left-[1.35rem] top-1 size-2.5 rounded-full border-2 border-background bg-emerald-500 ring-2 ring-background" />
-                              <div className="rounded-xl border border-border bg-muted/25 px-3 py-2.5">
-                                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                                  <p className="text-sm font-semibold text-foreground">{headline || actionLabel}</p>
-                                  <time className="text-xs tabular-nums text-muted-foreground" dateTime={h.at || undefined}>
-                                    {h.at ? formatDateTime(h.at) : '—'}
-                                  </time>
-                                </div>
-                                {sanitizeApprovalDisplayText(h?.details) ? (
-                                  <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-                                    {sanitizeApprovalDisplayText(h.details)}
-                                  </p>
-                                ) : null}
-                              </div>
-                            </li>
-                          )
-                        })}
-                    </ol>
-                  </section>
-                ) : null}
+                <CorrectionApprovalChain steps={selected.approval_progress} />
+                <CorrectionHistoryTimeline history={selected.approval_history} />
 
                 {selected.rejection_note ? (
-                  <section className="rounded-2xl border border-rose-200 bg-rose-50/50 p-4 dark:border-rose-900/50 dark:bg-rose-950/20">
-                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-rose-800 dark:text-rose-200">
+                  <section className="rounded-xl border border-destructive/30 bg-destructive/[0.06] p-5 dark:border-destructive/25 dark:bg-destructive/10">
+                    <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-destructive">
                       Rejection reason
                     </h3>
-                    <p className="text-sm leading-relaxed text-foreground">{selected.rejection_note}</p>
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{selected.rejection_note}</p>
                   </section>
                 ) : null}
               </div>
 
-              <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/15 px-6 py-4">
+              <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-7 py-5 dark:border-white/10">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="gap-2 rounded-xl border-border bg-background text-foreground hover:bg-muted"
+                  className="gap-2 rounded-lg border-border bg-card text-foreground hover:bg-muted dark:border-white/10 dark:bg-card"
                   onClick={() => {
                     toast({ title: 'Print', description: 'Use Ctrl+P (or Cmd+P) while this window is open.' })
                     window.print()
@@ -1322,7 +1401,7 @@ export default function EmployeeCorrectionRequests() {
                     <Button
                       type="button"
                       variant="destructive"
-                      className="gap-2 rounded-xl"
+                      className="gap-2 rounded-lg"
                       onClick={() => setDeleteDialog({ open: true, item: selected })}
                     >
                       <Trash2 className="size-4" />
@@ -1331,8 +1410,8 @@ export default function EmployeeCorrectionRequests() {
                   ) : null}
                   <Button
                     type="button"
-                    variant="default"
-                    className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+                    variant="outline"
+                    className="min-w-24 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand dark:border-brand/55 dark:bg-card"
                     onClick={() => setDetailOpen(false)}
                   >
                     Close
