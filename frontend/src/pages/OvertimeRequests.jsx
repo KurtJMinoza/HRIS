@@ -494,7 +494,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setMonthIndex(t.getMonth())
   }
 
-  const [tab, setTab] = useState('mine')
+  const [tab, setTab] = useState(() => (canSeeAllTab ? 'all' : 'mine'))
 
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
@@ -1265,20 +1265,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               <button
                 type="button"
                 role="tab"
-                aria-selected={tab === 'mine'}
-                onClick={() => setTab('mine')}
-                className={cn(
-                  'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
-                  tab === 'mine'
-                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
-                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
-                )}
-              >
-                My Requests
-              </button>
-              <button
-                type="button"
-                role="tab"
                 aria-selected={tab === 'all'}
                 onClick={() => {
                   setTab('all')
@@ -1292,6 +1278,20 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 )}
               >
                 All Requests
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'mine'}
+                onClick={() => setTab('mine')}
+                className={cn(
+                  'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                  tab === 'mine'
+                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                )}
+              >
+                My Requests
               </button>
             </div>
           </div>

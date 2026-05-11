@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion } from 'framer-motion'
 import { exportRowsToXlsx } from '@/lib/excelExport'
 import {
@@ -109,7 +109,7 @@ const ISSUE_KIND_OPTIONS = [
 const brandCardClass =
   'rounded-2xl border border-border bg-card text-card-foreground shadow-sm dark:shadow-[0_18px_50px_-36px_rgba(0,0,0,0.45)]'
 
-function RequestStatCard({ icon: Icon, value, label, hint, tone = 'orange' }) {
+function RequestStatCard({ icon, value, label, hint, tone = 'orange' }) {
   const tones = {
     orange: {
       shell:
@@ -138,7 +138,7 @@ function RequestStatCard({ icon: Icon, value, label, hint, tone = 'orange' }) {
     <Card className={cn(brandCardClass, 'overflow-hidden')}>
       <CardContent className="flex items-center gap-5 p-5 @md:p-6">
         <div className={cn('flex size-16 shrink-0 items-center justify-center rounded-full ring-1', t.shell)}>
-          <Icon className="size-7" aria-hidden />
+          {createElement(icon, { className: 'size-7', 'aria-hidden': true })}
         </div>
         <div className="min-w-0">
           <p className={cn('text-3xl font-extrabold leading-none tabular-nums tracking-tight', t.value)}>
@@ -292,7 +292,7 @@ export default function AttendanceCorrections() {
   const canSeeAll = perms.has('attendance.corrections.approve')
   const canViewEmployeeProfile = perms.has('employees.view')
 
-  const [tab, setTab] = useState('mine')
+  const [tab, setTab] = useState(() => (canSeeAll ? 'all' : 'mine'))
 
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
@@ -873,20 +873,6 @@ export default function AttendanceCorrections() {
                         <button
                           type="button"
                           role="tab"
-                          aria-selected={tab === 'mine'}
-                          onClick={() => setTab('mine')}
-                          className={cn(
-                            'rounded-lg px-4 py-2.5 text-sm font-semibold transition-all @sm:px-5',
-                            tab === 'mine'
-                              ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
-                              : 'text-muted-foreground hover:text-foreground'
-                          )}
-                        >
-                          My Filings
-                        </button>
-                        <button
-                          type="button"
-                          role="tab"
                           aria-selected={tab === 'all'}
                           onClick={() => setTab('all')}
                           className={cn(
@@ -897,6 +883,20 @@ export default function AttendanceCorrections() {
                           )}
                         >
                           All Requests
+                        </button>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={tab === 'mine'}
+                          onClick={() => setTab('mine')}
+                          className={cn(
+                            'rounded-lg px-4 py-2.5 text-sm font-semibold transition-all @sm:px-5',
+                            tab === 'mine'
+                              ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
+                              : 'text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          My Filings
                         </button>
                       </div>
                     </div>
