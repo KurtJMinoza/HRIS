@@ -4318,6 +4318,8 @@ export async function createCompany(payload) {
     body = JSON.stringify({
       name: payload.name,
       ...(payload.company_head_id != null && payload.company_head_id !== '' ? { company_head_id: Number(payload.company_head_id) } : {}),
+      ...(payload.tin != null && payload.tin !== '' ? { tin: String(payload.tin) } : {}),
+      ...(payload.address != null && payload.address !== '' ? { address: String(payload.address) } : {}),
     })
   }
 

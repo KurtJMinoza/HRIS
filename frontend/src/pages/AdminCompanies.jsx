@@ -5,7 +5,7 @@ import {
   ChevronRight, ChevronUp, ChevronDown, MapPin, Users, Users2, UserCheck, ExternalLink,
   Building, Pencil, Search, Crown, Eye, UserCircle, X, ShieldAlert, ArrowRight, FileBarChart, FileText,
   Mail, Hash, Activity, Network, Layers, Phone, Calendar, Percent, UserMinus,
-  TrendingUp, TrendingDown, CheckCircle2, Clock3, UserX, Umbrella, PenLine, Sparkles,
+  TrendingUp, TrendingDown, CheckCircle2, Clock3, UserX, Umbrella, PenLine, Sparkles, Upload,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -210,40 +210,6 @@ function OrgStatCell({
       </span>
       <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
     </button>
-  )
-}
-
-function CompanyMetric({ icon: Icon, label, value, helper, tone = 'brand' }) {
-  const toneClass =
-    tone === 'brand'
-      ? 'bg-brand/10 text-brand ring-brand/15 dark:bg-brand/15 dark:ring-brand/25'
-      : 'bg-muted text-muted-foreground ring-border/60 dark:bg-muted/60 dark:ring-white/10'
-  return (
-    <div className="flex min-w-0 items-center gap-4 border-border/70 px-4 py-2 first:border-0 @lg:border-l dark:border-white/10">
-      <div className={cn('flex size-14 shrink-0 items-center justify-center rounded-full ring-1', toneClass)}>
-        {createElement(Icon, { className: 'size-7', 'aria-hidden': true })}
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs font-medium text-muted-foreground">{label}</p>
-        <p className="mt-1 text-2xl font-black tabular-nums text-foreground">{value}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{helper}</p>
-      </div>
-    </div>
-  )
-}
-
-function CompanyDonut({ percent }) {
-  const p = Math.max(0, Math.min(100, Number(percent) || 0))
-  return (
-    <div
-      className="size-28 rounded-full"
-      style={{ background: `conic-gradient(var(--brand) ${p}%, color-mix(in oklch, var(--brand) 12%, transparent) 0)` }}
-      aria-hidden
-    >
-      <div className="flex size-full items-center justify-center rounded-full p-4">
-        <div className="size-full rounded-full bg-card" />
-      </div>
-    </div>
   )
 }
 
@@ -485,16 +451,6 @@ function CompanyAccessDenied() {
   )
 }
 
-function companyScopedEmployees(companyId, employees, branches) {
-  const bid = new Set((branches || []).filter((b) => String(b.company_id) === String(companyId)).map((b) => Number(b.id)))
-  return (employees || []).filter((e) => {
-    if (e.role !== 'employee') return false
-    if (String(e.company_id) === String(companyId)) return true
-    if (e.branch_id != null && bid.has(Number(e.branch_id))) return true
-    return false
-  })
-}
-
 function DeltaCount({ current, previous, noun }) {
   if (current == null || previous == null) return null
   const d = Number(current) - Number(previous)
@@ -627,21 +583,6 @@ function CompanyHeadOverview({
     () => allEmployees.find((e) => String(e.id) === String(company?.company_head_id)),
     [allEmployees, company?.company_head_id]
   )
-
-  const scopedEmployees = useMemo(
-    () => companyScopedEmployees(company?.id, allEmployees, allBranches),
-    [company?.id, allEmployees, allBranches]
-  )
-
-  const recentHires = useMemo(() => {
-    const list = [...scopedEmployees]
-    list.sort((a, b) => {
-      const ta = a.created_at ? new Date(a.created_at).getTime() : 0
-      const tb = b.created_at ? new Date(b.created_at).getTime() : 0
-      return tb - ta
-    })
-    return list.slice(0, 5)
-  }, [scopedEmployees])
 
   useEffect(() => {
     if (!company || !editOpen) return
@@ -1093,118 +1034,61 @@ function CompanyHeadOverview({
         </Card>
       </div>
 
-      <div className="grid gap-6 @xl:grid-cols-2">
-        <Card className="border-border/60 shadow-md dark:border-border/50">
-          <CardHeader>
-            <CardTitle className="text-xl font-semibold tracking-tight">Today&apos;s attendance</CardTitle>
-            <CardDescription>Live counts for your scope · {snapshotDate}</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 @sm:grid-cols-2">
-            {[
-              {
-                label: 'Present',
-                value: presentToday,
-                icon: CheckCircle2,
-                bar: 'border-l-emerald-500 bg-emerald-500/5',
-                iconClass: 'text-emerald-600 dark:text-emerald-400',
-              },
-              {
-                label: 'Late',
-                value: lateToday,
-                icon: Clock3,
-                bar: 'border-l-amber-500 bg-amber-500/5',
-                iconClass: 'text-amber-600 dark:text-amber-400',
-              },
-              {
-                label: 'Absent (expected)',
-                value: absentToday,
-                icon: UserX,
-                bar: 'border-l-rose-500 bg-rose-500/5',
-                iconClass: 'text-rose-600 dark:text-rose-400',
-              },
-              {
-                label: 'On leave',
-                value: onLeave,
-                icon: Umbrella,
-                bar: 'border-l-sky-500 bg-sky-500/5',
-                iconClass: 'text-sky-600 dark:text-sky-400',
-              },
-            ].map((row) => {
-              const Icon = row.icon
-              return (
-                <div
-                  key={row.label}
-                  className={cn(
-                    'flex items-center justify-between gap-3 rounded-2xl border border-border/60 border-l-4 bg-muted/20 px-4 py-4 shadow-sm',
-                    row.bar
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <Icon className={cn('size-6 shrink-0', row.iconClass)} aria-hidden />
-                    <span className="text-sm font-medium text-foreground">{row.label}</span>
-                  </span>
-                  <span className="text-2xl font-bold tabular-nums text-foreground">{row.value ?? '—'}</span>
-                </div>
-              )
-            })}
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/60 shadow-md dark:border-border/50">
-          <CardHeader className="flex flex-col gap-2 @sm:flex-row @sm:items-start @sm:justify-between">
-            <div>
-              <CardTitle className="text-xl font-semibold tracking-tight">Recent activity</CardTitle>
-              <CardDescription>New hires in your company scope</CardDescription>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="shrink-0 gap-1 text-emerald-700 hover:text-emerald-800 dark:text-emerald-400"
-              onClick={() => navigate(link('employees', { company_id: company.id }))}
-            >
-              View all
-              <ArrowRight className="size-4" />
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {recentHires.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
-                No recent hires in your company scope yet.
+      <Card className="border-border/60 shadow-md dark:border-border/50">
+        <CardHeader>
+          <CardTitle className="text-xl font-semibold tracking-tight">Today&apos;s attendance</CardTitle>
+          <CardDescription>Live counts for your scope · {snapshotDate}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 @sm:grid-cols-2">
+          {[
+            {
+              label: 'Present',
+              value: presentToday,
+              icon: CheckCircle2,
+              bar: 'border-l-emerald-500 bg-emerald-500/5',
+              iconClass: 'text-emerald-600 dark:text-emerald-400',
+            },
+            {
+              label: 'Late',
+              value: lateToday,
+              icon: Clock3,
+              bar: 'border-l-amber-500 bg-amber-500/5',
+              iconClass: 'text-amber-600 dark:text-amber-400',
+            },
+            {
+              label: 'Absent (expected)',
+              value: absentToday,
+              icon: UserX,
+              bar: 'border-l-rose-500 bg-rose-500/5',
+              iconClass: 'text-rose-600 dark:text-rose-400',
+            },
+            {
+              label: 'On leave',
+              value: onLeave,
+              icon: Umbrella,
+              bar: 'border-l-sky-500 bg-sky-500/5',
+              iconClass: 'text-sky-600 dark:text-sky-400',
+            },
+          ].map((row) => {
+            const Icon = row.icon
+            return (
+              <div
+                key={row.label}
+                className={cn(
+                  'flex items-center justify-between gap-3 rounded-2xl border border-border/60 border-l-4 bg-muted/20 px-4 py-4 shadow-sm',
+                  row.bar
+                )}
+              >
+                <span className="flex items-center gap-3">
+                  <Icon className={cn('size-6 shrink-0', row.iconClass)} aria-hidden />
+                  <span className="text-sm font-medium text-foreground">{row.label}</span>
+                </span>
+                <span className="text-2xl font-bold tabular-nums text-foreground">{row.value ?? '—'}</span>
               </div>
-            ) : (
-              <ul className="space-y-2">
-                {recentHires.map((emp) => (
-                  <li
-                    key={emp.id}
-                    className="flex items-center gap-3 rounded-2xl border border-border/60 bg-card px-4 py-3 shadow-sm transition-colors hover:bg-muted/30"
-                  >
-                    <Avatar className="size-10 border border-border/50">
-                      <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" />
-                      <AvatarFallback className="text-xs font-bold">{initials(emp.name)}</AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-semibold text-foreground">{emp.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {emp.created_at
-                          ? `Joined ${new Date(emp.created_at).toLocaleDateString('en-PH', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric',
-                            })}`
-                          : 'Employee record'}
-                      </p>
-                    </div>
-                    <Badge variant="secondary" className="shrink-0 rounded-full text-[10px] font-semibold uppercase tracking-wide">
-                      New
-                    </Badge>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            )
+          })}
+        </CardContent>
+      </Card>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent
@@ -1327,6 +1211,7 @@ export default function AdminCompanies() {
   const [createTin, setCreateTin] = useState('')
   const [createAddress, setCreateAddress] = useState('')
   const [createSubmitting, setCreateSubmitting] = useState(false)
+  const [createLogoDragOver, setCreateLogoDragOver] = useState(false)
 
   // Assign head dialog
   const [headOpen, setHeadOpen] = useState(false)
@@ -1493,26 +1378,82 @@ export default function AdminCompanies() {
     return true
   }
 
-  const onCreateLogoChange = (e) => {
-    const file = e.target.files?.[0]
+  const applyCreateLogoFile = (file) => {
     setCreateLogoError(null)
-    if (!file) { setCreateLogo(null); setCreateLogoPreview(null); return }
-    if (!validateLogoFile(file, setCreateLogoError)) { setCreateLogo(null); setCreateLogoPreview(null); return }
+    if (!file) {
+      setCreateLogo(null)
+      setCreateLogoPreview((prev) => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+      return
+    }
+    if (!validateLogoFile(file, setCreateLogoError)) {
+      setCreateLogo(null)
+      setCreateLogoPreview((prev) => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+      return
+    }
     setCreateLogo(file)
-    setCreateLogoPreview(URL.createObjectURL(file))
+    setCreateLogoPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return URL.createObjectURL(file)
+    })
+  }
+
+  const onCreateLogoChange = (e) => {
+    const input = e.target
+    const file = input.files?.[0]
+    applyCreateLogoFile(file ?? null)
+    input.value = ''
+  }
+
+  const onCreateLogoDragOver = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setCreateLogoDragOver(true)
+  }
+
+  const onCreateLogoDragLeave = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setCreateLogoDragOver(false)
+  }
+
+  const onCreateLogoDrop = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setCreateLogoDragOver(false)
+    const file = e.dataTransfer?.files?.[0]
+    if (file) applyCreateLogoFile(file)
+  }
+
+  const openCreateCompanyDialog = () => {
+    setCreateLogoPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return null
+    })
+    setCreateLogo(null)
+    setCreateLogoError(null)
+    setCreateName('')
+    setCreateTin('')
+    setCreateAddress('')
+    setCreateLogoDragOver(false)
+    setCreateOpen(true)
   }
 
   const handleCreate = async (e) => {
     e.preventDefault()
     const nameError = validateCompanyName(createName)
     if (nameError) { toast({ title: 'Invalid company name', description: nameError, variant: 'error' }); return }
-    if (!createLogo) { toast({ title: 'Logo required', description: 'A company logo is required. Branches and departments will use this logo.', variant: 'error' }); return }
     setCreateSubmitting(true)
     setCreateLogoError(null)
     try {
       await createCompany({
         name: createName.trim(),
-        logo: createLogo,
+        ...(createLogo ? { logo: createLogo } : {}),
         company_head_id: undefined,
         tin: createTin.trim() || undefined,
         address: createAddress.trim() || undefined,
@@ -1756,37 +1697,6 @@ export default function AdminCompanies() {
     return 0
   })
 
-  const organizationStats = useMemo(() => {
-    const totalBranches = companies.reduce((sum, company) => sum + (Number(company.branches_count) || 0), 0)
-    const totalDepartments = companies.reduce((sum, company) => sum + (Number(company.departments_count) || 0), 0)
-    const totalEmployees = companies.reduce((sum, company) => sum + (Number(company.total_employees) || 0), 0)
-    const withEmployees = companies.filter((company) => Number(company.total_employees) > 0).length
-    const withoutEmployees = Math.max(0, companies.length - withEmployees)
-    const withEmployeesPct = companies.length ? Math.round((withEmployees / companies.length) * 100) : 0
-    return {
-      totalCompanies: companies.length,
-      totalBranches,
-      totalDepartments,
-      totalEmployees,
-      withEmployees,
-      withoutEmployees,
-      withEmployeesPct,
-    }
-  }, [companies])
-
-  const recentCompanyActivity = useMemo(() => {
-    const list = [...companies]
-    list.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
-    return list.slice(0, 4).map((company, idx) => ({
-      key: company.id,
-      company,
-      title: company.name,
-      detail: idx === 0 ? 'Company added' : Number(company.company_head_id) ? 'Organization updated' : 'Head assignment pending',
-      time: formatEstablishedLabel(company.updated_at || company.created_at) || 'Recently',
-      active: Number(company.total_employees) > 0,
-    }))
-  }, [companies])
-
   if (authLoading) {
     return (
       <div className="space-y-6 p-4 @md:p-6">
@@ -1850,7 +1760,7 @@ export default function AdminCompanies() {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
-          <Button className={companyPrimaryButtonClass} onClick={() => { setCreateOpen(true); setCreateName(''); setCreateTin(''); setCreateAddress(''); setCreateLogo(null); setCreateLogoPreview(null); setCreateLogoError(null) }}>
+          <Button className={companyPrimaryButtonClass} onClick={openCreateCompanyDialog}>
             <Plus className="size-4" />
             Add Company
           </Button>
@@ -1861,17 +1771,7 @@ export default function AdminCompanies() {
         <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>
       ) : null}
 
-      <div className="grid gap-6 @xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-5">
-          <Card className={cn(companyCardClass, 'overflow-hidden')}>
-            <CardContent className="grid gap-3 p-4 @lg:grid-cols-4 @lg:gap-0 @lg:p-5">
-              <CompanyMetric icon={Building2} label="Total Companies" value={organizationStats.totalCompanies} helper="Across all organizations" tone="brand" />
-              <CompanyMetric icon={MapPin} label="Total Branches" value={organizationStats.totalBranches} helper="Across all companies" />
-              <CompanyMetric icon={Users} label="Total Employees" value={organizationStats.totalEmployees} helper="Across all companies" tone="brand" />
-              <CompanyMetric icon={Network} label="Total Departments" value={organizationStats.totalDepartments} helper="Across all companies" />
-            </CardContent>
-          </Card>
-
+      <div className="min-w-0 space-y-5">
           {loading ? (
             <div className="grid gap-5 @lg:grid-cols-2 @2xl:grid-cols-3">
               {[...Array(6)].map((_, i) => (
@@ -2027,7 +1927,7 @@ export default function AdminCompanies() {
                 <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
                   Start organizing your organization. Companies are the top level - add one to create branches, departments, and assign employees.
                 </p>
-                <Button className={cn(companyPrimaryButtonClass, 'mt-6')} onClick={() => { setCreateOpen(true); setCreateName(''); setCreateTin(''); setCreateAddress(''); setCreateLogo(null); setCreateLogoPreview(null); setCreateLogoError(null) }}>
+                <Button className={cn(companyPrimaryButtonClass, 'mt-6')} onClick={openCreateCompanyDialog}>
                   <Plus className="size-4" />
                   Add Company
                 </Button>
@@ -2038,7 +1938,7 @@ export default function AdminCompanies() {
           {!loading && sortedCompanies.length > 0 ? (
             <button
               type="button"
-              onClick={() => { setCreateOpen(true); setCreateName(''); setCreateTin(''); setCreateAddress(''); setCreateLogo(null); setCreateLogoPreview(null); setCreateLogoError(null) }}
+              onClick={openCreateCompanyDialog}
               className="flex min-h-20 w-full items-center justify-center gap-3 rounded-[18px] border border-dashed border-border/90 bg-background/40 text-base font-bold text-brand transition hover:border-brand hover:bg-brand/10 dark:border-white/15 dark:bg-background/20"
             >
               <Plus className="size-4" />
@@ -2046,154 +1946,206 @@ export default function AdminCompanies() {
             </button>
           ) : null}
         </div>
-
-        <aside className="space-y-5">
-          <Card className={cn(companyCardClass, 'overflow-hidden')}>
-            <CardContent className="p-5">
-              <h2 className="text-lg font-black tracking-tight text-foreground">Organization summary</h2>
-              <div className="mt-6 flex items-center gap-5">
-                <CompanyDonut percent={organizationStats.withEmployeesPct} />
-                <div className="space-y-4 text-sm">
-                  <div className="flex items-start gap-3">
-                    <span className="mt-1.5 size-2 rounded-full bg-brand" aria-hidden />
-                    <div>
-                      <p className="text-muted-foreground">With employees</p>
-                      <p className="font-black text-foreground">{organizationStats.withEmployees} ({organizationStats.withEmployeesPct}%)</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <span className="mt-1.5 size-2 rounded-full bg-brand/15" aria-hidden />
-                    <div>
-                      <p className="text-muted-foreground">No employees</p>
-                      <p className="font-black text-foreground">{organizationStats.withoutEmployees} ({100 - organizationStats.withEmployeesPct}%)</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <Button type="button" variant="outline" className={cn(companyOutlineButtonClass, 'mt-6 w-full justify-center')} onClick={() => navigate('/admin/reports')}>
-                <FileBarChart className="size-4" />
-                View full report
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className={cn(companyCardClass, 'overflow-hidden')}>
-            <CardContent className="p-5">
-              <h2 className="text-lg font-black tracking-tight text-foreground">Recent activity</h2>
-              <div className="mt-5 divide-y divide-border/70 dark:divide-white/10">
-                {recentCompanyActivity.length ? recentCompanyActivity.map((item) => (
-                  <div key={item.key} className="flex items-center gap-3 py-4 first:pt-0 last:pb-0">
-                    <Avatar className="size-11 shrink-0 rounded-full border border-border/70 bg-background dark:border-white/10">
-                      <AvatarImage src={companyLogoUrl(item.company)} className="object-cover" />
-                      <AvatarFallback className="bg-brand/10 text-xs font-bold text-brand dark:bg-brand/15">{initials(item.title)}</AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-black text-foreground">{item.title}</p>
-                      <p className="text-xs text-muted-foreground">{item.detail}</p>
-                      <p className="text-xs text-muted-foreground">{item.time}</p>
-                    </div>
-                    <span className={cn('size-2 rounded-full', item.active ? 'bg-emerald-500' : 'bg-brand')} aria-hidden />
-                  </div>
-                )) : (
-                  <p className="py-8 text-center text-sm text-muted-foreground">No recent activity yet.</p>
-                )}
-              </div>
-              <Button type="button" variant="outline" className={cn(companyOutlineButtonClass, 'mt-5 w-full justify-center border-brand/30 text-brand hover:bg-brand/10')}>
-                View all activity
-                <ArrowRight className="size-4" />
-              </Button>
-            </CardContent>
-          </Card>
-        </aside>
-      </div>
       {/* ── Create Company ── */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open)
+          if (!open) {
+            setCreateLogoPreview((prev) => {
+              if (prev) URL.revokeObjectURL(prev)
+              return null
+            })
+            setCreateLogo(null)
+            setCreateLogoError(null)
+            setCreateName('')
+            setCreateTin('')
+            setCreateAddress('')
+            setCreateLogoDragOver(false)
+          }
+        }}
+      >
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
+          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0"
+          className={cn('admin-add-company-dialog', adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG))}
           aria-describedby="company-create-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Create Company</DialogTitle>
-              <p id="company-create-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Adding a company lets you organize branches and departments. Company heads can oversee all branches and approve org changes.
-              </p>
-            </DialogHeader>
-          </div>
           {createSubmitting ? (
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-3 w-full" />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="shrink-0 px-6 pt-6 pb-3">
+                <Skeleton className="h-6 w-48 rounded-md" />
               </div>
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-16" />
-                <Skeleton className="h-3 w-full" />
-                <div className="flex items-center gap-3">
-                  <Skeleton className="h-9 w-28 rounded-md" />
-                  <Skeleton className="h-14 w-14 rounded-lg" />
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
+                <div className="flex gap-3">
+                  <Skeleton className="size-11 shrink-0 rounded-full" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-3 w-full" />
+                    <Skeleton className="h-3 w-4/5" />
+                  </div>
                 </div>
-              </div>
-              <div className="flex justify-end gap-2 pt-4">
-                <Skeleton className="h-9 w-16 rounded-md" />
-                <Skeleton className="h-9 w-32 rounded-md" />
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-28" />
+                  <Skeleton className="h-12 w-full rounded-xl" />
+                  <Skeleton className="h-3 w-full" />
+                </div>
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-12 w-full rounded-xl" />
+                </div>
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-12 w-full rounded-xl" />
+                </div>
+                <Skeleton className="h-32 w-full rounded-xl" />
+                <div className="flex justify-end gap-2 pt-2">
+                  <Skeleton className="h-12 w-24 rounded-lg" />
+                  <Skeleton className="h-12 w-40 rounded-lg" />
+                </div>
               </div>
             </div>
           ) : (
             <form onSubmit={handleCreate} className="flex min-h-0 flex-1 flex-col">
-              <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-              <div>
-                <Label htmlFor="create-name">Company Name *</Label>
-                <Input
-                  id="create-name"
-                  value={createName}
-                  onChange={(e) => setCreateName(e.target.value)}
-                  placeholder="e.g. Acme Corporation"
-                  className="mt-1"
-                />
-                <p className="mt-1 text-xs text-muted-foreground">Letters, numbers, spaces, hyphens, and apostrophes only.</p>
+              <div className="shrink-0 px-6 pt-6 pb-3 pr-14">
+                <DialogHeader className="p-0 text-left">
+                  <DialogTitle className="hr-dialog-title">Add New Company</DialogTitle>
+                </DialogHeader>
               </div>
-              <div>
-                <Label htmlFor="create-address">Company address</Label>
-                <textarea
-                  id="create-address"
-                  rows={3}
-                  value={createAddress}
-                  onChange={(e) => setCreateAddress(e.target.value)}
-                  placeholder="Registered business address (optional)"
-                  className="mt-1 flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:border-border/50 dark:bg-input/30"
-                />
-              </div>
-              <div>
-                <Label htmlFor="create-tin">Company TIN (ID number)</Label>
-                <Input
-                  id="create-tin"
-                  value={createTin}
-                  onChange={(e) => setCreateTin(e.target.value)}
-                  placeholder="e.g. 123-456-789-000 (optional)"
-                  className="mt-1"
-                  autoComplete="off"
-                />
-              </div>
-              <div>
-                <Label>Logo <span className="text-destructive">*</span></Label>
-                <p className="mt-0.5 text-xs text-muted-foreground">Branches and departments will use this logo. Required.</p>
-                <div className="mt-1 flex items-center gap-3">
-                  <input ref={createLogoInputRef} type="file" accept={LOGO_ACCEPT} className="hidden" onChange={onCreateLogoChange} />
-                  <Button type="button" variant="outline" size="sm" onClick={() => createLogoInputRef.current?.click()}>
-                    {createLogoPreview ? 'Change image' : 'Upload logo'}
-                  </Button>
-                  {createLogoPreview && <img src={createLogoPreview} alt="" className="h-14 w-14 rounded-lg object-cover border border-border" />}
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-6">
+                <div className="mb-5 flex gap-3 rounded-xl border border-border/60 bg-muted/25 px-4 py-3.5 dark:border-white/10 dark:bg-white/5">
+                  <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-brand/12 text-brand dark:bg-brand/18">
+                    <Building2 className="size-5" aria-hidden />
+                  </div>
+                  <p id="company-create-desc" className="text-sm leading-relaxed text-muted-foreground">
+                    Create a new company to organize branches and departments. Company heads can oversee all branches and approve organization changes.
+                  </p>
                 </div>
-                {createLogoError && <p className="mt-1 text-xs text-destructive">{createLogoError}</p>}
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <Label htmlFor="create-name" className="text-foreground">
+                      Company Name <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="create-name"
+                      value={createName}
+                      onChange={(e) => setCreateName(e.target.value)}
+                      placeholder="e.g. Acme Corporation"
+                      className="h-12 rounded-[0.875rem] shadow-sm"
+                      autoComplete="organization"
+                    />
+                    <p className="text-xs text-muted-foreground">Letters, numbers, spaces, hyphens, and apostrophes only.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="create-address" className="text-foreground">
+                      Company Address{' '}
+                      <span className="font-normal text-muted-foreground">(optional)</span>
+                    </Label>
+                    <Input
+                      id="create-address"
+                      value={createAddress}
+                      onChange={(e) => setCreateAddress(e.target.value)}
+                      placeholder="Registered business address"
+                      className="h-12 rounded-[0.875rem] shadow-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="create-tin" className="text-foreground">
+                      Company TIN (ID number){' '}
+                      <span className="font-normal text-muted-foreground">(optional)</span>
+                    </Label>
+                    <Input
+                      id="create-tin"
+                      value={createTin}
+                      onChange={(e) => setCreateTin(e.target.value)}
+                      placeholder="e.g. 123-456-789-000"
+                      className="h-12 rounded-[0.875rem] shadow-sm"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div>
+                      <Label className="text-foreground">
+                        Company Logo{' '}
+                        <span className="font-normal text-muted-foreground">(optional)</span>
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">This logo will represent the company across the system.</p>
+                    </div>
+                    <div
+                      onDragOver={onCreateLogoDragOver}
+                      onDragLeave={onCreateLogoDragLeave}
+                      onDrop={onCreateLogoDrop}
+                      className={cn(
+                        'rounded-xl border-2 border-dashed transition-colors',
+                        createLogoDragOver
+                          ? 'border-brand bg-brand/10 dark:border-brand dark:bg-brand/15'
+                          : 'border-border bg-muted/15 dark:border-white/15 dark:bg-white/5'
+                      )}
+                    >
+                      <input
+                        ref={createLogoInputRef}
+                        id="create-logo-input"
+                        type="file"
+                        accept={LOGO_ACCEPT}
+                        className="sr-only"
+                        onChange={onCreateLogoChange}
+                      />
+                      <button
+                        type="button"
+                        className={cn(
+                          'flex w-full cursor-pointer flex-col items-center justify-center gap-2 px-4 py-10 text-center transition-colors hover:bg-muted/25 dark:hover:bg-white/8',
+                          createLogoDragOver && 'bg-transparent'
+                        )}
+                        onClick={() => createLogoInputRef.current?.click()}
+                      >
+                        {createLogoPreview ? (
+                          <div className="flex flex-col items-center gap-3">
+                            <img src={createLogoPreview} alt="" className="h-16 w-16 rounded-xl border border-border object-cover dark:border-white/10" />
+                            <p className="text-sm font-medium text-foreground">
+                              <span className="text-brand">Click to replace</span>
+                              <span className="text-muted-foreground"> or drag and drop</span>
+                            </p>
+                          </div>
+                        ) : (
+                          <>
+                            <Upload className="size-8 text-muted-foreground" strokeWidth={1.5} aria-hidden />
+                            <p className="text-sm text-foreground">
+                              <span className="font-semibold text-brand">Click to upload</span>{' '}
+                              <span className="text-muted-foreground">or drag and drop</span>
+                            </p>
+                            <p className="text-xs text-muted-foreground">PNG, JPG, WebP up to 2MB</p>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    {createLogoPreview ? (
+                      <button
+                        type="button"
+                        className="mt-2 text-xs font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                        onClick={() => {
+                          applyCreateLogoFile(null)
+                          if (createLogoInputRef.current) createLogoInputRef.current.value = ''
+                        }}
+                      >
+                        Remove file
+                      </button>
+                    ) : null}
+                    {createLogoError ? <p className="text-xs text-destructive">{createLogoError}</p> : null}
+                  </div>
+                </div>
               </div>
-              </div>
-              <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-                <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-                <Button type="submit" className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS} disabled={!createLogo}>
-                  Create Company
+              <DialogFooter className="shrink-0 gap-3 border-t border-border/50 bg-muted/10 px-6 py-4 dark:border-white/10 dark:bg-muted/10">
+                <Button type="button" variant="outline" className={cn(companyOutlineButtonClass, 'h-11 min-w-[100px]')} onClick={() => setCreateOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" className={cn(companyPrimaryButtonClass, 'h-11 min-w-[160px] px-5')} disabled={createSubmitting}>
+                  {createSubmitting ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <>
+                      Create Company
+                      <ArrowRight className="size-4" />
+                    </>
+                  )}
                 </Button>
               </DialogFooter>
             </form>

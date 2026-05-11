@@ -177,6 +177,38 @@ body {
   color-scheme: dark;
 }
 
+/* Admin companies: Add Company modal — token-driven inputs (matches employee modal pattern). */
+.admin-add-company-dialog input:not([type='file']),
+.admin-add-company-dialog textarea {
+  min-height: 3rem;
+  border-radius: 0.875rem;
+  border-color: color-mix(in oklch, var(--border) 82%, transparent);
+  background-color: var(--background);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.05);
+}
+
+.admin-add-company-dialog textarea {
+  min-height: 5rem;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+  resize: vertical;
+}
+
+.admin-add-company-dialog input:not([type='file'])::placeholder,
+.admin-add-company-dialog textarea::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.72;
+}
+
+.dark .admin-add-company-dialog input:not([type='file']),
+.dark .admin-add-company-dialog textarea {
+  border-color: var(--border);
+  background-color: color-mix(in oklch, var(--input) 68%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.22);
+}
+
 html,
 body,
 #root {

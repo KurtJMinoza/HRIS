@@ -101,10 +101,9 @@ class CompanyController extends Controller
             'company_head_id' => ['nullable', 'integer', 'exists:users,id'],
             'tin' => ['nullable', 'string', 'max:64'],
             'address' => ['nullable', 'string', 'max:5000'],
-            'logo' => ['required', 'image', 'mimes:'.implode(',', self::LOGO_MIMES), 'max:'.self::LOGO_MAX_KB],
+            'logo' => ['nullable', 'image', 'mimes:'.implode(',', self::LOGO_MIMES), 'max:'.self::LOGO_MAX_KB],
         ], [
             'name.regex' => 'Company name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
-            'logo.required' => 'A company logo is required.',
             'logo.image' => 'The logo must be an image (JPG, PNG, or WebP).',
             'logo.mimes' => 'The logo must be a JPG, PNG, or WebP file.',
             'logo.max' => 'The logo must not exceed 2MB.',
@@ -112,7 +111,7 @@ class CompanyController extends Controller
 
         $this->validateCompanyHeadNotAssignedElsewhere($validated['company_head_id'] ?? null, null);
 
-        $path = $this->storeLogoOrFail($request);
+        $path = $request->hasFile('logo') ? $this->storeLogoOrFail($request) : null;
         $company = Company::create([
             'name' => $validated['name'],
             'logo' => $path,
