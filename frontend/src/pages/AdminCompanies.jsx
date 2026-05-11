@@ -70,6 +70,12 @@ import {
 const LOGO_ACCEPT = 'image/jpeg,image/jpg,image/png,image/webp'
 const LOGO_MAX_SIZE_MB = 2
 const LOGO_MAX_BYTES = LOGO_MAX_SIZE_MB * 1024 * 1024
+const companyCardClass =
+  'rounded-[18px] border border-border/70 bg-card text-card-foreground shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
+const companyPrimaryButtonClass =
+  'h-12 gap-2 rounded-lg bg-brand px-6 text-base font-semibold text-brand-foreground shadow-[0_12px_22px_-14px_rgba(234,88,12,0.9)] transition hover:bg-brand-strong dark:shadow-[0_12px_24px_-16px_rgba(251,146,60,0.75)]'
+const companyOutlineButtonClass =
+  'h-12 gap-2 rounded-lg border-border/80 bg-card px-5 text-base font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
 
 function validateCompanyName(value) {
   const trimmed = value.trim()
@@ -204,6 +210,40 @@ function OrgStatCell({
       </span>
       <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
     </button>
+  )
+}
+
+function CompanyMetric({ icon: Icon, label, value, helper, tone = 'brand' }) {
+  const toneClass =
+    tone === 'brand'
+      ? 'bg-brand/10 text-brand ring-brand/15 dark:bg-brand/15 dark:ring-brand/25'
+      : 'bg-muted text-muted-foreground ring-border/60 dark:bg-muted/60 dark:ring-white/10'
+  return (
+    <div className="flex min-w-0 items-center gap-4 border-border/70 px-4 py-2 first:border-0 @lg:border-l dark:border-white/10">
+      <div className={cn('flex size-14 shrink-0 items-center justify-center rounded-full ring-1', toneClass)}>
+        {createElement(Icon, { className: 'size-7', 'aria-hidden': true })}
+      </div>
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+        <p className="mt-1 text-2xl font-black tabular-nums text-foreground">{value}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{helper}</p>
+      </div>
+    </div>
+  )
+}
+
+function CompanyDonut({ percent }) {
+  const p = Math.max(0, Math.min(100, Number(percent) || 0))
+  return (
+    <div
+      className="size-28 rounded-full"
+      style={{ background: `conic-gradient(var(--brand) ${p}%, color-mix(in oklch, var(--brand) 12%, transparent) 0)` }}
+      aria-hidden
+    >
+      <div className="flex size-full items-center justify-center rounded-full p-4">
+        <div className="size-full rounded-full bg-card" />
+      </div>
+    </div>
   )
 }
 
@@ -1716,6 +1756,37 @@ export default function AdminCompanies() {
     return 0
   })
 
+  const organizationStats = useMemo(() => {
+    const totalBranches = companies.reduce((sum, company) => sum + (Number(company.branches_count) || 0), 0)
+    const totalDepartments = companies.reduce((sum, company) => sum + (Number(company.departments_count) || 0), 0)
+    const totalEmployees = companies.reduce((sum, company) => sum + (Number(company.total_employees) || 0), 0)
+    const withEmployees = companies.filter((company) => Number(company.total_employees) > 0).length
+    const withoutEmployees = Math.max(0, companies.length - withEmployees)
+    const withEmployeesPct = companies.length ? Math.round((withEmployees / companies.length) * 100) : 0
+    return {
+      totalCompanies: companies.length,
+      totalBranches,
+      totalDepartments,
+      totalEmployees,
+      withEmployees,
+      withoutEmployees,
+      withEmployeesPct,
+    }
+  }, [companies])
+
+  const recentCompanyActivity = useMemo(() => {
+    const list = [...companies]
+    list.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))
+    return list.slice(0, 4).map((company, idx) => ({
+      key: company.id,
+      company,
+      title: company.name,
+      detail: idx === 0 ? 'Company added' : Number(company.company_head_id) ? 'Organization updated' : 'Head assignment pending',
+      time: formatEstablishedLabel(company.updated_at || company.created_at) || 'Recently',
+      active: Number(company.total_employees) > 0,
+    }))
+  }, [companies])
+
   if (authLoading) {
     return (
       <div className="space-y-6 p-4 @md:p-6">
@@ -1754,22 +1825,21 @@ export default function AdminCompanies() {
   }
 
   return (
-    <div className="space-y-6 p-4 @md:p-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 @sm:flex-row @sm:items-start @sm:justify-between">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight text-fore ground">Companies</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+    <div className="min-h-0 min-w-0 max-w-full space-y-8 overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6">
+      <div className="flex flex-col gap-5 pb-1 @lg:flex-row @lg:items-start @lg:justify-between">
+        <div className="space-y-3">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground @md:text-4xl">Companies</h1>
+          <p className="max-w-3xl text-base leading-relaxed text-muted-foreground">
             Manage your organization hierarchy. Click a card to explore branches and departments.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {!loading && sortedCompanies.length > 1 && (
+        <div className="flex w-full flex-col gap-3 @sm:w-auto @sm:flex-row @sm:items-center @sm:justify-end">
+          {!loading && sortedCompanies.length > 1 ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="text-muted-foreground">
-                  Sort: {sortCol === 'name' ? 'Name' : sortCol === 'total_employees' ? 'Employees' : sortCol === 'branches_count' ? 'Branches' : 'Depts'}
-                  {sortDir === 'asc' ? <ChevronUp className="ml-1 size-3" /> : <ChevronDown className="ml-1 size-3" />}
+                <Button variant="outline" className={companyOutlineButtonClass}>
+                  Sort by: {sortCol === 'name' ? 'Name' : sortCol === 'total_employees' ? 'Employees' : sortCol === 'branches_count' ? 'Branches' : 'Departments'}
+                  {sortDir === 'asc' ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1779,285 +1849,263 @@ export default function AdminCompanies() {
                 <DropdownMenuItem onClick={() => toggleSort('departments_count')}>Departments</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          )}
-          <Button className="bg-black hover:bg-black/85 text-white dark:bg-white dark:hover:bg-white/90 dark:text-black" onClick={() => { setCreateOpen(true); setCreateName(''); setCreateTin(''); setCreateAddress(''); setCreateLogo(null); setCreateLogoPreview(null); setCreateLogoError(null) }}>
+          ) : null}
+          <Button className={companyPrimaryButtonClass} onClick={() => { setCreateOpen(true); setCreateName(''); setCreateTin(''); setCreateAddress(''); setCreateLogo(null); setCreateLogoPreview(null); setCreateLogoError(null) }}>
             <Plus className="size-4" />
             Add Company
           </Button>
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>
-      )}
+      {error ? (
+        <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>
+      ) : null}
 
-      {loading ? (
-        <div className="grid gap-5 @sm:grid-cols-1 @lg:grid-cols-2 @2xl:grid-cols-3">
-          {[...Array(6)].map((_, i) => (
-            <Card key={i} className="overflow-hidden rounded-2xl border border-border/70 shadow-md dark:border-white/10">
-              <CardContent className="p-5 @sm:p-6 space-y-5">
-                <div className="flex items-start gap-4">
-                  <Skeleton className="size-20 shrink-0 rounded-full" />
-                  <div className="flex-1 space-y-2 pt-0.5">
-                    <Skeleton className="h-2.5 w-24" />
-                    <Skeleton className="h-6 w-4/5 max-w-[200px]" />
-                    <Skeleton className="h-3 w-32" />
-                  </div>
-                  <Skeleton className="size-9 shrink-0 rounded-full" />
+      <div className="grid gap-6 @xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="min-w-0 space-y-5">
+          <Card className={cn(companyCardClass, 'overflow-hidden')}>
+            <CardContent className="grid gap-3 p-4 @lg:grid-cols-4 @lg:gap-0 @lg:p-5">
+              <CompanyMetric icon={Building2} label="Total Companies" value={organizationStats.totalCompanies} helper="Across all organizations" tone="brand" />
+              <CompanyMetric icon={MapPin} label="Total Branches" value={organizationStats.totalBranches} helper="Across all companies" />
+              <CompanyMetric icon={Users} label="Total Employees" value={organizationStats.totalEmployees} helper="Across all companies" tone="brand" />
+              <CompanyMetric icon={Network} label="Total Departments" value={organizationStats.totalDepartments} helper="Across all companies" />
+            </CardContent>
+          </Card>
+
+          {loading ? (
+            <div className="grid gap-5 @lg:grid-cols-2 @2xl:grid-cols-3">
+              {[...Array(6)].map((_, i) => (
+                <Card key={i} className={cn(companyCardClass, 'overflow-hidden')}>
+                  <CardContent className="space-y-5 p-5">
+                    <div className="flex items-start gap-4">
+                      <Skeleton className="size-16 shrink-0 rounded-full" />
+                      <div className="flex-1 space-y-2 pt-1">
+                        <Skeleton className="h-5 w-32" />
+                        <Skeleton className="h-3 w-24" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-20 rounded-xl" />
+                    <Skeleton className="h-20 rounded-xl" />
+                    <Skeleton className="h-11 rounded-lg" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : sortedCompanies.length > 0 ? (
+            <div className="grid gap-5 @lg:grid-cols-2 @2xl:grid-cols-3">
+              {sortedCompanies.map((company, idx) => {
+                const companyInitials = initials(company.name)
+                const headEmp = allEmployees.find((e) => String(e.id) === String(company.company_head_id))
+                const branchStackItems = buildBranchStackItems(company.id, allBranches)
+                const departmentStackItems = buildDepartmentStackItems(company.id, allDepartments)
+                const employeeStackItems = buildEmployeeStackItems(company.id, allEmployees, allBranches)
+                return (
+                  <Card
+                    key={company.id}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`View ${company.name} details`}
+                    onClick={() => openDetail(company)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(company) }
+                      if (e.key === 'ArrowDown' && idx < sortedCompanies.length - 1) {
+                        e.preventDefault()
+                        document.querySelector(`[data-company-id="${sortedCompanies[idx + 1].id}"]`)?.focus()
+                      }
+                      if (e.key === 'ArrowUp' && idx > 0) {
+                        e.preventDefault()
+                        document.querySelector(`[data-company-id="${sortedCompanies[idx - 1].id}"]`)?.focus()
+                      }
+                    }}
+                    data-company-id={company.id}
+                    className={cn(
+                      companyCardClass,
+                      'group cursor-pointer overflow-hidden transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 active:scale-[0.99] hover:-translate-y-0.5 hover:border-brand/35 hover:shadow-[0_18px_46px_-28px_rgba(15,23,42,0.65)] dark:hover:border-brand/35'
+                    )}
+                  >
+                    <CardContent className="p-5">
+                      <div className="flex items-start gap-4">
+                        <div className="shrink-0">
+                          {companyLogoUrl(company) ? (
+                            <div className="flex size-16 items-center justify-center overflow-hidden rounded-full border border-border/80 bg-background shadow-inner ring-2 ring-border/30 dark:border-white/10 dark:ring-white/10">
+                              <img src={companyLogoUrl(company)} alt="" className="size-full object-cover" />
+                            </div>
+                          ) : (
+                            <div className="flex size-16 items-center justify-center rounded-full border border-brand/20 bg-brand/10 text-lg font-black text-brand ring-2 ring-brand/10">
+                              {companyInitials}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1 pt-0.5">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <h3 className="truncate text-xl font-black tracking-tight text-foreground group-hover:text-brand">{company.name}</h3>
+                            <Badge className="rounded-full bg-brand/10 px-2.5 py-0.5 text-[10px] font-bold text-brand shadow-none dark:bg-brand/15">Organization</Badge>
+                          </div>
+                          {company.created_at ? <p className="mt-1 text-xs text-muted-foreground">{formatEstablishedLabel(company.created_at)}</p> : null}
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button variant="ghost" size="icon" className="size-9 shrink-0 rounded-full text-muted-foreground hover:bg-muted/80 hover:text-foreground" aria-label="Company actions">
+                              <MoreVertical className="size-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuItem onClick={() => openDetail(company)}><Building className="size-4" /><span>View details</span></DropdownMenuItem>
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEditDetails(company) }}><FileText className="size-4" /><span>Edit details</span></DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEditName(company)}><Pencil className="size-4" /><span>Rename</span></DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openHeadDialog(company)}><UserPlus className="size-4" /><span>Assign head</span></DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEditLogo(company)}><ImagePlus className="size-4" /><span>Change logo</span></DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem variant="destructive" onClick={() => setDeleteConfirmCompany(company)}><Trash2 className="size-4" /><span>Delete</span></DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+
+                      <div className="mt-4 rounded-xl border border-border/60 bg-background/60 px-4 py-3 dark:border-white/10 dark:bg-background/30" onClick={(e) => e.stopPropagation()}>
+                        {company.company_head_name ? (
+                          <div className="flex items-center gap-3">
+                            <Avatar className="size-11 shrink-0 rounded-full border-2 border-background shadow-sm ring-1 ring-border/60 dark:ring-white/10">
+                              <AvatarImage src={profileImageUrl(headEmp?.profile_image)} className="object-cover" />
+                              <AvatarFallback className="bg-brand/10 text-xs font-bold text-brand dark:bg-brand/15">{initials(company.company_head_name)}</AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs text-muted-foreground">Company head</p>
+                              <p className="truncate text-sm font-semibold text-foreground">{company.company_head_name}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <div className="flex size-11 shrink-0 items-center justify-center rounded-full border border-brand/20 bg-brand/10 text-brand dark:bg-brand/15">
+                              <UserPlus className="size-5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs text-muted-foreground">Company head</p>
+                              <p className="text-sm text-muted-foreground">No head assigned yet</p>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); openHeadDialog(company) }} className="text-sm font-bold text-brand hover:underline">Assign head</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-3 divide-x divide-border/70 rounded-xl border border-border/60 bg-background/60 dark:divide-white/10 dark:border-white/10 dark:bg-background/30">
+                        <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/branches?company_id=${company.id}`) }} className="px-3 py-3 text-center hover:bg-muted/35">
+                          <p className="text-2xl font-black tabular-nums text-foreground">{Number(company.branches_count) || 0}</p>
+                          <OrgProfileStack items={branchStackItems} max={3} className="mt-1" />
+                          <p className="text-[10px] font-bold uppercase text-muted-foreground">{Number(company.branches_count) === 1 ? 'Branch' : 'Branches'}</p>
+                        </button>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/departments?company_id=${company.id}`) }} className="px-3 py-3 text-center hover:bg-muted/35">
+                          <p className="text-2xl font-black tabular-nums text-foreground">{Number(company.departments_count) || 0}</p>
+                          <OrgProfileStack items={departmentStackItems} max={3} className="mt-1" />
+                          <p className="text-[10px] font-bold uppercase text-muted-foreground">Departments</p>
+                        </button>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(company, 'employees') }} className="px-3 py-3 text-center hover:bg-muted/35">
+                          <p className="text-2xl font-black tabular-nums text-brand">{Number(company.total_employees) || 0}</p>
+                          <OrgProfileStack items={employeeStackItems} max={3} className="mt-1" />
+                          <p className="text-[10px] font-bold uppercase text-muted-foreground">Employees</p>
+                        </button>
+                      </div>
+
+                      <Button
+                        className="mt-4 h-11 w-full justify-between rounded-lg bg-muted/45 px-4 text-base font-semibold text-foreground hover:bg-brand/10 hover:text-brand dark:bg-muted/25"
+                        onClick={(e) => { e.stopPropagation(); openDetail(company) }}
+                      >
+                        <span className="inline-flex items-center gap-2"><Eye className="size-4" /> View organization</span>
+                        <ArrowRight className="size-4 text-brand" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          ) : (
+            <Card className="border-dashed border-2 dark:border-white/10">
+              <CardContent className="flex flex-col items-center justify-center px-8 py-20 text-center">
+                <div className="mb-5 flex size-20 items-center justify-center rounded-2xl bg-brand/10 text-brand dark:bg-brand/15">
+                  <Building2 className="size-10" />
                 </div>
-                <Skeleton className="h-[104px] w-full rounded-xl" />
-                <div className="space-y-2">
-                  <Skeleton className="h-2.5 w-16" />
-                  <div className="grid grid-cols-3 gap-2">
-                    <Skeleton className="h-[88px] rounded-xl" />
-                    <Skeleton className="h-[88px] rounded-xl" />
-                    <Skeleton className="h-[88px] rounded-xl" />
-                  </div>
-                </div>
-                <div className="space-y-2 border-t border-border/40 pt-4">
-                  <Skeleton className="h-10 w-full rounded-lg" />
-                  <div className="flex gap-2">
-                    <Skeleton className="h-10 flex-1 rounded-lg" />
-                    <Skeleton className="h-10 flex-1 rounded-lg" />
-                  </div>
-                </div>
+                <h3 className="text-xl font-bold text-foreground">No companies yet</h3>
+                <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+                  Start organizing your organization. Companies are the top level - add one to create branches, departments, and assign employees.
+                </p>
+                <Button className={cn(companyPrimaryButtonClass, 'mt-6')} onClick={() => { setCreateOpen(true); setCreateName(''); setCreateTin(''); setCreateAddress(''); setCreateLogo(null); setCreateLogoPreview(null); setCreateLogoError(null) }}>
+                  <Plus className="size-4" />
+                  Add Company
+                </Button>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-5 @sm:grid-cols-1 @lg:grid-cols-2 @2xl:grid-cols-3">
-          {sortedCompanies.map((company, idx) => {
-            const companyInitials = initials(company.name)
-            const headEmp = allEmployees.find((e) => String(e.id) === String(company.company_head_id))
-            const branchStackItems = buildBranchStackItems(company.id, allBranches)
-            const departmentStackItems = buildDepartmentStackItems(company.id, allDepartments)
-            const employeeStackItems = buildEmployeeStackItems(company.id, allEmployees, allBranches)
-            return (
-              <Card
-                key={company.id}
-                tabIndex={0}
-                role="button"
-                aria-label={`View ${company.name} details`}
-                onClick={() => openDetail(company)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(company) }
-                  if (e.key === 'ArrowDown' && idx < sortedCompanies.length - 1) {
-                    e.preventDefault()
-                    document.querySelector(`[data-company-id="${sortedCompanies[idx + 1].id}"]`)?.focus()
-                  }
-                  if (e.key === 'ArrowUp' && idx > 0) {
-                    e.preventDefault()
-                    document.querySelector(`[data-company-id="${sortedCompanies[idx - 1].id}"]`)?.focus()
-                  }
-                }}
-                data-company-id={company.id}
-                className={cn(
-                  'group cursor-pointer overflow-hidden rounded-2xl transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99]',
-                  detailOpen && detailCompany?.id === company.id
-                    ? 'border border-blue-500/50 shadow-lg ring-1 ring-blue-500/20 dark:bg-card dark:border-blue-500/40'
-                    : 'border border-border/70 bg-card shadow-md dark:border-white/10 dark:shadow-[0_4px_24px_rgba(0,0,0,0.35)] hover:-translate-y-0.5 hover:shadow-lg hover:border-border/90 dark:hover:border-white/18'
-                )}
-              >
-                <CardContent className="p-5 @sm:p-6">
-                  {/* Top: org identity + kebab */}
-                  <div className="flex items-start gap-4">
-                    <div className="shrink-0">
-                      {companyLogoUrl(company) ? (
-                        <div className="flex size-20 items-center justify-center overflow-hidden rounded-full border border-border/80 bg-background shadow-inner ring-2 ring-border/30 dark:border-white/10 dark:ring-white/10">
-                          <img src={companyLogoUrl(company)} alt="" className="size-full object-cover" />
-                        </div>
-                      ) : (
-                        <div className="flex size-20 items-center justify-center rounded-full border border-border/80 bg-linear-to-br from-primary/25 to-primary/10 shadow-inner ring-2 ring-primary/10">
-                          <span className="text-xl font-bold tracking-tight text-primary">{companyInitials}</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1 pt-0.5 pr-1">
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/80">Organization</p>
-                      <h3 className="mt-0.5 text-xl font-bold leading-snug tracking-tight text-foreground line-clamp-2 group-hover:underline">
-                        {company.name}
-                      </h3>
-                      {company.created_at && (
-                        <p className="mt-1 text-xs text-muted-foreground">{formatEstablishedLabel(company.created_at)}</p>
-                      )}
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/80 -mr-1"
-                          aria-label="Company actions"
-                        >
-                          <MoreVertical className="size-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-48">
-                        <DropdownMenuItem onClick={() => openDetail(company)}>
-                          <Building className="size-4" /><span>View details</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            openEditDetails(company)
-                          }}
-                        >
-                          <FileText className="size-4" /><span>Edit details</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => openEditName(company)}>
-                          <Pencil className="size-4" /><span>Rename</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => openHeadDialog(company)}>
-                          <UserPlus className="size-4" /><span>Assign head</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => openEditLogo(company)}>
-                          <ImagePlus className="size-4" /><span>Change logo</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem variant="destructive" onClick={() => setDeleteConfirmCompany(company)}>
-                          <Trash2 className="size-4" /><span>Delete</span>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+          )}
 
-                  {/* Company head — full-width block, not nested card */}
-                  <div className="mt-5 rounded-xl border border-border/50 bg-muted/25 px-4 py-3 dark:bg-white/4 dark:border-white/10">
-                    {company.company_head_name ? (
-                      <div className="flex items-start gap-3">
-                        <Avatar className="size-16 shrink-0 rounded-full border-2 border-background shadow-sm ring-2 ring-border/40 dark:ring-white/10">
-                          <AvatarImage src={profileImageUrl(headEmp?.profile_image)} className="object-cover" />
-                          <AvatarFallback className="text-sm font-bold bg-sky-500/15 text-sky-800 dark:bg-sky-500/20 dark:text-sky-200">
-                            {initials(company.company_head_name)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-muted-foreground">Company head</p>
-                          <p className="mt-0.5 text-base font-semibold text-foreground leading-snug truncate">{company.company_head_name}</p>
-                          <Badge
-                            variant="secondary"
-                            className="mt-2 h-6 rounded-full border border-sky-200/80 bg-sky-100/90 px-2.5 text-[11px] font-semibold text-sky-900 shadow-none dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-100"
-                          >
-                            Company Head
-                          </Badge>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-start gap-3">
-                        <div className="flex size-16 shrink-0 items-center justify-center rounded-full border border-dashed border-amber-300/80 bg-amber-50/80 dark:border-amber-700/50 dark:bg-amber-950/30">
-                          <UserPlus className="size-7 text-amber-600 dark:text-amber-400" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-muted-foreground">Company head</p>
-                          <p className="mt-0.5 text-sm text-muted-foreground">No head assigned yet</p>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); openHeadDialog(company) }}
-                            className="mt-2 text-sm font-semibold text-amber-700 hover:underline dark:text-amber-400"
-                          >
-                            Assign head
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Stats — equal columns; employees emphasized when &gt; 0 */}
-                  <div className="mt-5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Overview</p>
-                    <div className="grid grid-cols-3 gap-2">
-                      <OrgStatCell
-                        value={company.branches_count ?? 0}
-                        singular="Branch"
-                        plural="Branches"
-                        icon={MapPin}
-                        stackItems={branchStackItems}
-                        onClick={() => navigate(`/admin/branches?company_id=${company.id}`)}
-                        title="Open branches for this company"
-                      />
-                      <OrgStatCell
-                        value={company.departments_count ?? 0}
-                        singular="Dept"
-                        plural="Depts"
-                        icon={Building2}
-                        stackItems={departmentStackItems}
-                        onClick={() => navigate(`/admin/departments?company_id=${company.id}`)}
-                        title="Open departments for this company"
-                      />
-                      <OrgStatCell
-                        value={company.total_employees ?? 0}
-                        singular="Employee"
-                        plural="Employees"
-                        icon={Users2}
-                        emphasize
-                        stackItems={employeeStackItems}
-                        onClick={() => openDetail(company, 'employees')}
-                        title="View employees in this organization"
-                      />
-                    </div>
-                    {(company.branches_count ?? 0) === 0 && (company.departments_count ?? 0) === 0 && (
-                      <p className="text-[11px] leading-relaxed text-muted-foreground/90">
-                        No branches or departments yet — add a branch to structure your org.
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Actions: one primary, second row secondary + tertiary */}
-                  <div className="mt-5 flex flex-col gap-2 border-t border-border/50 pt-5 dark:border-white/10" onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      className="h-10 w-full gap-2 bg-primary font-semibold text-primary-foreground shadow-sm hover:bg-primary/90"
-                      onClick={(e) => { e.stopPropagation(); openDetail(company) }}
-                    >
-                      <Eye className="size-4 shrink-0" />
-                      View organization
-                    </Button>
-                    <div className="flex flex-col gap-2 @sm:flex-row @sm:items-stretch">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-10 flex-1 border-border/80 font-medium"
-                        onClick={(e) => { e.stopPropagation(); openHeadDialog(company) }}
-                      >
-                        <UserPlus className="size-4 shrink-0" />
-                        Assign head
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="h-10 flex-1 font-medium text-muted-foreground hover:text-foreground"
-                        onClick={(e) => { e.stopPropagation(); navigate(`/admin/branches?company_id=${company.id}`) }}
-                      >
-                        <Plus className="size-4 shrink-0" />
-                        Add branch
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      )}
-
-      {!loading && sortedCompanies.length === 0 && (
-        <Card className="border-dashed border-2 dark:border-slate-700/50">
-          <CardContent className="flex flex-col items-center justify-center py-20 px-8 text-center">
-            <div className="mb-5 flex size-20 items-center justify-center rounded-2xl bg-muted/80 dark:bg-slate-800/60">
-              <Building2 className="size-10 text-muted-foreground" />
-            </div>
-            <h3 className="text-xl font-bold text-foreground">No companies yet</h3>
-            <p className="mt-2 max-w-md text-sm text-muted-foreground leading-relaxed">
-              Start organizing your organization. Companies are the top level — add one to create branches, departments, and assign employees.
-            </p>
-            <Button className="mt-6 bg-black hover:bg-black/85 text-white dark:bg-white dark:hover:bg-white/90 dark:text-black shadow-md hover:shadow-lg transition-shadow" onClick={() => { setCreateOpen(true); setCreateName(''); setCreateTin(''); setCreateAddress(''); setCreateLogo(null); setCreateLogoPreview(null); setCreateLogoError(null) }}>
+          {!loading && sortedCompanies.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => { setCreateOpen(true); setCreateName(''); setCreateTin(''); setCreateAddress(''); setCreateLogo(null); setCreateLogoPreview(null); setCreateLogoError(null) }}
+              className="flex min-h-20 w-full items-center justify-center gap-3 rounded-[18px] border border-dashed border-border/90 bg-background/40 text-base font-bold text-brand transition hover:border-brand hover:bg-brand/10 dark:border-white/15 dark:bg-background/20"
+            >
               <Plus className="size-4" />
-              Add Company
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+              Add New Company
+            </button>
+          ) : null}
+        </div>
 
+        <aside className="space-y-5">
+          <Card className={cn(companyCardClass, 'overflow-hidden')}>
+            <CardContent className="p-5">
+              <h2 className="text-lg font-black tracking-tight text-foreground">Organization summary</h2>
+              <div className="mt-6 flex items-center gap-5">
+                <CompanyDonut percent={organizationStats.withEmployeesPct} />
+                <div className="space-y-4 text-sm">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-1.5 size-2 rounded-full bg-brand" aria-hidden />
+                    <div>
+                      <p className="text-muted-foreground">With employees</p>
+                      <p className="font-black text-foreground">{organizationStats.withEmployees} ({organizationStats.withEmployeesPct}%)</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <span className="mt-1.5 size-2 rounded-full bg-brand/15" aria-hidden />
+                    <div>
+                      <p className="text-muted-foreground">No employees</p>
+                      <p className="font-black text-foreground">{organizationStats.withoutEmployees} ({100 - organizationStats.withEmployeesPct}%)</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <Button type="button" variant="outline" className={cn(companyOutlineButtonClass, 'mt-6 w-full justify-center')} onClick={() => navigate('/admin/reports')}>
+                <FileBarChart className="size-4" />
+                View full report
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className={cn(companyCardClass, 'overflow-hidden')}>
+            <CardContent className="p-5">
+              <h2 className="text-lg font-black tracking-tight text-foreground">Recent activity</h2>
+              <div className="mt-5 divide-y divide-border/70 dark:divide-white/10">
+                {recentCompanyActivity.length ? recentCompanyActivity.map((item) => (
+                  <div key={item.key} className="flex items-center gap-3 py-4 first:pt-0 last:pb-0">
+                    <Avatar className="size-11 shrink-0 rounded-full border border-border/70 bg-background dark:border-white/10">
+                      <AvatarImage src={companyLogoUrl(item.company)} className="object-cover" />
+                      <AvatarFallback className="bg-brand/10 text-xs font-bold text-brand dark:bg-brand/15">{initials(item.title)}</AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-black text-foreground">{item.title}</p>
+                      <p className="text-xs text-muted-foreground">{item.detail}</p>
+                      <p className="text-xs text-muted-foreground">{item.time}</p>
+                    </div>
+                    <span className={cn('size-2 rounded-full', item.active ? 'bg-emerald-500' : 'bg-brand')} aria-hidden />
+                  </div>
+                )) : (
+                  <p className="py-8 text-center text-sm text-muted-foreground">No recent activity yet.</p>
+                )}
+              </div>
+              <Button type="button" variant="outline" className={cn(companyOutlineButtonClass, 'mt-5 w-full justify-center border-brand/30 text-brand hover:bg-brand/10')}>
+                View all activity
+                <ArrowRight className="size-4" />
+              </Button>
+            </CardContent>
+          </Card>
+        </aside>
+      </div>
       {/* ── Create Company ── */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent
