@@ -1,21 +1,38 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Calendar,
-  Heart,
+  CheckCircle2,
+  ChevronRight,
+  Clock3,
+  FileClock,
+  HeartPulse,
+  History,
   Landmark,
   PiggyBank,
+  ReceiptText,
+  RefreshCw,
+  Save,
   Scale,
+  Search,
+  ShieldCheck,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   calculateStatutoryContributions,
-  getStoredUser,
+  generateStatutoryRemittance,
+  getStatutoryDashboardSummary,
   getStatutoryRateHistory,
   getStatutoryRates,
+  getStoredUser,
+  getTaxTables,
+  listStatutoryRemittances,
+  previewWithholdingTax,
   upsertStatutoryRate,
 } from '@/api'
+import { cn } from '@/lib/utils'
 
-const CODES = ['SSS', 'PHILHEALTH', 'PAGIBIG', 'EC']
+const RATE_CODES = ['SSS', 'PHILHEALTH', 'PAGIBIG', 'EC']
 const TABS = [
   { id: 'SSS', label: 'SSS' },
   { id: 'PHILHEALTH', label: 'PhilHealth' },
@@ -25,60 +42,110 @@ const TABS = [
 ]
 
 const DEFAULT_ROWS = {
-  SSS: { code: 'SSS', name: 'Social Security System (SSS)', employee_rate: 0.05, employer_rate: 0.10, min_salary: 5000, max_salary: 35000 },
-  PHILHEALTH: { code: 'PHILHEALTH', name: 'PhilHealth', employee_rate: 0.025, employer_rate: 0.025, salary_floor: 10000, salary_ceiling: 100000 },
-  PAGIBIG: { code: 'PAGIBIG', name: 'Pag-IBIG (HDMF)', employee_rate: 0.02, employer_rate: 0.02, tier_threshold: 1500, monthly_cap: 10000 },
-  EC: { code: 'EC', name: "Employees' Compensation (EC)", employee_rate: 0, employer_rate: 0, min_salary: 10, max_salary: 30 },
+  SSS: {
+    code: 'SSS',
+    name: 'Social Security System (SSS)',
+    employee_rate: 0.05,
+    employer_rate: 0.1,
+    min_salary: 5000,
+    max_salary: 35000,
+    compliance_reference: 'SSS Circular No. 2024-006',
+  },
+  PHILHEALTH: {
+    code: 'PHILHEALTH',
+    name: 'PhilHealth',
+    employee_rate: 0.025,
+    employer_rate: 0.025,
+    salary_floor: 10000,
+    salary_ceiling: 100000,
+    compliance_reference: 'RA 11223',
+  },
+  PAGIBIG: {
+    code: 'PAGIBIG',
+    name: 'Pag-IBIG (HDMF)',
+    employee_rate: 0.02,
+    employer_rate: 0.02,
+    tier_threshold: 1500,
+    monthly_cap: 10000,
+    metadata: { employee_rate_lower: 0.01, employee_rate_upper: 0.02 },
+    compliance_reference: 'RA 9679',
+  },
+  EC: {
+    code: 'EC',
+    name: "Employees' Compensation (EC)",
+    employee_rate: 0,
+    employer_rate: 0,
+    min_salary: 10,
+    max_salary: 30,
+    compliance_reference: 'Employer-only EC',
+  },
 }
 
-const TRAIN_WITHHOLDING_ROWS = [
-  {
-    id: 'train-1',
-    incomeRange: '₱0.00 - ₱250,000.00',
-    taxRate: '0%',
-    formula: 'No tax',
-    notes: 'Effective Jan 1, 2023 onwards',
-  },
-  {
-    id: 'train-2',
-    incomeRange: '₱250,001.00 - ₱400,000.00',
-    taxRate: '15%',
-    formula: '15% of excess over ₱250,000.00',
-    notes: 'Effective Jan 1, 2023 onwards',
-  },
-  {
-    id: 'train-3',
-    incomeRange: '₱400,001.00 - ₱800,000.00',
-    taxRate: '20%',
-    formula: '₱22,500.00 + 20% of excess over ₱400,000.00',
-    notes: 'Effective Jan 1, 2023 onwards',
-  },
-  {
-    id: 'train-4',
-    incomeRange: '₱800,001.00 - ₱2,000,000.00',
-    taxRate: '25%',
-    formula: '₱102,500.00 + 25% of excess over ₱800,000.00',
-    notes: 'Effective Jan 1, 2023 onwards',
-  },
-  {
-    id: 'train-5',
-    incomeRange: '₱2,000,001.00 - ₱8,000,000.00',
-    taxRate: '30%',
-    formula: '₱402,500.00 + 30% of excess over ₱2,000,000.00',
-    notes: 'Effective Jan 1, 2023 onwards',
-  },
-  {
-    id: 'train-6',
-    incomeRange: 'Over ₱8,000,000.00',
-    taxRate: '35%',
-    formula: '₱2,202,500.00 + 35% of excess over ₱8,000,000.00',
-    notes: 'Effective Jan 1, 2023 onwards',
-  },
-]
+const FALLBACK_TRAIN_ROWS = [
+  ['0.00 - 250,000.00', '0%', 'No tax', 'Effective January 1, 2023 onward'],
+  ['250,001.00 - 400,000.00', '15%', '15% of excess over 250,000.00', 'TRAIN table'],
+  ['400,001.00 - 800,000.00', '20%', '22,500.00 + 20% of excess over 400,000.00', 'TRAIN table'],
+  ['800,001.00 - 2,000,000.00', '25%', '102,500.00 + 25% of excess over 800,000.00', 'TRAIN table'],
+  ['2,000,001.00 - 8,000,000.00', '30%', '402,500.00 + 30% of excess over 2,000,000.00', 'TRAIN table'],
+  ['Over 8,000,000.00', '35%', '2,202,500.00 + 35% of excess over 8,000,000.00', 'TRAIN table'],
+].map(([incomeRange, taxRate, formula, notes], index) => ({
+  id: `fallback-${index}`,
+  incomeRange,
+  taxRate,
+  formula,
+  notes,
+}))
 
-const formatMoney = (v) => Number(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const formatPct = (v) => `${(Number(v || 0) * 100).toFixed(1)}%`
-const formatPeso = (v) => `₱${formatMoney(v)}`
+const AUDIT_SSS_KEY = 'sss'
+
+function todayYmd(timeZone = 'Asia/Manila') {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date())
+  } catch {
+    return new Date().toISOString().slice(0, 10)
+  }
+}
+
+function toNumber(value, fallback = 0) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function nonNegative(value) {
+  return Math.max(0, toNumber(value, 0))
+}
+
+function formatMoney(value) {
+  return nonNegative(value).toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
+function formatPeso(value) {
+  return `PHP ${formatMoney(value)}`
+}
+
+function formatPct(value) {
+  return `${(toNumber(value) * 100).toFixed(2).replace(/\.00$/, '')}%`
+}
+
+function monthName(month) {
+  const date = new Date(2026, Math.max(0, toNumber(month, 1) - 1), 1)
+  return date.toLocaleString('en-PH', { month: 'short' })
+}
+
+function normalizeDateLabel(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return String(value)
+  return d.toLocaleDateString('en-PH', { month: '2-digit', day: '2-digit', year: 'numeric' })
+}
 
 function buildSssCircular2024006Schedule() {
   const rows = [
@@ -101,9 +168,8 @@ function buildSssCircular2024006Schedule() {
   for (let min = 5250, msc = 5500; msc <= 34500; min += 500, msc += 500) {
     const max = min + 499.99
     const employee = msc * 0.05
-    const employer = msc * 0.10
+    const employer = msc * 0.1
     const ec = 30
-    const total = employee + employer + ec
     rows.push({
       min,
       max,
@@ -115,15 +181,15 @@ function buildSssCircular2024006Schedule() {
       ee_share: employee,
       er_share: employer,
       ec_amount: ec,
-      overall_total: total,
-      total,
+      overall_total: employee + employer + ec,
+      total: employee + employer + ec,
     })
   }
 
   rows.push({
     min: 34750,
     max: 35000,
-    range_label: '34,750 - 35,000',
+    range_label: '34,750.00 - 35,000.00',
     msc: 35000,
     employee_ss: 1750,
     employer_ss: 3500,
@@ -138,101 +204,210 @@ function buildSssCircular2024006Schedule() {
   return rows
 }
 
-/** Avoid NaN in JSON payloads (JSON.stringify(NaN) → null, which broke statutory/calculate). */
-const safeNonNegativeNumber = (v) => {
-  const n = Number(v)
-  return Number.isFinite(n) && n >= 0 ? n : 0
+function normalizeSssRows(rows, fallbackRows) {
+  const source = Array.isArray(rows) ? rows : []
+  const hasOfficialCoverage =
+    source.length >= 61 &&
+    source.some((row) => toNumber(row?.msc) <= 5000) &&
+    source.some((row) => toNumber(row?.msc) >= 35000)
+
+  return (hasOfficialCoverage ? source : fallbackRows)
+    .map((row) => {
+      const rangeFrom = row.range_from ?? row.range_start ?? row.salary_min ?? row.min ?? 0
+      const rangeTo = row.range_to ?? row.range_end ?? row.salary_max ?? row.max ?? null
+      const msc = toNumber(row.msc)
+      const ee = toNumber(row.ee_share ?? row.employee_ss ?? row.employee_total ?? msc * 0.05)
+      const er = toNumber(row.er_share ?? row.employer_ss ?? msc * 0.1)
+      const ec = toNumber(row.ec_amount ?? row.employer_ec ?? 30)
+      const total = toNumber(row.total ?? row.overall_total ?? ee + er + ec)
+      return {
+        ...row,
+        range_from: toNumber(rangeFrom),
+        range_to: rangeTo == null || rangeTo === '' ? null : toNumber(rangeTo),
+        range_label: row.range_label || '',
+        msc,
+        ee_share: ee,
+        er_share: er,
+        ec_amount: ec,
+        total,
+      }
+    })
+    .sort((a, b) => a.range_from - b.range_from)
 }
 
-/** Same JSON key as PHP `calculateAllStatutoryContributions` (three `s` characters — SSS block, not "tts"). */
-const AUDIT_SSS_KEY = '\x73\x73\x73'
+function readStoredCanManageRates() {
+  try {
+    const user = getStoredUser()
+    const hrRole = String(user?.hr_role || '').toLowerCase()
+    const role = String(user?.role || '').toLowerCase()
+    return Boolean(user?.is_super_admin) || hrRole === 'admin_hr' || hrRole === 'company_head' || role === 'admin'
+  } catch {
+    return true
+  }
+}
 
-export default function AdminGovernmentContributions() {
+function InfoBanner({ type = 'info', children, onDismiss }) {
+  const tone =
+    type === 'error'
+      ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/25 dark:bg-rose-950/30 dark:text-rose-200'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-950/30 dark:text-emerald-100'
+
+  return (
+    <div className={cn('flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-sm shadow-sm', tone)}>
+      <div className="flex min-w-0 items-start gap-2">
+        {type === 'error' ? <X className="mt-0.5 size-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 size-4 shrink-0" />}
+        <span>{children}</span>
+      </div>
+      {onDismiss ? (
+        <button type="button" onClick={onDismiss} className="rounded px-1.5 py-0.5 text-xs font-semibold opacity-80 hover:bg-current/10 hover:opacity-100">
+          Dismiss
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function Field({ label, value, onChange, disabled, type = 'number', step = '0.0001' }) {
+  return (
+    <label className="block min-w-0">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+      <input
+        type={type}
+        step={step}
+        value={value ?? ''}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20 disabled:cursor-not-allowed disabled:opacity-60"
+      />
+    </label>
+  )
+}
+
+function MetricCard({ label, value, caption, icon: Icon, accent = 'text-brand' }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+          <p className="mt-1 truncate text-xl font-bold tabular-nums text-foreground">{value}</p>
+        </div>
+        {Icon ? <Icon className={cn('size-5 shrink-0', accent)} aria-hidden /> : null}
+      </div>
+      {caption ? <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{caption}</p> : null}
+    </div>
+  )
+}
+
+function RateSettings({ title, description, children }) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/35 p-4">
+      <div className="mb-3">
+        <h3 className="text-sm font-bold text-foreground">{title}</h3>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
+    </div>
+  )
+}
+
+export default function GovernmentDeductionPage() {
   const [activeTab, setActiveTab] = useState('SSS')
   const [rowsByCode, setRowsByCode] = useState(DEFAULT_ROWS)
+  const [effectiveFrom, setEffectiveFrom] = useState(todayYmd())
   const [basicSalary, setBasicSalary] = useState('25000')
-  const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10))
-  const [preview, setPreview] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [auditLoading, setAuditLoading] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-  const [showNotice, setShowNotice] = useState(true)
+  const [whtSalary, setWhtSalary] = useState('25000')
+  const [thirteenthMonth, setThirteenthMonth] = useState('0')
+  const [whtMethod, setWhtMethod] = useState('annualized')
+  const [periodType, setPeriodType] = useState('monthly')
   const [sssSchedule, setSssSchedule] = useState([])
   const [sssQuery, setSssQuery] = useState('')
   const [sssPage, setSssPage] = useState(1)
   const [sssPageSize, setSssPageSize] = useState(20)
-  const [canManageRates, setCanManageRates] = useState(true)
+  const [auditPreview, setAuditPreview] = useState(null)
+  const [withholdingPreview, setWithholdingPreview] = useState(null)
+  const [summary, setSummary] = useState(null)
+  const [taxTables, setTaxTables] = useState([])
+  const [remittances, setRemittances] = useState([])
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [historyError, setHistoryError] = useState('')
   const [historyRows, setHistoryRows] = useState([])
   const [historyCodeFilter, setHistoryCodeFilter] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [whtLoading, setWhtLoading] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [remittanceLoading, setRemittanceLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [canManageRates] = useState(() => readStoredCanManageRates())
+  const [remittanceDraft, setRemittanceDraft] = useState(() => {
+    const now = new Date()
+    return {
+      agency: 'SSS',
+      report_kind: 'r3',
+      period_year: now.getFullYear(),
+      period_month: now.getMonth() + 1,
+    }
+  })
   const auditDebounceRef = useRef(null)
+  const whtDebounceRef = useRef(null)
 
-  const sssDefaultBrackets = useMemo(() => buildSssCircular2024006Schedule(), [])
+  const sssFallbackRows = useMemo(() => buildSssCircular2024006Schedule(), [])
+  const sssRows = useMemo(() => normalizeSssRows(sssSchedule, sssFallbackRows), [sssSchedule, sssFallbackRows])
 
-  async function loadRates() {
+  const loadAll = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const data = await getStatutoryRates()
-      const map = { ...DEFAULT_ROWS }
-      for (const row of data?.rates || []) {
-        const code = String(row.code || '').toUpperCase()
-        if (!map[code]) continue
-        map[code] = { ...map[code], ...row }
+      const [rateData, summaryData, remittanceData, taxData] = await Promise.all([
+        getStatutoryRates(),
+        getStatutoryDashboardSummary().catch(() => null),
+        listStatutoryRemittances({ page: 1, per_page: 8 }).catch(() => null),
+        getTaxTables({ year: new Date().getFullYear() }).catch(() => null),
+      ])
+
+      const nextRows = { ...DEFAULT_ROWS }
+      for (const row of rateData?.rates || []) {
+        const code = String(row?.code || '').toUpperCase()
+        if (nextRows[code]) nextRows[code] = { ...nextRows[code], ...row }
       }
-      setRowsByCode(map)
-      const sched = data?.sss_schedule
-      setSssSchedule(Array.isArray(sched) ? sched : [])
-    } catch (e) {
-      setError(e?.message || 'Failed to load statutory rates')
+      setRowsByCode(nextRows)
+      setSssSchedule(Array.isArray(rateData?.sss_schedule) ? rateData.sss_schedule : [])
+      setSummary(summaryData)
+      setRemittances(Array.isArray(remittanceData?.data) ? remittanceData.data : [])
+      setTaxTables(Array.isArray(taxData?.tax_tables) ? taxData.tax_tables : [])
+    } catch (err) {
+      setError(err?.message || 'Failed to load Government Deductions data.')
     } finally {
       setLoading(false)
     }
-  }
-
-  useEffect(() => {
-    loadRates()
   }, [])
 
-  /** Compliance Audit: keep preview aligned with PayrollCalculatorService (RA 11199 / Circular 2024-006). */
   useEffect(() => {
-    if (activeTab !== 'AUDIT') return undefined
-    if (auditDebounceRef.current) clearTimeout(auditDebounceRef.current)
-    auditDebounceRef.current = setTimeout(async () => {
-      try {
-        const data = await calculateStatutoryContributions({
-          basic_salary: safeNonNegativeNumber(basicSalary),
-          withholding_method: 'annualized',
-          period_type: 'monthly',
-        })
-        setPreview(data?.breakdown ?? null)
-      } catch {
-        // Local fallback (computedAudit) remains if API fails
-      }
-    }, 450)
-    return () => {
-      if (auditDebounceRef.current) clearTimeout(auditDebounceRef.current)
-    }
-  }, [activeTab, basicSalary])
+    loadAll()
+  }, [loadAll])
 
-  useEffect(() => {
-    let allowed = true
-    try {
-      const user = getStoredUser()
-      if (user) {
-        const hrRole = String(user?.hr_role || '').toLowerCase()
-        const role = String(user?.role || '').toLowerCase()
-        const isSuperAdmin = Boolean(user?.is_super_admin)
-        allowed = isSuperAdmin || hrRole === 'admin_hr' || hrRole === 'company_head' || role === 'admin'
-      }
-    } catch {
-      allowed = true
-    }
-    setCanManageRates(allowed)
+  const patchRate = useCallback((code, key, value) => {
+    setRowsByCode((current) => ({
+      ...current,
+      [code]: {
+        ...current[code],
+        [key]: value,
+      },
+    }))
+  }, [])
+
+  const patchPagibigMetadata = useCallback((key, value) => {
+    setRowsByCode((current) => ({
+      ...current,
+      PAGIBIG: {
+        ...current.PAGIBIG,
+        metadata: {
+          ...(current.PAGIBIG?.metadata || {}),
+          [key]: value,
+        },
+      },
+    }))
   }, [])
 
   async function saveChanges() {
@@ -240,52 +415,46 @@ export default function AdminGovernmentContributions() {
     setError('')
     setNotice('')
     try {
-      for (const code of CODES) {
-        const row = rowsByCode[code]
+      for (const code of RATE_CODES) {
+        const row = rowsByCode[code] || DEFAULT_ROWS[code]
         await upsertStatutoryRate(code, {
-          name: row.name,
-          employee_rate: Number(row.employee_rate || 0),
-          employer_rate: Number(row.employer_rate || 0),
-          min_salary: row.min_salary ?? null,
-          max_salary: row.max_salary ?? null,
-          msc: row.msc ?? null,
-          salary_floor: row.salary_floor ?? null,
-          salary_ceiling: row.salary_ceiling ?? null,
-          tier_threshold: row.tier_threshold ?? null,
-          monthly_cap: row.monthly_cap ?? null,
-          brackets: code === 'SSS' ? (Array.isArray(row.brackets) && row.brackets.length > 0 ? row.brackets : sssDefaultBrackets) : null,
+          name: row.name || DEFAULT_ROWS[code].name,
+          employee_rate: toNumber(row.employee_rate),
+          employer_rate: toNumber(row.employer_rate),
+          min_salary: row.min_salary === '' ? null : row.min_salary ?? null,
+          max_salary: row.max_salary === '' ? null : row.max_salary ?? null,
+          msc: row.msc === '' ? null : row.msc ?? null,
+          salary_floor: row.salary_floor === '' ? null : row.salary_floor ?? null,
+          salary_ceiling: row.salary_ceiling === '' ? null : row.salary_ceiling ?? null,
+          tier_threshold: row.tier_threshold === '' ? null : row.tier_threshold ?? null,
+          monthly_cap: row.monthly_cap === '' ? null : row.monthly_cap ?? null,
+          metadata: row.metadata || null,
+          brackets: code === 'SSS' ? sssRows : null,
+          compliance_reference: row.compliance_reference || DEFAULT_ROWS[code].compliance_reference,
           effective_from: effectiveFrom,
           is_active: true,
         })
       }
-      setNotice('Rates saved successfully.')
-      setShowNotice(true)
-      await loadRates()
-    } catch (e) {
-      setError(e?.message || 'Failed to save changes')
+      setNotice('Government deduction rates were saved.')
+      await loadAll()
+    } catch (err) {
+      setError(err?.message || 'Failed to save statutory rates.')
     } finally {
       setSaving(false)
     }
   }
 
-  async function runAudit() {
-    if (auditLoading) return
+  async function loadHistory(code = historyCodeFilter) {
+    setHistoryLoading(true)
     setError('')
-    setNotice('')
-    setAuditLoading(true)
     try {
-      const data = await calculateStatutoryContributions({
-        basic_salary: safeNonNegativeNumber(basicSalary),
-        withholding_method: 'annualized',
-        period_type: 'monthly',
-      })
-      setPreview(data?.breakdown || null)
-      setNotice('Compliance audit preview generated.')
-      setShowNotice(true)
-    } catch (e) {
-      setError(e?.message || 'Failed to run audit')
+      const data = await getStatutoryRateHistory({ code: code || undefined, page: 1, per_page: 60 })
+      setHistoryRows(Array.isArray(data?.history) ? data.history : [])
+    } catch (err) {
+      setError(err?.message || 'Failed to load rate history.')
+      setHistoryRows([])
     } finally {
-      setAuditLoading(false)
+      setHistoryLoading(false)
     }
   }
 
@@ -294,56 +463,91 @@ export default function AdminGovernmentContributions() {
     await loadHistory()
   }
 
-  async function loadHistory(code = historyCodeFilter) {
-    setHistoryLoading(true)
-    setHistoryError('')
+  const runAudit = useCallback(async () => {
+    setAuditLoading(true)
     try {
-      const data = await getStatutoryRateHistory({ code: code || undefined, page: 1, per_page: 50 })
-      setHistoryRows(Array.isArray(data?.history) ? data.history : [])
-    } catch (e) {
-      setHistoryError(e?.message || 'Failed to load history')
+      const data = await calculateStatutoryContributions({
+        basic_salary: nonNegative(basicSalary),
+        withholding_method: 'annualized',
+        period_type: 'monthly',
+      })
+      setAuditPreview(data?.breakdown || null)
+    } catch {
+      setAuditPreview(null)
     } finally {
-      setHistoryLoading(false)
+      setAuditLoading(false)
+    }
+  }, [basicSalary])
+
+  const runWithholdingPreview = useCallback(async () => {
+    setWhtLoading(true)
+    try {
+      const data = await previewWithholdingTax({
+        monthly_taxable_compensation: nonNegative(whtSalary),
+        thirteenth_month_amount: nonNegative(thirteenthMonth),
+        method: whtMethod,
+        period_type: periodType,
+      })
+      setWithholdingPreview(data?.withholding || null)
+    } catch {
+      setWithholdingPreview(null)
+    } finally {
+      setWhtLoading(false)
+    }
+  }, [periodType, thirteenthMonth, whtMethod, whtSalary])
+
+  useEffect(() => {
+    if (activeTab !== 'AUDIT') return undefined
+    if (auditDebounceRef.current) clearTimeout(auditDebounceRef.current)
+    auditDebounceRef.current = setTimeout(() => {
+      void runAudit()
+    }, 400)
+    return () => clearTimeout(auditDebounceRef.current)
+  }, [activeTab, runAudit])
+
+  useEffect(() => {
+    if (activeTab !== 'WHT') return undefined
+    if (whtDebounceRef.current) clearTimeout(whtDebounceRef.current)
+    whtDebounceRef.current = setTimeout(() => {
+      void runWithholdingPreview()
+    }, 400)
+    return () => clearTimeout(whtDebounceRef.current)
+  }, [activeTab, runWithholdingPreview])
+
+  async function createRemittance() {
+    setRemittanceLoading(true)
+    setError('')
+    setNotice('')
+    try {
+      const data = await generateStatutoryRemittance({
+        ...remittanceDraft,
+        period_year: toNumber(remittanceDraft.period_year, new Date().getFullYear()),
+        period_month: toNumber(remittanceDraft.period_month, new Date().getMonth() + 1),
+      })
+      setNotice(`Generated ${data?.remittance?.agency || remittanceDraft.agency} remittance with ${data?.row_count ?? 0} rows.`)
+      const next = await listStatutoryRemittances({ page: 1, per_page: 8 })
+      setRemittances(Array.isArray(next?.data) ? next.data : [])
+    } catch (err) {
+      setError(err?.message || 'Failed to generate remittance.')
+    } finally {
+      setRemittanceLoading(false)
     }
   }
 
-  const sssRow = rowsByCode.SSS || DEFAULT_ROWS.SSS
-  const phRow = rowsByCode.PHILHEALTH || DEFAULT_ROWS.PHILHEALTH
-  const pagibigRow = rowsByCode.PAGIBIG || DEFAULT_ROWS.PAGIBIG
-  const ecFixed = 30
-  const sssBrackets = sssSchedule.length > 0
-    ? sssSchedule
-    : (Array.isArray(sssRow.brackets) && sssRow.brackets.length > 0 ? sssRow.brackets : sssDefaultBrackets)
-  const sssBracketsNormalized = useMemo(() => {
-    const source = Array.isArray(sssBrackets) ? sssBrackets : []
-    const hasOfficialCoverage = source.length >= 61
-      && source.some((row) => Number(row?.msc ?? 0) <= 5000)
-      && source.some((row) => Number(row?.msc ?? 0) >= 35000)
-    return hasOfficialCoverage ? source : sssDefaultBrackets
-  }, [sssBrackets, sssDefaultBrackets])
-  const sssRowsSorted = useMemo(
-    () =>
-      [...sssBracketsNormalized].sort((a, b) => {
-        const aFrom = Number(a.range_from ?? a.range_start ?? a.min ?? 0)
-        const bFrom = Number(b.range_from ?? b.range_start ?? b.min ?? 0)
-        return aFrom - bFrom
-      }),
-    [sssBracketsNormalized]
-  )
-  const normalizedSssQuery = useMemo(() => sssQuery.trim().toLowerCase(), [sssQuery])
-  const sssFilteredRows = useMemo(
-    () =>
-      sssRowsSorted.filter((row) => {
-        const label = String(row.range_label || '').toLowerCase()
-        const rangeFrom = Number(row.range_from ?? row.range_start ?? row.min ?? 0)
-        const rangeToRaw = row.range_to ?? row.range_end ?? row.max ?? null
-        const rangeTo = rangeToRaw == null ? '' : String(rangeToRaw)
-        const msc = Number(row.msc ?? 0)
-        const haystack = `${label} ${rangeFrom} ${rangeTo} ${msc} ${formatMoney(rangeFrom)} ${formatMoney(msc)}`.toLowerCase()
-        return haystack.includes(normalizedSssQuery)
-      }),
-    [sssRowsSorted, normalizedSssQuery]
-  )
+  const sssQueryNormalized = sssQuery.trim().toLowerCase()
+  const sssFilteredRows = useMemo(() => {
+    if (!sssQueryNormalized) return sssRows
+    return sssRows.filter((row) => {
+      const label = String(row.range_label || '').toLowerCase()
+      const haystack = `${label} ${row.range_from} ${row.range_to ?? ''} ${row.msc} ${formatMoney(row.msc)}`.toLowerCase()
+      return haystack.includes(sssQueryNormalized)
+    })
+  }, [sssQueryNormalized, sssRows])
+
+  useEffect(() => {
+    setSssPage(1)
+  }, [sssQuery, sssPageSize])
+
   const sssTotalRows = sssFilteredRows.length
   const sssTotalPages = Math.max(1, Math.ceil(sssTotalRows / sssPageSize))
   const sssCurrentPage = Math.min(sssPage, sssTotalPages)
@@ -354,711 +558,666 @@ export default function AdminGovernmentContributions() {
     [sssFilteredRows, sssCurrentPage, sssPageSize]
   )
 
-  useEffect(() => {
-    setSssPage(1)
-  }, [sssQuery, sssPageSize])
-  const phFloor = Number(phRow.salary_floor ?? 10000)
-  const phCeiling = Number(phRow.salary_ceiling ?? 100000)
-  const phTotalRate = Number(phRow.employee_rate || 0) + Number(phRow.employer_rate || 0)
-  const phEmployeeRate = Number(phRow.employee_rate || 0)
-  const phEmployerRate = Number(phRow.employer_rate || 0)
-  const phRows = useMemo(
-    () => [
-      {
-        salaryRange: `${formatPeso(0)} – ${formatPeso(phFloor - 0.01)}`,
-        appliedSalary: phFloor,
-        totalPremium: phFloor * phTotalRate,
-        eeShare: phFloor * phEmployeeRate,
-        erShare: phFloor * phEmployerRate,
-      },
-      {
-        salaryRange: `${formatPeso(phFloor)} – ${formatPeso(phCeiling - 0.01)}`,
-        appliedSalary: 'Actual Salary',
-        totalPremium: `Salary × ${formatPct(phTotalRate)}`,
-        eeShare: `${formatPct(phEmployeeRate)} of salary`,
-        erShare: `${formatPct(phEmployerRate)} of salary`,
-      },
-      {
-        salaryRange: `${formatPeso(phCeiling)} and above`,
-        appliedSalary: phCeiling,
-        totalPremium: phCeiling * phTotalRate,
-        eeShare: phCeiling * phEmployeeRate,
-        erShare: phCeiling * phEmployerRate,
-      },
-    ],
-    [phFloor, phTotalRate, phEmployeeRate, phEmployerRate, phCeiling]
-  )
+  const phRow = rowsByCode.PHILHEALTH || DEFAULT_ROWS.PHILHEALTH
+  const phFloor = nonNegative(phRow.salary_floor ?? 10000)
+  const phCeiling = nonNegative(phRow.salary_ceiling ?? 100000)
+  const phEmployeeRate = nonNegative(phRow.employee_rate ?? 0.025)
+  const phEmployerRate = nonNegative(phRow.employer_rate ?? 0.025)
+  const phTotalRate = phEmployeeRate + phEmployerRate
 
-  const pagThreshold = Number(pagibigRow.tier_threshold ?? 1500)
-  const pagCap = Number(pagibigRow.monthly_cap ?? 10000)
-  const pagErRate = Number(pagibigRow.employer_rate ?? 0.02)
+  const pagibigRow = rowsByCode.PAGIBIG || DEFAULT_ROWS.PAGIBIG
+  const pagThreshold = nonNegative(pagibigRow.tier_threshold ?? 1500)
+  const pagCap = nonNegative(pagibigRow.monthly_cap ?? 10000)
+  const pagEeLower = nonNegative(pagibigRow?.metadata?.employee_rate_lower ?? 0.01)
+  const pagEeUpper = nonNegative(pagibigRow.employee_rate ?? pagibigRow?.metadata?.employee_rate_upper ?? 0.02)
+  const pagErRate = nonNegative(pagibigRow.employer_rate ?? 0.02)
 
-  const pagRows = useMemo(
-    () => [
-      {
-        salaryRange: `${formatPeso(0)} – ${formatPeso(pagThreshold)}`,
-        eeRate: '1.0%',
-        erRate: formatPct(pagErRate),
-        eeShare: 'Salary × 1%',
-        erShare: `Salary × ${formatPct(pagErRate)}`,
-        total: `Salary × ${(1 + (pagErRate * 100)).toFixed(1)}%`,
-        remarks: 'Tier 1 rate applies',
-      },
-      {
-        salaryRange: `${formatPeso(pagThreshold + 1)} – ${formatPeso(pagCap)}`,
-        eeRate: formatPct(pagibigRow.employee_rate || 0.02),
-        erRate: formatPct(pagErRate),
-        eeShare: `Salary × ${formatPct(pagibigRow.employee_rate || 0.02)}`,
-        erShare: `Salary × ${formatPct(pagErRate)}`,
-        total: `Salary × ${((Number(pagibigRow.employee_rate || 0.02) + pagErRate) * 100).toFixed(1)}%`,
-        remarks: 'Tier 2 rate applies',
-      },
-      {
-        salaryRange: `Above ${formatPeso(pagCap)}`,
-        eeRate: formatPct(pagibigRow.employee_rate || 0.02),
-        erRate: formatPct(pagErRate),
-        eeShare: formatPeso(pagCap * Number(pagibigRow.employee_rate || 0.02)),
-        erShare: formatPeso(pagCap * pagErRate),
-        total: formatPeso((pagCap * Number(pagibigRow.employee_rate || 0.02)) + (pagCap * pagErRate)),
-        remarks: `Capped at ${formatPeso(pagCap)} fund salary`,
-      },
-    ],
-    [pagThreshold, pagErRate, pagCap, pagibigRow.employee_rate]
-  )
-  const computedAudit = useMemo(() => {
-    const salary = Math.max(0, Number(basicSalary || 0))
-    const bracket = sssRowsSorted.find((row) => {
-      const min = Number(row.range_from ?? row.range_start ?? row.min ?? 0)
-      const maxRaw = row.range_to ?? row.range_end ?? row.max ?? null
-      const max = maxRaw == null ? Number.POSITIVE_INFINITY : Number(maxRaw)
-      return salary >= min && salary <= max
-    }) || sssRowsSorted[sssRowsSorted.length - 1] || { msc: 35000, range_label: '34,750 and above', range_from: 34750, range_to: null }
-    const msc = Number(bracket.msc ?? 35000)
-    const sssEe = Number(bracket.ee_share ?? bracket.employee_ss ?? (msc * 0.05))
-    const sssEr = Number(bracket.er_share ?? bracket.employer_ss ?? (msc * 0.1))
-    const sssEc = Number(bracket.ec_amount ?? bracket.employer_ec ?? ecFixed)
-    const brMin = Number(bracket.range_from ?? bracket.range_start ?? bracket.min ?? 0)
-    const brMaxRaw = bracket.range_to ?? bracket.range_end ?? bracket.max ?? null
-    const brMax = brMaxRaw == null || Number(brMaxRaw) >= 999999 ? null : Number(brMaxRaw)
-    const mscBracketRange =
-      brMax == null ? `${formatMoney(brMin)} and above` : `${formatMoney(brMin)} – ${formatMoney(brMax)}`
+  const audit = useMemo(() => {
+    if (auditPreview) return auditPreview
+    const salary = nonNegative(basicSalary)
+    const bracket =
+      sssRows.find((row) => salary >= row.range_from && (row.range_to == null || salary <= row.range_to)) ||
+      sssRows[sssRows.length - 1] ||
+      { msc: 35000, range_from: 34750, range_to: 35000, ee_share: 1750, er_share: 3500, ec_amount: 30, total: 5280 }
 
     const phBase = Math.min(phCeiling, Math.max(phFloor, salary))
+    const pagBase = Math.min(pagCap, salary)
+    const pagRate = salary <= pagThreshold ? pagEeLower : pagEeUpper
+    const sssEe = nonNegative(bracket.ee_share)
+    const sssEr = nonNegative(bracket.er_share)
+    const sssEc = nonNegative(bracket.ec_amount)
     const phEe = phBase * phEmployeeRate
     const phEr = phBase * phEmployerRate
-
-    const pagEeLower = Number(pagibigRow?.metadata?.employee_rate_lower ?? 0.01)
-    const pagEeUpper = Number(pagibigRow?.employee_rate ?? pagibigRow?.metadata?.employee_rate_upper ?? 0.02)
-    const pagApplied = Math.min(pagCap, salary)
-    const pagEeRate = salary <= pagThreshold ? pagEeLower : pagEeUpper
-    const pagEe = pagApplied * pagEeRate
-    const pagEr = pagApplied * pagErRate
-
-    const employeeDeduction = sssEe + phEe + pagEe
-    const employerLiability = sssEr + sssEc + phEr + pagEr
+    const pagEe = pagBase * pagRate
+    const pagEr = pagBase * pagErRate
 
     return {
-      [AUDIT_SSS_KEY]: {
+      sss: {
         employee_amount: sssEe,
         employer_amount: sssEr,
         ec_amount: sssEc,
         total_amount: sssEe + sssEr + sssEc,
-        bracket_range: String(bracket.range_label || `SSS MSC ${formatMoney(msc)}`),
-        msc_bracket_range: mscBracketRange,
-        msc_used: msc,
+        msc_used: bracket.msc,
+        msc_bracket_range: bracket.range_label || `${formatMoney(bracket.range_from)} - ${formatMoney(bracket.range_to ?? bracket.msc)}`,
       },
       philhealth: {
         employee_amount: phEe,
         employer_amount: phEr,
         total_amount: phEe + phEr,
-        metadata: {
-          applied_salary: phBase,
-          floor_applied: salary < phFloor,
-          ceiling_applied: salary > phCeiling,
-        },
+        metadata: { applied_salary: phBase },
       },
       pagibig: {
         employee_amount: pagEe,
         employer_amount: pagEr,
         total_amount: pagEe + pagEr,
-        metadata: {
-          applied_salary: pagApplied,
-          cap_applied: salary > pagCap,
-        },
+        metadata: { applied_salary: pagBase, cap_applied: salary > pagCap },
       },
       totals: {
-        employee_deduction: employeeDeduction,
-        employer_liability: employerLiability,
-        overall_statutory: employeeDeduction + employerLiability,
+        employee_deduction: sssEe + phEe + pagEe,
+        employer_liability: sssEr + sssEc + phEr + pagEr,
+        overall_statutory: sssEe + phEe + pagEe + sssEr + sssEc + phEr + pagEr,
       },
     }
-  }, [basicSalary, sssRowsSorted, ecFixed, phFloor, phCeiling, phEmployeeRate, phEmployerRate, pagibigRow?.metadata?.employee_rate_lower, pagibigRow?.employee_rate, pagibigRow?.metadata?.employee_rate_upper, pagCap, pagThreshold, pagErRate])
-  const audit = preview ?? computedAudit
-  const auditSss = audit?.[AUDIT_SSS_KEY]
-  const employeeTotal = Number(audit?.totals?.employee_deduction ?? 0)
-  const employerTotal = Number(audit?.totals?.employer_liability ?? 0)
-  const overallTotal = Number(audit?.totals?.overall_statutory ?? (employeeTotal + employerTotal))
-  const auditWithholding = audit?.withholding
-  const withholdingMonthlyEstimate = Number(auditWithholding?.withholding_per_month ?? 0)
-  const withholdingAnnualProjection = Number(auditWithholding?.annual_income_tax_per_train ?? (withholdingMonthlyEstimate * 12))
-  const withholdingEffectiveRate = Number(
-    auditWithholding?.effective_rate_percent_of_monthly_taxable
-      ?? (Number(basicSalary || 0) > 0 ? ((withholdingMonthlyEstimate / Number(basicSalary || 0)) * 100) : 0)
+  }, [
+    auditPreview,
+    basicSalary,
+    pagCap,
+    pagEeLower,
+    pagEeUpper,
+    pagErRate,
+    pagThreshold,
+    phCeiling,
+    phEmployeeRate,
+    phEmployerRate,
+    phFloor,
+    sssRows,
+  ])
+
+  const taxTableRows = useMemo(() => {
+    const rows = []
+    for (const table of taxTables) {
+      const payload = table?.payload || {}
+      const candidates = Array.isArray(payload) ? payload : payload.rows || payload.brackets || payload.table
+      if (Array.isArray(candidates)) {
+        candidates.forEach((row, index) => {
+          rows.push({
+            id: `${table.id || table.code || 'tax'}-${index}`,
+            incomeRange: row.incomeRange || row.income_range || row.range || row.label || table.label || 'Tax bracket',
+            taxRate: row.taxRate || row.tax_rate || row.rate || '',
+            formula: row.formula || row.description || row.rule || '',
+            notes: table.source_reference || table.label || normalizeDateLabel(table.effective_from),
+          })
+        })
+      }
+    }
+    return rows.length > 0 ? rows : FALLBACK_TRAIN_ROWS
+  }, [taxTables])
+
+  const withholdingMonthly = nonNegative(withholdingPreview?.withholding_per_month)
+  const withholdingAnnual = nonNegative(withholdingPreview?.annual_income_tax_per_train ?? withholdingMonthly * 12)
+  const withholdingRate = nonNegative(
+    withholdingPreview?.effective_rate_percent_of_monthly_taxable ??
+      (nonNegative(whtSalary) > 0 ? (withholdingMonthly / nonNegative(whtSalary)) * 100 : 0)
   )
 
+  const remittanceKindOptions = useMemo(() => {
+    if (remittanceDraft.agency === 'SSS') return ['r3', 'r5', 'monthly_listing']
+    if (remittanceDraft.agency === 'PHILHEALTH') return ['rf1', 'premium_listing']
+    if (remittanceDraft.agency === 'PAGIBIG') return ['mcrf', 'monthly_listing']
+    return ['withholding_summary']
+  }, [remittanceDraft.agency])
+
+  useEffect(() => {
+    if (!remittanceKindOptions.includes(remittanceDraft.report_kind)) {
+      setRemittanceDraft((draft) => ({ ...draft, report_kind: remittanceKindOptions[0] }))
+    }
+  }, [remittanceDraft.report_kind, remittanceKindOptions])
+
+  const headerDate = normalizeDateLabel(effectiveFrom)
+
   return (
-    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 text-[#0A0A0A] sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6 3xl:text-[1.0625rem] 4xl:px-12 print:max-w-none print:bg-white dark:bg-background dark:text-foreground">
-      {/* Fluid inside layout outlet; mobile-first; 3xl/4xl scales type for TV / screen share. */}
-      <div className="mb-1 flex flex-col gap-4 sm:mb-0 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 3xl:text-sm">Compensation</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl 2xl:text-4xl 3xl:text-5xl">Government Deductions</h1>
-          <p className="mt-2 max-w-4xl text-sm text-slate-600 3xl:text-base">
-            Statutory contributions: SSS (including employer EC), PhilHealth, and Pag-IBIG. Rates reference RA 11199, RA 11223, and RA 9679.
-          </p>
-        </div>
-        {/* Toolbar: compact h-9 controls, aligned end on desktop / TV — matches other admin list pages */}
-        <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-          <div className="flex h-9 w-full max-w-[10.75rem] items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 shadow-sm sm:w-auto sm:max-w-[11rem] sm:shrink-0">
-            <Calendar className="size-3.5 shrink-0 text-slate-400" aria-hidden />
-            <label htmlFor="gov-deduction-effective-from" className="sr-only">
-              Effective date for statutory rates
+    <div className="w-full min-w-0 bg-background px-3 py-4 text-foreground sm:px-4 md:px-5 lg:px-6 lg:py-5 3xl:px-10">
+      <div className="mx-auto max-w-[112rem] space-y-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="inline-flex items-center gap-2 rounded-md bg-brand/10 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-brand">
+              <ReceiptText className="size-3.5" aria-hidden />
+              Compensation
+            </div>
+            <h1 className="mt-4 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Government Deductions</h1>
+            <p className="mt-2 max-w-4xl text-sm leading-relaxed text-muted-foreground">
+              Statutory contributions: SSS including employer EC, PhilHealth, and Pag-IBIG. Rates reference RA 11199, RA 11223, RA 9679, and BIR TRAIN withholding.
+            </p>
+          </div>
+
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+            <label className="flex h-11 items-center gap-2 rounded-md border border-border bg-card px-3 shadow-sm">
+              <Calendar className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="sr-only">Effective date</span>
+              <input
+                type="date"
+                value={effectiveFrom}
+                onChange={(event) => setEffectiveFrom(event.target.value)}
+                className="h-full min-w-0 border-0 bg-transparent text-sm font-bold text-foreground outline-none [color-scheme:light] dark:[color-scheme:dark]"
+              />
             </label>
-            <input
-              id="gov-deduction-effective-from"
-              type="date"
-              value={effectiveFrom}
-              onChange={(e) => setEffectiveFrom(e.target.value)}
-              className="h-full min-w-0 flex-1 border-0 bg-transparent py-0 pr-0 text-xs font-medium text-slate-900 focus:outline-none focus:ring-0 sm:text-sm"
-            />
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={openHistoryModal}
-            className="h-9 w-full border-slate-300 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-700 shadow-sm sm:w-auto sm:min-w-0 sm:px-3.5"
-          >
-            HISTORY OF RATES
-          </Button>
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            onClick={saveChanges}
-            disabled={saving || loading || !canManageRates}
-            className="h-9 w-full bg-slate-900 px-3 text-[11px] font-semibold uppercase tracking-wide text-white hover:bg-slate-800 sm:w-auto sm:px-3.5"
-          >
-            {saving ? 'SAVING…' : canManageRates ? 'SAVE CHANGES' : 'VIEW ONLY'}
-          </Button>
-        </div>
-      </div>
-
-      {error ? <div className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</div> : null}
-      {notice && showNotice ? (
-        <div className="flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-            <span>{notice}</span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 self-start sm:self-auto">
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Success</span>
-            <button type="button" onClick={() => setShowNotice(false)} className="rounded px-1.5 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Dismiss</button>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm sm:p-3">
-        {/* Tabs: horizontal scroll on phones; wrap on sm+ to avoid overflow when mirroring to TV from narrow source. */}
-        <div
-          className="-mx-1 flex gap-2 overflow-x-auto overscroll-x-contain px-1 pb-1 pt-0.5 [-webkit-overflow-scrolling:touch] sm:flex-wrap sm:overflow-visible sm:pb-0 sm:pt-0"
-          role="tablist"
-          aria-label="Government deductions sections"
-        >
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
+            <Button type="button" variant="outline" onClick={openHistoryModal} className="h-11 border-border bg-card px-4 font-bold text-foreground shadow-sm">
+              <History className="size-4" />
+              History of Rates
+            </Button>
+            <Button
               type="button"
-              role="tab"
-              aria-selected={activeTab === tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2.5 text-xs font-semibold sm:py-2 3xl:px-4 3xl:py-3 3xl:text-sm ${activeTab === tab.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}
+              onClick={saveChanges}
+              disabled={saving || loading || !canManageRates}
+              className="h-11 bg-brand px-4 font-bold text-brand-foreground shadow-sm hover:bg-brand-strong"
             >
-              {tab.label}
-            </button>
-          ))}
+              <Save className="size-4" />
+              {saving ? 'Saving...' : canManageRates ? 'Save Changes' : 'View Only'}
+            </Button>
+          </div>
         </div>
-      </div>
 
-      <div className="grid min-w-0 gap-5 lg:grid-cols-1">
-        <div className="min-w-0 space-y-5 3xl:space-y-6">
-          {activeTab === 'SSS' ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 3xl:p-6">
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <h2 className="text-xl font-semibold text-slate-900 sm:text-2xl 2xl:text-3xl 3xl:text-4xl">SSS Contribution Schedule</h2>
-                  <p className="mt-1 text-xs text-slate-500 3xl:text-sm">Social Security Act (RA 11199)</p>
-                </div>
-                <span className="w-fit shrink-0 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 3xl:px-4 3xl:py-1.5 3xl:text-sm">Circular No. 2024-006</span>
+        {error ? <InfoBanner type="error" onDismiss={() => setError('')}>{error}</InfoBanner> : null}
+        {notice ? <InfoBanner onDismiss={() => setNotice('')}>{notice}</InfoBanner> : null}
+
+        <div className="rounded-lg border border-border bg-card p-3 shadow-sm">
+          <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0" role="tablist" aria-label="Government deduction tabs">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'h-12 shrink-0 rounded-md px-5 text-sm font-semibold transition-colors',
+                  activeTab === tab.id
+                    ? 'bg-brand text-brand-foreground shadow-sm'
+                    : 'bg-muted text-foreground hover:bg-muted/80 dark:bg-muted/60'
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground shadow-sm">
+            Loading Government Deductions...
+          </div>
+        ) : null}
+
+        {!loading && activeTab === 'SSS' ? (
+          <section className="rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">SSS Contribution Schedule</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Social Security Act (RA 11199)</p>
               </div>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+              <span className="w-fit rounded-md bg-brand/10 px-3 py-1.5 text-xs font-bold text-brand">Circular No. 2024-006</span>
+            </div>
+
+            <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <label className="flex h-12 w-full max-w-md items-center gap-2 rounded-md border border-border bg-background px-3 shadow-sm">
+                <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="sr-only">Search SSS table</span>
                 <input
                   value={sssQuery}
-                  onChange={(e) => setSssQuery(e.target.value)}
+                  onChange={(event) => setSssQuery(event.target.value)}
                   placeholder="Search by range or MSC..."
-                  className="w-full min-w-0 max-w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 sm:max-w-sm 3xl:py-2.5 3xl:text-base"
+                  className="h-full min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
                 />
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 3xl:text-sm">
-                  <span>Rows per page</span>
-                  <select
-                    value={sssPageSize}
-                    onChange={(e) => setSssPageSize(Number(e.target.value))}
-                    className="rounded-md border border-slate-300 px-2 py-1 text-sm"
-                  >
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                    <option value={50}>50</option>
-                  </select>
-                </div>
-              </div>
-              <div className="relative mt-4 -mx-1 overflow-x-auto rounded-lg border border-slate-100 sm:mx-0">
-                <table className="w-full min-w-[52rem] text-sm md:text-base lg:min-w-full 3xl:text-lg">
-                  <thead>
-                    <tr className="bg-slate-100 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:text-xs 3xl:text-sm">
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Range From</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Range To</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">MSC Value</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">EE Share (Employee)</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">ER Share (Regular SS)</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">EC (ER)</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Total Contribution</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sssRowsPaged.map((b, i) => {
-                      const ee = Number(b.ee_share ?? b.employee_ss ?? (Number(b.msc) * Number(sssRow.employee_rate || 0)))
-                      const er = Number(b.er_share ?? b.employer_ss ?? (Number(b.msc) * Number(sssRow.employer_rate || 0)))
-                      const ec = Number(b.ec_amount ?? b.employer_ec ?? ecFixed)
-                      const total = Number(b.total ?? b.overall_total ?? (ee + er + ec))
-                      const label = String(b.range_label || '').trim()
-                      const min = Number(b.range_from ?? b.range_start ?? b.min ?? 0)
-                      const maxRaw = b.range_to ?? b.range_end ?? b.max ?? null
-                      const max = maxRaw === null || maxRaw === '' ? null : Number(maxRaw)
-                      const isBelowRow = label.toLowerCase().startsWith('below')
-                      const rangeToDisplay = isBelowRow ? formatMoney(b.msc) : (max === null || Number.isNaN(max) ? formatMoney(b.msc) : formatMoney(max))
-                      return (
-                        <tr className="border-b border-slate-100" key={`${label}-${min}-${max}-${i}`}>
-                          <td className="whitespace-nowrap px-3 py-2.5 sm:px-4 sm:py-3">{label !== '' ? (isBelowRow ? label : formatMoney(min)) : formatMoney(min)}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5 sm:px-4 sm:py-3">{rangeToDisplay}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5 sm:px-4 sm:py-3">{formatMoney(b.msc)}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5 sm:px-4 sm:py-3">{formatMoney(ee)}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5 sm:px-4 sm:py-3">{formatMoney(er)}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5 sm:px-4 sm:py-3">{formatMoney(ec)}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5 font-semibold sm:px-4 sm:py-3">{formatMoney(total)}</td>
-                        </tr>
-                      )
-                    })}
-                    {sssRowsPaged.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500 md:text-base">No SSS brackets matched your search.</td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <p className="text-xs text-slate-500 3xl:text-sm">Showing {sssPageStart}-{sssPageEnd} of {sssTotalRows} entries</p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSssPage((p) => Math.max(1, p - 1))}
-                    disabled={sssCurrentPage <= 1}
-                    className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50 3xl:px-4 3xl:py-2.5 3xl:text-sm"
-                  >
-                    Previous
-                  </button>
-                  <span className="text-xs text-slate-600 3xl:text-sm">Page {sssCurrentPage} of {sssTotalPages}</span>
-                  <button
-                    type="button"
-                    onClick={() => setSssPage((p) => Math.min(sssTotalPages, p + 1))}
-                    disabled={sssCurrentPage >= sssTotalPages}
-                    className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50 3xl:px-4 3xl:py-2.5 3xl:text-sm"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-              <p className="mt-2 text-xs text-slate-500 3xl:text-sm">Based on SSS Circular No. 2024-006 • Effective January 2025</p>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                Rows per page
+                <select
+                  value={sssPageSize}
+                  onChange={(event) => setSssPageSize(Number(event.target.value))}
+                  className="h-10 rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </label>
             </div>
-          ) : null}
 
-          {activeTab === 'PHILHEALTH' ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 3xl:p-6">
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <h3 className="text-xl font-semibold text-slate-900 sm:text-2xl 2xl:text-3xl 3xl:text-4xl">PhilHealth Premium Table</h3>
-                  <p className="mt-1 text-xs text-slate-500 3xl:text-sm">PhilHealth – Universal Health Care Act (RA 11223)</p>
-                </div>
-                <span className="w-fit shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 3xl:text-sm">RA 11223</span>
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 3xl:p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 3xl:text-sm">Total Rate</p>
-                  <p className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl 3xl:text-3xl">{formatPct(phTotalRate)}</p>
-                  <p className="text-xs text-slate-500 3xl:text-sm">{formatPct(phEmployeeRate)} EE | {formatPct(phEmployerRate)} ER</p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 3xl:p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 3xl:text-sm">Salary Floor</p>
-                  <p className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl 3xl:text-3xl">{formatPeso(phFloor)}</p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2 lg:col-span-1 3xl:p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 3xl:text-sm">Salary Ceiling</p>
-                  <p className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl 3xl:text-3xl">{formatPeso(phCeiling)}</p>
-                </div>
-              </div>
-              <div className="relative mt-4 -mx-1 overflow-x-auto rounded-lg border border-slate-100 sm:mx-0">
-                <table className="w-full min-w-[44rem] text-sm md:text-base lg:min-w-full 3xl:text-lg">
-                  <thead>
-                    <tr className="bg-slate-100 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:text-xs 3xl:text-sm">
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Monthly Basic Salary Range</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3" title="Floor/Ceiling-adjusted salary used for premium computation">Applied Salary (i)</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3" title="Monthly basic salary multiplied by total premium rate">Total Premium ({formatPct(phTotalRate)})</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Employee Share (EE)</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Employer Share (ER)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {phRows.map((row) => (
-                      <tr key={row.salaryRange} className="border-b border-slate-100">
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.salaryRange}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{typeof row.appliedSalary === 'number' ? formatPeso(row.appliedSalary) : row.appliedSalary}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{typeof row.totalPremium === 'number' ? formatPeso(row.totalPremium) : row.totalPremium}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{typeof row.eeShare === 'number' ? formatPeso(row.eeShare) : row.eeShare}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{typeof row.erShare === 'number' ? formatPeso(row.erShare) : row.erShare}</td>
+            <div className="mt-5 overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[58rem] text-sm">
+                <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
+                  <tr>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Range From</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Range To</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">MSC Value</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">EE Share (Employee)</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">ER Share (Regular SS)</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">EC (ER)</th>
+                    <th className="border-b border-border px-4 py-4 text-left font-bold">Total Contribution</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sssRowsPaged.map((row, index) => {
+                    const isBelowRow = String(row.range_label || '').toLowerCase().startsWith('below')
+                    return (
+                      <tr key={`${row.range_from}-${row.range_to}-${row.msc}-${index}`} className="border-b border-border last:border-b-0">
+                        <td className="border-r border-border px-4 py-4 text-foreground">{isBelowRow ? row.range_label : formatMoney(row.range_from)}</td>
+                        <td className="border-r border-border px-4 py-4 text-foreground">{isBelowRow ? formatMoney(row.msc) : formatMoney(row.range_to ?? row.msc)}</td>
+                        <td className="border-r border-border px-4 py-4 text-foreground">{formatMoney(row.msc)}</td>
+                        <td className="border-r border-border px-4 py-4 text-foreground">{formatMoney(row.ee_share)}</td>
+                        <td className="border-r border-border px-4 py-4 text-foreground">{formatMoney(row.er_share)}</td>
+                        <td className="border-r border-border px-4 py-4 text-foreground">{formatMoney(row.ec_amount)}</td>
+                        <td className="px-4 py-4 font-bold text-brand">{formatMoney(row.total)}</td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-4 space-y-1 text-xs text-slate-600 3xl:text-sm">
-                <p><strong>Salary Floor:</strong> {formatPeso(phFloor)}</p>
-                <p><strong>Salary Ceiling:</strong> {formatPeso(phCeiling)}</p>
-                <p>Premium is computed on Monthly Basic Salary only (excluding allowances, OT, bonuses, etc.).</p>
-              </div>
+                    )
+                  })}
+                  {sssRowsPaged.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                        No SSS brackets matched your search.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
             </div>
-          ) : null}
 
-          {activeTab === 'PAGIBIG' ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 3xl:p-6">
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <h3 className="text-xl font-semibold text-slate-900 sm:text-2xl 2xl:text-3xl 3xl:text-4xl">Pag-IBIG Contribution Table</h3>
-                  <p className="mt-1 text-xs text-slate-500 3xl:text-sm">Pag-IBIG – HDMF Law (RA 9679)</p>
-                </div>
-                <span className="w-fit shrink-0 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 3xl:text-sm">RA 9679</span>
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 3xl:p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 3xl:text-sm">Employee Rate</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900 3xl:text-base">1% (≤ {formatPeso(pagThreshold)}) or 2% (&gt; {formatPeso(pagThreshold)})</p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 3xl:p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 3xl:text-sm">Employer Rate</p>
-                  <p className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl 3xl:text-3xl">{formatPct(pagErRate)}</p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2 lg:col-span-1 3xl:p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 3xl:text-sm">Monthly Cap</p>
-                  <p className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl 3xl:text-3xl">{formatPeso(pagCap)}</p>
-                  <p className="text-xs text-slate-500 3xl:text-sm">Max {formatPeso(200)} EE / {formatPeso(200)} ER</p>
-                </div>
-              </div>
-              <div className="relative mt-4 -mx-1 overflow-x-auto rounded-lg border border-slate-100 sm:mx-0">
-                <table className="w-full min-w-[56rem] text-sm md:text-base lg:min-w-full 3xl:text-lg">
-                  <thead>
-                    <tr className="bg-slate-100 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:text-xs 3xl:text-sm">
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Monthly Salary Range</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">EE Rate</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">ER Rate</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Max EE Share</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Max ER Share</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Total (at cap)</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3" title="Shows whether cap or tier rule is applied">Remarks (i)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagRows.map((row) => (
-                      <tr key={row.salaryRange} className="border-b border-slate-100">
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.salaryRange}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.eeRate}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.erRate}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{String(row.salaryRange).startsWith('Above') ? row.eeShare : '—'}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{String(row.salaryRange).startsWith('Above') ? row.erShare : '—'}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{String(row.salaryRange).startsWith('Above') ? row.total : '—'}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.remarks}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-4 space-y-1 text-xs text-slate-600 3xl:text-sm">
-                <p><strong>Maximum Monthly Fund Salary (Cap):</strong> {formatPeso(pagCap)}</p>
-                <p>Tiered employee rates apply first, then contribution base is capped regardless of actual salary.</p>
-              </div>
-            </div>
-          ) : null}
-
-          {activeTab === 'WHT' ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 3xl:p-6">
-              <div className="min-w-0">
-                <h3 className="text-xl font-semibold text-slate-900 sm:text-2xl 2xl:text-3xl 3xl:text-4xl">BIR Withholding Tax Table (TRAIN Law - RA 10963)</h3>
-                <p className="mt-1 text-xs text-slate-500 3xl:text-sm">Graduated annual income tax rates for compensation income.</p>
-              </div>
-
-              <div className="relative mt-4 -mx-1 overflow-x-auto rounded-lg border border-slate-100 sm:mx-0">
-                <table className="w-full min-w-[56rem] text-sm md:text-base lg:min-w-full 3xl:text-lg">
-                  <thead>
-                    <tr className="bg-slate-100 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:text-xs 3xl:text-sm">
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Annual Taxable Income Range</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Tax Rate</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Fixed Amount + % of Excess over Base</th>
-                      <th className="px-3 py-2.5 text-left sm:px-4 sm:py-3">Effective Date / Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {TRAIN_WITHHOLDING_ROWS.map((row) => (
-                      <tr key={row.id} className="border-b border-slate-100">
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.incomeRange}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.taxRate}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.formula}</td>
-                        <td className="px-3 py-2.5 sm:px-4 sm:py-3">{row.notes}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-3 text-xs text-slate-500 3xl:text-sm">
-                Based on TRAIN Law. First ₱250,000 annual income is tax-free. 13th month pay up to ₱90,000 is exempt.
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground">
+                Showing {sssPageStart}-{sssPageEnd} of {sssTotalRows} entries
               </p>
+              <div className="flex items-center gap-3">
+                <Button type="button" variant="outline" disabled={sssCurrentPage <= 1} onClick={() => setSssPage((page) => Math.max(1, page - 1))}>
+                  Previous
+                </Button>
+                <span className="text-sm font-medium text-foreground">Page {sssCurrentPage} of {sssTotalPages}</span>
+                <Button
+                  type="button"
+                  disabled={sssCurrentPage >= sssTotalPages}
+                  onClick={() => setSssPage((page) => Math.min(sssTotalPages, page + 1))}
+                  className="bg-brand text-brand-foreground hover:bg-brand-strong"
+                >
+                  Next
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
             </div>
-          ) : null}
+            <p className="mt-2 text-xs text-muted-foreground">Based on SSS Circular No. 2024-006 - Effective January 2025</p>
 
-          {activeTab === 'AUDIT' ? (
-            <div className="space-y-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            <div className="mt-5">
+              <RateSettings title="SSS rate settings" description={`Saved effective date: ${headerDate}. Rates are validated against RA 11199.`}>
+                <Field label="Employee rate" value={rowsByCode.SSS?.employee_rate ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('SSS', 'employee_rate', value)} />
+                <Field label="Employer rate" value={rowsByCode.SSS?.employer_rate ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('SSS', 'employer_rate', value)} />
+                <Field label="Minimum salary" value={rowsByCode.SSS?.min_salary ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('SSS', 'min_salary', value)} />
+                <Field label="Maximum salary" value={rowsByCode.SSS?.max_salary ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('SSS', 'max_salary', value)} />
+              </RateSettings>
+            </div>
+          </section>
+        ) : null}
+
+        {!loading && activeTab === 'PHILHEALTH' ? (
+          <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">PhilHealth Premium Table</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Universal Health Care Act (RA 11223)</p>
+              </div>
+              <span className="w-fit rounded-md bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300">5% total premium</span>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <MetricCard label="Total Rate" value={formatPct(phTotalRate)} caption={`${formatPct(phEmployeeRate)} EE | ${formatPct(phEmployerRate)} ER`} icon={HeartPulse} accent="text-emerald-600 dark:text-emerald-300" />
+              <MetricCard label="Salary Floor" value={formatPeso(phFloor)} caption="Minimum base used for premium computation" />
+              <MetricCard label="Salary Ceiling" value={formatPeso(phCeiling)} caption="Maximum base used for premium computation" />
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[48rem] text-sm">
+                <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
+                  <tr>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Monthly Basic Salary Range</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Applied Salary</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Total Premium</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Employee Share</th>
+                    <th className="border-b border-border px-4 py-4 text-left font-bold">Employer Share</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    [`0.00 - ${formatMoney(phFloor - 0.01)}`, formatPeso(phFloor), formatPeso(phFloor * phTotalRate), formatPeso(phFloor * phEmployeeRate), formatPeso(phFloor * phEmployerRate)],
+                    [`${formatMoney(phFloor)} - ${formatMoney(phCeiling - 0.01)}`, 'Actual salary', `Salary x ${formatPct(phTotalRate)}`, `Salary x ${formatPct(phEmployeeRate)}`, `Salary x ${formatPct(phEmployerRate)}`],
+                    [`${formatMoney(phCeiling)} and above`, formatPeso(phCeiling), formatPeso(phCeiling * phTotalRate), formatPeso(phCeiling * phEmployeeRate), formatPeso(phCeiling * phEmployerRate)],
+                  ].map((row) => (
+                    <tr key={row[0]} className="border-b border-border last:border-b-0">
+                      {row.map((cell, index) => (
+                        <td key={`${row[0]}-${index}`} className={cn('px-4 py-4 text-foreground', index < row.length - 1 && 'border-r border-border')}>{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <RateSettings title="PhilHealth rate settings" description={`Saved effective date: ${headerDate}. The backend validates the statutory 2.5% / 2.5% split.`}>
+              <Field label="Employee rate" value={phRow.employee_rate ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('PHILHEALTH', 'employee_rate', value)} />
+              <Field label="Employer rate" value={phRow.employer_rate ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('PHILHEALTH', 'employer_rate', value)} />
+              <Field label="Salary floor" value={phRow.salary_floor ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('PHILHEALTH', 'salary_floor', value)} />
+              <Field label="Salary ceiling" value={phRow.salary_ceiling ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('PHILHEALTH', 'salary_ceiling', value)} />
+            </RateSettings>
+          </section>
+        ) : null}
+
+        {!loading && activeTab === 'PAGIBIG' ? (
+          <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">Pag-IBIG Contribution Table</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Home Development Mutual Fund Law (RA 9679)</p>
+              </div>
+              <span className="w-fit rounded-md bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300">HDMF</span>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <MetricCard label="Employee Rate" value={`${formatPct(pagEeLower)} or ${formatPct(pagEeUpper)}`} caption={`Lower tier applies up to ${formatPeso(pagThreshold)}`} icon={PiggyBank} accent="text-amber-600 dark:text-amber-300" />
+              <MetricCard label="Employer Rate" value={formatPct(pagErRate)} caption="Employer statutory share" />
+              <MetricCard label="Monthly Cap" value={formatPeso(pagCap)} caption={`Max employee share ${formatPeso(pagCap * pagEeUpper)}`} />
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[56rem] text-sm">
+                <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
+                  <tr>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Monthly Salary Range</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">EE Rate</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">ER Rate</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Max EE Share</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Max ER Share</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Total At Cap</th>
+                    <th className="border-b border-border px-4 py-4 text-left font-bold">Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    [`0.00 - ${formatMoney(pagThreshold)}`, formatPct(pagEeLower), formatPct(pagErRate), '-', '-', '-', 'Tier 1 employee rate'],
+                    [`${formatMoney(pagThreshold + 0.01)} - ${formatMoney(pagCap)}`, formatPct(pagEeUpper), formatPct(pagErRate), '-', '-', '-', 'Tier 2 employee rate'],
+                    [`Above ${formatMoney(pagCap)}`, formatPct(pagEeUpper), formatPct(pagErRate), formatPeso(pagCap * pagEeUpper), formatPeso(pagCap * pagErRate), formatPeso(pagCap * (pagEeUpper + pagErRate)), 'Capped fund salary'],
+                  ].map((row) => (
+                    <tr key={row[0]} className="border-b border-border last:border-b-0">
+                      {row.map((cell, index) => (
+                        <td key={`${row[0]}-${index}`} className={cn('px-4 py-4 text-foreground', index < row.length - 1 && 'border-r border-border')}>{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <RateSettings title="Pag-IBIG rate settings" description={`Saved effective date: ${headerDate}. Employee rate may be 1% to 2%; employer rate is 2%.`}>
+              <Field label="Lower EE rate" value={pagibigRow?.metadata?.employee_rate_lower ?? ''} disabled={!canManageRates} onChange={(value) => patchPagibigMetadata('employee_rate_lower', value)} />
+              <Field label="Upper EE rate" value={pagibigRow.employee_rate ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('PAGIBIG', 'employee_rate', value)} />
+              <Field label="Employer rate" value={pagibigRow.employer_rate ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('PAGIBIG', 'employer_rate', value)} />
+              <Field label="Monthly cap" value={pagibigRow.monthly_cap ?? ''} disabled={!canManageRates} onChange={(value) => patchRate('PAGIBIG', 'monthly_cap', value)} />
+            </RateSettings>
+          </section>
+        ) : null}
+
+        {!loading && activeTab === 'WHT' ? (
+          <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">BIR Withholding Tax Table</h2>
+                <p className="mt-1 text-sm text-muted-foreground">TRAIN compensation income table and live payroll-aligned preview.</p>
+              </div>
+              <Button type="button" variant="outline" onClick={runWithholdingPreview} disabled={whtLoading}>
+                <RefreshCw className={cn('size-4', whtLoading && 'animate-spin')} />
+                Refresh Preview
+              </Button>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-4">
+              <Field label="Monthly taxable compensation" value={whtSalary} onChange={setWhtSalary} />
+              <Field label="13th month amount" value={thirteenthMonth} onChange={setThirteenthMonth} />
+              <label className="block">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Method</span>
+                <select value={whtMethod} onChange={(event) => setWhtMethod(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground">
+                  <option value="annualized">Annualized</option>
+                  <option value="per_period_monthly">Per-period monthly</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Period Type</span>
+                <select value={periodType} onChange={(event) => setPeriodType(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground">
+                  <option value="monthly">Monthly</option>
+                  <option value="semimonthly">Semi-monthly</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <MetricCard label="Monthly Withholding" value={formatPeso(withholdingMonthly)} caption="Estimated deduction per month" icon={Scale} accent="text-sky-600 dark:text-sky-300" />
+              <MetricCard label="Annual Projection" value={formatPeso(withholdingAnnual)} caption="Projected annual income tax" />
+              <MetricCard label="Effective Rate" value={`${withholdingRate.toFixed(2)}%`} caption="Against monthly taxable compensation" />
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[56rem] text-sm">
+                <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
+                  <tr>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Annual Taxable Income Range</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Tax Rate</th>
+                    <th className="border-b border-r border-border px-4 py-4 text-left font-bold">Fixed Amount + Percent Of Excess</th>
+                    <th className="border-b border-border px-4 py-4 text-left font-bold">Source / Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {taxTableRows.map((row) => (
+                    <tr key={row.id} className="border-b border-border last:border-b-0">
+                      <td className="border-r border-border px-4 py-4 text-foreground">{row.incomeRange}</td>
+                      <td className="border-r border-border px-4 py-4 font-semibold text-foreground">{row.taxRate || '-'}</td>
+                      <td className="border-r border-border px-4 py-4 text-foreground">{row.formula || '-'}</td>
+                      <td className="px-4 py-4 text-muted-foreground">{row.notes || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
+
+        {!loading && activeTab === 'AUDIT' ? (
+          <section className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              <MetricCard label="Period" value={summary?.period_label || 'Current month'} caption="Dashboard estimate window" icon={Calendar} />
+              <MetricCard label="Employees Included" value={String(summary?.headcount_included ?? 0)} caption="Active in-scope employees with salary" icon={ShieldCheck} accent="text-emerald-600 dark:text-emerald-300" />
+              <MetricCard label="EE Statutory" value={formatPeso(summary?.estimated_total_employee_statutory ?? 0)} caption="SSS + PhilHealth + Pag-IBIG" />
+              <MetricCard label="Monthly WHT" value={formatPeso(summary?.estimated_total_withholding_tax_monthly ?? 0)} caption="Estimated BIR withholding" />
+            </div>
+
+            <div className="rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                 <div>
-                  <h3 className="text-xl font-semibold text-slate-900 sm:text-2xl 3xl:text-3xl">Compliance Audit</h3>
-                  <p className="mt-1 text-sm text-slate-600 3xl:text-base">
-                    Preview statutory contributions and withholding using payroll-aligned rules (SSS including EC, PhilHealth, Pag-IBIG, TRAIN annualized tax).
-                  </p>
+                  <h2 className="text-2xl font-bold tracking-tight text-foreground">Compliance Audit</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">Preview statutory contributions and withholding using the same calculator path as payroll.</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    onClick={runAudit}
-                    disabled={auditLoading}
-                    className="h-9 bg-slate-900 text-white hover:bg-slate-800"
-                  >
-                    {auditLoading ? 'Refreshing…' : 'Refresh'}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <Field label="Basic salary" value={basicSalary} onChange={setBasicSalary} />
+                  <Button type="button" onClick={runAudit} disabled={auditLoading} className="h-10 bg-brand text-brand-foreground hover:bg-brand-strong">
+                    <RefreshCw className={cn('size-4', auditLoading && 'animate-spin')} />
+                    Refresh
                   </Button>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 3xl:p-7">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Basic salary</p>
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-3xl font-bold tabular-nums text-slate-900 3xl:text-4xl">{formatPeso(Number(basicSalary || 0))}</p>
-                  <div className="flex w-full max-w-md items-center gap-2 sm:w-auto">
-                    <span className="text-slate-400" aria-hidden>
-                      ₱
-                    </span>
-                    <input
-                      value={basicSalary}
-                      onChange={(e) => setBasicSalary(e.target.value)}
-                      className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm font-semibold text-slate-900"
-                      inputMode="decimal"
-                      aria-label="Basic monthly salary for audit"
-                    />
-                  </div>
-                </div>
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                {[
+                  {
+                    title: 'SSS including EC',
+                    subtitle: 'MSC bracket plus employer-only EC',
+                    icon: Landmark,
+                    rows: [
+                      ['Employee', audit?.[AUDIT_SSS_KEY]?.employee_amount],
+                      ['Employer', audit?.[AUDIT_SSS_KEY]?.employer_amount],
+                      ['EC (employer only)', audit?.[AUDIT_SSS_KEY]?.ec_amount],
+                      ['Total SSS + EC', audit?.[AUDIT_SSS_KEY]?.total_amount],
+                    ],
+                    foot: `MSC: ${audit?.[AUDIT_SSS_KEY]?.msc_bracket_range || '-'}${audit?.[AUDIT_SSS_KEY]?.msc_used ? ` | ${formatPeso(audit?.[AUDIT_SSS_KEY]?.msc_used)}` : ''}`,
+                  },
+                  {
+                    title: 'PhilHealth',
+                    subtitle: `${formatPct(phTotalRate)} total premium split equally`,
+                    icon: HeartPulse,
+                    rows: [
+                      ['Employee', audit?.philhealth?.employee_amount],
+                      ['Employer', audit?.philhealth?.employer_amount],
+                      ['Total', audit?.philhealth?.total_amount],
+                    ],
+                    foot: `Applied salary: ${formatPeso(audit?.philhealth?.metadata?.applied_salary ?? 0)}`,
+                  },
+                  {
+                    title: 'Pag-IBIG',
+                    subtitle: `Fund salary capped at ${formatPeso(pagCap)}`,
+                    icon: PiggyBank,
+                    rows: [
+                      ['Employee', audit?.pagibig?.employee_amount],
+                      ['Employer', audit?.pagibig?.employer_amount],
+                      ['Total', audit?.pagibig?.total_amount],
+                    ],
+                    foot: `Applied salary: ${formatPeso(audit?.pagibig?.metadata?.applied_salary ?? 0)}${audit?.pagibig?.metadata?.cap_applied ? ' (capped)' : ''}`,
+                  },
+                  {
+                    title: 'Payroll Totals',
+                    subtitle: 'Employee deductions and employer liabilities',
+                    icon: Scale,
+                    rows: [
+                      ['Total employee deductions', audit?.totals?.employee_deduction],
+                      ['Total employer liability', audit?.totals?.employer_liability],
+                      ['Overall statutory', audit?.totals?.overall_statutory],
+                    ],
+                    foot: summary?.disclaimer || 'Actual payroll may differ because of adjustments and attendance-driven earnings.',
+                  },
+                ].map((card) => {
+                  const Icon = card.icon
+                  return (
+                    <div key={card.title} className="rounded-lg border border-border bg-background p-4">
+                      <div className="flex items-start gap-3 border-b border-border pb-3">
+                        <Icon className="mt-0.5 size-5 shrink-0 text-brand" aria-hidden />
+                        <div>
+                          <h3 className="font-bold text-foreground">{card.title}</h3>
+                          <p className="text-xs text-muted-foreground">{card.subtitle}</p>
+                        </div>
+                      </div>
+                      <dl className="mt-4 space-y-2.5">
+                        {card.rows.map(([label, value]) => (
+                          <div key={label} className="flex items-center justify-between gap-3 text-sm">
+                            <dt className="text-muted-foreground">{label}</dt>
+                            <dd className="font-bold tabular-nums text-foreground">{formatPeso(value ?? 0)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                      <p className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">{card.foot}</p>
+                    </div>
+                  )
+                })}
               </div>
-
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 3xl:gap-5">
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm 3xl:p-6">
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <Landmark className="size-5 shrink-0 text-slate-700" aria-hidden />
-                    <div>
-                      <h4 className="text-base font-semibold text-slate-900 3xl:text-lg">SSS (RA 11199)</h4>
-                      <p className="text-[11px] text-slate-500">MSC from salary bracket · 15% of MSC (5% EE + 10% ER) + EC</p>
-                    </div>
-                  </div>
-                  <ul className="mt-4 space-y-2.5 text-sm text-slate-700 3xl:text-base">
-                    <li className="flex justify-between gap-3">
-                      <span>Employee</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{formatPeso(auditSss?.employee_amount ?? 0)}</span>
-                    </li>
-                    <li className="flex justify-between gap-3">
-                      <span>Employer</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{formatPeso(auditSss?.employer_amount ?? 0)}</span>
-                    </li>
-                    <li className="flex justify-between gap-3">
-                      <span>EC (employer only)</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{formatPeso(auditSss?.ec_amount ?? 0)}</span>
-                    </li>
-                    <li className="flex justify-between gap-3 border-t border-slate-100 pt-3 text-base font-bold text-slate-900">
-                      <span>Total SSS + EC</span>
-                      <span className="tabular-nums">{formatPeso(auditSss?.total_amount ?? 0)}</span>
-                    </li>
-                    <li className="pt-1 text-xs text-slate-500 3xl:text-sm">
-                      <span className="font-medium text-slate-600">MSC bracket: </span>
-                      {auditSss?.msc_bracket_range ?? auditSss?.bracket_range ?? '—'}
-                      {auditSss?.msc_used != null ? (
-                        <span className="text-slate-400"> · MSC {formatPeso(auditSss.msc_used)}</span>
-                      ) : null}
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm 3xl:p-6">
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <Heart className="size-5 shrink-0 text-rose-600" aria-hidden />
-                    <div>
-                      <h4 className="text-base font-semibold text-slate-900 3xl:text-lg">PhilHealth (RA 11223)</h4>
-                      <p className="text-[11px] text-slate-500">5% total (2.5% EE + 2.5% ER) on applicable base</p>
-                    </div>
-                  </div>
-                  <ul className="mt-4 space-y-2.5 text-sm text-slate-700 3xl:text-base">
-                    <li className="flex justify-between gap-3">
-                      <span>Employee</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{formatPeso(audit?.philhealth?.employee_amount ?? 0)}</span>
-                    </li>
-                    <li className="flex justify-between gap-3">
-                      <span>Employer</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{formatPeso(audit?.philhealth?.employer_amount ?? 0)}</span>
-                    </li>
-                    <li className="flex justify-between gap-3 border-t border-slate-100 pt-3 text-base font-bold text-slate-900">
-                      <span>Total</span>
-                      <span className="tabular-nums">{formatPeso(audit?.philhealth?.total_amount ?? 0)}</span>
-                    </li>
-                    <li className="text-xs text-slate-500 3xl:text-sm">
-                      <span className="font-medium text-slate-600">Applied salary: </span>
-                      {formatPeso(audit?.philhealth?.metadata?.applied_salary ?? 0)}
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm 3xl:p-6">
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <PiggyBank className="size-5 shrink-0 text-amber-700" aria-hidden />
-                    <div>
-                      <h4 className="text-base font-semibold text-slate-900 3xl:text-lg">Pag-IBIG (RA 9679)</h4>
-                      <p className="text-[11px] text-slate-500">2% EE + 2% ER · capped fund salary ₱10,000</p>
-                    </div>
-                  </div>
-                  <ul className="mt-4 space-y-2.5 text-sm text-slate-700 3xl:text-base">
-                    <li className="flex justify-between gap-3">
-                      <span>Employee</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{formatPeso(audit?.pagibig?.employee_amount ?? 0)}</span>
-                    </li>
-                    <li className="flex justify-between gap-3">
-                      <span>Employer</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{formatPeso(audit?.pagibig?.employer_amount ?? 0)}</span>
-                    </li>
-                    <li className="flex justify-between gap-3 border-t border-slate-100 pt-3 text-base font-bold text-slate-900">
-                      <span>Total</span>
-                      <span className="tabular-nums">{formatPeso(audit?.pagibig?.total_amount ?? 0)}</span>
-                    </li>
-                    <li className="text-xs text-slate-500 3xl:text-sm">
-                      <span className="font-medium text-slate-600">Applied: </span>
-                      {formatPeso(audit?.pagibig?.metadata?.applied_salary ?? 0)}
-                      {audit?.pagibig?.metadata?.cap_applied ? ' (capped)' : ''}
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm 3xl:p-6">
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <Scale className="size-5 shrink-0 text-indigo-700" aria-hidden />
-                    <div>
-                      <h4 className="text-base font-semibold text-slate-900 3xl:text-lg">Withholding Tax (TRAIN)</h4>
-                      <p className="text-[11px] text-slate-500">Annualized withholding method based on projected annual taxable income</p>
-                    </div>
-                  </div>
-                  <ul className="mt-4 space-y-2.5 text-sm text-slate-700 3xl:text-base">
-                    <li className="flex justify-between gap-3">
-                      <span>Estimated Monthly Withholding Tax</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{formatPeso(withholdingMonthlyEstimate)}</span>
-                    </li>
-                    <li className="flex justify-between gap-3">
-                      <span>Method</span>
-                      <span className="font-semibold text-slate-900">Annualized (TRAIN)</span>
-                    </li>
-                    <li className="flex justify-between gap-3">
-                      <span>Effective Rate</span>
-                      <span className="font-semibold tabular-nums text-slate-900">{withholdingEffectiveRate.toFixed(2)}%</span>
-                    </li>
-                    <li className="flex justify-between gap-3 border-t border-slate-100 pt-3 text-base font-bold text-slate-900">
-                      <span>Annual Projection</span>
-                      <span className="tabular-nums">{formatPeso(withholdingAnnualProjection)}</span>
-                    </li>
-                  </ul>
-                </div>
-
-              </div>
-
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex items-center gap-2 border-b border-slate-100 bg-white px-5 py-3 sm:px-6">
-                  <Scale className="size-5 shrink-0 text-slate-700" aria-hidden />
-                  <h4 className="text-base font-semibold text-slate-900 3xl:text-lg">Summary</h4>
-                </div>
-                <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-3 sm:p-6 3xl:gap-6 3xl:p-7">
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Total employee deductions</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums text-slate-900 3xl:text-2xl">{formatPeso(employeeTotal)}</p>
-                    <p className="mt-1 text-[11px] text-slate-500">SSS + PhilHealth + Pag-IBIG (EE)</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Total employer liability</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums text-slate-900 3xl:text-2xl">{formatPeso(employerTotal)}</p>
-                    <p className="mt-1 text-[11px] text-slate-500">SSS ER + EC + PhilHealth ER + Pag-IBIG ER</p>
-                  </div>
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 sm:col-span-1">
-                    <p className="text-xs font-medium uppercase tracking-wide text-emerald-900/90">Grand total (statutory)</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums text-emerald-950 3xl:text-2xl">{formatPeso(overallTotal)}</p>
-                    <p className="mt-1 text-[11px] text-emerald-900/80">Employee shares + employer shares (SSS, EC, PhilHealth, Pag-IBIG)</p>
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-center text-[11px] leading-relaxed text-slate-500 3xl:text-xs">
-                Rates as of 2025–2026 · SSS regular SS: <strong className="font-semibold text-slate-700">15% of MSC</strong> (5% EE + 10% ER) since Jan 2025 · EC employer-only ₱30 · PhilHealth 5% (2.5% + 2.5%) · Pag-IBIG 2% + 2% on capped ₱10,000 fund salary
-              </p>
             </div>
-          ) : null}
-        </div>
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)]">
+              <div className="rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
+                <h2 className="text-lg font-bold text-foreground">Generate Remittance</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Creates a pending batch for agency filing review.</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Agency</span>
+                    <select
+                      value={remittanceDraft.agency}
+                      onChange={(event) => setRemittanceDraft((draft) => ({ ...draft, agency: event.target.value }))}
+                      className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground"
+                    >
+                      <option value="SSS">SSS</option>
+                      <option value="PHILHEALTH">PhilHealth</option>
+                      <option value="PAGIBIG">Pag-IBIG</option>
+                      <option value="BIR">BIR</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Report Kind</span>
+                    <select
+                      value={remittanceDraft.report_kind}
+                      onChange={(event) => setRemittanceDraft((draft) => ({ ...draft, report_kind: event.target.value }))}
+                      className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground"
+                    >
+                      {remittanceKindOptions.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                    </select>
+                  </label>
+                  <Field label="Year" value={remittanceDraft.period_year} onChange={(value) => setRemittanceDraft((draft) => ({ ...draft, period_year: value }))} />
+                  <Field label="Month" value={remittanceDraft.period_month} onChange={(value) => setRemittanceDraft((draft) => ({ ...draft, period_month: value }))} />
+                </div>
+                <Button type="button" onClick={createRemittance} disabled={remittanceLoading} className="mt-4 w-full bg-brand text-brand-foreground hover:bg-brand-strong">
+                  <FileClock className="size-4" />
+                  {remittanceLoading ? 'Generating...' : 'Generate Pending Batch'}
+                </Button>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
+                <h2 className="text-lg font-bold text-foreground">Recent Remittances</h2>
+                <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full min-w-[42rem] text-sm">
+                    <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
+                      <tr>
+                        <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Period</th>
+                        <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Agency</th>
+                        <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Kind</th>
+                        <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Status</th>
+                        <th className="border-b border-r border-border px-3 py-3 text-right font-bold">Employee</th>
+                        <th className="border-b border-border px-3 py-3 text-right font-bold">Employer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {remittances.map((row) => (
+                        <tr key={row.id} className="border-b border-border last:border-b-0">
+                          <td className="border-r border-border px-3 py-3 text-foreground">{monthName(row.period_month)} {row.period_year}</td>
+                          <td className="border-r border-border px-3 py-3 font-semibold text-foreground">{row.agency}</td>
+                          <td className="border-r border-border px-3 py-3 text-muted-foreground">{row.report_kind}</td>
+                          <td className="border-r border-border px-3 py-3">
+                            <span className="rounded-md bg-amber-500/10 px-2 py-1 text-xs font-bold text-amber-700 dark:text-amber-300">{row.status}</span>
+                          </td>
+                          <td className="border-r border-border px-3 py-3 text-right font-semibold text-foreground">{formatPeso(row.total_employee_amount)}</td>
+                          <td className="px-3 py-3 text-right font-semibold text-foreground">{formatPeso(row.total_employer_amount)}</td>
+                        </tr>
+                      ))}
+                      {remittances.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">No remittance batches yet.</td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
       </div>
 
       {historyOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3 sm:p-4">
-          <div className="max-h-[min(85vh,100dvh)] w-full max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl sm:max-w-6xl 3xl:max-w-7xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
+          <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card text-foreground shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">History of Rates</h3>
-                <p className="text-xs text-slate-500">Audit trail for statutory rate updates (SSS, PhilHealth, Pag-IBIG, EC).</p>
+                <h2 className="text-lg font-bold text-foreground">History of Rates</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Audit trail for SSS, PhilHealth, Pag-IBIG, and EC rate updates.</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setHistoryOpen(false)}
-                className="rounded-md border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                Close
+              <button type="button" onClick={() => setHistoryOpen(false)} className="inline-flex size-9 items-center justify-center rounded-md border border-border bg-background text-foreground hover:bg-muted">
+                <X className="size-4" />
+                <span className="sr-only">Close</span>
               </button>
             </div>
-            <div className="space-y-3 p-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
               <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={historyCodeFilter}
-                  onChange={(e) => setHistoryCodeFilter(e.target.value)}
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  onChange={(event) => setHistoryCodeFilter(event.target.value)}
+                  className="h-10 rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground"
                 >
                   <option value="">All Codes</option>
                   <option value="SSS">SSS</option>
@@ -1066,55 +1225,52 @@ export default function AdminGovernmentContributions() {
                   <option value="PAGIBIG">Pag-IBIG</option>
                   <option value="EC">EC</option>
                 </select>
-                <button
-                  type="button"
-                  onClick={() => loadHistory(historyCodeFilter)}
-                  className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
-                >
+                <Button type="button" onClick={() => loadHistory(historyCodeFilter)} disabled={historyLoading} className="bg-brand text-brand-foreground hover:bg-brand-strong">
+                  <Clock3 className={cn('size-4', historyLoading && 'animate-spin')} />
                   Apply Filter
-                </button>
+                </Button>
               </div>
 
-              {historyError ? <div className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{historyError}</div> : null}
-
-              <div className="max-h-[55vh] min-h-0 overflow-auto rounded-lg border border-slate-200">
-                <table className="min-w-[640px] w-full text-sm md:min-w-full md:text-base">
-                  <thead className="sticky top-0 bg-slate-100">
-                    <tr className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                      <th className="px-3 py-2 text-left">Date/Time</th>
-                      <th className="px-3 py-2 text-left">Code</th>
-                      <th className="px-3 py-2 text-left">Effective Date</th>
-                      <th className="px-3 py-2 text-left">Action</th>
-                      <th className="px-3 py-2 text-left">Changed By</th>
-                      <th className="px-3 py-2 text-left">Changes (Old → New)</th>
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full min-w-[60rem] text-sm">
+                  <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
+                    <tr>
+                      <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Date / Time</th>
+                      <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Code</th>
+                      <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Effective Date</th>
+                      <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Action</th>
+                      <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Changed By</th>
+                      <th className="border-b border-border px-3 py-3 text-left font-bold">Changes</th>
                     </tr>
                   </thead>
                   <tbody>
                     {historyLoading ? (
-                      <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">Loading history...</td></tr>
+                      <tr>
+                        <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">Loading history...</td>
+                      </tr>
                     ) : null}
                     {!historyLoading && historyRows.length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No history records found.</td></tr>
+                      <tr>
+                        <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">No history records found.</td>
+                      </tr>
                     ) : null}
                     {!historyLoading && historyRows.map((row) => (
-                      <tr key={row.id} className="border-t border-slate-100 align-top">
-                        <td className="px-3 py-2 text-xs text-slate-600">{row.created_at || '—'}</td>
-                        <td className="px-3 py-2 font-semibold text-slate-800">{row.code || '—'}</td>
-                        <td className="px-3 py-2 text-slate-700">{row.effective_from || '—'}</td>
-                        <td className="px-3 py-2">
-                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${row.action === 'created' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
-                            {row.action || 'updated'}
-                          </span>
+                      <tr key={row.id} className="border-b border-border align-top last:border-b-0">
+                        <td className="border-r border-border px-3 py-3 text-muted-foreground">{row.created_at || '-'}</td>
+                        <td className="border-r border-border px-3 py-3 font-bold text-foreground">{row.code || '-'}</td>
+                        <td className="border-r border-border px-3 py-3 text-foreground">{row.effective_from || '-'}</td>
+                        <td className="border-r border-border px-3 py-3">
+                          <span className="rounded-md bg-sky-500/10 px-2 py-1 text-xs font-bold text-sky-700 dark:text-sky-300">{row.action || 'updated'}</span>
                         </td>
-                        <td className="px-3 py-2 text-slate-700">{row.changed_by?.name || row.changed_by?.email || 'System'}</td>
-                        <td className="px-3 py-2 text-xs text-slate-600">
+                        <td className="border-r border-border px-3 py-3 text-foreground">{row.changed_by?.name || row.changed_by?.email || 'System'}</td>
+                        <td className="px-3 py-3 text-xs text-muted-foreground">
                           {row.changed_fields && Object.keys(row.changed_fields).length > 0
-                            ? Object.entries(row.changed_fields).map(([k, v]) => (
-                                <div key={`${row.id}-${k}`} className="mb-1">
-                                  <span className="font-semibold text-slate-800">{k}</span>: {String(v?.old ?? 'null')} → {String(v?.new ?? 'null')}
+                            ? Object.entries(row.changed_fields).map(([key, value]) => (
+                                <div key={`${row.id}-${key}`} className="mb-1">
+                                  <span className="font-bold text-foreground">{key}</span>: {String(value?.old ?? 'null')} to {String(value?.new ?? 'null')}
                                 </div>
                               ))
-                            : 'Initial values saved / no diff captured'}
+                            : 'Initial values saved / no field diff captured'}
                         </td>
                       </tr>
                     ))}
@@ -1128,4 +1284,3 @@ export default function AdminGovernmentContributions() {
     </div>
   )
 }
-
