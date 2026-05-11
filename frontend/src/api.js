@@ -2465,7 +2465,7 @@ export async function exportAllEmployeesCsv() {
   }
   const blob = await res.blob()
   const header = res.headers.get('content-disposition') || ''
-  const filenameMatch = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(header)
+  const filenameMatch = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(header)
   const filename = filenameMatch?.[1] ? decodeURIComponent(filenameMatch[1].replace(/"/g, '')) : 'employees_export.csv'
 
   return { blob, filename }
@@ -2548,7 +2548,7 @@ export async function exportMyProfileCsv() {
   }
   const blob = await res.blob()
   const header = res.headers.get('content-disposition') || ''
-  const filenameMatch = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(header)
+  const filenameMatch = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(header)
   const filename = filenameMatch?.[1] ? decodeURIComponent(filenameMatch[1].replace(/"/g, '')) : 'my_profile_export.csv'
 
   return { blob, filename }
