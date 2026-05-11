@@ -6,6 +6,7 @@ import {
   Heart,
   Landmark,
   Loader2,
+  Mail,
   Pencil,
   PiggyBank,
   Scale,
@@ -27,11 +28,9 @@ import {
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
 import { getAdminNextDeductionDates, getDeductionScheduleSettings, updateDeductionScheduleSettingsBatch } from '@/api'
-import { formatDeductionScheduleTypeShort } from '@/components/salary/salaryTabFormatters'
 import { cn } from '@/lib/utils'
 import {
   APP_MODAL_DESCRIPTION_CLASS,
@@ -41,129 +40,185 @@ import {
   appModalDialogContentClass,
 } from '@/lib/appModalStyles'
 
-const TEXT = 'text-[#0A0A0A] dark:text-slate-100'
+const SCHEDULE_OPTIONS_FALLBACK = [
+  { value: '15th', label: 'First semi-monthly run', helper: 'Apply on the first payroll run.' },
+  { value: '30th', label: 'End of month', helper: 'Apply on the month-end payroll run.' },
+  { value: 'both', label: '50/50 split', helper: 'Split the amount across both payroll runs.' },
+]
 
-/** Basic salary is not configurable here; schedules apply to statutory items, loans, and non-base allowances only. */
+const TAB_TRIGGER_CLASS =
+  'relative h-12 min-w-0 rounded-md border-0 bg-transparent px-3 text-sm font-semibold text-foreground shadow-none transition after:absolute after:bottom-0 after:left-1/2 after:h-0.5 after:w-32 after:max-w-[calc(100%-1.25rem)] after:-translate-x-1/2 after:rounded-full after:bg-transparent hover:bg-muted/60 hover:text-brand data-[state=active]:bg-brand/10 data-[state=active]:text-brand data-[state=active]:shadow-none data-[state=active]:after:bg-brand dark:hover:bg-muted/40 dark:data-[state=active]:bg-brand/15 sm:px-4 lg:after:w-40'
+
 function isBasicSalaryScheduleRow(row) {
-  const code = String(row?.code ?? '')
-    .trim()
-    .toUpperCase()
+  const code = String(row?.code ?? '').trim().toUpperCase()
   if (code === 'BASIC_SALARY') return true
-  const name = String(row?.name ?? '')
-    .trim()
-    .toLowerCase()
+  const name = String(row?.name ?? '').trim().toLowerCase()
   return name === 'basic salary'
 }
 
-function pad2(n) {
-  return String(Math.min(99, Math.max(0, Number(n) || 0))).padStart(2, '0')
+function pad2(value) {
+  return String(Math.max(0, Number(value) || 0)).padStart(2, '0')
+}
+
+function getManilaTodayParts() {
+  try {
+    const raw = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date())
+    const [year, month, day] = raw.split('-').map(Number)
+    if (year && month && day) return { year, month, day }
+  } catch {
+    /* fall through */
+  }
+  const now = new Date()
+  return { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() }
 }
 
 function nextPayrollDisplayDate() {
-  const tz = 'Asia/Manila'
-  const raw = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-  const [yStr, mStr, dStr] = raw.split('-')
-  const y = Number(yStr)
-  const m = Number(mStr)
-  const day = Number(dStr)
-  if (!y || !m || !day) {
-    return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-  }
-  const lastDayOfMonth = new Date(y, m, 0).getDate()
-  let target
-  if (day < 15) {
-    target = new Date(y, m - 1, 15)
-  } else if (day === 15) {
-    target = new Date(y, m - 1, lastDayOfMonth)
-  } else if (day < lastDayOfMonth) {
-    target = new Date(y, m - 1, lastDayOfMonth)
-  } else {
-    target = new Date(y, m, 15)
-  }
+  const { year, month, day } = getManilaTodayParts()
+  const lastDayOfMonth = new Date(year, month, 0).getDate()
+  const target =
+    day < 15
+      ? new Date(year, month - 1, 15)
+      : day < lastDayOfMonth
+        ? new Date(year, month - 1, lastDayOfMonth)
+        : new Date(year, month, 15)
+
   return target.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 function formatPreviewDate(value) {
-  if (!value) return '—'
-  const d = new Date(String(value))
-  if (Number.isNaN(d.getTime())) return String(value)
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  if (!value) return '-'
+  const parsed = new Date(String(value))
+  if (Number.isNaN(parsed.getTime())) return String(value)
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function mapTypeForColumn(row) {
-  const t = String(row?.type || '').trim()
-  if (t === 'Government') return 'Government'
-  if (t === 'Earning') return 'Earning'
-  const cat = String(row?.category || '')
-  if (/loan|repayment/i.test(cat)) return 'Loan'
-  if (/hmo|union|benefit/i.test(cat)) return 'Benefit'
-  return 'Loan / Benefit'
+function formatScheduleLabel(value) {
+  const schedule = String(value || '').trim()
+  if (schedule === '15th') return 'First semi-monthly run'
+  if (schedule === '30th') return 'End of month'
+  if (schedule === 'both') return '50/50 split'
+  return schedule || '-'
+}
+
+function formatScheduleNextLine(schedule, nextDatesBySchedule) {
+  const dates = nextDatesBySchedule[schedule] || []
+  if (schedule === 'both') {
+    const nextTwo = dates.slice(0, 2).map(formatPreviewDate).filter((d) => d && d !== '-')
+    return `Next: ${nextTwo.length ? nextTwo.join(' and ') : '-'}`
+  }
+  return `Next: ${formatPreviewDate(dates[0])}`
 }
 
 function rowDescription(row) {
-  if (row?.description && String(row.description).trim()) return String(row.description).trim()
-  if (row?.category && String(row.category).trim()) return String(row.category).trim()
-  if (row?.code && String(row.code).trim()) return String(row.code).trim()
-  return null
+  const description = String(row?.description || '').trim()
+  if (description) return description.replace(/[^\w\s:().,/&-]+/g, ' - ').replace(/\s+-\s+/g, ' - ')
+  const category = String(row?.category || '').trim()
+  if (category) return category
+  const code = String(row?.code || '').trim()
+  return code || null
 }
 
-/** Icon for schedule row (government, loan, or earning) — neutral ink only. */
-function DeductionRowIcon({ row }) {
-  const key = String(row?.deduction_key || '')
-  const iconClass = 'size-4 text-[#0A0A0A] dark:text-slate-200'
-  if (String(row?.type || '') === 'Earning') {
-    return <Sparkles className={iconClass} aria-hidden />
-  }
-  if (key.includes('SSS') || key.endsWith(':SSS')) {
-    return <Landmark className={iconClass} aria-hidden />
-  }
-  if (key.includes('PHILHEALTH')) {
-    return <Heart className={iconClass} aria-hidden />
-  }
-  if (key.includes('PAGIBIG')) {
-    return <PiggyBank className={iconClass} aria-hidden />
-  }
-  if (key.includes('WITHHOLDING')) {
-    return <Scale className={iconClass} aria-hidden />
-  }
-  return <WalletCards className={iconClass} aria-hidden />
+function mapTypeForColumn(row) {
+  const type = String(row?.type || '').trim()
+  if (type === 'Government') return 'Government'
+  if (type === 'Earning') return 'Earning'
+  const category = String(row?.category || '')
+  if (/loan|repayment/i.test(category)) return 'Loan'
+  if (/hmo|union|benefit/i.test(category)) return 'Benefit'
+  return 'Loan / Benefit'
 }
 
-/** Matches Pay Cycles `KpiCard` density; icons use neutral surface + #0A0A0A ink. */
-function DeductionKpiCard({ label, children, icon, footer }) {
+function iconForRow(row) {
+  const key = String(row?.deduction_key || '').toUpperCase()
+  const name = String(row?.name || '').toUpperCase()
+  if (String(row?.type || '') === 'Earning') return Sparkles
+  if (key.includes('SSS') || name.includes('SSS')) return Landmark
+  if (key.includes('PHILHEALTH') || name.includes('PHILHEALTH')) return Heart
+  if (key.includes('PAGIBIG') || key.includes('PAG-IBIG') || name.includes('PAG-IBIG')) return PiggyBank
+  if (key.includes('WITHHOLDING') || name.includes('WITHHOLDING')) return Scale
+  return WalletCards
+}
+
+function ScheduleRowIcon({ row }) {
+  return createElement(iconForRow(row), { className: 'size-5 text-brand', 'aria-hidden': true })
+}
+
+function MetricCard({ label, value, footer, icon: Icon, loading }) {
   return (
-    <Card className="overflow-hidden border border-border/60 bg-background shadow-sm transition-colors dark:border-border/50">
-      <CardContent className="flex items-start justify-between gap-4 p-5 sm:p-6">
-        <div className="min-w-0 space-y-2">
-          <p className={cn('text-[11px] font-semibold uppercase tracking-[0.18em]', TEXT)}>{label}</p>
-          <div className="min-h-10">{children}</div>
-          {footer ? <p className={cn('text-sm', TEXT)}>{footer}</p> : null}
+    <Card className="min-h-32 overflow-hidden rounded-lg border-border bg-card shadow-sm">
+      <CardContent className="flex h-full min-h-32 flex-col justify-between p-4">
+        <div className="flex items-start justify-between gap-3">
+          <p className="max-w-[10rem] text-[11px] font-semibold uppercase leading-5 tracking-wide text-muted-foreground">
+            {label}
+          </p>
+          <div className="shrink-0 text-brand">
+            {createElement(Icon, { className: 'size-5', 'aria-hidden': true })}
+          </div>
         </div>
-        <div className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted text-[#0A0A0A] ring-1 ring-border/50 dark:bg-muted/80 dark:text-slate-100">
-          {createElement(icon, { className: 'size-6', 'aria-hidden': true })}
+        <div className="mt-4">
+          {loading ? (
+            <Skeleton className="h-8 w-20" />
+          ) : (
+            <p className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">{value}</p>
+          )}
+          {footer ? (
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">{footer}</p>
+          ) : null}
         </div>
       </CardContent>
     </Card>
   )
 }
 
-function ScheduleBadge({ scheduleType }) {
-  const s = String(scheduleType || 'both')
-  const label = formatDeductionScheduleTypeShort(s)
-  let variantClass =
-    'border-border/70 bg-muted/35 text-[#0A0A0A] dark:border-border dark:bg-muted/50 dark:text-slate-100'
-  if (s === '30th') {
-    variantClass =
-      'border-border/70 bg-muted/45 text-[#0A0A0A] dark:border-border dark:bg-muted/55 dark:text-slate-100'
-  }
-  if (s === 'both') {
-    variantClass =
-      'border-border/70 bg-muted/40 text-[#0A0A0A] dark:border-border dark:bg-muted/45 dark:text-slate-100'
-  }
+function ScheduleBadge({ scheduleType, pending = false }) {
   return (
-    <Badge variant="outline" className={cn('rounded-md px-2.5 py-0.5 text-xs font-medium tabular-nums', variantClass)}>
-      {label}
+    <span
+      className={cn(
+        'inline-flex min-h-8 items-center rounded-lg border border-border/70 bg-background px-3 text-sm font-semibold text-foreground shadow-sm dark:border-border/60 dark:bg-muted/20',
+        pending && 'border-brand/45 bg-brand/10 text-brand dark:bg-brand/15',
+      )}
+    >
+      {formatScheduleLabel(scheduleType)}
+    </span>
+  )
+}
+
+function TypeBadge({ row }) {
+  const type = mapTypeForColumn(row)
+  const className =
+    type === 'Earning'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200'
+      : type === 'Loan'
+        ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200'
+        : 'border-border/70 bg-background text-foreground dark:border-border/60 dark:bg-muted/20'
+
+  return (
+    <Badge variant="outline" className={cn('rounded-lg px-3 py-1 text-xs font-medium', className)}>
+      {type}
     </Badge>
+  )
+}
+
+function TableSkeleton() {
+  return (
+    <div className="rounded-xl border border-border/70 bg-card p-4 dark:border-border/50">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="flex items-center gap-5 border-b border-border/60 py-5 last:border-0">
+          <Skeleton className="size-14 rounded-xl" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-4 w-56" />
+          </div>
+          <Skeleton className="hidden h-8 w-28 sm:block" />
+          <Skeleton className="hidden h-8 w-36 sm:block" />
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -174,7 +229,7 @@ export default function AdminDeductionScheduleSettingsPage() {
   const [savingAll, setSavingAll] = useState(false)
   const [rows, setRows] = useState([])
   const [scheduleOptions, setScheduleOptions] = useState([])
-  const [pendingEdits, setPendingEdits] = useState(() => ({}))
+  const [pendingEdits, setPendingEdits] = useState({})
   const [editOpen, setEditOpen] = useState(false)
   const [activeRow, setActiveRow] = useState(null)
   const [draftSchedule, setDraftSchedule] = useState('both')
@@ -182,10 +237,9 @@ export default function AdminDeductionScheduleSettingsPage() {
   const [nextDatesBySchedule, setNextDatesBySchedule] = useState({})
 
   useEffect(() => {
-    const h = String(location.hash || '').trim()
-    if (h === '#earnings' || h === '#earning') {
-      setActiveTab('earnings')
-    }
+    const hash = String(location.hash || '').trim().toLowerCase()
+    if (hash === '#earnings' || hash === '#earning') setActiveTab('earnings')
+    if (hash === '#other' || hash === '#loans') setActiveTab('other')
   }, [location.hash])
 
   const load = useCallback(async () => {
@@ -194,10 +248,10 @@ export default function AdminDeductionScheduleSettingsPage() {
       const data = await getDeductionScheduleSettings()
       setRows(Array.isArray(data?.settings) ? data.settings : [])
       setScheduleOptions(Array.isArray(data?.schedule_options) ? data.schedule_options : [])
-    } catch (e) {
+    } catch (error) {
       toast({
         title: 'Deduction schedule settings',
-        description: e.message || 'Failed to load settings',
+        description: error.message || 'Failed to load deduction schedule settings.',
         variant: 'destructive',
       })
     } finally {
@@ -209,460 +263,414 @@ export default function AdminDeductionScheduleSettingsPage() {
     load()
   }, [load])
 
+  const effectiveSchedule = useCallback(
+    (row) => {
+      const key = row?.deduction_key
+      if (!key) return row?.schedule_type || 'both'
+      return pendingEdits[key] || row.schedule_type || 'both'
+    },
+    [pendingEdits],
+  )
+
   useEffect(() => {
     let cancelled = false
     const schedules = Array.from(
       new Set(
         rows
-          .map((row) => pendingEdits[row?.deduction_key] ?? row?.schedule_type)
-          .filter((v) => v === '15th' || v === '30th' || v === 'both'),
+          .map((row) => effectiveSchedule(row))
+          .filter((value) => value === '15th' || value === '30th' || value === 'both'),
       ),
     )
+
     if (schedules.length === 0) return () => {}
 
     ;(async () => {
       const updates = {}
-      for (const schedule of schedules) {
-        try {
-          const resp = await getAdminNextDeductionDates({ schedule_type: schedule })
-          updates[schedule] = Array.isArray(resp?.next_dates) ? resp.next_dates : []
-        } catch {
-          updates[schedule] = []
-        }
-      }
+      await Promise.all(
+        schedules.map(async (schedule) => {
+          try {
+            const response = await getAdminNextDeductionDates({ schedule_type: schedule })
+            updates[schedule] = Array.isArray(response?.next_dates) ? response.next_dates : []
+          } catch {
+            updates[schedule] = []
+          }
+        }),
+      )
       if (!cancelled) {
-        setNextDatesBySchedule((prev) => ({ ...prev, ...updates }))
+        setNextDatesBySchedule((current) => ({ ...current, ...updates }))
       }
     })()
 
     return () => {
       cancelled = true
     }
-  }, [rows, pendingEdits])
+  }, [effectiveSchedule, pendingEdits, rows])
 
-  const effectiveSchedule = useCallback(
-    (row) => {
-      if (!row?.deduction_key) return row?.schedule_type ?? 'both'
-      return pendingEdits[row.deduction_key] ?? row.schedule_type ?? 'both'
-    },
-    [pendingEdits],
-  )
-
-  const govRows = useMemo(
-    () => rows.filter((r) => r.type === 'Government' && !isBasicSalaryScheduleRow(r)),
+  const governmentRows = useMemo(
+    () => rows.filter((row) => row.type === 'Government' && !isBasicSalaryScheduleRow(row)),
     [rows],
   )
-  const loanDeductionRows = useMemo(
-    () => rows.filter((r) => r.type === 'Loan / deduction' && !isBasicSalaryScheduleRow(r)),
+  const otherRows = useMemo(
+    () => rows.filter((row) => row.type === 'Loan / deduction' && !isBasicSalaryScheduleRow(row)),
     [rows],
   )
   const earningRows = useMemo(
-    () => rows.filter((r) => r.type === 'Earning' && !isBasicSalaryScheduleRow(r)),
+    () => rows.filter((row) => row.type === 'Earning' && !isBasicSalaryScheduleRow(row)),
     [rows],
   )
 
-  const govCount = govRows.length
-  const loanCount = loanDeductionRows.length
-  const earningCount = earningRows.length
   const hasPending = Object.keys(pendingEdits).length > 0
-
   const nextPayrollLabel = useMemo(() => nextPayrollDisplayDate(), [])
+  const options = scheduleOptions.length
+    ? scheduleOptions.map((option) => ({
+        ...option,
+        helper: SCHEDULE_OPTIONS_FALLBACK.find((fallback) => fallback.value === option.value)?.helper,
+      }))
+    : SCHEDULE_OPTIONS_FALLBACK
 
-  const openEdit = (row) => {
+  function openEdit(row) {
     setActiveRow(row)
     setDraftSchedule(effectiveSchedule(row))
     setEditOpen(true)
   }
 
-  const applyEditFromModal = () => {
+  function handleEditOpenChange(open) {
+    setEditOpen(open)
+    if (!open) {
+      setActiveRow(null)
+      setDraftSchedule('both')
+    }
+  }
+
+  function applyEditFromModal() {
     if (!activeRow?.deduction_key) return
     const key = activeRow.deduction_key
-    const serverType = rows.find((r) => r.deduction_key === key)?.schedule_type ?? 'both'
-    setPendingEdits((prev) => {
-      const next = { ...prev }
-      if (draftSchedule === serverType) {
+    const serverSchedule = rows.find((row) => row.deduction_key === key)?.schedule_type || 'both'
+    setPendingEdits((current) => {
+      const next = { ...current }
+      if (draftSchedule === serverSchedule) {
         delete next[key]
       } else {
         next[key] = draftSchedule
       }
       return next
     })
-    setEditOpen(false)
-    setActiveRow(null)
+    handleEditOpenChange(false)
   }
 
-  const discardPending = () => setPendingEdits({})
+  function discardPending() {
+    setPendingEdits({})
+  }
 
-  const saveAll = async () => {
-    const entries = Object.entries(pendingEdits)
-    if (entries.length === 0) return
+  async function saveAll() {
+    const settings = Object.entries(pendingEdits).map(([deduction_key, schedule_type]) => ({
+      deduction_key,
+      schedule_type,
+    }))
+    if (settings.length === 0) return
+
     setSavingAll(true)
     try {
-      await updateDeductionScheduleSettingsBatch({
-        settings: entries.map(([deduction_key, schedule_type]) => ({ deduction_key, schedule_type })),
-      })
+      const response = await updateDeductionScheduleSettingsBatch({ settings })
       toast({
         title: 'Default schedules saved',
-        description: 'These defaults apply to employees without custom schedule overrides. Changes take effect on the next payroll run.',
+        description:
+          response?.message ||
+          'These defaults apply to employees without custom schedule overrides on the next payroll run.',
       })
       setPendingEdits({})
       await load()
-      try {
-        window.dispatchEvent(new CustomEvent('hr:deduction-schedule-changed'))
-      } catch {
-        /* ignore */
-      }
-    } catch (e) {
-      toast({ title: 'Save failed', description: e.message || 'Could not save schedules', variant: 'destructive' })
+      window.dispatchEvent(new CustomEvent('hr:deduction-schedule-changed'))
+    } catch (error) {
+      toast({
+        title: 'Save failed',
+        description: error.message || 'Could not save deduction schedules.',
+        variant: 'destructive',
+      })
     } finally {
       setSavingAll(false)
     }
   }
 
-  const opts =
-    scheduleOptions.length > 0
-      ? scheduleOptions
-      : [
-          { value: '15th', label: 'First semi-monthly run' },
-          { value: '30th', label: 'End of month' },
-          { value: 'both', label: '50/50 split' },
-        ]
+  function renderRows(list, emptyTitle, emptyDescription) {
+    if (loading) return <TableSkeleton />
 
-  const renderTable = (list, { firstLabel = 'Item', emptyHint = 'Items will appear here when configured.' } = {}) => (
-    <div className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm dark:border-border/50">
-      <div className="overflow-x-auto">
-        <Table className="w-full min-w-[680px]">
-          <TableHeader>
-            <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:border-border/40 dark:bg-muted/25 dark:hover:bg-muted/25">
-              <TableHead className={cn('h-14 px-6 text-[11px] font-semibold uppercase tracking-wide', TEXT)}>{firstLabel}</TableHead>
-              <TableHead className={cn('h-14 px-6 text-[11px] font-semibold uppercase tracking-wide', TEXT)}>Type</TableHead>
-              <TableHead className={cn('h-14 px-6 text-[11px] font-semibold uppercase tracking-wide', TEXT)}>Current schedule</TableHead>
-              <TableHead className={cn('h-14 w-[88px] px-6 text-right text-[11px] font-semibold uppercase tracking-wide', TEXT)}>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="px-6 py-16 text-center">
-                  <div className="mx-auto flex max-w-md flex-col items-center gap-3">
-                    <div className="flex size-14 items-center justify-center rounded-lg border border-dashed border-border/60 bg-background shadow-sm dark:border-border/50">
-                      <CalendarRange className={cn('size-6 opacity-50', TEXT)} aria-hidden />
-                    </div>
-                    <div>
-                      <p className={cn('text-sm font-medium', TEXT)}>Nothing in this tab</p>
-                      <p className={cn('mt-1 text-sm', TEXT)}>{emptyHint}</p>
-                    </div>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              list.map((row) => {
-                const sched = effectiveSchedule(row)
-                const gov = mapTypeForColumn(row) === 'Government'
-                const earning = String(row?.type || '') === 'Earning'
+    if (list.length === 0) {
+      return (
+        <div className="rounded-xl border border-dashed border-border/70 bg-card px-5 py-14 text-center dark:border-border/50">
+          <div className="mx-auto flex size-14 items-center justify-center rounded-xl border border-border/70 bg-background text-brand dark:border-border/50 dark:bg-muted/20">
+            <CalendarRange className="size-6" aria-hidden />
+          </div>
+          <p className="mt-4 text-sm font-semibold text-foreground">{emptyTitle}</p>
+          <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">{emptyDescription}</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left">
+            <thead className="bg-background dark:bg-card">
+              <tr className="border-b border-border/70 text-xs font-bold uppercase text-foreground dark:border-border/50">
+                <th className="px-4 py-4">Deduction</th>
+                <th className="px-4 py-4">Type</th>
+                <th className="px-4 py-4">Current schedule</th>
+                <th className="px-4 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((row) => {
+                const schedule = effectiveSchedule(row)
+                const isPending = Object.prototype.hasOwnProperty.call(pendingEdits, row.deduction_key)
                 return (
-                  <TableRow
+                  <tr
                     key={row.deduction_key}
-                    className="group border-b border-border/60 transition-colors last:border-0 hover:bg-muted/30 dark:border-border/40 dark:hover:bg-muted/20"
+                    className="group border-b border-border/70 transition hover:bg-muted/30 last:border-b-0 dark:border-border/50 dark:hover:bg-muted/15"
                   >
-                    <TableCell className="px-6 py-5 align-middle">
-                      <div className="flex gap-3">
-                        <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-background shadow-sm dark:border-border/50 dark:bg-white/5">
-                          <DeductionRowIcon row={row} />
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background shadow-sm dark:bg-muted/20">
+                          <ScheduleRowIcon row={row} />
                         </div>
                         <div className="min-w-0">
-                          <p className={cn('text-sm font-semibold leading-snug', TEXT)}>{row.name}</p>
+                          <p className="text-sm font-bold leading-snug text-foreground">{row.name}</p>
                           {rowDescription(row) ? (
-                            <p className={cn('mt-1 max-w-md text-xs leading-relaxed', TEXT)}>{rowDescription(row)}</p>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">{rowDescription(row)}</p>
                           ) : null}
                         </div>
                       </div>
-                    </TableCell>
-                    <TableCell className="px-6 py-5 align-middle">
-                      {gov ? (
-                        <Badge
-                          variant="secondary"
-                          className={cn(
-                            'rounded-md border border-border/70 bg-muted/40 px-2.5 py-0.5 text-xs font-medium dark:border-border dark:bg-muted/50',
-                            TEXT,
-                          )}
-                        >
-                          Government
-                        </Badge>
-                      ) : earning ? (
-                        <Badge
-                          variant="outline"
-                          className="rounded-md border-emerald-200/80 bg-emerald-50/90 px-2.5 py-0.5 text-xs font-medium text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100"
-                        >
-                          Earning
-                        </Badge>
-                      ) : (
-                        <Badge
-                          variant="outline"
-                          className="rounded-md border-border/70 px-2.5 py-0.5 text-xs font-medium text-[#0A0A0A] dark:text-slate-200"
-                        >
-                          {mapTypeForColumn(row)}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-6 py-5 align-middle">
-                      <div className="space-y-1">
-                        <ScheduleBadge scheduleType={sched} />
-                        <p className="text-[11px] text-muted-foreground">
-                          {sched === 'both'
-                            ? `Next: ${(nextDatesBySchedule[sched] || []).slice(0, 2).map(formatPreviewDate).join(' and ') || '—'}`
-                            : `Next: ${formatPreviewDate((nextDatesBySchedule[sched] || [])[0])}`}
-                        </p>
+                    </td>
+                    <td className="px-4 py-4 align-middle">
+                      <TypeBadge row={row} />
+                    </td>
+                    <td className="px-4 py-4 align-middle">
+                      <div className="space-y-2">
+                        <ScheduleBadge scheduleType={schedule} pending={isPending} />
+                        <p className="text-xs text-muted-foreground">{formatScheduleNextLine(schedule, nextDatesBySchedule)}</p>
                       </div>
-                    </TableCell>
-                    <TableCell className="px-6 py-5 text-right align-middle">
+                    </td>
+                    <td className="px-4 py-4 text-right align-middle">
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="size-9 rounded-lg text-[#0A0A0A] opacity-80 transition-opacity hover:bg-muted hover:text-[#0A0A0A] group-hover:opacity-100 dark:text-slate-200 dark:hover:bg-muted dark:hover:text-slate-100"
+                        className="size-9 rounded-md text-foreground hover:bg-brand/10 hover:text-brand dark:hover:bg-brand/15"
                         onClick={() => openEdit(row)}
                         aria-label={`Edit schedule for ${row.name}`}
                       >
                         <Pencil className="size-4" aria-hidden />
                       </Button>
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 )
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  )
-
-  return (
-    <div className="w-full min-w-0 space-y-6">
-      {/* Header — Pay Cycles / profile style */}
-      <div className="rounded-2xl border border-border/60 bg-background p-5 shadow-sm sm:p-6 dark:border-border/50">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="max-w-3xl space-y-3">
-            <Badge variant="outline" className={cn('w-fit rounded-full border-border/70 bg-background px-3 py-1 text-[11px] font-medium tracking-wide', TEXT)}>
-              Compensation
-            </Badge>
-            <div className="space-y-2">
-              <h1 className={cn('hr-page-title', TEXT)}>Deduction schedule settings</h1>
-              <p className={cn('max-w-2xl text-sm leading-relaxed', TEXT)}>
-                Set default schedules for when statutory deductions, loans, and recurring earnings or allowances are paid (15th, month-end, or split). These are company-wide defaults—individual employees can override them in Employee Compensation.
-              </p>
-            </div>
-          </div>
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/30 shadow-sm dark:border-border/50 dark:bg-white/5">
-            <CalendarRange className={cn('size-6', TEXT)} aria-hidden />
-          </div>
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
+    )
+  }
 
-      {/* KPI cards — Pay Cycles–style density */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <DeductionKpiCard
-          label="Government deductions"
-          icon={Landmark}
-          footer={
-            loading ? null : (
-              <span className={cn('inline-flex items-center gap-1.5 font-medium', TEXT)}>
-                <CheckCircle2 className="size-3.5 shrink-0 opacity-80" aria-hidden />
+  return (
+    <div className="w-full min-w-0 bg-background px-3 py-4 text-foreground sm:px-4 md:px-5 lg:px-6 lg:py-5 3xl:px-10">
+      <div className="mx-auto max-w-[112rem] space-y-5">
+        <section className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <Badge
+              variant="outline"
+              className="rounded-md border-0 bg-brand/10 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-brand hover:bg-brand/10"
+            >
+              Compensation
+            </Badge>
+            <h1 className="mt-4 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+              <span className="text-brand">Deduction</span> schedule settings
+            </h1>
+            <p className="mt-2 max-w-4xl text-sm leading-relaxed text-muted-foreground">
+              Set default schedules for when statutory deductions, loans, and recurring earnings or allowances are paid
+              (15th, month-end, or split). These are company-wide defaults-individual employees can override them in
+              Employee Compensation.
+            </p>
+          </div>
+          <div className="flex size-14 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-brand shadow-sm">
+            <CalendarRange className="size-6" aria-hidden />
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label="Government deductions"
+            value={pad2(governmentRows.length)}
+            icon={Landmark}
+            loading={loading}
+            footer={
+              <span className="inline-flex items-center gap-2">
+                <CheckCircle2 className="size-4 text-brand" aria-hidden />
                 Active
               </span>
-            )
-          }
-        >
-          {loading ? <Skeleton className="h-10 w-16" /> : <p className={cn('text-4xl font-semibold tabular-nums tracking-tight', TEXT)}>{pad2(govCount)}</p>}
-        </DeductionKpiCard>
+            }
+          />
+          <MetricCard
+            label="Other loans / deductions"
+            value={pad2(otherRows.length)}
+            icon={Mail}
+            loading={loading}
+            footer="Pay component deductions in this schedule"
+          />
+          <MetricCard
+            label="Earnings & allowances"
+            value={pad2(earningRows.length)}
+            icon={Sparkles}
+            loading={loading}
+            footer="Pay component earnings in this schedule"
+          />
+          <MetricCard
+            label="Next payroll date"
+            value={nextPayrollLabel}
+            icon={CalendarDays}
+            loading={loading}
+            footer="Semi-monthly anchor (PH)"
+          />
+        </section>
 
-        <DeductionKpiCard
-          label="Other loans / deductions"
-          icon={WalletCards}
-          footer={loading ? null : 'Pay component deductions in this schedule'}
-        >
-          {loading ? <Skeleton className="h-10 w-16" /> : <p className={cn('text-4xl font-semibold tabular-nums tracking-tight', TEXT)}>{pad2(loanCount)}</p>}
-        </DeductionKpiCard>
-
-        <DeductionKpiCard
-          label="Earnings & allowances"
-          icon={Sparkles}
-          footer={loading ? null : 'Pay component earnings in this schedule'}
-        >
-          {loading ? <Skeleton className="h-10 w-16" /> : <p className={cn('text-4xl font-semibold tabular-nums tracking-tight', TEXT)}>{pad2(earningCount)}</p>}
-        </DeductionKpiCard>
-
-        <DeductionKpiCard
-          label="Next payroll date"
-          icon={CalendarDays}
-          footer={loading ? null : 'Semi-monthly anchor (PH)'}
-        >
-          {loading ? (
-            <Skeleton className="h-10 w-40" />
-          ) : (
-            <p className={cn('text-xl font-semibold leading-snug tracking-tight sm:text-2xl', TEXT)}>{nextPayrollLabel}</p>
-          )}
-        </DeductionKpiCard>
-      </div>
-
-      {/* Table card + underline tabs */}
-      <Card className="overflow-hidden border-border/60 shadow-sm dark:border-border/50">
-        <CardHeader className="border-b border-border/60 space-y-1 bg-card pb-5 dark:border-border/50">
-          <CardTitle className={cn('text-xl', TEXT)}>Schedules</CardTitle>
-          <CardDescription className={cn('text-sm leading-relaxed', TEXT)}>
-            Set the default schedule for when deductions and earnings are applied. Individual employees can override these defaults in Employee Compensation → Pay Components.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0 pt-2">
-          {loading ? (
-            <div className="space-y-3 px-6 py-6">
-              <Skeleton className="h-10 w-full max-w-md" />
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
-            </div>
-          ) : (
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-0">
-              <div className="border-b border-border/60 px-4 dark:border-border/50 sm:px-6">
-                <TabsList className="h-auto w-full justify-start gap-0 rounded-none border-0 bg-transparent p-0">
-                  <TabsTrigger
-                    value="government"
-                    className={cn(
-                      'relative rounded-none border-0 border-b-2 border-transparent bg-transparent px-0 py-3 text-sm font-medium shadow-none',
-                      'data-[state=active]:shadow-none',
-                      TEXT,
-                      'opacity-60 transition-colors hover:opacity-100',
-                      'data-[state=active]:opacity-100 data-[state=active]:border-blue-600 data-[state=active]:bg-transparent',
-                      'mr-8',
-                    )}
-                  >
+        <Card className="w-full overflow-hidden rounded-lg border-border bg-card shadow-sm">
+          <CardHeader className="border-b border-border p-4 sm:p-5">
+            <CardTitle className="text-2xl font-bold tracking-tight text-foreground">Schedules</CardTitle>
+            <CardDescription className="mt-1 max-w-5xl text-sm leading-relaxed text-muted-foreground">
+              Set the default schedule for when deductions and earnings are applied. Individual employees can override
+              these defaults in Employee Compensation - Pay Components.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <div className="border-b border-border p-3">
+                <TabsList className="grid h-auto w-full grid-cols-1 gap-2 rounded-lg border-0 bg-muted/35 p-1 sm:grid-cols-3">
+                  <TabsTrigger value="government" className={TAB_TRIGGER_CLASS}>
                     Government deductions
                   </TabsTrigger>
-                  <TabsTrigger
-                    value="other"
-                    className={cn(
-                      'relative rounded-none border-0 border-b-2 border-transparent bg-transparent px-0 py-3 text-sm font-medium shadow-none',
-                      'data-[state=active]:shadow-none',
-                      TEXT,
-                      'opacity-60 transition-colors hover:opacity-100',
-                      'data-[state=active]:opacity-100 data-[state=active]:border-blue-600 data-[state=active]:bg-transparent',
-                      'mr-8',
-                    )}
-                  >
+                  <TabsTrigger value="other" className={TAB_TRIGGER_CLASS}>
                     Other loans / deductions
                   </TabsTrigger>
-                  <TabsTrigger
-                    value="earnings"
-                    className={cn(
-                      'relative rounded-none border-0 border-b-2 border-transparent bg-transparent px-0 py-3 text-sm font-medium shadow-none',
-                      'data-[state=active]:shadow-none',
-                      TEXT,
-                      'opacity-60 transition-colors hover:opacity-100',
-                      'data-[state=active]:opacity-100 data-[state=active]:border-blue-600 data-[state=active]:bg-transparent',
-                    )}
-                  >
+                  <TabsTrigger value="earnings" className={TAB_TRIGGER_CLASS}>
                     Earnings & allowances
                   </TabsTrigger>
                 </TabsList>
               </div>
-              <TabsContent value="government" className="mt-0 px-4 pb-6 pt-4 focus-visible:outline-none sm:px-6">
-                {renderTable(govRows, {
-                  firstLabel: 'Deduction',
-                  emptyHint: 'Statutory deductions are always listed for schedule control.',
-                })}
+
+              <TabsContent value="government" className="m-0 p-4 focus-visible:outline-none sm:p-5">
+                {renderRows(
+                  governmentRows,
+                  'No government deductions found',
+                  'Statutory deductions will appear here once the payroll catalog is available.',
+                )}
               </TabsContent>
-              <TabsContent value="other" className="mt-0 px-4 pb-6 pt-4 focus-visible:outline-none sm:px-6">
-                {renderTable(loanDeductionRows, {
-                  firstLabel: 'Deduction',
-                  emptyHint: 'Deduction-type pay components will appear here when configured for your company.',
-                })}
+              <TabsContent value="other" className="m-0 p-4 focus-visible:outline-none sm:p-5">
+                {renderRows(
+                  otherRows,
+                  'No loan or deduction components yet',
+                  'Create active deduction-type pay components and they will be available for scheduling here.',
+                )}
               </TabsContent>
-              <TabsContent value="earnings" className="mt-0 px-4 pb-6 pt-4 focus-visible:outline-none sm:px-6">
-                <p className="mb-3 text-xs text-muted-foreground">
-                  Default schedule for each earning/allowance. Employees may override these in Employee Compensation.
-                </p>
-                {renderTable(earningRows, {
-                  firstLabel: 'Allowance / earning',
-                  emptyHint: 'Earning-type pay components (allowances, bonuses, etc.) will appear here when configured.',
-                })}
+              <TabsContent value="earnings" className="m-0 p-4 focus-visible:outline-none sm:p-5">
+                {renderRows(
+                  earningRows,
+                  'No earning or allowance components yet',
+                  'Create active earning-type pay components and they will be available for scheduling here.',
+                )}
               </TabsContent>
             </Tabs>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {hasPending ? (
+        <div className="flex flex-col items-stretch justify-end gap-3 pb-2 sm:flex-row sm:items-center">
+          {hasPending ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-11 rounded-md px-4 font-bold text-foreground hover:bg-muted"
+              onClick={discardPending}
+              disabled={savingAll}
+            >
+              Discard
+            </Button>
+          ) : null}
           <Button
             type="button"
-            variant="ghost"
-            size="sm"
-            className={cn(TEXT, 'h-10')}
-            onClick={discardPending}
-            disabled={savingAll}
+            disabled={!hasPending || savingAll}
+            onClick={saveAll}
+            className="h-11 min-w-[150px] rounded-md bg-brand px-4 font-bold text-brand-foreground shadow-sm hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-55"
           >
-            Discard
+            {savingAll ? (
+              <>
+                <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+                Saving...
+              </>
+            ) : (
+              'Save changes'
+            )}
           </Button>
-        ) : null}
-        <Button
-          type="button"
-          variant="default"
-          disabled={!hasPending || savingAll}
-          onClick={saveAll}
-          className="h-11 min-w-[140px] rounded-lg px-8 font-semibold shadow-sm"
-        >
-          {savingAll ? (
-            <>
-              <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-              Saving…
-            </>
-          ) : (
-            'Save changes'
-          )}
-        </Button>
+        </div>
       </div>
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className={cn(appModalDialogContentClass, 'sm:max-w-md')}>
-          <DialogHeader className="space-y-1">
+      <Dialog open={editOpen} onOpenChange={handleEditOpenChange}>
+        <DialogContent className={appModalDialogContentClass({ size: 'sm', className: 'sm:max-w-lg' })}>
+          <DialogHeader className="space-y-2">
             <DialogTitle className={APP_MODAL_TITLE_CLASS}>Edit schedule</DialogTitle>
             <DialogDescription className={APP_MODAL_DESCRIPTION_CLASS}>
               {activeRow ? (
                 <>
-                  <span className="font-medium text-[#0A0A0A] dark:text-slate-100">{activeRow.name}</span>
-                  <span className="block pt-1">
-                    {activeRow.type === 'Earning' ? (
-                      <>
-                        Choose the default schedule for this earning/allowance. Employees may override this schedule in Employee
-                        Compensation.
-                      </>
-                    ) : (
-                      <>
-                        Choose the default schedule for this deduction. Employees may override earning/allowance schedules in
-                        Employee Compensation.
-                      </>
-                    )}
+                  <span className="font-semibold text-foreground">{activeRow.name}</span>
+                  <span className="mt-1 block">
+                    Choose the company default schedule. Employee-level overrides still take priority where they are set.
                   </span>
                 </>
               ) : null}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
-            <RadioGroup value={draftSchedule} onValueChange={setDraftSchedule} className="gap-3">
-              {opts.map((opt) => (
-                <div
-                  key={opt.value}
-                  className="flex items-center space-x-3 rounded-xl border border-slate-200 px-3 py-2.5 dark:border-white/10"
+
+          <RadioGroup value={draftSchedule} onValueChange={setDraftSchedule} className="gap-3 py-2">
+            {options.map((option) => {
+              const checked = draftSchedule === option.value
+              const Icon =
+                option.value === '15th' ? CalendarDays : option.value === '30th' ? CalendarRange : Sparkles
+              return (
+                <label
+                  key={option.value}
+                  htmlFor={`schedule-${option.value}`}
+                  className={cn(
+                    'flex cursor-pointer items-start gap-4 rounded-xl border border-border/70 bg-background p-4 transition hover:border-brand/40 hover:bg-brand/5 dark:border-border/50 dark:bg-muted/10 dark:hover:bg-brand/10',
+                    checked && 'border-brand/55 bg-brand/10 ring-2 ring-brand/15 dark:bg-brand/15',
+                  )}
                 >
-                  <RadioGroupItem value={opt.value} id={`sched-${opt.value}`} />
-                  <Label htmlFor={`sched-${opt.value}`} className={cn('cursor-pointer text-sm font-normal leading-snug', TEXT)}>
-                    {opt.label}
-                  </Label>
-                </div>
-              ))}
-            </RadioGroup>
-          </div>
+                  <RadioGroupItem id={`schedule-${option.value}`} value={option.value} className="mt-1 text-brand" />
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand dark:bg-brand/15">
+                      {createElement(Icon, { className: 'size-5', 'aria-hidden': true })}
+                    </span>
+                    <span className="min-w-0">
+                      <Label
+                        htmlFor={`schedule-${option.value}`}
+                        className="cursor-pointer text-sm font-bold text-foreground"
+                      >
+                        {option.label}
+                      </Label>
+                      {option.helper ? (
+                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.helper}</span>
+                      ) : null}
+                    </span>
+                  </div>
+                </label>
+              )
+            })}
+          </RadioGroup>
+
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" className={APP_MODAL_OUTLINE_BUTTON_CLASS} onClick={() => setEditOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              className={APP_MODAL_OUTLINE_BUTTON_CLASS}
+              onClick={() => handleEditOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button type="button" className={APP_MODAL_PRIMARY_BUTTON_CLASS} onClick={applyEditFromModal}>
