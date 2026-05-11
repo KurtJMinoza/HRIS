@@ -7,6 +7,7 @@ use App\Jobs\ComputeCompensationSummaryJob;
 use App\Models\DeductionScheduleSetting;
 use App\Models\DeductionType;
 use App\Models\EmployeeDeduction;
+use App\Models\LoanRequest;
 use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\DeductionApplicationService;
@@ -91,6 +92,7 @@ class EmployeeDeductionController extends Controller
             'start_date' => ['required', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'remaining_balance' => ['nullable', 'numeric', 'min:0'],
+            'term_months' => ['nullable', 'integer', 'min:1', 'max:600'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'deduction_schedule' => ['nullable', 'string', Rule::in([
                 DeductionScheduleSetting::SCHEDULE_15TH,
@@ -104,6 +106,10 @@ class EmployeeDeductionController extends Controller
 
         $type = DeductionType::query()->findOrFail((int) $validated['deduction_type_id']);
         $isLoan = $type->type === DeductionType::TYPE_LOAN;
+        $remainingBalance = $isLoan
+            ? round((float) ($validated['remaining_balance'] ?? $validated['amount']), 2)
+            : null;
+        $withInterest = $isLoan && (bool) ($type->with_interest ?? false);
 
         $attrs = [
             'user_id' => $userId,
@@ -112,9 +118,7 @@ class EmployeeDeductionController extends Controller
             'amount' => round((float) $validated['amount'], 2),
             'start_date' => $validated['start_date'],
             'end_date' => $validated['end_date'] ?? null,
-            'remaining_balance' => $isLoan
-                ? round((float) ($validated['remaining_balance'] ?? $validated['amount']), 2)
-                : null,
+            'remaining_balance' => $remainingBalance,
             'is_active' => true,
             'source' => EmployeeDeduction::SOURCE_MANUAL,
             'loan_request_id' => null,
@@ -126,8 +130,47 @@ class EmployeeDeductionController extends Controller
         if (Schema::hasColumn('pay_employee_deductions', 'deduction_schedule') && ! empty($validated['deduction_schedule'])) {
             $attrs['deduction_schedule'] = $validated['deduction_schedule'];
         }
+        if ($isLoan) {
+            if (Schema::hasColumn('pay_employee_deductions', 'total_loan_amount')) {
+                $attrs['total_loan_amount'] = $remainingBalance;
+            }
+            if (Schema::hasColumn('pay_employee_deductions', 'is_amortized')) {
+                $attrs['is_amortized'] = $remainingBalance !== null && $remainingBalance > 0;
+            }
+            if (Schema::hasColumn('pay_employee_deductions', 'with_interest')) {
+                $attrs['with_interest'] = $withInterest;
+            }
+            if (Schema::hasColumn('pay_employee_deductions', 'interest_rate_annual')) {
+                $attrs['interest_rate_annual'] = $withInterest ? (float) ($type->interest_rate_percent ?? 0) : null;
+            }
+            if (Schema::hasColumn('pay_employee_deductions', 'interest_type')) {
+                $attrs['interest_type'] = $withInterest
+                    ? (in_array((string) ($type->interest_type ?? ''), ['simple', 'compound'], true) ? (string) $type->interest_type : 'simple')
+                    : null;
+            }
+        }
 
         $row = EmployeeDeduction::create($attrs);
+        if ($isLoan && ($attrs['is_amortized'] ?? false)) {
+            $scheduleLoan = new LoanRequest([
+                'user_id' => $userId,
+                'deduction_type_id' => $type->id,
+                'pay_component_id' => $attrs['pay_component_id'] ?? null,
+                'requested_amount' => $remainingBalance,
+                'installment_amount' => $attrs['amount'],
+                'preferred_monthly_deduction' => $attrs['amount'],
+                'term_months' => $validated['term_months'] ?? null,
+                'deduction_schedule' => $attrs['deduction_schedule'] ?? null,
+                'with_interest' => $withInterest,
+                'interest_rate_percent' => $withInterest ? (float) ($type->interest_rate_percent ?? 0) : null,
+                'interest_type' => $withInterest
+                    ? (in_array((string) ($type->interest_type ?? ''), ['simple', 'compound'], true) ? (string) $type->interest_type : 'simple')
+                    : null,
+            ]);
+            $this->loanAmortizationService->generateSchedule($row->fresh(['deductionType', 'payComponent']), $scheduleLoan);
+            $row = $row->fresh(['deductionType', 'payComponent:id,name,code', 'amortizationSchedule']);
+            $this->loanAmortizationService->overlayNextDueForResponse($row, $user);
+        }
         $this->deductionAuditService->log(
             $row,
             'deduction_assigned',
@@ -135,7 +178,7 @@ class EmployeeDeductionController extends Controller
             (float) $row->amount,
             $row->remaining_balance !== null ? (float) $row->remaining_balance : null,
             null,
-            $row->toArray(),
+            $row->withoutRelations()->toArray(),
             'Manual deduction assignment created via admin module.'
         );
 
@@ -148,7 +191,7 @@ class EmployeeDeductionController extends Controller
             ]);
         }
 
-        return response()->json(['employee_deduction' => $row->load(['deductionType', 'payComponent:id,name,code'])], 201);
+        return response()->json(['employee_deduction' => $row->load(['deductionType', 'payComponent:id,name,code', 'amortizationSchedule'])], 201);
     }
 
     public function update(Request $request, int $userId, int $id): JsonResponse

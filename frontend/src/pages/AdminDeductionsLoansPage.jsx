@@ -1,5 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CalendarDays, ChevronRight, Loader2, MoreHorizontal, Pencil, Search, Trash2, Wallet } from 'lucide-react'
+import {
+  CalendarDays,
+  ChevronRight,
+  FileText,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  UserPlus,
+  Wallet,
+} from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -57,13 +70,13 @@ import { Link } from 'react-router-dom'
 
 /** Clean admin shell — white card, neutral depth */
 const PREMIUM_CARD =
-  'overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm transition-shadow dark:border-white/10 dark:bg-card'
+  'overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm transition-shadow dark:border-white/10 dark:bg-card'
 const PREMIUM_ROW =
   'group border-border/30 transition-colors hover:bg-muted/40 dark:hover:bg-white/[0.04]'
 
-/** Primary CTA — black surface, white label (strong actions: save, submit, approve) */
+/** Primary CTA — AGCTEK orange surface, white label (strong actions: save, submit, approve) */
 const BTN_PRIMARY =
-  'bg-[#0A0A0A] text-white shadow-sm hover:bg-[#0A0A0A]/90 focus-visible:ring-2 focus-visible:ring-[#0A0A0A]/25 dark:bg-slate-100 dark:text-[#0A0A0A] dark:hover:bg-white dark:focus-visible:ring-slate-400/30'
+  'bg-brand text-brand-foreground shadow-sm hover:bg-brand-strong focus-visible:ring-2 focus-visible:ring-brand/25 dark:bg-brand dark:text-brand-foreground dark:hover:bg-brand-strong dark:focus-visible:ring-brand/35'
 /** Secondary — black text and icons on clean light surface */
 const BTN_SECONDARY =
   'border border-border bg-background text-[#0A0A0A] shadow-sm hover:bg-muted/80 [&_svg]:text-[#0A0A0A] dark:border-white/15 dark:bg-card dark:text-slate-100 dark:[&_svg]:text-slate-100 dark:hover:bg-white/10'
@@ -407,6 +420,7 @@ export default function AdminDeductionsLoansPage() {
     pay_component_id: '',
     amount: '',
     remaining_balance: '',
+    term_months: '',
     start_date: new Date().toISOString().slice(0, 10),
     deduction_schedule: 'both',
   })
@@ -880,6 +894,8 @@ export default function AdminDeductionsLoansPage() {
         remaining_balance:
           assignForm.remaining_balance === '' ? undefined : Number(assignForm.remaining_balance),
       }
+      const termRaw = String(assignForm.term_months || '').trim()
+      if (termRaw) body.term_months = Number(termRaw)
       const pcRaw = String(assignForm.pay_component_id || '').trim()
       if (pcRaw) body.pay_component_id = Number(pcRaw)
       const ds = String(assignForm.deduction_schedule || '').trim()
@@ -891,6 +907,7 @@ export default function AdminDeductionsLoansPage() {
         ...f,
         amount: '',
         remaining_balance: '',
+        term_months: '',
         pay_component_id: '',
         deduction_schedule: 'both',
       }))
@@ -927,6 +944,7 @@ export default function AdminDeductionsLoansPage() {
       pay_component_id: payload.pay_component_id ? String(payload.pay_component_id) : '',
       amount: payload.amount != null ? String(payload.amount) : '',
       remaining_balance: payload.remaining_balance != null ? String(payload.remaining_balance) : '',
+      term_months: payload.term_months != null ? String(payload.term_months) : '',
       deduction_schedule: payload.deduction_schedule || 'both',
     }))
     setTab('assign')
@@ -945,6 +963,7 @@ export default function AdminDeductionsLoansPage() {
       if (Number.isFinite(nBal) && nBal >= 0) balanceLabel = formatPhpWithSymbol(nBal)
     }
     const schedLabel = scheduleTypeFriendlyLabel(assignForm.deduction_schedule)
+    const termMonths = Number(assignForm.term_months)
     return {
       ready: true,
       uid,
@@ -952,12 +971,14 @@ export default function AdminDeductionsLoansPage() {
       typeLabel: selectedTypeName || null,
       startLabel: formatDisplayDate(start),
       balanceLabel,
+      termLabel: Number.isFinite(termMonths) && termMonths > 0 ? `${Math.trunc(termMonths)} months` : null,
       scheduleLabel: schedLabel,
     }
   }, [
     assignForm.user_id,
     assignForm.amount,
     assignForm.remaining_balance,
+    assignForm.term_months,
     assignForm.start_date,
     assignForm.deduction_schedule,
     selectedTypeName,
@@ -989,9 +1010,10 @@ export default function AdminDeductionsLoansPage() {
               {mayRequestLoan ? (
                 <Button
                   type="button"
-                  className={cn(BTN_PRIMARY, 'px-5')}
+                  className={cn(BTN_PRIMARY, 'h-12 gap-2 rounded-md px-5 text-sm font-semibold')}
                   onClick={() => setRequestLoanOpen(true)}
                 >
+                  <Plus className="size-4" aria-hidden />
                   Request a loan
                 </Button>
               ) : null}
@@ -999,11 +1021,15 @@ export default function AdminDeductionsLoansPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                className={cn(BTN_SECONDARY, 'px-4')}
+                className={cn(BTN_SECONDARY, 'h-12 gap-2 rounded-md px-4 text-sm font-semibold')}
                 onClick={loadAll}
                 disabled={loading}
               >
-                {loading ? <Loader2 className="size-4 animate-spin text-[#0A0A0A] dark:text-slate-200" aria-hidden /> : null}
+                {loading ? (
+                  <Loader2 className="size-4 animate-spin text-[#0A0A0A] dark:text-slate-200" aria-hidden />
+                ) : (
+                  <RefreshCw className="size-4" aria-hidden />
+                )}
                 Refresh
               </Button>
             </div>
@@ -1011,7 +1037,7 @@ export default function AdminDeductionsLoansPage() {
 
           {/* Summary metrics */}
           <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-border/60 bg-card p-6 shadow-sm dark:bg-card">
+            <div className="rounded-xl border border-border/60 bg-card p-6 shadow-sm dark:bg-card">
               <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 space-y-2">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Total remaining debt</p>
@@ -1029,7 +1055,7 @@ export default function AdminDeductionsLoansPage() {
                 </p>
               ) : null}
             </div>
-            <div className="rounded-2xl border border-border/60 bg-card p-6 shadow-sm dark:bg-card">
+            <div className="rounded-xl border border-border/60 bg-card p-6 shadow-sm dark:bg-card">
               <div className="space-y-2">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Total monthly deductions</p>
                 <p className="text-4xl font-bold tabular-nums tracking-tight text-[#0A0A0A] dark:text-slate-50">
@@ -1070,7 +1096,7 @@ export default function AdminDeductionsLoansPage() {
                 <TabsTrigger
                   key={id}
                   value={id}
-                  className="relative rounded-none border-0 bg-transparent px-4 py-3.5 text-sm font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0A0A0A]/20 dark:focus-visible:ring-slate-400/30 data-[state=active]:font-semibold data-[state=active]:text-[#0A0A0A] data-[state=active]:dark:text-slate-50 data-[state=active]:after:absolute data-[state=active]:after:inset-x-2 data-[state=active]:after:bottom-0 data-[state=active]:after:h-0.5 data-[state=active]:after:rounded-full data-[state=active]:after:bg-[#0A0A0A] data-[state=active]:dark:after:bg-slate-100"
+                  className="relative rounded-none border-0 bg-transparent px-4 py-3.5 text-sm font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:after:absolute data-[state=active]:after:inset-x-2 data-[state=active]:after:bottom-0 data-[state=active]:after:h-0.5 data-[state=active]:after:rounded-full data-[state=active]:after:bg-brand"
                 >
                   {label}
                 </TabsTrigger>
@@ -1078,7 +1104,7 @@ export default function AdminDeductionsLoansPage() {
             </TabsList>
 
             <TabsContent value="overview" className="mt-0 outline-none">
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border/60 bg-muted/30 px-5 py-4 text-[#0A0A0A] dark:text-slate-100">
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border/60 bg-card px-5 py-4 text-[#0A0A0A] shadow-sm dark:text-slate-100">
                 <div className="flex flex-wrap gap-3 text-sm font-medium">
                   <span>
                     {loading ? '—' : stats.active} active rows
@@ -1103,18 +1129,34 @@ export default function AdminDeductionsLoansPage() {
                   <button
                     type="button"
                     onClick={() => setTab('requests')}
-                    className="rounded-2xl border border-border/60 bg-card p-5 text-left shadow-sm transition-colors hover:bg-muted/50 dark:bg-card"
+                    className="group flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-card p-5 text-left shadow-sm transition-colors hover:bg-muted/50 dark:bg-card"
                   >
-                    <p className="text-base font-semibold text-[#0A0A0A] dark:text-slate-100">Review loan queue</p>
-                    <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">Approve or reject employee submissions in one place.</p>
+                    <span className="flex min-w-0 items-center gap-4">
+                      <span className="flex size-11 shrink-0 items-center justify-center rounded-md text-brand">
+                        <FileText className="size-8" strokeWidth={1.8} aria-hidden />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-base font-semibold text-[#0A0A0A] dark:text-slate-100">Review loan queue</span>
+                        <span className="mt-1.5 block text-sm leading-relaxed text-muted-foreground">Approve or reject employee submissions in one place.</span>
+                      </span>
+                    </span>
+                    <ChevronRight className="size-5 shrink-0 text-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
                   </button>
                   <button
                     type="button"
                     onClick={() => setTab('assign')}
-                    className="rounded-2xl border border-border/60 bg-card p-5 text-left shadow-sm transition-colors hover:bg-muted/50 dark:bg-card"
+                    className="group flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-card p-5 text-left shadow-sm transition-colors hover:bg-muted/50 dark:bg-card"
                   >
-                    <p className="text-base font-semibold text-[#0A0A0A] dark:text-slate-100">Assign a deduction</p>
-                    <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">Add a manual recurring row for any employee.</p>
+                    <span className="flex min-w-0 items-center gap-4">
+                      <span className="flex size-11 shrink-0 items-center justify-center rounded-md text-brand">
+                        <UserPlus className="size-8" strokeWidth={1.8} aria-hidden />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-base font-semibold text-[#0A0A0A] dark:text-slate-100">Assign a deduction</span>
+                        <span className="mt-1.5 block text-sm leading-relaxed text-muted-foreground">Add a manual recurring row for any employee.</span>
+                      </span>
+                    </span>
+                    <ChevronRight className="size-5 shrink-0 text-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
                   </button>
                 </CardContent>
               </Card>
@@ -1205,7 +1247,7 @@ export default function AdminDeductionsLoansPage() {
                                   <span
                                     className={cn(
                                       'inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
-                                      'border-border bg-muted text-[#0A0A0A] dark:text-slate-100',
+                                      loanRequestStatusBadgeClass(st),
                                     )}
                                   >
                                     {st || '—'}
@@ -1950,6 +1992,25 @@ export default function AdminDeductionsLoansPage() {
                               />
                             </div>
                           </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="as-term" className="text-foreground/90">
+                              Term (months)
+                            </Label>
+                            <Input
+                              id="as-term"
+                              type="number"
+                              min="1"
+                              max="600"
+                              step="1"
+                              className="h-12 rounded-2xl border-border/80 text-base tabular-nums focus-visible:border-[#0A0A0A]/35 focus-visible:ring-[#0A0A0A]/15 dark:focus-visible:border-slate-400/40 dark:focus-visible:ring-slate-400/20"
+                              value={assignForm.term_months}
+                              onChange={(e) => setAssignForm((f) => ({ ...f, term_months: e.target.value }))}
+                              placeholder="Optional"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Used to build an amortization schedule for manual loan assignments.
+                            </p>
+                          </div>
                           <div className="space-y-2 sm:col-span-2">
                             <Label htmlFor="as-start" className="text-foreground/90">
                               Start date
@@ -2017,6 +2078,11 @@ export default function AdminDeductionsLoansPage() {
                         ) : (
                           <p className="text-[13px] text-muted-foreground">Add a remaining balance for loans to track payoff progress.</p>
                         )}
+                        {assignPreviewLive.termLabel ? (
+                          <p className="text-[13px] text-[#0A0A0A]/85 dark:text-slate-300">
+                            Term: <span className="font-semibold text-[#0A0A0A] dark:text-slate-100">{assignPreviewLive.termLabel}</span>
+                          </p>
+                        ) : null}
                         <p className="text-[13px] leading-relaxed text-muted-foreground">
                           Pay runs follow this schedule type and the employee&apos;s pay cycle (see Deduction schedule settings).
                         </p>
