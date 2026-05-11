@@ -819,15 +819,15 @@ class PolicyEngineTest extends TestCase
             $allowanceLine = collect($payroll['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
             $this->assertNotNull($allowanceLine);
-            // Default pay component schedule is Split (both): half allowance, less only unpaid absences.
-            $this->assertSame(1200.0, (float) ($allowanceLine['amount'] ?? 0));
+            // Proratable allowance is payable-day based: monthly allowance / 26 * 5 payable days.
+            $this->assertSame(500.0, (float) ($allowanceLine['amount'] ?? 0));
             $this->assertSame(5.0, (float) data_get($allowanceLine, 'allowance_proration.payable_day_units'));
             $this->assertSame(1.0, (float) data_get($allowanceLine, 'allowance_proration.unpaid_absent_days'));
-            $this->assertSame('unpaid_absent_days', data_get($allowanceLine, 'allowance_proration.proration_basis'));
+            $this->assertSame('payable_days', data_get($allowanceLine, 'allowance_proration.proration_basis'));
             $this->assertSame(26.0, (float) data_get($allowanceLine, 'allowance_proration.monthly_divisor_days'));
             $this->assertSame(26.0, (float) data_get($allowanceLine, 'allowance_proration.base_divisor_days'));
             $this->assertSame(2600.0, (float) data_get($allowanceLine, 'allowance_proration.allowance_base_before_proration'));
-            $this->assertSame(2500.0, (float) data_get($allowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
+            $this->assertSame(500.0, (float) data_get($allowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
             $this->assertSame(1300.0, (float) data_get($allowanceLine, 'allowance_proration.scheduled_base_for_run_before_absence_deduction'));
             $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.unpaid_absence_deduction'));
             $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
@@ -856,7 +856,7 @@ class PolicyEngineTest extends TestCase
             $fifteenthAllowanceLine = collect($fifteenthOnlyPayroll['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
             $this->assertNotNull($fifteenthAllowanceLine);
-            $this->assertSame(2500.0, (float) ($fifteenthAllowanceLine['amount'] ?? 0));
+            $this->assertSame(500.0, (float) ($fifteenthAllowanceLine['amount'] ?? 0));
             $this->assertSame(1.0, (float) data_get($fifteenthAllowanceLine, 'allowance_proration.schedule_adjustment_multiplier'));
 
             DeductionScheduleSetting::query()->where('deduction_key', 'pay_component:'.$component->id)->delete();
@@ -883,11 +883,121 @@ class PolicyEngineTest extends TestCase
             $this->assertSame(0.0, (float) ($secondRunOnlyAllowanceLine['amount'] ?? -1));
             $this->assertFalse((bool) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.is_applicable_in_run'));
             $this->assertSame(0.0, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.allowance_base_before_proration'));
-            $this->assertSame(2600.0, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
+            $this->assertSame(500.0, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
         } finally {
             DeductionScheduleSetting::query()
                 ->where('deduction_key', 'pay_component:'.$component->id)
                 ->delete();
+            $assignment->forceDelete();
+            $component->forceDelete();
+        }
+    }
+
+    public function test_split_proratable_allowance_uses_only_present_payable_days_in_cutoff(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $workday = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_period_minutes' => 0,
+            'early_timeout_minutes' => null,
+            'overtime_buffer_minutes' => 15,
+        ];
+        $schedule = [
+            'sun' => null,
+            'mon' => $workday,
+            'tue' => $workday,
+            'wed' => $workday,
+            'thu' => $workday,
+            'fri' => $workday,
+            'sat' => $workday,
+        ];
+
+        $user = User::factory()->create([
+            'monthly_salary' => 26000,
+            'schedule' => $schedule,
+            'is_active' => true,
+        ]);
+
+        $component = PayComponent::create([
+            'name' => 'Allowance',
+            'code' => 'ALLOWANCE_SPLIT_'.$user->id,
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => 'Fixed Allowance',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'default_value' => 2600,
+            'is_taxable' => true,
+            'is_proratable' => true,
+            'is_active' => true,
+        ]);
+
+        $assignment = EmployeeCompensationComponent::create([
+            'user_id' => $user->id,
+            'pay_component_id' => $component->id,
+            'name' => 'Allowance',
+            'code' => 'ALLOWANCE_SPLIT_'.$user->id,
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => 'Fixed Allowance',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'value' => 2600,
+            'is_taxable' => true,
+            'is_proratable' => true,
+            'is_active' => true,
+            'schedule_override' => 'split',
+        ]);
+
+        try {
+            foreach ([
+                '2026-04-27',
+                '2026-04-28',
+                '2026-04-29',
+                '2026-04-30',
+                '2026-05-02',
+                '2026-05-04',
+                '2026-05-05',
+                '2026-05-06',
+                '2026-05-07',
+            ] as $dateKey) {
+                AttendanceLog::create([
+                    'user_id' => $user->id,
+                    'type' => AttendanceLog::TYPE_CLOCK_IN,
+                    'verified_at' => Carbon::parse("{$dateKey} 08:00", 'Asia/Manila')->utc(),
+                ]);
+                AttendanceLog::create([
+                    'user_id' => $user->id,
+                    'type' => AttendanceLog::TYPE_CLOCK_OUT,
+                    'verified_at' => Carbon::parse("{$dateKey} 17:00", 'Asia/Manila')->utc(),
+                ]);
+            }
+
+            $payroll = app(PayrollComputationService::class)->computeEmployeePayroll(
+                $user->fresh(),
+                Carbon::parse('2026-04-26', 'Asia/Manila'),
+                Carbon::parse('2026-05-10', 'Asia/Manila'),
+                null,
+                [
+                    'pay_period_start' => '2026-04-26',
+                    'pay_period_end' => '2026-05-10',
+                    'selected_pay_date' => '2026-05-15',
+                ]
+            );
+
+            $allowanceLine = collect($payroll['summary']['payslip_earning_lines'] ?? [])
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
+
+            $this->assertNotNull($allowanceLine);
+            $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
+            $this->assertSame(9.0, (float) data_get($allowanceLine, 'allowance_proration.payable_day_units'));
+            $this->assertSame(9.0, (float) data_get($allowanceLine, 'allowance_proration.present_day_units'));
+            $this->assertSame('both', data_get($allowanceLine, 'allowance_proration.schedule_configuration'));
+            $this->assertSame('first', data_get($allowanceLine, 'allowance_proration.current_payroll_run_type'));
+            $this->assertSame(900.0, (float) ($allowanceLine['amount'] ?? 0));
+        } finally {
             $assignment->forceDelete();
             $component->forceDelete();
         }
@@ -1009,8 +1119,9 @@ class PolicyEngineTest extends TestCase
             $paidLine = collect($payrollFor($paidUser)['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance PAID');
             $this->assertNotNull($paidLine);
-            $this->assertSame(1300.0, (float) ($paidLine['amount'] ?? 0));
+            $this->assertSame(600.0, (float) ($paidLine['amount'] ?? 0));
             $this->assertSame(0.0, (float) data_get($paidLine, 'allowance_proration.unpaid_absent_days'));
+            $this->assertSame(1.0, (float) data_get($paidLine, 'allowance_proration.approved_paid_leave_day_units'));
             $this->assertTrue(collect(data_get($paidLine, 'allowance_proration.attendance_counted', []))
                 ->contains(fn ($row) => ($row['date'] ?? null) === '2026-05-04'
                     && ($row['reason'] ?? null) === 'approved_paid_leave'));
@@ -1018,7 +1129,7 @@ class PolicyEngineTest extends TestCase
             $unpaidLine = collect($payrollFor($unpaidUser)['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance UNPAID');
             $this->assertNotNull($unpaidLine);
-            $this->assertSame(1200.0, (float) ($unpaidLine['amount'] ?? 0));
+            $this->assertSame(500.0, (float) ($unpaidLine['amount'] ?? 0));
             $this->assertSame(1.0, (float) data_get($unpaidLine, 'allowance_proration.unpaid_absent_days'));
             $this->assertTrue(collect(data_get($unpaidLine, 'allowance_proration.unpaid_absences', []))
                 ->contains(fn ($row) => ($row['date'] ?? null) === '2026-05-04'

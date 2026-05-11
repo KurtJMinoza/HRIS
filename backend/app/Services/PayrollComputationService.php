@@ -1573,6 +1573,9 @@ class PayrollComputationService
         $payableDays = 0.0;
         $unpaidAbsentDays = 0.0;
         $nonDeductibleDays = 0.0;
+        $presentDays = 0.0;
+        $approvedPaidLeaveDays = 0.0;
+        $approvedCorrectionDays = 0.0;
         $attendanceCounted = [];
         $attendanceExcluded = [];
         $unpaidAbsences = [];
@@ -1632,13 +1635,22 @@ class PayrollComputationService
 
             $credited += 1.0;
             $payableDays += 1.0;
+            $reason = $resolution !== null ? (string) ($resolution['reason'] ?? 'payable_day') : 'payable_day';
+            $sources = $resolution['sources'] ?? [];
+            if ($reason === 'approved_paid_leave') {
+                $approvedPaidLeaveDays += 1.0;
+            } elseif ($reason === 'approved_attendance_correction' || (bool) ($sources['approved_correction'] ?? false)) {
+                $approvedCorrectionDays += 1.0;
+            } else {
+                $presentDays += 1.0;
+            }
             $attendanceCounted[] = [
                 'date' => $dateKey,
                 'status' => $status,
                 'required_minutes' => $required,
                 'payable_day_unit' => 1.0,
-                'reason' => $resolution !== null ? (string) ($resolution['reason'] ?? 'payable_day') : 'payable_day',
-                'sources' => $resolution['sources'] ?? [],
+                'reason' => $reason,
+                'sources' => $sources,
             ];
         }
         $factor = $scheduled > 0.0 ? max(0.0, min(1.0, $credited / $scheduled)) : 1.0;
@@ -1654,6 +1666,9 @@ class PayrollComputationService
             'allowance' => [
                 'worked_day_units' => round($payableDays, 6),
                 'payable_day_units' => round($payableDays, 6),
+                'present_day_units' => round($presentDays, 6),
+                'approved_paid_leave_day_units' => round($approvedPaidLeaveDays, 6),
+                'approved_correction_day_units' => round($approvedCorrectionDays, 6),
                 'unpaid_absent_days' => round($unpaidAbsentDays, 6),
                 'non_deductible_days' => round($nonDeductibleDays, 6),
                 'worked_minutes' => 0,
