@@ -5,8 +5,10 @@ import {
   ArrowRight,
   Calendar,
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Clock,
   ExternalLink,
   Eye,
   FileDown,
@@ -19,6 +21,7 @@ import {
   Timer,
   Trash2,
   X,
+  XCircle,
   Inbox,
   Sparkles,
 } from 'lucide-react'
@@ -69,7 +72,6 @@ import {
   deleteAdminOvertimeRequest,
   exportAdminOvertimeCsv,
 } from '@/api'
-import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
   ADMIN_FORM_DIALOG_DESC_CLASS,
@@ -80,7 +82,6 @@ import {
   ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS,
   ADMIN_FORM_DIALOG_TITLE_CLASS,
   adminFormDialogContentClass,
-  ADMIN_VIEW_REQUEST_DIALOG_MAX,
 } from '@/lib/adminFormDialogStyles'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
 
@@ -103,6 +104,12 @@ function formatDateShort(dateStr) {
   } catch {
     return dateStr
   }
+}
+
+function formatDateTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 function formatTableDate(iso) {
@@ -441,12 +448,164 @@ function OvertimeModalHeaderArt() {
 
 function DetailSection({ title, children, className }) {
   return (
-    <section className={cn('rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50', className)}>
-      <h3 className="mb-4 border-b border-border/50 pb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+    <section
+      className={cn(
+        'rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
+        className
+      )}
+    >
+      <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
         {title}
       </h3>
       {children}
     </section>
+  )
+}
+
+function OvertimeStatusPill({ row }) {
+  const label = formatOvertimeStatusLine(row)
+  const status = row?.status
+  const Icon = status === 'approved' ? CheckCircle2 : status === 'rejected' ? XCircle : Clock
+  const tone =
+    status === 'approved'
+      ? 'border-emerald-200/80 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/35 dark:text-emerald-100'
+      : status === 'rejected'
+        ? 'border-rose-200/80 bg-rose-50 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/35 dark:text-rose-100'
+        : 'border-amber-200/80 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/35 dark:text-amber-100'
+
+  return (
+    <span className={cn('inline-flex max-w-full items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-bold shadow-sm', tone)}>
+      <Icon className="size-4 shrink-0" aria-hidden />
+      <span className="line-clamp-2 leading-tight">{label}</span>
+    </span>
+  )
+}
+
+function OvertimeInitialsAvatar({ name }) {
+  return (
+    <div className="flex size-12 shrink-0 items-center justify-center rounded-full border border-brand/15 bg-brand/10 text-sm font-black uppercase text-brand shadow-sm dark:border-brand/25 dark:bg-brand/15">
+      {getInitials(name)}
+    </div>
+  )
+}
+
+function humanApprovalStepStatus(status) {
+  switch (status) {
+    case 'completed':
+      return 'Completed'
+    case 'current':
+    case 'pending':
+      return 'Pending'
+    case 'rejected':
+      return 'Rejected'
+    case 'skipped':
+      return 'Skipped'
+    default:
+      return status ? String(status) : '—'
+  }
+}
+
+function approvalStepName(step) {
+  if (step?.key === 'submitted') return step.submitter_name || '—'
+  return step?.approver_name || step?.approver_role_label || '—'
+}
+
+function approvalStepRole(step) {
+  if (step?.key === 'submitted') return 'Requester'
+  return step?.approver_role_label || step?.approver_role || ''
+}
+
+function overtimeHistoryActionLabel(action) {
+  switch (action) {
+    case 'file':
+      return 'Request filed'
+    case 'approve_first':
+      return 'Line manager approval'
+    case 'approve_final':
+      return 'HR final approval'
+    case 'reject':
+      return 'Rejected'
+    default:
+      return action ? String(action).replace(/_/g, ' ') : 'Action'
+  }
+}
+
+function OvertimeApprovalChain({ steps }) {
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return <p className="text-sm text-muted-foreground">No approval step data for this request.</p>
+  }
+
+  return (
+    <ol className="space-y-4">
+      {steps.map((step, idx) => {
+        const name = approvalStepName(step)
+        const role = approvalStepRole(step)
+        const statusLabel = humanApprovalStepStatus(step.status)
+        const statusLine = step.acted_at ? `${statusLabel} - ${formatDateTime(step.acted_at)}` : statusLabel
+        const remarks = sanitizeApprovalDisplayText(step?.remarks)
+
+        return (
+          <li key={step.key || `ot-step-${idx}`}>
+            <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-brand">
+              <span className="tabular-nums">{idx + 1}. </span>
+              {step.label}
+            </p>
+            <div
+              className={cn(
+                'rounded-xl border border-border/70 bg-background/70 p-4 shadow-sm dark:border-white/10 dark:bg-background/35',
+                step.status === 'current' &&
+                  'border-amber-400/70 bg-amber-50/80 ring-2 ring-amber-500/20 dark:border-amber-400/35 dark:bg-amber-950/25'
+              )}
+            >
+              <div className="flex gap-4">
+                <OvertimeInitialsAvatar name={name} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] font-bold leading-snug text-foreground">{name}</p>
+                  {role ? <p className="mt-1 text-sm font-medium text-foreground/85">{role}</p> : null}
+                  <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{statusLine}</p>
+                  {remarks ? (
+                    <p className="mt-3 text-sm leading-relaxed text-foreground">
+                      <span className="font-semibold">Remarks: </span>
+                      {remarks}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+function OvertimeHistoryTimeline({ history }) {
+  if (!Array.isArray(history) || history.length === 0) return null
+
+  return (
+    <ol className="relative ml-1 border-l-2 border-border/70 pl-6 dark:border-white/10">
+      {[...history]
+        .sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
+        .map((item, idx) => {
+          const actionLabel = overtimeHistoryActionLabel(item.action)
+          const details = sanitizeApprovalDisplayText(item?.details)
+          const headline = [item.actor_name, item.approver_role].filter(Boolean).join(' - ') || actionLabel
+          return (
+            <li key={`${item.at}-${idx}-${item.action}`} className="relative pb-7 last:pb-0">
+              <span className="absolute -left-[1.95rem] top-3 size-2.5 rounded-full bg-brand ring-4 ring-card dark:ring-card" />
+              <div className="rounded-xl border border-border/70 bg-background/70 px-4 py-4 shadow-sm dark:border-white/10 dark:bg-background/35">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+                  <p className="text-sm font-bold text-foreground">{headline}</p>
+                  <time className="text-xs tabular-nums text-foreground/85" dateTime={item.at || undefined}>
+                    {item.at ? formatDateTime(item.at) : '—'}
+                  </time>
+                </div>
+                {details ? <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">{details}</p> : null}
+              </div>
+            </li>
+          )
+        })}
+    </ol>
   )
 }
 
@@ -1788,7 +1947,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         </DialogContent>
       </Dialog>
 
-      {/* Details — wide viewer (same shell as correction / leave request modals) */}
+      {/* Details - employee-style viewer shared by employee and admin overtime modules */}
       <Dialog
         open={viewOpen}
         onOpenChange={(o) => {
@@ -1798,241 +1957,203 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       >
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_VIEW_REQUEST_DIALOG_MAX)}
+          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
+          closeButtonClassName="right-5 top-5 size-11 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className="max-h-[94vh] max-w-[min(94vw,58rem)] overflow-hidden rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          innerClassName="gap-0 overflow-hidden p-0 pr-0"
           aria-describedby="ot-detail-desc"
         >
-          {detailLoading && !detail && (
-            <div className="flex justify-center py-12">
+          {detailLoading && !detail ? (
+            <div className="flex min-h-80 items-center justify-center">
               <Loader2 className="size-8 animate-spin text-muted-foreground" />
             </div>
-          )}
-          {detail && (
-            <>
-              <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-                <DialogHeader className={cn(ADMIN_FORM_DIALOG_HEADER_INNER_CLASS, 'space-y-3 text-left')}>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Overtime request</p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <DialogTitle className="font-mono text-2xl font-bold tracking-tight text-foreground @sm:text-3xl">
-                      Request #{detail.id}
-                    </DialogTitle>
-                    <Badge
-                      className={cn(
-                        'max-w-full whitespace-normal rounded-xl px-3 py-1.5 text-left text-sm font-semibold leading-snug',
-                        statusBadgeClass(detail.display_status)
-                      )}
-                    >
-                      {formatOvertimeStatusLine(detail)}
-                    </Badge>
-                  </div>
-                  <DialogDescription id="ot-detail-desc" className="text-sm text-muted-foreground">
-                    Review request information, overtime details, and the approval chain. Use the actions below when you are
-                    the current approver.
-                  </DialogDescription>
-                  {detailLoading ? (
-                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                      Refreshing full details…
-                    </p>
-                  ) : null}
-                </DialogHeader>
-              </div>
-              <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-5 text-sm')}>
-                {/* Request Information */}
-                <DetailSection title="Request Information">
-                  {(detail.requested_by_name || detail.employee_name) && (
-                    <div className="mb-4">
-                      <RequesterCell
-                        item={detail}
-                        profileTo={
-                          canViewEmployeeProfile && (detail.requested_by_id || detail.employee_id)
-                            ? hrPanelPath(hrBase, `employees/${detail.requested_by_id || detail.employee_id}`)
-                            : null
-                        }
-                        avatarLinkable={Boolean(canViewEmployeeProfile && (detail.requested_by_id || detail.employee_id))}
-                      />
-                    </div>
-                  )}
-                  <dl className="grid gap-3 @sm:grid-cols-2">
-                    <div>
-                      <dt className="text-xs font-medium text-muted-foreground">Filed</dt>
-                      <dd className="mt-0.5 tabular-nums text-foreground">
-                        {detail.filed_at || detail.created_at
-                          ? formatTableDate(detail.filed_at || detail.created_at)
-                          : '—'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs font-medium text-muted-foreground">Request ID</dt>
-                      <dd className="mt-0.5 font-mono font-semibold tabular-nums text-foreground">#{detail.id}</dd>
-                    </div>
-                  </dl>
-                  {detail.has_attachment && detail.attachment_url ? (
-                    <div className="mt-4 border-t border-border/40 pt-4">
-                      <p className="mb-2 text-xs font-medium text-muted-foreground">Attachment</p>
-                      <a
-                        href={detail.attachment_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
-                      >
-                        <ExternalLink className="size-4" />
-                        {detail.attachment_filename || 'Open attachment'}
-                      </a>
-                    </div>
-                  ) : null}
-                </DetailSection>
+          ) : null}
 
-                {/* OT Details */}
-                <DetailSection title="OT Details">
-                  <div className="grid gap-4 @sm:grid-cols-2">
-                    <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-muted/25 px-3 py-3 dark:bg-muted/15">
-                      <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground shadow-sm ring-1 ring-border/50">
-                        <CalendarDays className="size-5" aria-hidden />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Date</p>
-                        <p className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
-                          {detail.date ? formatDateShort(`${detail.date}T12:00:00`) : '—'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-muted/25 px-3 py-3 dark:bg-muted/15">
-                      <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground shadow-sm ring-1 ring-border/50">
-                        <Timer className="size-5" aria-hidden />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Hours</p>
-                        <p className="mt-0.5 font-mono text-base font-semibold text-foreground">{formatOtHoursDisplay(detail)}</p>
-                      </div>
-                    </div>
-                    <div className="@sm:col-span-2">
-                      <p className="text-xs font-medium text-muted-foreground">Category</p>
-                      <p className="mt-0.5 font-medium text-foreground">{otTypeLabel(detail.ot_type)}</p>
-                    </div>
-                    {detail.ph_ot_rule_label || detail.ph_ot_rule ? (
-                      <div className="@sm:col-span-2">
-                        <p className="text-xs font-medium text-muted-foreground">PH pay rule</p>
-                        <p className="mt-0.5 text-foreground">
-                          {detail.ph_ot_rule_label || detail.ph_ot_rule}
+          {detail ? (
+            <>
+              <DialogHeader className="relative overflow-hidden border-b border-border/70 px-6 pb-6 pt-7 text-left dark:border-white/10 @md:px-8">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-brand">Overtime request</p>
+                <div className="mt-4 flex flex-wrap items-center gap-4 pr-12">
+                  <DialogTitle className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
+                    #{detail.id}
+                  </DialogTitle>
+                  <OvertimeStatusPill row={detail} />
+                  {detailLoading ? <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden /> : null}
+                </div>
+                <DialogDescription id="ot-detail-desc" className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">
+                  Review request information, overtime details, approval chain, and request history below.
+                </DialogDescription>
+                <div className="pointer-events-none absolute bottom-0 right-10 hidden text-brand/10 dark:text-brand/15 @lg:block" aria-hidden>
+                  <Timer className="size-36" strokeWidth={1.1} />
+                </div>
+              </DialogHeader>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 @md:px-8">
+                <div className="space-y-6">
+                  <div className="space-y-6">
+                    <DetailSection title="Summary">
+                      {(detail.requested_by_name || detail.employee_name) ? (
+                        <div className="mb-5">
+                          <RequesterCell
+                            item={detail}
+                            profileTo={
+                              canViewEmployeeProfile && (detail.requested_by_id || detail.employee_id)
+                                ? hrPanelPath(hrBase, `employees/${detail.requested_by_id || detail.employee_id}`)
+                                : null
+                            }
+                            avatarLinkable={Boolean(canViewEmployeeProfile && (detail.requested_by_id || detail.employee_id))}
+                          />
+                        </div>
+                      ) : null}
+                      <dl className="grid gap-x-6 gap-y-3 text-sm @sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
+                        <dt className="text-muted-foreground">Filed</dt>
+                        <dd className="font-medium tabular-nums text-foreground">
+                          {detail.filed_at || detail.created_at ? formatDateTime(detail.filed_at || detail.created_at) : '—'}
+                        </dd>
+                        <dt className="text-muted-foreground">Request ID</dt>
+                        <dd className="font-mono font-bold tabular-nums text-foreground">#{detail.id}</dd>
+                        <dt className="text-muted-foreground">Category</dt>
+                        <dd className="font-medium text-foreground">{otTypeLabel(detail.ot_type)}</dd>
+                        <dt className="text-muted-foreground">PH pay rule</dt>
+                        <dd className="font-medium text-foreground">
+                          {detail.ph_ot_rule_label || detail.ph_ot_rule || '—'}
                           {detail.ot_multiplier != null && detail.first_8_multiplier != null ? (
                             <span className="text-muted-foreground">
-                              {' '}
-                              — 1st 8h ×{detail.first_8_multiplier} · OT ×{detail.ot_multiplier}
+                              {' '}1st 8h x{detail.first_8_multiplier} / OT x{detail.ot_multiplier}
                             </span>
                           ) : null}
-                        </p>
+                        </dd>
+                      </dl>
+                      {detail.has_attachment && detail.attachment_url ? (
+                        <div className="mt-5 border-t border-border/70 pt-4 dark:border-white/10">
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">Attachment</p>
+                          <a
+                            href={detail.attachment_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 text-sm font-bold text-brand hover:underline"
+                          >
+                            <ExternalLink className="size-4" />
+                            {detail.attachment_filename || 'Open attachment'}
+                          </a>
+                        </div>
+                      ) : null}
+                    </DetailSection>
+
+                    <DetailSection title="Overtime details">
+                      <div className="space-y-5">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-xl border border-border/70 bg-background/70 p-4 dark:border-white/10 dark:bg-background/35">
+                            <div className="flex items-center gap-3">
+                              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
+                                <CalendarDays className="size-5" aria-hidden />
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Date</p>
+                                <p className="mt-1 text-lg font-black tabular-nums text-foreground">
+                                  {detail.date ? formatDateShort(`${detail.date}T12:00:00`) : '—'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-border/70 bg-background/70 p-4 dark:border-white/10 dark:bg-background/35">
+                            <div className="flex items-center gap-3">
+                              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
+                                <Timer className="size-5" aria-hidden />
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Hours</p>
+                                <p className="mt-1 font-mono text-lg font-black tabular-nums text-foreground">{formatOtHoursDisplay(detail)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="divide-y divide-border/70 rounded-xl border border-border/70 bg-background/70 dark:divide-white/10 dark:border-white/10 dark:bg-background/35">
+                          <div className="flex min-h-14 items-center justify-between gap-4 px-4 py-3">
+                            <p className="text-[15px] font-bold text-foreground">Start time</p>
+                            <p className="font-mono text-xl font-black tabular-nums tracking-tight text-foreground">
+                              {formatTimeHm(detail.start_time || detail.schedule_end)}
+                            </p>
+                          </div>
+                          <div className="flex min-h-14 items-center justify-between gap-4 px-4 py-3">
+                            <p className="text-[15px] font-bold text-foreground">End time</p>
+                            <p className="font-mono text-xl font-black tabular-nums tracking-tight text-foreground">
+                              {formatTimeHm(detail.end_time || detail.expected_end_time)}
+                            </p>
+                          </div>
+                        </div>
+
+                        {detail.status === 'approved' && (detail.end_time || detail.expected_end_time) ? (
+                          <div className="rounded-xl border border-emerald-500/30 bg-emerald-50/70 px-4 py-3 dark:bg-emerald-950/20">
+                            <p className="text-xs font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                              Approved OT range
+                            </p>
+                            <p className="mt-1 text-sm leading-relaxed text-emerald-900 dark:text-emerald-100">
+                              Approved from <span className="font-mono font-bold">{formatTimeHm(detail.start_time || detail.schedule_end)}</span> to{' '}
+                              <span className="font-mono font-bold">{formatTimeHm(detail.end_time || detail.expected_end_time)}</span>.
+                            </p>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                    <div className="@sm:col-span-2">
-                      <p className="text-xs font-medium text-muted-foreground">Requested time range</p>
-                      <p className="mt-1 font-mono text-sm font-medium text-foreground">
-                        {formatTimeHm(detail.start_time || detail.schedule_end)} – {formatTimeHm(detail.end_time || detail.expected_end_time)}
-                      </p>
-                    </div>
-                    {detail.status === 'approved' && (detail.end_time || detail.expected_end_time) ? (
-                      <div className="@sm:col-span-4 rounded-lg border border-emerald-500/30 bg-emerald-50/60 px-4 py-3 dark:bg-emerald-950/20">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                          Approved OT range
-                        </p>
-                        <p className="mt-1 text-sm text-emerald-800 dark:text-emerald-300">
-                          Approved from{' '}
-                          <span className="font-mono font-bold">{formatTimeHm(detail.start_time || detail.schedule_end)}</span>
-                          {' '}to{' '}
-                          <span className="font-mono font-bold">{formatTimeHm(detail.end_time || detail.expected_end_time)}</span>.
-                        </p>
-                      </div>
-                    ) : null}
-                    <div className="@sm:col-span-2">
-                      <p className="text-xs font-medium text-muted-foreground">Reason</p>
-                      <p className="mt-1.5 whitespace-pre-wrap rounded-md border border-border/50 bg-muted/20 p-3 text-sm leading-relaxed text-foreground">
+                    </DetailSection>
+
+                    <DetailSection title="Reason">
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
                         {detail.reason && String(detail.reason).trim() !== '' ? detail.reason : '—'}
                       </p>
-                    </div>
-                  </div>
-                </DetailSection>
+                    </DetailSection>
 
-                {/* Approval Chain — policy text + stepper */}
-                <section className="rounded-lg border border-border/60 bg-gradient-to-br from-indigo-500/[0.06] via-transparent to-teal-500/[0.05] p-5 shadow-sm dark:from-indigo-950/30 dark:to-teal-950/20">
-                  <div>
-                    <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                      Current request — approval steps
-                    </p>
-                    {Array.isArray(detail.approval_progress) && detail.approval_progress.length > 0 ? (
-                      <ApprovalChainDetailView steps={detail.approval_progress} />
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No approval step data for this request.</p>
-                    )}
-                  </div>
-                </section>
-
-                {/* Approval History */}
-                {Array.isArray(detail.approval_history) && detail.approval_history.length > 0 ? (
-                  <DetailSection title="Approval History">
-                    <ul className="space-y-2">
-                      {detail.approval_history.map((h, i) => (
-                        <li key={i} className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2.5 text-xs dark:bg-white/5">
-                          <span className="font-semibold text-foreground">{h.actor_name || h.action || '—'}</span>
-                          {h.approver_role ? (
-                            <span className="text-muted-foreground"> · {h.approver_role}</span>
+                    {(detail.remarks && String(detail.remarks).trim() !== '') ||
+                    (detail.status === 'rejected' && detail.rejection_note && String(detail.rejection_note).trim() !== '') ? (
+                      <DetailSection title="Full remarks">
+                        <div className="space-y-4 text-sm">
+                          {detail.remarks && String(detail.remarks).trim() !== '' ? (
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Approver / HR</p>
+                              <p className="mt-2 whitespace-pre-wrap rounded-xl border border-border/70 bg-background/70 p-4 leading-relaxed text-foreground dark:border-white/10 dark:bg-background/35">
+                                {detail.remarks}
+                              </p>
+                            </div>
                           ) : null}
-                          {h.at ? (
-                            <time
-                              className="mt-1 block text-[11px] tabular-nums text-muted-foreground"
-                              dateTime={h.at}
-                            >
-                              {new Date(h.at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}
-                            </time>
+                          {detail.status === 'rejected' && detail.rejection_note && String(detail.rejection_note).trim() !== '' ? (
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-destructive">Rejection</p>
+                              <p className="mt-2 whitespace-pre-wrap rounded-xl border border-destructive/25 bg-destructive/5 p-4 leading-relaxed text-foreground">
+                                {detail.rejection_note}
+                              </p>
+                            </div>
                           ) : null}
-                          {sanitizeApprovalDisplayText(h?.details) ? (
-                            <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90">
-                              {sanitizeApprovalDisplayText(h.details)}
-                            </p>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  </DetailSection>
-                ) : null}
-
-                {/* Full Remarks — consolidated approver / HR / rejection notes */}
-                <DetailSection title="Full Remarks">
-                  <div className="space-y-3 text-sm">
-                    {detail.remarks && String(detail.remarks).trim() !== '' ? (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">Approver / HR</p>
-                        <p className="mt-1 whitespace-pre-wrap rounded-md border border-border/50 bg-muted/20 p-3 leading-relaxed">
-                          {detail.remarks}
-                        </p>
-                      </div>
-                    ) : null}
-                    {detail.status === 'rejected' && detail.rejection_note && String(detail.rejection_note).trim() !== '' ? (
-                      <div>
-                        <p className="text-xs font-medium text-destructive">Rejection</p>
-                        <p className="mt-1 whitespace-pre-wrap rounded-md border border-destructive/25 bg-destructive/5 p-3 leading-relaxed text-foreground">
-                          {detail.rejection_note}
-                        </p>
-                      </div>
-                    ) : null}
-                    {!detail.remarks?.trim() &&
-                    !(detail.status === 'rejected' && detail.rejection_note && String(detail.rejection_note).trim() !== '') ? (
-                      <p className="text-muted-foreground">—</p>
+                        </div>
+                      </DetailSection>
                     ) : null}
                   </div>
-                </DetailSection>
+
+                  <div className="space-y-6">
+                    <DetailSection title="Approval chain">
+                      <OvertimeApprovalChain steps={detail.approval_progress || []} />
+                    </DetailSection>
+                    {Array.isArray(detail.approval_history) && detail.approval_history.length > 0 ? (
+                      <DetailSection title="Approval history">
+                        <OvertimeHistoryTimeline history={detail.approval_history} />
+                      </DetailSection>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             </>
-          )}
-          {!detailLoading && !detail && (
+          ) : null}
+
+          {!detailLoading && !detail ? (
             <p className="px-6 py-8 text-center text-sm text-muted-foreground">No request data to display.</p>
-          )}
-          <DialogFooter
-            className={cn(ADMIN_FORM_DIALOG_FOOTER_CLASS, 'flex flex-col gap-3 @sm:flex-row @sm:flex-wrap @sm:items-center @sm:justify-end')}
-          >
+          ) : null}
+
+          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-6 py-5 dark:border-white/10 @md:px-8">
             {detail && !detailLoading && detail.actor_can_delete ? (
               <Button
                 type="button"
                 variant="destructive"
-                className="min-w-[100px]"
+                className="h-12 min-w-[110px] rounded-xl px-5 text-base font-semibold"
                 onClick={() => setDeleteDialog({ open: true, row: detail })}
               >
                 <Trash2 className="size-4" />
@@ -2044,21 +2165,21 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 <Button
                   type="button"
                   variant="outline"
-                  className="min-w-[100px] border-destructive/40 text-destructive hover:bg-destructive/10 dark:border-destructive/50"
+                  className="h-12 min-w-[110px] rounded-xl border-destructive/40 px-5 text-base font-semibold text-destructive hover:bg-destructive/10 dark:border-destructive/50"
                   onClick={() => openReject(detail)}
                 >
                   Reject
                 </Button>
                 <Button
                   type="button"
-                  className={cn(ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS, 'min-w-[100px]')}
+                  className="h-12 min-w-[110px] rounded-xl bg-brand px-5 text-base font-semibold text-brand-foreground shadow-[0_12px_22px_-14px_rgba(234,88,12,0.9)] hover:bg-brand-strong"
                   onClick={() => openApprove(detail)}
                 >
                   Approve
                 </Button>
               </div>
             ) : null}
-            <Button type="button" variant="outline" className="min-w-[100px]" onClick={() => setViewOpen(false)}>
+            <Button type="button" variant="outline" className="h-12 min-w-[110px] rounded-xl px-5 text-base font-semibold" onClick={() => setViewOpen(false)}>
               Close
             </Button>
           </DialogFooter>

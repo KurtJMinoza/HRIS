@@ -1,8 +1,8 @@
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { createElement, useEffect, useState, useMemo, useCallback } from 'react'
 import {
   AlertTriangle,
-  BarChart3,
   Calendar,
+  CalendarCheck,
   CheckCircle2,
   Clock,
   Copy,
@@ -10,8 +10,10 @@ import {
   Layers,
   Loader2,
   Lock,
+  PieChart,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   Users,
 } from 'lucide-react'
@@ -56,7 +58,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { cn } from '@/lib/utils'
-import { FIELD_SELECT_CLASS_H8, FIELD_SELECT_CLASS_H10 } from '@/lib/fieldClasses'
+import { FIELD_SELECT_CLASS_H10 } from '@/lib/fieldClasses'
 import {
   ADMIN_FORM_DIALOG_DESC_CLASS,
   ADMIN_FORM_DIALOG_FOOTER_CLASS,
@@ -99,6 +101,13 @@ const DAY_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 /** Default weekly days off for new templates (PH common case: single Sunday off). */
 const DEFAULT_REST_DAYS = ['sun']
 
+const workScheduleCardClass =
+  'rounded-[18px] border border-border/70 bg-card text-card-foreground shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
+const workSchedulePrimaryButtonClass =
+  'h-12 gap-2 rounded-lg bg-brand px-6 text-base font-semibold text-brand-foreground shadow-[0_12px_22px_-14px_rgba(234,88,12,0.9)] transition hover:bg-brand-strong dark:shadow-[0_12px_24px_-16px_rgba(251,146,60,0.75)]'
+const workScheduleOutlineButtonClass =
+  'h-12 gap-2 rounded-lg border-border/80 bg-card px-5 text-base font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
+
 /** True if employee has any schedule (working_schedule_id or custom schedule JSON). */
 function hasSchedule(emp) {
   if (emp.working_schedule_id != null && emp.working_schedule_id !== '') return true
@@ -139,6 +148,41 @@ function formatWorkingDaysAbbr(restDays = []) {
   const contiguous = working.length === DAY_ORDER.indexOf(working[working.length - 1]) - DAY_ORDER.indexOf(working[0]) + 1
   if (contiguous === working.length) return `${first}–${last}`
   return labels.join(', ')
+}
+
+function ScheduleStatCard({ icon: Icon, label, value, helper, tone = 'brand', children }) {
+  const tones = {
+    brand: {
+      icon: 'bg-brand/10 text-brand ring-brand/15 dark:bg-brand/15 dark:ring-brand/25',
+      value: 'text-foreground',
+    },
+    danger: {
+      icon: 'bg-brand/10 text-brand ring-brand/15 dark:bg-brand/15 dark:ring-brand/25',
+      value: 'text-destructive',
+    },
+    success: {
+      icon: 'bg-emerald-100 text-emerald-700 ring-emerald-200/70 dark:bg-emerald-950/45 dark:text-emerald-300 dark:ring-emerald-900/40',
+      value: 'text-foreground',
+    },
+  }
+  const t = tones[tone] || tones.brand
+
+  return (
+    <Card className={cn(workScheduleCardClass, 'min-h-[140px] overflow-hidden')}>
+      <CardContent className="flex h-full items-center gap-5 p-6">
+        <div className={cn('flex size-16 shrink-0 items-center justify-center rounded-full ring-1', t.icon)}>
+          {createElement(Icon, { className: 'size-8', 'aria-hidden': true })}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          <p className={cn('mt-2 text-4xl font-black tabular-nums tracking-tight', t.value)}>{value}</p>
+          <div className="mt-3 text-sm leading-relaxed text-muted-foreground">
+            {children || helper}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
 export default function AdminSchedules() {
@@ -777,16 +821,16 @@ export default function AdminSchedules() {
   const selectedTemplateIds = templateTable.getSelectedRowModel().rows.map((r) => r.original.id)
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between">
-        <div className="space-y-2">
-          <h1 className="hr-page-title">Work schedules</h1>
-          <p className="max-w-2xl text-base leading-relaxed text-muted-foreground">
+    <div className="min-h-0 min-w-0 max-w-full space-y-8 overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6">
+      <div className="flex flex-col gap-5 pb-1 @lg:flex-row @lg:items-start @lg:justify-between">
+        <div className="space-y-3">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground @md:text-4xl">Work schedules</h1>
+          <p className="max-w-4xl text-base leading-relaxed text-muted-foreground">
             Build DOLE-aware shift templates, preview night differential exposure, and keep provincial teams covered.
-            Optimized for clear scanning at night.
+            <span className="block">Optimized for clear scanning at night.</span>
           </p>
         </div>
-        <Button onClick={openCreate} className="min-h-11 shrink-0 shadow-sm">
+        <Button onClick={openCreate} className={cn(workSchedulePrimaryButtonClass, 'shrink-0')}>
           <Plus className="size-4" />
           New schedule
         </Button>
@@ -799,79 +843,43 @@ export default function AdminSchedules() {
       )}
 
       <div className="grid gap-4 @lg:grid-cols-4 @lg:gap-6">
-        <Card className="flex min-h-[140px] flex-col border-border/60 bg-card/90 shadow-sm ring-1 ring-border/40 transition-shadow hover:shadow-md dark:bg-card/80">
-          <CardContent className="flex flex-1 flex-col p-5">
-            <p className="text-sm font-medium text-muted-foreground">Active templates</p>
-            <p className="mt-2 text-3xl font-semibold tabular-nums tracking-tight text-foreground">{stats.activeSchedules}</p>
-            <p className="mt-auto pt-2 text-sm text-muted-foreground">Reusable shift definitions</p>
-          </CardContent>
-        </Card>
-        <Card
-          className={cn(
-            'flex min-h-[140px] flex-col border-border/60 bg-card/90 shadow-sm ring-1 ring-border/40 transition-shadow hover:shadow-md dark:bg-card/80',
-            stats.missing > 0 && 'ring-amber-500/25'
+        <ScheduleStatCard icon={CalendarCheck} label="Active templates" value={stats.activeSchedules} helper="Reusable shift definitions" />
+        <ScheduleStatCard icon={AlertTriangle} label="Missing schedule" value={stats.missing} tone={stats.missing > 0 ? 'danger' : 'success'}>
+          {stats.missing > 0 ? (
+            <span className="flex items-start gap-2 text-brand">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              Assign employees without a schedule
+            </span>
+          ) : (
+            <span className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+              All active employees covered
+            </span>
           )}
-        >
-          <CardContent className="flex flex-1 flex-col p-5">
-            <p className="text-sm font-medium text-muted-foreground">Missing schedule</p>
-            <p
-              className={cn(
-                'mt-2 text-3xl font-semibold tabular-nums tracking-tight',
-                stats.missing > 0 ? 'text-destructive' : 'text-foreground'
-              )}
-            >
-              {stats.missing}
-            </p>
-            {stats.missing > 0 ? (
-              <p className="mt-auto flex items-start gap-2 pt-2 text-sm text-amber-800 dark:text-amber-200">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <span>Assign employees without a schedule</span>
-              </p>
-            ) : (
-              <p className="mt-auto flex items-center gap-2 pt-2 text-sm text-emerald-700 dark:text-emerald-400">
-                <CheckCircle2 className="size-4 shrink-0" aria-hidden />
-                <span>All active employees covered</span>
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card
-          className={cn(
-            'flex min-h-[140px] flex-col border-border/60 bg-card/90 shadow-sm ring-1 ring-border/40 transition-shadow hover:shadow-md dark:bg-card/80',
-            stats.restRisk > 0 && 'ring-amber-500/25'
+        </ScheduleStatCard>
+        <ScheduleStatCard icon={ShieldCheck} label="Rest-day risk" value={stats.restRisk} tone={stats.restRisk > 0 ? 'danger' : 'success'}>
+          {stats.restRisk > 0 ? (
+            'Templates missing a weekly rest day'
+          ) : (
+            <span className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+              All templates include rest days
+            </span>
           )}
-        >
-          <CardContent className="flex flex-1 flex-col p-5">
-            <p className="text-sm font-medium text-muted-foreground">Rest-day risk</p>
-            <p
-              className={cn(
-                'mt-2 text-3xl font-semibold tabular-nums tracking-tight',
-                stats.restRisk > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'
-              )}
-            >
-              {stats.restRisk}
-            </p>
-            {stats.restRisk > 0 ? (
-              <p className="mt-auto pt-2 text-sm text-muted-foreground">Templates missing a weekly rest day</p>
-            ) : (
-              <p className="mt-auto flex items-center gap-2 pt-2 text-sm text-emerald-700 dark:text-emerald-400">
-                <CheckCircle2 className="size-4 shrink-0" aria-hidden />
-                <span>All templates include rest days</span>
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="flex min-h-[140px] flex-col border-border/60 bg-card/90 shadow-sm ring-1 ring-border/40 transition-shadow hover:shadow-md dark:bg-card/80">
-          <CardContent className="flex flex-1 flex-col p-5">
-            <div className="flex items-start justify-between gap-2">
-              <div>
+        </ScheduleStatCard>
+        <Card className={cn(workScheduleCardClass, 'min-h-[140px] overflow-hidden')}>
+          <CardContent className="flex h-full flex-col p-6">
+            <div className="flex items-start gap-5">
+              <div className="flex size-16 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
+                <PieChart className="size-8" aria-hidden />
+              </div>
+              <div className="min-w-0">
                 <p className="text-sm font-medium text-muted-foreground">Schedule coverage</p>
-                <p className="mt-2 text-3xl font-semibold tabular-nums tracking-tight text-foreground">{stats.coveragePct}%</p>
+                <p className="mt-2 text-4xl font-black tabular-nums tracking-tight text-foreground">{stats.coveragePct}%</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {stats.scheduled} of {employees.filter((e) => e.is_active !== false).length} active employees
                 </p>
               </div>
-              <BarChart3 className="size-8 shrink-0 text-muted-foreground/80" aria-hidden />
             </div>
             <div
               className="mt-4 h-3 w-full overflow-hidden rounded-full bg-muted ring-1 ring-border/50"
@@ -882,7 +890,7 @@ export default function AdminSchedules() {
               aria-label="Share of active employees with a schedule"
             >
               <div
-                className="h-full rounded-full bg-primary transition-all"
+                className="h-full rounded-full bg-brand transition-all"
                 style={{ width: `${Math.min(100, stats.coveragePct)}%` }}
               />
             </div>
@@ -890,19 +898,19 @@ export default function AdminSchedules() {
         </Card>
       </div>
 
-      <Tabs value={mainTab} onValueChange={setMainTab} className="space-y-5">
+      <Tabs value={mainTab} onValueChange={setMainTab} className="space-y-6">
         {/* Flex + fixed trigger height: TabsList defaults to h-9 while Trigger used min-h-11 — caused active pill to overflow the track */}
-        <TabsList className="flex w-full max-w-lg items-stretch gap-1 rounded-xl border border-border/50 bg-muted/50 p-1 shadow-sm !h-auto overflow-hidden">
+        <TabsList className="flex w-full max-w-lg items-stretch gap-0 rounded-xl border border-border/70 bg-card p-0 shadow-sm !h-auto overflow-hidden dark:border-white/10">
           <TabsTrigger
             value="templates"
-            className="flex min-h-0 flex-1 items-center justify-center gap-2 rounded-lg px-3 py-0 text-sm font-medium !h-10 data-[state=active]:shadow-sm"
+            className="flex min-h-0 flex-1 items-center justify-center gap-2 rounded-none border-b-2 border-transparent px-5 py-0 text-base font-semibold !h-14 text-muted-foreground data-[state=active]:border-brand data-[state=active]:bg-brand/5 data-[state=active]:text-brand data-[state=active]:shadow-none"
           >
             <Layers className="size-4 shrink-0" />
             Templates
           </TabsTrigger>
           <TabsTrigger
             value="coverage"
-            className="flex min-h-0 flex-1 items-center justify-center gap-2 rounded-lg px-3 py-0 text-sm font-medium !h-10 data-[state=active]:shadow-sm"
+            className="flex min-h-0 flex-1 items-center justify-center gap-2 rounded-none border-b-2 border-transparent px-5 py-0 text-base font-semibold !h-14 text-muted-foreground data-[state=active]:border-brand data-[state=active]:bg-brand/5 data-[state=active]:text-brand data-[state=active]:shadow-none"
           >
             <Users className="size-4 shrink-0" />
             Team coverage
@@ -910,19 +918,19 @@ export default function AdminSchedules() {
         </TabsList>
 
         <TabsContent value="templates" className="space-y-4 outline-none">
-          <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
+          <div className={cn(workScheduleCardClass, 'p-5')}>
             <div className="flex flex-col gap-3 @lg:flex-row @lg:items-end @lg:justify-between">
-              <div className="relative max-w-md flex-1">
+              <div className="relative max-w-xl flex-1">
                 <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
                 <Input
-                  className="h-11 min-h-11 pl-9"
-                  placeholder="Search schedule name, shift, or pattern…"
+                  className="h-12 min-h-12 rounded-xl border-border/80 bg-background pl-10 text-base shadow-sm dark:border-white/10 dark:bg-background/40"
+                  placeholder="Search schedule name, shift, or pattern..."
                   value={templateSearch}
                   onChange={(e) => setTemplateSearch(e.target.value)}
                 />
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" className="min-h-11" onClick={exportTemplatesCsv}>
+                <Button type="button" variant="outline" className={workScheduleOutlineButtonClass} onClick={exportTemplatesCsv}>
                   <Download className="size-4" />
                   Export
                 </Button>
@@ -988,15 +996,15 @@ export default function AdminSchedules() {
               </Button>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-border/60 bg-card shadow-sm">
+            <div className={cn(workScheduleCardClass, 'overflow-hidden')}>
               <table className="w-full min-w-[900px] border-collapse text-sm">
                 <thead>
                   {templateTable.getHeaderGroups().map((hg) => (
-                    <tr key={hg.id} className="border-b border-border/60 bg-muted/40">
+                    <tr key={hg.id} className="border-b border-border/60 bg-card">
                       {hg.headers.map((header) => (
                         <th
                           key={header.id}
-                          className="px-3 py-3.5 text-left text-xs font-semibold tracking-tight text-muted-foreground"
+                          className="px-5 py-4 text-left text-xs font-bold tracking-tight text-muted-foreground"
                           style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
                         >
                           {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
@@ -1011,11 +1019,11 @@ export default function AdminSchedules() {
                       key={row.id}
                       className={cn(
                         'border-b border-border/50 transition-colors hover:bg-muted/35',
-                        rowIdx % 2 === 1 && 'bg-muted/20'
+                        rowIdx % 2 === 1 && 'bg-muted/10'
                       )}
                     >
                       {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-3 py-3 align-middle">
+                        <td key={cell.id} className="px-5 py-5 align-middle">
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </td>
                       ))}
@@ -1023,7 +1031,7 @@ export default function AdminSchedules() {
                   ))}
                 </tbody>
               </table>
-              <div className="flex flex-col items-center justify-between gap-3 border-t border-border/60 px-3 py-3 @sm:flex-row">
+              <div className="flex flex-col items-center justify-between gap-3 border-t border-border/60 px-5 py-5 @sm:flex-row">
                 <p className="text-xs text-muted-foreground">
                   Page {templateTable.getState().pagination.pageIndex + 1} of {templateTable.getPageCount() || 1}
                 </p>
@@ -1032,7 +1040,7 @@ export default function AdminSchedules() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="min-h-11"
+                    className="h-12 rounded-lg px-5 text-base"
                     disabled={!templateTable.getCanPreviousPage()}
                     onClick={() => templateTable.previousPage()}
                   >
@@ -1042,7 +1050,7 @@ export default function AdminSchedules() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="min-h-11"
+                    className="h-12 rounded-lg border-brand px-5 text-base text-brand hover:bg-brand/10"
                     disabled={!templateTable.getCanNextPage()}
                     onClick={() => templateTable.nextPage()}
                   >
@@ -1320,33 +1328,38 @@ export default function AdminSchedules() {
       >
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(
-            'w-full max-w-[min(96vw,1320px)] sm:max-w-[min(1320px,96vw)] lg:max-w-[min(1440px,96vw)]',
-            'max-h-[min(92vh,920px)] flex flex-col overflow-hidden',
-          )}
+          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
+          closeButtonClassName="right-6 top-6 size-12 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className="max-h-[92vh] max-w-[min(96vw,86rem)] overflow-hidden rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          innerClassName="gap-0 overflow-hidden p-0 pr-0"
           aria-describedby="schedule-assign-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={cn(ADMIN_FORM_DIALOG_HEADER_INNER_CLASS, 'px-0')}>
-              <DialogTitle className={cn(ADMIN_FORM_DIALOG_TITLE_CLASS, 'flex items-center gap-2')}>
-                <Users className="size-5 text-primary" />
-                Assign schedule
-              </DialogTitle>
-              <p id="schedule-assign-desc" className={cn(ADMIN_FORM_DIALOG_DESC_CLASS, 'text-sm')}>
-                {assignSchedule && (
-                  <>
-                    <span className="font-medium text-foreground">{assignSchedule.name}</span>
-                    {' — '}
-                    Select employees who should follow this schedule.
-                  </>
-                )}
-              </p>
-            </DialogHeader>
-          </div>
           <form onSubmit={handleAssignSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="shrink-0 space-y-3 border-b border-border/60 px-4 py-3 @sm:px-6">
+            <DialogHeader className="shrink-0 border-b border-border/70 px-6 pb-6 pt-6 pr-20 text-left dark:border-white/10 @md:px-8">
+              <div className="flex items-start gap-5">
+                <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
+                  <Users className="size-7" aria-hidden />
+                </div>
+                <div className="min-w-0 space-y-2">
+                  <DialogTitle className="text-2xl font-black tracking-tight text-foreground">Assign schedule</DialogTitle>
+                  <p id="schedule-assign-desc" className="text-base leading-relaxed text-muted-foreground">
+                    {assignSchedule ? (
+                      <>
+                        <span className="font-bold text-brand">{assignSchedule.name}</span>
+                        <span className="mx-2 text-muted-foreground">-</span>
+                        Select employees who should follow this schedule.
+                      </>
+                    ) : (
+                      'Select employees who should follow this schedule.'
+                    )}
+                  </p>
+                </div>
+              </div>
+            </DialogHeader>
+
+            <div className="shrink-0 space-y-4 border-b border-border/70 px-6 py-5 dark:border-white/10 @md:px-8">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                <Search className="absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" aria-hidden />
                 <Input
                   type="search"
                   placeholder="Search by name, employee ID, or department..."
@@ -1355,80 +1368,79 @@ export default function AdminSchedules() {
                     setAssignSearch(e.target.value)
                     setAssignPage(1)
                   }}
-                  className="h-10 pl-9"
+                  className="h-14 rounded-xl border-border/80 bg-background pl-12 text-lg shadow-sm dark:border-white/10 dark:bg-background/40"
                   aria-label="Search employees"
                 />
               </div>
-              <div className="flex flex-col gap-2 @md:flex-row @md:flex-wrap @md:items-center">
-                <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-sm @sm:flex-row @sm:items-center @sm:gap-2">
-                  <span className="shrink-0 text-muted-foreground">Filter</span>
+              <div className="grid gap-4 @lg:grid-cols-[minmax(0,22rem)_1fr] @lg:items-end">
+                <label className="space-y-2 text-base font-medium text-foreground">
+                  <span>Filter</span>
                   <select
                     value={assignFilter}
                     onChange={(e) => {
                       setAssignFilter(e.target.value)
                       setAssignPage(1)
                     }}
-                    className={cn('h-10 w-full min-w-0 md:min-w-[280px]', FIELD_SELECT_CLASS_H10)}
+                    className="h-14 w-full rounded-xl border border-border/80 bg-background px-4 text-base font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:border-white/10 dark:bg-background/40"
                     aria-label="Filter by schedule status"
                   >
                     <option value="all">All others ({countNotOnThisShift})</option>
-                    <option value="available_only">Available — no shift ({countTrulyAvailable})</option>
+                    <option value="available_only">Available - no shift ({countTrulyAvailable})</option>
                     <option value="on_this_shift">This shift only ({countOnThisShift})</option>
                     <option value="without_schedule">Without schedule (same as Available)</option>
                     <option value="with_schedule">Has other shift</option>
                   </select>
                 </label>
-                {employeesWithoutSchedule.length > 0 && (
+                {employeesWithoutSchedule.length > 0 ? (
                   <Button
                     type="button"
                     variant="outline"
-                    size="sm"
-                    className="h-10 w-full shrink-0 text-xs @md:w-auto"
+                    className="h-14 justify-center gap-3 rounded-xl border-brand px-5 text-base font-bold text-brand hover:bg-brand/10 dark:border-brand/60 dark:hover:bg-brand/15"
                     onClick={bulkSelectWithoutSchedule}
                   >
+                    <Users className="size-5" aria-hidden />
                     Bulk: no schedule ({employeesWithoutSchedule.length})
                   </Button>
-                )}
+                ) : null}
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3 @sm:px-6">
-              <div className="rounded-md border border-border/50 p-3">
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 @md:px-8">
               {assignEmployeesLoading ? (
-                <div className="flex items-center justify-center py-12">
+                <div className="flex min-h-80 items-center justify-center">
                   <Loader2 className="size-8 animate-spin text-muted-foreground" aria-hidden />
                 </div>
               ) : employees.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
+                <div className="rounded-xl border border-border/70 bg-background/70 px-5 py-10 text-center text-sm text-muted-foreground dark:border-white/10 dark:bg-background/35">
                   No employees found. Add employees first.
-                </p>
+                </div>
               ) : (
-                <div className="flex flex-col gap-6">
-                  {/* Section 1: always derived from live assignment — never mixed with "Available" */}
-                  {assignSchedule && (
-                    <div className="rounded-lg border border-blue-500/25 bg-blue-500/5 p-3 dark:bg-blue-950/20">
-                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold text-foreground">
+                <div className="space-y-5">
+                  {assignSchedule ? (
+                    <section className="overflow-hidden rounded-xl border border-border/70 bg-background/60 shadow-sm dark:border-white/10 dark:bg-background/30">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4 dark:border-white/10">
+                        <h3 className="text-lg font-black tracking-tight text-foreground">
                           On this shift
-                          <span className="ml-2 font-normal text-muted-foreground">({employeesOnThisShiftFiltered.length})</span>
+                          <span className="ml-3 text-base font-semibold text-muted-foreground">({employeesOnThisShiftFiltered.length})</span>
                         </h3>
-                        <span className="text-[11px] text-muted-foreground">Uncheck or Unassign to remove</span>
+                        <span className="text-sm font-medium text-muted-foreground">Uncheck or Unassign to remove</span>
                       </div>
                       {employeesOnThisShiftFiltered.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">
+                        <p className="px-5 py-8 text-sm text-muted-foreground">
                           {countOnThisShift > 0 && assignSearchTrimmed
                             ? 'No one on this shift matches your search.'
                             : 'No employees assigned to this shift yet.'}
                         </p>
                       ) : (
-                        <div className="flex flex-col gap-1">
+                        <div className="divide-y divide-border/70 dark:divide-white/10">
                           {employeesOnThisShiftFiltered.map((emp) => {
                             const checked = selectedEmployeeIds.includes(emp.id)
                             const currentSchedule = emp.working_schedule_id
                               ? schedules.find((s) => Number(s.id) === Number(emp.working_schedule_id))
                               : null
                             const currentTime = currentSchedule
-                              ? formatShiftRange12h(currentSchedule.time_in, currentSchedule.time_out, ' – ')
-                              : '—'
+                              ? formatShiftRange12h(currentSchedule.time_in, currentSchedule.time_out, ' - ')
+                              : '-'
                             const initials =
                               (emp.name || '?')
                                 .trim()
@@ -1442,7 +1454,7 @@ export default function AdminSchedules() {
                               <div
                                 key={`on-${emp.id}`}
                                 role="row"
-                                className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-xs transition-colors hover:bg-muted/50"
+                                className="grid cursor-pointer grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-4 px-5 py-4 transition-colors hover:bg-muted/35 @lg:grid-cols-[auto_auto_minmax(0,1fr)_10rem_9rem_6rem]"
                                 onClick={() => toggleEmployeeSelection(emp.id)}
                               >
                                 <div className="flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
@@ -1450,34 +1462,34 @@ export default function AdminSchedules() {
                                     checked={checked}
                                     onCheckedChange={() => toggleEmployeeSelection(emp.id)}
                                     onClick={(e) => e.stopPropagation()}
+                                    className="size-5 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
                                   />
                                 </div>
-                                <Avatar className="size-9 shrink-0 rounded-full">
+                                <Avatar className="size-12 shrink-0 rounded-full bg-brand/10">
                                   <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" className="object-cover" />
-                                  <AvatarFallback className="rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                                  <AvatarFallback className="rounded-full bg-brand/10 text-sm font-bold text-brand dark:bg-brand/15">
                                     {initials}
                                   </AvatarFallback>
                                 </Avatar>
-                                <div className="min-w-0 flex-1">
-                                  <span className="font-medium text-foreground block truncate">{emp.name}</span>
-                                  <span className="text-[11px] text-muted-foreground">{emp.department || 'No department'}</span>
+                                <div className="min-w-0">
+                                  <span className="block truncate text-base font-bold text-foreground">{emp.name}</span>
+                                  <span className="text-sm text-muted-foreground">{emp.department || 'No department'}</span>
                                 </div>
-                                <div className="min-w-[100px] shrink-0 text-[11px] text-muted-foreground">{currentTime}</div>
-                                <div className="min-w-[120px] shrink-0">
-                                  <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-400">
+                                <div className="hidden text-base tabular-nums text-foreground/80 @lg:block">{currentTime}</div>
+                                <div className="col-start-3 @lg:col-start-auto">
+                                  <span className="inline-flex items-center rounded-md bg-brand/10 px-3 py-1 text-sm font-bold text-brand dark:bg-brand/15">
                                     On this shift
                                   </span>
                                 </div>
-                                <div className="shrink-0">
+                                <div className="col-start-3 @lg:col-start-auto">
                                   <Button
                                     type="button"
                                     variant="ghost"
-                                    size="sm"
-                                    className="h-7 text-xs"
+                                    className="h-9 px-2 text-sm font-bold text-foreground hover:text-brand"
                                     disabled={isUnassigning}
                                     onClick={(e) => handleUnassign(emp, e)}
                                   >
-                                    {isUnassigning ? <Loader2 className="size-3 animate-spin" /> : 'Unassign'}
+                                    {isUnassigning ? <Loader2 className="size-4 animate-spin" /> : 'Unassign'}
                                   </Button>
                                 </div>
                               </div>
@@ -1485,68 +1497,59 @@ export default function AdminSchedules() {
                           })}
                         </div>
                       )}
-                    </div>
-                  )}
+                    </section>
+                  ) : null}
 
-                  {/* Section 2: everyone NOT on this shift — filters apply only here */}
-                  {assignFilter !== 'on_this_shift' && (
-                    <div>
-                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold text-foreground">
+                  {assignFilter !== 'on_this_shift' ? (
+                    <section className="overflow-hidden rounded-xl border border-border/70 bg-background/60 shadow-sm dark:border-white/10 dark:bg-background/30">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4 dark:border-white/10">
+                        <h3 className="text-lg font-black tracking-tight text-foreground">
                           {assignFilter === 'available_only' || assignFilter === 'without_schedule'
-                            ? 'Available — no shift assigned'
+                            ? 'Available - no shift assigned'
                             : assignFilter === 'with_schedule'
                               ? 'Has another shift'
                               : 'Other employees'}
-                          <span className="ml-2 font-normal text-muted-foreground">({assignFilteredOthers.length})</span>
+                          <span className="ml-3 text-base font-semibold text-muted-foreground">({assignFilteredOthers.length})</span>
                         </h3>
-                        <span className="text-[11px] text-muted-foreground">
+                        <span className="text-sm font-medium text-muted-foreground">
                           Selected: {selectedEmployeeIds.length}
-                          {assignFilteredOthers.length !== countNotOnThisShift &&
-                            ` · ${assignFilteredOthers.length} shown after filter`}
+                          {assignFilteredOthers.length !== countNotOnThisShift && ` - ${assignFilteredOthers.length} shown after filter`}
                         </span>
                       </div>
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-3 rounded-md border-b border-border/60 px-2 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          <div className="w-[18px] shrink-0" aria-hidden />
-                          <div className="size-9 shrink-0" aria-hidden />
-                          <span className="min-w-0 flex-1">Employee</span>
-                          <span className="min-w-[100px] shrink-0">Shift</span>
-                          <span className="min-w-[120px] shrink-0">Status</span>
-                          <span className="w-14 shrink-0">Action</span>
-                        </div>
-                        <label className="flex cursor-pointer items-center gap-3 rounded-md border-b border-border/60 px-2 py-2.5 text-sm font-medium hover:bg-muted/50">
-                          <Checkbox
-                            checked={
-                              (() => {
-                                const selectable = assignPaginatedOthers.filter((e) => !hasSchedule(e))
-                                if (selectable.length === 0) return false
-                                const allSelected = selectable.every((e) => selectedEmployeeIds.includes(e.id))
-                                const someSelected = selectable.some((e) => selectedEmployeeIds.includes(e.id))
-                                return allSelected ? true : someSelected ? 'indeterminate' : false
-                              })()
+                      <label className="flex cursor-pointer items-center gap-4 border-b border-border/70 px-5 py-4 text-base font-bold hover:bg-muted/35 dark:border-white/10">
+                        <Checkbox
+                          checked={
+                            (() => {
+                              const selectable = assignPaginatedOthers.filter((e) => !hasSchedule(e))
+                              if (selectable.length === 0) return false
+                              const allSelected = selectable.every((e) => selectedEmployeeIds.includes(e.id))
+                              const someSelected = selectable.some((e) => selectedEmployeeIds.includes(e.id))
+                              return allSelected ? true : someSelected ? 'indeterminate' : false
+                            })()
+                          }
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              const ids = new Set(selectedEmployeeIds)
+                              assignPaginatedOthers.forEach((e) => {
+                                if (hasSchedule(e)) return
+                                ids.add(e.id)
+                              })
+                              setSelectedEmployeeIds(Array.from(ids))
+                            } else {
+                              const removeIds = new Set(assignPaginatedOthers.map((e) => e.id))
+                              setSelectedEmployeeIds(selectedEmployeeIds.filter((id) => !removeIds.has(id)))
                             }
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                const ids = new Set(selectedEmployeeIds)
-                                assignPaginatedOthers.forEach((e) => {
-                                  if (hasSchedule(e)) return
-                                  ids.add(e.id)
-                                })
-                                setSelectedEmployeeIds(Array.from(ids))
-                              } else {
-                                const removeIds = new Set(assignPaginatedOthers.map((e) => e.id))
-                                setSelectedEmployeeIds(selectedEmployeeIds.filter((id) => !removeIds.has(id)))
-                              }
-                            }}
-                            aria-label="Select all with no shift on this page"
-                          />
-                          <span className="text-foreground flex-1">Select all with no shift (this page)</span>
-                        </label>
-                        {assignFilteredOthers.length === 0 ? (
-                          <p className="text-xs text-muted-foreground py-2">No employees in this list for the current filter.</p>
-                        ) : (
-                          assignPaginatedOthers.map((emp) => {
+                          }}
+                          aria-label="Select all with no shift on this page"
+                          className="size-5 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
+                        />
+                        <span className="text-foreground">Select all with no shift (this page)</span>
+                      </label>
+                      {assignFilteredOthers.length === 0 ? (
+                        <p className="px-5 py-8 text-sm text-muted-foreground">No employees in this list for the current filter.</p>
+                      ) : (
+                        <div className="divide-y divide-border/70 dark:divide-white/10">
+                          {assignPaginatedOthers.map((emp) => {
                             const checked = selectedEmployeeIds.includes(emp.id)
                             const blockedOther = isAssignedOtherShift(emp, assignSchedule)
                             const currentSchedule = emp.working_schedule_id
@@ -1555,15 +1558,10 @@ export default function AdminSchedules() {
                             const firstCustomDay =
                               emp.schedule && Object.values(emp.schedule || {}).find((v) => v?.in && v?.out)
                             const currentTime = currentSchedule
-                              ? formatShiftRange12h(currentSchedule.time_in, currentSchedule.time_out, ' – ')
+                              ? formatShiftRange12h(currentSchedule.time_in, currentSchedule.time_out, ' - ')
                               : firstCustomDay
-                                ? formatShiftRange12h(firstCustomDay.in, firstCustomDay.out, ' – ')
-                                : '—'
-                            const currentShiftLabel = currentSchedule
-                              ? `${currentSchedule.name} (${currentTime})`
-                              : firstCustomDay
-                                ? `Custom (${currentTime})`
-                                : '—'
+                                ? formatShiftRange12h(firstCustomDay.in, firstCustomDay.out, ' - ')
+                                : '-'
                             const initials =
                               (emp.name || '?')
                                 .trim()
@@ -1572,25 +1570,23 @@ export default function AdminSchedules() {
                                 .join('')
                                 .toUpperCase()
                                 .slice(0, 2) || '?'
-                            const currentScheduleName = currentSchedule?.name || (firstCustomDay ? 'Custom schedule' : '—')
+                            const currentScheduleName = currentSchedule?.name || (firstCustomDay ? 'Custom schedule' : '-')
                             const tooltipText = blockedOther
                               ? `Already on:\n${currentScheduleName} (${currentTime})\n\nUnassign there first.`
-                              : 'No schedule — click to assign to this shift'
+                              : 'No schedule - click to assign to this shift'
                             const isUnassigning = unassigningId === emp.id
                             return (
                               <div
                                 key={`other-${emp.id}`}
                                 role="row"
-                                className={`flex items-center gap-3 rounded-md px-2 py-2 text-xs transition-colors ${
-                                  blockedOther
-                                    ? 'cursor-not-allowed opacity-60 hover:bg-muted/30'
-                                    : 'cursor-pointer hover:bg-muted/50'
-                                }`}
+                                className={cn(
+                                  'grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-4 px-5 py-4 transition-colors @lg:grid-cols-[auto_auto_minmax(0,1fr)_10rem_9rem_6rem]',
+                                  blockedOther ? 'cursor-not-allowed opacity-65 hover:bg-muted/20' : 'cursor-pointer hover:bg-muted/35'
+                                )}
                                 onClick={() => {
                                   if (blockedOther) {
                                     toast.error('Cannot assign', {
-                                      description:
-                                        'Employee already has a schedule. Please unassign from the current shift first.',
+                                      description: 'Employee already has a schedule. Please unassign from the current shift first.',
                                     })
                                   } else {
                                     toggleEmployeeSelection(emp.id)
@@ -1603,77 +1599,76 @@ export default function AdminSchedules() {
                                     disabled={blockedOther}
                                     onCheckedChange={() => !blockedOther && toggleEmployeeSelection(emp.id)}
                                     onClick={(e) => e.stopPropagation()}
+                                    className="size-5 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
                                   />
                                 </div>
-                                <Avatar className="size-9 shrink-0 rounded-full">
+                                <Avatar className="size-12 shrink-0 rounded-full bg-brand/10">
                                   <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" className="object-cover" />
-                                  <AvatarFallback className="rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                                  <AvatarFallback className="rounded-full bg-brand/10 text-sm font-bold text-brand dark:bg-brand/15">
                                     {initials}
                                   </AvatarFallback>
                                 </Avatar>
-                                <div className="min-w-0 flex-1">
-                                  <span className="font-medium text-foreground block truncate">{emp.name}</span>
-                                  <span className="text-[11px] text-muted-foreground">{emp.department || 'No department'}</span>
+                                <div className="min-w-0">
+                                  <span className="block truncate text-base font-bold text-foreground">{emp.name}</span>
+                                  <span className="text-sm text-muted-foreground">{emp.department || 'No department'}</span>
                                 </div>
-                                <div className="min-w-[100px] shrink-0 text-[11px] text-muted-foreground" title={currentShiftLabel}>
-                                  {blockedOther ? currentTime : '—'}
+                                <div className="hidden text-base tabular-nums text-foreground/80 @lg:block" title={currentScheduleName}>
+                                  {blockedOther ? currentTime : '-'}
                                 </div>
-                                <div className="min-w-[120px] shrink-0">
+                                <div className="col-start-3 @lg:col-start-auto">
                                   {blockedOther ? (
                                     <span
-                                      className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+                                      className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-3 py-1 text-sm font-bold text-amber-700 dark:text-amber-300"
                                       title={tooltipText}
                                     >
-                                      <Lock className="size-3" />
-                                      Already Assigned
+                                      <Lock className="size-3.5" />
+                                      Assigned
                                     </span>
                                   ) : (
                                     <span
-                                      className="inline-flex items-center rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+                                      className="inline-flex items-center rounded-md bg-emerald-500/15 px-3 py-1 text-sm font-bold text-emerald-700 dark:text-emerald-300"
                                       title={tooltipText}
                                     >
                                       Available
                                     </span>
                                   )}
                                 </div>
-                                <div className="shrink-0">
+                                <div className="col-start-3 @lg:col-start-auto">
                                   {blockedOther ? (
                                     <Button
                                       type="button"
                                       variant="ghost"
-                                      size="sm"
-                                      className="h-7 text-xs"
+                                      className="h-9 px-2 text-sm font-bold text-foreground hover:text-brand"
                                       disabled={isUnassigning}
                                       onClick={(e) => handleUnassign(emp, e)}
                                     >
-                                      {isUnassigning ? <Loader2 className="size-3 animate-spin" /> : 'Unassign'}
+                                      {isUnassigning ? <Loader2 className="size-4 animate-spin" /> : 'Unassign'}
                                     </Button>
                                   ) : (
-                                    <span className="inline-block w-14 text-[10px] text-muted-foreground">—</span>
+                                    <span className="inline-block text-sm text-muted-foreground">-</span>
                                   )}
                                 </div>
                               </div>
                             )
-                          })
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  </div>
+                          })}
+                        </div>
+                      )}
+                    </section>
+                  ) : null}
+                </div>
               )}
-              </div>
             </div>
-            {assignFilteredOthers.length > ASSIGN_PAGE_SIZE && assignFilter !== 'on_this_shift' && (
-              <div className="flex shrink-0 items-center justify-between border-t border-border/60 px-3 py-3 text-sm @sm:px-6">
+
+            {assignFilteredOthers.length > ASSIGN_PAGE_SIZE && assignFilter !== 'on_this_shift' ? (
+              <div className="flex shrink-0 items-center justify-between border-t border-border/70 px-6 py-4 text-sm dark:border-white/10 @md:px-8">
                 <span className="text-muted-foreground">
                   Page {assignPage} of {assignTotalPages} ({assignFilteredOthers.length} employees)
                 </span>
-                <div className="flex gap-1">
+                <div className="flex gap-2">
                   <Button
                     type="button"
                     variant="outline"
-                    size="sm"
+                    className="h-10 rounded-lg px-4"
                     disabled={assignPage <= 1}
                     onClick={() => setAssignPage((p) => Math.max(1, p - 1))}
                   >
@@ -1682,7 +1677,7 @@ export default function AdminSchedules() {
                   <Button
                     type="button"
                     variant="outline"
-                    size="sm"
+                    className="h-10 rounded-lg border-brand px-4 text-brand hover:bg-brand/10"
                     disabled={assignPage >= assignTotalPages}
                     onClick={() => setAssignPage((p) => Math.min(assignTotalPages, p + 1))}
                   >
@@ -1690,11 +1685,13 @@ export default function AdminSchedules() {
                   </Button>
                 </div>
               </div>
-            )}
-            <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+            ) : null}
+
+            <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-6 py-5 dark:border-white/10 @md:px-8">
               <Button
                 type="button"
                 variant="outline"
+                className="h-12 min-w-36 rounded-xl border-border/80 bg-card px-8 text-base font-semibold text-foreground hover:bg-muted dark:border-white/10"
                 onClick={() => {
                   setAssignOpen(false)
                   setAssignSchedule(null)
@@ -1707,13 +1704,9 @@ export default function AdminSchedules() {
               <Button
                 type="submit"
                 disabled={assignSubmitting || selectedEmployeeIds.length === 0}
-                className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}
+                className="h-12 min-w-52 rounded-xl bg-brand px-8 text-base font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
               >
-                {assignSubmitting ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  'Assign schedule'
-                )}
+                {assignSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Assign schedule'}
               </Button>
             </DialogFooter>
           </form>
@@ -1722,4 +1715,3 @@ export default function AdminSchedules() {
     </div>
   )
 }
-
