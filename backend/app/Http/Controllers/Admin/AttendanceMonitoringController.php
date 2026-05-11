@@ -23,7 +23,10 @@ use Illuminate\Support\Facades\Log;
 class AttendanceMonitoringController extends Controller
 {
     /** Fixed page size for admin attendance list (pagination + payloads). Client cannot override. */
-    private const ROWS_PER_PAGE = 10;
+    private const ROWS_PER_PAGE = 20;
+
+    /** Skip payslip-parity payroll impact during bulk row materialization; hydrate only for paginated rows (index). */
+    private const SLOW_MONITORING_MS = 500;
 
     public function __construct(
         private readonly DataScopeService $dataScopeService,
@@ -110,15 +113,24 @@ class AttendanceMonitoringController extends Controller
             'pending_attention' => ['sometimes', 'boolean'],
         ]);
 
-        $computed = $this->computeMonitoringRows($request, $validated);
+        $computeStart = microtime(true);
+        $computed = $this->computeMonitoringRows($request, $validated, includePayrollImpact: false);
+        $computeMs = (int) round((microtime(true) - $computeStart) * 1000);
         if ($computed instanceof JsonResponse) {
             return $computed;
         }
 
+        $employeesById = $computed['employees_by_id'] ?? null;
+        unset($computed['employees_by_id']);
+
+        $filterStart = microtime(true);
         $rows = $computed['rows'];
         $rows = $this->applyAttendanceMonitoringFilters($rows, $validated);
+        $filterMs = (int) round((microtime(true) - $filterStart) * 1000);
 
+        $totalsStart = microtime(true);
         $totals = $this->attendanceMonitoringTotals($rows);
+        $totalsMs = (int) round((microtime(true) - $totalsStart) * 1000);
 
         $perPage = self::ROWS_PER_PAGE;
         $page = max(1, (int) ($validated['page'] ?? 1));
@@ -127,10 +139,19 @@ class AttendanceMonitoringController extends Controller
         $page = min($page, $lastPage);
         $offset = ($page - 1) * $perPage;
 
+        $pageRows = array_slice($rows, $offset, $perPage);
+
+        $hydrateStart = microtime(true);
+        $tz = $this->attendanceTimezone();
+        if ($employeesById !== null && $employeesById->isNotEmpty()) {
+            $this->hydratePayrollImpactForMonitoringRows($employeesById, $pageRows, $tz);
+        }
+        $hydrateMs = (int) round((microtime(true) - $hydrateStart) * 1000);
+
         $response = [
             'from_date' => $computed['from_date'],
             'to_date' => $computed['to_date'],
-            'rows' => array_slice($rows, $offset, $perPage),
+            'rows' => $pageRows,
             'meta' => [
                 'current_page' => $page,
                 'last_page' => $lastPage,
@@ -140,14 +161,23 @@ class AttendanceMonitoringController extends Controller
             ],
         ];
 
-        Log::info('Attendance monitoring response prepared', [
+        $totalMs = (int) round((microtime(true) - $startedAt) * 1000);
+        $payload = [
             'actor_user_id' => (int) $request->user()->id,
             'from_date' => (string) $computed['from_date'],
             'to_date' => (string) $computed['to_date'],
-            'rows_count' => count($response['rows']),
-            'paginated' => true,
-            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-        ]);
+            'matched_rows' => $total,
+            'page_rows' => count($response['rows']),
+            'compute_rows_ms' => $computeMs,
+            'filter_ms' => $filterMs,
+            'totals_ms' => $totalsMs,
+            'hydrate_payroll_ms' => $hydrateMs,
+            'total_response_ms' => $totalMs,
+        ];
+        Log::info('Attendance monitoring response prepared', $payload);
+        if ($totalMs >= self::SLOW_MONITORING_MS) {
+            Log::warning('Slow attendance monitoring index', $payload);
+        }
 
         return response()->json($response);
     }
@@ -175,7 +205,7 @@ class AttendanceMonitoringController extends Controller
             'pending_attention' => ['sometimes', 'boolean'],
         ]);
 
-        $computed = $this->computeMonitoringRows($request, $validated);
+        $computed = $this->computeMonitoringRows($request, $validated, includePayrollImpact: true);
         if ($computed instanceof JsonResponse) {
             return $computed;
         }
@@ -273,9 +303,9 @@ class AttendanceMonitoringController extends Controller
      * Shared attendance monitoring computation used by index + export.
      *
      * @param  array<string,mixed>  $validated
-     * @return array{from_date:string,to_date:string,rows:list<array<string,mixed>>}|JsonResponse
+     * @return array{from_date:string,to_date:string,rows:list<array<string,mixed>>,employees_by_id?:\Illuminate\Support\Collection<int, User>}|JsonResponse
      */
-    private function computeMonitoringRows(Request $request, array $validated): array|JsonResponse
+    private function computeMonitoringRows(Request $request, array $validated, bool $includePayrollImpact = true): array|JsonResponse
     {
         $tz = $this->attendanceTimezone();
 
@@ -305,8 +335,6 @@ class AttendanceMonitoringController extends Controller
         // UTC bounds for DB query (timestamps are stored in UTC).
         $fromUtc = $from->copy()->setTimezone('UTC');
         $toUtc = $to->copy()->setTimezone('UTC');
-
-        $undertimeThresholdMinutes = (int) config('attendance.undertime_threshold_minutes', 60);
 
         $employeesQuery = User::query()
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
@@ -352,6 +380,16 @@ class AttendanceMonitoringController extends Controller
         $userIds = $employees->pluck('id')->all();
 
         $logs = AttendanceLog::query()
+            ->select([
+                'id',
+                'user_id',
+                'type',
+                'verified_at',
+                'created_at',
+                'night_hours',
+                'premium_type',
+                'calculated_pay_factor',
+            ])
             ->whereIn('user_id', $userIds)
             ->whereBetween('verified_at', [$fromUtc, $toUtc])
             ->orderBy('verified_at')
@@ -368,12 +406,32 @@ class AttendanceMonitoringController extends Controller
         }
 
         $corrections = AttendanceCorrection::query()
+            ->select([
+                'id',
+                'user_id',
+                'date',
+                'time_in',
+                'time_out',
+                'remarks',
+                'approved',
+                'pending_approval',
+                'reason_code',
+                'filed_at',
+            ])
             ->whereIn('user_id', $userIds)
             ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
             ->get()
             ->groupBy(fn ($c) => $c->user_id.'|'.$c->date->toDateString());
 
         $approvedOvertimesByUserDate = Overtime::query()
+            ->select([
+                'id',
+                'user_id',
+                'date',
+                'computed_hours',
+                'expected_end_time',
+                'status',
+            ])
             ->whereIn('user_id', $userIds)
             ->where('status', Overtime::STATUS_APPROVED)
             ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
@@ -381,6 +439,15 @@ class AttendanceMonitoringController extends Controller
             ->keyBy(fn ($o) => $o->user_id.'|'.$o->date->toDateString());
 
         $approvedLeaves = LeaveRequest::query()
+            ->select([
+                'id',
+                'user_id',
+                'type',
+                'half_type',
+                'start_date',
+                'end_date',
+                'status',
+            ])
             ->whereIn('user_id', $userIds)
             ->where('status', LeaveRequest::STATUS_APPROVED)
             ->where('start_date', '<=', $to->toDateString())
@@ -654,7 +721,7 @@ class AttendanceMonitoringController extends Controller
                 // Payroll Impact (hrs): payslip-parity via PayrollComputationService (paid regular + paid OT),
                 // not min(net-worked, schedule) + raw approved OT (pre-shift "total hours" skewed Impact).
                 $payrollImpactMinutes = 0;
-                if ($isWorkday) {
+                if ($isWorkday && $includePayrollImpact) {
                     $tInPayroll = $effectiveTimeIn
                         ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
                         : null;
@@ -754,11 +821,73 @@ class AttendanceMonitoringController extends Controller
             }
         }
 
-        return [
+        $result = [
             'from_date' => $from->toDateString(),
             'to_date' => $to->toDateString(),
             'rows' => $rows,
         ];
+
+        if (! $includePayrollImpact) {
+            $result['employees_by_id'] = $employees->keyBy('id');
+        }
+
+        return $result;
+    }
+
+    /**
+     * Payslip-parity payroll impact is expensive ({@see PayrollComputationService::computeDayPayroll}).
+     * Index loads hydrate only the visible page after filtering.
+     *
+     * @param  \Illuminate\Support\Collection<int, User>  $employeesById
+     * @param  list<array<string, mixed>>  $pageRows
+     */
+    private function hydratePayrollImpactForMonitoringRows(
+        \Illuminate\Support\Collection $employeesById,
+        array &$pageRows,
+        string $tz
+    ): void {
+        foreach ($pageRows as &$r) {
+            $scheduleIn = $r['schedule_in'] ?? null;
+            $scheduleOut = $r['schedule_out'] ?? null;
+            if (! $scheduleIn || ! $scheduleOut) {
+                continue;
+            }
+
+            $employee = $employeesById->get((int) ($r['employee_id'] ?? 0));
+            if (! $employee instanceof User) {
+                continue;
+            }
+
+            $dateKey = (string) ($r['date'] ?? '');
+            if ($dateKey === '') {
+                continue;
+            }
+
+            $tInPayroll = null;
+            if (! empty($r['time_in'])) {
+                $tInPayroll = Carbon::parse($dateKey.' '.$r['time_in'], $tz);
+            }
+
+            $tOutPayroll = null;
+            if (! empty($r['time_out'])) {
+                $outDay = $dateKey;
+                if (! empty($r['time_out_next_day'])) {
+                    $outDay = Carbon::parse($dateKey.' 00:00:00', $tz)->addDay()->toDateString();
+                }
+                $tOutPayroll = Carbon::parse($outDay.' '.$r['time_out'], $tz);
+            }
+
+            $minutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
+                $employee,
+                $dateKey,
+                $tInPayroll,
+                $tOutPayroll,
+                $tz
+            );
+            $r['payroll_impact_minutes'] = $minutes;
+            $r['payroll_impact_hours'] = round($minutes / 60, 2);
+        }
+        unset($r);
     }
 
     /** Mirrors frontend {@see attendanceRecordUtils isPendingAttentionRow} for parity. */

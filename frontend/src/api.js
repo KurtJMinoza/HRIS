@@ -186,8 +186,29 @@ function normalizePerPage(perPage, fallback = undefined, max = 100) {
 const TIMEOUT_ERROR_MSG =
   'Server request timed out. Check if the backend API is running and reachable.'
 
-/** Page size enforced by Laravel for Admin Attendance + Reports (detailed) list endpoints. */
+/** Page size enforced by Laravel for Admin Reports (detailed) list endpoints. */
 export const REPORTS_AND_ATTENDANCE_PAGE_SIZE = 10
+
+/** Admin → Attendance monitoring list (matches backend AttendanceMonitoringController::ROWS_PER_PAGE). */
+export const ADMIN_ATTENDANCE_PAGE_SIZE = 20
+
+/** Matches backend AttendanceController::EMPLOYEE_SUMMARY_MAX_PER_PAGE — caps payroll hydration per request. */
+export const EMPLOYEE_ATTENDANCE_SUMMARY_MAX_PER_PAGE = 124
+
+/** Employee → Attendance: server page size (rows per page; ≤ backend max). */
+export const EMPLOYEE_ATTENDANCE_PAGE_SIZE = 20
+
+/** @deprecated Use EMPLOYEE_ATTENDANCE_PAGE_SIZE */
+export const EMPLOYEE_ATTENDANCE_INITIAL_PER_PAGE = EMPLOYEE_ATTENDANCE_PAGE_SIZE
+
+/** Inclusive calendar days between two YYYY-MM-DD strings (employee attendance summary sizing). */
+export function inclusiveAttendanceDaySpan(fromDateStr, toDateStr) {
+  if (!fromDateStr || !toDateStr) return 31
+  const a = Date.parse(String(fromDateStr).slice(0, 10) + 'T12:00:00')
+  const b = Date.parse(String(toDateStr).slice(0, 10) + 'T12:00:00')
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 31
+  return Math.floor(Math.abs(b - a) / 86400000) + 1
+}
 
 // Lightweight in-memory cache + in-flight dedupe for repeated GET endpoints.
 // This reduces duplicate network calls across tabs/modules during rapid navigation.
@@ -1256,7 +1277,7 @@ export async function getAdminAttendance(params = {}) {
 
   const p = Number(params.page)
   query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
-  query.set('per_page', String(REPORTS_AND_ATTENDANCE_PAGE_SIZE))
+  query.set('per_page', String(ADMIN_ATTENDANCE_PAGE_SIZE))
 
   if (params.search) query.set('search', String(params.search).trim())
   if (params.company) query.set('company', String(params.company))
@@ -1270,7 +1291,7 @@ export async function getAdminAttendance(params = {}) {
   return data
 }
 
-/** All rows for the given filters by paging (10 per request). Prefer export endpoint for CSV. */
+/** All rows for the given filters by paging ({@link ADMIN_ATTENDANCE_PAGE_SIZE} per request). Prefer export endpoint for CSV. */
 export async function fetchAllAdminAttendanceRows(params = {}) {
   const first = await getAdminAttendance({ ...params, page: 1 })
   const meta = first.meta || {}
@@ -4634,17 +4655,73 @@ export async function getAttendance() {
 
 /**
  * Get monthly attendance summary for the authenticated employee.
- * @param {{ from_date?: string, to_date?: string }} params
+ * Sends pagination hints so the API only runs payslip-parity payroll impact on the returned slice (merged automatically when the range spans multiple pages).
+ * @param {{ from_date?: string, to_date?: string, page?: number, per_page?: number, full_summary?: boolean, merge_all_pages?: boolean }} params
  */
 export async function getMyAttendanceSummary(params = {}) {
-  const query = new URLSearchParams()
-  if (params.from_date) query.set('from_date', params.from_date)
-  if (params.to_date) query.set('to_date', params.to_date)
-  const path = `/attendance/summary${query.toString() ? `?${query.toString()}` : ''}`
+  const maxPerPage = EMPLOYEE_ATTENDANCE_SUMMARY_MAX_PER_PAGE
+  const mergeAllPages = params.merge_all_pages !== false
+  const pageParam = Number(params.page)
+  const requestedPage =
+    Number.isFinite(pageParam) && pageParam >= 1 ? Math.floor(pageParam) : 1
+
+  function buildQuery(page) {
+    const query = new URLSearchParams()
+    if (params.from_date) query.set('from_date', params.from_date)
+    if (params.to_date) query.set('to_date', params.to_date)
+    query.set('page', String(page))
+
+    if (params.full_summary === true) {
+      // omit per_page → legacy path (hydrates payroll for every day in range; slower)
+    } else {
+      let perPage = Number(params.per_page)
+      if (!Number.isFinite(perPage) || perPage < 1) {
+        const span = inclusiveAttendanceDaySpan(params.from_date, params.to_date)
+        perPage = Math.min(maxPerPage, Math.max(1, span))
+      } else {
+        perPage = Math.min(maxPerPage, Math.max(1, Math.floor(perPage)))
+      }
+      query.set('per_page', String(perPage))
+    }
+
+    return query
+  }
+
+  const pathBase = `/attendance/summary`
+  const firstQuery = buildQuery(requestedPage)
+  const path = `${pathBase}?${firstQuery.toString()}`
   const res = await authenticatedFetch(path)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load attendance summary')
-  return data
+
+  const dm = data.meta?.days
+  if (!mergeAllPages || !dm?.paginated || dm.last_page <= 1) return data
+
+  const fetchPage = async (page) => {
+    const q = buildQuery(page)
+    const r = await authenticatedFetch(`${pathBase}?${q.toString()}`)
+    const chunk = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(chunk.message || 'Failed to load attendance summary')
+    return chunk
+  }
+
+  const pageNums = []
+  for (let p = 2; p <= dm.last_page; p++) pageNums.push(p)
+  const chunks = await Promise.all(pageNums.map((p) => fetchPage(p)))
+
+  const days = [...(data.days || [])]
+  for (const chunk of chunks) {
+    days.push(...(chunk.days || []))
+  }
+
+  return {
+    ...data,
+    days,
+    meta: {
+      ...(data.meta || {}),
+      days: { ...dm, paginated: false, merged_pages: dm.last_page },
+    },
+  }
 }
 
 /** Employee: submit presence filing (pending approval). */

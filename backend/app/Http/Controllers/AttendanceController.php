@@ -23,6 +23,7 @@ use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -39,6 +40,15 @@ class AttendanceController extends Controller
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+    /** Employee `/attendance/summary`: max rows per page when `per_page` is sent (caps payload + payroll hydration). */
+    private const EMPLOYEE_SUMMARY_MAX_PER_PAGE = 124;
+
+    /** Log slow employee attendance summary responses (ms). */
+    private const EMPLOYEE_SUMMARY_SLOW_WARN_MS = 200;
+
+    /** Full JSON payload cache for employee summary (revision bumps when source rows change). */
+    private const EMPLOYEE_SUMMARY_RESPONSE_CACHE_SECONDS = 900;
 
     /** No schedule assigned at all (Admin → Schedule). */
     private const NO_SCHEDULE_ASSIGNED_MESSAGE = 'No schedule assigned. Please contact the administrator.';
@@ -1619,6 +1629,42 @@ class AttendanceController extends Controller
     }
 
     /**
+     * Cheap fingerprint so cached `/attendance/summary` payloads invalidate when punches, corrections,
+     * overlapping leaves, overtime rows, or the employee profile (schedule) change.
+     */
+    private function employeeAttendanceSummaryResponseCacheRevision(User $user, Carbon $from, Carbon $to): string
+    {
+        $fromUtc = $from->copy()->timezone('UTC');
+        $toUtc = $to->copy()->timezone('UTC');
+        $fromStr = $from->toDateString();
+        $toStr = $to->toDateString();
+
+        $parts = [
+            AttendanceLog::query()
+                ->where('user_id', $user->id)
+                ->whereBetween('verified_at', [$fromUtc, $toUtc])
+                ->max('updated_at'),
+            AttendanceCorrection::query()
+                ->where('user_id', $user->id)
+                ->whereBetween('date', [$fromStr, $toStr])
+                ->max('updated_at'),
+            LeaveRequest::query()
+                ->where('user_id', $user->id)
+                ->where('status', LeaveRequest::STATUS_APPROVED)
+                ->where('start_date', '<=', $toStr)
+                ->where('end_date', '>=', $fromStr)
+                ->max('updated_at'),
+            Overtime::query()
+                ->where('user_id', $user->id)
+                ->whereBetween('date', [$fromStr, $toStr])
+                ->max('updated_at'),
+            User::query()->whereKey($user->id)->value('updated_at'),
+        ];
+
+        return substr(md5(implode('|', array_map(fn ($v) => (string) ($v ?? ''), $parts))), 0, 24);
+    }
+
+    /**
      * Monthly-style attendance summary for the authenticated user.
      *
      * Returns:
@@ -1628,11 +1674,14 @@ class AttendanceController extends Controller
      */
     public function summary(Request $request): JsonResponse
     {
+        $startedAt = microtime(true);
         $user = $request->user();
 
         $validated = $request->validate([
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:'.self::EMPLOYEE_SUMMARY_MAX_PER_PAGE],
         ]);
 
         // Default: current month
@@ -1655,11 +1704,59 @@ class AttendanceController extends Controller
         $from = $from->copy()->timezone($attendanceTz)->startOfDay();
         $to = $to->copy()->timezone($attendanceTz)->endOfDay();
 
+        $perPageInput = isset($validated['per_page']) ? (int) $validated['per_page'] : null;
+        $pageInput = max(1, (int) ($validated['page'] ?? 1));
+        $ppCacheKey = ($perPageInput === null || $perPageInput <= 0)
+            ? 'all'
+            : (string) min(self::EMPLOYEE_SUMMARY_MAX_PER_PAGE, max(1, $perPageInput));
+
+        $revision = $this->employeeAttendanceSummaryResponseCacheRevision($user, $from, $to);
+        $responseCacheKey = sprintf(
+            'employee_attendance_summary:v3:%d:%s:%s:%s:%s:%d',
+            $user->id,
+            $from->toDateString(),
+            $to->toDateString(),
+            $revision,
+            $ppCacheKey,
+            $pageInput,
+        );
+
+        if (($cachedPayload = Cache::get($responseCacheKey)) && is_array($cachedPayload)) {
+            $cachedPayload['summary']['today']['ot_detection'] = $this->otDetectionService->detectForToday($user, $attendanceTz);
+            $totalMs = (int) round((microtime(true) - $startedAt) * 1000);
+            if (! isset($cachedPayload['meta']) || ! is_array($cachedPayload['meta'])) {
+                $cachedPayload['meta'] = [];
+            }
+            if (! isset($cachedPayload['meta']['performance']) || ! is_array($cachedPayload['meta']['performance'])) {
+                $cachedPayload['meta']['performance'] = [];
+            }
+            $cachedPayload['meta']['performance']['cache_hit'] = true;
+            $cachedPayload['meta']['performance']['total_ms'] = $totalMs;
+            Log::info('Employee attendance summary cache hit', [
+                'user_id' => (int) $user->id,
+                'cache_key_suffix' => $revision.'|'.$ppCacheKey.'|'.$pageInput,
+                'total_ms' => $totalMs,
+            ]);
+
+            return response()->json($cachedPayload);
+        }
+
         $undertimeThresholdMinutes = (int) config('attendance.undertime_threshold_minutes', 60);
 
         // Preload logs and corrections for range.
         // IMPORTANT: Attendance views are based on the punch timestamp (`verified_at`), not row insertion time (`created_at`).
+        $bulkFetchStart = microtime(true);
         $logs = AttendanceLog::query()
+            ->select([
+                'id',
+                'user_id',
+                'type',
+                'verified_at',
+                'created_at',
+                'night_hours',
+                'premium_type',
+                'calculated_pay_factor',
+            ])
             ->where('user_id', $user->id)
             ->whereBetween('verified_at', [$from->copy()->setTimezone('UTC'), $to->copy()->setTimezone('UTC')])
             ->orderBy('verified_at')
@@ -1676,28 +1773,57 @@ class AttendanceController extends Controller
         }
 
         $corrections = AttendanceCorrection::query()
+            ->select([
+                'id',
+                'user_id',
+                'date',
+                'time_in',
+                'time_out',
+                'remarks',
+                'approved',
+                'pending_approval',
+                'reason_code',
+                'filed_at',
+                'rejected_at',
+                'rejected_by',
+                'rejection_note',
+                'approval_stage',
+                'first_approver_id',
+                'second_approver_id',
+                'first_approved_at',
+                'second_approved_at',
+                'approved_by',
+                'approved_at',
+                'filed_by',
+                'issue_kind',
+                'is_incomplete_record',
+                'attendance_logs_synced_at',
+                'attendance_logs_synced_by',
+                'updated_at',
+            ])
             ->where('user_id', $user->id)
             ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
-            ->with([
-                'user',
-                'filedBy',
-                'firstApprover',
-                'secondApprover',
-                'rejectedBy',
-                'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
-            ])
             ->get()
             ->groupBy(fn ($c) => $c->date->toDateString());
 
         // Preload approved leaves for range to mark days as "Filed Leave"
         $approvedLeaves = LeaveRequest::query()
+            ->select([
+                'id',
+                'user_id',
+                'type',
+                'half_type',
+                'start_date',
+                'end_date',
+                'status',
+            ])
             ->where('user_id', $user->id)
             ->where('status', LeaveRequest::STATUS_APPROVED)
-            ->whereDate('start_date', '<=', $to->toDateString())
-            ->whereDate('end_date', '>=', $from->toDateString())
+            ->where('start_date', '<=', $to->toDateString())
+            ->where('end_date', '>=', $from->toDateString())
             ->get();
 
-        $this->leaveCreditService->ensureAnnualRechargeForUserId((int) $user->id);
+        $this->leaveCreditService->ensureAnnualRechargeForUser($user);
 
         /** @var array<string, LeaveRequest> $leaveByDate Most recent overlapping request wins (matches payroll tie-break). */
         $leaveByDate = [];
@@ -1716,10 +1842,21 @@ class AttendanceController extends Controller
         }
 
         $overtimeByDate = Overtime::query()
+            ->select([
+                'id',
+                'user_id',
+                'date',
+                'computed_hours',
+                'expected_end_time',
+                'status',
+                'ph_ot_rule',
+            ])
             ->where('user_id', $user->id)
             ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
             ->get()
             ->keyBy(fn (Overtime $o) => $o->date->toDateString());
+
+        $bulkFetchMs = (int) round((microtime(true) - $bulkFetchStart) * 1000);
 
         $metrics = [
             'present_count' => 0,
@@ -2114,25 +2251,9 @@ class AttendanceController extends Controller
             if (is_array($daySchedule) && ! empty($daySchedule['in']) && ! empty($daySchedule['out'])) {
                 $scheduledRegularMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $daySchedule, $attendanceTz);
             }
-            // Payroll Impact (hrs): same paid minutes as payslip (computeDayPayroll), not display net-worked + approved OT.
+            // Payroll impact is payslip-parity via computeDayPayroll — deferred to pagination hydrate only.
             $payrollImpactMinutes = 0;
-            $isScheduledWorkday = is_array($daySchedule) && ! empty($daySchedule['in']);
-            if ($isScheduledWorkday) {
-                $tInPayroll = $effectiveTimeIn
-                    ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
-                    : null;
-                $tOutPayroll = $effectiveTimeOut
-                    ? ($effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut))
-                    : null;
-                $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
-                    $user,
-                    $dateKey,
-                    $tInPayroll,
-                    $tOutPayroll,
-                    $attendanceTz
-                );
-            }
-            $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
+            $payrollImpactHours = 0.0;
 
             $scheduleInDay = is_array($daySchedule) && ! empty($daySchedule['in'])
                 ? (string) $daySchedule['in']
@@ -2140,6 +2261,13 @@ class AttendanceController extends Controller
             $scheduleOutDay = is_array($daySchedule) && ! empty($daySchedule['out'])
                 ? (string) $daySchedule['out']
                 : null;
+
+            $effectiveTimeOutDateForPayroll = $effectiveTimeOut
+                ? ($effectiveTimeOut instanceof Carbon
+                    ? $effectiveTimeOut->copy()->timezone($attendanceTz)->toDateString()
+                    : Carbon::parse($effectiveTimeOut)->timezone($attendanceTz)->toDateString())
+                : null;
+            $timeOutNextDay = $effectiveTimeOutDateForPayroll !== null && $effectiveTimeOutDateForPayroll !== $dateKey;
 
             $scheduleAssignedForRow = is_array($effectiveSchedule) && $effectiveSchedule !== [];
             $isRestDayRow = false;
@@ -2162,6 +2290,7 @@ class AttendanceController extends Controller
                 'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
                 'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
                 'virtual_time_out_from_ot' => $virtualTimeOutFromOt,
+                'time_out_next_day' => $timeOutNextDay,
                 'scheduled_regular_hours' => $scheduledRegularMinutes !== null && $scheduledRegularMinutes > 0
                     ? round($scheduledRegularMinutes / 60, 2)
                     : null,
@@ -2202,7 +2331,7 @@ class AttendanceController extends Controller
                 'has_approved_overtime' => $approvedOtAppliedHours > 0.0001,
                 'presence_label' => $presenceLabel,
                 'presence_issue' => $presenceIssue,
-                'presence_filing' => $this->presenceFilingPayloadForSummary($correction, $attendanceTz),
+                'presence_filing' => null,
                 'leave_pay_status' => $leavePayStatus,
             ];
 
@@ -2222,6 +2351,47 @@ class AttendanceController extends Controller
 
             $cursor->addDay();
         }
+
+        $transformStart = microtime(true);
+        $this->attachPresenceFilingsToEmployeeSummaryDays($corrections, $days, $attendanceTz);
+
+        usort($days, fn (array $a, array $b) => strcmp((string) ($b['date'] ?? ''), (string) ($a['date'] ?? '')));
+
+        $todayPresenceFilingPayload = null;
+        foreach ($days as $d) {
+            if (($d['date'] ?? '') === $todayDate) {
+                $todayPresenceFilingPayload = $d['presence_filing'] ?? null;
+                break;
+            }
+        }
+
+        $totalDaysInRange = count($days);
+
+        $hydratePayrollStart = microtime(true);
+        if ($perPageInput === null || $perPageInput <= 0) {
+            $responseDays = $days;
+            $this->hydrateEmployeeSummaryPayrollImpact($user, $responseDays, $attendanceTz);
+            $daysMeta = [
+                'paginated' => false,
+                'total' => $totalDaysInRange,
+            ];
+        } else {
+            $perPage = min(self::EMPLOYEE_SUMMARY_MAX_PER_PAGE, max(1, $perPageInput));
+            $lastPage = max(1, (int) ceil($totalDaysInRange / $perPage));
+            $page = min($pageInput, $lastPage);
+            $offset = ($page - 1) * $perPage;
+            $responseDays = array_slice($days, $offset, $perPage);
+            $this->hydrateEmployeeSummaryPayrollImpact($user, $responseDays, $attendanceTz);
+            $daysMeta = [
+                'paginated' => true,
+                'current_page' => $page,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $totalDaysInRange,
+            ];
+        }
+        $hydratePayrollMs = (int) round((microtime(true) - $hydratePayrollStart) * 1000);
+        $transformMs = (int) round((microtime(true) - $transformStart) * 1000);
 
         $scheduleAssigned = is_array($effectiveSchedule) && $effectiveSchedule !== [];
 
@@ -2254,22 +2424,165 @@ class AttendanceController extends Controller
                 'undertime_minutes' => $todayUndertimeMinutes,
                 'presence_label' => $todayPresenceLabel,
                 'presence_issue' => $todayPresenceIssue,
-                'presence_filing' => $this->presenceFilingPayloadForSummary($corrections->get($todayDate)?->first(), $attendanceTz),
+                'presence_filing' => $todayPresenceFilingPayload,
                 'leave_pay_status' => $todayLeavePayStatus,
                 'ot_detection' => $otDetection,
             ],
         ];
 
-        return response()->json([
+        $totalMs = (int) round((microtime(true) - $startedAt) * 1000);
+        $performancePayload = [
+            'user_id' => (int) $user->id,
+            'from_date' => $from->toDateString(),
+            'to_date' => $to->toDateString(),
+            'bulk_fetch_ms' => $bulkFetchMs,
+            'transform_slice_ms' => $transformMs,
+            'hydrate_payroll_ms' => $hydratePayrollMs,
+            'total_response_ms' => $totalMs,
+            'days_meta' => $daysMeta,
+            'cache_hit' => false,
+        ];
+        Log::info('Employee attendance summary prepared', $performancePayload);
+        if ($totalMs >= self::EMPLOYEE_SUMMARY_SLOW_WARN_MS) {
+            Log::warning('Slow employee attendance summary', $performancePayload);
+        }
+
+        $payload = [
             'from_date' => $from->toDateString(),
             'to_date' => $to->toDateString(),
             'summary' => $summary,
-            'days' => $days,
-        ]);
+            'days' => $responseDays,
+            'meta' => [
+                'days' => $daysMeta,
+                'performance' => [
+                    'bulk_fetch_ms' => $bulkFetchMs,
+                    'transform_slice_ms' => $transformMs,
+                    'hydrate_payroll_ms' => $hydratePayrollMs,
+                    'total_ms' => $totalMs,
+                    'cache_hit' => false,
+                ],
+            ],
+        ];
+
+        $cachePayload = $payload;
+        $cachePayload['summary']['today']['ot_detection'] = null;
+        $cachePayload['meta']['performance']['total_ms'] = null;
+        Cache::put($responseCacheKey, $cachePayload, self::EMPLOYEE_SUMMARY_RESPONSE_CACHE_SECONDS);
+
+        return response()->json($payload);
+    }
+
+    private function correctionNeedsPresenceFilingPayload(?AttendanceCorrection $correction): bool
+    {
+        if ($correction === null) {
+            return false;
+        }
+
+        return ! ($correction->reason_code === null && ! $correction->pending_approval && $correction->rejected_at === null);
     }
 
     /**
-     * Full presence filing payload (same shape as employee/admin presence-filing APIs), including
+     * Avoid eager-loading audits / approvers for every correction in-range; hydrate only calendar rows that need a filing card.
+     *
+     * @param  \Illuminate\Support\Collection<string, \Illuminate\Support\Collection<int, AttendanceCorrection>>  $correctionsByDate
+     * @param  list<array<string, mixed>>  $days
+     */
+    private function attachPresenceFilingsToEmployeeSummaryDays($correctionsByDate, array &$days, string $tz): void
+    {
+        $ids = [];
+        foreach ($days as $day) {
+            $dateKey = (string) ($day['date'] ?? '');
+            $correction = $correctionsByDate->get($dateKey)?->first();
+            if (! $this->correctionNeedsPresenceFilingPayload($correction)) {
+                continue;
+            }
+            $ids[(int) $correction->id] = true;
+        }
+        if ($ids === []) {
+            return;
+        }
+
+        $loaded = AttendanceCorrection::query()
+            ->whereIn('id', array_keys($ids))
+            ->with([
+                'user',
+                'filedBy',
+                'firstApprover',
+                'secondApprover',
+                'rejectedBy',
+                'attendanceLogsSyncedBy',
+                'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
+                'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
+            ])
+            ->get()
+            ->keyBy('id');
+
+        foreach ($days as $i => $day) {
+            $dateKey = (string) ($day['date'] ?? '');
+            $correction = $correctionsByDate->get($dateKey)?->first();
+            if (! $this->correctionNeedsPresenceFilingPayload($correction)) {
+                continue;
+            }
+            $full = $loaded->get((int) $correction->id);
+            if ($full instanceof AttendanceCorrection) {
+                $days[$i]['presence_filing'] = $this->presenceFilingFormatter->format(
+                    $full,
+                    $tz,
+                    includeEmployee: true,
+                    actor: null,
+                    includeDisplayFields: true
+                );
+            }
+        }
+    }
+
+    /**
+     * Payslip-parity payroll impact only for rows returned to the client (paginated slice when requested).
+     *
+     * @param  list<array<string, mixed>>  $daysSlice
+     */
+    private function hydrateEmployeeSummaryPayrollImpact(User $user, array &$daysSlice, string $tz): void
+    {
+        foreach ($daysSlice as &$day) {
+            $scheduleIn = $day['schedule_in'] ?? null;
+            $scheduleOut = $day['schedule_out'] ?? null;
+            if (! $scheduleIn || ! $scheduleOut) {
+                continue;
+            }
+
+            $dateKey = (string) ($day['date'] ?? '');
+            if ($dateKey === '') {
+                continue;
+            }
+
+            $tInPayroll = null;
+            if (! empty($day['time_in'])) {
+                $tInPayroll = Carbon::parse($dateKey.' '.$day['time_in'], $tz);
+            }
+
+            $tOutPayroll = null;
+            if (! empty($day['time_out'])) {
+                $outDay = $dateKey;
+                if (! empty($day['time_out_next_day'])) {
+                    $outDay = Carbon::parse($dateKey.' 00:00:00', $tz)->addDay()->toDateString();
+                }
+                $tOutPayroll = Carbon::parse($outDay.' '.$day['time_out'], $tz);
+            }
+
+            $minutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
+                $user,
+                $dateKey,
+                $tInPayroll,
+                $tOutPayroll,
+                $tz
+            );
+            $day['payroll_impact_minutes'] = $minutes;
+            $day['payroll_impact_hours'] = round($minutes / 60, 2);
+        }
+        unset($day);
+    }
+
+    /**
      * approval_progress with profile_image_url for each step — used by attendance summary so the
      * employee calendar modal matches the admin corrections view.
      *
@@ -2280,7 +2593,7 @@ class AttendanceController extends Controller
         if ($correction === null) {
             return null;
         }
-        if ($correction->reason_code === null && ! $correction->pending_approval && $correction->rejected_at === null) {
+        if (! $this->correctionNeedsPresenceFilingPayload($correction)) {
             return null;
         }
 

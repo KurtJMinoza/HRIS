@@ -66,8 +66,8 @@ class OtDetectionService
         $hasApprovedLeave = LeaveRequest::query()
             ->where('user_id', $user->id)
             ->where('status', LeaveRequest::STATUS_APPROVED)
-            ->whereDate('start_date', '<=', $dateKey)
-            ->whereDate('end_date', '>=', $dateKey)
+            ->where('start_date', '<=', $dateKey)
+            ->where('end_date', '>=', $dateKey)
             ->exists();
 
         if ($hasApprovedLeave) {

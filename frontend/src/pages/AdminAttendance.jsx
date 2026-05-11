@@ -48,7 +48,7 @@ import {
   exportAdminAttendance,
   getEmployees,
   profileImageUrl,
-  REPORTS_AND_ATTENDANCE_PAGE_SIZE,
+  ADMIN_ATTENDANCE_PAGE_SIZE,
 } from '@/api'
 import ReportPdfDocument from '@/components/reports/ReportPdfDocument'
 import { cn } from '@/lib/utils'
@@ -1127,7 +1127,7 @@ export default function AdminAttendance() {
             <CardDescription className="text-xs">
               Page {Math.min(attendancePage, attendanceLastPage)} of {attendanceLastPage} · Showing{' '}
               {displayRows.length} / {attendanceTotalMatched} record
-              {attendanceTotalMatched !== 1 ? 's' : ''} · {REPORTS_AND_ATTENDANCE_PAGE_SIZE} per page ·{' '}
+              {attendanceTotalMatched !== 1 ? 's' : ''} · {ADMIN_ATTENDANCE_PAGE_SIZE} per page ·{' '}
               {periodLabel || 'selected period'}
             </CardDescription>
           </div>
@@ -1184,8 +1184,8 @@ export default function AdminAttendance() {
           {attendanceTotalMatched > 0 && (
             <div className="flex flex-col gap-2 border-t border-border/40 px-4 py-3 text-[11px] text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between">
               <span className="tabular-nums">
-                Showing {Math.min((attendancePage - 1) * REPORTS_AND_ATTENDANCE_PAGE_SIZE + 1, attendanceTotalMatched)} to{' '}
-                {Math.min(attendancePage * REPORTS_AND_ATTENDANCE_PAGE_SIZE, attendanceTotalMatched)} of {attendanceTotalMatched} records
+                Showing {Math.min((attendancePage - 1) * ADMIN_ATTENDANCE_PAGE_SIZE + 1, attendanceTotalMatched)} to{' '}
+                {Math.min(attendancePage * ADMIN_ATTENDANCE_PAGE_SIZE, attendanceTotalMatched)} of {attendanceTotalMatched} records
               </span>
               <div className="flex flex-wrap items-center gap-1.5">
                 <Button

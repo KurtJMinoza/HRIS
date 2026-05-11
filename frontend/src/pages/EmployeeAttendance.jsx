@@ -15,8 +15,10 @@ import {
   UserX,
   AlertCircle,
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   Download,
+  Loader2,
 } from 'lucide-react'
 import { exportRowsToXlsx } from '@/lib/excelExport'
 import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRecordsDataTable'
@@ -56,7 +58,12 @@ import {
   ADMIN_FORM_DIALOG_MAX_W_MD,
 } from '@/lib/adminFormDialogStyles'
 import { cn } from '@/lib/utils'
-import { getMyAttendanceSummary, recordAttendance, getStoredUser } from '@/api'
+import {
+  getMyAttendanceSummary,
+  recordAttendance,
+  getStoredUser,
+  EMPLOYEE_ATTENDANCE_PAGE_SIZE,
+} from '@/api'
 import { Input } from '@/components/ui/input'
 import { ScannerInput } from '@/components/ScannerInput'
 import { useToast } from '@/components/ui/use-toast'
@@ -70,10 +77,116 @@ function getLocalDateStr() {
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
 }
 
+/** Map `/attendance/summary` day rows to Employee Attendance table rows. */
+function mapSummaryDaysToRows(days, fromDate, toDate) {
+  const todayKey = new Date().toISOString().slice(0, 10)
+  return (Array.isArray(days) ? days : [])
+    .filter((d) => {
+      if (fromDate && d.date < fromDate) return false
+      if (toDate && d.date > toDate) return false
+      return true
+    })
+    .map((d) => {
+      const isFuture = d.date > todayKey
+      const rawStatus = d.status || '—'
+      const status = isFuture ? 'upcoming' : rawStatus
+      const lateLabel = d.late_label || (rawStatus === 'late' ? 'Late' : null)
+      return {
+        date: d.date,
+        time_in: isFuture ? null : d.time_in,
+        time_out: isFuture ? null : d.time_out,
+        virtual_time_out_from_ot: isFuture ? null : d.virtual_time_out_from_ot,
+        scheduled_regular_hours: isFuture ? null : d.scheduled_regular_hours,
+        schedule_in: isFuture ? null : d.schedule_in,
+        schedule_out: isFuture ? null : d.schedule_out,
+        total_rendered_hours: isFuture ? null : d.total_rendered_hours,
+        total_hours: isFuture ? null : d.total_hours,
+        night_hours: isFuture ? null : d.night_hours,
+        status,
+        late_label: lateLabel,
+        late_minutes: isFuture ? null : d.late_minutes,
+        undertime_minutes: isFuture ? null : d.undertime_minutes,
+        overtime_minutes: isFuture ? null : d.overtime_minutes,
+        rendered_overtime_hours: isFuture ? null : d.rendered_overtime_hours,
+        approved_overtime_hours: isFuture ? null : d.approved_overtime_hours,
+        unapproved_overtime_hours: isFuture ? null : d.unapproved_overtime_hours,
+        overtime_status: isFuture ? null : d.overtime_status,
+        payroll_impact_hours: isFuture ? null : d.payroll_impact_hours,
+        overtime_hours: isFuture ? null : d.overtime_hours,
+        presence_filing: d.presence_filing ?? null,
+        presence_label: d.presence_label ?? null,
+        presence_issue: d.presence_issue ?? null,
+        leave_pay_status: d.leave_pay_status ?? null,
+      }
+    })
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+}
+
+/** When history is paginated, today may not be in `days`; mirror row shape from `summary.today`. */
+function mapSummaryTodayToAttendanceRow(todayIso, t) {
+  if (!t?.date || String(t.date) !== String(todayIso)) return null
+  const rawStatus = t.status || '—'
+  const lateLabel = t.late_label || (rawStatus === 'late' ? 'Late' : null)
+  return {
+    date: t.date,
+    time_in: t.time_in ?? null,
+    time_out: t.time_out ?? null,
+    virtual_time_out_from_ot: t.virtual_time_out_from_ot ?? null,
+    scheduled_regular_hours: null,
+    schedule_in: null,
+    schedule_out: null,
+    total_rendered_hours: null,
+    total_hours: null,
+    night_hours: null,
+    status: rawStatus,
+    late_label: lateLabel,
+    late_minutes: t.late_minutes ?? null,
+    undertime_minutes: t.undertime_minutes ?? null,
+    overtime_minutes: null,
+    rendered_overtime_hours: null,
+    approved_overtime_hours: null,
+    unapproved_overtime_hours: null,
+    overtime_status: null,
+    payroll_impact_hours: null,
+    overtime_hours: null,
+    presence_filing: t.presence_filing ?? null,
+    presence_label: t.presence_label ?? null,
+    presence_issue: t.presence_issue ?? null,
+    leave_pay_status: t.leave_pay_status ?? null,
+  }
+}
+
+function filterEmployeeAttendanceRows(list, scopeSegment, debouncedSearchQuery, viewerUser) {
+  let out = list
+  if (scopeSegment === 'pending') {
+    out = out.filter((r) => isPendingEmployeeRow(r))
+  }
+  const q = debouncedSearchQuery.toLowerCase()
+  if (!q) return out
+  return out.filter((r) => {
+    const refId = attendanceRecordRef(null, r.date).toLowerCase()
+    const status = resolveEmployeeStatusLabel(r).toLowerCase()
+    const dt = (r.date || '').toLowerCase()
+    return (
+      refId.includes(q) ||
+      status.includes(q) ||
+      dt.includes(q) ||
+      (viewerUser?.company?.name || '').toLowerCase().includes(q) ||
+      (viewerUser?.company_name || '').toLowerCase().includes(q) ||
+      (viewerUser?.department?.name || viewerUser?.department_name || viewerUser?.department || '')
+        .toLowerCase()
+        .includes(q)
+    )
+  })
+}
+
 export default function EmployeeAttendance() {
   const [rows, setRows] = useState([])
   const [attSummary, setAttSummary] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [daysListMeta, setDaysListMeta] = useState(null)
+  const [historyPage, setHistoryPage] = useState(1)
   const [error, setError] = useState(null)
   const [successMessage, setSuccessMessage] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -82,6 +195,7 @@ export default function EmployeeAttendance() {
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailRow, setDetailRow] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [scopeSegment, setScopeSegment] = useState('all')
   const lastScanRef = useRef({ text: null, at: 0 })
   const { toast } = useToast()
@@ -96,63 +210,78 @@ export default function EmployeeAttendance() {
     return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10)
   })
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
   const fetchHistory = useCallback(async () => {
     setError(null)
     setLoading(true)
+    setHistoryPage(1)
+    setDaysListMeta(null)
     try {
-      const data = await getMyAttendanceSummary({ from_date: fromDate, to_date: toDate })
+      const data = await getMyAttendanceSummary({
+        from_date: fromDate,
+        to_date: toDate,
+        merge_all_pages: false,
+        per_page: EMPLOYEE_ATTENDANCE_PAGE_SIZE,
+        page: 1,
+      })
       setAttSummary(data.summary ?? null)
-      const days = Array.isArray(data.days) ? data.days : []
-      const todayKey = new Date().toISOString().slice(0, 10)
-      const mapped = days
-        .filter((d) => {
-          if (fromDate && d.date < fromDate) return false
-          if (toDate && d.date > toDate) return false
-          return true
-        })
-        .map((d) => {
-          const isFuture = d.date > todayKey
-          const rawStatus = d.status || '—'
-          const status = isFuture ? 'upcoming' : rawStatus
-          const lateLabel = d.late_label || (rawStatus === 'late' ? 'Late' : null)
-          return {
-            date: d.date,
-            time_in: isFuture ? null : d.time_in,
-            time_out: isFuture ? null : d.time_out,
-            virtual_time_out_from_ot: isFuture ? null : d.virtual_time_out_from_ot,
-            scheduled_regular_hours: isFuture ? null : d.scheduled_regular_hours,
-            schedule_in: isFuture ? null : d.schedule_in,
-            schedule_out: isFuture ? null : d.schedule_out,
-            total_rendered_hours: isFuture ? null : d.total_rendered_hours,
-            total_hours: isFuture ? null : d.total_hours,
-            night_hours: isFuture ? null : d.night_hours,
-            status,
-            late_label: lateLabel,
-            late_minutes: isFuture ? null : d.late_minutes,
-            undertime_minutes: isFuture ? null : d.undertime_minutes,
-            overtime_minutes: isFuture ? null : d.overtime_minutes,
-            rendered_overtime_hours: isFuture ? null : d.rendered_overtime_hours,
-            approved_overtime_hours: isFuture ? null : d.approved_overtime_hours,
-            unapproved_overtime_hours: isFuture ? null : d.unapproved_overtime_hours,
-            overtime_status: isFuture ? null : d.overtime_status,
-            payroll_impact_hours: isFuture ? null : d.payroll_impact_hours,
-            overtime_hours: isFuture ? null : d.overtime_hours,
-            presence_filing: d.presence_filing ?? null,
-            presence_label: d.presence_label ?? null,
-            presence_issue: d.presence_issue ?? null,
-            leave_pay_status: d.leave_pay_status ?? null,
-          }
-        })
-        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+      setDaysListMeta(data.meta?.days ?? null)
+      setHistoryPage(Number(data.meta?.days?.current_page) || 1)
+      const mapped = mapSummaryDaysToRows(data.days, fromDate, toDate)
       setRows(mapped)
     } catch (e) {
       setError(e.message)
       setRows([])
       setAttSummary(null)
+      setDaysListMeta(null)
     } finally {
       setLoading(false)
     }
   }, [fromDate, toDate])
+
+  const goToHistoryPage = useCallback(
+    async (page) => {
+      const lastPage = Math.max(1, Number(daysListMeta?.last_page) || 1)
+      const target = Math.min(Math.max(1, Math.floor(Number(page)) || 1), lastPage)
+      if (!daysListMeta?.paginated || target === historyPage || loading || loadingMore) return
+      setLoadingMore(true)
+      setError(null)
+      try {
+        const data = await getMyAttendanceSummary({
+          from_date: fromDate,
+          to_date: toDate,
+          merge_all_pages: false,
+          per_page: EMPLOYEE_ATTENDANCE_PAGE_SIZE,
+          page: target,
+        })
+        setAttSummary(data.summary ?? null)
+        setDaysListMeta(data.meta?.days ?? null)
+        setHistoryPage(Number(data.meta?.days?.current_page) || target)
+        setRows(mapSummaryDaysToRows(data.days, fromDate, toDate))
+      } catch (e) {
+        setError(e.message)
+      } finally {
+        setLoadingMore(false)
+      }
+    },
+    [
+      fromDate,
+      toDate,
+      daysListMeta?.paginated,
+      daysListMeta?.last_page,
+      historyPage,
+      loading,
+      loadingMore,
+    ],
+  )
+
+  const historyLastPage = Math.max(1, Number(daysListMeta?.last_page) || 1)
+  const paginatedMultiPage =
+    Boolean(daysListMeta?.paginated) && historyLastPage > 1
 
   useEffect(() => {
     fetchHistory()
@@ -160,35 +289,17 @@ export default function EmployeeAttendance() {
 
   const viewerUser = getStoredUser()
 
-  const displayRows = useMemo(() => {
-    let list = rows
-    if (scopeSegment === 'pending') {
-      list = list.filter((r) => isPendingEmployeeRow(r))
-    }
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return list
-    return list.filter((r) => {
-      const refId = attendanceRecordRef(null, r.date).toLowerCase()
-      const status = resolveEmployeeStatusLabel(r).toLowerCase()
-      const dt = (r.date || '').toLowerCase()
-      return (
-        refId.includes(q) ||
-        status.includes(q) ||
-        dt.includes(q) ||
-        (viewerUser?.company?.name || '').toLowerCase().includes(q) ||
-        (viewerUser?.company_name || '').toLowerCase().includes(q) ||
-        (viewerUser?.department?.name || viewerUser?.department_name || viewerUser?.department || '')
-          .toLowerCase()
-          .includes(q)
-      )
-    })
-  }, [rows, scopeSegment, searchQuery, viewerUser])
+  const displayRows = useMemo(
+    () => filterEmployeeAttendanceRows(rows, scopeSegment, debouncedSearchQuery, viewerUser),
+    [rows, scopeSegment, debouncedSearchQuery, viewerUser],
+  )
 
   const todayIso = getLocalDateStr()
-  const todayRow = useMemo(
-    () => rows.find((r) => r.date === todayIso) || null,
-    [rows, todayIso]
-  )
+  const todayRow = useMemo(() => {
+    const fromPage = rows.find((r) => r.date === todayIso)
+    if (fromPage) return fromPage
+    return mapSummaryTodayToAttendanceRow(todayIso, attSummary?.today)
+  }, [rows, todayIso, attSummary?.today])
 
   const isClockedIn =
     !!todayRow &&
@@ -333,28 +444,36 @@ export default function EmployeeAttendance() {
   const viewerDepartment =
     viewerUser?.department?.name ?? viewerUser?.department_name ?? viewerUser?.department ?? '—'
 
-  function exportEmployeeCsv() {
-    const header = [
-      'Record ID',
-      'Date',
-      'Rendered Hours',
-      'Type',
-      'Documents',
-      'Activity',
-      'Status',
-    ]
-    const csvRows = [
-      header,
-      ...displayRows.map((r) => [
-        attendanceRecordRef(null, r.date),
-        r.date,
-        employeeDurationLabel(r),
-        employeeTypeReasonLabel(r),
-        r.presence_filing ? 1 : 0,
-        employeeActivityLine(r),
-        resolveEmployeeStatusLabel(r),
-      ]),
-    ]
+  async function exportEmployeeCsv() {
+    try {
+      const data = await getMyAttendanceSummary({
+        from_date: fromDate,
+        to_date: toDate,
+        merge_all_pages: true,
+      })
+      const baseRows = mapSummaryDaysToRows(data.days, fromDate, toDate)
+      const exportRows = filterEmployeeAttendanceRows(baseRows, scopeSegment, debouncedSearchQuery, viewerUser)
+      const header = [
+        'Record ID',
+        'Date',
+        'Rendered Hours',
+        'Type',
+        'Documents',
+        'Activity',
+        'Status',
+      ]
+      const csvRows = [
+        header,
+        ...exportRows.map((r) => [
+          attendanceRecordRef(null, r.date),
+          r.date,
+          employeeDurationLabel(r),
+          employeeTypeReasonLabel(r),
+          r.presence_filing ? 1 : 0,
+          employeeActivityLine(r),
+          resolveEmployeeStatusLabel(r),
+        ]),
+      ]
     const blob = new Blob(
       [csvRows.map((cols) => cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')],
       { type: 'text/csv;charset=utf-8;' },
@@ -367,20 +486,34 @@ export default function EmployeeAttendance() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+    } catch (e) {
+      toast({ title: 'Export failed', description: e.message, variant: 'destructive' })
+    }
   }
 
   async function exportEmployeeExcel() {
-    const headers = ['Record ID', 'Date', 'Rendered Hours', 'Type', 'Documents', 'Activity', 'Status']
-    const rows = displayRows.map((r) => [
-      attendanceRecordRef(null, r.date),
-      r.date,
-      employeeDurationLabel(r),
-      employeeTypeReasonLabel(r),
-      r.presence_filing ? 1 : 0,
-      employeeActivityLine(r),
-      resolveEmployeeStatusLabel(r),
-    ])
-    await exportRowsToXlsx(headers, rows, `my-attendance-${fromDate}-${toDate}.xlsx`, 'Attendance')
+    try {
+      const data = await getMyAttendanceSummary({
+        from_date: fromDate,
+        to_date: toDate,
+        merge_all_pages: true,
+      })
+      const baseRows = mapSummaryDaysToRows(data.days, fromDate, toDate)
+      const exportRows = filterEmployeeAttendanceRows(baseRows, scopeSegment, debouncedSearchQuery, viewerUser)
+      const headers = ['Record ID', 'Date', 'Rendered Hours', 'Type', 'Documents', 'Activity', 'Status']
+      const xRows = exportRows.map((r) => [
+        attendanceRecordRef(null, r.date),
+        r.date,
+        employeeDurationLabel(r),
+        employeeTypeReasonLabel(r),
+        r.presence_filing ? 1 : 0,
+        employeeActivityLine(r),
+        resolveEmployeeStatusLabel(r),
+      ])
+      await exportRowsToXlsx(headers, xRows, `my-attendance-${fromDate}-${toDate}.xlsx`, 'Attendance')
+    } catch (e) {
+      toast({ title: 'Export failed', description: e.message, variant: 'destructive' })
+    }
   }
 
   return (
@@ -708,7 +841,16 @@ export default function EmployeeAttendance() {
         <Card className="overflow-hidden rounded-xl border border-border/60 shadow-sm">
           <CardHeader>
             <CardTitle>Attendance history</CardTitle>
-            <CardDescription>Tap a row for clock times, filings, and remarks.</CardDescription>
+            <CardDescription>
+              Tap a row for clock times, filings, and remarks.
+              {daysListMeta?.paginated && typeof daysListMeta.total === 'number' ? (
+                <span className="mt-1 block text-xs">
+                  Page {historyPage} of {daysListMeta.last_page ?? '—'} ·{' '}
+                  {daysListMeta.per_page ?? EMPLOYEE_ATTENDANCE_PAGE_SIZE} days per page ·{' '}
+                  {daysListMeta.total} days in this period.
+                </span>
+              ) : null}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <AttendanceRecordsDataTable
@@ -730,6 +872,59 @@ export default function EmployeeAttendance() {
                   : 'No records match your search or filters.'
               }
             />
+            {paginatedMultiPage ? (
+              <div className="mt-4 flex w-full flex-col items-end gap-3 border-t border-border/60 pt-4">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    disabled={historyPage <= 1 || loading || loadingMore}
+                    onClick={() => goToHistoryPage(historyPage - 1)}
+                  >
+                    <ChevronLeft className="size-4" aria-hidden />
+                    Previous
+                  </Button>
+                  {historyLastPage <= 15 ? (
+                    Array.from({ length: historyLastPage }, (_, i) => i + 1).map((p) => (
+                      <Button
+                        key={p}
+                        type="button"
+                        variant={p === historyPage ? 'default' : 'outline'}
+                        size="sm"
+                        className="min-w-20"
+                        disabled={loading || loadingMore}
+                        onClick={() => goToHistoryPage(p)}
+                      >
+                        Page {p}
+                      </Button>
+                    ))
+                  ) : (
+                    <span className="px-2 text-sm text-muted-foreground">
+                      Page {historyPage} of {historyLastPage}
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    disabled={historyPage >= historyLastPage || loading || loadingMore}
+                    onClick={() => goToHistoryPage(historyPage + 1)}
+                  >
+                    Next
+                    <ChevronRight className="size-4" aria-hidden />
+                  </Button>
+                </div>
+                {loadingMore ? (
+                  <p className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    Loading…
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
