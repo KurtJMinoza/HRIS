@@ -1,6 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Building2, CirclePlus, Eye, Save, Search, Trash2, UserCircle2, Wallet } from 'lucide-react'
+import {
+  BriefcaseBusiness,
+  Building2,
+  Calculator,
+  CheckCircle2,
+  ChevronDown,
+  CirclePlus,
+  Eye,
+  Info,
+  Pencil,
+  RefreshCw,
+  Save,
+  Search,
+  Trash2,
+  UserCircle2,
+  UsersRound,
+  Wallet,
+} from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,7 +40,9 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { hrPanelPath } from '@/lib/hrRoutes'
+import { cn } from '@/lib/utils'
 import {
   assignEmployeeCompensation,
   deleteEmployeeCompensation,
@@ -259,6 +278,8 @@ export default function AdminEmployeeCompensationPage() {
     () => compensationData.find((entry) => entry.employee?.id === activeEmployeeId) || null,
     [activeEmployeeId, compensationData],
   )
+  const activeEmployeePhoto = employeeAvatarSrc(activeEmployee)
+  const activeEmployeeFallbackClass = getEmployeeAvatarColorClass(activeEmployee?.id, activeEmployee?.name)
 
   const summary = activeCompensation?.summary || {}
   const earnings = summary.earnings || []
@@ -292,7 +313,6 @@ export default function AdminEmployeeCompensationPage() {
       import.meta.env !== undefined &&
       Boolean(import.meta.env.DEV)
     if (!dev) return
-    // eslint-disable-next-line no-console
     console.debug('[hr] compensation.schedule', selection, payload)
   }, [])
 
@@ -565,16 +585,16 @@ export default function AdminEmployeeCompensationPage() {
   const pendingForActive = pendingAssignments.filter((item) => item.employeeId === activeEmployeeId)
 
   return (
-    <div className="w-full min-w-0 max-w-none space-y-4 bg-white px-3 py-4 text-[#0A0A0A] sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6 dark:bg-background dark:text-foreground">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-border dark:bg-card">
+    <div className="w-full min-w-0 max-w-none space-y-4 bg-background px-3 py-4 text-foreground sm:space-y-5 sm:px-4 md:px-5 lg:space-y-6 lg:px-6 lg:py-5 3xl:space-y-8 3xl:px-10 3xl:py-6">
+      <section className="rounded-[1.75rem] border border-border/70 bg-card p-6 shadow-sm dark:shadow-[0_14px_45px_rgba(0,0,0,0.28)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+            <div className="inline-flex items-center gap-2 rounded-full bg-brand/10 px-3 py-1 text-xs font-semibold text-brand">
               <Wallet className="size-3.5" />
               Compensation
             </div>
-            <h1 className="hr-page-title mt-3 text-slate-900">Employee Compensation</h1>
-            <p className="mt-2 max-w-2xl text-sm text-slate-600">
+            <h1 className="hr-page-title mt-3 text-foreground">Employee Compensation</h1>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
               Select employees, review their assigned compensation, and queue updates before saving.
             </p>
           </div>
@@ -588,11 +608,11 @@ export default function AdminEmployeeCompensationPage() {
       </section>
 
       {pendingAssignments.length > 0 ? (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+        <section className="rounded-[1.25rem] border border-amber-300/45 bg-amber-500/10 p-4 text-foreground">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Pending Changes</p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="text-sm font-semibold text-foreground">Pending Changes</p>
+              <p className="mt-1 text-sm text-muted-foreground">
                 {pendingAssignments.length} item{pendingAssignments.length === 1 ? '' : 's'} queued across {new Set(pendingAssignments.map((item) => item.employeeId)).size} employee{new Set(pendingAssignments.map((item) => item.employeeId)).size === 1 ? '' : 's'}.
               </p>
             </div>
@@ -600,7 +620,7 @@ export default function AdminEmployeeCompensationPage() {
               <Button type="button" variant="outline" className="rounded-xl" onClick={() => setPendingAssignments([])}>
                 Clear
               </Button>
-              <Button type="button" className="rounded-xl bg-slate-900 text-white hover:bg-slate-800" onClick={savePendingAssignments} disabled={saving}>
+              <Button type="button" className="rounded-xl bg-brand text-brand-foreground shadow-lg shadow-brand/20 hover:bg-brand-strong" onClick={savePendingAssignments} disabled={saving}>
                 <Save className="mr-2 size-4" />
                 {saving ? 'Saving...' : 'Save Changes'}
               </Button>
@@ -609,18 +629,18 @@ export default function AdminEmployeeCompensationPage() {
         </section>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <aside className="rounded-[1.5rem] border border-border/70 bg-card p-4 shadow-sm dark:shadow-[0_14px_45px_rgba(0,0,0,0.22)]">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Employees</h2>
-              <p className="text-sm text-slate-500">Search and choose one</p>
+              <h2 className="text-lg font-semibold text-foreground">Employees</h2>
+              <p className="text-sm text-muted-foreground">Search and choose one</p>
             </div>
-            <Badge className="rounded-full bg-slate-100 text-slate-700">{activeEmployee ? 1 : 0}</Badge>
+            <Badge className="rounded-full bg-brand/10 text-brand hover:bg-brand/10">{activeEmployee ? 1 : 0}</Badge>
           </div>
 
           <label className="relative mt-4 block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
               value={employeeSearch}
               onChange={(e) => setEmployeeSearch(e.target.value)}
@@ -632,15 +652,17 @@ export default function AdminEmployeeCompensationPage() {
           <div className="mt-4 max-h-[720px] space-y-2 overflow-y-auto pr-1">
             {loading ? (
               Array.from({ length: 8 }).map((_, index) => (
-                <div key={index} className="h-20 animate-pulse rounded-xl bg-slate-100" />
+                <div key={index} className="h-20 animate-pulse rounded-xl bg-muted" />
               ))
             ) : employees.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
+              <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
                 No employees matched your search.
               </div>
             ) : (
               employees.map((employee) => {
                 const active = activeEmployeeId === employee.id
+                const photo = employeeAvatarSrc(employee)
+                const fallbackClass = getEmployeeAvatarColorClass(employee.id, employee.name)
                 return (
                   <button
                     key={employee.id}
@@ -648,26 +670,31 @@ export default function AdminEmployeeCompensationPage() {
                     onClick={() => selectEmployee(employee)}
                     className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                       active
-                        ? 'border-slate-900 bg-slate-900 text-white'
-                        : 'border-slate-200 bg-white hover:bg-slate-50'
+                        ? 'border-brand/70 bg-brand/10 shadow-sm ring-2 ring-brand/10'
+                        : 'border-border/70 bg-background/65 hover:border-brand/40 hover:bg-brand/5'
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <Avatar className="size-11 border border-white/20">
-                        <AvatarImage src={employee.profile_image || undefined} alt={employee.name} />
-                        <AvatarFallback className={active ? 'bg-white/10 text-white' : 'bg-slate-100 text-slate-700'}>
+                      <Avatar className="size-11 border border-border/70">
+                        <AvatarImage src={photo || undefined} alt={employee.name} className="object-cover" />
+                        <AvatarFallback className={cn('font-semibold', fallbackClass)}>
                           {initials(employee.name)}
                         </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0 flex-1">
-                        <p className={`truncate text-sm font-semibold ${active ? 'text-white' : 'text-slate-900'}`}>{employee.name}</p>
-                        <p className={`mt-1 truncate text-xs ${active ? 'text-slate-300' : 'text-slate-500'}`}>
+                        <p className="truncate text-sm font-semibold text-foreground">{employee.name}</p>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
                           {employee.position || 'No position'}
                         </p>
-                        <p className={`mt-1 truncate text-[11px] ${active ? 'text-slate-300' : 'text-slate-500'}`}>
+                        <p className="mt-1 truncate text-[11px] text-muted-foreground">
                           {employee.employee_code || 'No code'}
                         </p>
                       </div>
+                      {active ? (
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-sm">
+                          <CheckCircle2 className="size-4" aria-hidden />
+                        </span>
+                      ) : null}
                     </div>
                   </button>
                 )
@@ -679,22 +706,22 @@ export default function AdminEmployeeCompensationPage() {
         <main className="space-y-6">
           {activeEmployee ? (
             <>
-              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <section className="rounded-[1.5rem] border border-border/70 bg-card p-6 shadow-sm dark:shadow-[0_14px_45px_rgba(0,0,0,0.22)]">
                 <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
                   <div className="flex items-center gap-4">
-                    <Avatar className="size-16 border border-slate-200">
-                      <AvatarImage src={activeEmployee.profile_image || undefined} alt={activeEmployee.name} />
-                      <AvatarFallback className="bg-slate-100 text-slate-700">
+                    <Avatar className="size-16 border border-border/70">
+                      <AvatarImage src={activeEmployeePhoto || undefined} alt={activeEmployee.name} className="object-cover" />
+                      <AvatarFallback className={cn('text-lg font-bold', activeEmployeeFallbackClass)}>
                         {initials(activeEmployee.name)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-2xl font-semibold text-slate-900">{activeEmployee.name}</h2>
-                        <Badge className="rounded-full bg-slate-100 text-slate-700">{activeEmployee.employee_code || 'No code'}</Badge>
+                        <h2 className="text-2xl font-semibold text-foreground">{activeEmployee.name}</h2>
+                        <Badge className="rounded-full bg-muted text-muted-foreground hover:bg-muted">{activeEmployee.employee_code || 'No code'}</Badge>
                       </div>
-                      <p className="mt-1 text-sm text-slate-500">{activeEmployee.position || 'No position assigned'}</p>
-                      <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">
+                      <p className="mt-1 text-sm text-muted-foreground">{activeEmployee.position || 'No position assigned'}</p>
+                      <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
                         <Building2 className="size-4" />
                         <span>{activeEmployee.department || 'No department info'}</span>
                       </div>
@@ -716,11 +743,11 @@ export default function AdminEmployeeCompensationPage() {
                       onClick={handleRefreshPreview}
                       disabled={loading}
                     >
-                      <Save className="mr-2 size-4" />
+                      <RefreshCw className="mr-2 size-4" />
                       Refresh Preview
                     </Button>
                     {summaryPending ? (
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-muted-foreground">
                         Preview is warming up. Click Refresh if values still show ₱0.00.
                       </span>
                     ) : null}
@@ -735,7 +762,7 @@ export default function AdminEmployeeCompensationPage() {
                       <Eye className="mr-2 size-4" />
                       View Profile
                     </Button>
-                    <Button type="button" onClick={openNewAssignmentDialog} className="rounded-xl bg-slate-900 text-white hover:bg-slate-800">
+                    <Button type="button" onClick={openNewAssignmentDialog} className="rounded-xl bg-brand text-brand-foreground shadow-lg shadow-brand/20 hover:bg-brand-strong">
                       <CirclePlus className="mr-2 size-4" />
                       Add Component
                     </Button>
@@ -744,11 +771,11 @@ export default function AdminEmployeeCompensationPage() {
               </section>
 
               {pendingForActive.length > 0 ? (
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <p className="text-sm font-semibold text-slate-900">Pending for {activeEmployee.name}</p>
+                <section className="rounded-[1.25rem] border border-border/70 bg-card p-4 shadow-sm">
+                  <p className="text-sm font-semibold text-foreground">Pending for {activeEmployee.name}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {pendingForActive.map((item, index) => (
-                      <Badge key={`${item.code}-${index}`} className="rounded-full bg-slate-100 text-slate-700">
+                      <Badge key={`${item.code}-${index}`} className="rounded-full bg-brand/10 text-brand hover:bg-brand/10">
                         {item.name}
                       </Badge>
                     ))}
@@ -756,18 +783,18 @@ export default function AdminEmployeeCompensationPage() {
                 </section>
               ) : null}
 
-              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <section className="rounded-[1.5rem] border border-border/70 bg-card p-5 shadow-sm dark:shadow-[0_14px_45px_rgba(0,0,0,0.22)]">
                 <Tabs defaultValue="earnings" className="w-full">
-                  <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-3 border-b border-border/70 pb-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h3 className="text-lg font-semibold text-slate-900">Compensation Components</h3>
-                      <p className="mt-1 text-sm text-slate-500">Review earnings and deductions for the selected employee.</p>
+                      <h3 className="text-lg font-semibold text-foreground">Compensation Components</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">Review earnings and deductions for the selected employee.</p>
                     </div>
-                    <TabsList className="h-auto rounded-xl bg-slate-100 p-1">
-                      <TabsTrigger value="earnings" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white">
+                    <TabsList className="h-auto rounded-xl bg-muted p-1">
+                      <TabsTrigger value="earnings" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-card data-[state=active]:text-brand">
                         Earnings
                       </TabsTrigger>
-                      <TabsTrigger value="deductions" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-white">
+                      <TabsTrigger value="deductions" className="rounded-lg px-4 py-2 text-sm font-medium data-[state=active]:bg-card data-[state=active]:text-brand">
                         Deductions
                       </TabsTrigger>
                     </TabsList>
@@ -812,10 +839,10 @@ export default function AdminEmployeeCompensationPage() {
               </section>
             </>
           ) : (
-            <section className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center shadow-sm">
-              <UserCircle2 className="mx-auto size-12 text-slate-300" />
-              <h2 className="mt-4 text-xl font-semibold text-slate-900">Select an employee</h2>
-              <p className="mt-2 text-sm text-slate-500">
+            <section className="rounded-[1.5rem] border border-dashed border-border bg-card px-6 py-16 text-center shadow-sm">
+              <UserCircle2 className="mx-auto size-12 text-muted-foreground/50" />
+              <h2 className="mt-4 text-xl font-semibold text-foreground">Select an employee</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
                 Choose someone from the list to review and update compensation.
               </p>
             </section>
@@ -830,67 +857,71 @@ export default function AdminEmployeeCompensationPage() {
           if (!open) setDraftForm(EMPTY_FORM)
         }}
       >
-        <DialogContent className="max-w-4xl rounded-3xl border-slate-200 p-0">
-          <div className="border-b border-slate-200 px-6 py-5">
+        <DialogContent
+          overlayClassName="bg-black/60 backdrop-blur-[3px]"
+          innerClassName="overflow-hidden p-0"
+          closeButtonClassName="right-4 top-4 size-10 rounded-xl border-border/70 bg-background/95 text-foreground shadow-sm hover:bg-muted sm:right-6 sm:top-6 sm:size-11"
+          className="max-h-[88vh] !w-[94vw] !max-w-3xl overflow-hidden rounded-[1.25rem] border border-border/70 bg-card p-0 text-card-foreground shadow-2xl sm:rounded-[1.5rem]"
+        >
+          <div className="border-b border-border/60 bg-card px-5 py-5 pr-16 sm:px-8 sm:py-6 sm:pr-24">
             <DialogHeader>
-              <DialogTitle className="text-xl font-semibold text-slate-900">
-                Add Component to {activeEmployee?.name || 'Employee'}
-              </DialogTitle>
-              <DialogDescription className="text-sm text-slate-500">
-                Select a pay component from the catalog, then set the employee-specific amount.
-              </DialogDescription>
+              <div className="flex gap-4">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand sm:size-12 sm:bg-transparent">
+                  <UsersRound className="size-7 fill-brand/20 stroke-[2.2] sm:size-8" aria-hidden />
+                </div>
+                <div>
+                  <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+                    Add Component to {activeEmployee?.name || 'Employee'}
+                  </DialogTitle>
+                  <DialogDescription className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-base">
+                    Select a pay component from the catalog, then set the employee-specific amount.
+                  </DialogDescription>
+                </div>
+              </div>
             </DialogHeader>
           </div>
 
-          <form onSubmit={addPendingAssignment} className="space-y-6 px-7 py-7">
-            <div className="grid grid-cols-1 gap-5">
-              <Field label="Pay Component">
-                <select value={draftForm.pay_component_id} onChange={(e) => applyMasterComponent(e.target.value)} className={inputClass} required>
-                  <option value="" disabled>Select a pay component</option>
-                  {components.map((component) => (
-                    <option key={component.id} value={component.id}>
-                      {component.name} ({component.code})
-                    </option>
-                  ))}
-                </select>
+          <form onSubmit={addPendingAssignment} className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
+              <Field label="Pay Component" required>
+                <div className="relative">
+                  <select
+                    value={draftForm.pay_component_id}
+                    onChange={(e) => applyMasterComponent(e.target.value)}
+                    className={componentModalSelectClass}
+                    required
+                  >
+                    <option value="" disabled>Select a pay component</option>
+                    {components.map((component) => (
+                      <option key={component.id} value={component.id}>
+                        {component.name} ({component.code})
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-5 top-1/2 size-5 -translate-y-1/2 text-foreground" aria-hidden />
+                </div>
               </Field>
 
               {draftForm.pay_component_id ? (
-                <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm sm:grid-cols-3">
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Type</p>
-                    <p className="mt-1 font-semibold text-slate-900 capitalize">{draftForm.type}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Category</p>
-                    <p className="mt-1 font-semibold text-slate-900">{draftForm.category || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Calculation</p>
-                    <p className="mt-1 font-semibold text-slate-900">{formatCalculationType(draftForm.calculation_type)}</p>
-                  </div>
-                </div>
+                <ComponentDefinitionStrip draftForm={draftForm} />
               ) : null}
 
               {draftForm.calculation_type === 'fixed_amount' ? (
-                <Field label="Amount (₱)">
-                  <input
+                <Field label="Amount (₱)" required>
+                  <CurrencyInput
                     value={draftForm.value}
-                    onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
-                    className={inputClass}
-                    inputMode="decimal"
-                    placeholder="0.00"
+                    onChange={(value) => setDraftForm((prev) => ({ ...prev, value }))}
                     required
                   />
                 </Field>
               ) : null}
 
               {draftForm.calculation_type === 'percent_basic' || draftForm.calculation_type === 'percent_gross' ? (
-                <Field label={draftForm.calculation_type === 'percent_basic' ? 'Percentage of Basic (%)' : 'Percentage of Gross (%)'}>
+                <Field label={draftForm.calculation_type === 'percent_basic' ? 'Percentage of Basic (%)' : 'Percentage of Gross (%)'} required>
                   <input
                     value={draftForm.value}
                     onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
-                    className={inputClass}
+                    className={componentModalInputClass}
                     inputMode="decimal"
                     placeholder="e.g. 5"
                     required
@@ -900,21 +931,18 @@ export default function AdminEmployeeCompensationPage() {
 
               {draftForm.calculation_type === 'hourly' ? (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Hourly Rate (₱)">
-                    <input
+                  <Field label="Hourly Rate (₱)" required>
+                    <CurrencyInput
                       value={draftForm.hourly_rate}
-                      onChange={(e) => setDraftForm((prev) => ({ ...prev, hourly_rate: e.target.value, value: e.target.value }))}
-                      className={inputClass}
-                      inputMode="decimal"
-                      placeholder="0.00"
+                      onChange={(value) => setDraftForm((prev) => ({ ...prev, hourly_rate: value, value }))}
                       required
                     />
                   </Field>
-                  <Field label="Hours per Pay Period">
+                  <Field label="Hours per Pay Period" required>
                     <input
                       value={draftForm.hours}
                       onChange={(e) => setDraftForm((prev) => ({ ...prev, hours: e.target.value }))}
-                      className={inputClass}
+                      className={componentModalInputClass}
                       inputMode="decimal"
                       placeholder="e.g. 40"
                       required
@@ -925,13 +953,10 @@ export default function AdminEmployeeCompensationPage() {
 
               {draftForm.calculation_type === 'daily_rate' ? (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Daily Rate (₱)">
-                    <input
+                  <Field label="Daily Rate (₱)" required>
+                    <CurrencyInput
                       value={draftForm.value}
-                      onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
-                      className={inputClass}
-                      inputMode="decimal"
-                      placeholder="0.00"
+                      onChange={(value) => setDraftForm((prev) => ({ ...prev, value }))}
                       required
                     />
                   </Field>
@@ -939,7 +964,7 @@ export default function AdminEmployeeCompensationPage() {
                     <input
                       value={draftForm.hours}
                       onChange={(e) => setDraftForm((prev) => ({ ...prev, hours: e.target.value }))}
-                      className={inputClass}
+                      className={componentModalInputClass}
                       inputMode="decimal"
                       placeholder="e.g. 22"
                     />
@@ -950,19 +975,16 @@ export default function AdminEmployeeCompensationPage() {
               {draftForm.calculation_type === 'formula' ? (
                 <>
                   <Field label="Default value (DEFAULT_VALUE token)">
-                    <input
+                    <CurrencyInput
                       value={draftForm.value}
-                      onChange={(e) => setDraftForm((prev) => ({ ...prev, value: e.target.value }))}
-                      className={inputClass}
-                      inputMode="decimal"
-                      placeholder="0.00"
+                      onChange={(value) => setDraftForm((prev) => ({ ...prev, value }))}
                     />
                   </Field>
                   <Field label="Formula">
                     <input
                       value={draftForm.formula}
                       onChange={(e) => setDraftForm((prev) => ({ ...prev, formula: e.target.value }))}
-                      className={`${inputClass} font-mono text-xs`}
+                      className={`${componentModalInputClass} font-mono text-sm`}
                       placeholder="(BASIC * 0.05) + DEFAULT_VALUE"
                     />
                   </Field>
@@ -970,44 +992,55 @@ export default function AdminEmployeeCompensationPage() {
               ) : null}
 
               {draftForm.type === 'earning' || draftForm.type === 'deduction' ? (
-                <Field label="Pay Component Schedule">
-                  <select
-                    value={draftForm.schedule_override}
-                    onChange={(e) => {
-                      const value = e.target.value
-                      debugSchedule('employee_compensation.schedule_selected', {
-                        schedule_override: value,
-                        employee_id: activeEmployee?.id,
-                      })
-                      setDraftForm((prev) => ({ ...prev, schedule_override: value }))
-                    }}
-                    className={inputClass}
-                  >
-                    <option value="default">
-                      Default — from Deduction Schedule Settings (this allowance / pay component)
-                    </option>
-                    {PAY_COMPONENT_SCHEDULE_OPTIONS.filter((o) => o.value !== 'default').map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
+                <Field label="Pay Component Schedule" required>
+                  <div className="relative">
+                    <select
+                      value={draftForm.schedule_override}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        debugSchedule('employee_compensation.schedule_selected', {
+                          schedule_override: value,
+                          employee_id: activeEmployee?.id,
+                        })
+                        setDraftForm((prev) => ({ ...prev, schedule_override: value }))
+                      }}
+                      className={componentModalSelectClass}
+                    >
+                      <option value="default">
+                        Default — from Deduction Schedule Settings (this allowance)
                       </option>
-                    ))}
-                  </select>
-                  <p className="mt-1.5 text-xs text-slate-500">
+                      {PAY_COMPONENT_SCHEDULE_OPTIONS.filter((o) => o.value !== 'default').map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-5 top-1/2 size-5 -translate-y-1/2 text-foreground" aria-hidden />
+                  </div>
+                  <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
                     Default follows Compensation → Deduction Schedule Settings for the selected pay component. Other options override that schedule for this employee only.
                   </p>
                 </Field>
               ) : null}
+
+              <div className="rounded-2xl border border-brand/25 bg-brand/5 px-4 py-4 text-foreground dark:bg-brand/10">
+                <div className="flex gap-3">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full border-2 border-brand text-brand">
+                    <Info className="size-4" aria-hidden />
+                  </div>
+                  <p className="text-sm leading-relaxed">
+                    Component definition (calculation type, taxability, contributions) is set in the Pay Components catalog. Use this dialog to capture the employee-specific amount or rate.
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
-              Component definition (calculation type, taxability, contributions) is set in the Pay Components catalog. Use this dialog to capture the employee-specific amount or rate.
-            </div>
-
-            <DialogFooter className="border-t border-slate-200 pt-5">
-              <Button type="button" variant="outline" className="rounded-xl" onClick={() => setDialogOpen(false)}>
+            <DialogFooter className="border-t border-border/60 bg-card px-5 py-4 sm:px-8">
+              <Button type="button" variant="outline" className="h-11 w-full rounded-xl px-6 text-sm sm:w-auto" onClick={() => setDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" className="rounded-xl bg-slate-900 text-white hover:bg-slate-800">
+              <Button type="submit" className="h-11 w-full rounded-xl bg-brand px-6 text-sm font-semibold text-brand-foreground shadow-lg shadow-brand/20 hover:bg-brand-strong sm:w-auto">
+                <CirclePlus className="mr-2 size-4" />
                 Add to Pending Changes
               </Button>
             </DialogFooter>
@@ -1024,15 +1057,15 @@ export default function AdminEmployeeCompensationPage() {
           }
         }}
       >
-        <DialogContent className="max-w-md rounded-2xl border-slate-200">
+        <DialogContent className="max-w-md rounded-2xl border-border/70">
           <DialogHeader>
-            <DialogTitle className="text-lg font-semibold text-slate-900">Remove compensation component</DialogTitle>
-            <DialogDescription className="text-sm text-slate-500">
+            <DialogTitle className="text-lg font-semibold text-foreground">Remove compensation component</DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
               Remove "{assignmentToRemove?.assignment?.name || 'this component'}" from {activeEmployee?.name || 'this employee'}?
             </DialogDescription>
           </DialogHeader>
 
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <div className="rounded-xl border border-border/70 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
             This action removes the assigned component from the employee compensation record.
           </div>
 
@@ -1066,18 +1099,18 @@ export default function AdminEmployeeCompensationPage() {
 
 function SimpleStat({ label, value, compact = false }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className={`mt-2 font-semibold text-slate-900 ${compact ? 'text-base' : 'text-2xl'}`}>{value}</p>
+    <div className="rounded-xl border border-border/70 bg-background/65 px-4 py-3 shadow-sm">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={`mt-2 font-semibold text-foreground ${compact ? 'text-base' : 'text-2xl'}`}>{value}</p>
     </div>
   )
 }
 
 function SummaryCard({ label, value }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-slate-900">{formatPeso(value)}</p>
+    <div className="rounded-xl border border-border/70 bg-background/65 px-4 py-3 shadow-sm">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-foreground">{formatPeso(value)}</p>
     </div>
   )
 }
@@ -1102,22 +1135,22 @@ function CompTable({
       <Table className="min-w-[820px]">
         <TableHeader className="[&_tr]:border-b-0">
           <TableRow>
-            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Component</TableHead>
-            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Category</TableHead>
-            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Calculation</TableHead>
-            <TableHead className="min-w-48 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Component</TableHead>
+            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Category</TableHead>
+            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Calculation</TableHead>
+            <TableHead className="min-w-48 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Schedule
             </TableHead>
-            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Taxability</TableHead>
-            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Contributory</TableHead>
-            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</TableHead>
-            <TableHead className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</TableHead>
+            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Taxability</TableHead>
+            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contributory</TableHead>
+            <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Amount</TableHead>
+            <TableHead className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="px-3 py-10 text-center text-sm text-slate-500">
+              <TableCell colSpan={8} className="px-3 py-10 text-center text-sm text-muted-foreground">
                 {emptyLabel}
               </TableCell>
             </TableRow>
@@ -1125,23 +1158,23 @@ function CompTable({
             items.map((item) => {
               const isEditing = editingId === item.id
               return (
-                <TableRow key={item.id} className="border-b border-slate-100 transition hover:bg-slate-50/80">
+                <TableRow key={item.id} className="border-b border-border/60 transition hover:bg-muted/35">
                   <TableCell className="px-3 py-3.5">
-                    <div className="font-medium text-slate-900">{item.name}</div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <div className="font-medium text-foreground">{item.name}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>{item.code}{item.structure_name ? ` • ${item.structure_name}` : ''}</span>
                       <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${getAssignmentSourceStyles(item).className}`}>
                         {getAssignmentSourceStyles(item).label}
                       </span>
                     </div>
                   </TableCell>
-                  <TableCell className="px-3 py-3.5 text-slate-600">{item.category || '—'}</TableCell>
+                  <TableCell className="px-3 py-3.5 text-muted-foreground">{item.category || '—'}</TableCell>
                   <TableCell className="px-3 py-3.5">{formatCalculationType(item.calculation_type)}</TableCell>
                   <TableCell className="px-3 py-3.5">
                     {item.pay_component_id ? (
                       <select
                         aria-label={`Pay component schedule for ${item.name ?? 'component'}`}
-                        className="max-w-[min(260px,calc(100vw-220px))] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:opacity-60 dark:border-border dark:bg-background"
+                        className="max-w-[min(260px,calc(100vw-220px))] rounded-lg border border-border/70 bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-brand/60 focus:ring-2 focus:ring-brand/15 disabled:opacity-60"
                         value={normalizedScheduleSelectValue(item.schedule_override)}
                         disabled={!item?.id || updatingScheduleId === item.id || (updatingValue && editingId === item.id)}
                         title={item?.id ? undefined : 'System line — edit schedule via employee assignment'}
@@ -1154,10 +1187,10 @@ function CompTable({
                         ))}
                       </select>
                     ) : (
-                      <span className="text-xs text-slate-400 dark:text-slate-500">—</span>
+                      <span className="text-xs text-muted-foreground/70">—</span>
                     )}
                     {item?.id && item.pay_component_id && updatingScheduleId === item.id ? (
-                      <span className="mt-1 block text-[11px] text-slate-500">Saving…</span>
+                      <span className="mt-1 block text-[11px] text-muted-foreground">Saving…</span>
                     ) : null}
                   </TableCell>
                   <TableCell className="px-3 py-3.5">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
@@ -1165,7 +1198,7 @@ function CompTable({
                   <TableCell className="px-3 py-3.5">
                     {isEditing ? (
                       <div className="flex items-center gap-1.5">
-                        <span className="text-sm text-slate-500">₱</span>
+                        <span className="text-sm text-muted-foreground">₱</span>
                         <input
                           autoFocus
                           value={editValue}
@@ -1174,7 +1207,7 @@ function CompTable({
                             if (e.key === 'Enter') onEditSave(item)
                             if (e.key === 'Escape') onEditCancel()
                           }}
-                          className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                          className="w-28 rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none focus:border-brand/60 focus:ring-2 focus:ring-brand/15"
                           inputMode="decimal"
                           disabled={updatingValue || updatingScheduleId === item.id}
                         />
@@ -1183,7 +1216,7 @@ function CompTable({
                       <button
                         type="button"
                         onClick={() => item?.id && onEditStart(item)}
-                        className={`group inline-flex items-center gap-1.5 rounded-lg px-2 py-1 transition ${item?.id ? 'cursor-pointer hover:bg-slate-100' : 'cursor-default'}`}
+                        className={`group inline-flex items-center gap-1.5 rounded-lg px-2 py-1 transition ${item?.id ? 'cursor-pointer hover:bg-muted' : 'cursor-default'}`}
                         disabled={!item?.id || updatingScheduleId === item.id}
                         title={
                           !item?.id
@@ -1193,14 +1226,11 @@ function CompTable({
                               : 'Click to edit value'
                         }
                       >
-                        <span className={amountTone === 'deduction' ? 'font-medium text-rose-700' : 'font-medium text-emerald-700'}>
+                        <span className={amountTone === 'deduction' ? 'font-medium text-rose-600 dark:text-rose-300' : 'font-medium text-emerald-600 dark:text-emerald-300'}>
                           {formatPeso(item.computed_amount)}
                         </span>
                         {item?.id ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="size-3.5 text-slate-400 opacity-0 transition group-hover:opacity-100">
-                            <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.262a1.75 1.75 0 0 0 0-2.474Z" />
-                            <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9A.75.75 0 0 1 14 9v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z" />
-                          </svg>
+                          <Pencil className="size-3.5 text-muted-foreground opacity-0 transition group-hover:opacity-100" aria-hidden />
                         ) : null}
                       </button>
                     )}
@@ -1212,7 +1242,7 @@ function CompTable({
                           type="button"
                           variant="ghost"
                           size="sm"
-                          className="rounded-lg px-3 text-slate-600 hover:bg-slate-100"
+                          className="rounded-lg px-3 text-muted-foreground hover:bg-muted"
                           onClick={onEditCancel}
                           disabled={updatingValue || updatingScheduleId === item.id}
                         >
@@ -1221,7 +1251,7 @@ function CompTable({
                         <Button
                           type="button"
                           size="sm"
-                          className="rounded-lg bg-slate-900 px-3 text-white hover:bg-slate-800"
+                          className="rounded-lg bg-brand px-3 text-brand-foreground hover:bg-brand-strong"
                           onClick={() => onEditSave(item)}
                           disabled={updatingValue || updatingScheduleId === item.id}
                         >
@@ -1241,7 +1271,7 @@ function CompTable({
                         Remove
                       </Button>
                     ) : (
-                      <span className="inline-flex rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-500">
+                      <span className="inline-flex rounded-lg bg-muted px-3 py-2 text-xs font-medium text-muted-foreground">
                         System item
                       </span>
                     )}
@@ -1256,10 +1286,56 @@ function CompTable({
   )
 }
 
-function Field({ label, children }) {
+function ComponentDefinitionStrip({ draftForm }) {
+  const items = [
+    { label: 'Type', value: draftForm.type || '—', Icon: Wallet, valueClassName: 'capitalize' },
+    { label: 'Category', value: draftForm.category || '—', Icon: BriefcaseBusiness },
+    { label: 'Calculation', value: formatCalculationType(draftForm.calculation_type), Icon: Calculator },
+  ]
+
   return (
-    <label className="block text-sm font-medium text-slate-700">
-      <span className="mb-1.5 block">{label}</span>
+    <div className="grid grid-cols-1 gap-4 rounded-2xl border border-brand/20 bg-brand/5 px-4 py-4 text-sm dark:bg-brand/10 sm:grid-cols-3">
+      {items.map((item) => {
+        const DefinitionIcon = item.Icon
+        return (
+          <div key={item.label} className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{item.label}</p>
+            <div className="mt-3 flex items-center gap-3">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand shadow-inner">
+                <DefinitionIcon className="size-4" aria-hidden />
+              </span>
+              <p className={cn('truncate text-base font-semibold text-foreground', item.valueClassName)}>{item.value}</p>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function CurrencyInput({ value, onChange, required = false }) {
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-base font-semibold text-foreground/85">₱</span>
+      <input
+        value={value}
+        onChange={(e) => onChange?.(e.target.value)}
+        className={cn(componentModalInputClass, 'pl-10')}
+        inputMode="decimal"
+        placeholder="0.00"
+        required={required}
+      />
+    </div>
+  )
+}
+
+function Field({ label, children, required = false }) {
+  return (
+    <label className="block text-base font-semibold text-foreground">
+      <span className="mb-2.5 block">
+        {label}
+        {required ? <span className="ml-1 text-brand">*</span> : null}
+      </span>
       {children}
     </label>
   )
@@ -1306,28 +1382,30 @@ function getAssignmentSourceStyles(item) {
   if (source === 'auto_apply_all') {
     return {
       label: 'Auto-applied',
-      className: 'bg-indigo-50 text-indigo-700',
+      className: 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-200',
     }
   }
 
   if (source === 'manual_override') {
     return {
       label: 'Manual override',
-      className: 'bg-amber-50 text-amber-700',
+      className: 'bg-amber-500/10 text-amber-700 dark:text-amber-200',
     }
   }
 
   if (!item?.id) {
     return {
       label: 'System item',
-      className: 'bg-slate-100 text-slate-600',
+      className: 'bg-muted text-muted-foreground',
     }
   }
 
   return {
     label: 'Manual',
-    className: 'bg-emerald-50 text-emerald-700',
+    className: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-200',
   }
 }
 
-const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100'
+const inputClass = 'w-full rounded-xl border border-border/70 bg-background px-3 py-2.5 text-sm text-foreground shadow-sm outline-none transition placeholder:text-muted-foreground/75 focus:border-brand/60 focus:ring-4 focus:ring-brand/15 dark:bg-muted/10'
+const componentModalInputClass = 'h-12 w-full min-w-0 rounded-xl border border-border/70 bg-background px-4 text-base font-medium text-foreground shadow-sm outline-none transition placeholder:text-muted-foreground/70 focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-muted/10 sm:h-14'
+const componentModalSelectClass = `${componentModalInputClass} appearance-none truncate border-brand pr-12 focus:border-brand`

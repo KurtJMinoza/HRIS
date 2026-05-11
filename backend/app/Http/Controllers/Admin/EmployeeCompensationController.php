@@ -104,6 +104,9 @@ class EmployeeCompensationController extends Controller
                         'name' => $employee->name,
                         'employee_code' => $employee->employee_code,
                         'position' => $employee->position,
+                        'department' => $employee->department,
+                        'profile_image' => $employee->profile_image,
+                        'profile_image_url' => $employee->profile_image_url,
                     ],
                     'summary' => $summary,
                 ];
