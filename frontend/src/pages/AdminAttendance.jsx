@@ -4,16 +4,13 @@ import { pdf } from '@react-pdf/renderer'
 import {
   Calendar,
   CalendarDays,
-  Clock4,
+  CheckCircle2,
   Filter,
   RefreshCw,
   Table2,
-  Loader2,
-  Plus,
   FileText,
   UserX,
   AlertCircle,
-  Moon,
   Search,
   ChevronDown,
   Download,
@@ -49,27 +46,14 @@ import {
   getAdminAttendance,
   fetchAllAdminAttendanceRows,
   exportAdminAttendance,
-  saveAttendanceCorrection,
   getEmployees,
   profileImageUrl,
   REPORTS_AND_ATTENDANCE_PAGE_SIZE,
 } from '@/api'
 import ReportPdfDocument from '@/components/reports/ReportPdfDocument'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
-import { DIALOG_CONTENT_CLASS } from '@/lib/fieldClasses'
-import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdminHrUser } from '@/lib/hrRoutes'
-
-function toHhMm(value) {
-  if (value == null || typeof value !== 'string') return value
-  const trimmed = value.trim()
-  if (!trimmed) return trimmed
-  return trimmed.length >= 5 ? trimmed.slice(0, 5) : trimmed
-}
 
 function formatTime(value) {
   if (!value) return '—'
@@ -119,6 +103,23 @@ function getLocalDateString(d = new Date()) {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+function paginationWindow(current, last) {
+  const total = Math.max(1, Number(last) || 1)
+  const active = Math.min(Math.max(1, Number(current) || 1), total)
+  if (total <= 6) return Array.from({ length: total }, (_, i) => i + 1)
+
+  const pages = [1]
+  const start = Math.max(2, active - 1)
+  const end = Math.min(total - 1, active + 1)
+
+  if (start > 2) pages.push('ellipsis-start')
+  for (let p = start; p <= end; p += 1) pages.push(p)
+  if (end < total - 1) pages.push('ellipsis-end')
+  pages.push(total)
+
+  return pages
 }
 
 export default function AdminAttendance() {
@@ -385,150 +386,6 @@ export default function AdminAttendance() {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]))
   }, [rosterEmployees])
 
-  const [addOpen, setAddOpen] = useState(false)
-  const [allEmployees, setAllEmployees] = useState([])
-  const [addEmployeesLoading, setAddEmployeesLoading] = useState(false)
-  const [addSubmitting, setAddSubmitting] = useState(false)
-  const [addError, setAddError] = useState(null)
-  const [addForm, setAddForm] = useState({
-    employee_id: '',
-    date: new Date().toISOString().slice(0, 10),
-    /** `full` = clock in + clock out; `in_only` = clock in only (no time out). */
-    manual_punch_mode: 'full',
-    time_in: '08:00',
-    time_out: '17:00',
-    remarks: '',
-    approved: true,
-    override_leave: false,
-    use_schedule_regular: false,
-    manual_presence_reason: '',
-  })
-
-  useEffect(() => {
-    if (addOpen) {
-      setAddForm((f) => ({ ...f, manual_punch_mode: 'full' }))
-      setAddEmployeesLoading(true)
-      setAddError(null)
-      const scope = user?.attendance_scope
-      const params = { per_page: 200 }
-      if (scope?.kind === 'department' && scope.department_ids?.length === 1) {
-        params.department_id = scope.department_ids[0]
-      } else if (scope?.kind === 'branch' && scope.branch_id) {
-        params.branch_id = scope.branch_id
-      } else if (scope?.kind === 'company' && scope.company_ids?.length === 1) {
-        params.company_id = scope.company_ids[0]
-      }
-      getEmployees(params)
-        .then((res) => {
-          const list = res?.employees ?? res ?? []
-          setAllEmployees(Array.isArray(list) ? list : [])
-        })
-        .catch(() => setAllEmployees([]))
-        .finally(() => setAddEmployeesLoading(false))
-    }
-  }, [addOpen, user?.attendance_scope])
-
-  function validateAddForm() {
-    const empId = addForm.employee_id?.trim()
-    const date = addForm.date?.trim()
-    const timeIn = addForm.time_in?.trim()
-    const timeOut = addForm.time_out?.trim()
-    if (!empId) return 'Employee is required. Please select an employee.'
-    if (!date) return 'Date is required. Please select a date.'
-    const dateObj = new Date(date)
-    if (Number.isNaN(dateObj.getTime())) return 'Please enter a valid date.'
-    if (addForm.use_schedule_regular) {
-      return null
-    }
-    if (!timeIn) return 'Time in is required (or enable “Use scheduled shift times”).'
-    if (addForm.manual_punch_mode === 'full' && !timeOut) return 'Time out is required when recording both clock in and clock out.'
-    // Night shift (e.g. 22:00–06:00): timeOut < timeIn is valid; backend normalizes to next day.
-    return null
-  }
-
-  async function handleAddManualSubmit(e) {
-    e.preventDefault()
-    const err = validateAddForm()
-    if (err) {
-      setAddError(err)
-      return
-    }
-    setAddError(null)
-    setAddSubmitting(true)
-    try {
-      const empId = Number(addForm.employee_id)
-      const date = addForm.date.trim()
-
-      // Prevent duplicate manual attendance for the same employee and date
-      const duplicateRows = await fetchAllAdminAttendanceRows({
-        from_date: date,
-        to_date: date,
-        employee_id: empId,
-      })
-      const hasDuplicate = duplicateRows.some(
-        (r) => r.employee_id === empId && r.date === date && r.has_correction,
-      )
-
-      if (hasDuplicate) {
-        setAddError('Manual attendance for this employee and date already exists.')
-        return
-      }
-
-      const clockInOnly = addForm.manual_punch_mode === 'in_only'
-      const basePayload = {
-        employee_id: empId,
-        date,
-        preset_schedule_regular: Boolean(addForm.use_schedule_regular),
-        time_in: addForm.use_schedule_regular ? undefined : (toHhMm(addForm.time_in?.trim() || '') || undefined),
-        time_out:
-          addForm.use_schedule_regular || clockInOnly
-            ? undefined
-            : (toHhMm(addForm.time_out?.trim() || '') || undefined),
-        remarks: addForm.remarks?.trim() || undefined,
-        manual_presence_reason: addForm.manual_presence_reason?.trim() || undefined,
-        approved: Boolean(addForm.approved),
-      }
-
-      const attemptSave = async (overrideLeave) => {
-        await saveAttendanceCorrection({
-          ...basePayload,
-          override_leave: overrideLeave,
-        })
-      }
-
-      try {
-        await attemptSave(Boolean(addForm.override_leave))
-      } catch (error) {
-        const msg = error?.message || ''
-        const leaveConflict =
-          msg.toLowerCase().includes('approved full-day leave') ||
-          msg.toLowerCase().includes('approved leave on this date')
-
-        if (leaveConflict && !addForm.override_leave) {
-          const confirmed = window.confirm(
-            'This employee has an approved leave on this date. Do you want to override it?'
-          )
-          if (!confirmed) {
-            setAddError(msg)
-            return
-          }
-
-          // Retry with override flag enabled
-          await attemptSave(true)
-        } else {
-          throw error
-        }
-      }
-
-      setAddOpen(false)
-      await load()
-    } catch (err) {
-      setAddError(err?.message || 'Failed to add manual attendance.')
-    } finally {
-      setAddSubmitting(false)
-    }
-  }
-
   const periodLabel =
     fromDate && toDate && fromDate !== toDate ? `${fromDate} to ${toDate}` : fromDate || ''
 
@@ -720,6 +577,7 @@ export default function AdminAttendance() {
   const displayRows = rows
 
   const secondsAgo = Math.floor((Date.now() - lastRefresh.getTime()) / 1000)
+  const pageButtons = paginationWindow(attendancePage, attendanceLastPage)
 
   function exportAttendanceCsv() {
     // Build CSV from the same column schema as the on-screen table for 1:1 parity.
@@ -759,12 +617,12 @@ export default function AdminAttendance() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex flex-col gap-2 @md:flex-row @md:items-center @md:justify-between">
         <div>
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="hr-page-title">Attendance</h1>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400">
+            <h1 className="mb-0 text-[28px] font-black leading-tight tracking-normal text-foreground">Attendance</h1>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
               <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
               LIVE
             </span>
@@ -773,26 +631,28 @@ export default function AdminAttendance() {
             {String(user?.hr_role || user?.role || 'manager')
               .replace(/_/g, ' ')
               .replace(/\b\w/g, (c) => c.toUpperCase())}
-            {' · '}
+            {' - '}
             {isUnrestrictedHr
               ? 'Organization-wide monitoring, approvals, and exports. '
-              : 'Scoped to your organization — monitoring and exports. '}
+              : 'Scoped to your organization - monitoring and exports. '}
             <span className="text-xs text-muted-foreground/60">
-              Updated {secondsAgo < 5 ? 'just now' : `${secondsAgo}s ago`} · Auto-refreshes every 15s
+              Updated {secondsAgo < 5 ? 'just now' : `${secondsAgo}s ago`} - Auto-refreshes every 15s
             </span>
           </p>
         </div>
       </div>
 
       {(lateCount > 0 || absentCount > 0) && (
-        <div className="flex flex-col @sm:flex-row items-start @sm:items-center justify-between gap-3 rounded-xl border border-red-400/50 bg-red-500/8 px-4 py-3.5 dark:border-red-500/40 dark:bg-red-500/8">
+        <div className="flex flex-col @sm:flex-row items-start @sm:items-center justify-between gap-3 rounded-lg border border-orange-500/35 bg-orange-500/8 px-5 py-4 shadow-sm dark:border-orange-400/30 dark:bg-orange-500/10">
           <div className="flex items-center gap-3">
-            <AlertCircle className="size-5 shrink-0 text-red-600 dark:text-red-400" />
+            <span className="flex size-8 items-center justify-center rounded-full bg-orange-500/10 text-orange-600 ring-1 ring-orange-500/25 dark:bg-orange-500/15 dark:text-orange-300">
+              <AlertCircle className="size-4" />
+            </span>
             <div>
-              <p className="font-semibold text-red-800 dark:text-red-200">
-                {[lateCount > 0 ? `${lateCount} Late` : null, absentCount > 0 ? `${absentCount} Absent` : null].filter(Boolean).join(' • ')} — Action Needed
+              <p className="font-bold text-orange-700 dark:text-orange-200">
+                {[lateCount > 0 ? `${lateCount} Late` : null, absentCount > 0 ? `${absentCount} Absent` : null].filter(Boolean).join(' - ')} - Action Needed
               </p>
-              <p className="text-xs text-red-700/70 dark:text-red-300/60">
+              <p className="text-xs font-medium text-orange-700/75 dark:text-orange-200/70">
                 Review these employees and follow up as needed.
               </p>
             </div>
@@ -802,7 +662,7 @@ export default function AdminAttendance() {
               <button
                 type="button"
                 onClick={() => { setStatus('late'); loadWith({ status: 'late' }) }}
-                className="text-xs font-semibold text-amber-700 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300 underline underline-offset-2"
+                className="text-xs font-bold text-orange-700 underline underline-offset-2 hover:text-orange-600 dark:text-orange-300 dark:hover:text-orange-200"
               >
                 View {lateCount} Late
               </button>
@@ -811,7 +671,7 @@ export default function AdminAttendance() {
               <button
                 type="button"
                 onClick={() => { setStatus('absent'); loadWith({ status: 'absent' }) }}
-                className="text-xs font-semibold text-red-700 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 underline underline-offset-2"
+                className="text-xs font-bold text-red-700 underline underline-offset-2 hover:text-red-600 dark:text-red-300 dark:hover:text-red-200"
               >
                 View {absentCount} Absent
               </button>
@@ -825,71 +685,71 @@ export default function AdminAttendance() {
       </p>
       <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-4">
         {/* Present */}
-        <Card className="border border-border/60 shadow-md dark:border-white/8 bg-card overflow-hidden">
+        <Card className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm dark:border-white/10">
           <CardContent className="p-5">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs font-medium text-muted-foreground">Present</p>
-                <p className="mt-1 text-4xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">{presentCount}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Clocked in</p>
+                <p className="text-xs font-semibold text-muted-foreground">Present</p>
+                <p className="mt-1 text-3xl font-black tracking-normal text-foreground">{presentCount}</p>
+                <p className="mt-2 text-xs text-muted-foreground">Clocked in</p>
               </div>
-              <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/15 dark:bg-emerald-500/20">
-                <Clock4 className="size-5 text-emerald-600 dark:text-emerald-400" />
+              <div className="flex size-12 items-center justify-center rounded-full bg-orange-500/10 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                <CheckCircle2 className="size-6" />
               </div>
             </div>
           </CardContent>
         </Card>
 
         {/* Late */}
-        <Card className={`border shadow-md bg-card overflow-hidden transition-all ${lateCount > 0 ? 'border-amber-400/60 dark:border-amber-500/40 shadow-[0_0_18px_rgba(245,158,11,0.12)]' : 'border-border/60 dark:border-white/8'}`}>
+        <Card className={cn('overflow-hidden rounded-lg border bg-card shadow-sm transition-all dark:border-white/10', lateCount > 0 ? 'border-orange-500/45 shadow-[0_0_0_1px_rgba(249,115,22,0.12)] dark:border-orange-400/35' : 'border-border/70')}>
           <CardContent className="p-5">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs font-medium text-muted-foreground">Late</p>
-                <p className={`mt-1 text-4xl font-black tracking-tight ${lateCount > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'}`}>{lateCount}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{lateCount > 0 ? 'Need follow-up' : 'All on time'}</p>
+                <p className="text-xs font-semibold text-muted-foreground">Late</p>
+                <p className="mt-1 text-3xl font-black tracking-normal text-foreground">{lateCount}</p>
+                <p className="mt-2 text-xs text-muted-foreground">{lateCount > 0 ? 'Need follow-up' : 'All on time'}</p>
               </div>
-              <div className={`flex size-10 items-center justify-center rounded-xl ${lateCount > 0 ? 'bg-amber-500/20 animate-pulse' : 'bg-amber-500/10'}`}>
-                <AlertCircle className={`size-5 ${lateCount > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-amber-500/50'}`} />
+              <div className={cn('flex size-12 items-center justify-center rounded-full bg-orange-500/10 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300', lateCount > 0 && 'animate-pulse')}>
+                <AlertCircle className="size-6" />
               </div>
             </div>
           </CardContent>
         </Card>
 
         {/* Absent */}
-        <Card className={`border shadow-md bg-card overflow-hidden transition-all ${absentCount > 0 ? 'border-red-400/60 dark:border-red-500/40 shadow-[0_0_18px_rgba(239,68,68,0.12)]' : 'border-border/60 dark:border-white/8'}`}>
+        <Card className={cn('overflow-hidden rounded-lg border bg-card shadow-sm transition-all dark:border-white/10', absentCount > 0 ? 'border-orange-500/45 shadow-[0_0_0_1px_rgba(249,115,22,0.12)] dark:border-orange-400/35' : 'border-border/70')}>
           <CardContent className="p-5">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs font-medium text-muted-foreground">Absent</p>
-                <p className={`mt-1 text-4xl font-black tracking-tight ${absentCount > 0 ? 'text-red-600 dark:text-red-400' : 'text-foreground'}`}>{absentCount}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{absentCount > 0 ? 'Unaccounted' : 'Full attendance'}</p>
+                <p className="text-xs font-semibold text-muted-foreground">Absent</p>
+                <p className="mt-1 text-3xl font-black tracking-normal text-foreground">{absentCount}</p>
+                <p className="mt-2 text-xs text-muted-foreground">{absentCount > 0 ? 'Unaccounted' : 'Full attendance'}</p>
               </div>
-              <div className={`flex size-10 items-center justify-center rounded-xl ${absentCount > 0 ? 'bg-red-500/20 animate-pulse' : 'bg-red-500/10'}`}>
-                <UserX className={`size-5 ${absentCount > 0 ? 'text-red-500 dark:text-red-400' : 'text-red-500/50'}`} />
+              <div className={cn('flex size-12 items-center justify-center rounded-full bg-orange-500/10 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300', absentCount > 0 && 'animate-pulse')}>
+                <UserX className="size-6" />
               </div>
             </div>
           </CardContent>
         </Card>
 
         {/* On leave */}
-        <Card className="border border-border/60 shadow-md dark:border-white/8 bg-card overflow-hidden">
+        <Card className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm dark:border-white/10">
           <CardContent className="p-5">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs font-medium text-muted-foreground">On leave</p>
-                <p className="mt-1 text-4xl font-black tracking-tight text-violet-600 dark:text-violet-400">{onLeaveCount}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Approved leave</p>
+                <p className="text-xs font-semibold text-muted-foreground">On leave</p>
+                <p className="mt-1 text-3xl font-black tracking-normal text-foreground">{onLeaveCount}</p>
+                <p className="mt-2 text-xs text-muted-foreground">Approved leave</p>
               </div>
-              <div className="flex size-10 items-center justify-center rounded-xl bg-violet-500/15 dark:bg-violet-500/20">
-                <CalendarDays className="size-5 text-violet-600 dark:text-violet-400" />
+              <div className="flex size-12 items-center justify-center rounded-full bg-orange-500/10 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                <CalendarDays className="size-6" />
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      <Card className="border border-border/60 shadow-md dark:border-white/8 bg-card">
+      <Card className="rounded-lg border border-border/70 bg-card shadow-sm dark:border-white/10">
         <CardHeader className="pb-3">
           <div className="flex flex-col @sm:flex-row @sm:items-start @sm:justify-between gap-3">
             <div>
@@ -903,7 +763,7 @@ export default function AdminAttendance() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-muted-foreground">Scope:</span>
               <div
-                className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-0.5"
+                className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5 dark:bg-muted/20"
                 role="tablist"
                 aria-label="Date scope"
               >
@@ -958,9 +818,9 @@ export default function AdminAttendance() {
                     aria-selected={scopeSegment === id}
                     onClick={action}
                     className={cn(
-                      'rounded-[10px] px-3 py-1.5 text-xs font-semibold transition-all',
+                      'rounded-md px-3 py-1.5 text-xs font-semibold transition-all',
                       scopeSegment === id
-                        ? 'bg-background text-foreground shadow-sm'
+                        ? 'bg-background text-foreground shadow-sm ring-1 ring-border/50 dark:bg-input/40'
                         : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
@@ -978,9 +838,9 @@ export default function AdminAttendance() {
                   type="button"
                   onClick={action}
                   className={[
-                    'inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-semibold transition-all',
+                    'inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-semibold transition-all',
                     accent === 'amber'
-                      ? 'border-amber-400/50 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:border-amber-500/40 dark:text-amber-400'
+                      ? 'border-orange-400/50 bg-orange-500/10 text-orange-700 hover:bg-orange-500/20 dark:border-orange-500/40 dark:text-orange-300'
                       : 'border-red-400/50 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:border-red-500/40 dark:text-red-400',
                   ].join(' ')}
                 >
@@ -1180,7 +1040,7 @@ export default function AdminAttendance() {
                 type="button"
                 variant="default"
                 size="sm"
-                className="gap-1.5"
+                className="gap-1.5 bg-orange-600 text-white shadow-sm shadow-orange-500/20 hover:bg-orange-500 dark:bg-orange-500 dark:hover:bg-orange-400"
                 onClick={applyFilters}
               >
                 <Filter className="size-3.5" />
@@ -1260,7 +1120,7 @@ export default function AdminAttendance() {
           <Table2 className="size-5 shrink-0" aria-hidden />
           <h3 className="text-base font-semibold text-foreground">Records</h3>
         </div>
-      <Card className="overflow-hidden rounded-xl border border-border/60 shadow-md dark:border-white/8 bg-card">
+      <Card className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm dark:border-white/10">
         <CardHeader className="flex flex-col gap-3 pb-3 @sm:flex-row @sm:items-center @sm:justify-between">
           <div>
             <CardTitle className="text-sm font-semibold">Attendance records</CardTitle>
@@ -1277,7 +1137,7 @@ export default function AdminAttendance() {
                 type="button"
                 size="sm"
                 variant="outline"
-                className="gap-1.5 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
+                className="gap-1.5 dark:border-white/10 dark:text-foreground dark:hover:bg-white/5"
                 disabled={!attendanceTotalMatched}
               >
                 <Download className="size-4" aria-hidden />
@@ -1324,9 +1184,10 @@ export default function AdminAttendance() {
           {attendanceTotalMatched > 0 && (
             <div className="flex flex-col gap-2 border-t border-border/40 px-4 py-3 text-[11px] text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between">
               <span className="tabular-nums">
-                Page {Math.min(attendancePage, attendanceLastPage)} of {attendanceLastPage}
+                Showing {Math.min((attendancePage - 1) * REPORTS_AND_ATTENDANCE_PAGE_SIZE + 1, attendanceTotalMatched)} to{' '}
+                {Math.min(attendancePage * REPORTS_AND_ATTENDANCE_PAGE_SIZE, attendanceTotalMatched)} of {attendanceTotalMatched} records
               </span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <Button
                   type="button"
                   variant="outline"
@@ -1337,6 +1198,26 @@ export default function AdminAttendance() {
                 >
                   Previous
                 </Button>
+                {pageButtons.map((page) =>
+                  typeof page === 'number' ? (
+                    <Button
+                      key={page}
+                      type="button"
+                      variant={page === attendancePage ? 'default' : 'outline'}
+                      size="sm"
+                      className={cn(
+                        'h-8 min-w-8 px-2.5',
+                        page === attendancePage && 'bg-orange-600 text-white hover:bg-orange-500 dark:bg-orange-500 dark:hover:bg-orange-400',
+                      )}
+                      disabled={loading}
+                      onClick={() => setAttendancePage(page)}
+                    >
+                      {page}
+                    </Button>
+                  ) : (
+                    <span key={page} className="px-1.5 text-muted-foreground">...</span>
+                  ),
+                )}
                 <Button
                   type="button"
                   variant="outline"
@@ -1366,249 +1247,6 @@ export default function AdminAttendance() {
         showPayrollColumns={showPayrollAttendanceColumns}
         correctionsHref={hrPanelPath(hrBase, 'attendance-corrections')}
       />
-
-      {/* Add manual attendance */}
-      <Dialog
-        open={addOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setAddOpen(false)
-            setAddError(null)
-          }
-        }}
-      >
-        <DialogContent
-          className={cn(
-            DIALOG_CONTENT_CLASS,
-            'flex max-h-[min(90vh,880px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg',
-          )}
-        >
-          <DialogHeader className="shrink-0 space-y-1.5 px-6 pb-2 pt-6 text-left">
-            <DialogTitle className="flex items-center gap-2 text-xl">
-              <Plus className="size-5 text-primary" />
-              Add manual attendance
-            </DialogTitle>
-            <DialogDescription>
-              Record clock in only, or both clock in and clock out, without a scan. Use the date filter to see the new entry.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAddManualSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-1">
-          {addError && (
-            <div className="mb-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {addError}
-            </div>
-          )}
-          <div className="flex flex-col gap-4 pb-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="add-employee" className="text-xs">Employee <span className="text-destructive">*</span></Label>
-              <Select
-                value={addForm.employee_id || ' '}
-                onValueChange={(v) => setAddForm((f) => ({ ...f, employee_id: v === ' ' ? '' : v }))}
-                disabled={addEmployeesLoading}
-              >
-                <SelectTrigger id="add-employee" className="h-9">
-                  <SelectValue placeholder={addEmployeesLoading ? 'Loading…' : 'Select employee'} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value=" ">
-                    {addEmployeesLoading ? 'Loading employees…' : '— Select employee —'}
-                  </SelectItem>
-                  {allEmployees.map((emp) => (
-                    <SelectItem key={emp.id} value={String(emp.id)}>
-                      {emp.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {!addEmployeesLoading && allEmployees.length === 0 && addOpen && (
-                <p className="text-xs text-muted-foreground">No employees found. Add employees first.</p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="add-date" className="text-xs">Date <span className="text-destructive">*</span></Label>
-              <Input
-                id="add-date"
-                type="date"
-                value={addForm.date}
-                onChange={(e) => setAddForm((f) => ({ ...f, date: e.target.value }))}
-                className="h-9"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs">What to record</Label>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={cn(
-                    'inline-flex min-w-[8.5rem] flex-1 items-center justify-center rounded-lg border px-3 py-2 text-xs font-semibold transition-colors',
-                    addForm.manual_punch_mode === 'in_only'
-                      ? 'border-primary bg-primary/15 text-primary shadow-sm dark:bg-primary/20'
-                      : 'border-border bg-transparent text-muted-foreground hover:border-border hover:text-foreground dark:border-white/10',
-                  )}
-                  onClick={() => setAddForm((f) => ({ ...f, manual_punch_mode: 'in_only' }))}
-                >
-                  Clock in only
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    'inline-flex min-w-[8.5rem] flex-1 items-center justify-center rounded-lg border px-3 py-2 text-xs font-semibold transition-colors',
-                    addForm.manual_punch_mode === 'full'
-                      ? 'border-primary bg-primary/15 text-primary shadow-sm dark:bg-primary/20'
-                      : 'border-border bg-transparent text-muted-foreground hover:border-border hover:text-foreground dark:border-white/10',
-                  )}
-                  onClick={() => setAddForm((f) => ({ ...f, manual_punch_mode: 'full' }))}
-                >
-                  Clock in &amp; out
-                </button>
-              </div>
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                {addForm.manual_punch_mode === 'in_only'
-                  ? 'Records arrival only (no clock out). Use when the employee has not left yet or exit was not captured.'
-                  : 'Records both time in and time out for a completed shift.'}
-              </p>
-            </div>
-            <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/10 p-3">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="add-schedule-regular"
-                  checked={addForm.use_schedule_regular}
-                  onCheckedChange={(c) =>
-                    setAddForm((f) => ({
-                      ...f,
-                      use_schedule_regular: c === true,
-                      manual_punch_mode: c === true ? 'full' : f.manual_punch_mode,
-                    }))
-                  }
-                />
-                <Label htmlFor="add-schedule-regular" className="text-xs leading-snug">
-                  Use scheduled shift times (regular day; no OT from this manual entry)
-                </Label>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="add-manual-reason" className="text-xs">
-                  Reason for manual presence (optional)
-                </Label>
-                <Textarea
-                  id="add-manual-reason"
-                  rows={2}
-                  value={addForm.manual_presence_reason}
-                  onChange={(e) => setAddForm((f) => ({ ...f, manual_presence_reason: e.target.value }))}
-                  placeholder="e.g. Forgot to punch, kiosk offline"
-                  className="min-h-0 text-xs"
-                />
-              </div>
-            </div>
-            {!addForm.use_schedule_regular && (
-            <div className={cn('grid gap-4', addForm.manual_punch_mode === 'full' ? 'grid-cols-1 @sm:grid-cols-2' : 'grid-cols-1')}>
-              <div className="space-y-1.5">
-                <Label htmlFor="add-time-in" className="text-xs">Time in <span className="text-destructive">*</span></Label>
-                <Input
-                  id="add-time-in"
-                  type="time"
-                  value={addForm.time_in}
-                  onChange={(e) => setAddForm((f) => ({ ...f, time_in: e.target.value }))}
-                  className="h-9"
-                  required
-                />
-              </div>
-              {addForm.manual_punch_mode === 'full' ? (
-                <div className="space-y-1.5">
-                  <Label htmlFor="add-time-out" className="text-xs">Time out <span className="text-destructive">*</span></Label>
-                  <Input
-                    id="add-time-out"
-                    type="time"
-                    value={addForm.time_out}
-                    onChange={(e) => setAddForm((f) => ({ ...f, time_out: e.target.value }))}
-                    className="h-9"
-                    required
-                  />
-                </div>
-              ) : (
-                <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-3 py-2.5 text-[11px] text-muted-foreground dark:border-white/10 dark:bg-white/5">
-                  Clock out is not recorded for this entry.
-                </div>
-              )}
-            </div>
-            )}
-            {addForm.use_schedule_regular && (
-              <p className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-900 dark:text-sky-200">
-                Times will be taken from the employee&apos;s assigned schedule for that date (regular hours; night differential still follows actual window if applicable).
-              </p>
-            )}
-            {(addForm.manual_punch_mode === 'full' && addForm.time_in && addForm.time_out && addForm.time_out <= addForm.time_in) && (
-              <p className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                <Moon className="size-3.5 shrink-0 opacity-90" aria-hidden />
-                Night shift detected (crosses midnight). Time out will be treated as next day.
-              </p>
-            )}
-            <div className="space-y-1.5">
-              <Label htmlFor="add-remarks" className="text-xs">Remarks (optional)</Label>
-              <Input
-                id="add-remarks"
-                value={addForm.remarks}
-                onChange={(e) => setAddForm((f) => ({ ...f, remarks: e.target.value }))}
-                placeholder="e.g. Manual entry"
-                className="h-9"
-                maxLength={500}
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="add-approved"
-                  checked={addForm.approved}
-                  onCheckedChange={(c) => setAddForm((f) => ({ ...f, approved: c === true }))}
-                />
-                <Label htmlFor="add-approved" className="text-xs">Mark as approved</Label>
-              </div>
-              <div className="flex items-start gap-2">
-                <Checkbox
-                  id="add-override-leave"
-                  checked={addForm.override_leave}
-                  onCheckedChange={(c) => setAddForm((f) => ({ ...f, override_leave: c === true }))}
-                />
-                <div className="space-y-0.5">
-                  <Label htmlFor="add-override-leave" className="text-xs">Override approved leave for this date</Label>
-                  <p className="text-[11px] text-muted-foreground">
-                    When checked, you can record attendance even if a full-day leave exists. Half‑day and undertime rules still apply.
-                  </p>
-                </div>
-              </div>
-            </div>
-            </div>
-            </div>
-            <DialogFooter className="shrink-0 gap-2 border-t border-border/60 bg-card px-6 py-4 sm:justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => { setAddOpen(false); setAddError(null); }}
-                disabled={addSubmitting}
-                className="dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={
-                  addSubmitting
-                  || addEmployeesLoading
-                  || !addForm.employee_id
-                  || !addForm.date
-                  || !addForm.time_in
-                  || (addForm.manual_punch_mode === 'full' && !addForm.time_out)
-                }
-                className="gap-2 bg-teal-600 text-white hover:bg-teal-500 dark:bg-teal-600 dark:hover:bg-teal-500"
-              >
-                {addSubmitting && <Loader2 className="size-4 animate-spin" />}
-                Add attendance
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
     </div>
   )

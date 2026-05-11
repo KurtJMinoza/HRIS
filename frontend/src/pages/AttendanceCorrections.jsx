@@ -5,6 +5,8 @@ import {
   Loader2,
   RefreshCw,
   Plus,
+  CheckCircle2,
+  XCircle,
   Download,
   ArrowUpDown,
   ArrowUp,
@@ -17,6 +19,8 @@ import {
   ChevronRight,
   Inbox,
   Sparkles,
+  FileText,
+  Send,
   LogIn,
   LogOut,
   FileSpreadsheet,
@@ -74,18 +78,6 @@ import {
   deleteAdminPresenceFiling,
   deleteMyPresenceFiling,
 } from '@/api'
-import {
-  ADMIN_FORM_DIALOG_BODY_CLASS,
-  ADMIN_FORM_DIALOG_DESC_CLASS,
-  ADMIN_FORM_DIALOG_FOOTER_CLASS,
-  ADMIN_FORM_DIALOG_HEADER_INNER_CLASS,
-  ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS,
-  ADMIN_FORM_DIALOG_MAX_W_LG,
-  ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS,
-  ADMIN_FORM_DIALOG_TITLE_CLASS,
-  ADMIN_VIEW_REQUEST_DIALOG_MAX,
-  adminFormDialogContentClass,
-} from '@/lib/adminFormDialogStyles'
 import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
 import {
   issueLabel,
@@ -113,6 +105,81 @@ const ISSUE_KIND_OPTIONS = [
   { value: 'missing_out', label: 'Missing Clock Out' },
   { value: 'both', label: 'Both (Clock In and Clock Out)' },
 ]
+
+const brandCardClass =
+  'rounded-2xl border border-border bg-card text-card-foreground shadow-sm dark:shadow-[0_18px_50px_-36px_rgba(0,0,0,0.45)]'
+
+function RequestStatCard({ icon: Icon, value, label, hint, tone = 'orange' }) {
+  const tones = {
+    orange: {
+      shell:
+        'bg-chart-5/15 text-chart-5 ring-chart-5/25 dark:bg-chart-5/20 dark:text-chart-5 dark:ring-chart-5/35',
+      value: 'text-chart-5',
+    },
+    blue: {
+      shell:
+        'bg-chart-1/15 text-chart-1 ring-chart-1/25 dark:bg-chart-1/20 dark:text-chart-1 dark:ring-chart-1/35',
+      value: 'text-chart-1',
+    },
+    green: {
+      shell:
+        'bg-chart-2/15 text-chart-2 ring-chart-2/25 dark:bg-chart-2/20 dark:text-chart-2 dark:ring-chart-2/35',
+      value: 'text-chart-2',
+    },
+    red: {
+      shell:
+        'bg-destructive/10 text-destructive ring-destructive/25 dark:bg-destructive/15 dark:text-destructive dark:ring-destructive/30',
+      value: 'text-destructive',
+    },
+  }
+  const t = tones[tone] ?? tones.orange
+
+  return (
+    <Card className={cn(brandCardClass, 'overflow-hidden')}>
+      <CardContent className="flex items-center gap-5 p-5 @md:p-6">
+        <div className={cn('flex size-16 shrink-0 items-center justify-center rounded-full ring-1', t.shell)}>
+          <Icon className="size-7" aria-hidden />
+        </div>
+        <div className="min-w-0">
+          <p className={cn('text-3xl font-extrabold leading-none tabular-nums tracking-tight', t.value)}>
+            {value}
+          </p>
+          <p className="mt-2 text-base font-semibold text-foreground">{label}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{hint}</p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function EmployeeStyleStatusPill({ displayStatus, status }) {
+  const ds = displayStatus || ''
+  const isRejected = status === 'rejected' || ds === 'Rejected'
+  const isApproved = status === 'approved' || ds === 'HR Approved'
+
+  if (isRejected) {
+    return (
+      <span className="inline-flex items-center gap-2 rounded-full border border-red-200/90 bg-gradient-to-br from-red-50 to-rose-50 px-3.5 py-1.5 text-sm font-semibold text-red-900 shadow-sm ring-1 ring-red-100 dark:border-red-900/50 dark:from-red-950/40 dark:to-rose-950/30 dark:text-red-100 dark:ring-red-900/40">
+        <XCircle className="size-4 shrink-0" aria-hidden />
+        Rejected
+      </span>
+    )
+  }
+  if (isApproved) {
+    return (
+      <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/90 bg-gradient-to-br from-emerald-50 to-teal-50 px-3.5 py-1.5 text-sm font-semibold text-emerald-950 shadow-sm ring-1 ring-emerald-100 dark:border-emerald-900/40 dark:from-emerald-950/45 dark:to-teal-950/25 dark:text-emerald-50 dark:ring-emerald-900/30">
+        <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+        Approved
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex max-w-[min(100%,14rem)] items-center gap-2 rounded-full border border-amber-200/90 bg-gradient-to-br from-amber-50 to-orange-50/80 px-3.5 py-1.5 text-sm font-semibold text-amber-950 shadow-sm ring-1 ring-amber-100 dark:border-amber-900/50 dark:from-amber-950/40 dark:to-orange-950/20 dark:text-amber-50 dark:ring-amber-900/40">
+      <Clock className="size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+      <span className="line-clamp-2 leading-tight">{ds || 'Pending'}</span>
+    </span>
+  )
+}
 
 /** Map API display_status to badge styles (readable, consistent). */
 function statusBadgeClass(displayStatus) {
@@ -319,6 +386,17 @@ export default function AttendanceCorrections() {
 
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine' ? loadingMine : loadingAll
+
+  const requestStats = useMemo(() => {
+    const out = { total: activeItems.length, pending: 0, approved: 0, rejected: 0 }
+    for (const item of activeItems) {
+      const label = String(item.display_status || reviewStatusLabel(item) || '').toLowerCase()
+      if (item.status === 'rejected' || label.includes('rejected')) out.rejected += 1
+      else if (item.status === 'approved' || label.includes('approved')) out.approved += 1
+      else out.pending += 1
+    }
+    return out
+  }, [activeItems])
 
   const filteredSorted = useMemo(() => {
     let list = [...activeItems]
@@ -704,20 +782,20 @@ export default function AttendanceCorrections() {
 
   return (
     <Motion.div
-      className="min-h-0 min-w-0 max-w-full space-y-4 overflow-x-hidden @sm:space-y-6"
+      className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
     >
-      <div className="flex w-full min-w-0 flex-col gap-5 border-b border-border/60 pb-6 @lg:flex-row @lg:items-end @lg:justify-between">
+      <div className="flex w-full min-w-0 flex-col gap-6 pb-2 @lg:flex-row @lg:items-end @lg:justify-between">
         <div className="max-w-2xl space-y-3">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-            Corrections
+          <p className="text-sm font-extrabold uppercase tracking-[0.14em] text-chart-5">
+            {tab === 'mine' ? 'My Requests' : 'Approval Scope'}
           </p>
-          <h1 className="hr-page-title text-slate-900 dark:text-slate-50">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground @md:text-4xl">
             Correction Requests
           </h1>
-          <p className="text-base leading-relaxed text-slate-600 dark:text-slate-400">
+          <p className="text-base leading-relaxed text-muted-foreground">
             Review filings, approve in sequence, and keep attendance accurate — without the spreadsheet fatigue.
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -738,24 +816,42 @@ export default function AttendanceCorrections() {
             </Popover>
           </div>
         </div>
-        <Button
-          type="button"
-          size="lg"
-          className="group h-12 shrink-0 gap-2 self-start rounded-xl bg-black px-6 text-white shadow-lg shadow-black/25 ring-1 ring-black/20 transition-all hover:bg-black/90 hover:shadow-black/20 dark:bg-black dark:text-white dark:ring-white/15 dark:hover:bg-black/90"
-          onClick={openFile}
-        >
-          <Plus className="size-5 transition-transform group-hover:scale-110" />
-          File Correction
-        </Button>
+        <div className="flex w-full flex-wrap items-center gap-3 @lg:w-auto @lg:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-12 flex-1 gap-2 rounded-xl border-border bg-background px-5 text-base font-semibold text-foreground shadow-sm hover:bg-muted @lg:flex-initial"
+            onClick={() => refresh()}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Refresh
+          </Button>
+          <Button
+            type="button"
+            className="h-12 flex-1 gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-6 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700 @lg:flex-initial"
+            onClick={openFile}
+          >
+            <Plus className="size-4" />
+            File new correction
+          </Button>
+        </div>
       </div>
 
-      <Card className="w-full min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xl shadow-slate-200/50 ring-1 ring-slate-100/80 dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-black/40 dark:ring-slate-800/50">
-        <CardHeader className="space-y-1 border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-5 py-5 dark:border-slate-800 dark:from-slate-900/40 dark:to-slate-950/20 @md:px-6 @md:py-6">
-          <CardTitle className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-            Request list
+      <section className="grid gap-5 @md:grid-cols-2 @xl:grid-cols-4">
+        <RequestStatCard icon={FileText} value={requestStats.total} label="Total Requests" hint="All correction requests" tone="orange" />
+        <RequestStatCard icon={Clock} value={requestStats.pending} label="Pending" hint="Awaiting approval" tone="blue" />
+        <RequestStatCard icon={CheckCircle2} value={requestStats.approved} label="Approved" hint="Successfully approved" tone="green" />
+        <RequestStatCard icon={XCircle} value={requestStats.rejected} label="Rejected" hint="Not approved" tone="red" />
+      </section>
+
+      <Card className={cn(brandCardClass, 'mt-3 w-full min-w-0 overflow-hidden @md:mt-4')}>
+        <CardHeader className="border-b border-border bg-card px-6 py-6">
+          <CardTitle className="text-xl font-semibold tracking-tight text-foreground">
+            {tab === 'mine' ? 'Your filings' : 'Request list'}
           </CardTitle>
-          <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
-            {tab === 'mine' ? 'Your correction filings' : 'Requests in your approval scope'}
+          <CardDescription className="text-base text-muted-foreground">
+            {tab === 'mine' ? 'Each row is one request. Open a row to see the full approval timeline and remarks.' : 'Requests in your approval scope.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -1242,20 +1338,25 @@ export default function AttendanceCorrections() {
       </Card>
 
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-        <DialogContent className={adminFormDialogContentClass(ADMIN_VIEW_REQUEST_DIALOG_MAX)}>
+        <DialogContent
+          showCloseButton
+          closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
+          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
+          className="max-h-[92vh] max-w-lg flex flex-col overflow-hidden rounded-2xl border border-border bg-card p-0 text-card-foreground scheme-light @sm:max-w-2xl dark:scheme-dark"
+        >
           <DialogHeader className="sr-only">
             <DialogTitle>Correction request details</DialogTitle>
             <DialogDescription>Approval chain, attendance, and approval history.</DialogDescription>
           </DialogHeader>
           {selectedItem && (
             <>
-              <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-                <div className={cn(ADMIN_FORM_DIALOG_HEADER_INNER_CLASS, 'space-y-3')}>
+              <div className="shrink-0 border-b border-border bg-muted/20 px-6 py-6 text-left">
+                <div className="space-y-3">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Correction request
                   </p>
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-mono text-2xl font-bold tracking-tight text-foreground @sm:text-3xl">
+                    <span className="font-mono text-3xl font-black tracking-tight text-foreground">
                       #{selectedItem.id}
                     </span>
                     <Badge
@@ -1272,10 +1373,10 @@ export default function AttendanceCorrections() {
                   </p>
                 </div>
               </div>
-              <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-5 text-sm')}>
-                  <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50">
-                    <h3 className="mb-4 flex items-center gap-2 border-b border-border/50 pb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                      <CalendarDays className="size-4 shrink-0" aria-hidden />
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-6 py-6 text-sm">
+                  <section className="rounded-2xl border border-border bg-muted/15 p-4 shadow-sm">
+                    <h3 className="mb-3 flex items-center gap-2 border-b border-border pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                      <CalendarDays className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
                       Summary
                     </h3>
                     <div className="grid grid-cols-1 gap-x-8 gap-y-3 @lg:grid-cols-2">
@@ -1450,7 +1551,7 @@ export default function AttendanceCorrections() {
                     </section>
                   ) : null}
               </div>
-              <div className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+              <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/15 px-6 py-4">
                 <p className="text-xs text-muted-foreground">
                   <kbd className="rounded border border-border bg-background px-1 font-mono text-[10px]">Esc</kbd> to close
                 </p>
@@ -1470,8 +1571,8 @@ export default function AttendanceCorrections() {
       </Dialog>
 
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="max-w-md rounded-2xl border-border bg-card">
+          <DialogHeader className="space-y-2">
             <DialogTitle>Approve request</DialogTitle>
             <DialogDescription>Optional remarks are stored in the audit trail.</DialogDescription>
           </DialogHeader>
@@ -1487,11 +1588,11 @@ export default function AttendanceCorrections() {
               />
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => setApproveOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" onClick={submitApprove} disabled={submitting}>
+            <Button type="button" className="bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700" onClick={submitApprove} disabled={submitting}>
               {submitting ? <Loader2 className="size-4 animate-spin" /> : 'Approve'}
             </Button>
           </DialogFooter>
@@ -1499,8 +1600,8 @@ export default function AttendanceCorrections() {
       </Dialog>
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="max-w-md rounded-2xl border-border bg-card">
+          <DialogHeader className="space-y-2">
             <DialogTitle>Reject request</DialogTitle>
             <DialogDescription>Provide a reason for rejection (required).</DialogDescription>
           </DialogHeader>
@@ -1516,7 +1617,7 @@ export default function AttendanceCorrections() {
               />
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => setRejectOpen(false)}>
               Cancel
             </Button>
@@ -1528,33 +1629,39 @@ export default function AttendanceCorrections() {
       </Dialog>
 
       <Dialog open={fileOpen} onOpenChange={setFileOpen}>
-        <DialogContent className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}>
-          <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <div className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>File correction request</DialogTitle>
-              <DialogDescription className={ADMIN_FORM_DIALOG_DESC_CLASS}>
+        <DialogContent
+          showCloseButton
+          closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
+          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
+          className="max-h-[92vh] max-w-lg flex flex-col overflow-hidden rounded-2xl border border-border bg-card p-0 text-card-foreground scheme-light @sm:max-w-2xl dark:scheme-dark"
+        >
+          <DialogHeader className="shrink-0 border-b border-border bg-muted/20 px-7 py-7 text-left">
+            <div className="space-y-2">
+              <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-chart-5">Attendance correction</p>
+              <DialogTitle className="text-2xl font-black tracking-tight text-foreground">File correction request</DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
                 Choose the date and issue type. Only the time fields that apply to your issue are shown. Remarks are
                 required.
               </DialogDescription>
             </div>
           </DialogHeader>
-          <div className={ADMIN_FORM_DIALOG_BODY_CLASS}>
-            <div className="space-y-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card px-7 py-6">
+            <div className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="file-date">Date *</Label>
+                <Label htmlFor="file-date" className="text-sm font-bold text-foreground">Date *</Label>
                 <Input
                   id="file-date"
                   type="date"
-                  className="h-11 rounded-lg"
+                  className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
                   value={fileDate}
                   onChange={(e) => setFileDate(e.target.value)}
                   max={new Date().toISOString().split('T')[0]}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="file-issue">Issue type *</Label>
+                <Label htmlFor="file-issue" className="text-sm font-bold text-foreground">Issue type *</Label>
                 <Select value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
-                  <SelectTrigger id="file-issue" className="h-11 rounded-lg">
+                  <SelectTrigger id="file-issue" className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1582,12 +1689,12 @@ export default function AttendanceCorrections() {
                     transition={{ duration: 0.2 }}
                     className="space-y-2"
                   >
-                    <Label htmlFor="file-time-in">Actual Clock In Time *</Label>
+                    <Label htmlFor="file-time-in" className="text-sm font-bold text-foreground">Actual clock in time *</Label>
                     <Input
                       id="file-time-in"
                       type="time"
                       step={60}
-                      className="h-11 rounded-lg"
+                      className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
                       value={fileTimeIn}
                       onChange={(e) => setFileTimeIn(e.target.value)}
                     />
@@ -1602,12 +1709,12 @@ export default function AttendanceCorrections() {
                     transition={{ duration: 0.2 }}
                     className="space-y-2"
                   >
-                    <Label htmlFor="file-time-out">Actual Clock Out Time *</Label>
+                    <Label htmlFor="file-time-out" className="text-sm font-bold text-foreground">Actual clock out time *</Label>
                     <Input
                       id="file-time-out"
                       type="time"
                       step={60}
-                      className="h-11 rounded-lg"
+                      className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
                       value={fileTimeOut}
                       onChange={(e) => setFileTimeOut(e.target.value)}
                     />
@@ -1616,39 +1723,40 @@ export default function AttendanceCorrections() {
                 )}
               </Motion.div>
               <div className="space-y-2">
-                <Label htmlFor="file-remarks">Remarks *</Label>
+                <Label htmlFor="file-remarks" className="text-sm font-bold text-foreground">Remarks *</Label>
                 <Textarea
                   id="file-remarks"
                   value={fileRemarks}
                   onChange={(e) => setFileRemarks(e.target.value)}
                   rows={4}
-                  className="min-h-[100px] resize-y rounded-lg"
+                  className="min-h-[8.5rem] resize-y rounded-xl border-input bg-background p-4 text-base text-foreground shadow-sm placeholder:text-muted-foreground"
                   placeholder="Describe what happened and what correction you need…"
                   required
                 />
               </div>
             </div>
           </div>
-          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button type="button" variant="outline" onClick={() => setFileOpen(false)}>
+          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-3 border-t border-border bg-muted/15 px-7 py-5 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" className="h-12 rounded-xl border-border bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted" onClick={() => setFileOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS} onClick={submitFile} disabled={submitting}>
-              {submitting ? <Loader2 className="size-4 animate-spin" /> : 'Submit correction request'}
+            <Button type="button" className="h-12 gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-7 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700" onClick={submitFile} disabled={submitting}>
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : 'Submit request'}
+              {!submitting ? <Send className="size-4" aria-hidden /> : null}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, item: null })}>
-        <DialogContent className={adminFormDialogContentClass('max-w-md')}>
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Delete correction request</DialogTitle>
-              <p className={ADMIN_FORM_DIALOG_DESC_CLASS}>Are you sure you want to delete this request?</p>
+        <DialogContent className="max-w-md rounded-2xl border-border bg-card">
+          <div className="px-1">
+            <DialogHeader>
+              <DialogTitle>Delete correction request</DialogTitle>
+              <DialogDescription>Are you sure you want to delete this request?</DialogDescription>
             </DialogHeader>
           </div>
-          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+          <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteDialog({ open: false, item: null })} disabled={deleteSubmitting}>
               Cancel
             </Button>
