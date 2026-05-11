@@ -1259,7 +1259,7 @@ export default function AdminPayComponentsPage() {
 
                     <ToggleCard
                       title="Pro-ratable"
-                      description="When on, payroll scales this component by attendance vs scheduled workdays in the pay period (after 15th/30th rules). Salary tab preview stays full-month unless a payroll period is run."
+                      description="When enabled, this component is reduced only for unpaid absences. Approved paid leaves, valid attendance, and approved attendance corrections still receive the full amount."
                       checked={form.is_proratable}
                       onChange={(checked) => updateForm({ is_proratable: checked })}
                     />

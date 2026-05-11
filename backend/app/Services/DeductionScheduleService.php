@@ -779,11 +779,9 @@ class DeductionScheduleService
     }
 
     /**
-     * Attendance-prorated allowances: daily rate from full monthly allowance ÷ stable working
-     * days, times valid attendance units in the cutoff, then multiply by the pay schedule factor
-     * (1 for 15th-only or 30th-only when this run applies, 0.5 for split / both when applicable, 0 when not).
-     *
-     * Example: ₱2,600 ÷ 26 = ₱100/day × 4.8625 units = ₱486.25 before schedule; split run applies ×0.5 → ₱243.13.
+     * Proratable allowances: start from the amount scheduled for this run, then deduct only
+     * unpaid absences in the payroll period. Hours, late, undertime, paid leave, rest days,
+     * and holidays do not reduce the allowance.
      *
      * @param  array<string, mixed>|null  $attendanceProration
      * @return array<string, mixed>
@@ -802,14 +800,17 @@ class DeductionScheduleService
             : [];
         $monthlyAmount = round(max(0.0, (float) ($line['computed_amount'] ?? 0)), 2);
         $monthlyDivisor = max(1.0, (float) ($allowanceMeta['monthly_divisor_days'] ?? 0));
-        $workedDayUnits = max(0.0, (float) ($allowanceMeta['worked_day_units'] ?? 0));
+        $payableDayUnits = max(0.0, (float) ($allowanceMeta['payable_day_units'] ?? $allowanceMeta['worked_day_units'] ?? 0));
+        $unpaidAbsentDays = max(0.0, (float) ($allowanceMeta['unpaid_absent_days'] ?? 0));
         $scheduleFactor = max(0.0, min(1.0, $scheduleFactor));
         $isApplicable = $scheduleFactor > 0.0;
 
         $fullMonthDailyRate = round($monthlyAmount / $monthlyDivisor, 6);
-        $originalProratedBeforeSchedule = round($fullMonthDailyRate * $workedDayUnits, 2);
+        $scheduledBaseForRun = $isApplicable ? round($monthlyAmount * $scheduleFactor, 2) : 0.0;
+        $unpaidAbsenceDeduction = $isApplicable ? round($fullMonthDailyRate * $unpaidAbsentDays, 2) : 0.0;
+        $originalProratedBeforeSchedule = round(max(0.0, $monthlyAmount - $unpaidAbsenceDeduction), 2);
         $amount = $isApplicable
-            ? round($originalProratedBeforeSchedule * $scheduleFactor, 2)
+            ? round(max(0.0, $scheduledBaseForRun - $unpaidAbsenceDeduction), 2)
             : 0.0;
         $scheduleDivisor = ($isApplicable && $scheduleFactor > 0.0)
             ? round(1.0 / $scheduleFactor, 4)
@@ -827,16 +828,22 @@ class DeductionScheduleService
             'is_applicable_in_run' => $isApplicable,
             'original_prorated_allowance_before_schedule_adjustment' => $originalProratedBeforeSchedule,
             'allowance_base_before_proration' => $isApplicable ? round($monthlyAmount, 2) : 0.0,
+            'scheduled_base_for_run_before_absence_deduction' => $scheduledBaseForRun,
+            'unpaid_absence_deduction' => $unpaidAbsenceDeduction,
+            'unpaid_absent_days' => round($unpaidAbsentDays, 6),
+            'payable_day_units' => round($payableDayUnits, 6),
+            'proration_basis' => (string) ($allowanceMeta['proration_basis'] ?? 'unpaid_absent_days'),
             'monthly_divisor_days' => round($monthlyDivisor, 4),
             'base_divisor_days' => round($monthlyDivisor, 4),
             'daily_allowance_rate' => round($fullMonthDailyRate, 6),
-            'worked_day_units' => round($workedDayUnits, 6),
+            'worked_day_units' => round($payableDayUnits, 6),
             'worked_minutes' => (int) ($allowanceMeta['worked_minutes'] ?? 0),
             'converted_hours' => round((float) ($allowanceMeta['converted_hours'] ?? 0), 4),
             'daily_hours' => round((float) ($allowanceMeta['daily_hours'] ?? 8), 4),
             'divisor_source' => (string) ($allowanceMeta['divisor_source'] ?? 'stable_schedule_monthly'),
             'attendance_counted' => is_array($allowanceMeta['attendance_counted'] ?? null) ? $allowanceMeta['attendance_counted'] : [],
             'attendance_excluded' => is_array($allowanceMeta['attendance_excluded'] ?? null) ? $allowanceMeta['attendance_excluded'] : [],
+            'unpaid_absences' => is_array($allowanceMeta['unpaid_absences'] ?? null) ? $allowanceMeta['unpaid_absences'] : [],
             'effective_factor' => $monthlyAmount > 0 ? round($amount / $monthlyAmount, 6) : 0.0,
             'final_allowance_after_schedule_adjustment' => $amount,
             'amount' => $amount,
@@ -892,6 +899,11 @@ class DeductionScheduleService
             'schedule_adjustment_divisor' => $allowanceProration['schedule_adjustment_divisor'] ?? null,
             'is_applicable_in_run' => $allowanceProration['is_applicable_in_run'] ?? null,
             'allowance_base_before_proration' => $allowanceProration['allowance_base_before_proration'] ?? null,
+            'scheduled_base_for_run_before_absence_deduction' => $allowanceProration['scheduled_base_for_run_before_absence_deduction'] ?? null,
+            'unpaid_absence_deduction' => $allowanceProration['unpaid_absence_deduction'] ?? null,
+            'unpaid_absent_days' => $allowanceProration['unpaid_absent_days'] ?? null,
+            'payable_day_units' => $allowanceProration['payable_day_units'] ?? null,
+            'proration_basis' => $allowanceProration['proration_basis'] ?? null,
             'monthly_divisor_days' => $allowanceProration['monthly_divisor_days'] ?? null,
             'base_divisor_days' => $allowanceProration['base_divisor_days'] ?? null,
             'daily_allowance_rate' => $allowanceProration['daily_allowance_rate'] ?? null,
@@ -900,6 +912,7 @@ class DeductionScheduleService
             'daily_hours' => $allowanceProration['daily_hours'] ?? null,
             'attendance_counted' => $allowanceProration['attendance_counted'] ?? [],
             'attendance_excluded' => $allowanceProration['attendance_excluded'] ?? [],
+            'unpaid_absences' => $allowanceProration['unpaid_absences'] ?? [],
             'final_allowance_after_schedule_adjustment' => $allowanceProration['final_allowance_after_schedule_adjustment'] ?? $allowanceProration['amount'] ?? null,
             'amount' => $allowanceProration['amount'] ?? null,
         ]);

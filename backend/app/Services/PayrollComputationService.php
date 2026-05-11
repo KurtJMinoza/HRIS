@@ -1128,7 +1128,6 @@ class PayrollComputationService
         while ($cursor->lessThanOrEqualTo($to)) {
             $dateKey = $cursor->toDateString();
             [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey, $tz);
-            $allowanceAttendance = $this->resolveAllowanceAttendanceValidity($user, $dateKey, $timeIn, $timeOut, $tz);
             $dayPayroll = $this->computeDayPayroll(
                 $user,
                 $dateKey,
@@ -1138,9 +1137,11 @@ class PayrollComputationService
                 $dailyRate,
                 $tz
             );
+            $allowanceAttendance = $this->resolveAllowanceDayForProration($user, $dateKey, $timeIn, $timeOut, $dayPayroll, $tz);
             $dayPayroll['allowance_attendance_valid'] = $allowanceAttendance['valid'];
             $dayPayroll['allowance_attendance_reason'] = $allowanceAttendance['reason'];
             $dayPayroll['allowance_attendance_sources'] = $allowanceAttendance['sources'];
+            $dayPayroll['allowance_proration_day'] = $allowanceAttendance;
             $days[] = $dayPayroll;
             $cursor->addDay();
         }
@@ -1569,84 +1570,75 @@ class PayrollComputationService
     {
         $scheduled = 0.0;
         $credited = 0.0;
-        $allowanceEligibleMinutes = 0;
-        $allowanceWorkedDayUnits = 0.0;
+        $payableDays = 0.0;
+        $unpaidAbsentDays = 0.0;
+        $nonDeductibleDays = 0.0;
         $attendanceCounted = [];
         $attendanceExcluded = [];
+        $unpaidAbsences = [];
 
         foreach ($days as $d) {
             $dateKey = (string) ($d['date'] ?? '');
+            $resolution = is_array($d['allowance_proration_day'] ?? null) ? $d['allowance_proration_day'] : null;
             $isRest = (bool) ($d['is_rest_day'] ?? false);
+            $isHoliday = is_array($d['holiday'] ?? null);
             $required = (int) ($d['required_minutes'] ?? 0);
-            if ($isRest || $required <= 0) {
+            if ($resolution !== null && ! (bool) ($resolution['scheduled_deductible_day'] ?? false)) {
                 if ($dateKey !== '') {
+                    $nonDeductibleDays += 1.0;
                     $attendanceExcluded[] = [
                         'date' => $dateKey,
                         'status' => (string) ($d['status'] ?? ''),
-                        'reason' => $isRest ? 'rest_day' : 'no_required_minutes',
+                        'reason' => (string) ($resolution['reason'] ?? 'non_deductible_day'),
+                        'sources' => $resolution['sources'] ?? [],
+                    ];
+                }
+                continue;
+            }
+            if ($resolution === null && ($isRest || $isHoliday || $required <= 0)) {
+                if ($dateKey !== '') {
+                    $nonDeductibleDays += 1.0;
+                    $attendanceExcluded[] = [
+                        'date' => $dateKey,
+                        'status' => (string) ($d['status'] ?? ''),
+                        'reason' => $isRest ? 'rest_day' : ($isHoliday ? 'holiday' : 'no_required_minutes'),
                     ];
                 }
                 continue;
             }
             $scheduled += 1.0;
-            $regularPaid = (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0));
-            $credited += min(1.0, $regularPaid / $required);
 
             $status = strtolower(trim((string) ($d['status'] ?? '')));
-            if ($status !== 'worked') {
+            $isUnpaidAbsent = $resolution !== null
+                ? (bool) ($resolution['unpaid_absent_day'] ?? false)
+                : ! (bool) ($d['allowance_attendance_valid'] ?? false);
+            if ($isUnpaidAbsent) {
+                $unpaidAbsentDays += 1.0;
                 if ($dateKey !== '') {
-                    $attendanceExcluded[] = [
+                    $row = [
                         'date' => $dateKey,
                         'status' => $status,
                         'required_minutes' => $required,
-                        'paid_regular_minutes' => $regularPaid,
-                        'reason' => $status === 'leave' ? 'leave_not_attendance_allowance' : 'not_worked',
+                        'reason' => $resolution !== null
+                            ? (string) ($resolution['reason'] ?? 'unpaid_absence')
+                            : (string) ($d['allowance_attendance_reason'] ?? 'unpaid_absence'),
+                        'sources' => $resolution['sources'] ?? ($d['allowance_attendance_sources'] ?? []),
                     ];
+                    $attendanceExcluded[] = $row;
+                    $unpaidAbsences[] = $row;
                 }
                 continue;
             }
 
-            if (! (bool) ($d['allowance_attendance_valid'] ?? false)) {
-                if ($dateKey !== '') {
-                    $attendanceExcluded[] = [
-                        'date' => $dateKey,
-                        'status' => $status,
-                        'required_minutes' => $required,
-                        'paid_regular_minutes' => $regularPaid,
-                        'reason' => (string) ($d['allowance_attendance_reason'] ?? 'invalid_attendance_session'),
-                        'sources' => $d['allowance_attendance_sources'] ?? [],
-                    ];
-                }
-                continue;
-            }
-
-            $breakdown = is_array($d['breakdown'] ?? null) ? $d['breakdown'] : [];
-            $regularPayMinutes = collect($breakdown)
-                ->filter(fn ($entry) => strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay')
-                ->sum(fn ($entry) => (int) ($entry['minutes'] ?? 0));
-
-            if ($regularPayMinutes <= 0) {
-                if ($dateKey !== '') {
-                    $attendanceExcluded[] = [
-                        'date' => $dateKey,
-                        'status' => $status,
-                        'required_minutes' => $required,
-                        'paid_regular_minutes' => $regularPaid,
-                        'reason' => 'no_regular_pay_minutes',
-                    ];
-                }
-                continue;
-            }
-
-            $dayUnit = min(1.0, $regularPayMinutes / $required);
-            $allowanceEligibleMinutes += $regularPayMinutes;
-            $allowanceWorkedDayUnits += $dayUnit;
+            $credited += 1.0;
+            $payableDays += 1.0;
             $attendanceCounted[] = [
                 'date' => $dateKey,
                 'status' => $status,
                 'required_minutes' => $required,
-                'allowance_minutes' => $regularPayMinutes,
-                'worked_day_unit' => round($dayUnit, 6),
+                'payable_day_unit' => 1.0,
+                'reason' => $resolution !== null ? (string) ($resolution['reason'] ?? 'payable_day') : 'payable_day',
+                'sources' => $resolution['sources'] ?? [],
             ];
         }
         $factor = $scheduled > 0.0 ? max(0.0, min(1.0, $credited / $scheduled)) : 1.0;
@@ -1656,29 +1648,102 @@ class PayrollComputationService
             'factor' => round($factor, 6),
             'scheduled_workdays' => round($scheduled, 4),
             'credited_day_units' => round($credited, 4),
+            'unpaid_absent_days' => round($unpaidAbsentDays, 4),
+            'payable_day_units' => round($payableDays, 4),
+            'non_deductible_days' => round($nonDeductibleDays, 4),
             'allowance' => [
-                'worked_day_units' => round($allowanceWorkedDayUnits, 6),
-                'worked_minutes' => $allowanceEligibleMinutes,
-                'converted_hours' => round($allowanceEligibleMinutes / 60, 4),
+                'worked_day_units' => round($payableDays, 6),
+                'payable_day_units' => round($payableDays, 6),
+                'unpaid_absent_days' => round($unpaidAbsentDays, 6),
+                'non_deductible_days' => round($nonDeductibleDays, 6),
+                'worked_minutes' => 0,
+                'converted_hours' => 0.0,
                 'daily_hours' => round(max(0.0, $scheduledDailyHours), 4),
                 'monthly_divisor_days' => $monthlyDivisorDays,
                 'divisor_source' => 'stable_schedule_monthly',
+                'proration_basis' => 'unpaid_absent_days',
                 'attendance_counted' => $attendanceCounted,
                 'attendance_excluded' => $attendanceExcluded,
+                'unpaid_absences' => $unpaidAbsences,
             ],
         ];
     }
 
     /**
-     * Monthly basic → daily rate for payroll (Finalize Payroll, Payslip preview/view, employee payroll run).
+     * Centralized payable-day resolver for proratable allowances/components.
+     * Present/corrected/paid-leave days are payable; only scheduled workdays with no payable
+     * signal are unpaid absences. Hours worked, tardiness, and undertime are deliberately ignored.
      *
-     * Payroll divisor is schedule-based and stable per schedule type:
-     * - 5-day schedule => round(5 * 52 / 12) = 22
-     * - 6-day schedule => round(6 * 52 / 12) = 26
-     * This avoids month-to-month drift from raw calendar weekday counts (20-23 for 5-day schedules).
-     *
-     * @param  Carbon  $from  Retained for call-site compatibility.
+     * @return array<string, mixed>
      */
+    private function resolveAllowanceDayForProration(
+        User $user,
+        string $dateKey,
+        ?Carbon $timeIn,
+        ?Carbon $timeOut,
+        array $dayPayroll,
+        string $tz
+    ): array {
+        $status = strtolower(trim((string) ($dayPayroll['status'] ?? '')));
+        $isRest = (bool) ($dayPayroll['is_rest_day'] ?? false);
+        $isHoliday = is_array($dayPayroll['holiday'] ?? null);
+        $required = (int) ($dayPayroll['required_minutes'] ?? 0);
+
+        if ($isRest || $isHoliday || $required <= 0) {
+            return [
+                'valid' => true,
+                'scheduled_deductible_day' => false,
+                'payable_day' => false,
+                'unpaid_absent_day' => false,
+                'reason' => $isRest ? 'rest_day' : ($isHoliday ? 'holiday' : 'no_scheduled_workday'),
+                'sources' => [
+                    'rest_day' => $isRest,
+                    'holiday' => $isHoliday,
+                    'scheduled_workday' => false,
+                ],
+            ];
+        }
+
+        $attendance = $this->resolveAllowanceAttendanceValidity($user, $dateKey, $timeIn, $timeOut, $tz);
+        if ((bool) ($attendance['valid'] ?? false)) {
+            return array_merge($attendance, [
+                'scheduled_deductible_day' => true,
+                'payable_day' => true,
+                'unpaid_absent_day' => false,
+            ]);
+        }
+
+        $leave = $this->approvedPrimaryLeaveForDate($user, $dateKey);
+        if ($leave !== null) {
+            $leaveCredits = app(LeaveCreditService::class);
+            $isPaidLeave = $leaveCredits->consumesCredits((string) $leave->type)
+                && $leaveCredits->dateIsPaidLeavePortion($user, $leave, $dateKey);
+
+            return [
+                'valid' => $isPaidLeave,
+                'scheduled_deductible_day' => true,
+                'payable_day' => $isPaidLeave,
+                'unpaid_absent_day' => ! $isPaidLeave,
+                'reason' => $isPaidLeave ? 'approved_paid_leave' : 'approved_unpaid_leave',
+                'sources' => array_merge($attendance['sources'] ?? [], [
+                    'approved_leave' => true,
+                    'approved_paid_leave' => $isPaidLeave,
+                    'approved_unpaid_leave' => ! $isPaidLeave,
+                    'leave_type' => (string) $leave->type,
+                ]),
+            ];
+        }
+
+        return [
+            'valid' => false,
+            'scheduled_deductible_day' => true,
+            'payable_day' => false,
+            'unpaid_absent_day' => true,
+            'reason' => $status === 'absent' ? 'absent_without_leave' : (string) ($attendance['reason'] ?? 'unpaid_absence'),
+            'sources' => $attendance['sources'] ?? [],
+        ];
+    }
+
     /**
      * Allowance eligibility is stricter than payroll's payable-time fallback:
      * actual attendance must have a valid IN and OUT from raw logs and/or approved correction.
@@ -1697,17 +1762,10 @@ class PayrollComputationService
         $sources = [
             'raw_clock_in' => false,
             'raw_clock_out' => false,
+            'approved_correction' => false,
             'approved_correction_time_in' => false,
             'approved_correction_time_out' => false,
         ];
-
-        if (! $timeIn || ! $timeOut) {
-            return [
-                'valid' => false,
-                'reason' => 'missing_clock_in_or_out',
-                'sources' => $sources,
-            ];
-        }
 
         $correction = AttendanceCorrection::query()
             ->where('user_id', $user->id)
@@ -1722,6 +1780,7 @@ class PayrollComputationService
             ->first();
 
         if ($correction) {
+            $sources['approved_correction'] = true;
             $sources['approved_correction_time_in'] = $correction->time_in !== null;
             $sources['approved_correction_time_out'] = $correction->time_out !== null;
         }
@@ -1734,21 +1793,22 @@ class PayrollComputationService
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->exists();
 
-        $timeInUtc = $timeIn->copy()->setTimezone('UTC');
-        $timeOutUtc = $timeOut->copy()->setTimezone('UTC');
         $sources['raw_clock_out'] = AttendanceLog::query()
             ->where('user_id', $user->id)
-            ->where('verified_at', '>=', $timeInUtc)
-            ->where('verified_at', '<=', $timeOutUtc)
+            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
             ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
             ->exists();
 
-        $hasValidIn = $sources['raw_clock_in'] || $sources['approved_correction_time_in'];
-        $hasValidOut = $sources['raw_clock_out'] || $sources['approved_correction_time_out'];
+        $hasValidInOut = ($timeIn !== null && $timeOut !== null)
+            && (($sources['raw_clock_in'] || $sources['approved_correction_time_in'])
+                && ($sources['raw_clock_out'] || $sources['approved_correction_time_out']));
+        $valid = $hasValidInOut || $sources['approved_correction'];
 
         return [
-            'valid' => $hasValidIn && $hasValidOut,
-            'reason' => $hasValidIn && $hasValidOut ? 'valid_attendance_session' : 'incomplete_attendance_without_approved_correction',
+            'valid' => $valid,
+            'reason' => $valid
+                ? ($sources['approved_correction'] ? 'approved_attendance_correction' : 'valid_attendance_session')
+                : 'missing_attendance_or_approved_correction',
             'sources' => $sources,
         ];
     }
