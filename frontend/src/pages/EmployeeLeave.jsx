@@ -48,6 +48,12 @@ import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 
 const MAX_LEAVE_SUPPORTING_FILES = 5
 const MAX_LEAVE_FILE_BYTES = 10 * 1024 * 1024
+const EMPLOYEE_LEAVE_STATUS_OPTIONS = [
+  { value: '', label: 'All' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+]
 const employeeLeaveCardClass =
   'rounded-[18px] border border-border/70 bg-card shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
 const employeeLeaveInputClass =
@@ -475,6 +481,7 @@ export default function EmployeeLeave() {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [statusFilter, setStatusFilter] = useState('')
   const [leaveCreditInfo, setLeaveCreditInfo] = useState(null)
 
   const [undertimePreview, setUndertimePreview] = useState(null)
@@ -878,7 +885,20 @@ export default function EmployeeLeave() {
     setAddOpen(true)
   }
 
-  const hasTableRows = rows.length > 0
+  const totalCount = rows.length
+  const pendingCount = rows.filter((l) => normalizeLeaveStatus(l.status) === 'pending').length
+  const approvedCount = rows.filter((l) => normalizeLeaveStatus(l.status) === 'approved').length
+  const rejectedCount = rows.filter((l) => normalizeLeaveStatus(l.status) === 'rejected').length
+  const statusCounts = {
+    '': totalCount,
+    pending: pendingCount,
+    approved: approvedCount,
+    rejected: rejectedCount,
+  }
+  const filteredRows = statusFilter
+    ? rows.filter((leave) => normalizeLeaveStatus(leave.status) === statusFilter)
+    : rows
+  const hasTableRows = filteredRows.length > 0
 
   function renderLeaveTable() {
     return (
@@ -908,11 +928,23 @@ export default function EmployeeLeave() {
             ) : !hasTableRows ? (
               <tr>
                 <td colSpan={8}>
-                  <LeaveEmptyState onFileLeave={openFileLeave} />
+                  {rows.length > 0 ? (
+                    <div className="flex min-h-[330px] flex-col items-center justify-center px-6 py-16 text-center">
+                      <div className="mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                        <Inbox className="size-11" strokeWidth={1.85} aria-hidden />
+                      </div>
+                      <h3 className="text-xl font-semibold tracking-tight text-foreground">No {statusFilter} leave requests</h3>
+                      <p className="mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">
+                        Choose another status filter or adjust the date range above.
+                      </p>
+                    </div>
+                  ) : (
+                    <LeaveEmptyState onFileLeave={openFileLeave} />
+                  )}
                 </td>
               </tr>
             ) : (
-              rows.map((leave, rowIdx) => {
+              filteredRows.map((leave, rowIdx) => {
                 const dur = computeLeaveDurationDays(leave)
                 const durLabel =
                   dur === null
@@ -1016,12 +1048,18 @@ export default function EmployeeLeave() {
     >
       <div className="mx-auto flex w-full max-w-full flex-1 flex-col space-y-7 px-1 @sm:px-0">
         <header className="flex flex-col gap-5 pb-1 @lg:flex-row @lg:items-end @lg:justify-between">
-          <div className="max-w-2xl space-y-3">
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand">My leave</p>
-            <h1 className="text-3xl font-bold tracking-tight text-foreground @sm:text-4xl">Leave</h1>
-            <p className="text-[15px] leading-relaxed text-muted-foreground">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-2xl font-bold tracking-tight text-foreground @md:text-3xl">Leave Management</h2>
+            <p className="mt-1 text-sm text-muted-foreground @md:text-[15px]">
               Request leave, attach supporting documents, and track approvals in one place.
             </p>
+            {totalCount > 0 ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {pendingCount > 0
+                  ? `${pendingCount} pending, ${approvedCount} approved, ${rejectedCount} rejected.`
+                  : `No pending leave. ${approvedCount} approved, ${rejectedCount} rejected.`}
+              </p>
+            ) : null}
           </div>
           <div className="flex w-full flex-wrap items-center gap-3 @lg:w-auto @lg:justify-end">
             <Button
@@ -1082,6 +1120,101 @@ export default function EmployeeLeave() {
           </div>
         )}
 
+        {totalCount > 0 && (
+          <div className="grid w-full gap-3 @sm:grid-cols-2 @lg:grid-cols-4">
+            <Card className="overflow-hidden border border-border/60 bg-card shadow-md dark:border-white/8">
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Selected period</p>
+                    <p className="mt-1 text-4xl font-black tracking-tight text-foreground">{totalCount}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Total requests</p>
+                  </div>
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/15 dark:bg-blue-500/20">
+                    <Calendar className="size-5 text-blue-600 dark:text-blue-400" aria-hidden />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className={cn(
+              'overflow-hidden border bg-card shadow-md transition-all',
+              pendingCount > 0
+                ? 'border-amber-400/60 shadow-[0_0_18px_rgba(245,158,11,0.12)] dark:border-amber-500/40'
+                : 'border-border/60 dark:border-white/8'
+            )}>
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Pending review</p>
+                    <p className={cn('mt-1 text-4xl font-black tracking-tight', pendingCount > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')}>
+                      {pendingCount}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{pendingCount > 0 ? 'Awaiting action' : 'All cleared'}</p>
+                  </div>
+                  <div className={cn('flex size-10 items-center justify-center rounded-xl', pendingCount > 0 ? 'bg-amber-500/20' : 'bg-amber-500/10')}>
+                    <Clock className={cn('size-5', pendingCount > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-amber-500/50')} aria-hidden />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="overflow-hidden border border-border/60 bg-card shadow-md dark:border-white/8">
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Approved</p>
+                    <p className="mt-1 text-4xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">{approvedCount}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Selected period</p>
+                  </div>
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/15 dark:bg-emerald-500/20">
+                    <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="overflow-hidden border border-border/60 bg-card shadow-md dark:border-white/8">
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Rejected</p>
+                    <p className="mt-1 text-4xl font-black tracking-tight text-rose-600 dark:text-rose-400">{rejectedCount}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Selected period</p>
+                  </div>
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-rose-500/15 dark:bg-rose-500/20">
+                    <XCircle className="size-5 text-rose-600 dark:text-rose-400" aria-hidden />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {pendingCount > 0 && (
+          <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-amber-400/50 bg-amber-500/10 px-4 py-3.5 dark:border-amber-500/40 dark:bg-amber-500/8 @sm:flex-row @sm:items-center">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="size-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+              <div>
+                <p className="font-semibold text-amber-800 dark:text-amber-200">
+                  {pendingCount} leave request{pendingCount > 1 ? 's are' : ' is'} waiting for review
+                </p>
+                <p className="text-xs text-amber-700/70 dark:text-amber-300/60">
+                  Open pending requests to track the approval chain and latest remarks.
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="shrink-0 bg-amber-600 text-white hover:bg-amber-500 dark:bg-amber-600 dark:hover:bg-amber-500"
+              onClick={() => setStatusFilter('pending')}
+            >
+              View Pending
+            </Button>
+          </div>
+        )}
+
         {/* Period filter */}
         <div className={cn(employeeLeaveCardClass, 'px-4 py-4 @md:px-5')}>
           <div className="flex flex-col gap-4 @lg:flex-row @lg:items-end @lg:justify-between">
@@ -1119,13 +1252,50 @@ export default function EmployeeLeave() {
         )}
 
         <Card className={cn(employeeLeaveCardClass, 'w-full min-w-0 flex-1 overflow-hidden')}>
-            <CardHeader className="border-b border-border/70 bg-card px-5 py-6 @md:px-6">
-              <CardTitle className="text-xl font-semibold tracking-tight text-foreground">
-                My leave requests
-              </CardTitle>
-              <CardDescription className="text-sm leading-relaxed text-muted-foreground @md:text-[15px]">
-                Each row is one request. Open details to see the approval chain and remarks.
-              </CardDescription>
+            <CardHeader className="flex flex-col gap-4 border-b border-border/40 bg-muted/10 px-4 py-4 dark:border-border/50 dark:bg-muted/20 @sm:px-6 @sm:py-5">
+              <div className="min-w-0">
+                <CardTitle className="text-lg font-semibold @md:text-xl">My leave requests</CardTitle>
+                <CardDescription className="text-sm @md:text-[15px]">
+                  Filter by status. Open details to see the approval chain and remarks.
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {EMPLOYEE_LEAVE_STATUS_OPTIONS.map((opt) => {
+                  const active = statusFilter === opt.value
+                  const count = statusCounts[opt.value]
+                  const activeStyles = {
+                    '': 'border-foreground bg-foreground text-background',
+                    pending: 'border-amber-500 bg-amber-500 text-white shadow-[0_0_10px_rgba(245,158,11,0.3)]',
+                    approved: 'border-emerald-600 bg-emerald-600 text-white',
+                    rejected: 'border-rose-600 bg-rose-600 text-white',
+                  }
+                  const inactiveStyles = {
+                    '': 'border-border/60 text-muted-foreground hover:border-foreground/40 hover:text-foreground',
+                    pending: 'border-border/60 text-muted-foreground hover:border-amber-400/60 hover:text-amber-600 dark:hover:text-amber-400',
+                    approved: 'border-border/60 text-muted-foreground hover:border-emerald-400/60 hover:text-emerald-600 dark:hover:text-emerald-400',
+                    rejected: 'border-border/60 text-muted-foreground hover:border-rose-400/60 hover:text-rose-600 dark:hover:text-rose-400',
+                  }
+                  return (
+                    <button
+                      key={opt.value || 'all'}
+                      type="button"
+                      onClick={() => setStatusFilter(opt.value)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all',
+                        active ? activeStyles[opt.value] || activeStyles[''] : inactiveStyles[opt.value] || inactiveStyles['']
+                      )}
+                    >
+                      {opt.label}
+                      <span className={cn(
+                        'inline-flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] font-bold tabular-nums',
+                        active ? 'bg-white/25' : 'bg-muted'
+                      )}>
+                        {count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="hidden min-h-[280px] md:block">{renderLeaveTable()}</div>
@@ -1135,10 +1305,22 @@ export default function EmployeeLeave() {
                     <Loader2 className="size-10 animate-spin text-brand" />
                   </div>
                 ) : !hasTableRows ? (
-                  <LeaveEmptyState onFileLeave={openFileLeave} />
+                  rows.length > 0 ? (
+                    <div className="flex min-h-[260px] flex-col items-center justify-center px-6 py-12 text-center">
+                      <div className="mb-5 flex size-20 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                        <Inbox className="size-9" strokeWidth={1.85} aria-hidden />
+                      </div>
+                      <h3 className="text-lg font-semibold tracking-tight text-foreground">No {statusFilter} leave requests</h3>
+                      <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+                        Choose another status filter or adjust the date range above.
+                      </p>
+                    </div>
+                  ) : (
+                    <LeaveEmptyState onFileLeave={openFileLeave} />
+                  )
                 ) : (
                   <AnimatedSection staggerChildren={0.03} duration={0.4}>
-                    {rows.map((leave) => {
+                    {filteredRows.map((leave) => {
                       const dur = computeLeaveDurationDays(leave)
                       const durLabel =
                         dur === null

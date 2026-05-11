@@ -5,6 +5,7 @@ import {
   XCircle,
   Plus,
   FileText,
+  RefreshCw,
   TrendingUp,
   Calendar,
   Clock,
@@ -13,6 +14,8 @@ import {
   Eye,
   Trash2,
   X,
+  UploadCloud,
+  ArrowRight,
 } from 'lucide-react'
 import { TableBodySkeleton } from '@/components/skeletons'
 import { Button } from '@/components/ui/button'
@@ -23,6 +26,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
 import {
@@ -51,7 +55,6 @@ import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import {
-  FIELD_SELECT_CLASS_H10,
   FIELD_TEXTAREA_CLASS,
   FIELD_TEXTAREA_CLASS_SM,
 } from '@/lib/fieldClasses'
@@ -67,6 +70,7 @@ import {
 } from '@/lib/adminFormDialogStyles'
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
 import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
+import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All' },
@@ -108,12 +112,45 @@ const REST_DAY_BYPASS_REASON_MIN = 10
 
 const MAX_LEAVE_SUPPORTING_FILES = 5
 const MAX_LEAVE_FILE_BYTES = 10 * 1024 * 1024
+const adminLeaveCardClass =
+  'rounded-[18px] border border-border/70 bg-card shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
+const adminLeavePrimaryButtonClass =
+  'h-11 gap-2 rounded-lg bg-brand px-5 text-sm font-semibold text-brand-foreground shadow-[0_12px_22px_-14px_rgba(234,88,12,0.9)] transition hover:bg-brand-strong dark:shadow-[0_12px_24px_-16px_rgba(251,146,60,0.75)]'
+const adminLeaveOutlineButtonClass =
+  'h-11 gap-2 rounded-lg border-border/80 bg-card px-5 text-sm font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
+const adminLeaveModalFieldClass =
+  'h-14 rounded-xl border-border/80 bg-background px-4 text-base font-medium text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
+const adminLeaveModalSelectClass =
+  'h-14 w-full rounded-xl border border-brand bg-background px-5 text-lg font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-background/40 dark:focus:ring-brand/20'
+const adminLeaveModalLabelClass = 'text-base font-semibold tracking-tight text-foreground'
+const adminLeaveModalHintClass = 'text-[13px] leading-relaxed text-muted-foreground'
 
 function supportingDocUrls(leave) {
   if (!leave) return []
   if (Array.isArray(leave.document_urls) && leave.document_urls.length) return leave.document_urls
   if (leave.document_url) return [leave.document_url]
   return []
+}
+
+function LeaveModalCalendarArt() {
+  return (
+    <div className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-72 text-brand opacity-20 dark:opacity-25 @lg:block" aria-hidden>
+      <svg viewBox="0 0 280 160" className="h-full w-full" fill="none">
+        <path d="M38 152C31 122 36 91 61 62C78 99 69 128 42 152" stroke="currentColor" strokeWidth="2" />
+        <path d="M60 63L42 152" stroke="currentColor" strokeWidth="2" />
+        <path d="M57 89L43 98M63 108L45 119M51 129L39 137" stroke="currentColor" strokeWidth="2" />
+        <path d="M86 152C83 125 93 99 118 75C130 111 119 137 90 152" stroke="currentColor" strokeWidth="2" />
+        <path d="M117 76L90 152" stroke="currentColor" strokeWidth="2" />
+        <path d="M111 101L96 110M113 122L93 131" stroke="currentColor" strokeWidth="2" />
+        <path d="M128 48L260 30L268 152H116L128 48Z" stroke="currentColor" strokeWidth="2" />
+        <path d="M125 73L263 55" stroke="currentColor" strokeWidth="2" />
+        <path d="M165 36V22C165 16 169 12 174 12C179 12 183 16 183 22V49C183 54 179 58 174 58C170 58 167 56 165 52" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M209 30V16C209 10 213 6 218 6C223 6 227 10 227 16V43C227 48 223 52 218 52C214 52 211 50 209 46" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M247 25V12C247 7 251 3 256 3C261 3 265 7 265 12V38C265 43 261 47 256 47C252 47 249 45 247 41" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M150 88H171V111H150V88ZM190 83H212V106H190V83ZM230 78H252V101H230V78ZM145 124H167V147H145V124ZM187 119H209V142H187V119ZM228 114H250V137H228V114Z" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    </div>
+  )
 }
 
 export default function AdminLeave() {
@@ -631,14 +668,15 @@ export default function AdminLeave() {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-6 @md:gap-8">
-      <div className="flex w-full flex-col gap-4 @sm:flex-row @sm:items-start @sm:justify-between">
+      <div className="flex w-full flex-col gap-5 pb-1 @lg:flex-row @lg:items-end @lg:justify-between">
         <div className="min-w-0 flex-1">
-          <h2 className="text-2xl font-bold tracking-tight @md:text-3xl">Leave Management</h2>
-          <CardDescription className="text-sm @md:text-[15px]">
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand">Leave management</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-tight text-foreground @sm:text-4xl">Leave</h1>
+          <p className="mt-2 text-[15px] leading-relaxed text-muted-foreground">
             {canApproveLeave || canLeaveNotes
               ? 'View and manage employee leave requests in your scope. Approval, rejection, and notes require the matching permissions.'
               : 'View employee leave requests in your scope (read-only).'}
-          </CardDescription>
+          </p>
           {totalCount > 0 && (
             <p className="mt-1 text-xs text-muted-foreground">
               {pendingCount > 0
@@ -647,9 +685,20 @@ export default function AdminLeave() {
             </p>
           )}
         </div>
-        {canApproveLeave && (
+        <div className="flex w-full flex-wrap items-center gap-3 @lg:w-auto @lg:justify-end">
           <Button
-            className="w-full shrink-0 @sm:w-auto"
+            type="button"
+            variant="outline"
+            className={cn(adminLeaveOutlineButtonClass, 'flex-1 @lg:flex-initial')}
+            onClick={() => fetchLeaves()}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Refresh
+          </Button>
+          {canApproveLeave && (
+          <Button
+            className={cn(adminLeavePrimaryButtonClass, 'flex-1 @lg:flex-initial')}
             onClick={() => {
               setAddOpen(true)
               setAddForm({
@@ -664,16 +713,17 @@ export default function AdminLeave() {
               setError(null)
             }}
           >
-            <Plus className="size-4 mr-2" />
+            <Plus className="size-4" />
             File new leave
           </Button>
-        )}
+          )}
+        </div>
       </div>
 
       {totalCount > 0 && (
         <div className="grid w-full gap-3 @sm:grid-cols-2 @lg:grid-cols-4">
           {/* Total */}
-          <Card className="border border-border/60 shadow-md dark:border-white/8 bg-card overflow-hidden">
+          <Card className={cn(adminLeaveCardClass, 'overflow-hidden')}>
             <CardContent className="p-5">
               <div className="flex items-start justify-between">
                 <div>
@@ -689,7 +739,7 @@ export default function AdminLeave() {
           </Card>
 
           {/* Pending */}
-          <Card className={`border shadow-md bg-card overflow-hidden transition-all ${monthlyPending > 0 ? 'border-amber-400/60 dark:border-amber-500/40 shadow-[0_0_18px_rgba(245,158,11,0.12)]' : 'border-border/60 dark:border-white/8'}`}>
+          <Card className={cn(adminLeaveCardClass, 'overflow-hidden transition-all', monthlyPending > 0 && 'border-amber-400/60 shadow-[0_0_18px_rgba(245,158,11,0.12)] dark:border-amber-500/40')}>
             <CardContent className="p-5">
               <div className="flex items-start justify-between">
                 <div>
@@ -709,7 +759,7 @@ export default function AdminLeave() {
           </Card>
 
           {/* Approved */}
-          <Card className="border border-border/60 shadow-md dark:border-white/8 bg-card overflow-hidden">
+          <Card className={cn(adminLeaveCardClass, 'overflow-hidden')}>
             <CardContent className="p-5">
               <div className="flex items-start justify-between">
                 <div>
@@ -725,7 +775,7 @@ export default function AdminLeave() {
           </Card>
 
           {/* Rejected */}
-          <Card className="border border-border/60 shadow-md dark:border-white/8 bg-card overflow-hidden">
+          <Card className={cn(adminLeaveCardClass, 'overflow-hidden')}>
             <CardContent className="p-5">
               <div className="flex items-start justify-between">
                 <div>
@@ -771,7 +821,7 @@ export default function AdminLeave() {
         </div>
       )}
 
-      <Card className="w-full min-w-0 border border-border/60 shadow-md dark:border-white/8 bg-card">
+      <Card className={cn(adminLeaveCardClass, 'w-full min-w-0 overflow-hidden')}>
         <CardHeader className="flex flex-col gap-4 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
           <div className="min-w-0">
             <CardTitle className="text-lg font-semibold @md:text-xl">Leave requests</CardTitle>
@@ -822,16 +872,44 @@ export default function AdminLeave() {
               </table>
             </div>
           ) : leaveRequests.length === 0 ? (
-            <div className="flex min-h-[min(58vh,620px)] flex-col items-center justify-center gap-3 px-6 py-16 text-center @md:py-24">
-              <div className="flex size-14 items-center justify-center rounded-2xl border border-dashed border-border/60 bg-muted/30 dark:border-white/10">
-                <FileText className="size-7 text-muted-foreground/50" aria-hidden />
+            <div className="flex min-h-[min(58vh,620px)] flex-col items-center justify-center px-6 py-16 text-center @md:py-24">
+              <div className="relative mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                <FileText className="size-11" strokeWidth={1.85} aria-hidden />
+                <span className="absolute -left-1 top-2 text-lg font-semibold text-brand" aria-hidden>
+                  +
+                </span>
+                <span className="absolute -right-2 bottom-3 text-lg font-semibold text-brand/70" aria-hidden>
+                  +
+                </span>
               </div>
-              <p className="max-w-md text-base font-medium text-foreground">
+              <p className="max-w-md text-xl font-semibold tracking-tight text-foreground">
                 {statusFilter ? `No ${statusFilter} leave requests.` : 'No leave requests yet.'}
               </p>
-              <p className="max-w-md text-sm text-muted-foreground">
+              <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
                 When employees submit leave, they will appear here for review.
               </p>
+              {canApproveLeave ? (
+                <Button
+                  type="button"
+                  className={cn(adminLeavePrimaryButtonClass, 'mt-7 px-6')}
+                  onClick={() => {
+                    setAddOpen(true)
+                    setAddForm({
+                      user_id: showEmployeePicker ? '' : String(user?.id ?? ''),
+                      type: 'vacation',
+                      start_date: '',
+                      end_date: '',
+                      half_type: '',
+                      notes: '',
+                      supportingFiles: [],
+                    })
+                    setError(null)
+                  }}
+                >
+                  <Plus className="size-4" />
+                  File new leave
+                </Button>
+              ) : null}
             </div>
           ) : (
             <div className="flex-1 overflow-x-auto">
@@ -1249,268 +1327,277 @@ export default function AdminLeave() {
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass()}
+          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
+          closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className="max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          innerClassName="gap-0 overflow-hidden p-0 pr-0"
           aria-describedby="leave-add-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={cn(ADMIN_FORM_DIALOG_TITLE_CLASS, 'flex items-center gap-2')}>
-                <Calendar className="size-5 text-black dark:text-white" />
-                File new leave
-              </DialogTitle>
-              <p id="leave-add-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                {showEmployeePicker
-                  ? 'Select an employee in your scope, then choose dates and leave type.'
-                  : 'Complete the fields below. This request is for your own leave only.'}
-              </p>
-              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-                Applies to every role (employee, department head, branch head, company head, HR): earliest start is
-                tomorrow. Dates where the leave subject already has complete attendance (clock-in and clock-out),
-                including from approved corrections, cannot be used. New requests cannot overlap an existing pending or
-                approved leave for the same person.
-              </p>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-8 pb-6 pt-8 text-left dark:to-brand/10 @md:px-12">
+              <AgcBrandLogo className="mb-7 h-9 @md:h-10" />
+              <div className="relative z-10 max-w-[43rem] space-y-3 pr-14 @md:pr-0">
+                <DialogTitle className="text-2xl font-bold tracking-tight text-foreground @md:text-3xl">
+                  File new leave
+                </DialogTitle>
+                <DialogDescription id="leave-add-desc" className="max-w-[42rem] text-base leading-relaxed text-muted-foreground @md:text-lg">
+                  {showEmployeePicker
+                    ? 'Select an employee in your scope, then choose dates and leave type.'
+                    : 'Choose your leave type and dates. This request is for your own leave only.'}{' '}
+                  The earliest start date is tomorrow. Dates with complete attendance and overlapping pending or approved leave cannot be used.
+                </DialogDescription>
+              </div>
+              <LeaveModalCalendarArt />
             </DialogHeader>
-          </div>
-          <form onSubmit={handleAddLeave} className="flex min-h-0 flex-1 flex-col">
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-            {!showEmployeePicker && (
-              <div className="rounded-lg border border-border/50 bg-muted/40 px-4 py-3 text-foreground/90 dark:bg-white/5">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Filing leave as
-                </p>
-                <p className="mt-1.5 text-sm font-semibold leading-snug text-foreground">
-                  {user?.name ?? '—'}
-                  {user?.hr_role_label ? (
-                    <span className="font-normal text-muted-foreground"> — {user.hr_role_label}</span>
-                  ) : null}
-                </p>
-              </div>
-            )}
-            {showEmployeePicker ? (
-            <div className="space-y-2">
-              <Label htmlFor="add-employee">Employee</Label>
-              <select
-                id="add-employee"
-                required
-                value={addForm.user_id}
-                onChange={(e) => setAddForm((f) => ({ ...f, user_id: e.target.value }))}
-                className={FIELD_SELECT_CLASS_H10}
-              >
-                <option value="">Select employee…</option>
-                {employees.filter((e) => isRosterStaffMember(e)).map((emp) => (
-                  <option key={emp.id} value={emp.id}>{emp.name}</option>
-                ))}
-              </select>
-            </div>
-            ) : null}
-            <div className="space-y-2">
-              <Label htmlFor="add-type">Leave type</Label>
-              <select
-                id="add-type"
-                value={addForm.type}
-                onChange={(e) => setAddForm((f) => ({ ...f, type: e.target.value }))}
-                className={FIELD_SELECT_CLASS_H10}
-              >
-                {LEAVE_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
-            </div>
-            {addForm.type === 'half_day' && (
-              <div className="space-y-2">
-                <Label htmlFor="add-half-type">Half day type</Label>
-                <select
-                  id="add-half-type"
-                  value={addForm.half_type}
-                  onChange={(e) => setAddForm((f) => ({ ...f, half_type: e.target.value }))}
-                  className={FIELD_SELECT_CLASS_H10}
-                  required
-                >
-                  <option value="">Select option</option>
-                  <option value="am">AM Half Day (work morning, leave afternoon)</option>
-                  <option value="pm">PM Half Day (leave morning, work afternoon)</option>
-                </select>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="add-start">Start date</Label>
-                <Input
-                  id="add-start"
-                  type="date"
-                  required
-                  min={minLeaveDate}
-                  value={addForm.start_date}
-                  onChange={(e) => setAddForm((f) => ({ ...f, start_date: e.target.value }))}
-                  className="dark:[color-scheme:dark]"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="add-end">End date</Label>
-                <Input
-                  id="add-end"
-                  type="date"
-                  required
-                  value={addForm.end_date}
-                  min={minEndDate}
-                  onChange={(e) => setAddForm((f) => ({ ...f, end_date: e.target.value }))}
-                  className="dark:[color-scheme:dark]"
-                />
-              </div>
-            </div>
-            {addRangeValidating && addSubjectUid && addForm.start_date && addRangeEndYmd ? (
-              <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-                Checking dates against the employee&apos;s work schedule…
-              </p>
-            ) : null}
-            {addRangeRestDay && !addRangeRestDay.valid ? (
-              <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2 text-xs dark:border-amber-900/50 dark:bg-amber-950/25">
-                <p className="flex items-start gap-2 font-medium text-amber-950 dark:text-amber-100">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  <span>{addRangeRestDay.message}</span>
-                </p>
-                {isAdminHr ? (
-                  <div className="mt-3 space-y-2 border-t border-amber-200/60 pt-3 dark:border-amber-900/40">
-                    <div className="flex items-start gap-2">
-                      <Checkbox
-                        id="add-bypass-rest-days"
-                        checked={addBypassRestDays}
-                        onCheckedChange={(c) => setAddBypassRestDays(c === true)}
-                        className="mt-0.5"
+
+            <div className="px-8 py-7 @md:px-12">
+              <form id="admin-leave-file-form" className="space-y-6" onSubmit={handleAddLeave}>
+                {!showEmployeePicker && (
+                  <div className="rounded-xl border border-brand/25 bg-brand/[0.045] px-5 py-4 shadow-sm dark:border-brand/25 dark:bg-brand/10">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-brand">Filing leave as</p>
+                    <p className="mt-1.5 text-base font-semibold leading-snug text-foreground">
+                      {user?.name ?? '?'}
+                      {user?.hr_role_label ? <span className="font-normal text-muted-foreground"> ? {user.hr_role_label}</span> : null}
+                    </p>
+                  </div>
+                )}
+
+                {showEmployeePicker ? (
+                  <div className="space-y-3">
+                    <Label htmlFor="add-employee" className={adminLeaveModalLabelClass}>Employee</Label>
+                    <select
+                      id="add-employee"
+                      required
+                      value={addForm.user_id}
+                      onChange={(e) => setAddForm((f) => ({ ...f, user_id: e.target.value }))}
+                      className={adminLeaveModalSelectClass}
+                    >
+                      <option value="">Select employee</option>
+                      {employees.filter((e) => isRosterStaffMember(e)).map((emp) => (
+                        <option key={emp.id} value={emp.id}>{emp.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+
+                <div className="space-y-3">
+                  <Label htmlFor="add-type" className={adminLeaveModalLabelClass}>Leave type</Label>
+                  <select
+                    id="add-type"
+                    value={addForm.type}
+                    onChange={(e) => setAddForm((f) => ({ ...f, type: e.target.value }))}
+                    className={adminLeaveModalSelectClass}
+                  >
+                    {LEAVE_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {addForm.type === 'half_day' ? (
+                  <div className="space-y-3">
+                    <Label htmlFor="add-half-type" className={adminLeaveModalLabelClass}>Half day type</Label>
+                    <select
+                      id="add-half-type"
+                      value={addForm.half_type}
+                      onChange={(e) => setAddForm((f) => ({ ...f, half_type: e.target.value }))}
+                      className={cn(adminLeaveModalFieldClass, 'w-full')}
+                      required
+                    >
+                      <option value="">Select option</option>
+                      <option value="am">AM Half Day (work morning, leave afternoon)</option>
+                      <option value="pm">PM Half Day (leave morning, work afternoon)</option>
+                    </select>
+                  </div>
+                ) : null}
+
+                <div className="space-y-3">
+                  <Label className={adminLeaveModalLabelClass}>Date range</Label>
+                  <div className="grid grid-cols-1 gap-4 @md:grid-cols-2">
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">From</span>
+                      <Input
+                        id="add-start"
+                        type="date"
+                        required
+                        min={minLeaveDate}
+                        value={addForm.start_date}
+                        onChange={(e) => setAddForm((f) => ({ ...f, start_date: e.target.value }))}
+                        className={cn(adminLeaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
                       />
-                      <Label
-                        htmlFor="add-bypass-rest-days"
-                        className="cursor-pointer text-xs font-normal leading-snug text-amber-950 dark:text-amber-100"
-                      >
-                        HR admin: file on rest days with a documented reason (recorded in the audit trail).
-                      </Label>
                     </div>
-                    {addBypassRestDays ? (
-                      <div className="space-y-1">
-                        <Label htmlFor="add-rest-day-bypass-reason" className="text-[11px]">
-                          Override reason (min. {REST_DAY_BYPASS_REASON_MIN} characters)
-                        </Label>
-                        <textarea
-                          id="add-rest-day-bypass-reason"
-                          value={addRestDayBypassReason}
-                          onChange={(e) => setAddRestDayBypassReason(e.target.value)}
-                          rows={3}
-                          className={FIELD_TEXTAREA_CLASS_SM}
-                        />
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">To</span>
+                      <Input
+                        id="add-end"
+                        type="date"
+                        required
+                        value={addForm.end_date}
+                        min={minEndDate}
+                        onChange={(e) => setAddForm((f) => ({ ...f, end_date: e.target.value }))}
+                        className={cn(adminLeaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {addRangeValidating && addSubjectUid && addForm.start_date && addRangeEndYmd ? (
+                  <p className="mt-1.5 flex items-center gap-2 text-[12px] text-muted-foreground">
+                    <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                    Checking dates against the employee&apos;s work schedule...
+                  </p>
+                ) : null}
+                {addRangeRestDay && !addRangeRestDay.valid ? (
+                  <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 px-4 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/25">
+                    <p className="flex items-start gap-2 font-medium text-amber-950 dark:text-amber-100">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                      <span>{addRangeRestDay.message}</span>
+                    </p>
+                    {isAdminHr ? (
+                      <div className="mt-3 space-y-3 border-t border-amber-200/60 pt-3 dark:border-amber-900/40">
+                        <div className="flex items-start gap-2">
+                          <Checkbox
+                            id="add-bypass-rest-days"
+                            checked={addBypassRestDays}
+                            onCheckedChange={(c) => setAddBypassRestDays(c === true)}
+                            className="mt-0.5"
+                          />
+                          <Label htmlFor="add-bypass-rest-days" className="cursor-pointer text-sm font-normal leading-snug text-amber-950 dark:text-amber-100">
+                            HR admin: file on rest days with a documented reason.
+                          </Label>
+                        </div>
+                        {addBypassRestDays ? (
+                          <div className="space-y-2">
+                            <Label htmlFor="add-rest-day-bypass-reason" className="text-xs font-semibold">
+                              Override reason (min. {REST_DAY_BYPASS_REASON_MIN} characters)
+                            </Label>
+                            <textarea
+                              id="add-rest-day-bypass-reason"
+                              value={addRestDayBypassReason}
+                              onChange={(e) => setAddRestDayBypassReason(e.target.value)}
+                              rows={3}
+                              className="min-h-24 w-full resize-none rounded-xl border border-border/80 bg-background px-4 py-3 text-sm shadow-sm focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40"
+                            />
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
                 ) : null}
-              </div>
-            ) : null}
-            {addRangeRestDay?.valid &&
-            addRangeRestDay?.using_default_schedule &&
-            addRangeRestDay?.schedule_warning ? (
-              <div className="rounded-lg border border-sky-200/80 bg-sky-50/70 px-3 py-2 text-xs text-sky-950 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-100">
-                <p className="flex items-start gap-2 leading-snug">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-sky-700 dark:text-sky-300" aria-hidden />
-                  <span>{addRangeRestDay.schedule_warning}</span>
-                </p>
-              </div>
-            ) : null}
-            <div className="space-y-2">
-              <Label htmlFor="add-notes">
-                Reason / Notes <span className="text-muted-foreground font-normal">(optional)</span>
-              </Label>
-              <textarea
-                id="add-notes"
-                value={addForm.notes}
-                onChange={(e) => setAddForm((f) => ({ ...f, notes: e.target.value }))}
-                rows={3}
-                placeholder="e.g. Scheduled medical procedure, family emergency…"
-                className={FIELD_TEXTAREA_CLASS}
-              />
-              <p className="text-[11px] text-muted-foreground">This will be saved as the admin note on the request.</p>
-            </div>
-            {user?.is_super_admin ? (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/50 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/20">
-                <Checkbox
-                  id="add-bypass-credits"
-                  checked={addBypassLeaveCredits}
-                  onCheckedChange={(c) => setAddBypassLeaveCredits(c === true)}
-                  className="mt-0.5"
-                />
-                <Label htmlFor="add-bypass-credits" className="cursor-pointer text-xs font-normal leading-snug text-amber-950 dark:text-amber-100">
-                  Super admin: file this request even if the employee has insufficient leave credits (bypass validation).
-                </Label>
-              </div>
-            ) : null}
-            <div className="space-y-2">
-              <Label className="text-sm">Supporting documents (optional)</Label>
-              <div className="rounded-xl border border-dashed border-muted-foreground/35 bg-muted/20 px-4 py-5 dark:border-white/10 dark:bg-white/5">
-                <div className="flex flex-col gap-3 @sm:flex-row @sm:items-center @sm:justify-between">
-                  <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium shadow-sm hover:bg-muted/60">
-                    <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                    Add files
-                    <input
-                      type="file"
-                      className="sr-only"
-                      multiple
-                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                      onChange={addSupportingFilesFromInput}
-                    />
-                  </label>
-                  <p className="text-[11px] leading-snug text-muted-foreground">
-                    Up to {MAX_LEAVE_SUPPORTING_FILES} files · 10MB each · PDF, JPG, PNG, DOC, DOCX
+                {addRangeRestDay?.valid && addRangeRestDay?.using_default_schedule && addRangeRestDay?.schedule_warning ? (
+                  <p className="mt-1.5 flex items-start gap-2 text-[12px] leading-snug text-muted-foreground">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-brand" aria-hidden />
+                    <span>{addRangeRestDay.schedule_warning}</span>
                   </p>
-                </div>
-                {(addForm.supportingFiles ?? []).length > 0 ? (
-                  <ul className="mt-3 space-y-2">
-                    {(addForm.supportingFiles ?? []).map((f, i) => (
-                      <li
-                        key={`${f.name}-${i}-${f.size}`}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs"
-                      >
-                        <span className="min-w-0 flex-1 truncate font-medium text-foreground">{f.name}</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                          onClick={() => removeSupportingFile(i)}
-                          aria-label={`Remove ${f.name}`}
-                        >
-                          <X className="size-3.5" />
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
                 ) : null}
-              </div>
+
+                <div className="space-y-3">
+                  <Label htmlFor="add-notes" className={adminLeaveModalLabelClass}>
+                    Reason / remarks <span className="font-normal text-muted-foreground">(optional)</span>
+                  </Label>
+                  <div className="relative">
+                    <textarea
+                      id="add-notes"
+                      value={addForm.notes}
+                      onChange={(e) => setAddForm((f) => ({ ...f, notes: e.target.value }))}
+                      rows={4}
+                      maxLength={500}
+                      placeholder="Optional context for approvers..."
+                      className="min-h-28 w-full resize-none rounded-xl border border-border/80 bg-background px-4 pb-9 pt-4 text-base shadow-sm focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40"
+                    />
+                    <span className="pointer-events-none absolute bottom-4 right-4 text-sm tabular-nums text-muted-foreground">
+                      {addForm.notes.length} / 500
+                    </span>
+                  </div>
+                  <p className={adminLeaveModalHintClass}>This will be saved as the admin note on the request.</p>
+                </div>
+
+                {user?.is_super_admin ? (
+                  <div className="flex items-start gap-3 rounded-xl border border-amber-200/80 bg-amber-50/50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+                    <Checkbox
+                      id="add-bypass-credits"
+                      checked={addBypassLeaveCredits}
+                      onCheckedChange={(c) => setAddBypassLeaveCredits(c === true)}
+                      className="mt-0.5"
+                    />
+                    <Label htmlFor="add-bypass-credits" className="cursor-pointer text-sm font-normal leading-snug text-amber-950 dark:text-amber-100">
+                      Super admin: file this request even if the employee has insufficient leave credits.
+                    </Label>
+                  </div>
+                ) : null}
+
+                <div className="space-y-3">
+                  <Label className={adminLeaveModalLabelClass}>Supporting documents (optional)</Label>
+                  <div className="rounded-xl border border-dashed border-border bg-muted/15 px-5 py-6 dark:border-white/15 dark:bg-white/[0.03]">
+                    <div className="flex flex-col items-center justify-center gap-3 text-center">
+                      <label className="flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg px-4 py-2 text-muted-foreground transition hover:text-foreground">
+                        <UploadCloud className="size-9 text-foreground" strokeWidth={1.7} aria-hidden />
+                        <span className="text-base font-medium text-muted-foreground">Drag and drop files here or click to upload</span>
+                        <span className={adminLeaveModalHintClass}>
+                          Up to {MAX_LEAVE_SUPPORTING_FILES} files. PDF, PNG, JPG, DOC, DOCX up to 10MB each
+                        </span>
+                        <input
+                          type="file"
+                          className="sr-only"
+                          multiple
+                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                          onChange={addSupportingFilesFromInput}
+                        />
+                      </label>
+                    </div>
+                    {(addForm.supportingFiles ?? []).length > 0 ? (
+                      <ul className="mt-3 space-y-2">
+                        {(addForm.supportingFiles ?? []).map((f, i) => (
+                          <li key={`${f.name}-${i}-${f.size}`} className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm">
+                            <span className="min-w-0 flex-1 truncate font-medium text-foreground">{f.name}</span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeSupportingFile(i)}
+                              aria-label={`Remove ${f.name}`}
+                            >
+                              <X className="size-3.5" />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </div>
+              </form>
             </div>
-            </div>
-            <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setAddOpen(false)}
-                className="dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}
-                disabled={
-                  addSubmitting ||
-                  addFormRestDayBlocksSubmit ||
-                  (showEmployeePicker && !addForm.user_id) ||
-                  (!showEmployeePicker && !user?.id) ||
-                  !addForm.start_date ||
-                  !addForm.end_date
-                }
-              >
-                {addSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-                Submit request
-              </Button>
-            </DialogFooter>
-          </form>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-8 py-5 @md:px-12">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-14 min-w-36 rounded-xl border-border/80 bg-card px-8 text-lg font-semibold text-foreground hover:bg-muted dark:border-white/10"
+              onClick={() => setAddOpen(false)}
+              disabled={addSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="admin-leave-file-form"
+              className="h-14 min-w-72 gap-4 rounded-xl bg-brand px-9 text-lg font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
+              disabled={
+                addSubmitting ||
+                addFormRestDayBlocksSubmit ||
+                (showEmployeePicker && !addForm.user_id) ||
+                (!showEmployeePicker && !user?.id) ||
+                !addForm.start_date ||
+                !addForm.end_date
+              }
+            >
+              {addSubmitting && <Loader2 className="size-4 animate-spin" />}
+              Submit request
+              <ArrowRight className="size-5" aria-hidden />
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1518,53 +1605,81 @@ export default function AdminLeave() {
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass()}
+          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
+          closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className="max-h-[92vh] max-w-[min(94vw,42rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          innerClassName="gap-0 overflow-hidden p-0 pr-0"
           aria-describedby="leave-reject-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={cn(ADMIN_FORM_DIALOG_TITLE_CLASS, 'flex items-center gap-2')}>
-                <XCircle className="size-5 text-destructive" />
-                Reject leave request
-              </DialogTitle>
-              <p id="leave-reject-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                {rejectLeave && (
-                  <>
-                    Provide a short remark for{' '}
-                    <span className="font-medium">{rejectLeave.employee_name}</span> (
-                    {formatType(rejectLeave.type)}, {formatDateRange(rejectLeave.start_date, rejectLeave.end_date)}).
-                  </>
-                )}
-              </p>
-            </DialogHeader>
-          </div>
           <form onSubmit={handleConfirmReject} className="flex min-h-0 flex-1 flex-col">
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-            <div className="space-y-2">
-              <Label htmlFor="reject-reason">Remarks</Label>
-              <textarea
-                id="reject-reason"
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="e.g. Overlapping with approved leave, insufficient balance, etc."
-                rows={3}
-                className={cn(FIELD_TEXTAREA_CLASS_SM, 'focus-visible:ring-rose-500')}
-              />
+            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-destructive/5 px-8 pb-6 pt-8 text-left dark:to-destructive/10 @md:px-10">
+              <div className="relative z-10 max-w-[34rem] space-y-3 pr-14 @md:pr-0">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-destructive">Leave request</p>
+                <DialogTitle className="flex items-center gap-3 text-2xl font-bold tracking-tight text-foreground @md:text-3xl">
+                  <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-destructive/25 bg-destructive/10 text-destructive">
+                    <XCircle className="size-5" aria-hidden />
+                  </span>
+                  Reject leave request
+                </DialogTitle>
+                <DialogDescription id="leave-reject-desc" className="max-w-[34rem] text-base leading-relaxed text-muted-foreground">
+                  {rejectLeave ? (
+                    <>
+                      Provide a clear remark for <span className="font-semibold text-foreground">{rejectLeave.employee_name}</span> ({formatType(rejectLeave.type)}, {formatDateRange(rejectLeave.start_date, rejectLeave.end_date)}).
+                    </>
+                  ) : (
+                    'Provide a clear remark for this leave request.'
+                  )}
+                </DialogDescription>
+              </div>
+            </DialogHeader>
+
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-8 py-7 @md:px-10">
+              {rejectLeave ? (
+                <div className="rounded-xl border border-border/70 bg-background/70 px-5 py-4 shadow-sm dark:border-white/10 dark:bg-background/35">
+                  <dl className="grid grid-cols-[minmax(0,8rem)_1fr] gap-x-4 gap-y-3 text-sm">
+                    <dt className="text-muted-foreground">Employee</dt>
+                    <dd className="font-bold text-foreground">{rejectLeave.employee_name || '?'}</dd>
+                    <dt className="text-muted-foreground">Leave type</dt>
+                    <dd className="font-bold text-foreground">{formatType(rejectLeave.type)}</dd>
+                    <dt className="text-muted-foreground">Date range</dt>
+                    <dd className="font-medium tabular-nums text-foreground">{formatDateRange(rejectLeave.start_date, rejectLeave.end_date)}</dd>
+                  </dl>
+                </div>
+              ) : null}
+
+              <div className="space-y-3">
+                <Label htmlFor="reject-reason" className={adminLeaveModalLabelClass}>Remarks</Label>
+                <div className="relative">
+                  <textarea
+                    id="reject-reason"
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="e.g. Overlapping with approved leave, insufficient balance, incomplete supporting details..."
+                    rows={5}
+                    maxLength={500}
+                    className="min-h-36 w-full resize-none rounded-xl border border-border/80 bg-background px-4 pb-9 pt-4 text-base shadow-sm focus-visible:border-destructive focus-visible:ring-destructive/25 dark:border-white/12 dark:bg-background/40"
+                  />
+                  <span className="pointer-events-none absolute bottom-4 right-4 text-sm tabular-nums text-muted-foreground">
+                    {rejectReason.length} / 500
+                  </span>
+                </div>
+                <p className={adminLeaveModalHintClass}>This remark will be visible in the approval history.</p>
+              </div>
             </div>
-            </div>
-            <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+
+            <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-8 py-5 @md:px-10">
               <Button
                 type="button"
                 variant="outline"
+                className="h-14 min-w-36 rounded-xl border-border/80 bg-card px-8 text-lg font-semibold text-foreground hover:bg-muted dark:border-white/10"
                 onClick={() => setRejectOpen(false)}
                 disabled={rejectSubmitting}
-                className="dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
-                className="gap-2 bg-rose-600 text-white hover:bg-rose-500 dark:bg-rose-600 dark:hover:bg-rose-500"
+                className="h-14 min-w-56 gap-3 rounded-xl bg-destructive px-8 text-lg font-semibold text-destructive-foreground shadow-[0_14px_28px_-18px_rgba(220,38,38,0.95)] hover:bg-destructive/90"
                 disabled={rejectSubmitting || !rejectReason.trim()}
               >
                 {rejectSubmitting && <Loader2 className="size-4 animate-spin" />}

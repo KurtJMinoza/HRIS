@@ -1,4 +1,4 @@
-import { CalendarDays, Calendar, Clock, FileText } from 'lucide-react'
+import { CalendarDays, Calendar, Clock, FileText, MessageSquareText, UsersRound } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -9,16 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
-import {
-  APP_MODAL_DESCRIPTION_CLASS,
-  APP_MODAL_FOOTER,
-  APP_MODAL_FORM_BODY,
-  APP_MODAL_HEADER,
-  APP_MODAL_OUTLINE_BUTTON_CLASS,
-  appModalDialogContentClass,
-} from '@/lib/appModalStyles'
 
 function formatDateTime(iso) {
   if (!iso) return '—'
@@ -173,6 +164,156 @@ function leaveApprovalHistoryActionLabel(action) {
   }
 }
 
+
+function getInitials(name) {
+  if (!name || typeof name !== 'string') return '?'
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0] ?? ''}${parts[parts.length - 1][0] ?? ''}`.toUpperCase() || '?'
+}
+
+function approvalStepName(step) {
+  if (step?.key === 'submitted') return step.submitter_name || '—'
+  return step?.approver_name || step?.approver_role_label || '—'
+}
+
+function approvalStepRole(step) {
+  if (step?.key === 'submitted') return 'Requester'
+  return step?.approver_role_label || step?.approver_role || ''
+}
+
+function humanStepStatus(status) {
+  switch (status) {
+    case 'completed':
+      return 'Completed'
+    case 'current':
+      return 'Pending'
+    case 'pending':
+      return 'Pending'
+    case 'rejected':
+      return 'Rejected'
+    case 'skipped':
+      return 'Skipped'
+    default:
+      return status ? String(status) : '—'
+  }
+}
+
+function LeaveDetailSection({ icon: Icon, title, children, className }) {
+  return (
+    <section
+      className={cn(
+        'rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
+        className
+      )}
+    >
+      <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
+        {Icon ? <Icon className="size-5 shrink-0" aria-hidden /> : null}
+        {title}
+      </h3>
+      {children}
+    </section>
+  )
+}
+
+function LeaveInitialsAvatar({ name }) {
+  return (
+    <div
+      className="flex size-12 shrink-0 items-center justify-center rounded-full border border-brand/15 bg-brand/10 text-sm font-black uppercase text-brand shadow-sm dark:border-brand/25 dark:bg-brand/15"
+      aria-hidden
+    >
+      {getInitials(name)}
+    </div>
+  )
+}
+
+function LeaveApprovalChain({ steps }) {
+  if (!Array.isArray(steps) || steps.length === 0) return null
+
+  return (
+    <LeaveDetailSection icon={UsersRound} title="Approval chain">
+      <ol className="space-y-4">
+        {steps.map((step, idx) => {
+          const name = approvalStepName(step)
+          const role = approvalStepRole(step)
+          const statusLabel = humanStepStatus(step.status)
+          const statusLine =
+            step.acted_at != null && step.acted_at !== ''
+              ? `${statusLabel} · ${formatDateTime(step.acted_at)}`
+              : statusLabel
+          const remarks = sanitizeApprovalDisplayText(step?.remarks)
+
+          return (
+            <li key={step.key || `approval-step-${idx}`}>
+              <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-brand">
+                <span className="tabular-nums">{idx + 1}. </span>
+                {step.label}
+              </p>
+              <div
+                className={cn(
+                  'rounded-xl border border-border/70 bg-background/70 p-4 shadow-sm dark:border-white/10 dark:bg-background/35',
+                  step.status === 'current' &&
+                    'border-amber-400/70 bg-amber-50/80 ring-2 ring-amber-500/20 dark:border-amber-400/35 dark:bg-amber-950/25'
+                )}
+              >
+                <div className="flex gap-4">
+                  <LeaveInitialsAvatar name={name} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[15px] font-bold leading-snug text-foreground">{name}</p>
+                    {role ? <p className="mt-1 text-sm font-medium text-foreground/85">{role}</p> : null}
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{statusLine}</p>
+                    {remarks ? (
+                      <p className="mt-3 text-sm leading-relaxed text-foreground">
+                        <span className="font-semibold">Remarks: </span>
+                        {remarks}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </LeaveDetailSection>
+  )
+}
+
+function LeaveApprovalHistory({ history }) {
+  if (!Array.isArray(history) || history.length === 0) return null
+
+  return (
+    <LeaveDetailSection icon={Clock} title="Approval history">
+      <ol className="relative ml-1 border-l-2 border-border/70 pl-6 dark:border-white/10">
+        {[...history]
+          .sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
+          .map((item, idx) => {
+            const actionLabel = leaveApprovalHistoryActionLabel(item.action)
+            const details = sanitizeApprovalDisplayText(item?.details)
+            const headline = [item.actor_name, item.approver_role].filter(Boolean).join(' · ') || actionLabel
+            return (
+              <li key={`${item.at}-${idx}-${item.action}`} className="relative pb-7 last:pb-0">
+                <span className="absolute -left-[1.95rem] top-3 size-2.5 rounded-full bg-brand ring-4 ring-card dark:ring-card" />
+                <div className="rounded-xl border border-border/70 bg-background/70 px-4 py-4 shadow-sm dark:border-white/10 dark:bg-background/35">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+                    <p className="text-sm font-bold text-foreground">{headline}</p>
+                    <time className="text-xs tabular-nums text-foreground/85" dateTime={item.at || undefined}>
+                      {item.at ? formatDateTime(item.at) : '—'}
+                    </time>
+                  </div>
+                  {details ? (
+                    <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">{details}</p>
+                  ) : null}
+                </div>
+              </li>
+            )
+          })}
+      </ol>
+    </LeaveDetailSection>
+  )
+}
+
 /**
  * Leave request details — same shell as admin Attendance Corrections “View” modal.
  *
@@ -192,12 +333,15 @@ export function LeaveRequestDetailModal({
   resolveDocUrl = (url) => url,
 }) {
   const badgeLabel = leave?.display_status || leave?.status || '—'
+  const docs = supportingDocUrls(leave)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className={appModalDialogContentClass({ size: 'md' })}
-        innerClassName="gap-0 overflow-hidden p-0 pr-0"
+        showCloseButton
+        closeButtonClassName="right-4 top-4 size-10 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted dark:border-white/10 dark:bg-card"
+        innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
+        className="max-h-[92vh] max-w-[min(100vw-1rem,38rem)] flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light dark:border-white/10 dark:bg-card dark:scheme-dark"
       >
         <DialogHeader className="sr-only">
           <DialogTitle>Leave request details</DialogTitle>
@@ -205,129 +349,99 @@ export function LeaveRequestDetailModal({
         </DialogHeader>
         {leave && (
           <>
-            <div className={APP_MODAL_HEADER}>
-              <div className="space-y-3 text-left">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Leave request</p>
+            <div className="shrink-0 border-b border-border/70 bg-card px-7 pb-7 pt-8 text-left dark:border-white/10">
+              <div className="space-y-5">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-brand">Leave request</p>
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="font-mono text-2xl font-bold tracking-tight text-foreground @sm:text-3xl">
+                  <span className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
                     #{leave.id}
                   </span>
                   <Badge
                     className={cn(
-                      'rounded-full px-3 py-1 text-sm font-semibold',
+                      'rounded-full px-3.5 py-1.5 text-sm font-bold',
                       leaveDisplayStatusBadgeClass(leave.display_status, leave.status)
                     )}
                   >
                     {badgeLabel}
                   </Badge>
                 </div>
-                <p className={cn(APP_MODAL_DESCRIPTION_CLASS, 'max-w-none')}>
+                <p className="text-sm leading-relaxed text-muted-foreground">
                   Review summary, leave dates, approval chain, and history below.
                 </p>
               </div>
             </div>
 
-            <div className={cn(APP_MODAL_FORM_BODY, 'space-y-5 text-sm')}>
-              {leave.start_date ? (
-                <div className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3 dark:bg-muted/20">
-                  <div className="flex items-center gap-3">
-                    <div className="flex size-10 items-center justify-center rounded-md bg-background text-muted-foreground shadow-sm ring-1 ring-border/50">
-                      <CalendarDays className="size-5" aria-hidden />
-                    </div>
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                        Leave dates
-                      </p>
-                      <p className="text-base font-semibold tabular-nums text-foreground">
-                        {formatDateRangeLabel(leave.start_date, leave.end_date)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-7 py-6 text-sm dark:bg-card">
+              <LeaveDetailSection icon={CalendarDays} title="Summary">
+                <dl className="grid grid-cols-[minmax(0,12.5rem)_1fr] gap-x-4 gap-y-4 text-sm">
+                  {showEmployeeName ? (
+                    <>
+                      <dt className="text-muted-foreground">Employee</dt>
+                      <dd className="font-bold text-foreground">{leave.employee_name || '—'}</dd>
+                    </>
+                  ) : null}
+                  <dt className="text-muted-foreground">Leave type</dt>
+                  <dd>
+                    <Badge
+                      variant="outline"
+                      className="rounded-full border-brand/25 bg-brand/10 px-3 py-1 font-bold text-brand dark:border-brand/30 dark:bg-brand/15"
+                    >
+                      {leaveTypeLabel(leave.type)}
+                    </Badge>
+                  </dd>
+                  <dt className="text-muted-foreground">Leave dates</dt>
+                  <dd className="font-bold tabular-nums text-foreground">{formatDateRangeLabel(leave.start_date, leave.end_date)}</dd>
+                  <dt className="text-muted-foreground">Duration</dt>
+                  <dd className="font-bold text-foreground">{formatDurationSummary(leave)}</dd>
+                  <dt className="text-muted-foreground">Date filed</dt>
+                  <dd className="tabular-nums text-foreground">{leave.created_at ? formatDateTime(leave.created_at) : '—'}</dd>
+                  {leave.reviewed_at ? (
+                    <>
+                      <dt className="text-muted-foreground">Last updated</dt>
+                      <dd className="tabular-nums text-foreground">{formatDateTime(leave.reviewed_at)}</dd>
+                    </>
+                  ) : null}
+                  {leave.approval_stage != null ? (
+                    <>
+                      <dt className="text-muted-foreground">Approval stage</dt>
+                      <dd className="text-foreground">{String(leave.approval_stage)}</dd>
+                    </>
+                  ) : null}
+                </dl>
+              </LeaveDetailSection>
 
-              <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50">
-                <h3 className="mb-4 border-b border-border/50 pb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  Summary
-                </h3>
-                <div className="grid grid-cols-1 gap-x-8 gap-y-3 @sm:grid-cols-2">
-                  <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-                    {showEmployeeName ? (
-                      <>
-                        <span className="text-muted-foreground">Employee</span>
-                        <span className="font-medium text-foreground">{leave.employee_name || '—'}</span>
-                      </>
-                    ) : null}
-                    <span className="text-muted-foreground">Leave type</span>
-                    <span>
-                      <Badge variant="outline" className="font-normal">
-                        {leaveTypeLabel(leave.type)}
-                      </Badge>
-                    </span>
-                    <span className="text-muted-foreground">Duration</span>
-                    <span className="text-foreground">{formatDurationSummary(leave)}</span>
-                    <span className="text-muted-foreground">Date filed</span>
-                    <span className="tabular-nums">{leave.created_at ? formatDateTime(leave.created_at) : '—'}</span>
-                    {leave.reviewed_at ? (
-                      <>
-                        <span className="text-muted-foreground">Last updated</span>
-                        <span className="tabular-nums">{formatDateTime(leave.reviewed_at)}</span>
-                      </>
-                    ) : null}
-                    {leave.approval_stage != null && (
-                      <>
-                        <span className="text-muted-foreground">Approval stage</span>
-                        <span className="text-foreground">{String(leave.approval_stage)}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </section>
-
-              <section className="rounded-lg border border-border/60 bg-muted/20 p-5 dark:border-border/50 dark:bg-muted/15">
-                <h3 className="mb-4 flex items-center gap-2 border-b border-border/50 pb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  <Calendar className="size-4 text-muted-foreground" aria-hidden />
-                  Leave details
-                </h3>
-                <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
-                  <div className="rounded-lg border border-border/60 bg-background p-4 shadow-sm dark:border-border/50">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Start</p>
-                    <p className="mt-1 font-mono text-xl font-semibold tabular-nums tracking-tight text-foreground @sm:text-2xl">
+              <LeaveDetailSection icon={Calendar} title="Leave details">
+                <div className="divide-y divide-border/70 dark:divide-white/10">
+                  <div className="flex min-h-14 items-center justify-between gap-4 py-2">
+                    <p className="text-[15px] font-bold text-foreground">Start</p>
+                    <p className="text-right font-mono text-base font-black tabular-nums tracking-tight text-foreground">
                       {formatDateShort(leave.start_date)}
                     </p>
                   </div>
-                  <div className="rounded-lg border border-border/60 bg-background p-4 shadow-sm dark:border-border/50">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">End</p>
-                    <p className="mt-1 font-mono text-xl font-semibold tabular-nums tracking-tight text-foreground @sm:text-2xl">
+                  <div className="flex min-h-14 items-center justify-between gap-4 py-4">
+                    <p className="text-[15px] font-bold text-foreground">End</p>
+                    <p className="text-right font-mono text-base font-black tabular-nums tracking-tight text-foreground">
                       {formatDateShort(leave.end_date)}
                     </p>
                   </div>
+                  {leave.type === 'undertime' && leave.undertime_time ? (
+                    <div className="flex min-h-14 items-center justify-between gap-4 py-4">
+                      <p className="text-[15px] font-bold text-foreground">Early out</p>
+                      <p className="font-mono text-base font-black tabular-nums tracking-tight text-foreground">
+                        {formatTimeHM(leave.undertime_time)}
+                      </p>
+                    </div>
+                  ) : null}
+                  {leave.type === 'half_day' ? (
+                    <div className="flex min-h-14 items-center justify-between gap-4 py-4">
+                      <p className="text-[15px] font-bold text-foreground">Half day</p>
+                      <p className="font-bold text-foreground">
+                        {leave.half_type === 'am' ? 'AM' : leave.half_type === 'pm' ? 'PM' : '—'}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
-                {leave.type === 'undertime' && leave.undertime_time ? (
-                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-border/50 bg-card px-3 py-2 text-sm">
-                    <Clock className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="text-muted-foreground">Early out:</span>
-                    <span className="font-medium tabular-nums">{formatTimeHM(leave.undertime_time)}</span>
-                  </div>
-                ) : null}
-                {leave.type === 'half_day' ? (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    Half day:{' '}
-                    <span className="font-medium text-foreground">
-                      {leave.half_type === 'am' ? 'AM' : leave.half_type === 'pm' ? 'PM' : '—'}
-                    </span>
-                  </p>
-                ) : null}
-              </section>
-
-              {Array.isArray(leave.approval_progress) && leave.approval_progress.length > 0 ? (
-                <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50">
-                  <h3 className="mb-4 border-b border-border/50 pb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                    Approval chain
-                  </h3>
-                  <ApprovalChainDetailView steps={leave.approval_progress} />
-                </section>
-              ) : null}
+              </LeaveDetailSection>
 
               {leave.hr_wait_message ? (
                 <div
@@ -338,51 +452,17 @@ export function LeaveRequestDetailModal({
                 </div>
               ) : null}
 
-              {Array.isArray(leave.approval_history) && leave.approval_history.length > 0 ? (
-                <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50">
-                  <h3 className="mb-4 border-b border-border/50 pb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                    Approval history
-                  </h3>
-                  <ol className="relative ml-0.5 border-l-2 border-border pl-6">
-                    {[...leave.approval_history]
-                      .sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
-                      .map((h, idx) => {
-                        const actionLabel = leaveApprovalHistoryActionLabel(h.action)
-                        const headline = [h.actor_name, h.approver_role || actionLabel].filter(Boolean).join(' · ')
-                        return (
-                          <li key={`${h.at}-${idx}-${h.action}`} className="relative pb-6 last:pb-0">
-                            <span className="absolute -left-[1.35rem] top-1 size-2.5 rounded-full border-2 border-background bg-primary ring-2 ring-background" />
-                            <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2.5 dark:bg-white/5">
-                              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                                <p className="text-sm font-semibold text-foreground">{headline || actionLabel}</p>
-                                <time className="text-xs tabular-nums text-muted-foreground" dateTime={h.at || undefined}>
-                                  {h.at ? formatDateTime(h.at) : '—'}
-                                </time>
-                              </div>
-                              {sanitizeApprovalDisplayText(h?.details) ? (
-                                <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-                                  {sanitizeApprovalDisplayText(h.details)}
-                                </p>
-                              ) : null}
-                            </div>
-                          </li>
-                        )
-                      })}
-                  </ol>
-                </section>
-              ) : null}
+              <LeaveApprovalChain steps={leave.approval_progress} />
+              <LeaveApprovalHistory history={leave.approval_history} />
 
               {leave.notes ? (
-                <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50">
-                  <h3 className="mb-3 border-b border-border/50 pb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                    Remarks
-                  </h3>
+                <LeaveDetailSection icon={MessageSquareText} title="Remarks">
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{leave.notes}</p>
-                </section>
+                </LeaveDetailSection>
               ) : null}
 
               {leave.rejection_note ? (
-                <section className="rounded-lg border border-destructive/30 bg-destructive/[0.06] p-5 dark:border-destructive/25 dark:bg-destructive/10">
+                <section className="rounded-xl border border-destructive/30 bg-destructive/[0.06] p-5 dark:border-destructive/25 dark:bg-destructive/10">
                   <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-destructive">
                     Rejection reason
                   </h3>
@@ -390,34 +470,36 @@ export function LeaveRequestDetailModal({
                 </section>
               ) : null}
 
-              {supportingDocUrls(leave).length > 0 ? (
-                <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm dark:border-border/50">
-                  <h3 className="mb-3 border-b border-border/50 pb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                    Supporting documents
-                  </h3>
+              {docs.length > 0 ? (
+                <LeaveDetailSection icon={FileText} title="Supporting documents">
                   <div className="flex flex-col gap-2">
-                    {supportingDocUrls(leave).map((url, i) => (
+                    {docs.map((url, i) => (
                       <a
                         key={`${url}-${i}`}
                         href={resolveDocUrl(url)}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-medium text-primary hover:bg-muted/50"
+                        className="inline-flex items-center gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-medium text-primary hover:bg-muted/50 dark:border-white/10 dark:bg-background/35"
                       >
                         <FileText className="size-4 shrink-0" aria-hidden />
-                        {supportingDocUrls(leave).length > 1 ? `View file ${i + 1}` : 'View document'}
+                        {docs.length > 1 ? `View file ${i + 1}` : 'View document'}
                       </a>
                     ))}
                   </div>
-                </section>
+                </LeaveDetailSection>
               ) : null}
             </div>
 
-            <div className={APP_MODAL_FOOTER}>
+            <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-7 py-5 dark:border-white/10">
               <p className="text-xs text-muted-foreground">
                 <kbd className="rounded border border-border bg-background px-1 font-mono text-[10px]">Esc</kbd> to close
               </p>
-              <Button type="button" variant="outline" className={APP_MODAL_OUTLINE_BUTTON_CLASS} onClick={() => onOpenChange(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-w-24 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand dark:border-brand/55 dark:bg-card"
+                onClick={() => onOpenChange(false)}
+              >
                 Close
               </Button>
             </div>
