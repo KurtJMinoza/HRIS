@@ -1442,30 +1442,7 @@ export async function deleteAttendanceCorrection(id) {
   return data
 }
 
-// —— Admin: Reports (summary per employee) ——
-
-/**
- * Get per-employee summary metrics over a date range.
- * Supports late, undertime, half-day, absences, and monthly-style totals.
- *
- * @param {{ from_date: string, to_date?: string, department?: string, employee_id?: number, status?: string }} params
- */
-export async function getAdminReportsSummary(params = {}) {
-  const query = new URLSearchParams()
-  if (params.from_date) query.set('from_date', params.from_date)
-  if (params.to_date) query.set('to_date', params.to_date)
-  if (params.department) query.set('department', params.department)
-  if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
-  if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
-  if (params.employee_id != null && params.employee_id !== '') query.set('employee_id', String(params.employee_id))
-  if (params.status) query.set('status', params.status)
-
-  const path = `/admin/reports/summary${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to load reports')
-  return data
-}
+// —— Admin & employee: Reports (detailed per-day only) ——
 
 /**
  * Get detailed per-day attendance rows over a date range.
@@ -1474,7 +1451,7 @@ export async function getAdminReportsSummary(params = {}) {
  *
  * @param {{ from_date: string, to_date?: string, department?: string, employee_id?: number, status?: string, leave_type?: string, overtime_status?: string }} params
  */
-export async function getAdminReportsDetailed(params = {}) {
+export async function getAdminReportsDetailed(params = {}, fetchOpts = {}) {
   const query = new URLSearchParams()
   if (params.from_date) query.set('from_date', params.from_date)
   if (params.to_date) query.set('to_date', params.to_date)
@@ -1494,7 +1471,7 @@ export async function getAdminReportsDetailed(params = {}) {
   if (params.search) query.set('search', String(params.search).trim())
 
   const path = `/admin/reports/detailed${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
+  const res = await authenticatedFetch(path, fetchOpts)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load detailed attendance report')
   return data
@@ -1530,25 +1507,10 @@ export async function fetchAllEmployeeReportsDetailedRows(params = {}) {
 }
 
 /**
- * Self-service summary (plain employees only — same payload shape as admin summary).
- * @param {{ from_date: string, to_date?: string }} params
- */
-export async function getEmployeeReportsSummary(params = {}) {
-  const query = new URLSearchParams()
-  if (params.from_date) query.set('from_date', params.from_date)
-  if (params.to_date) query.set('to_date', params.to_date)
-  const path = `/employee/reports/summary${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to load reports')
-  return data
-}
-
-/**
  * Self-service detailed rows (plain employees only).
  * @param {{ from_date: string, to_date?: string }} params
  */
-export async function getEmployeeReportsDetailed(params = {}) {
+export async function getEmployeeReportsDetailed(params = {}, fetchOpts = {}) {
   const query = new URLSearchParams()
   if (params.from_date) query.set('from_date', params.from_date)
   if (params.to_date) query.set('to_date', params.to_date)
@@ -1561,41 +1523,9 @@ export async function getEmployeeReportsDetailed(params = {}) {
   if (params.search) query.set('search', String(params.search).trim())
 
   const path = `/employee/reports/detailed${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
+  const res = await authenticatedFetch(path, fetchOpts)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load detailed attendance report')
-  return data
-}
-
-/**
- * Get premium pay breakdown (Night Differential, Overtime) for the authenticated employee.
- * @param {{ from_date: string, to_date?: string }} params
- */
-export async function getMyPremiumReport(params = {}) {
-  const query = new URLSearchParams()
-  if (params.from_date) query.set('from_date', params.from_date)
-  if (params.to_date) query.set('to_date', params.to_date)
-  const path = `/reports/premiums${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to load premium report')
-  return data
-}
-
-/**
- * Get premium pay breakdown (ND, OT) for employees (admin).
- * @param {{ from_date: string, to_date?: string, employee_id?: number, company_id?: number }} params
- */
-export async function getAdminPremiumReport(params = {}) {
-  const query = new URLSearchParams()
-  if (params.from_date) query.set('from_date', params.from_date)
-  if (params.to_date) query.set('to_date', params.to_date)
-  if (params.employee_id != null && params.employee_id !== '') query.set('employee_id', String(params.employee_id))
-  if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
-  const path = `/admin/reports/premiums${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to load premium report')
   return data
 }
 

@@ -32,6 +32,9 @@ class ReportsController extends Controller
     /** Employee self-service detailed report response cache (short TTL; narrows repeated filter churn). */
     private const EMPLOYEE_DETAILED_CACHE_TTL_SECONDS = 90;
 
+    /** Admin detailed report cache — repeat loads (pagination / refresh) avoid full recompute briefly. */
+    private const ADMIN_DETAILED_CACHE_TTL_SECONDS = 45;
+
     /** Default page size for detailed report list responses; overridden by per_page (25–100). */
     private const DETAILED_ROWS_PER_PAGE_DEFAULT = 50;
 
@@ -236,648 +239,6 @@ class ReportsController extends Controller
     }
 
     /**
-     * Summary reports per employee for a given date range.
-     *
-     * Supports:
-     * - Late report (total late count + late minutes)
-     * - Undertime report (total undertime count)
-     * - Half day report (count of half days)
-     * - Absences report (count of absences)
-     * - Monthly-style summary (all metrics + total hours)
-     */
-    public function summary(Request $request): JsonResponse
-    {
-        $summaryStartedAt = microtime(true);
-        $routeName = $request->route()?->getName();
-        $isEmployeeSelfRoute = $routeName === 'employee.reports.summary';
-        if ($isEmployeeSelfRoute) {
-            if ($this->hrRoleResolver->resolve($request->user()) !== HrRole::Employee) {
-                return response()->json(['message' => 'Forbidden.'], 403);
-            }
-            $request->merge(['employee_id' => $request->user()->id]);
-        }
-
-        $validated = $request->validate([
-            'from_date' => ['required', 'date'],
-            'to_date' => ['nullable', 'date'],
-            'department' => ['nullable', 'string', 'max:255'],
-            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
-            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
-            'employee_id' => ['nullable', 'integer', 'exists:users,id'],
-            'status' => ['nullable', 'string', 'in:present,late,absent,halfday,leave,undertime,incomplete,all'],
-        ]);
-
-        // Normalize filters so matching is consistent (trim, lowercase status).
-        $validated['department'] = isset($validated['department']) && $validated['department'] !== ''
-            ? trim($validated['department'])
-            : null;
-        $validated['status'] = isset($validated['status']) && $validated['status'] !== ''
-            ? strtolower(trim($validated['status']))
-            : null;
-
-        // Employee self-service: org-wide filters must not apply.
-        if ($isEmployeeSelfRoute) {
-            $validated['department'] = null;
-            $validated['company_id'] = null;
-            $validated['branch_id'] = null;
-        }
-
-        // Parse dates as calendar dates in attendance timezone so the UTC log range is correct.
-        $attendanceTz = $this->attendanceTimezone();
-        $from = $this->parseDateInAttendanceTz($validated['from_date'], false);
-        $to = isset($validated['to_date'])
-            ? $this->parseDateInAttendanceTz($validated['to_date'], true)
-            : $this->parseDateInAttendanceTz($validated['from_date'], true);
-
-        if ($to->lessThan($from)) {
-            $fromSwap = $to->copy()->startOfDay();
-            $toSwap = $from->copy()->endOfDay();
-            $from = $fromSwap;
-            $to = $toSwap;
-        }
-
-        if ($from->greaterThan($to)) {
-            $from = $to->copy()->startOfDay();
-        }
-
-        // "All statuses": treat as no status filter so all records are included.
-        $statusFilter = $validated['status'] ?? null;
-        if ($statusFilter === 'all' || $statusFilter === '' || $statusFilter === null) {
-            $statusFilter = null;
-        }
-
-        $summaryEmployeeRelations = [
-            'workingSchedule',
-            'companyHeadships:id,name,company_head_id',
-            'company:id,name',
-            'branch:id,company_id',
-            'branch.company:id,name',
-            'departmentRelation:id,name,branch_id',
-            'departmentRelation.branch:id,company_id',
-            'departmentRelation.branch.company:id,name',
-        ];
-
-        if ($isEmployeeSelfRoute) {
-            /** @var \Illuminate\Support\Collection<int, User> $employees */
-            $employees = User::query()
-                ->whereKey($request->user()->id)
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-                ->where('is_active', true)
-                ->with($summaryEmployeeRelations)
-                ->get();
-        } else {
-            $employeesQuery = User::query()
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-                ->where('is_active', true);
-
-            // Department filter: match employees by departmentRelation.name or legacy department.
-            if (! empty($validated['department'])) {
-                $deptName = $validated['department'];
-                $employeesQuery->where(function ($q) use ($deptName) {
-                    $q->where('department', $deptName)
-                        ->orWhereHas('departmentRelation', fn ($d) => $d->where('name', $deptName));
-                });
-            }
-
-            // Company filter: match employees who belong to the given company via any path.
-            if (! empty($validated['company_id'])) {
-                $cid = (int) $validated['company_id'];
-                $employeesQuery->where(function ($q) use ($cid) {
-                    $q->where('company_id', $cid)
-                        ->orWhereHas('branch', fn ($b) => $b->where('company_id', $cid))
-                        ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->where('company_id', $cid)))
-                        ->orWhereHas('companyHeadships', fn ($c) => $c->where('id', $cid));
-                });
-            }
-
-            if (! empty($validated['branch_id'])) {
-                $employeesQuery->where('branch_id', (int) $validated['branch_id']);
-            }
-
-            if (! empty($validated['employee_id'])) {
-                $employeesQuery->where('id', $validated['employee_id']);
-            }
-
-            $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeesQuery);
-
-            /** @var \Illuminate\Support\Collection<int, User> $employees */
-            $employees = $employeesQuery
-                ->orderBy('name')
-                ->with($summaryEmployeeRelations)
-                ->get();
-        }
-
-        $viewer = $request->user();
-
-        // Pre-compute company names and IDs for all employees.
-        $employeeCompanyNames = [];
-        $employeeCompanyIds = [];
-        foreach ($employees as $emp) {
-            $co = $emp->companyHeadships->first() ?? $emp->company ?? $emp->branch?->company ?? $emp->departmentRelation?->branch?->company;
-            $employeeCompanyNames[$emp->id] = $co?->name ?? null;
-            $employeeCompanyIds[$emp->id] = $co?->id ?? null;
-        }
-
-        if ($employees->isEmpty()) {
-            return response()->json([
-                'from_date' => $from->toDateString(),
-                'to_date' => $to->toDateString(),
-                'employees' => [],
-            ]);
-        }
-
-        $undertimeThresholdMinutes = (int) config('attendance.undertime_threshold_minutes', 60);
-
-        $userIds = $employees->pluck('id')->all();
-
-        $summaryPreloadStart = microtime(true);
-
-        // verified_at is stored in UTC; convert the attendance-TZ range to UTC
-        // so that e.g. "Feb 26" in Manila includes logs from 2026-02-25 16:00 UTC to 2026-02-26 15:59 UTC.
-        $fromUtc = $from->copy()->setTimezone('UTC');
-        $toUtc = $to->copy()->setTimezone('UTC');
-
-        /** @var \Illuminate\Support\Collection<int, AttendanceLog> $logs */
-        $logsQuery = AttendanceLog::query()
-            ->select(['id', 'user_id', 'type', 'verified_at', 'created_at'])
-            ->whereIn('user_id', $userIds)
-            // Strictly constrain by the punch timestamp (`verified_at`, UTC in DB)
-            // so seeded attendance + attendance module match exactly.
-            ->whereBetween('verified_at', [$fromUtc, $toUtc]);
-
-        if (! empty($validated['employee_id'])) {
-            // When a specific employee is selected, hard-filter by that user
-            // so that no other employees' logs are ever included.
-            $logsQuery->where('user_id', $validated['employee_id']);
-        }
-
-        $logs = $logsQuery
-            ->orderBy('verified_at')
-            ->get();
-
-        $attendanceTz = $this->attendanceTimezone();
-        /** @var array<int, array<string, \Illuminate\Support\Collection>> $logsByUserDate */
-        $logsByUserDate = [];
-        foreach ($logs as $log) {
-            $userId = $log->user_id;
-            $stamp = $log->verified_at ?? $log->created_at;
-            $dateKey = $stamp->copy()->timezone($attendanceTz)->toDateString();
-            $logsByUserDate[$userId][$dateKey] = ($logsByUserDate[$userId][$dateKey] ?? collect())->push($log);
-        }
-
-        // Preload approved corrections so manual attendance entries are included in summary metrics.
-        $correctionsSummary = AttendanceCorrection::query()
-            ->whereIn('user_id', $userIds)
-            ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
-            ->where('approved', true)
-            ->get()
-            ->groupBy(fn ($c) => $c->user_id.'|'.$c->date->toDateString());
-
-        // Preload approved leaves for range to include them in reports (e.g. payroll impact).
-        $approvedLeavesQuery = LeaveRequest::query()
-            ->whereIn('user_id', $userIds)
-            ->where('status', LeaveRequest::STATUS_APPROVED)
-            ->where('start_date', '<=', $to->toDateString().' 23:59:59')
-            ->where('end_date', '>=', $from->toDateString().' 00:00:00');
-
-        if (! empty($validated['employee_id'])) {
-            $approvedLeavesQuery->where('user_id', $validated['employee_id']);
-        }
-
-        $approvedLeaves = $approvedLeavesQuery->get();
-
-        /** @var array<int, array<string, array{type: string, undertime_time?: string|null}>> $leaveDatesByUser */
-        $leaveDatesByUser = [];
-        foreach ($approvedLeaves as $leave) {
-            $leaveStart = $leave->start_date->copy()->max($from);
-            $leaveEnd = $leave->end_date->copy()->min($to);
-            $cursorLeave = $leaveStart->copy();
-            while ($cursorLeave->lessThanOrEqualTo($leaveEnd)) {
-                $d = $cursorLeave->toDateString();
-                $leaveDatesByUser[$leave->user_id][$d] = [
-                    'type' => $leave->type,
-                    'undertime_time' => $leave->undertime_time ? substr((string) $leave->undertime_time, 0, 5) : null,
-                ];
-                $cursorLeave->addDay();
-            }
-        }
-
-        $summaryPreloadMs = (int) round((microtime(true) - $summaryPreloadStart) * 1000);
-        $summaryAggregateStart = microtime(true);
-
-        $results = [];
-        $departmentAggregates = [];
-
-        /** @var User $employee */
-        foreach ($employees as $employee) {
-            $deptKey = $employee->departmentRelation?->name ?? $employee->department ?? 'Unassigned';
-            if (! isset($departmentAggregates[$deptKey])) {
-                $departmentAggregates[$deptKey] = [
-                    'department' => $deptKey,
-                    'scheduled_days' => 0,
-                    'present_days' => 0,
-                    'total_worked_minutes' => 0,
-                    'late_counts_by_employee' => [],
-                ];
-            }
-
-            $metrics = array_merge([
-                'employee_id' => $employee->id,
-                'employee_name' => $employee->name,
-                'profile_image' => $employee->profile_image_url,
-                'department' => $employee->departmentRelation?->name ?? $employee->department,
-                'company_id' => $employeeCompanyIds[$employee->id] ?? null,
-                'company_name' => $employeeCompanyNames[$employee->id] ?? null,
-                'late_count' => 0,
-                'late_minutes' => 0,
-                'undertime_count' => 0,
-                'undertime_minutes' => 0,
-                'halfday_count' => 0,
-                'absent_count' => 0,
-                'present_count' => 0,
-                'total_worked_minutes' => 0,
-                'overtime_count' => 0,
-                'overtime_minutes' => 0,
-                'leave_days' => 0,
-            ], $this->employmentFieldsForReport($employee, $viewer));
-
-            $effectiveSchedule = $this->resolveEffectiveSchedule($employee);
-
-            $cursor = $from->copy();
-            while ($cursor->lessThanOrEqualTo($to)) {
-                $dayKey = self::DAY_KEYS[(int) $cursor->format('w')];
-                $todaySchedule = is_array($effectiveSchedule) && isset($effectiveSchedule[$dayKey]) ? $effectiveSchedule[$dayKey] : null;
-                $dateKey = $cursor->toDateString();
-
-                /** @var Collection<int, AttendanceLog>|null $dayLogs */
-                $dayLogs = $logsByUserDate[$employee->id][$dateKey] ?? null;
-
-                [$timeIn, $timeOut, $workedMinutes] = $this->extractTimesAndWorkedMinutes($dayLogs);
-
-                // Overlay approved correction: overrides log-based times and recalculates
-                // worked minutes subtracting the schedule break period.
-                $corrKeyS = $employee->id.'|'.$dateKey;
-                $correctionS = $correctionsSummary->get($corrKeyS)?->first();
-                if ($correctionS) {
-                    if ($correctionS->time_in) {
-                        $timeIn = $correctionS->time_in;
-                    }
-                    if ($correctionS->time_out) {
-                        $timeOut = $correctionS->time_out;
-                    }
-                    if ($correctionS->time_in && $correctionS->time_out) {
-                        $workedMinutes = $todaySchedule
-                            ? AttendanceStatusService::getNetWorkedMinutes(
-                                $correctionS->time_in,
-                                $correctionS->time_out,
-                                $todaySchedule,
-                                $dateKey,
-                                $attendanceTz
-                            )
-                            : (int) $correctionS->time_in->diffInMinutes($correctionS->time_out);
-                    }
-                }
-
-                // For regular clock-in/out logs (no correction covering both times), deduct the
-                // schedule's unpaid break window so worked minutes are consistent across all views.
-                if (! ($correctionS && $correctionS->time_in && $correctionS->time_out)) {
-                    if ($todaySchedule && $timeIn && $timeOut && $workedMinutes !== null) {
-                        $tIn = $timeIn instanceof Carbon ? $timeIn : Carbon::parse($timeIn);
-                        $tOut = $timeOut instanceof Carbon ? $timeOut : Carbon::parse($timeOut);
-                        $workedMinutes = AttendanceStatusService::getNetWorkedMinutes(
-                            $tIn, $tOut, $todaySchedule, $dateKey, $attendanceTz
-                        );
-                    }
-                }
-
-                // Rest day / not scheduled: never surface punches (e.g., Sundays) in reports.
-                // If the day has no scheduled "in" time, treat it as rest day and blank out any punches/corrections.
-                if (! (is_array($todaySchedule) && ! empty($todaySchedule['in']))) {
-                    $timeIn = null;
-                    $timeOut = null;
-                    $workedMinutes = null;
-                }
-
-                $hasTimeIn = $timeIn !== null;
-
-                // Per-day metric deltas so that we can apply the status filter
-                // before accumulating into the employee and department totals.
-                $dayLeave = 0;
-                $dayAbsent = 0;
-                $dayHalfday = 0;
-                $dayLate = 0;
-                $dayLateMinutes = 0;
-                $dayUndertimeCount = 0;
-                $dayUndertimeMinutes = 0;
-                $dayOvertimeCount = 0;
-                $dayOvertimeMinutes = 0;
-                $dayPresentIncrement = 0;
-                $dayScheduledIncrement = 0;
-                $dayLateCountForDept = 0;
-
-                $status = '—';
-                $leaveOnDate = $leaveDatesByUser[$employee->id][$dateKey] ?? null;
-                $isOnLeave = $leaveOnDate !== null;
-                $leaveTypeOnDate = $leaveOnDate['type'] ?? null;
-
-                if ($isOnLeave) {
-                    if ($leaveTypeOnDate === 'half_day') {
-                        $status = 'halfday';
-                        $dayHalfday = 1;
-                        $dayLeave = 0.5;
-                    } elseif ($leaveTypeOnDate === 'undertime') {
-                        $status = 'undertime';
-                        $dayUndertimeCount = 1;
-                        // Undertime is time-based (minutes), not a fraction of a day.
-                        $dayLeave = 0;
-                        if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
-                            $utTime = $leaveOnDate['undertime_time'] ?? null;
-                            if ($utTime) {
-                                $computed = $this->computeUndertimeMinutesFromEarlyOut($dateKey, $todaySchedule, (string) $utTime, $attendanceTz);
-                                if ($computed !== null) {
-                                    $dayUndertimeMinutes = $computed;
-                                }
-                            }
-                        }
-                    } else {
-                        $status = 'leave';
-                        $dayLeave = 1;
-                    }
-                } elseif ($todaySchedule && ! empty($todaySchedule['in'])) {
-                    $dayScheduledIncrement = 1;
-
-                    if (! $hasTimeIn) {
-                        // Do not auto-mark future dates as absent. Only dates
-                        // before today, or today after the configured cutoff,
-                        // are considered true absences.
-                        $todayDate = now($attendanceTz)->toDateString();
-                        $isFuture = $dateKey > $todayDate;
-                        if (! $isFuture) {
-                            $isToday = $dateKey === $todayDate;
-                            $pastCutoff = ! $isToday || AttendanceStatusService::isPastAbsentCutoff($dateKey, now());
-                            if ($pastCutoff) {
-                                $dayAbsent = 1;
-                                $status = 'absent';
-                            }
-                        }
-                    } else {
-                        $timeInCarbon = $timeIn instanceof Carbon ? $timeIn : Carbon::parse($timeIn);
-                        $clockInResult = AttendanceStatusService::getClockInStatus(
-                            $todaySchedule,
-                            $dateKey,
-                            $timeInCarbon
-                        );
-
-                        if ($clockInResult['status'] === 'half_day') {
-                            $dayHalfday = 1;
-                            $status = 'halfday';
-                        } elseif ($clockInResult['status'] === 'late') {
-                            $dayLate = 1;
-                            // Store and display actual late minutes (Actual Time-In − 8:00 AM) in reports
-                            $dayLateMinutes = $clockInResult['late_minutes'];
-                            $status = 'late';
-                            $dayLateCountForDept = 1;
-                        } else {
-                            $status = 'present';
-                        }
-                    }
-
-                    if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
-                        $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $todaySchedule, $attendanceTz);
-                        $requiredMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
-
-                        if ($workedMinutes !== null && $status !== 'halfday' && $scheduledEnd && $requiredMinutes > 0) {
-                            $outCarbon = $timeOut instanceof Carbon ? $timeOut : ($timeOut ? Carbon::parse($timeOut) : null);
-                            $earlyTimeout = isset($todaySchedule['early_timeout_minutes']) ? (int) $todaySchedule['early_timeout_minutes'] : null;
-                            /** Early leave vs scheduled end (AttendanceController / kiosk parity). */
-                            $undertimeFromEarlyOut = $outCarbon
-                                ? AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $outCarbon, $earlyTimeout)
-                                : 0;
-                            /**
-                             * Net shortfall vs required shift minutes after break netting (Attendance summary parity).
-                             * Catches gaps not expressed by scheduled-end − clock-out alone (e.g. within early-timeout tolerance).
-                             */
-                            $undertimeFromNetShortfall = max(0, $requiredMinutes - (int) $workedMinutes);
-                            $effectiveUndertime = max((int) $undertimeFromEarlyOut, $undertimeFromNetShortfall);
-                            if (
-                                $effectiveUndertime > 0
-                                || $undertimeFromNetShortfall > $undertimeThresholdMinutes
-                            ) {
-                                $dayUndertimeCount = 1;
-                                $dayUndertimeMinutes = $effectiveUndertime;
-                                $status = 'undertime';
-                            }
-
-                            $postShiftOtSum = 0;
-                            $overtimeBuffer = isset($todaySchedule['overtime_buffer_minutes']) ? (int) $todaySchedule['overtime_buffer_minutes'] : (int) config('attendance.overtime_buffer_minutes', 15);
-                            $otStartSum = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
-                            if ($outCarbon && $outCarbon->greaterThan($otStartSum)) {
-                                $postShiftOtSum = (int) $otStartSum->diffInMinutes($outCarbon);
-                            }
-
-                            $preShiftOtSum = 0;
-                            $scheduledStartSum = AttendanceStatusService::getScheduledStartForDate($dateKey, $todaySchedule, $attendanceTz);
-                            $inCarbonSum = $timeIn instanceof Carbon ? $timeIn : ($timeIn ? Carbon::parse($timeIn) : null);
-                            if ($scheduledStartSum && $inCarbonSum && $inCarbonSum->lessThan($scheduledStartSum)) {
-                                $preShiftOtSum = (int) $inCarbonSum->diffInMinutes($scheduledStartSum);
-                            }
-
-                            $overtimeForDay = $preShiftOtSum + $postShiftOtSum;
-                            if ($overtimeForDay > 0) {
-                                $dayOvertimeCount = 1;
-                                $dayOvertimeMinutes = $overtimeForDay;
-                            }
-                        }
-
-                        // Clock-in but no clock-out after shift end ⇒ incomplete record — same semantics as Employee Attendance /
-                        // {@see AttendancePresenceDisplayService} (Absent was wrong here and wiped undertime in reports).
-                        if ($timeIn && ! $timeOut && $scheduledEnd && isset($requiredMinutes) && $requiredMinutes > 0 && $status !== 'halfday') {
-                            $nowTz = Carbon::now($attendanceTz);
-                            $todayDate = $nowTz->toDateString();
-                            $pastShiftEnd = $dateKey < $todayDate || ($dateKey === $todayDate && $nowTz->greaterThan($scheduledEnd));
-                            if ($pastShiftEnd) {
-                                // No paired clock-out → no countable rendered shift minutes toward the day's requirement.
-                                $actualRenderedTowardRequired = ($workedMinutes !== null && $workedMinutes > 0) ? (int) $workedMinutes : 0;
-                                $missingMinutes = max(0, $requiredMinutes - $actualRenderedTowardRequired);
-                                $status = 'incomplete';
-                                if ($missingMinutes > 0) {
-                                    $dayUndertimeCount = 1;
-                                    $dayUndertimeMinutes = $missingMinutes;
-                                }
-                                $dayAbsent = 0;
-                                // Final day label is Incomplete, not Late — mirrors employee summary rollups.
-                                $dayLate = 0;
-                                $dayLateMinutes = 0;
-                                $dayLateCountForDept = 0;
-                            }
-                        }
-                    }
-                }
-
-                if ($hasTimeIn && $status === '—') {
-                    // Only treat punches as presence on scheduled workdays.
-                    if (is_array($todaySchedule) && ! empty($todaySchedule['in'])) {
-                        $status = 'present';
-                    }
-                }
-
-                if ($status !== 'absent' && $status !== '—' && $status !== 'leave' && $todaySchedule && ! empty($todaySchedule['in'])) {
-                    $dayPresentIncrement = 1;
-                }
-
-                // Apply status filter at the day level: if a specific status is selected,
-                // only days matching that status contribute to any aggregates.
-                // Compare in lowercase so "Late" and "late" both match.
-                if ($statusFilter && strtolower((string) $status) !== $statusFilter) {
-                    $cursor->addDay();
-
-                    continue;
-                }
-
-                if ($dayLeave) {
-                    $metrics['leave_days'] += $dayLeave;
-                }
-
-                if ($dayAbsent) {
-                    $metrics['absent_count'] += $dayAbsent;
-                }
-
-                if ($dayHalfday) {
-                    $metrics['halfday_count'] += $dayHalfday;
-                }
-
-                if ($dayLate) {
-                    $metrics['late_count'] += $dayLate;
-                    $metrics['late_minutes'] += $dayLateMinutes;
-                    $departmentAggregates[$deptKey]['late_counts_by_employee'][$employee->id] =
-                        ($departmentAggregates[$deptKey]['late_counts_by_employee'][$employee->id] ?? 0) + $dayLateCountForDept;
-                }
-
-                if ($dayUndertimeCount) {
-                    $metrics['undertime_count'] += $dayUndertimeCount;
-                    $metrics['undertime_minutes'] += $dayUndertimeMinutes;
-                }
-
-                if ($dayOvertimeCount) {
-                    $metrics['overtime_count'] += $dayOvertimeCount;
-                    $metrics['overtime_minutes'] += $dayOvertimeMinutes;
-                }
-
-                if ($dayScheduledIncrement) {
-                    $departmentAggregates[$deptKey]['scheduled_days'] += $dayScheduledIncrement;
-                }
-
-                if ($dayPresentIncrement) {
-                    $departmentAggregates[$deptKey]['present_days'] += $dayPresentIncrement;
-                }
-
-                // Employee-facing summary collapses incomplete to "present" for counts; mirrors that here so monthly reports
-                // agree with Employee Attendance.
-                if ($status === 'present' || $status === 'incomplete') {
-                    $metrics['present_count']++;
-                }
-
-                if ($workedMinutes !== null) {
-                    $metrics['total_worked_minutes'] += $workedMinutes;
-                    $departmentAggregates[$deptKey]['total_worked_minutes'] += $workedMinutes;
-                } elseif ($isOnLeave && $leaveTypeOnDate === 'undertime' && $todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
-                    // For undertime leave, keep computing worked minutes from schedule minus approved undertime.
-                    // Half-day leave no longer auto-credits any fixed hours; it must rely on actual attendance logs.
-                    $scheduledMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
-                    if ($scheduledMinutes > 0) {
-                        $utTime = $leaveOnDate['undertime_time'] ?? null;
-                        $computed = $utTime
-                            ? $this->computeUndertimeMinutesFromEarlyOut($dateKey, $todaySchedule, (string) $utTime, $attendanceTz)
-                            : null;
-                        if ($computed !== null) {
-                            $metrics['total_worked_minutes'] += max(0, $scheduledMinutes - $computed);
-                            $departmentAggregates[$deptKey]['total_worked_minutes'] += max(0, $scheduledMinutes - $computed);
-                        } else {
-                            // If undertime time is missing, keep scheduled minutes as baseline instead of guessing a fractional value.
-                            $metrics['total_worked_minutes'] += $scheduledMinutes;
-                            $departmentAggregates[$deptKey]['total_worked_minutes'] += $scheduledMinutes;
-                        }
-                    }
-                }
-
-                $cursor->addDay();
-            }
-
-            $metrics['total_hours'] = $metrics['total_worked_minutes'] > 0
-                ? round($metrics['total_worked_minutes'] / 60, 2)
-                : 0;
-            $metrics['undertime_hours'] = $metrics['undertime_minutes'] > 0
-                ? round($metrics['undertime_minutes'] / 60, 2)
-                : 0;
-            $metrics['overtime_hours'] = $metrics['overtime_minutes'] > 0
-                ? round($metrics['overtime_minutes'] / 60, 2)
-                : 0;
-
-            $results[] = $metrics;
-        }
-
-        // Build department-level summary with attendance rate and most late employees.
-        $departmentSummary = [];
-        foreach ($departmentAggregates as $dept => $agg) {
-            $attendanceRate = 0.0;
-            if ($agg['scheduled_days'] > 0) {
-                $attendanceRate = $agg['present_days'] / $agg['scheduled_days'];
-            }
-
-            $lateCounts = $agg['late_counts_by_employee'];
-            arsort($lateCounts);
-            $topLate = [];
-            foreach (array_slice($lateCounts, 0, 3, true) as $empId => $lateCount) {
-                /** @var User|null $emp */
-                $emp = $employees->firstWhere('id', $empId);
-                if (! $emp) {
-                    continue;
-                }
-                $topLate[] = [
-                    'employee_id' => $emp->id,
-                    'employee_name' => $emp->name,
-                    'late_count' => $lateCount,
-                ];
-            }
-
-            $departmentSummary[] = [
-                'department' => $agg['department'],
-                'attendance_rate' => $attendanceRate,
-                'attendance_rate_percent' => round($attendanceRate * 100, 2),
-                'total_hours' => $agg['total_worked_minutes'] > 0 ? round($agg['total_worked_minutes'] / 60, 2) : 0,
-                'most_late_employees' => $topLate,
-            ];
-        }
-
-        $summaryAggregateMs = (int) round((microtime(true) - $summaryAggregateStart) * 1000);
-        $summaryTotalMs = (int) round((microtime(true) - $summaryStartedAt) * 1000);
-
-        Log::info('Reports summary prepared', [
-            'actor_user_id' => (int) $request->user()->id,
-            'employee_self' => $isEmployeeSelfRoute,
-            'employee_count' => count($userIds),
-            'query_preload_ms' => $summaryPreloadMs,
-            'aggregate_ms' => $summaryAggregateMs,
-            'total_response_ms' => $summaryTotalMs,
-            'rows_returned' => count($results),
-        ]);
-        if ($summaryTotalMs > 500) {
-            Log::warning('Reports summary slow', [
-                'duration_ms' => $summaryTotalMs,
-                'employee_self' => $isEmployeeSelfRoute,
-            ]);
-        }
-
-        // Response dates always YYYY-MM-DD (toDateString()) for consistent filtering with frontend.
-        return response()->json([
-            'from_date' => $from->toDateString(),
-            'to_date' => $to->toDateString(),
-            'employees' => $results,
-            'departments' => $departmentSummary,
-        ]);
-    }
-
-    /**
      * Reuses the same extraction logic as AttendanceMonitoringController.
      *
      * @param  \Illuminate\Support\Collection<int, AttendanceLog>|null  $logs
@@ -1026,7 +387,10 @@ class ReportsController extends Controller
         $perPage = min(100, max(25, $perPage));
         $pagePref = max(1, (int) ($validated['page'] ?? 1));
 
+        $filtersParseMs = (int) round((microtime(true) - $startedAt) * 1000);
+
         $employeeDetailedCacheKey = null;
+        $adminDetailedCacheKey = null;
         if ($isEmployeeSelfRoute) {
             $employeeDetailedCacheKey = sprintf(
                 'reports:employee:detailed:v2:%d:%s:%s:%d:%d:%s:%s:%s:%s:%s',
@@ -1061,6 +425,35 @@ class ReportsController extends Controller
                 }
 
                 return response()->json($cachedDetailed);
+            }
+        } else {
+            $adminCacheIdentity = [
+                'uid' => (int) $request->user()->id,
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+                'company_id' => $validated['company_id'] ?? null,
+                'branch_id' => $validated['branch_id'] ?? null,
+                'department' => $validated['department'] ?? null,
+                'employee_id' => $validated['employee_id'] ?? null,
+                'status' => isset($validated['status']) ? strtolower(trim((string) $validated['status'])) : null,
+                'leave_type' => $validated['leave_type'] ?? null,
+                'overtime_status' => $validated['overtime_status'] ?? null,
+                'search' => strtolower(trim((string) ($validated['search'] ?? ''))),
+                'page' => $pagePref,
+                'per_page' => $perPage,
+            ];
+            $adminDetailedCacheKey = 'reports:admin:detailed:v2:'.hash('xxh128', serialize($adminCacheIdentity), false);
+            $cachedAdminDetailed = Cache::get($adminDetailedCacheKey);
+            if (is_array($cachedAdminDetailed) && isset($cachedAdminDetailed['rows'], $cachedAdminDetailed['meta'])) {
+                $cacheHitMs = (int) round((microtime(true) - $startedAt) * 1000);
+                Log::info('Admin detailed report cache hit', [
+                    'actor_user_id' => (int) $request->user()->id,
+                    'filters_parse_ms' => $filtersParseMs,
+                    'total_response_ms' => $cacheHitMs,
+                    'rows_returned' => count($cachedAdminDetailed['rows'] ?? []),
+                ]);
+
+                return response()->json($cachedAdminDetailed);
             }
         }
 
@@ -1136,10 +529,17 @@ class ReportsController extends Controller
         // Pre-compute company names and IDs for all employees.
         $detailedEmployeeCompanyNames = [];
         $detailedEmployeeCompanyIds = [];
+        /** @var array<int, string> $employeeSearchHaystack lowercased name / dept / company for quick search */
+        $employeeSearchHaystack = [];
         foreach ($employees as $emp) {
             $co = $emp->companyHeadships->first() ?? $emp->company ?? $emp->branch?->company ?? $emp->departmentRelation?->branch?->company;
             $detailedEmployeeCompanyNames[$emp->id] = $co?->name ?? null;
             $detailedEmployeeCompanyIds[$emp->id] = $co?->id ?? null;
+            $employeeSearchHaystack[$emp->id] = strtolower(implode(' ', array_filter([
+                $emp->name,
+                $emp->departmentRelation?->name ?? $emp->department,
+                $detailedEmployeeCompanyNames[$emp->id] ?? null,
+            ], fn ($v) => $v !== null && $v !== '')));
         }
 
         if ($employees->isEmpty()) {
@@ -1292,8 +692,12 @@ class ReportsController extends Controller
 
         $eagerLoadMs = (int) round((microtime(true) - $eagerRelStartedAt) * 1000);
         if ($eagerLoadMs > 500) {
-            Log::warning('Reports detailed: slow related preload (correct + leave + OT)', ['eager_load_ms' => $eagerLoadMs, 'user_ids' => count($userIds)]);
+            Log::warning('Reports detailed: slow related preload (correct + leave + OT)', ['related_maps_ms' => $eagerLoadMs, 'user_ids' => count($userIds)]);
         }
+
+        $searchNorm = strtolower(trim((string) ($validated['search'] ?? '')));
+        $nowTz = Carbon::now($attendanceTz);
+        $todayDateRow = $nowTz->toDateString();
 
         $aggregateStartedAt = microtime(true);
         $totalMatches = 0;
@@ -1316,8 +720,41 @@ class ReportsController extends Controller
 
                 $todaySchedule = is_array($effectiveSchedule) && isset($effectiveSchedule[$dayKey]) ? $effectiveSchedule[$dayKey] : null;
 
+                $leaveInfo = $leaveByUserDate[$employee->id][$dateKey] ?? null;
                 /** @var Collection<int, AttendanceLog>|null $dayLogs */
                 $dayLogs = $logsByUserDate[$employee->id][$dateKey] ?? null;
+
+                if (! $todaySchedule && ! $leaveInfo && ($dayLogs === null || $dayLogs->isEmpty())) {
+                    $cursor->addDay();
+
+                    continue;
+                }
+
+                if ($searchNorm !== '') {
+                    $haystack = $employeeSearchHaystack[$employee->id].' '.$dateKey;
+                    if (! str_contains($haystack, $searchNorm)) {
+                        $cursor->addDay();
+
+                        continue;
+                    }
+                }
+
+                if ($leaveTypeFilter !== null && $leaveTypeFilter !== '' && $leaveTypeFilter !== 'all') {
+                    if (! $leaveInfo || ($leaveInfo['type'] ?? null) !== $leaveTypeFilter) {
+                        $cursor->addDay();
+
+                        continue;
+                    }
+                }
+
+                $ot = $overtimeByUserDate[$employee->id][$dateKey] ?? null;
+                if ($overtimeStatusFilter !== null && $overtimeStatusFilter !== '' && $overtimeStatusFilter !== 'all') {
+                    if (! $ot || $ot->status !== $overtimeStatusFilter) {
+                        $cursor->addDay();
+
+                        continue;
+                    }
+                }
 
                 [$timeIn, $timeOut, $workedMinutes] = $this->extractTimesAndWorkedMinutes($dayLogs);
 
@@ -1345,7 +782,7 @@ class ReportsController extends Controller
                     }
                 }
 
-                $approvedOtForDetailedRow = $overtimeByUserDate[$employee->id][$dateKey] ?? null;
+                $approvedOtForDetailedRow = $ot;
                 $virtualClockOutFromOt = false;
                 if ($timeOut === null && $approvedOtForDetailedRow && $approvedOtForDetailedRow->status === Overtime::STATUS_APPROVED) {
                     $resolvedOut = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
@@ -1379,6 +816,7 @@ class ReportsController extends Controller
                     $workedMinutes = null;
                     $virtualClockOutFromOt = false;
                     $approvedOtForDetailedRow = null;
+                    $ot = null;
                 }
 
                 $effectiveTimeIn = $timeIn;
@@ -1393,7 +831,6 @@ class ReportsController extends Controller
                 $undertimeMinutes = null;
                 $overtimeMinutes = null;
 
-                $leaveInfo = $leaveByUserDate[$employee->id][$dateKey] ?? null;
                 $isOnLeaveApproved = $leaveInfo && $leaveInfo['status'] === LeaveRequest::STATUS_APPROVED;
                 $leaveTypeApproved = $leaveInfo['type'] ?? null;
 
@@ -1430,11 +867,10 @@ class ReportsController extends Controller
                             // For detailed rows, future dates should never be marked
                             // as absences. Only dates strictly before today, or
                             // today after the cutoff, are considered absent.
-                            $todayDate = now($attendanceTz)->toDateString();
-                            $isFuture = $dateKey > $todayDate;
+                            $isFuture = $dateKey > $todayDateRow;
                             if (! $isFuture) {
-                                $isToday = $dateKey === $todayDate;
-                                $pastCutoff = ! $isToday || AttendanceStatusService::isPastAbsentCutoff($dateKey, now($attendanceTz));
+                                $isToday = $dateKey === $todayDateRow;
+                                $pastCutoff = ! $isToday || AttendanceStatusService::isPastAbsentCutoff($dateKey, $nowTz);
                                 if ($pastCutoff) {
                                     $status = 'absent';
                                 }
@@ -1502,9 +938,7 @@ class ReportsController extends Controller
                         } elseif ($scheduledEnd && $effectiveTimeIn && ! $effectiveTimeOut && ! $isHalfday && $requiredMinutes > 0) {
                             // Missing time-out past shift end: {@see AttendancePresenceDisplayService incomplete_pair}.
                             // Undertime displayed as required net minutes − actual rendered toward that requirement (typically 0 when no pairing).
-                            $nowTzIncomplete = Carbon::now($attendanceTz);
-                            $todayDateIncomplete = $nowTzIncomplete->toDateString();
-                            $pastShiftEndIncomplete = $dateKey < $todayDateIncomplete || ($dateKey === $todayDateIncomplete && $nowTzIncomplete->greaterThan($scheduledEnd));
+                            $pastShiftEndIncomplete = $dateKey < $todayDateRow || ($dateKey === $todayDateRow && $nowTz->greaterThan($scheduledEnd));
                             if ($pastShiftEndIncomplete) {
                                 $basisRendered = (
                                     $effectiveWorkedMinutes !== null && $effectiveWorkedMinutes > 0
@@ -1539,9 +973,7 @@ class ReportsController extends Controller
                         // If there is a clock-in but no clock-out after the shift window has ended,
                         // treat the detailed row as Incomplete so it never appears as a clean "present".
                         if ($effectiveTimeIn && ! $effectiveTimeOut && $scheduledEnd) {
-                            $nowTz = Carbon::now($attendanceTz);
-                            $todayDate = $nowTz->toDateString();
-                            $pastShiftEnd = $dateKey < $todayDate || ($dateKey === $todayDate && $nowTz->greaterThan($scheduledEnd));
+                            $pastShiftEnd = $dateKey < $todayDateRow || ($dateKey === $todayDateRow && $nowTz->greaterThan($scheduledEnd));
                             if ($pastShiftEnd) {
                                 $status = 'incomplete';
                             }
@@ -1557,12 +989,11 @@ class ReportsController extends Controller
                 }
 
                 $correctionMeta = $this->pickCorrectionMetaRow($correctionsByKey, $correctionKey);
-                $todayDateRow = now($attendanceTz)->toDateString();
                 $isFutureRow = $dateKey > $todayDateRow;
                 $qualifiedRow = $this->presenceDisplay->qualify(
                     $dateKey,
                     $todayDateRow,
-                    Carbon::now($attendanceTz),
+                    $nowTz,
                     is_array($todaySchedule) ? $todaySchedule : null,
                     $status,
                     $effectiveTimeIn,
@@ -1585,10 +1016,7 @@ class ReportsController extends Controller
                     ? sprintf('%s – %s', $todaySchedule['in'], $todaySchedule['out'])
                     : '—';
 
-                $ot = $overtimeByUserDate[$employee->id][$dateKey] ?? null;
-
-                // Apply filters: status, leave type, overtime status.
-                // Status comparison uses lowercase so "Late" and "late" both match; late_minutes is numeric and already set above.
+                // Apply filters: status (must run after presence qualification). Search / leave type / OT already gated earlier.
                 if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {
                     $sf = strtolower((string) $statusFilter);
                     if ($sf === 'incomplete') {
@@ -1598,37 +1026,6 @@ class ReportsController extends Controller
                             continue;
                         }
                     } elseif ($sf !== strtolower((string) $status)) {
-                        $cursor->addDay();
-
-                        continue;
-                    }
-                }
-
-                if ($leaveTypeFilter !== null && $leaveTypeFilter !== '' && $leaveTypeFilter !== 'all') {
-                    if (! $leaveInfo || $leaveInfo['type'] !== $leaveTypeFilter) {
-                        $cursor->addDay();
-
-                        continue;
-                    }
-                }
-
-                if ($overtimeStatusFilter !== null && $overtimeStatusFilter !== '' && $overtimeStatusFilter !== 'all') {
-                    if (! $ot || $ot->status !== $overtimeStatusFilter) {
-                        $cursor->addDay();
-
-                        continue;
-                    }
-                }
-
-                $searchNorm = isset($validated['search']) ? strtolower(trim((string) $validated['search'])) : '';
-                if ($searchNorm !== '') {
-                    $haystack = strtolower(implode(' ', array_filter([
-                        $employee->name,
-                        $employee->departmentRelation?->name ?? $employee->department,
-                        $detailedEmployeeCompanyNames[$employee->id] ?? null,
-                        $dateKey,
-                    ], fn ($v) => $v !== null && $v !== '')));
-                    if (! str_contains($haystack, $searchNorm)) {
                         $cursor->addDay();
 
                         continue;
@@ -1846,9 +1243,10 @@ class ReportsController extends Controller
             'rows_returned' => count($pagedRows),
             'matching_rows_total' => $totalMatches,
             'paginated' => true,
+            'filters_parse_ms' => $filtersParseMs,
             'employees_load_ms' => $employeesLoadMs,
             'query_execute_ms' => $queryExecuteMs,
-            'eager_load_ms' => $eagerLoadMs,
+            'related_maps_ms' => $eagerLoadMs,
             'aggregate_ms' => $aggregateMs,
             'transform_ms' => $transformMs,
             'total_response_ms' => $totalResponseMs,
@@ -1865,6 +1263,10 @@ class ReportsController extends Controller
                 'employee_count' => count($userIds),
                 'range_days' => $rangeDays,
             ]);
+        }
+
+        if ($adminDetailedCacheKey !== null) {
+            Cache::put($adminDetailedCacheKey, $response, now()->addSeconds(self::ADMIN_DETAILED_CACHE_TTL_SECONDS));
         }
 
         if ($employeeDetailedCacheKey !== null) {

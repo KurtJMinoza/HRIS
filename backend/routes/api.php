@@ -50,7 +50,6 @@ use App\Http\Controllers\LivenessController;
 use App\Http\Controllers\MyScheduleController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\PayslipDownloadController;
-use App\Http\Controllers\PremiumReportController;
 use App\Http\Controllers\PresenceFilingController;
 use App\Http\Controllers\PublicMediaController;
 use App\Http\Controllers\RegularizationController;
@@ -145,7 +144,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('permission:request-schedule')->get('/my-schedule/request-context', [MyScheduleController::class, 'requestContext']);
     Route::middleware('permission:request-schedule')->post('/my-schedule/requests', [MyScheduleController::class, 'store']);
     Route::middleware('permission:request-schedule')->delete('/my-schedule/requests/{id}', [MyScheduleController::class, 'destroy']);
-    Route::get('/reports/premiums', [PremiumReportController::class, 'employee']);
     Route::get('/employee/contributions', [EmployeeContributionController::class, 'mine']);
 
     /** Payslips (self-service; own records only — {@see EmployeePayslipController}). */
@@ -167,8 +165,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/employee/loan-requests', [EmployeeLoanRequestController::class, 'store']);
     Route::get('/employee/loan-requests/{id}', [EmployeeLoanRequestController::class, 'show']);
 
-    /** Plain employees only (not org heads): self-service reports without HR panel / reports.view. */
-    Route::get('/employee/reports/summary', [ReportsController::class, 'summary'])->name('employee.reports.summary');
+    /** Plain employees only (not org heads): self-service detailed report without HR panel / reports.view. */
     Route::get('/employee/reports/detailed', [ReportsController::class, 'detailed'])->name('employee.reports.detailed');
 
     /** Subject employee: read-only list of recommendations about self (no HR panel required). */
@@ -213,12 +210,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:holiday.manage')->delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
 
         Route::middleware('permission:reports.view')->group(function () {
-            Route::get('/admin/reports/summary', [ReportsController::class, 'summary']);
             Route::get('/admin/reports/detailed', [ReportsController::class, 'detailed']);
             Route::post('/admin/reports/detailed/export', [ReportsController::class, 'queueDetailedExport']);
             Route::get('/admin/reports/detailed/export/{id}/status', [ReportsController::class, 'detailedExportStatus']);
             Route::get('/admin/reports/leave-credits', [ReportsController::class, 'leaveCredits']);
-            Route::get('/admin/reports/premiums', [PremiumReportController::class, 'admin']);
         });
 
         Route::middleware('permission:manage-schedules|schedule.view')->get('/admin/schedules', [ScheduleController::class, 'index']);
