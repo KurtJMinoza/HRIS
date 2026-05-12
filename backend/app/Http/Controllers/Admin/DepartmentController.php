@@ -88,6 +88,12 @@ class DepartmentController extends Controller
             'logo' => null,
         ]);
 
+        $department->load([
+            'branch:id,name,company_id',
+            'branch.company:id,name,logo',
+        ]);
+        $department->loadCount('employees');
+
         return response()->json([
             'message' => 'Department created successfully.',
             'department' => $this->departmentResponse($department),
@@ -156,6 +162,16 @@ class DepartmentController extends Controller
                     'department_head_id' => ['The selected employee must belong to this department to be assigned as head.'],
                 ]);
             }
+            if (! $headUser->is_active) {
+                throw ValidationException::withMessages([
+                    'department_head_id' => ['The selected employee must be active to be assigned as department head.'],
+                ]);
+            }
+            if ($headUser->branch_id !== null && (int) $headUser->branch_id !== (int) $department->branch_id) {
+                throw ValidationException::withMessages([
+                    'department_head_id' => ['The selected employee must belong to the same branch as this department to be assigned as head.'],
+                ]);
+            }
             $headCompanyId = $headUser->getEffectiveCompanyId();
             $deptCompanyId = $department->branch?->company_id;
             if ($headCompanyId !== null && (int) $headCompanyId !== (int) $deptCompanyId) {
@@ -201,9 +217,18 @@ class DepartmentController extends Controller
             $department->save();
         }
 
+        $departmentFresh = $department->fresh([
+            'departmentHead:id,name,profile_image',
+            'branch:id,name,company_id',
+            'branch.company:id,name,logo',
+        ]);
+        if ($departmentFresh) {
+            $departmentFresh->loadCount('employees');
+        }
+
         return response()->json([
             'message' => 'Department updated successfully.',
-            'department' => $this->departmentResponse($department->fresh(['departmentHead:id,name'])),
+            'department' => $this->departmentResponse($departmentFresh ?? $department),
         ]);
     }
 
@@ -286,7 +311,11 @@ class DepartmentController extends Controller
 
         return response()->json([
             'message' => 'Employees assigned successfully.',
-            'department' => $this->departmentResponse($department->fresh(['departmentHead:id,name'])->loadCount('employees')),
+            'department' => $this->departmentResponse($department->fresh([
+                'departmentHead:id,name,profile_image',
+                'branch:id,name,company_id',
+                'branch.company:id,name,logo',
+            ])->loadCount('employees')),
         ]);
     }
 
@@ -309,7 +338,11 @@ class DepartmentController extends Controller
 
         return response()->json([
             'message' => 'Employees unassigned successfully.',
-            'department' => $this->departmentResponse($department->fresh(['departmentHead:id,name'])->loadCount('employees')),
+            'department' => $this->departmentResponse($department->fresh([
+                'departmentHead:id,name,profile_image',
+                'branch:id,name,company_id',
+                'branch.company:id,name,logo',
+            ])->loadCount('employees')),
         ]);
     }
 

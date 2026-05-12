@@ -2729,8 +2729,9 @@ export async function getDepartments(params = {}) {
   const query = new URLSearchParams()
   if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
+  if (params.fresh) query.set('_ts', String(Date.now()))
   const path = `/admin/departments${query.toString() ? `?${query.toString()}` : ''}`
-  return cachedAuthenticatedGetJson(path, { ttlMs: 5 * 60 * 1000 })
+  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
 }
 
 /**
@@ -2771,6 +2772,7 @@ export async function createDepartment(payload) {
     const msg = data.message || data.errors?.logo?.[0] || data.errors?.name?.[0] || 'Failed to create department'
     throw new Error(msg)
   }
+  clearGetCacheByPrefix('/admin/departments')
   return data
 }
 
@@ -2790,6 +2792,7 @@ export async function unassignEmployeesFromDepartment(departmentId, employeeIds)
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.errors?.employee_ids?.[0] || data.message || 'Failed to unassign employees')
+  clearGetCacheByPrefix('/admin/departments')
   return data
 }
 
@@ -4263,6 +4266,7 @@ export async function updateDepartment(id, payload) {
       'Failed to update department'
     throw new Error(msg)
   }
+  clearGetCacheByPrefix('/admin/departments')
   return data
 }
 
@@ -4270,6 +4274,7 @@ export async function deleteDepartment(id) {
   const res = await authenticatedFetch(`/admin/departments/${id}`, { method: 'DELETE' })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to delete department')
+  clearGetCacheByPrefix('/admin/departments')
   return data
 }
 
@@ -4280,6 +4285,7 @@ export async function assignEmployeesToDepartment(departmentId, employeeIds) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.errors?.employee_ids?.[0] || data.message || 'Failed to assign employees')
+  clearGetCacheByPrefix('/admin/departments')
   return data
 }
 

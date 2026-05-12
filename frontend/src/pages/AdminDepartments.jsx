@@ -125,6 +125,11 @@ export default function AdminDepartments() {
   const [headDepartment, setHeadDepartment] = useState(null)
   const [headId, setHeadId] = useState('')
   const [headSubmitting, setHeadSubmitting] = useState(false)
+  /** Roster candidates for Assign Head — loaded per department via API (avoid paginated global `employees`). */
+  const [headModalEmployees, setHeadModalEmployees] = useState([])
+  const [headModalLoading, setHeadModalLoading] = useState(false)
+  const [headModalLoadError, setHeadModalLoadError] = useState(null)
+  const headLoadSeqRef = useRef(0)
 
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignDepartment, setAssignDepartment] = useState(null)
@@ -271,12 +276,23 @@ export default function AdminDepartments() {
     setCreateSubmitting(true)
     setError(null)
     try {
-      await createDepartment({
+      const data = await createDepartment({
         name: createName.trim(),
         branch_id: parseInt(createBranchId, 10),
         office_location: createOfficeLocation.trim() || undefined,
       })
       const savedName = createName.trim()
+      if (data?.department?.id != null) {
+        setDepartments((prev) => {
+          const id = String(data.department.id)
+          if (!prev.some((d) => String(d.id) === id)) {
+            const next = [...prev, data.department]
+            next.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+            return next
+          }
+          return prev.map((d) => (String(d.id) === id ? { ...d, ...data.department } : d))
+        })
+      }
       setCreateName('')
       setCreateBranchId('')
       setCreateOfficeLocation('')
@@ -340,11 +356,16 @@ export default function AdminDepartments() {
     setUnassigningId(bulkIds?.length ? 'bulk' : employee.id)
     setError(null)
     try {
-      await unassignEmployeesFromDepartment(department.id, idsToUnassign)
+      const data = await unassignEmployeesFromDepartment(department.id, idsToUnassign)
       setUnassignConfirm(null)
       setViewEmployeesSelectedIds((prev) =>
         prev.filter((id) => !idsToUnassign.some((u) => sameUserId(u, id)))
       )
+      if (data?.department?.id != null) {
+        setDepartments((prev) =>
+          prev.map((d) => (sameUserId(d.id, data.department.id) ? { ...d, ...data.department } : d)),
+        )
+      }
       await refreshViewEmployeesList()
       await fetchDepartments()
       toast({
@@ -385,10 +406,66 @@ export default function AdminDepartments() {
     openAssignDialog(viewEmployeesDept)
   }
 
+  const loadHeadCandidates = useCallback(async (dept) => {
+    if (dept?.id == null) return
+    headLoadSeqRef.current += 1
+    const seq = headLoadSeqRef.current
+    const resolvedDeptId = dept.id
+    setHeadModalEmployees([])
+    setHeadModalLoadError(null)
+    setHeadModalLoading(true)
+    try {
+      const data = await getEmployees({
+        department_id: resolvedDeptId,
+        for_schedule_assignment: true,
+        fresh: true,
+      })
+      if (seq !== headLoadSeqRef.current) return
+      let list = (data.employees || []).filter((e) => {
+        if (!isRosterStaffMember(e)) return false
+        if (!sameUserId(e.department_id, resolvedDeptId)) return false
+        const isCurrentHead =
+          dept.department_head_id != null && dept.department_head_id !== '' && sameUserId(e.id, dept.department_head_id)
+        if (!isCurrentHead && e.is_active === false) return false
+        if (
+          dept.branch_id != null &&
+          dept.branch_id !== '' &&
+          e.branch_id != null &&
+          String(e.branch_id) !== String(dept.branch_id)
+        ) {
+          return false
+        }
+        if (
+          dept.company_id != null &&
+          dept.company_id !== '' &&
+          e.company_id != null &&
+          Number(e.company_id) !== Number(dept.company_id)
+        ) {
+          return false
+        }
+        return true
+      })
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+      setHeadModalEmployees(list)
+    } catch (err) {
+      if (seq !== headLoadSeqRef.current) return
+      setHeadModalEmployees([])
+      setHeadModalLoadError(err?.message || 'Could not load employees for this department.')
+    } finally {
+      if (seq === headLoadSeqRef.current) {
+        setHeadModalLoading(false)
+      }
+    }
+  }, [])
+
   const openHeadDialog = (dept) => {
+    if (dept?.id == null) return
     setHeadDepartment(dept)
     setHeadId(dept.department_head_id ? String(dept.department_head_id) : '')
+    setHeadModalEmployees([])
+    setHeadModalLoadError(null)
     setHeadOpen(true)
+    void loadHeadCandidates(dept)
   }
 
   const handleAssignHead = async (e) => {
@@ -397,11 +474,18 @@ export default function AdminDepartments() {
     setHeadSubmitting(true)
     setError(null)
     try {
-      await updateDepartment(headDepartment.id, {
+      const data = await updateDepartment(headDepartment.id, {
         department_head_id: headId ? parseInt(headId, 10) : null,
       })
+      if (data?.department?.id != null) {
+        setDepartments((prev) =>
+          prev.map((d) => (sameUserId(d.id, data.department.id) ? { ...d, ...data.department } : d)),
+        )
+      }
       setHeadOpen(false)
       setHeadDepartment(null)
+      setHeadModalEmployees([])
+      setHeadModalLoadError(null)
       await fetchDepartments()
       await fetchEmployees()
       toast({ title: 'Department head updated', variant: 'success' })
@@ -450,7 +534,12 @@ export default function AdminDepartments() {
     setAssignSubmitting(true)
     setError(null)
     try {
-      await assignEmployeesToDepartment(assignDepartment.id, assignIds)
+      const data = await assignEmployeesToDepartment(assignDepartment.id, assignIds)
+      if (data?.department?.id != null) {
+        setDepartments((prev) =>
+          prev.map((d) => (sameUserId(d.id, data.department.id) ? { ...d, ...data.department } : d)),
+        )
+      }
       setAssignOpen(false)
       setAssignDepartment(null)
       setAssignModalEmployees([])
@@ -930,20 +1019,20 @@ export default function AdminDepartments() {
 
                         {/* Head */}
                         <td className="px-5 py-4 align-middle">
-                          {dept.department_head_name ? (() => {
-                            const headEmp = employees.find((e) => String(e.id) === String(dept.department_head_id))
-                            return (
-                              <div className="flex items-center gap-2">
-                                <Avatar className="size-7 shrink-0">
-                                  <AvatarImage src={profileImageUrl(headEmp?.profile_image)} alt={dept.department_head_name} />
-                                  <AvatarFallback className="bg-teal-500/20 text-[10px] font-bold text-teal-700 dark:text-teal-300">
-                                    {dept.department_head_name.trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <span className="max-w-[140px] truncate text-sm text-foreground">{dept.department_head_name}</span>
-                              </div>
-                            )
-                          })() : (
+                          {dept.department_head_name ? (
+                            <div className="flex items-center gap-2">
+                              <Avatar className="size-7 shrink-0">
+                                <AvatarImage
+                                  src={profileImageUrl(dept.department_head_profile_image)}
+                                  alt={dept.department_head_name}
+                                />
+                                <AvatarFallback className="bg-teal-500/20 text-[10px] font-bold text-teal-700 dark:text-teal-300">
+                                  {dept.department_head_name.trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="max-w-[140px] truncate text-sm text-foreground">{dept.department_head_name}</span>
+                            </div>
+                          ) : (
                             <span className="text-xs italic text-muted-foreground/50">Not assigned</span>
                           )}
                         </td>
@@ -1606,7 +1695,20 @@ export default function AdminDepartments() {
       </Dialog>
 
       {/* Assign Department Head */}
-      <Dialog open={headOpen} onOpenChange={setHeadOpen}>
+      <Dialog
+        open={headOpen}
+        onOpenChange={(open) => {
+          setHeadOpen(open)
+          if (!open) {
+            headLoadSeqRef.current += 1
+            setHeadDepartment(null)
+            setHeadId('')
+            setHeadModalEmployees([])
+            setHeadModalLoading(false)
+            setHeadModalLoadError(null)
+          }
+        }}
+      >
         <DialogContent
           showCloseButton
           className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
@@ -1638,23 +1740,28 @@ export default function AdminDepartments() {
                   Remove employee
                 </Button>
               )}
-              {(() => {
-                // Employees in this dept
-                const deptEmps = employees.filter(
-                  (e) => isRosterStaffMember(e) && (
-                    sameUserId(e.department_id, headDepartment?.id) ||
-                    String(e.department || '').trim().toLowerCase() === String(headDepartment?.name || '').trim().toLowerCase()
-                  )
-                )
-                // Always include the current head even if they don't match the dept filter
+              {headModalLoading ? (
+                <div className="flex items-center justify-center gap-2 rounded-lg border border-border/60 py-10 text-sm text-muted-foreground dark:border-white/10">
+                  <Loader2 className="size-4 animate-spin shrink-0 text-teal-600" />
+                  Loading department members…
+                </div>
+              ) : headModalLoadError ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  <p>{headModalLoadError}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => headDepartment && loadHeadCandidates(headDepartment)}
+                  >
+                    Try again
+                  </Button>
+                </div>
+              ) : (() => {
+                const listEmps = headModalEmployees
                 const currentHeadId = headDepartment?.department_head_id
-                const currentHead = currentHeadId
-                  ? employees.find((e) => String(e.id) === String(currentHeadId))
-                  : null
-                const alreadyInList = currentHead && deptEmps.some((e) => sameUserId(e.id, currentHead.id))
-                const listEmps = alreadyInList || !currentHead ? deptEmps : [currentHead, ...deptEmps]
 
-                // Ineligible: Company Head, Branch Manager, Dept Head elsewhere, or cross-company employee
                 const ineligibleReason = new Map()
                 for (const c of companies) {
                   if (c.company_head_id) ineligibleReason.set(String(c.company_head_id), `Company Head — ${c.name || 'Company'}`)
@@ -1667,7 +1774,6 @@ export default function AdminDepartments() {
                     ineligibleReason.set(String(d.department_head_id), `Dept Head — ${d.name || 'Department'}`)
                   }
                 }
-                // Flag employees from a different company structure (e.g. stale data)
                 const targetCompanyId = headDepartment?.company_id
                 if (targetCompanyId) {
                   for (const emp of listEmps) {
@@ -1681,7 +1787,6 @@ export default function AdminDepartments() {
 
                 return (
                   <div className="max-h-64 overflow-y-auto rounded-lg border border-border/60 dark:border-white/10">
-                    {/* None option */}
                     <label className={[
                       'flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40 dark:hover:bg-white/5',
                       headId === '' ? 'bg-muted/30 dark:bg-white/5' : '',
@@ -1730,7 +1835,7 @@ export default function AdminDepartments() {
                           className="accent-teal-500 disabled:cursor-not-allowed"
                         />
                         <Avatar className="size-8 shrink-0">
-                          <AvatarImage src={profileImageUrl(emp.profile_image)} alt={emp.name} />
+                          <AvatarImage src={profileImageUrl(emp.profile_image_url || emp.profile_image)} alt={emp.name} />
                           <AvatarFallback className="bg-teal-500/20 text-[10px] font-bold text-teal-700 dark:text-teal-300">
                             {initials(emp.name)}
                           </AvatarFallback>
@@ -1755,7 +1860,7 @@ export default function AdminDepartments() {
             </div>
             <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
               <Button type="button" variant="outline" className="dark:border-white/10 dark:text-slate-300" onClick={() => setHeadOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={headSubmitting} className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}>
+              <Button type="submit" disabled={headSubmitting || headModalLoading} className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}>
                 {headSubmitting ? <Loader2 className="size-4 animate-spin" /> : null}
                 Save
               </Button>
