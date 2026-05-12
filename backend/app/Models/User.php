@@ -173,7 +173,12 @@ class User extends Authenticatable
      *
      * @var list<string>
      */
-    protected $appends = ['profile_image_url'];
+    protected $appends = [
+        'profile_image_url',
+        'profile_picture_url',
+        'avatar_url',
+        'photo_url',
+    ];
 
     protected static function booted(): void
     {
@@ -751,6 +756,21 @@ class User extends Authenticatable
         }
 
         return url('/api/media/public/'.$this->encodeStoragePath($normalized));
+    }
+
+    public function getProfilePictureUrlAttribute(): ?string
+    {
+        return $this->profile_image_url;
+    }
+
+    public function getAvatarUrlAttribute(): ?string
+    {
+        return $this->profile_image_url;
+    }
+
+    public function getPhotoUrlAttribute(): ?string
+    {
+        return $this->profile_image_url;
     }
 
     public function getSignatureImageUrlAttribute(): ?string

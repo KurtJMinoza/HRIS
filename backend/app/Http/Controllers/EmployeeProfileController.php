@@ -266,6 +266,7 @@ class EmployeeProfileController extends Controller
         $includePayCyclePreview = (bool) ($flags['include_pay_cycle_preview'] ?? false);
 
         $cacheDescriptor = [
+            'version' => 2,
             'lite' => $lite,
             'include_government_ids' => $includeGov,
             'include_emergency_contacts' => $includeEmergency,
@@ -526,6 +527,9 @@ class EmployeeProfileController extends Controller
             'is_active' => (bool) $user->is_active,
             'profile_image' => $user->profile_image_url,
             'profile_image_url' => $user->profile_image_url,
+            'profile_picture_url' => $user->profile_image_url,
+            'avatar_url' => $user->profile_image_url,
+            'photo_url' => $user->profile_image_url,
             'signature_image' => $user->signature_image_url,
             'signature_signed_at' => $user->signature_signed_at?->toIso8601String(),
             'last_login_at' => $user->last_login_at?->toIso8601String(),
@@ -587,6 +591,9 @@ class EmployeeProfileController extends Controller
             'is_active' => (bool) $user->is_active,
             'profile_image' => $user->profile_image_url,
             'profile_image_url' => $user->profile_image_url,
+            'profile_picture_url' => $user->profile_image_url,
+            'avatar_url' => $user->profile_image_url,
+            'photo_url' => $user->profile_image_url,
             'signature_image' => $user->signature_image_url,
             'signature_signed_at' => $user->signature_signed_at?->toIso8601String(),
             'last_login_at' => $user->last_login_at?->toIso8601String(),

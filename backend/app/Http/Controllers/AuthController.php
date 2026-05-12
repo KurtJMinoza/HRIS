@@ -166,7 +166,7 @@ class AuthController extends Controller
         $userPayload = EmployeeProfileCache::remember(
             (int) $user->id,
             'auth_user_payload',
-            ['version' => 4, 'include_leave_credits' => false],
+            ['version' => 5, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($user, ['include_leave_credits' => false])
         );
@@ -220,7 +220,7 @@ class AuthController extends Controller
         $payload = EmployeeProfileCache::remember(
             (int) $authUser->id,
             'auth_user_payload',
-            ['version' => 4, 'include_leave_credits' => false],
+            ['version' => 5, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($authUser, ['include_leave_credits' => false])
         );
@@ -712,6 +712,9 @@ class AuthController extends Controller
 
         $payload['profile_image'] = $user->profile_image_url;
         $payload['profile_image_url'] = $user->profile_image_url;
+        $payload['profile_picture_url'] = $user->profile_image_url;
+        $payload['avatar_url'] = $user->profile_image_url;
+        $payload['photo_url'] = $user->profile_image_url;
 
         // Basic account metadata for profile UI
         $payload['email_verified_at'] = $user->email_verified_at

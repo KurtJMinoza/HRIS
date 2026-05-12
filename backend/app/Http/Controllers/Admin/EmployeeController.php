@@ -2224,6 +2224,10 @@ class EmployeeController extends Controller
             'created_at' => $user->created_at?->toIso8601String(),
             'updated_at' => $user->updated_at?->toIso8601String(),
             'profile_image' => $user->profile_image_url,
+            'profile_image_url' => $user->profile_image_url,
+            'profile_picture_url' => $user->profile_image_url,
+            'avatar_url' => $user->profile_image_url,
+            'photo_url' => $user->profile_image_url,
             'signature_image' => $user->signature_image_url,
             'signature_signed_at' => $user->signature_signed_at?->toIso8601String(),
             ...($includeLeaveCreditsSnapshot ? $this->leaveCreditsSnapshotFields($user) : [
@@ -2755,6 +2759,10 @@ class EmployeeController extends Controller
             'created_at' => $user->created_at?->toIso8601String(),
             'updated_at' => $user->updated_at?->toIso8601String(),
             'profile_image' => $user->profile_image_url,
+            'profile_image_url' => $user->profile_image_url,
+            'profile_picture_url' => $user->profile_image_url,
+            'avatar_url' => $user->profile_image_url,
+            'photo_url' => $user->profile_image_url,
             ...$this->leaveCreditsSnapshotFields($user),
         ];
     }

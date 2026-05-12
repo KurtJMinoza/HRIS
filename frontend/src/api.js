@@ -84,15 +84,61 @@ export function profileImageUrl(pathOrUrl) {
   return pathOrUrl.startsWith('/') ? `${origin}${pathOrUrl}` : `${origin}/${pathOrUrl}`
 }
 
+function firstNonEmptyString(values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  }
+  return undefined
+}
+
 /**
- * Best URL for a user avatar: prefer Laravel's profile_image_url (/api/media/public/…), else build from profile_image.
- * @param {{ profile_image?: string | null, profile_image_url?: string | null } | null | undefined} user
+ * Best URL for a user/employee avatar. Keep this as the single frontend resolver:
+ * employee image aliases first, linked user image aliases second, then UI fallback.
  */
 export function userProfileImageSrc(user) {
   if (!user || typeof user !== 'object') return undefined
-  const direct = user.profile_image_url
-  if (typeof direct === 'string' && direct.trim() !== '') return direct.trim()
-  return profileImageUrl(user.profile_image)
+  const direct = firstNonEmptyString([
+    user.profile_picture_url,
+    user.profile_image_url,
+    user.avatar_url,
+    user.photo_url,
+    user.profile_photo_url,
+    user.image_url,
+  ])
+  if (direct) return profileImageUrl(direct)
+
+  const raw = firstNonEmptyString([
+    user.profile_picture,
+    user.profile_image,
+    user.avatar,
+    user.photo,
+    user.profile_photo,
+  ])
+  if (raw) return profileImageUrl(raw)
+
+  const linkedUser = user.user
+  if (linkedUser && typeof linkedUser === 'object') {
+    const linkedDirect = firstNonEmptyString([
+      linkedUser.profile_picture_url,
+      linkedUser.profile_image_url,
+      linkedUser.avatar_url,
+      linkedUser.photo_url,
+      linkedUser.profile_photo_url,
+      linkedUser.image_url,
+    ])
+    if (linkedDirect) return profileImageUrl(linkedDirect)
+
+    const linkedRaw = firstNonEmptyString([
+      linkedUser.profile_picture,
+      linkedUser.profile_image,
+      linkedUser.avatar,
+      linkedUser.photo,
+      linkedUser.profile_photo,
+    ])
+    if (linkedRaw) return profileImageUrl(linkedRaw)
+  }
+
+  return undefined
 }
 
 /**

@@ -40,8 +40,8 @@ import {
   uploadProfilePhoto,
   removeProfilePhoto,
   getMyFace,
-  profileImageUrl,
 } from '@/api'
+import { employeeAvatarSrc } from '@/lib/employeeAvatar'
 import {
   validateEmail,
   validatePassword,
@@ -156,6 +156,7 @@ export default function Profile() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   const [faceLoading, setFaceLoading] = useState(false)
+  const [faceImage, setFaceImage] = useState(null)
   const [hasFace, setHasFace] = useState(user?.has_face ?? false)
   const [activeTab, setActiveTab] = useState('personal')
 
@@ -327,13 +328,13 @@ export default function Profile() {
       })
       .catch(() => setFaceImage(null))
       .finally(() => setFaceLoading(false))
-  }, [user?.id, user?.has_face, user?.role, user?.is_roster_staff])
+  }, [user])
 
   const initials = user?.name
     ? user.name.trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2)
     : '?'
 
-  const photoUrl = profileImageUrl(user?.profile_image)
+  const photoUrl = employeeAvatarSrc(user)
 
   // —— Name ———
   function handleNameChange(e) {
@@ -921,19 +922,12 @@ export default function Profile() {
               </CardHeader>
               <CardContent className="flex flex-col items-start gap-4">
                 <div className="relative">
-                  {photoUrl ? (
-                    <img
-                      src={photoUrl}
-                      alt=""
-                      className="size-24 rounded-xl border-2 border-border object-cover"
-                    />
-                  ) : (
-                    <Avatar className="size-24 rounded-xl border-2 border-border">
-                      <AvatarFallback className="rounded-xl bg-primary/10 text-xl font-semibold text-primary">
-                        {initials}
-                      </AvatarFallback>
-                    </Avatar>
-                  )}
+                  <Avatar className="size-24 rounded-xl border-2 border-border">
+                    <AvatarImage src={photoUrl || undefined} alt="" className="rounded-xl object-cover" />
+                    <AvatarFallback className="rounded-xl bg-primary/10 text-xl font-semibold text-primary">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
                   {photoLoading && (
                     <span className="absolute inset-0 flex items-center justify-center rounded-xl bg-background/80">
                       <Loader2 className="size-8 animate-spin text-primary" />
@@ -959,7 +953,7 @@ export default function Profile() {
                     <Camera className="mr-2 size-4" />
                     Upload
                   </Button>
-                  {user?.profile_image && (
+                  {photoUrl && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -1040,19 +1034,12 @@ export default function Profile() {
           </CardHeader>
           <CardContent className="flex flex-col items-start gap-4">
             <div className="relative">
-              {photoUrl ? (
-                <img
-                  src={photoUrl}  
-                  alt=""
-                  className="size-24 rounded-xl border-2 border-border object-cover"
-                />
-              ) : (
-                <Avatar className="size-24 rounded-xl border-2 border-border">
-                  <AvatarFallback className="rounded-xl bg-primary/10 text-xl font-semibold text-primary">
-                    {initials}
-                  </AvatarFallback>
-                </Avatar>
-              )}
+              <Avatar className="size-24 rounded-xl border-2 border-border">
+                <AvatarImage src={photoUrl || undefined} alt="" className="rounded-xl object-cover" />
+                <AvatarFallback className="rounded-xl bg-primary/10 text-xl font-semibold text-primary">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
               {photoLoading && (
                 <span className="absolute inset-0 flex items-center justify-center rounded-xl bg-background/80">
                   <Loader2 className="size-8 animate-spin text-primary" />
@@ -1078,7 +1065,7 @@ export default function Profile() {
                 <Camera className="mr-2 size-4" />
                 Upload
               </Button>
-              {user?.profile_image && (
+              {photoUrl && (
                 <Button
                   type="button"
                   variant="ghost"
