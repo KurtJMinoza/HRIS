@@ -40,7 +40,6 @@ import {
   Building2,
   CalendarClock,
   Clock3,
-  DollarSign,
   Eye,
   FileDown,
   FileText,
@@ -53,21 +52,22 @@ import {
   TrendingUp,
   Users,
   Printer,
+  PhilippinePeso,
   Trash2,
   Zap,
 } from 'lucide-react'
 
 /** Full-width shell aligned with Government Deduction / Pay Cycles */
 const PAYSLIP_MODULE_SHELL =
-  'w-full min-w-0 max-w-none bg-white px-3 py-4 text-[#0A0A0A] sm:px-4 md:px-5 lg:px-6 lg:py-5 dark:bg-background dark:text-foreground'
-const PAYSLIP_STACK = 'space-y-5 sm:space-y-6 lg:space-y-8'
+  'w-full min-w-0 max-w-none bg-background px-3 py-4 text-foreground sm:px-4 md:px-5 lg:px-6 lg:py-5'
+const PAYSLIP_STACK = 'space-y-5 sm:space-y-6'
 const PAYSLIP_PREVIEW_DIALOG =
   '!max-w-[min(88rem,calc(100vw-1.5rem))] w-full overflow-hidden border-slate-200/90 bg-white p-0 shadow-xl shadow-slate-900/[0.07] sm:!max-w-[min(88rem,calc(100vw-2rem))] dark:border-border dark:bg-card dark:shadow-black/40'
 
 const CARD_SHELL =
-  'rounded-2xl border border-slate-200/90 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-950 dark:hover:shadow-lg'
+  'rounded-2xl border border-border/80 bg-card text-card-foreground shadow-sm shadow-slate-900/[0.03] transition-shadow duration-200 hover:shadow-md dark:shadow-black/25 dark:hover:shadow-lg'
 const SELECT_TRIGGER =
-  'h-11 rounded-lg border-slate-200/90 bg-white text-base font-medium text-[#0A0A0A] shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100'
+  'h-11 rounded-xl border-border/80 bg-background text-sm font-semibold text-foreground shadow-sm dark:bg-input/45'
 const DEMO_ORG_NAME_PATTERN = /^(company\s+[ab]|acme\s+(corp|group))$/i
 
 function isDemoOrganization(item) {
@@ -128,8 +128,8 @@ function batchStatusBadge(status, statusLabel) {
   const label = (statusLabel && String(statusLabel).trim()) || (s === 'finalized' ? 'Finalized' : s === 'draft' ? 'Draft' : s)
   if (s === 'finalized') {
     return (
-      <Badge className="border-emerald-200/80 bg-emerald-50 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200">
-        <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      <Badge className="border-brand/30 bg-brand/10 text-brand hover:bg-brand/10">
+        <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-brand" />
         {label}
       </Badge>
     )
@@ -144,8 +144,8 @@ function batchStatusBadge(status, statusLabel) {
   }
   if (s === 'queued') {
     return (
-      <Badge className="border-sky-200/80 bg-sky-50 text-sky-900 hover:bg-sky-50 dark:border-sky-800/50 dark:bg-sky-950/40 dark:text-sky-100">
-        <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-500" />
+      <Badge className="border-brand/30 bg-brand/10 text-brand hover:bg-brand/10">
+        <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
         {label}
       </Badge>
     )
@@ -167,7 +167,7 @@ function batchStatusBadge(status, statusLabel) {
     )
   }
   return (
-    <Badge className="border-border/70 bg-muted/60 text-[#0A0A0A] hover:bg-muted/60 dark:text-foreground">
+    <Badge className="border-border/70 bg-muted/60 text-foreground hover:bg-muted/60">
       <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-slate-400" />
       {label}
     </Badge>
@@ -215,8 +215,8 @@ function CircularProgress({ value = 0, size = 160, strokeWidth = 10, children, c
         />
         <defs>
           <linearGradient id="progressGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#10b981" />
-            <stop offset="100%" stopColor="#059669" />
+            <stop offset="0%" stopColor="#ff7a1a" />
+            <stop offset="100%" stopColor="#f24b00" />
           </linearGradient>
         </defs>
       </svg>
@@ -232,18 +232,18 @@ function MetricCard({ icon, label, value, subtext, accent = false }) {
       className={cn(
         'rounded-xl border px-4 py-3.5 transition-all duration-200',
         accent
-          ? 'border-emerald-200/80 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/35'
+          ? 'border-brand/35 bg-brand/10 dark:border-brand/35 dark:bg-brand/15'
           : 'border-border/60 bg-muted/25 dark:bg-muted/15',
       )}
     >
       <div className="flex items-center gap-2">
-        <MetricIcon className={cn('h-4 w-4 shrink-0', accent ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')} />
+        <MetricIcon className={cn('h-4 w-4 shrink-0', accent ? 'text-brand dark:text-brand' : 'text-muted-foreground')} />
         <span className="text-sm font-normal uppercase leading-tight tracking-[0.06em] text-muted-foreground">{label}</span>
       </div>
       <p
         className={cn(
           'mt-1.5 text-[22px] font-medium tabular-nums leading-none tracking-tight',
-          accent ? 'font-semibold text-emerald-700 dark:text-emerald-300' : 'text-foreground',
+          accent ? 'font-semibold text-brand' : 'text-foreground',
         )}
       >
         {value}
@@ -817,25 +817,37 @@ export default function AdminGeneratePayslipsPage() {
     <TooltipProvider>
       <div className={cn(PAYSLIP_MODULE_SHELL, PAYSLIP_STACK)}>
         {/* ── Hero Header ── */}
-        <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          <div className="relative p-6 md:p-8">
-            <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-emerald-500/5 blur-3xl dark:bg-emerald-500/10" aria-hidden />
-            <div className="pointer-events-none absolute -bottom-16 -left-16 h-48 w-48 rounded-full bg-sky-500/5 blur-3xl dark:bg-sky-500/10" aria-hidden />
-            <div className="relative max-w-3xl space-y-3">
+        <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm shadow-slate-900/[0.03] dark:shadow-black/25">
+          <div className="relative grid min-h-[220px] gap-6 p-6 md:grid-cols-[1fr_290px] md:p-8">
+            <div className="relative z-10 max-w-3xl space-y-3 self-center">
               <Badge
                 variant="outline"
-                className="w-fit rounded-full border-emerald-200/80 bg-emerald-50/50 px-3 py-1 text-[11px] font-medium tracking-wide text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300"
+                className="w-fit rounded-full border-brand/30 bg-brand/10 px-3 py-1 text-[12px] font-bold tracking-normal text-brand hover:bg-brand/10"
               >
                 <Zap className="mr-1 h-3 w-3" />
                 Payroll · Compensation
               </Badge>
-              <h1 className="text-[28px] font-bold leading-tight tracking-tight text-[#0A0A0A] md:text-[32px] dark:text-slate-100">
+              <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-foreground md:text-[34px]">
                 Bulk Payslip Generation
               </h1>
-              <p className="max-w-2xl text-[15px] font-normal leading-relaxed text-[#0A0A0A]/65 dark:text-slate-400">
+              <p className="max-w-2xl text-[15px] font-medium leading-7 text-muted-foreground">
                 Generate official PDF payslips for active employees in the selected scope using the same payroll engine as your
                 previews — pay components, statutory deductions, loans, pay cycles, and daily computation.
               </p>
+            </div>
+            <div className="pointer-events-none relative hidden min-h-[150px] items-center justify-center md:flex" aria-hidden>
+              <div className="absolute inset-y-8 right-0 w-full opacity-70 [background-image:radial-gradient(circle,#fb923c_1.4px,transparent_1.4px)] [background-size:18px_18px] dark:opacity-25" />
+              <div className="relative h-[150px] w-[122px] rounded-xl border border-brand/25 bg-background shadow-md shadow-slate-900/10 dark:bg-card dark:shadow-black/30">
+                <div className="absolute right-0 top-0 h-9 w-9 rounded-bl-xl bg-muted" />
+                <div className="mx-auto mt-9 h-1.5 w-12 rounded-full bg-brand" />
+                <div className="mx-auto mt-6 h-1.5 w-14 rounded-full bg-brand" />
+                <div className="mx-auto mt-4 h-1.5 w-20 rounded-full bg-brand" />
+                <div className="mx-auto mt-4 h-1.5 w-16 rounded-full bg-brand" />
+                <div className="mx-auto mt-4 h-1.5 w-24 rounded-full bg-brand" />
+              </div>
+              <div className="absolute bottom-6 right-9 flex h-16 w-16 items-center justify-center rounded-full bg-brand text-3xl font-extrabold text-brand-foreground shadow-lg shadow-brand/30">
+                <PhilippinePeso className="h-8 w-8" />
+              </div>
             </div>
           </div>
         </div>
@@ -845,10 +857,10 @@ export default function AdminGeneratePayslipsPage() {
           {/* ── LEFT: Generation Parameters (70%) ── */}
           <div className="space-y-6">
             <Card className={CARD_SHELL}>
-              <CardHeader className="border-b border-slate-100 pb-5 dark:border-slate-800">
+              <CardHeader className="pb-5">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-foreground/[0.07] ring-1 ring-foreground/10 dark:bg-foreground/10 dark:ring-foreground/15">
-                    <Layers className="h-6 w-6 text-foreground" />
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand ring-1 ring-brand/15">
+                    <Layers className="h-6 w-6" />
                   </div>
                   <div>
                     <CardTitle className="text-lg font-bold text-foreground @md:text-xl">Generation Parameters</CardTitle>
@@ -867,7 +879,7 @@ export default function AdminGeneratePayslipsPage() {
                   </Label>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <div
-                      className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50 shadow-sm transition-all duration-200 dark:border-slate-700 dark:bg-slate-900/50"
+                      className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm transition-all duration-200 dark:bg-input/35"
                       aria-hidden
                     >
                       {selectedCompanyLogo ? (
@@ -970,13 +982,13 @@ export default function AdminGeneratePayslipsPage() {
                 </div>
 
                 {/* Advanced Options */}
-                <Accordion type="single" collapsible className="rounded-xl border border-dashed border-slate-200/90 bg-slate-50/80 dark:border-slate-700 dark:bg-slate-900/40">
+                <Accordion type="single" collapsible className="rounded-xl border border-border/80 bg-background dark:bg-input/30">
                   <AccordionItem value="advanced" className="border-0">
                     <AccordionTrigger className="px-4 py-3.5 text-sm font-semibold text-foreground hover:no-underline data-[state=open]:font-bold">
                       Advanced — Custom Dates & Security
                     </AccordionTrigger>
                     <AccordionContent className="space-y-4 px-4 pb-4">
-                      <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200/80 bg-white px-3 py-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-border/80 bg-card px-3 py-2.5 shadow-sm dark:bg-input/35">
                         <div className="min-w-0">
                           <p className="text-base font-semibold text-foreground">Use company default cut-off and pay date</p>
                           <p className="text-xs text-muted-foreground">
@@ -1006,7 +1018,7 @@ export default function AdminGeneratePayslipsPage() {
                             value={fromDate}
                             onChange={(e) => setFromDate(e.target.value)}
                             disabled={useCompanyDefaultDates && !payCycleId}
-                            className="h-10 rounded-lg border-slate-200/90 dark:border-slate-700"
+                            className="h-10 rounded-lg border-border/80 bg-background dark:bg-input/45"
                           />
                         </div>
                         <div className="space-y-2">
@@ -1016,7 +1028,7 @@ export default function AdminGeneratePayslipsPage() {
                             value={toDate}
                             onChange={(e) => setToDate(e.target.value)}
                             disabled={useCompanyDefaultDates && !payCycleId}
-                            className="h-10 rounded-lg border-slate-200/90 dark:border-slate-700"
+                            className="h-10 rounded-lg border-border/80 bg-background dark:bg-input/45"
                           />
                         </div>
                         <div className="space-y-2">
@@ -1026,11 +1038,11 @@ export default function AdminGeneratePayslipsPage() {
                             value={referenceDate}
                             onChange={(e) => setReferenceDate(e.target.value)}
                             disabled={useCompanyDefaultDates && !payCycleId}
-                            className="h-10 rounded-lg border-slate-200/90 dark:border-slate-700"
+                            className="h-10 rounded-lg border-border/80 bg-background dark:bg-input/45"
                           />
                         </div>
                       </div>
-                      <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200/80 bg-white px-3 py-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-border/80 bg-card px-3 py-2.5 shadow-sm dark:bg-input/35">
                         <div>
                           <p className="text-base font-semibold text-foreground">Password-protect PDFs</p>
                           <p className="text-xs text-muted-foreground">Password is shown once after generation for secure download.</p>
@@ -1046,12 +1058,12 @@ export default function AdminGeneratePayslipsPage() {
                             onChange={(e) => setEmployeeId(e.target.value)}
                             placeholder="Employee user ID"
                             inputMode="numeric"
-                            className="h-10 rounded-lg border-slate-200/90 sm:max-w-xs dark:border-slate-700"
+                            className="h-10 rounded-lg border-border/80 bg-background sm:max-w-xs dark:bg-input/45"
                           />
                           <Button
                             type="button"
                             variant="outline"
-                            className="h-10 rounded-lg border-slate-200/90 dark:border-slate-700"
+                            className="h-10 rounded-lg border-border/80"
                             onClick={handleGeneratePayslips}
                             disabled={!String(employeeId || '').trim() || generating}
                           >
@@ -1068,16 +1080,16 @@ export default function AdminGeneratePayslipsPage() {
             {/* ── Action Area ── */}
             <div
               className={cn(
-                'overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-slate-950 dark:shadow-lg',
+                'overflow-hidden rounded-2xl border bg-card shadow-sm shadow-slate-900/[0.03] dark:shadow-black/25',
                 scopeReady
-                  ? 'border-emerald-200/80 ring-1 ring-emerald-500/10 dark:border-emerald-900/40'
-                  : 'border-slate-200/90 dark:border-slate-800',
+                  ? 'border-brand/35 ring-1 ring-brand/10'
+                  : 'border-border/80',
               )}
             >
               <div className="p-5 md:p-6">
                 {scopeReady && (
                   <div className="mb-4 overflow-hidden rounded-full">
-                    <Progress value={scopeReadiness} className="h-1.5" indicatorClassName="bg-emerald-500" />
+                    <Progress value={scopeReadiness} className="h-1.5" indicatorClassName="bg-brand" />
                   </div>
                 )}
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
@@ -1090,7 +1102,7 @@ export default function AdminGeneratePayslipsPage() {
                     {scopeReady ? (
                       recentListNetTotal != null && companyRows.length > 0 ? (
                         <p className="text-sm font-normal leading-relaxed text-muted-foreground">
-                          <span className="text-xl font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                          <span className="text-xl font-semibold tabular-nums text-brand">
                             {formatPeso(recentListNetTotal)}
                           </span>{' '}
                           <span className="text-muted-foreground">combined net in the company summary below.</span>
@@ -1112,7 +1124,7 @@ export default function AdminGeneratePayslipsPage() {
                       variant="outline"
                       size="default"
                       disabled={!scopeReady || samplePreviewLoading}
-                      className="h-10 min-w-[168px] rounded-xl border-slate-200/90 bg-white text-sm font-normal text-[#0A0A0A]/65 shadow-sm hover:bg-slate-50 hover:text-[#0A0A0A] disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                      className="h-10 min-w-[168px] rounded-xl border-border/80 bg-background text-sm font-semibold text-foreground shadow-sm hover:bg-muted disabled:opacity-60 dark:bg-input/35"
                       onClick={handleViewSamplePreview}
                     >
                       {samplePreviewLoading ? (
@@ -1128,9 +1140,9 @@ export default function AdminGeneratePayslipsPage() {
                       disabled={!finalizeReady || generating}
                       onClick={handleGeneratePayslips}
                       className={cn(
-                        'h-12 min-w-[220px] rounded-xl px-8 text-[17px] font-bold shadow-lg transition-all duration-200 disabled:opacity-60',
-                        'bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500',
-                        'shadow-[0_8px_24px_rgba(5,150,105,0.38)] dark:shadow-[0_8px_24px_rgba(16,185,129,0.35)]',
+                        'h-12 min-w-[220px] rounded-xl px-8 text-[16px] font-bold shadow-lg transition-all duration-200 disabled:opacity-60',
+                        'bg-brand text-brand-foreground hover:bg-brand-strong',
+                        'shadow-[0_8px_24px_rgba(249,115,22,0.35)] dark:shadow-[0_8px_24px_rgba(251,146,60,0.24)]',
                       )}
                     >
                       {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
@@ -1145,8 +1157,8 @@ export default function AdminGeneratePayslipsPage() {
           {/* ── RIGHT: Live Processing Summary (30%) ── */}
           <div className="lg:sticky lg:top-6">
             <Card className={cn(CARD_SHELL, 'overflow-hidden')}>
-              <div className="bg-linear-to-br from-foreground/2 via-transparent to-emerald-500/3 dark:from-foreground/4 dark:to-emerald-500/6">
-                <CardHeader className="border-b border-slate-100 pb-4 dark:border-slate-800">
+              <div className="bg-linear-to-br from-transparent via-transparent to-brand/5 dark:to-brand/10">
+                <CardHeader className="pb-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <CardTitle className="text-lg font-bold text-foreground">Processing Summary</CardTitle>
@@ -1198,7 +1210,7 @@ export default function AdminGeneratePayslipsPage() {
                       subtext={scopeReady && sampleDeductions > 0 ? `${formatPeso(sampleDeductions)} avg/employee` : undefined}
                     />
                     <MetricCard
-                      icon={DollarSign}
+                      icon={PhilippinePeso}
                       label="Est. Net Pay"
                       value={scopeReady && estimatedNet > 0 ? formatCompactPeso(estimatedNet) : '—'}
                       subtext={scopeReady && sampleNet > 0 ? `${formatPeso(sampleNet)} avg/employee` : undefined}
@@ -1207,7 +1219,7 @@ export default function AdminGeneratePayslipsPage() {
                   </div>
 
                   {/* Estimated processing time */}
-                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/90 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/50">
+                  <div className="rounded-xl border border-border/80 bg-background px-4 py-3 dark:bg-input/35">
                     <div className="flex items-center justify-between">
                       <span className="flex items-center gap-2 text-xs font-normal text-muted-foreground">
                         <Clock3 className="h-3.5 w-3.5 opacity-80" />
@@ -1222,14 +1234,14 @@ export default function AdminGeneratePayslipsPage() {
                         <Progress
                           value={Math.min(100, (activeEmployees / Math.max(activeEmployees, 100)) * 100)}
                           className="h-1"
-                          indicatorClassName="bg-foreground/30"
+                          indicatorClassName="bg-brand"
                         />
                       </div>
                     )}
                   </div>
 
                   {/* Branches in scope */}
-                  <div className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-slate-50/90 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/50">
+                  <div className="flex items-center justify-between rounded-xl border border-border/80 bg-background px-4 py-3 dark:bg-input/35">
                     <span className="flex items-center gap-2 text-xs font-normal text-muted-foreground">
                       <Layers className="h-3.5 w-3.5 opacity-80" />
                       Branches in scope
@@ -1260,10 +1272,10 @@ export default function AdminGeneratePayslipsPage() {
 
         {/* ── Recent Payslips Table ── */}
         <Card className={CARD_SHELL}>
-          <CardHeader className="flex flex-col gap-1 border-b border-slate-100 md:flex-row md:items-center md:justify-between dark:border-slate-800">
+          <CardHeader className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-foreground/5 dark:bg-foreground/10">
-                <FileText className="h-5 w-5 text-foreground" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                <FileText className="h-5 w-5" />
               </div>
               <div>
                 <CardTitle className="text-lg font-bold text-foreground @md:text-[19px]">Recent Payslips</CardTitle>
@@ -1313,29 +1325,29 @@ export default function AdminGeneratePayslipsPage() {
               <div className="w-full overflow-x-auto rounded-xl bg-transparent">
                 <Table className="w-full min-w-[880px] border-0 border-collapse-separate [border-spacing:0] [&_td]:border-0 [&_th]:border-0 [&_tr]:border-0">
                   <TableHeader className="[&_tr]:border-0">
-                    <TableRow className="border-0 bg-slate-100/70 hover:bg-slate-100/70 dark:bg-slate-800/60 dark:hover:bg-slate-800/60">
-                      <TableHead className="min-w-[200px] text-[14px] font-semibold tracking-[0.02em] text-[#0A0A0A]">
+                    <TableRow className="border-0 bg-background hover:bg-background dark:bg-input/25 dark:hover:bg-input/25">
+                      <TableHead className="min-w-[200px] text-[13px] font-bold tracking-normal text-foreground">
                         Company
                       </TableHead>
-                      <TableHead className="min-w-[180px] text-[14px] font-semibold tracking-[0.02em] text-[#0A0A0A]">
+                      <TableHead className="min-w-[180px] text-[13px] font-bold tracking-normal text-foreground">
                         Pay Period
                       </TableHead>
-                      <TableHead className="w-[120px] text-right text-[14px] font-semibold tracking-[0.02em] text-[#0A0A0A]">
+                      <TableHead className="w-[120px] text-right text-[13px] font-bold tracking-normal text-foreground">
                         Employees
                       </TableHead>
-                      <TableHead className="min-w-[130px] text-right text-[14px] font-semibold tracking-[0.02em] text-[#0A0A0A]">
+                      <TableHead className="min-w-[130px] text-right text-[13px] font-bold tracking-normal text-foreground">
                         Total Net Pay
                       </TableHead>
-                      <TableHead className="min-w-[160px] text-[14px] font-semibold tracking-[0.02em] text-[#0A0A0A]">
+                      <TableHead className="min-w-[160px] text-[13px] font-bold tracking-normal text-foreground">
                         Generated
                       </TableHead>
-                      <TableHead className="w-[110px] text-[14px] font-semibold tracking-[0.02em] text-[#0A0A0A]">Status</TableHead>
-                      <TableHead className="min-w-[200px] text-right text-[14px] font-semibold tracking-[0.02em] text-[#0A0A0A]">
+                      <TableHead className="w-[110px] text-[13px] font-bold tracking-normal text-foreground">Status</TableHead>
+                      <TableHead className="min-w-[200px] text-right text-[13px] font-bold tracking-normal text-foreground">
                         Actions
                       </TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody className="[&_tr]:border-0 [&_tr]:transition-colors divide-y divide-slate-100/80 dark:divide-slate-800/80">
+                  <TableBody className="[&_tr]:border-0 [&_tr]:transition-colors divide-y divide-border/70">
                     {companyRows.map((r) => {
                       const key = rowGroupKey(r)
                       const logo = resolveLogoUrl(r.company_logo_url)
@@ -1346,22 +1358,22 @@ export default function AdminGeneratePayslipsPage() {
                       return (
                         <TableRow
                           key={key}
-                          className="group border-0 transition-colors hover:bg-slate-50/90 dark:hover:bg-slate-900/40"
+                          className="group border-0 transition-colors hover:bg-muted/35"
                         >
                           <TableCell className="py-4">
                             <div className="flex items-center gap-3">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50 transition-shadow group-hover:shadow-sm dark:border-slate-700 dark:bg-slate-900/50">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/80 bg-background transition-shadow group-hover:shadow-sm dark:bg-input/35">
                                 {logo ? (
                                   <img src={logo} alt="" className="max-h-9 max-w-9 object-contain" />
                                 ) : (
                                   <Building2 className="h-4 w-4 text-muted-foreground" />
                                 )}
                               </div>
-                              <span className="text-base font-bold text-[#0A0A0A]">{r.company_name ?? '—'}</span>
+                              <span className="text-base font-bold text-foreground">{r.company_name ?? '—'}</span>
                             </div>
                           </TableCell>
                           <TableCell className="py-4">
-                            <div className="text-sm font-medium text-[#0A0A0A]">
+                            <div className="text-sm font-semibold text-foreground">
                               {formatPayPeriodRange(r.pay_period_start, r.pay_period_end)}
                             </div>
                             {r.pay_cycle_source_label ? (
@@ -1370,13 +1382,13 @@ export default function AdminGeneratePayslipsPage() {
                           </TableCell>
                           <TableCell className="py-4 text-right">
                             <div className="flex items-center justify-end gap-2">
-                              <span className="text-sm font-semibold tabular-nums text-[#0A0A0A]">
+                              <span className="text-sm font-semibold tabular-nums text-foreground">
                                 {r.employee_count ?? '—'}
                               </span>
                             </div>
                           </TableCell>
                           <TableCell className="py-4 text-right">
-                            <span className="text-base font-semibold tabular-nums text-[#0A0A0A]">
+                            <span className="text-base font-semibold tabular-nums text-foreground">
                               {formatPeso(r.total_net_pay)}
                             </span>
                           </TableCell>
@@ -1390,7 +1402,7 @@ export default function AdminGeneratePayslipsPage() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                className="h-8 rounded-lg border-slate-200/90 bg-white px-3 text-xs font-normal text-[#0A0A0A]/65 shadow-sm hover:bg-slate-50 hover:text-[#0A0A0A] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                                className="h-8 rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-input/35"
                                 onClick={() => handleViewBatch(r)}
                               >
                                 <Eye className="mr-1.5 h-4 w-4" />
@@ -1401,7 +1413,7 @@ export default function AdminGeneratePayslipsPage() {
                                   type="button"
                                   size="sm"
                                   variant="outline"
-                                  className="h-8 rounded-lg border-slate-200/90 bg-white px-3 text-xs font-normal text-[#0A0A0A]/65 shadow-sm hover:bg-slate-50 hover:text-[#0A0A0A] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                                  className="h-8 rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-input/35"
                                   disabled={bulkDownloadingBatchId === r.payroll_batch_run_id}
                                   onClick={() => handleBulkDownloadBatchPdf(r)}
                                 >
@@ -1456,7 +1468,7 @@ export default function AdminGeneratePayslipsPage() {
         >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle className="text-[#0A0A0A]">Delete this batch?</DialogTitle>
+              <DialogTitle className="text-foreground">Delete this batch?</DialogTitle>
               <DialogDescription className="text-left text-muted-foreground">
                 This removes draft payslip rows (or cancels a queued generation) for{' '}
                 <span className="font-medium text-foreground">{deleteBatchDialogRow?.company_name ?? 'this company'}</span>
@@ -1498,7 +1510,7 @@ export default function AdminGeneratePayslipsPage() {
         >
           <DialogContent className={cn(PAYSLIP_PREVIEW_DIALOG, 'max-h-[95vh]')}>
             <style dangerouslySetInnerHTML={{ __html: PAYSLIP_MODAL_PRINT_STYLES }} />
-            <div data-payslip-modal-chrome className="border-b border-slate-200/80 bg-white px-6 py-4 dark:border-slate-800">
+            <div data-payslip-modal-chrome className="border-b border-border/80 bg-card px-6 py-4">
               <DialogHeader>
                 <div className="flex items-start justify-between gap-4">
                   <DialogTitle>Sample payslip preview</DialogTitle>
@@ -1529,14 +1541,14 @@ export default function AdminGeneratePayslipsPage() {
                 </div>
               </DialogHeader>
             </div>
-            <div data-payslip-print-mount className="h-[88vh] overflow-y-auto bg-[#F8FAFC] p-6">
+            <div data-payslip-print-mount className="h-[88vh] overflow-y-auto bg-muted/35 p-6">
               {samplePreviewLoading ? (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-slate-200/80 bg-white text-[#0A0A0A]/55">
+                <div className="flex h-full items-center justify-center rounded-2xl border border-border/80 bg-card text-muted-foreground">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                   Loading sample data…
                 </div>
               ) : samplePreviewData ? (
-                <div className="mx-auto h-full w-full max-w-[min(80rem,100%)] rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm">
+                <div className="mx-auto h-full w-full max-w-[min(80rem,100%)] rounded-2xl border border-border/80 bg-card p-3 shadow-sm">
                   <PayslipHtmlDocument data={samplePreviewData} isPreviewMode />
                 </div>
               ) : (

@@ -34,23 +34,25 @@ import {
   CheckCircle2,
   Eye,
   FileDown,
+  Info,
   RefreshCw,
   Loader2,
   Lock,
+  PhilippinePeso,
   Search,
   Send,
   Trash2,
   Users,
 } from 'lucide-react'
 
-const TEXT = 'text-[#0A0A0A]'
+const TEXT = 'text-foreground'
 /** Full-width shell aligned with Government Deduction / Pay Cycles style */
 const PAYSLIP_MODULE_SHELL =
-  'w-full min-w-0 max-w-none bg-white px-3 py-4 sm:px-4 md:px-5 lg:px-6 lg:py-5'
-const PAYSLIP_STACK = 'space-y-5 sm:space-y-6 lg:space-y-8'
-const CARD = 'rounded-2xl border border-slate-200/90 bg-white shadow-sm'
+  'w-full min-w-0 max-w-none bg-background px-3 py-4 text-foreground sm:px-4 md:px-5 lg:px-6 lg:py-5'
+const PAYSLIP_STACK = 'space-y-5 sm:space-y-6'
+const CARD = 'rounded-2xl border border-border/80 bg-card text-card-foreground shadow-sm shadow-slate-900/[0.03] dark:shadow-black/25'
 const PAYSLIP_PREVIEW_DIALOG =
-  '!max-w-[min(88rem,calc(100vw-1.5rem))] w-full overflow-hidden border-slate-200/90 bg-white p-0 shadow-xl shadow-slate-900/[0.07] sm:!max-w-[min(88rem,calc(100vw-2rem))]'
+  '!max-w-[min(88rem,calc(100vw-1.5rem))] w-full overflow-hidden border-border/80 bg-card p-0 shadow-xl shadow-slate-900/[0.07] sm:!max-w-[min(88rem,calc(100vw-2rem))] dark:shadow-black/40'
 
 /** Matches non-draft payslip rows considered “done” for period lock + per-row Finalize button (align with backend). */
 const PUBLISHED_PAYSLIP_STATUSES = new Set(['finalized', 'generated', 'emailed', 'sent_finalized', 'viewed'])
@@ -126,15 +128,15 @@ function employeeCompanyPosition(row) {
 function roleBadgeMeta(roleRaw) {
   const role = String(roleRaw || '').trim().toLowerCase()
   if (role === 'company_head' || role === 'company head') {
-    return { label: 'Company Head', className: 'bg-blue-50 text-blue-700' }
+    return { label: 'Company Head', className: 'bg-brand/10 text-brand ring-1 ring-brand/20' }
   }
   if (role === 'branch_head' || role === 'branch head') {
-    return { label: 'Branch Head', className: 'bg-violet-50 text-violet-700' }
+    return { label: 'Branch Head', className: 'bg-brand/10 text-brand ring-1 ring-brand/20' }
   }
   if (role === 'department_head' || role === 'department head') {
-    return { label: 'Department Head', className: 'bg-teal-50 text-teal-700' }
+    return { label: 'Department Head', className: 'bg-brand/10 text-brand ring-1 ring-brand/20' }
   }
-  return { label: 'Employee', className: 'bg-slate-100 text-slate-700' }
+  return { label: 'Employee', className: 'bg-muted text-muted-foreground ring-1 ring-border/60' }
 }
 
 function roleRank(roleRaw) {
@@ -187,10 +189,10 @@ function attendanceSummaryLine(row) {
 
 function statusPill(label, color = 'gray') {
   const map = {
-    green: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    gray: 'border-slate-200 bg-slate-50 text-slate-700',
+    green: 'border-brand/30 bg-brand/10 text-brand',
+    gray: 'border-border/70 bg-muted/60 text-foreground',
   }
-  const dot = color === 'green' ? 'text-emerald-500' : 'text-slate-400'
+  const dot = color === 'green' ? 'text-brand' : 'text-muted-foreground'
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium', map[color] || map.gray)}>
       <span className={cn('text-[10px]', dot)}>●</span>
@@ -851,7 +853,7 @@ export default function AdminFinalizePayrollPage() {
         <Card className={CARD}>
           <CardContent className="p-6">
             <h2 className={cn('text-xl font-semibold', TEXT)}>Finalize payroll</h2>
-            <p className="mt-2 text-sm text-[#0A0A0A]/70">You do not have permission to finalize payroll runs.</p>
+            <p className="mt-2 text-sm text-muted-foreground">You do not have permission to finalize payroll runs.</p>
           </CardContent>
         </Card>
       </div>
@@ -870,8 +872,8 @@ export default function AdminFinalizePayrollPage() {
         <Card className={CARD}>
           <CardContent className="p-6">
             <h2 className={cn('text-xl font-semibold', TEXT)}>No batch selected</h2>
-            <p className="mt-2 text-sm text-[#0A0A0A]/70">
-              Start from <span className="font-medium text-[#0A0A0A]">Generate Payslips</span>, set your filters, then click
+            <p className="mt-2 text-sm text-muted-foreground">
+              Start from <span className="font-medium text-foreground">Generate Payslips</span>, set your filters, then click
               "Generate payslips" to review and finalize here.
             </p>
           </CardContent>
@@ -884,7 +886,7 @@ export default function AdminFinalizePayrollPage() {
     <TooltipProvider>
       <div className={cn(PAYSLIP_MODULE_SHELL, PAYSLIP_STACK)}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <Button variant="ghost" size="sm" className="w-fit gap-2" asChild>
+          <Button variant="outline" size="sm" className="h-10 w-fit gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted" asChild>
             <Link to={`${hrBase}/compensation/generate-payslips`}>
               <ArrowLeft className="h-4 w-4" />
               Back
@@ -898,7 +900,7 @@ export default function AdminFinalizePayrollPage() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="gap-2"
+                  className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
                   disabled={bulkDownloadingZip || loading}
                   onClick={handleBulkDownloadFinalizedZip}
                 >
@@ -914,7 +916,7 @@ export default function AdminFinalizePayrollPage() {
               type="button"
               variant="outline"
               size="sm"
-              className="gap-2"
+              className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
               onClick={() => setRefreshToken(String(Date.now()))}
               disabled={loading || periodFinalized}
               title={periodFinalized ? 'Preview refresh is disabled while this payroll is locked.' : undefined}
@@ -925,40 +927,43 @@ export default function AdminFinalizePayrollPage() {
           </div>
         </div>
 
-        <div className={cn(CARD, 'p-6')}>
-          <div className="flex flex-col gap-4 @md:flex-row @md:items-start @md:justify-between">
+        <div className={cn(CARD, 'p-5 md:p-6')}>
+          <div className="flex flex-col gap-5 @md:flex-row @md:items-start @md:justify-between">
             <div className="space-y-2">
-              <h1 className={cn('text-[28px] font-bold leading-tight tracking-tight @md:text-[32px]', TEXT)}>Finalize Payroll</h1>
-              <p className="max-w-3xl text-[15px] font-normal leading-relaxed text-[#0A0A0A]/55">
+              <h1 className={cn('text-[28px] font-extrabold leading-tight tracking-normal @md:text-[32px]', TEXT)}>Finalize Payroll</h1>
+              <p className="max-w-3xl text-[15px] font-medium leading-7 text-muted-foreground">
                 Review totals from the same payroll engine as pay components, deductions, statutory lines, pay cycles, schedules, and
                 daily computation — then finalize to persist payroll periods, generate PDF payslips, and lock the run.
               </p>
             </div>
             <div
               className={cn(
-                'w-fit rounded-2xl border px-4 py-2.5 shadow-sm',
-                periodFinalized ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50',
+                'flex w-fit items-center gap-3 rounded-xl border px-4 py-3 shadow-sm',
+                periodFinalized ? 'border-brand/30 bg-brand/10' : 'border-brand/25 bg-brand/10',
               )}
             >
-              <p className={cn('text-xs font-semibold tracking-[0.16em]', periodFinalized ? 'text-emerald-700' : 'text-slate-700')}>
-                {periodFinalized ? 'STATUS: FINALIZED' : 'STATUS: DRAFT'}
-              </p>
-              <p className={cn('text-xs', periodFinalized ? 'text-emerald-700/80' : 'text-slate-600')}>
-                {periodFinalized ? 'Locked — read only' : 'Editable before finalize'}
-              </p>
+              <div>
+                <p className="text-xs font-extrabold uppercase tracking-normal text-brand">
+                  {periodFinalized ? 'Status: Finalized' : 'Status: Draft'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {periodFinalized ? 'Locked - read only' : 'Editable before finalize'}
+                </p>
+              </div>
+              <Lock className="h-5 w-5 text-brand" />
             </div>
           </div>
 
-          <div className="mt-4 inline-flex items-center gap-3 rounded-xl border border-slate-200/80 bg-white px-3 py-2 shadow-sm">
+          <div className="mt-5 inline-flex items-center gap-3 rounded-xl border border-border/80 bg-background px-3 py-2 shadow-sm dark:bg-input/35">
             {selectedCompanyLogo ? (
-              <img src={selectedCompanyLogo} alt="" className="h-10 w-10 rounded-md border border-slate-200/80 bg-white object-contain" />
+              <img src={selectedCompanyLogo} alt="" className="h-10 w-10 rounded-md border border-border/80 bg-background object-contain" />
             ) : (
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200/80 bg-slate-50">
-                <Building2 className="h-5 w-5 text-[#0A0A0A]/55" />
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-border/80 bg-muted">
+                <Building2 className="h-5 w-5 text-muted-foreground" />
               </span>
             )}
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#0A0A0A]/65">Company</p>
+              <p className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Company</p>
               <p className={cn('truncate font-semibold', TEXT)}>
                 {selectedCompany?.name || (user?.hr_role === 'company_head' ? `${user?.company_name || 'Company'} (Company-wide)` : 'All selected scope')}
               </p>
@@ -966,34 +971,37 @@ export default function AdminFinalizePayrollPage() {
           </div>
 
           {periodPreview ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 text-xs @md:grid-cols-3">
-              <div className="rounded-lg border border-slate-200/70 bg-white px-3 py-2 text-[#0A0A0A]/75">
-                <span className="font-semibold text-[#0A0A0A]">Pay Cycle:</span> {periodPreview?.pay_cycle_name || periodPreview?.cycle_label || '—'}
+            <div className="mt-4 grid grid-cols-1 gap-3 text-sm @md:grid-cols-3">
+              <div className="rounded-xl border border-border/80 bg-background px-4 py-3 text-muted-foreground dark:bg-input/30">
+                <span className="font-semibold text-foreground">Pay Cycle:</span> {periodPreview?.pay_cycle_name || periodPreview?.cycle_label || '—'}
                 {periodPreview?.pay_cycle_source_label ? (
-                  <div className="mt-1 text-[11px] text-[#0A0A0A]/55">{periodPreview.pay_cycle_source_label}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{periodPreview.pay_cycle_source_label}</div>
                 ) : null}
               </div>
-              <div className="rounded-lg border border-slate-200/70 bg-white px-3 py-2 text-[#0A0A0A]/75">
-                <span className="font-semibold text-[#0A0A0A]">Next Cut-off:</span> {formatDate(periodPreview?.next_cut_off_start || periodPreview?.cut_off_start_date)} - {formatDate(periodPreview?.next_cut_off_end || periodPreview?.cut_off_end_date)}
+              <div className="rounded-xl border border-border/80 bg-background px-4 py-3 text-muted-foreground dark:bg-input/30">
+                <span className="font-semibold text-foreground">Next Cut-off:</span> {formatDate(periodPreview?.next_cut_off_start || periodPreview?.cut_off_start_date)} - {formatDate(periodPreview?.next_cut_off_end || periodPreview?.cut_off_end_date)}
               </div>
-              <div className="rounded-lg border border-slate-200/70 bg-white px-3 py-2 text-[#0A0A0A]/75">
-                <span className="font-semibold text-[#0A0A0A]">Pay Date:</span> {formatDate(periodPreview?.next_pay_date || periodPreview?.pay_date)}
+              <div className="rounded-xl border border-border/80 bg-background px-4 py-3 text-muted-foreground dark:bg-input/30">
+                <span className="font-semibold text-foreground">Pay Date:</span> {formatDate(periodPreview?.next_pay_date || periodPreview?.pay_date)}
               </div>
             </div>
           ) : null}
 
           {!periodFinalized ? (
-            <p className="mt-4 rounded-xl border border-slate-200/70 bg-slate-50/80 px-4 py-3 text-sm text-[#0A0A0A]/70">
-              Figures below are <span className="font-medium text-[#0A0A0A]">computed</span> for review only. PDFs are created after
-              you confirm and click Finalize Payroll.
+            <p className="mt-4 flex items-start gap-2 rounded-xl border border-brand/20 bg-brand/10 px-4 py-3 text-sm text-muted-foreground">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+              <span>
+                Figures below are <span className="font-bold text-brand">computed</span> for review only. PDFs are created after
+                you confirm and click Finalize Payroll.
+              </span>
             </p>
           ) : (
             <div className="mt-4 space-y-3">
-              <p className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-[#0A0A0A]">
-                <Lock className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
+              <p className="flex items-start gap-2 rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm text-foreground">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0 text-brand" aria-hidden />
                 <span>
-                  <span className="font-semibold text-emerald-900">This payroll has been finalized and is now locked.</span> Use{' '}
-                  <span className="font-medium text-emerald-900">Send payslips</span> for each finalized row (or bulk) so they appear in My Payslips.
+                  <span className="font-semibold text-brand">This payroll has been finalized and is now locked.</span> Use{' '}
+                  <span className="font-medium text-brand">Send payslips</span> for each finalized row (or bulk) so they appear in My Payslips.
                   You cannot change attendance, leave, or amounts for this period.
                 </span>
               </p>
@@ -1015,7 +1023,7 @@ export default function AdminFinalizePayrollPage() {
           )}
 
           {!loading && previewError ? (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {previewError}
             </div>
           ) : null}
@@ -1024,39 +1032,45 @@ export default function AdminFinalizePayrollPage() {
         <div className="grid grid-cols-1 gap-4 @lg:grid-cols-4">
           <Card className={cn(CARD, 'overflow-hidden')}>
             <CardContent className="p-5">
-              <p className="text-[14px] font-medium uppercase tracking-[0.12em] text-[#0A0A0A]/50">Total gross pay</p>
+              <p className="text-[13px] font-semibold uppercase tracking-normal text-muted-foreground">Total gross pay</p>
               <div className="mt-3 flex items-center justify-between">
-                <p className={cn('text-[26px] font-medium tabular-nums leading-none', loading ? 'text-[#0A0A0A]/45' : TEXT)}>
+                <p className={cn('text-[26px] font-extrabold tabular-nums leading-none', loading ? 'text-muted-foreground' : TEXT)}>
                   {loading ? '—' : formatPeso(totals.total_gross)}
                 </p>
-                <ArrowUpRight className="h-6 w-6 text-[#0A0A0A]/45" />
+                <ArrowUpRight className="h-6 w-6 text-brand" />
               </div>
             </CardContent>
           </Card>
 
           <Card className={cn(CARD, 'overflow-hidden')}>
             <CardContent className="p-5">
-              <p className="text-[14px] font-medium uppercase tracking-[0.12em] text-[#0A0A0A]/50">Total deductions</p>
-              <p className={cn('mt-3 text-[26px] font-medium tabular-nums leading-none', loading ? 'text-[#0A0A0A]/45' : TEXT)}>
-                {loading ? '—' : formatPeso(totals.total_deductions)}
-              </p>
+              <p className="text-[13px] font-semibold uppercase tracking-normal text-muted-foreground">Total deductions</p>
+              <div className="mt-3 flex items-center justify-between">
+                <p className={cn('text-[26px] font-extrabold tabular-nums leading-none', loading ? 'text-muted-foreground' : TEXT)}>
+                  {loading ? '—' : formatPeso(totals.total_deductions)}
+                </p>
+                <ArrowUpRight className="h-6 w-6 text-brand" />
+              </div>
             </CardContent>
           </Card>
 
-          <Card className={cn(CARD, 'overflow-hidden border-emerald-200/80 bg-emerald-50/70 shadow-[0_8px_20px_rgba(16,185,129,0.12)]')}>
+          <Card className={cn(CARD, 'overflow-hidden border-brand/30 bg-brand/10 shadow-[0_8px_20px_rgba(249,115,22,0.12)] dark:bg-brand/15')}>
             <CardContent className="p-5">
-              <p className="text-[14px] font-medium uppercase tracking-[0.12em] text-emerald-800/70">Total net pay</p>
-              <p className={cn('mt-3 text-[34px] font-bold tabular-nums leading-none tracking-tight @md:text-[36px]', loading ? 'text-[#0A0A0A]/45' : 'text-emerald-950')}>
-                {loading ? '—' : formatPeso(totals.total_net)}
-              </p>
+              <p className="text-[13px] font-bold uppercase tracking-normal text-brand">Total net pay</p>
+              <div className="mt-3 flex items-center justify-between">
+                <p className={cn('text-[30px] font-extrabold tabular-nums leading-none tracking-normal @md:text-[32px]', loading ? 'text-muted-foreground' : 'text-brand')}>
+                  {loading ? '—' : formatPeso(totals.total_net)}
+                </p>
+                <PhilippinePeso className="h-6 w-6 text-brand" />
+              </div>
             </CardContent>
           </Card>
 
           <Card className={cn(CARD, 'overflow-hidden')}>
             <CardContent className="p-5">
-              <p className="text-[14px] font-medium uppercase tracking-[0.12em] text-[#0A0A0A]/50">Employee count</p>
+              <p className="text-[13px] font-semibold uppercase tracking-normal text-muted-foreground">Employee count</p>
               <div className="mt-3 flex items-center justify-between">
-                <p className={cn('text-[28px] font-bold tabular-nums leading-none', TEXT)}>{loading ? '—' : Number(totals.employee_count || 0)}</p>
+                <p className={cn('text-[28px] font-extrabold tabular-nums leading-none', TEXT)}>{loading ? '—' : Number(totals.employee_count || 0)}</p>
                 <div className="flex items-center -space-x-2">
                   {employees.slice(0, 3).map((row) => (
                     <Avatar key={row.user_id} className="h-8 w-8 border-2 border-background ring-1 ring-border/60">
@@ -1064,7 +1078,7 @@ export default function AdminFinalizePayrollPage() {
                       <AvatarFallback className="text-[10px] font-semibold">{initials(row.name)}</AvatarFallback>
                     </Avatar>
                   ))}
-                  <span className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-semibold text-[#0A0A0A]/55">
+                  <span className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
                     <Users className="h-4 w-4" />
                   </span>
                 </div>
@@ -1077,30 +1091,30 @@ export default function AdminFinalizePayrollPage() {
           <CardContent className="p-0">
             <div className="flex flex-col gap-3 px-4 py-4 @md:flex-row @md:items-center @md:justify-between @md:px-5">
               <div>
-                <h2 className={cn('text-[22px] font-semibold leading-snug @md:text-2xl', TEXT)}>Employees</h2>
-                <p className="mt-1 text-sm font-normal leading-snug text-[#0A0A0A]/55">
+                <h2 className={cn('text-[22px] font-bold leading-snug @md:text-2xl', TEXT)}>Employees</h2>
+                <p className="mt-1 text-sm font-normal leading-snug text-muted-foreground">
                   View full payslip details on Draft. Finalize only locks the period and publishes PDFs.
                 </p>
               </div>
               <div className="flex w-full max-w-md items-center gap-2">
-                <Search className="h-4 w-4 shrink-0 text-[#0A0A0A]/55" />
+                <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search employee…"
                   disabled={periodFinalized}
-                  className="h-9 rounded-lg border-[#0A0A0A]/12 bg-white text-[#0A0A0A]"
+                  className="h-10 rounded-xl border-border/80 bg-background text-foreground dark:bg-input/35"
                 />
               </div>
             </div>
 
             {periodFinalized ? (
-              <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 @md:flex-row @md:flex-wrap @md:items-center @md:justify-end @md:px-5">
+              <div className="flex flex-col gap-3 border-t border-border/70 px-4 py-3 @md:flex-row @md:flex-wrap @md:items-center @md:justify-end @md:px-5">
                 {Number(preview?.batch_run?.payroll_batch_run_id || 0) > 0 ? (
                   <Button
                     type="button"
                     disabled={sendingBatchPayslips || loading}
-                    className="h-9 gap-2 bg-indigo-600 font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:bg-indigo-600/40"
+                    className="h-9 gap-2 rounded-xl bg-brand font-semibold text-brand-foreground shadow-sm hover:bg-brand-strong disabled:bg-brand/40"
                     onClick={() => setSendBatchDialogOpen(true)}
                   >
                     {sendingBatchPayslips ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -1110,7 +1124,7 @@ export default function AdminFinalizePayrollPage() {
                 <Button
                   type="button"
                   disabled={deliveringBulk || selectedPayslipIds.size === 0}
-                  className="h-9 gap-2 bg-emerald-600 font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:bg-emerald-600/40"
+                  className="h-9 gap-2 rounded-xl bg-brand font-semibold text-brand-foreground shadow-sm hover:bg-brand-strong disabled:bg-brand/40"
                   onClick={() => handleDeliverBulk()}
                 >
                   {deliveringBulk ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -1120,12 +1134,12 @@ export default function AdminFinalizePayrollPage() {
             ) : null}
 
             {loading ? (
-              <div className="flex items-center justify-center py-14 text-[#0A0A0A]/60">
+              <div className="flex items-center justify-center py-14 text-muted-foreground">
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 Loading employees…
               </div>
             ) : Number(pagination.total || 0) === 0 ? (
-              <div className="px-4 py-10 text-center text-sm text-[#0A0A0A]/65 @md:px-5">
+              <div className="px-4 py-10 text-center text-sm text-muted-foreground @md:px-5">
                 No employees found in the selected scope.
               </div>
             ) : (
@@ -1133,7 +1147,7 @@ export default function AdminFinalizePayrollPage() {
                 <div className="w-full overflow-x-auto">
                   <Table className="min-w-[1020px] border-0 [&_td]:border-0 [&_th]:border-0">
                     <TableHeader className="[&_tr]:border-0">
-                      <TableRow className="border-0 bg-slate-100/70 hover:bg-slate-100/70">
+                      <TableRow className="border-0 bg-background hover:bg-background dark:bg-input/25 dark:hover:bg-input/25">
                         {periodFinalized ? (
                           <TableHead className="h-auto w-10 py-2.5 pl-4 pr-0 text-left first:pl-5">
                             <Checkbox
@@ -1144,17 +1158,17 @@ export default function AdminFinalizePayrollPage() {
                             />
                           </TableHead>
                         ) : null}
-                        <TableHead className="h-auto py-2.5 pl-4 pr-2 text-left text-[14px] font-semibold uppercase tracking-[0.06em] text-[#0A0A0A]/70 first:pl-5">
+                        <TableHead className="h-auto py-2.5 pl-4 pr-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground first:pl-5">
                           Employee
                         </TableHead>
-                        <TableHead className="h-auto py-2.5 px-2 text-left text-[14px] font-semibold uppercase tracking-[0.06em] text-[#0A0A0A]/70">Department</TableHead>
-                        <TableHead className="h-auto py-2.5 px-2 text-right text-[14px] font-semibold uppercase tracking-[0.06em] text-[#0A0A0A]/70">Basic Salary (Period)</TableHead>
-                        <TableHead className="h-auto py-2.5 px-2 text-right text-[14px] font-semibold uppercase tracking-[0.06em] text-[#0A0A0A]/70">Daily Rate</TableHead>
-                        <TableHead className="h-auto py-2.5 px-2 text-right text-[14px] font-semibold uppercase tracking-[0.06em] text-[#0A0A0A]/70">Gross Pay</TableHead>
-                        <TableHead className="h-auto py-2.5 px-2 text-right text-[14px] font-semibold uppercase tracking-[0.06em] text-[#0A0A0A]/70">Total Deductions</TableHead>
-                        <TableHead className="h-auto py-2.5 px-2 text-right text-[14px] font-semibold uppercase tracking-[0.06em] text-emerald-800/90">Net pay</TableHead>
-                        <TableHead className="h-auto py-2.5 px-2 text-left text-[14px] font-semibold uppercase tracking-[0.06em] text-[#0A0A0A]/70">Status</TableHead>
-                        <TableHead className="h-auto min-w-[220px] py-2.5 pl-2 pr-4 text-right text-[14px] font-semibold uppercase tracking-[0.06em] text-[#0A0A0A]/70 @md:pr-5">
+                        <TableHead className="h-auto py-2.5 px-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Department</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Basic Salary (Period)</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Daily Rate</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Gross Pay</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Total Deductions</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-brand">Net pay</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Status</TableHead>
+                        <TableHead className="h-auto min-w-[220px] py-2.5 pl-2 pr-4 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground @md:pr-5">
                           Actions
                         </TableHead>
                       </TableRow>
@@ -1169,7 +1183,7 @@ export default function AdminFinalizePayrollPage() {
                         return (
                         <TableRow
                           key={`${row.payslip_id ?? `preview-${row.user_id}`}`}
-                          className="border-0 transition-colors duration-150 hover:bg-slate-50/90"
+                          className="border-0 transition-colors duration-150 hover:bg-muted/35"
                         >
                           {periodFinalized ? (
                             <TableCell className="w-10 py-2.5 pl-4 pr-0 align-middle first:pl-5">
@@ -1186,7 +1200,7 @@ export default function AdminFinalizePayrollPage() {
                           ) : null}
                           <TableCell className="py-2.5 pl-4 pr-2 align-middle first:pl-5">
                             <div className="flex items-start gap-2.5">
-                              <Avatar className="h-9 w-9 ring-1 ring-[#0A0A0A]/10">
+                              <Avatar className="h-9 w-9 ring-1 ring-border/80">
                                 <AvatarImage src={employeeAvatarSrc(row) || undefined} alt="" />
                                 <AvatarFallback className="text-[10px] font-semibold">{initials(row.name)}</AvatarFallback>
                               </Avatar>
@@ -1196,59 +1210,59 @@ export default function AdminFinalizePayrollPage() {
                                   <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium', roleBadgeMeta(employeeCompanyPosition(row)).className)}>
                                     {row?.employee_role_label || roleBadgeMeta(employeeCompanyPosition(row)).label}
                                   </span>
-                                  <span className="text-[11px] text-[#0A0A0A]/50">{row.employee_code}</span>
+                                  <span className="text-[11px] text-muted-foreground">{row.employee_code}</span>
                                   {periodFinalized && canSendRow && rowIsSent ? (
-                                    <Badge variant="secondary" className="h-5 rounded-md border-emerald-200 bg-emerald-50 px-2 text-[10px] font-semibold uppercase tracking-wide text-emerald-900">
+                                    <Badge variant="secondary" className="h-5 rounded-md border-brand/30 bg-brand/10 px-2 text-[10px] font-semibold uppercase tracking-normal text-brand">
                                       Sent
                                     </Badge>
                                   ) : null}
                                 </div>
                                 {employeeRole(row) && employeeRole(row) !== '—' ? (
-                                  <p className="mt-0.5 text-[15px] font-normal leading-snug text-[#0A0A0A]/55">{employeeRole(row)}</p>
+                                  <p className="mt-0.5 text-[15px] font-normal leading-snug text-muted-foreground">{employeeRole(row)}</p>
                                 ) : null}
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="py-2.5 px-2 text-[15px] font-normal text-[#0A0A0A]/58">{row.department || '—'}</TableCell>
-                          <TableCell className="py-2.5 px-2 text-right text-sm font-medium tabular-nums text-[#0A0A0A]/80">
+                          <TableCell className="py-2.5 px-2 text-[15px] font-normal text-muted-foreground">{row.department || '—'}</TableCell>
+                          <TableCell className="py-2.5 px-2 text-right text-sm font-medium tabular-nums text-foreground/80">
                             {formatPeso(row.basic_salary)}
                             {Number(row.basic_salary_monthly || 0) > 0 ? (
-                              <div className="mt-1 text-[10px] text-[#0A0A0A]/55">
+                              <div className="mt-1 text-[10px] text-muted-foreground">
                                 Monthly: {formatPeso(row.basic_salary_monthly)}
                               </div>
                             ) : null}
                           </TableCell>
-                          <TableCell className="py-2.5 px-2 text-right text-sm font-medium tabular-nums text-[#0A0A0A]/80">
+                          <TableCell className="py-2.5 px-2 text-right text-sm font-medium tabular-nums text-foreground/80">
                             {formatPeso(row.daily_rate)}
                           </TableCell>
                           <TableCell className="py-2.5 px-2 text-right align-middle">
                             <div className="flex flex-col items-end gap-1">
-                              <span className="text-[15px] font-semibold tabular-nums text-[#0A0A0A]">
+                              <span className="text-[15px] font-semibold tabular-nums text-foreground">
                                 {formatPeso(row.gross_pay)}
                               </span>
                               <div className="flex items-center justify-end gap-2">
                                 <button
                                   type="button"
-                                  className="text-xs font-semibold text-[#0A0A0A]/70 underline underline-offset-4 hover:text-[#0A0A0A]"
+                                  className="text-xs font-semibold text-muted-foreground underline underline-offset-4 hover:text-foreground"
                                   onClick={() => setBreakdownRow(row)}
                                 >
                                   View breakdown
                                 </button>
                               </div>
                               {Number(row.actual_days_worked || 0) <= 0 && Number(row.basic_salary || 0) > 0 ? (
-                                <div className="text-[11px] font-medium leading-tight text-amber-700">No attendance in selected period</div>
+                                <div className="text-[11px] font-medium leading-tight text-amber-700 dark:text-amber-300">No attendance in selected period</div>
                               ) : null}
                             </div>
                           </TableCell>
                           <TableCell
                             className={cn(
                               'py-2.5 px-2 text-right text-base font-medium tabular-nums',
-                              Number(row.total_deductions || 0) > 0 ? 'text-orange-700' : 'text-[#0A0A0A]/50',
+                              Number(row.total_deductions || 0) > 0 ? 'text-brand' : 'text-muted-foreground',
                             )}
                           >
                             {formatPeso(row.total_deductions)}
                           </TableCell>
-                          <TableCell className="py-2.5 px-2 text-right text-base font-semibold tabular-nums text-[#0A0A0A]">
+                          <TableCell className="py-2.5 px-2 text-right text-base font-semibold tabular-nums text-foreground">
                             {formatPeso(row.net_pay)}
                           </TableCell>
                           <TableCell className="py-2.5 px-2">
@@ -1264,8 +1278,8 @@ export default function AdminFinalizePayrollPage() {
                                   className={cn(
                                     'h-8 shrink-0 gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold @sm:text-sm',
                                     rowIsSent
-                                      ? 'border-emerald-200 text-emerald-800 hover:bg-emerald-50'
-                                      : 'border-transparent bg-emerald-600 text-white hover:bg-emerald-700',
+                                      ? 'border-brand/30 text-brand hover:bg-brand/10'
+                                      : 'border-transparent bg-brand text-brand-foreground hover:bg-brand-strong',
                                   )}
                                   disabled={deliveringPayslipId === payslipIdNum}
                                   onClick={() => handleDeliverOne(row)}
@@ -1284,7 +1298,7 @@ export default function AdminFinalizePayrollPage() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                className="h-8 shrink-0 gap-1.5 whitespace-nowrap rounded-lg border-slate-200/90 bg-white px-3 text-xs font-semibold text-[#0A0A0A] hover:bg-slate-50 @sm:text-sm"
+                                className="h-8 shrink-0 gap-1.5 whitespace-nowrap rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted @sm:text-sm dark:bg-input/35"
                                 onClick={() => handlePreviewPayslip(row)}
                               >
                                 <Eye className="h-3.5 w-3.5 shrink-0 @sm:h-4 @sm:w-4" />
@@ -1299,15 +1313,15 @@ export default function AdminFinalizePayrollPage() {
                   </Table>
                 </div>
 
-                <div className="mt-3 flex flex-col gap-2 px-4 @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5 text-sm text-[#0A0A0A]/70">
+                <div className="mt-3 flex flex-col gap-2 px-4 text-sm text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5">
                   <span>
                     Page {page} of {pageCount} · {Number(pagination.total || 0)} employee{Number(pagination.total || 0) === 1 ? '' : 's'}
                   </span>
                   <div className="flex gap-2">
-                    <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                    <Button type="button" variant="outline" size="sm" className="rounded-xl border-border/80 bg-background hover:bg-muted dark:bg-input/35" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
                       Prev
                     </Button>
-                    <Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={page >= pageCount}>
+                    <Button type="button" variant="outline" size="sm" className="rounded-xl border-border/80 bg-background hover:bg-muted dark:bg-input/35" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={page >= pageCount}>
                       Next
                     </Button>
                   </div>
@@ -1320,10 +1334,10 @@ export default function AdminFinalizePayrollPage() {
         <Card className={cn(CARD, 'sticky bottom-3')}>
           <CardContent className="py-6">
             {periodFinalized ? (
-              <div className="flex flex-wrap items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center">
-                <CheckCircle2 className="h-4 w-4 text-emerald-700" aria-hidden />
-                <span className="text-sm font-semibold text-[#0A0A0A]">Payroll Finalized</span>
-                <span className="text-sm text-[#0A0A0A]/60">This payroll batch is locked and no further confirmation is required.</span>
+              <div className="flex flex-wrap items-center justify-center gap-2 rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-center">
+                <CheckCircle2 className="h-4 w-4 text-brand" aria-hidden />
+                <span className="text-sm font-semibold text-foreground">Payroll Finalized</span>
+                <span className="text-sm text-muted-foreground">This payroll batch is locked and no further confirmation is required.</span>
               </div>
             ) : (
               <div className="flex flex-col gap-6 @md:flex-row @md:items-center @md:justify-between">
@@ -1336,10 +1350,10 @@ export default function AdminFinalizePayrollPage() {
                     className="mt-1"
                   />
                   <div>
-                    <Label htmlFor="review" className={cn('cursor-pointer text-base font-medium leading-snug', TEXT)}>
+                    <Label htmlFor="review" className={cn('cursor-pointer text-base font-bold leading-snug', TEXT)}>
                       I confirm I have reviewed all totals and employee details for this payroll batch.
                     </Label>
-                    <p className="mt-1.5 text-sm font-normal text-[#0A0A0A]/55">Gross pay verified • Deductions correct • No open loans conflicting</p>
+                    <p className="mt-1.5 text-sm font-normal text-muted-foreground">Gross pay verified • Deductions correct • No open loans conflicting</p>
                   </div>
                 </div>
                 <Button
@@ -1348,9 +1362,9 @@ export default function AdminFinalizePayrollPage() {
                   disabled={!reviewConfirmed || finalizing || loading || Number(totals?.employee_count || 0) <= 0}
                   onClick={handleFinalize}
                   className={cn(
-                    'h-12 min-w-[260px] shrink-0 rounded-xl px-8 text-[17px] font-bold transition-transform active:scale-[0.99]',
-                    'bg-emerald-600 text-white shadow-[0_8px_20px_rgba(5,150,105,0.35)] hover:bg-emerald-700',
-                    'disabled:bg-[#0A0A0A]/25 disabled:text-white/90 disabled:shadow-none',
+                    'h-12 min-w-[260px] shrink-0 rounded-xl px-8 text-[16px] font-bold transition-transform active:scale-[0.99]',
+                    'bg-brand text-brand-foreground shadow-[0_8px_20px_rgba(249,115,22,0.35)] hover:bg-brand-strong',
+                    'disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none',
                   )}
                 >
                   {finalizing ? (
@@ -1374,21 +1388,21 @@ export default function AdminFinalizePayrollPage() {
           <DialogContent showCloseButton={false} className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle className={cn('text-xl font-bold', TEXT)}>{periodFinalized ? 'Payroll finalized' : 'Finalizing payroll'}</DialogTitle>
-              <DialogDescription className="text-sm">
+              <DialogDescription className="text-sm text-muted-foreground">
                 {periodFinalized
                   ? 'All employees in this batch were finalized successfully.'
                   : `Finalizing payroll for ${Math.max(1, Number(totals?.employee_count || employees.length || 1))} employees...`}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 py-2">
-              <Progress value={progress} indicatorClassName="bg-emerald-600 transition-all duration-300" />
-              <p className="text-xs font-medium text-[#0A0A0A]/70">{periodFinalized ? 'Finalized and locked' : finalizeStage}</p>
-              <div className="flex items-center justify-between text-xs text-[#0A0A0A]/65">
+              <Progress value={progress} indicatorClassName="bg-brand transition-all duration-300" />
+              <p className="text-xs font-medium text-muted-foreground">{periodFinalized ? 'Finalized and locked' : finalizeStage}</p>
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>{periodFinalized ? 'Done' : `${processedCount}/${Math.max(1, Number(totals?.employee_count || employees.length || 1))}`}</span>
-                <span className="font-semibold text-[#0A0A0A]">{progress}%</span>
+                <span className="font-semibold text-foreground">{progress}%</span>
               </div>
               {periodFinalized ? (
-                <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                <div className="flex items-center gap-2 rounded-lg border border-brand/30 bg-brand/10 px-3 py-2 text-sm text-brand">
                   <CheckCircle2 className="h-4 w-4" />
                   Success! Payslips and payroll locks are now in place.
                 </div>
@@ -1406,47 +1420,47 @@ export default function AdminFinalizePayrollPage() {
           <DialogContent className={cn(PAYSLIP_PREVIEW_DIALOG, 'max-h-[90vh]')}>
             <DialogHeader>
               <DialogTitle className={cn('text-xl font-bold', TEXT)}>Payroll breakdown</DialogTitle>
-              <DialogDescription className="text-[#0A0A0A]/60">
-                {breakdownRow?.name ? <span className="font-medium text-[#0A0A0A]">{breakdownRow.name}</span> : 'Employee'} ·{' '}
+              <DialogDescription className="text-muted-foreground">
+                {breakdownRow?.name ? <span className="font-medium text-foreground">{breakdownRow.name}</span> : 'Employee'} ·{' '}
                 {breakdownRow?.employee_code || '—'}
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
-              <div className="rounded-xl border border-slate-200/80 bg-white p-4">
+              <div className="rounded-xl border border-border/80 bg-background p-4 dark:bg-input/35">
                 <div className="grid grid-cols-1 gap-3 @sm:grid-cols-3">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0A0A0A]/50">Gross pay</p>
-                    <p className="mt-1 text-lg font-bold tabular-nums text-[#0A0A0A]">{formatPeso(breakdownRow?.gross_pay)}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Gross pay</p>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-foreground">{formatPeso(breakdownRow?.gross_pay)}</p>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0A0A0A]/50">Total deductions</p>
-                    <p className="mt-1 text-lg font-bold tabular-nums text-[#0A0A0A]">{formatPeso(breakdownRow?.total_deductions)}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Total deductions</p>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-foreground">{formatPeso(breakdownRow?.total_deductions)}</p>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0A0A0A]/50">Net pay</p>
-                    <p className="mt-1 text-lg font-bold tabular-nums text-[#0A0A0A]">{formatPeso(breakdownRow?.net_pay)}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Net pay</p>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-brand">{formatPeso(breakdownRow?.net_pay)}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-200/80 bg-white">
-                <div className="border-b border-slate-100 px-4 py-3">
-                  <p className="text-sm font-semibold text-[#0A0A0A]">Earnings (Daily Computation)</p>
-                  <p className="mt-0.5 text-xs text-[#0A0A0A]/55">Based on attendance, holidays, OT approvals, and policy rules.</p>
+              <div className="rounded-xl border border-border/80 bg-card">
+                <div className="border-b border-border/70 px-4 py-3">
+                  <p className="text-sm font-semibold text-foreground">Earnings (Daily Computation)</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Based on attendance, holidays, OT approvals, and policy rules.</p>
                 </div>
-                <div className="divide-y divide-slate-100">
+                <div className="divide-y divide-border/70">
                   {(Array.isArray(breakdownRow?.daily_computation_earning_lines) ? breakdownRow.daily_computation_earning_lines : []).map((l, i) => (
                     <div key={`bde-${i}`} className="flex items-center justify-between gap-4 px-4 py-3">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-[#0A0A0A]">{String(l?.label || 'Earning')}</p>
-                        {l?.units ? <p className="mt-0.5 text-xs text-[#0A0A0A]/55">{String(l.units)}</p> : null}
+                        <p className="truncate text-sm font-medium text-foreground">{String(l?.label || 'Earning')}</p>
+                        {l?.units ? <p className="mt-0.5 text-xs text-muted-foreground">{String(l.units)}</p> : null}
                       </div>
-                      <p className="shrink-0 text-sm font-semibold tabular-nums text-[#0A0A0A]">{formatPeso(Number(l?.amount || 0))}</p>
+                      <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{formatPeso(Number(l?.amount || 0))}</p>
                     </div>
                   ))}
                   {(Array.isArray(breakdownRow?.daily_computation_earning_lines) ? breakdownRow.daily_computation_earning_lines : []).length === 0 ? (
-                    <div className="px-4 py-10 text-center text-sm text-[#0A0A0A]/60">No earning lines available for this preview row.</div>
+                    <div className="px-4 py-10 text-center text-sm text-muted-foreground">No earning lines available for this preview row.</div>
                   ) : null}
                 </div>
               </div>
@@ -1455,14 +1469,14 @@ export default function AdminFinalizePayrollPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-9 rounded-xl border-[#0A0A0A]/15 bg-white text-[#0A0A0A] hover:bg-slate-50"
+                  className="h-9 rounded-xl border-border/80 bg-background text-foreground hover:bg-muted dark:bg-input/35"
                   onClick={() => setBreakdownRow(null)}
                 >
                   Close
                 </Button>
                 <Button
                   type="button"
-                  className="h-9 rounded-xl bg-[#0A0A0A] text-white hover:bg-[#0A0A0A]/90"
+                  className="h-9 rounded-xl bg-brand text-brand-foreground hover:bg-brand-strong"
                   onClick={() => {
                     if (!breakdownRow) return
                     setBreakdownRow(null)
@@ -1485,7 +1499,7 @@ export default function AdminFinalizePayrollPage() {
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle className={cn('text-xl font-bold', TEXT)}>Bulk Send Payslip</DialogTitle>
-              <DialogDescription className="text-sm text-[#0A0A0A]/70">
+              <DialogDescription className="text-sm text-muted-foreground">
                 Send payslips to all {finalizedBatchEmployeeCount} employees in this batch?
               </DialogDescription>
             </DialogHeader>
@@ -1510,7 +1524,7 @@ export default function AdminFinalizePayrollPage() {
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle className={cn('text-xl font-bold', TEXT)}>Delete finalized batch?</DialogTitle>
-              <DialogDescription className="text-sm text-[#0A0A0A]/70">
+              <DialogDescription className="text-sm text-muted-foreground">
                 This will delete all payslips and sent records. You will need to regenerate the payroll.
               </DialogDescription>
             </DialogHeader>
