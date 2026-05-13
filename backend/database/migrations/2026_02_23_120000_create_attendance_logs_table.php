@@ -12,8 +12,9 @@ return new class extends Migration
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->string('type', 20); // 'clock_in', 'clock_out'
-            $table->timestamp('verified_at')->nullable();
-            $table->timestamps();
+            $table->dateTime('verified_at')->nullable();
+            $table->dateTime('created_at')->nullable();
+            $table->dateTime('updated_at')->nullable();
 
             $table->index(['user_id', 'created_at']);
         });
