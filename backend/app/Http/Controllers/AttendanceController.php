@@ -19,7 +19,6 @@ use App\Services\OvertimeService;
 use App\Services\PayrollComputationService;
 use App\Services\PremiumPayCalculatorService;
 use App\Services\PresenceFilingCorrectionFormatter;
-use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -495,9 +494,7 @@ class AttendanceController extends Controller
      * at any time — before shift, after shift, rest day, holiday, OT hours.
      * Method kept as no-op for call-site compatibility.
      */
-    private function ensureWithinWorkingHours(User $user, string $type): void
-    {
-    }
+    private function ensureWithinWorkingHours(User $user, string $type): void {}
 
     /**
      * @deprecated Per Enhanced Attendance Logic Section 2:
@@ -505,9 +502,7 @@ class AttendanceController extends Controller
      * Holiday restrictions have been removed. Employees can clock in/out on holidays.
      * Method kept as no-op for call-site compatibility.
      */
-    private function ensureNotHolidayForAttendance(): void
-    {
-    }
+    private function ensureNotHolidayForAttendance(): void {}
 
     /**
      * Send attendance SMS immediately via PhilSMS (synchronous).
@@ -2666,23 +2661,27 @@ class AttendanceController extends Controller
     }
 
     /**
+     * Prefer {@see AttendanceLog::$verified_at} (actual punch instant) when set; otherwise insertion time.
+     */
+    private function attendanceLogPunchInstant(AttendanceLog $log): Carbon
+    {
+        $t = $log->verified_at ?? $log->created_at;
+
+        return $t instanceof Carbon ? $t : Carbon::parse($t);
+    }
+
+    /**
      * Kiosk: list recent attendance logs (for display on login page DTR panel).
-     * Public, no auth. Returns real kiosk/employee punch activity only.
+     * Public, no auth. Includes synthetic HR-approved rows so seeded / corrected DTR can appear alongside live scans.
      *
-     * Approved attendance corrections still update DTR/payroll, but they are intentionally
-     * hidden from the login Recent Activity feed so old approved filings do not look like
-     * fresh kiosk scans.
+     * Sort / dedupe / late labels follow {@see AttendanceLog::$verified_at} first so batches that share one
+     * {@see AttendanceLog::$created_at} timestamp do not collapse the feed.
      */
     public function recentKiosk(Request $request): JsonResponse
     {
         $tz = $this->attendanceTimezone();
 
-        // Regular attendance logs only. Exclude synthetic HR-approved correction punches from the kiosk login feed.
         $logEntries = AttendanceLog::query()
-            ->where(function ($q) {
-                $q->whereNull('authentication_method')
-                    ->orWhere('authentication_method', '!=', AttendanceLog::AUTH_METHOD_HR_APPROVED_CORRECTION);
-            })
             ->with([
                 'user:id,name,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
                 'user.workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days',
@@ -2694,10 +2693,11 @@ class AttendanceController extends Controller
                 'user.departmentRelation.branch:id,company_id',
                 'user.departmentRelation.branch.company:id,name,logo',
             ])
-            ->orderByDesc('created_at')
-            ->limit(40)
+            ->orderByRaw('COALESCE(verified_at, created_at) DESC')
+            ->limit(80)
             ->get()
             ->map(function (AttendanceLog $log) use ($tz) {
+                $punchAt = $this->attendanceLogPunchInstant($log);
                 $info = $this->kioskLogStatus($log);
                 $user = $log->user;
                 $company = $user?->companyHeadships->first() ?? $user?->company ?? $user?->branch?->company ?? $user?->departmentRelation?->branch?->company;
@@ -2713,23 +2713,23 @@ class AttendanceController extends Controller
                     'employee_profile_image_url' => $user?->profile_image_url,
                     'employee_profile_image' => $user?->profile_image,
                     'company' => ['name' => $company?->name, 'logo_url' => $companyLogoUrl],
-                    'created_at' => $log->created_at->toIso8601String(),
+                    'created_at' => $punchAt->toIso8601String(),
                     'status' => $info['status'] ?? null,
                     'late_minutes' => $info['late_minutes'] ?? null,
                     'late_label' => $info['late_label'] ?? null,
-                    '_ts' => $log->created_at->timestamp,
-                    '_dedup_key' => ((int)($user?->id ?? 0)).'|'.$log->created_at->copy()->timezone($tz)->toDateString().'|'.$log->type,
+                    '_ts' => $punchAt->timestamp,
+                    '_dedup_key' => ((int) ($user?->id ?? 0)).'|'.$punchAt->copy()->timezone($tz)->toDateString().'|'.$log->type,
                 ];
             });
 
-        // Keep the login Recent Activity feed limited to actual kiosk/employee punches.
-        // Approved correction requests are intentionally hidden here.
+        // Dedup same calendar-day repeats; keep the list short for kiosk performance.
         $merged = $logEntries
             ->sortByDesc('_ts')
             ->unique('_dedup_key')
             ->take(25)
             ->map(function (array $e) {
                 unset($e['_ts'], $e['_dedup_key']);
+
                 return $e;
             })
             ->values();
@@ -2802,7 +2802,7 @@ class AttendanceController extends Controller
             return null;
         }
 
-        $result = $this->kioskClockInDisplayStatus($user, $log->created_at);
+        $result = $this->kioskClockInDisplayStatus($user, $this->attendanceLogPunchInstant($log));
 
         return [
             'status' => $result['status'],

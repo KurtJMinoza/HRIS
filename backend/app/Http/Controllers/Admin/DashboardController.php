@@ -57,7 +57,8 @@ class DashboardController extends Controller
 
     /**
      * Return UTC range [start, end] for a calendar day in the attendance timezone.
-     * Use for whereBetween('created_at', ...) so logs stored in UTC match "today" in business tz.
+     * Use with {@see attendanceLogEffectivePunchWhereBetween()} so punch instants (`verified_at`, else `created_at`)
+     * stored in UTC line up with the business calendar date.
      */
     private function dateRangeUtcForDay(Carbon $date, string $tz): array
     {
@@ -65,6 +66,33 @@ class DashboardController extends Controller
         $end = $date->copy()->endOfDay()->setTimezone('UTC');
 
         return [$start, $end];
+    }
+
+    /**
+     * True punch instant for dashboards: prefer `verified_at` (seeded kiosk / corrections), fallback `created_at`.
+     */
+    private function attendanceLogPunchInstant(AttendanceLog $log): ?Carbon
+    {
+        $t = $log->verified_at ?? $log->created_at;
+        if ($t === null) {
+            return null;
+        }
+
+        return $t instanceof Carbon ? $t : Carbon::parse($t);
+    }
+
+    private function attendanceLogEffectivePunchColumnSql(): string
+    {
+        return 'COALESCE(verified_at, created_at)';
+    }
+
+    /** @param  \Illuminate\Database\Eloquent\Builder<AttendanceLog>|\Illuminate\Database\Query\Builder  $query */
+    private function attendanceLogEffectivePunchWhereBetween($query, Carbon $rangeStartUtc, Carbon $rangeEndUtc)
+    {
+        return $query->whereRaw(
+            $this->attendanceLogEffectivePunchColumnSql().' between ? and ?',
+            [$rangeStartUtc->format('Y-m-d H:i:s'), $rangeEndUtc->format('Y-m-d H:i:s')]
+        );
     }
 
     /**
@@ -451,11 +479,18 @@ class DashboardController extends Controller
     {
         $total = 0;
         $clockIn = null;
-        foreach ($logs as $log) {
+        $sorted = collect($logs)
+            ->sortBy(fn (AttendanceLog $log) => $this->attendanceLogPunchInstant($log)?->getTimestamp() ?? 0)
+            ->values();
+        foreach ($sorted as $log) {
+            $punch = $this->attendanceLogPunchInstant($log);
+            if ($punch === null) {
+                continue;
+            }
             if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
-                $clockIn = $log->created_at;
+                $clockIn = $punch;
             } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT && $clockIn) {
-                $total += $clockIn->diffInMinutes($log->created_at);
+                $total += $clockIn->diffInMinutes($punch);
                 $clockIn = null;
             }
         }
@@ -549,11 +584,12 @@ class DashboardController extends Controller
 
         // First clock-in per user for this date (for present + late + half day).
         [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($date, $tz);
-        $firstClockIn = AttendanceLog::query()
-            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
+        $firstClockInQuery = AttendanceLog::query()
+            ->where('type', AttendanceLog::TYPE_CLOCK_IN);
+        $firstClockInQuery = $this->attendanceLogEffectivePunchWhereBetween($firstClockInQuery, $rangeStart, $rangeEnd);
+        $firstClockIn = $firstClockInQuery
             ->whereIn('user_id', $activeEmployeeIds)
-            ->select('user_id', DB::raw('MIN(created_at) as first_at'))
+            ->select('user_id', DB::raw('MIN('.$this->attendanceLogEffectivePunchColumnSql().') as first_at'))
             ->groupBy('user_id')
             ->get()
             ->keyBy('user_id');
@@ -591,7 +627,7 @@ class DashboardController extends Controller
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
 
             if ($firstAt && $daySchedule && ! empty($daySchedule['in'])) {
-                // $firstAt comes from MIN(created_at) (stored in UTC). Parse as UTC then convert to business timezone.
+                // $first_at is MIN(COALESCE(verified_at, created_at)) stored in UTC.
                 $firstAtCarbon = $firstAt instanceof Carbon ? $firstAt : Carbon::parse($firstAt, 'UTC')->timezone($tz);
                 $clockInResult = AttendanceStatusService::getClockInStatus($daySchedule, $dateKey, $firstAtCarbon);
                 if ($clockInResult['status'] === 'late') {
@@ -603,10 +639,11 @@ class DashboardController extends Controller
             }
         }
 
-        $logsByUserForDay = AttendanceLog::query()
-            ->whereIn('user_id', $activeEmployeeIds)
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
-            ->orderBy('created_at')
+        $logsByDayQuery = AttendanceLog::query()
+            ->whereIn('user_id', $activeEmployeeIds);
+        $logsByDayQuery = $this->attendanceLogEffectivePunchWhereBetween($logsByDayQuery, $rangeStart, $rangeEnd);
+        $logsByUserForDay = $logsByDayQuery
+            ->orderByRaw($this->attendanceLogEffectivePunchColumnSql())
             ->get()
             ->groupBy('user_id');
 
@@ -681,8 +718,8 @@ class DashboardController extends Controller
             $date = $today->copy()->subDays($i);
             [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($date, $tz);
             $presentQuery = AttendanceLog::query()
-                ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                ->whereBetween('created_at', [$rangeStart, $rangeEnd]);
+                ->where('type', AttendanceLog::TYPE_CLOCK_IN);
+            $presentQuery = $this->attendanceLogEffectivePunchWhereBetween($presentQuery, $rangeStart, $rangeEnd);
             if ($scopedUserIds !== []) {
                 $presentQuery->whereIn('user_id', $scopedUserIds);
             } else {
@@ -709,24 +746,44 @@ class DashboardController extends Controller
      */
     private function monthlyLateStatistics(Carbon $now, array $scopedUserIds): array
     {
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         $usersCache = [];
         $months = [];
         for ($i = 11; $i >= 0; $i--) {
-            $start = $now->copy()->subMonths($i)->startOfMonth();
-            $end = $start->copy()->endOfMonth();
+            $monthStartLocal = $now->copy()->subMonths($i)->startOfMonth()->startOfDay();
+            $monthEndLocal = $monthStartLocal->copy()->endOfMonth()->endOfDay();
+            $rangeStartUtc = $monthStartLocal->copy()->utc();
+            $rangeEndUtc = $monthEndLocal->copy()->utc();
+
             $firstClockInsQuery = AttendanceLog::query()
-                ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                ->whereBetween('created_at', [$start, $end]);
+                ->where('type', AttendanceLog::TYPE_CLOCK_IN);
+            $firstClockInsQuery = $this->attendanceLogEffectivePunchWhereBetween($firstClockInsQuery, $rangeStartUtc, $rangeEndUtc);
             if ($scopedUserIds !== []) {
                 $firstClockInsQuery->whereIn('user_id', $scopedUserIds);
             } else {
                 $firstClockInsQuery->whereRaw('1 = 0');
             }
-            $firstClockIns = $firstClockInsQuery
-                ->select('user_id', DB::raw('DATE(created_at) as d'), DB::raw('MIN(created_at) as first_at'))
-                ->groupBy('user_id', DB::raw('DATE(created_at)'))
-                ->get();
-            $monthUserIds = $firstClockIns->pluck('user_id')->unique()->map(fn ($id) => (int) $id)->all();
+            /** @var \Illuminate\Support\Collection<int, AttendanceLog> $punches */
+            $punches = $firstClockInsQuery->get(['id', 'user_id', 'verified_at', 'created_at']);
+
+            $firstPerUserDay = [];
+            foreach ($punches as $log) {
+                $punch = $this->attendanceLogPunchInstant($log);
+                if ($punch === null) {
+                    continue;
+                }
+                $dateKey = $punch->copy()->timezone($tz)->toDateString();
+                $k = ((int) $log->user_id).'|'.$dateKey;
+                if (! isset($firstPerUserDay[$k]) || $punch->lessThan($firstPerUserDay[$k])) {
+                    $firstPerUserDay[$k] = $punch;
+                }
+            }
+
+            $monthUserIds = collect(array_keys($firstPerUserDay))
+                ->map(fn (string $key) => (int) explode('|', $key, 2)[0])
+                ->unique()
+                ->values()
+                ->all();
             $idsToLoad = array_values(array_diff($monthUserIds, array_keys($usersCache)));
             if ($idsToLoad !== []) {
                 $loaded = User::query()
@@ -737,28 +794,26 @@ class DashboardController extends Controller
                     $usersCache[(int) $loadedUser->id] = $loadedUser;
                 }
             }
-            $clockInSamples = $firstClockIns->count();
+            $clockInSamples = count($firstPerUserDay);
             $lateCount = 0;
-            foreach ($firstClockIns as $row) {
-                $date = Carbon::parse($row->d);
+            foreach ($firstPerUserDay as $key => $firstAtCarbon) {
+                [$uidPart, $dateKey] = explode('|', $key, 2);
+                $date = Carbon::parse($dateKey, $tz)->startOfDay();
                 $dayKey = self::DAY_KEYS[(int) $date->format('w')];
-                $user = $usersCache[(int) $row->user_id] ?? null;
+                $user = $usersCache[(int) $uidPart] ?? null;
                 $effectiveSched = $user ? $this->resolveEffectiveSchedule($user) : null;
                 if (! $effectiveSched || ! isset($effectiveSched[$dayKey]['in'])) {
                     continue;
                 }
                 $todaySchedule = $effectiveSched[$dayKey];
-                $dateKey = $date->format('Y-m-d');
-                // first_at is MIN(created_at) stored in UTC.
-                $firstAtCarbon = Carbon::parse($row->first_at, 'UTC');
                 $result = AttendanceStatusService::getClockInStatus($todaySchedule, $dateKey, $firstAtCarbon);
                 if ($result['status'] === 'late') {
                     $lateCount++;
                 }
             }
             $months[] = [
-                'month' => $start->format('Y-m'),
-                'label' => $start->format('M Y'),
+                'month' => $monthStartLocal->format('Y-m'),
+                'label' => $monthStartLocal->format('M Y'),
                 // Distinguish "no records" from a true zero-late month so charts don't look bugged.
                 // If there were no clock-ins recorded, return null and mark has_data=false.
                 'late_count' => $clockInSamples === 0 ? null : $lateCount,
@@ -779,10 +834,11 @@ class DashboardController extends Controller
             $date = today($tz)->subDays($i);
             $dayKey = self::DAY_KEYS[(int) $date->format('w')];
             [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($date, $tz);
-            $firstClockIns = AttendanceLog::query()
-                ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                ->whereBetween('created_at', [$rangeStart, $rangeEnd])
-                ->select('user_id', DB::raw('MIN(created_at) as first_at'))
+            $fq = AttendanceLog::query()
+                ->where('type', AttendanceLog::TYPE_CLOCK_IN);
+            $fq = $this->attendanceLogEffectivePunchWhereBetween($fq, $rangeStart, $rangeEnd);
+            $firstClockIns = $fq
+                ->select('user_id', DB::raw('MIN('.$this->attendanceLogEffectivePunchColumnSql().') as first_at'))
                 ->groupBy('user_id')
                 ->get();
             $dayUserIds = $firstClockIns->pluck('user_id')->unique()->map(fn ($id) => (int) $id)->all();
@@ -805,7 +861,7 @@ class DashboardController extends Controller
                 }
                 $todaySchedule = $effectiveSched[$dayKey];
                 $dateKey = $date->format('Y-m-d');
-                // first_at is MIN(created_at) stored in UTC.
+                // first_at is MIN(COALESCE(verified_at, created_at)) stored in UTC.
                 $firstAtCarbon = Carbon::parse($row->first_at, 'UTC');
                 $result = AttendanceStatusService::getClockInStatus($todaySchedule, $dateKey, $firstAtCarbon);
                 if ($result['status'] === 'late') {
@@ -960,11 +1016,12 @@ class DashboardController extends Controller
             ->get();
 
         $userIds = $leaveRequests->pluck('user_id')->unique()->all();
-        $firstClockIns = AttendanceLog::query()
+        $fdc = AttendanceLog::query()
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->whereIn('user_id', $userIds)
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
-            ->select('user_id', DB::raw('MIN(created_at) as first_at'))
+            ->whereIn('user_id', $userIds);
+        $fdc = $this->attendanceLogEffectivePunchWhereBetween($fdc, $rangeStart, $rangeEnd);
+        $firstClockIns = $fdc
+            ->select('user_id', DB::raw('MIN('.$this->attendanceLogEffectivePunchColumnSql().') as first_at'))
             ->groupBy('user_id')
             ->get()
             ->keyBy('user_id');
@@ -1020,8 +1077,8 @@ class DashboardController extends Controller
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($today, $tz);
         $presentQuery = AttendanceLog::query()
-            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd]);
+            ->where('type', AttendanceLog::TYPE_CLOCK_IN);
+        $presentQuery = $this->attendanceLogEffectivePunchWhereBetween($presentQuery, $rangeStart, $rangeEnd);
         if ($activeEmployees->isNotEmpty()) {
             $presentQuery->whereIn('user_id', $activeEmployees->pluck('id')->all());
         } else {
@@ -1079,7 +1136,7 @@ class DashboardController extends Controller
             ->with(['workingSchedule', 'companyHeadships:id,company_head_id', 'company:id,name', 'branch:id,company_id', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $activeEmployeesQuery);
         $activeEmployees = $activeEmployeesQuery->get();
-        
+
         // Ensure company filter respects the actor's scope
         if ($companyIds !== null && $companyIds !== []) {
             $scopedCompanyIds = $activeEmployees->map(fn (User $u) => $u->getEffectiveCompanyId())->filter()->unique()->values()->all();
@@ -1090,6 +1147,7 @@ class DashboardController extends Controller
         if ($companyIds !== null && $companyIds !== []) {
             $activeEmployees = $activeEmployees->filter(function (User $u) use ($companyIds) {
                 $cid = $u->getEffectiveCompanyId();
+
                 return $cid !== null && in_array($cid, $companyIds, true);
             });
         }
@@ -1115,11 +1173,12 @@ class DashboardController extends Controller
             ->unique();
         $leaveSet = array_fill_keys($leaveUserIds->all(), true);
 
-        $firstClockIn = AttendanceLog::query()
+        $fcd = AttendanceLog::query()
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
-            ->whereIn('user_id', $activeEmployeeIds)
-            ->select('user_id', DB::raw('MIN(created_at) as first_at'))
+            ->whereIn('user_id', $activeEmployeeIds);
+        $fcd = $this->attendanceLogEffectivePunchWhereBetween($fcd, $rangeStart, $rangeEnd);
+        $firstClockIn = $fcd
+            ->select('user_id', DB::raw('MIN('.$this->attendanceLogEffectivePunchColumnSql().') as first_at'))
             ->groupBy('user_id')
             ->get()
             ->keyBy('user_id');
@@ -1391,9 +1450,9 @@ class DashboardController extends Controller
             ->with(['user' => function ($q) {
                 $q->select('id', 'name', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
                     ->with(['workingSchedule', 'companyHeadships:id,name,logo,company_head_id', 'company:id,name,logo', 'branch:id,company_id', 'branch.company:id,name,logo', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id', 'departmentRelation.branch.company:id,name,logo']);
-            }])
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
-            ->orderBy('created_at');
+            }]);
+        $logsQuery = $this->attendanceLogEffectivePunchWhereBetween($logsQuery, $rangeStart, $rangeEnd);
+        $logsQuery->orderByRaw($this->attendanceLogEffectivePunchColumnSql());
         if ($scopedActiveUserIds !== []) {
             $logsQuery->whereIn('user_id', $scopedActiveUserIds);
         } else {
@@ -1435,13 +1494,19 @@ class DashboardController extends Controller
                 $schedules[$userId] = $this->resolveEffectiveSchedule($user);
             }
 
+            $punchAt = $this->attendanceLogPunchInstant($log);
+            if ($punchAt === null) {
+                continue;
+            }
             if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
-                if ($grouped[$userId]['time_in'] === null || $log->created_at->lessThan($grouped[$userId]['time_in'])) {
-                    $grouped[$userId]['time_in'] = $log->created_at;
+                $currentIn = $grouped[$userId]['time_in'];
+                if ($currentIn === null || $punchAt->lessThan($currentIn instanceof Carbon ? $currentIn : Carbon::parse($currentIn))) {
+                    $grouped[$userId]['time_in'] = $punchAt;
                 }
             } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
-                if ($grouped[$userId]['time_out'] === null || $log->created_at->greaterThan($grouped[$userId]['time_out'])) {
-                    $grouped[$userId]['time_out'] = $log->created_at;
+                $currentOut = $grouped[$userId]['time_out'];
+                if ($currentOut === null || $punchAt->greaterThan($currentOut instanceof Carbon ? $currentOut : Carbon::parse($currentOut))) {
+                    $grouped[$userId]['time_out'] = $punchAt;
                 }
             }
         }
