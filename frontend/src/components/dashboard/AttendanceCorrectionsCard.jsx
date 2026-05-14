@@ -9,27 +9,16 @@ import { profileImageUrl } from '@/api'
 export function AttendanceCorrectionsCard({
   pendingCount = 0,
   request = null,
+  requests = [],
   loading = false,
   onViewAll,
   onViewDetails,
   onReviewRequest,
 }) {
   const hasPending = Number(pendingCount) > 0
-  const activeRequest = hasPending ? request : null
-  const employeeName = activeRequest?.employee_name || activeRequest?.requested_by_name || 'Employee'
-  const employeePosition = activeRequest?.employee_position || activeRequest?.requested_by_position || 'Employee'
-  const employeeId = activeRequest?.user_id
-  const employeeCode = activeRequest?.employee_code || (employeeId ? `EMP-${employeeId}` : 'EMP-—')
-  const employeeMeta = buildEmployeeMeta(activeRequest)
-  const avatarSrcRaw = activeRequest?.employee_profile_image_url || activeRequest?.requested_by_profile_image_url || undefined
-  const avatarSrc = avatarSrcRaw ? profileImageUrl(avatarSrcRaw) : undefined
-  const startTime = timeFromIso(activeRequest?.requested_time_in ?? activeRequest?.time_in)
-  const endTime = timeFromIso(activeRequest?.requested_time_out ?? activeRequest?.time_out)
-  const hours = formatHoursSpan(activeRequest?.requested_time_in ?? activeRequest?.time_in, activeRequest?.requested_time_out ?? activeRequest?.time_out)
-  const reason = activeRequest?.issue_type != null ? issueLabel(activeRequest.issue_type) : 'Attendance correction'
-  const reasonSubtext =
-    truncateText(activeRequest?.remarks || activeRequest?.display_status || activeRequest?.last_action_label, 120) ||
-    'Awaiting your review'
+  const pendingRequests = hasPending
+    ? (Array.isArray(requests) && requests.length > 0 ? requests : [request].filter(Boolean))
+    : []
 
   return (
     <Card
@@ -102,94 +91,122 @@ export function AttendanceCorrectionsCard({
             <p className="mt-1 text-xs text-muted-foreground">You&apos;re all caught up.</p>
           </div>
         ) : (
-          <article
-            className={cn(
-              'rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm @sm:p-3',
-              'transition-[border-color,box-shadow,transform] duration-200 hover:border-brand/25 hover:shadow-md',
-            )}
-          >
-            <div className="flex flex-col gap-2.5 @sm:flex-row @sm:items-start @sm:justify-between">
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="relative shrink-0">
-                  <Avatar className="size-10 border-2 border-background shadow-md ring-1 ring-border/70 @md:size-11">
-                    <AvatarImage src={avatarSrc} alt="" className="object-cover" />
-                    <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">
-                      {initials(employeeName)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="absolute bottom-0.5 right-0.5 size-3 rounded-full border-2 border-background bg-brand shadow-sm" />
-                </div>
-                <div className="min-w-0 pt-0.5">
-                  <p className="wrap-break-word text-sm font-bold tracking-tight text-foreground">{employeeName}</p>
-                  <p className="mt-0.5 wrap-break-word text-xs text-muted-foreground">{employeePosition}</p>
-                  {employeeMeta ? (
-                    <p className="mt-0.5 wrap-break-word text-[11px] leading-relaxed text-muted-foreground/90">{employeeMeta}</p>
-                  ) : null}
-                  <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                    <IdCard className="size-3.5" aria-hidden />
-                    {employeeCode}
-                  </span>
-                </div>
-              </div>
-
-              <span className="inline-flex w-fit items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand">
-                <Clock3 className="size-3" aria-hidden />
-                Pending
-              </span>
-            </div>
-
-            <div className="my-3 h-px bg-border/70 @md:my-3.5" />
-
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-2.5">
-              <InfoBlock
-                icon={CalendarDays}
-                label="Date"
-                value={formatDate(activeRequest?.date)}
-                subvalue={formatWeekday(activeRequest?.date)}
-              />
-              <InfoBlock
-                icon={Clock3}
-                label="Time"
-                value={formatTimeRange(startTime, endTime)}
-                subvalue={hours}
-              />
-              <InfoBlock
-                icon={BriefcaseBusiness}
-                label="Reason"
-                value={reason}
-                subvalue={reasonSubtext}
-              />
-            </div>
-
-            <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] gap-2 border-t border-border/70 pt-3">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9 w-full rounded-lg px-4 text-xs font-medium"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onViewDetails?.(activeRequest)
-                }}
-              >
-                <Eye className="mr-2 size-4" aria-hidden />
-                View Details
-              </Button>
-              <Button
-                type="button"
-                className="h-9 w-full rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onReviewRequest?.(activeRequest)
-                }}
-              >
-                <Send className="mr-2 size-4" aria-hidden />
-                Review Request
-              </Button>
-            </div>
-          </article>
+          pendingRequests.map((item, index) => (
+            <PendingCorrectionItem
+              key={item?.id ?? `${item?.user_id ?? 'employee'}-${item?.date ?? index}`}
+              request={item}
+              onViewDetails={onViewDetails}
+              onReviewRequest={onReviewRequest}
+            />
+          ))
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function PendingCorrectionItem({ request, onViewDetails, onReviewRequest }) {
+  const employeeName = request?.employee_name || request?.requested_by_name || 'Employee'
+  const employeePosition = request?.employee_position || request?.requested_by_position || 'Employee'
+  const employeeId = request?.user_id
+  const employeeCode = request?.employee_code || (employeeId ? `EMP-${employeeId}` : 'EMP-—')
+  const employeeMeta = buildEmployeeMeta(request)
+  const avatarSrcRaw = request?.employee_profile_image_url || request?.requested_by_profile_image_url || undefined
+  const avatarSrc = avatarSrcRaw ? profileImageUrl(avatarSrcRaw) : undefined
+  const startTime = timeFromIso(request?.requested_time_in ?? request?.time_in)
+  const endTime = timeFromIso(request?.requested_time_out ?? request?.time_out)
+  const hours = formatHoursSpan(request?.requested_time_in ?? request?.time_in, request?.requested_time_out ?? request?.time_out)
+  const reason = request?.issue_type != null ? issueLabel(request.issue_type) : 'Attendance correction'
+  const reasonSubtext =
+    truncateText(request?.remarks || request?.display_status || request?.last_action_label, 120) ||
+    'Awaiting your review'
+
+  return (
+    <article
+      className={cn(
+        'rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm @sm:p-3',
+        'transition-[border-color,box-shadow,transform] duration-200 hover:border-brand/25 hover:shadow-md',
+      )}
+    >
+      <div className="flex flex-col gap-2.5 @sm:flex-row @sm:items-start @sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="relative shrink-0">
+            <Avatar className="size-10 border-2 border-background shadow-md ring-1 ring-border/70 @md:size-11">
+              <AvatarImage src={avatarSrc} alt="" className="object-cover" />
+              <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">
+                {initials(employeeName)}
+              </AvatarFallback>
+            </Avatar>
+            <span className="absolute bottom-0.5 right-0.5 size-3 rounded-full border-2 border-background bg-brand shadow-sm" />
+          </div>
+          <div className="min-w-0 pt-0.5">
+            <p className="wrap-break-word text-sm font-bold tracking-tight text-foreground">{employeeName}</p>
+            <p className="mt-0.5 wrap-break-word text-xs text-muted-foreground">{employeePosition}</p>
+            {employeeMeta ? (
+              <p className="mt-0.5 wrap-break-word text-[11px] leading-relaxed text-muted-foreground/90">{employeeMeta}</p>
+            ) : null}
+            <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              <IdCard className="size-3.5" aria-hidden />
+              {employeeCode}
+            </span>
+          </div>
+        </div>
+
+        <span className="inline-flex w-fit items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand">
+          <Clock3 className="size-3" aria-hidden />
+          Pending
+        </span>
+      </div>
+
+      <div className="my-3 h-px bg-border/70 @md:my-3.5" />
+
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-2.5">
+        <InfoBlock
+          icon={CalendarDays}
+          label="Date"
+          value={formatDate(request?.date)}
+          subvalue={formatWeekday(request?.date)}
+        />
+        <InfoBlock
+          icon={Clock3}
+          label="Time"
+          value={formatTimeRange(startTime, endTime)}
+          subvalue={hours}
+        />
+        <InfoBlock
+          icon={BriefcaseBusiness}
+          label="Reason"
+          value={reason}
+          subvalue={reasonSubtext}
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] gap-2 border-t border-border/70 pt-3">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 w-full rounded-lg px-4 text-xs font-medium"
+          onClick={(e) => {
+            e.stopPropagation()
+            onViewDetails?.(request)
+          }}
+        >
+          <Eye className="mr-2 size-4" aria-hidden />
+          View Details
+        </Button>
+        <Button
+          type="button"
+          className="h-9 w-full rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"
+          onClick={(e) => {
+            e.stopPropagation()
+            onReviewRequest?.(request)
+          }}
+        >
+          <Send className="mr-2 size-4" aria-hidden />
+          Review Request
+        </Button>
+      </div>
+    </article>
   )
 }
 

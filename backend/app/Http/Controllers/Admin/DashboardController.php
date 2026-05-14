@@ -162,6 +162,7 @@ class DashboardController extends Controller
         $pendingAttendanceCorrections = $pendingCorrectionsCollection->count();
         $correctionDisplayTz = $this->presenceFilingService->attendanceTimezone();
         $pendingAttendanceCorrectionPreview = null;
+        $pendingAttendanceCorrectionPreviews = [];
         if ($pendingCorrectionsCollection->isNotEmpty()) {
             $pendingAttendanceCorrectionPreview = $this->correctionFormatter->format(
                 $pendingCorrectionsCollection->first(),
@@ -170,6 +171,17 @@ class DashboardController extends Controller
                 actor: $actor,
                 includeDisplayFields: true
             );
+            $pendingAttendanceCorrectionPreviews = $pendingCorrectionsCollection
+                ->take(5)
+                ->map(fn ($correction) => $this->correctionFormatter->format(
+                    $correction,
+                    $correctionDisplayTz,
+                    includeEmployee: true,
+                    actor: $actor,
+                    includeDisplayFields: true
+                ))
+                ->values()
+                ->all();
         }
 
         $response = [
@@ -187,6 +199,7 @@ class DashboardController extends Controller
             'employment_settings' => $employmentSettings,
             'pending_attendance_corrections' => $pendingAttendanceCorrections,
             'pending_attendance_correction_preview' => $pendingAttendanceCorrectionPreview,
+            'pending_attendance_correction_previews' => $pendingAttendanceCorrectionPreviews,
         ];
 
         Log::info('Admin dashboard payload prepared', [

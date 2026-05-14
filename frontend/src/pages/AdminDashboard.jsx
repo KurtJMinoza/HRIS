@@ -679,6 +679,12 @@ export default function AdminDashboard() {
     canApproveAttendanceCorrections && pendingAttendanceCorrectionsCount > 0
       ? data?.pending_attendance_correction_preview ?? null
       : null
+  const pendingAttendanceCorrectionPreviews =
+    canApproveAttendanceCorrections && Array.isArray(data?.pending_attendance_correction_previews)
+      ? data.pending_attendance_correction_previews
+      : pendingAttendanceCorrectionPreview
+        ? [pendingAttendanceCorrectionPreview]
+        : []
   const todayLeavesPreview = todayLeaves.slice(0, 1)
   // Used by other dashboard sections; keep available for future copy changes.
   // eslint-disable-next-line no-unused-vars
@@ -1298,6 +1304,7 @@ export default function AdminDashboard() {
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
+            requests={pendingAttendanceCorrectionPreviews}
             onViewAll={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
             onViewDetails={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
             onReviewRequest={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
@@ -1585,6 +1592,7 @@ export default function AdminDashboard() {
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
+            requests={pendingAttendanceCorrectionPreviews}
             onViewAll={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
             onViewDetails={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
             onReviewRequest={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
