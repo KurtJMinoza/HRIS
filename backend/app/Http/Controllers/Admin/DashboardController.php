@@ -183,6 +183,18 @@ class DashboardController extends Controller
                 ->values()
                 ->all();
         }
+        $pendingAttendanceCorrectionRequests = collect($pendingAttendanceCorrectionPreviews)
+            ->map(fn (array $row) => $row + [
+                'correction_request_id' => $row['id'] ?? null,
+                'employee_id' => $row['user_id'] ?? null,
+                'attendance_date' => $row['date'] ?? null,
+                'requested_time_start' => $row['requested_time_in'] ?? $row['time_in'] ?? null,
+                'requested_time_end' => $row['requested_time_out'] ?? $row['time_out'] ?? null,
+                'current_step' => $row['approval_stage'] ?? null,
+                'can_review' => (bool) ($row['actor_can_approve'] ?? false),
+            ])
+            ->values()
+            ->all();
 
         $response = [
             'stats' => $statsToday,
@@ -200,6 +212,8 @@ class DashboardController extends Controller
             'pending_attendance_corrections' => $pendingAttendanceCorrections,
             'pending_attendance_correction_preview' => $pendingAttendanceCorrectionPreview,
             'pending_attendance_correction_previews' => $pendingAttendanceCorrectionPreviews,
+            'pending_count' => $pendingAttendanceCorrections,
+            'pending_requests' => $pendingAttendanceCorrectionRequests,
         ];
 
         Log::info('Admin dashboard payload prepared', [

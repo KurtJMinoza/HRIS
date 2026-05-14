@@ -32,11 +32,11 @@ export function AttendanceCorrectionsCard({
         }
       }}
       className={cn(
-        'admin-dashboard-card h-[400px] max-h-[400px] min-h-[400px] gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px] @xl:max-h-[420px] @xl:min-h-[420px]',
+        'admin-dashboard-card flex h-[400px] max-h-[400px] min-h-[400px] flex-col gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px] @xl:max-h-[420px] @xl:min-h-[420px]',
         'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
       )}
     >
-      <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
+      <CardHeader className="shrink-0 px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
         <div className="flex flex-col gap-2.5 @sm:flex-row @sm:items-start @sm:justify-between @sm:gap-4">
           <div className="min-w-0">
             <CardTitle className="mb-2.5 flex min-w-0 flex-wrap items-center gap-2.5 text-base font-extrabold leading-snug tracking-tight text-foreground">
@@ -77,7 +77,7 @@ export function AttendanceCorrectionsCard({
         </div>
       </CardHeader>
 
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
+      <CardContent className="flex min-h-0 flex-1 basis-0 flex-col gap-3 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
         {loading ? (
           <div className="rounded-2xl border border-border/70 bg-muted/15 p-5 text-sm font-normal leading-[1.55] text-muted-foreground">
             Loading attendance corrections...
@@ -93,7 +93,7 @@ export function AttendanceCorrectionsCard({
         ) : (
           pendingRequests.map((item, index) => (
             <PendingCorrectionItem
-              key={item?.id ?? `${item?.user_id ?? 'employee'}-${item?.date ?? index}`}
+              key={item?.correction_request_id ?? item?.id ?? `${item?.user_id ?? item?.employee_id ?? 'employee'}-${item?.date ?? item?.attendance_date ?? index}`}
               request={item}
               onViewDetails={onViewDetails}
               onReviewRequest={onReviewRequest}
@@ -108,7 +108,7 @@ export function AttendanceCorrectionsCard({
 function PendingCorrectionItem({ request, onViewDetails, onReviewRequest }) {
   const employeeName = request?.employee_name || request?.requested_by_name || 'Employee'
   const employeePosition = request?.employee_position || request?.requested_by_position || 'Employee'
-  const employeeId = request?.user_id
+  const employeeId = request?.user_id ?? request?.employee_id
   const employeeCode = request?.employee_code || (employeeId ? `EMP-${employeeId}` : 'EMP-—')
   const employeeMeta = buildEmployeeMeta(request)
   const avatarSrcRaw = request?.employee_profile_image_url || request?.requested_by_profile_image_url || undefined
@@ -164,8 +164,8 @@ function PendingCorrectionItem({ request, onViewDetails, onReviewRequest }) {
         <InfoBlock
           icon={CalendarDays}
           label="Date"
-          value={formatDate(request?.date)}
-          subvalue={formatWeekday(request?.date)}
+          value={formatDate(request?.date ?? request?.attendance_date)}
+          subvalue={formatWeekday(request?.date ?? request?.attendance_date)}
         />
         <InfoBlock
           icon={Clock3}

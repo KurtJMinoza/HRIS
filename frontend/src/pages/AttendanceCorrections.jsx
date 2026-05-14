@@ -1,5 +1,6 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion } from 'framer-motion'
+import { useSearchParams } from 'react-router-dom'
 import { exportRowsToXlsx } from '@/lib/excelExport'
 import {
   Loader2,
@@ -523,10 +524,15 @@ const STATUS_CHIPS = [
 export default function AttendanceCorrections() {
   const { toast } = useToast()
   const { user } = useAuth()
+  const [searchParams] = useSearchParams()
   const hrBase = useHrBasePath()
   const perms = new Set(user?.permissions ?? [])
   const canSeeAll = perms.has('attendance.corrections.approve')
   const canViewEmployeeProfile = perms.has('employees.view')
+
+  const deepLinkedRequestId = searchParams.get('request_id')
+  const deepLinkedStatus = searchParams.get('status')
+  const handledDeepLinkRef = useRef(null)
 
   const [tab, setTab] = useState(() => (canSeeAll ? 'all' : 'mine'))
 
@@ -536,7 +542,7 @@ export default function AttendanceCorrections() {
   const [loadingAll, setLoadingAll] = useState(false)
 
   const [mineSearch, setMineSearch] = useState('')
-  const [allStatus, setAllStatus] = useState('all')
+  const [allStatus, setAllStatus] = useState(() => (deepLinkedStatus === 'pending' ? 'pending' : 'all'))
   const [allFrom, setAllFrom] = useState('')
   const [allTo, setAllTo] = useState('')
   const [allIssue, setAllIssue] = useState('all')
@@ -640,6 +646,24 @@ export default function AttendanceCorrections() {
       loadAll()
     }
   }, [tab, canSeeAll, loadAll])
+
+  useEffect(() => {
+    if (!canSeeAll) return
+    if (deepLinkedStatus === 'pending') {
+      setTab('all')
+      setAllStatus('pending')
+    }
+  }, [canSeeAll, deepLinkedStatus])
+
+  useEffect(() => {
+    if (!canSeeAll || !deepLinkedRequestId) return
+    setTab('all')
+    const target = allItems.find((item) => String(item.id) === String(deepLinkedRequestId))
+    if (!target) return
+    if (handledDeepLinkRef.current === String(deepLinkedRequestId)) return
+    handledDeepLinkRef.current = String(deepLinkedRequestId)
+    openView(target)
+  }, [allItems, canSeeAll, deepLinkedRequestId])
 
   useEffect(() => {
     if (!fileOpen || !canSeeAll) return undefined

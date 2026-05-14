@@ -55,6 +55,7 @@ import {
   getCompanies,
   getHalfDayList,
   getAdminOvertime,
+  getAdminPresenceFilings,
   profileImageUrl,
   companyLogoUrl,
   submitRegularizationRecommendation,
@@ -354,6 +355,15 @@ export default function AdminDashboard() {
     queryKey: ['admin-dashboard-overtime-pending'],
     queryFn: () => getAdminOvertime({ status: 'pending', page: 1, per_page: 1 }),
     enabled: !authLoading && canViewOvertime,
+    refetchInterval: 15000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  })
+
+  const attendanceCorrectionsPendingQuery = useQuery({
+    queryKey: ['admin-dashboard-attendance-corrections-pending'],
+    queryFn: () => getAdminPresenceFilings({ status: 'pending' }),
+    enabled: !authLoading && canApproveAttendanceCorrections,
     refetchInterval: 15000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
@@ -673,15 +683,23 @@ export default function AdminDashboard() {
     : []
   const expiringContracts = Array.isArray(data?.expiring_contracts) ? data.expiring_contracts : []
   const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
-    ? Number(data?.pending_attendance_corrections ?? 0) || 0
+    ? Number(
+        attendanceCorrectionsPendingQuery.data?.presence_filings?.length
+          ?? data?.pending_attendance_corrections
+          ?? 0
+      ) || 0
     : 0
   const pendingAttendanceCorrectionPreview =
     canApproveAttendanceCorrections && pendingAttendanceCorrectionsCount > 0
       ? data?.pending_attendance_correction_preview ?? null
       : null
   const pendingAttendanceCorrectionPreviews =
-    canApproveAttendanceCorrections && Array.isArray(data?.pending_attendance_correction_previews)
-      ? data.pending_attendance_correction_previews
+    canApproveAttendanceCorrections && Array.isArray(attendanceCorrectionsPendingQuery.data?.presence_filings)
+      ? attendanceCorrectionsPendingQuery.data.presence_filings
+      : canApproveAttendanceCorrections && Array.isArray(data?.pending_requests)
+      ? data.pending_requests
+      : canApproveAttendanceCorrections && Array.isArray(data?.pending_attendance_correction_previews)
+        ? data.pending_attendance_correction_previews
       : pendingAttendanceCorrectionPreview
         ? [pendingAttendanceCorrectionPreview]
         : []
@@ -1300,14 +1318,14 @@ export default function AdminDashboard() {
           <AttendanceCorrectionsCard
             loading={
               (!canApproveAttendanceCorrections && loading) ||
-              (canApproveAttendanceCorrections && dashboardQuery.isLoading)
+              (canApproveAttendanceCorrections && (dashboardQuery.isLoading || attendanceCorrectionsPendingQuery.isLoading))
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
             requests={pendingAttendanceCorrectionPreviews}
-            onViewAll={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
-            onViewDetails={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
-            onReviewRequest={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
+            onViewAll={() => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?status=pending`)}
+            onViewDetails={(item) => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?request_id=${encodeURIComponent(String(item?.correction_request_id ?? item?.id ?? ''))}`)}
+            onReviewRequest={(item) => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?status=pending${item?.correction_request_id || item?.id ? `&request_id=${encodeURIComponent(String(item?.correction_request_id ?? item?.id))}` : ''}`)}
           />
         </Motion.div>
       </Motion.div>
@@ -1588,14 +1606,14 @@ export default function AdminDashboard() {
           <AttendanceCorrectionsCard
             loading={
               (!canApproveAttendanceCorrections && loading) ||
-              (canApproveAttendanceCorrections && dashboardQuery.isLoading)
+              (canApproveAttendanceCorrections && (dashboardQuery.isLoading || attendanceCorrectionsPendingQuery.isLoading))
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
             requests={pendingAttendanceCorrectionPreviews}
-            onViewAll={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
-            onViewDetails={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
-            onReviewRequest={() => navigate(hrPanelPath(hrBase, 'attendance-corrections'))}
+            onViewAll={() => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?status=pending`)}
+            onViewDetails={(item) => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?request_id=${encodeURIComponent(String(item?.correction_request_id ?? item?.id ?? ''))}`)}
+            onReviewRequest={(item) => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?status=pending${item?.correction_request_id || item?.id ? `&request_id=${encodeURIComponent(String(item?.correction_request_id ?? item?.id))}` : ''}`)}
           />
         </Motion.div>
       </Motion.div>
