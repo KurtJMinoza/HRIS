@@ -10,6 +10,7 @@ use App\Models\AttendanceCorrectionAudit;
 use App\Models\AttendanceLog;
 use App\Models\User;
 use App\Services\AttendanceCorrectionApprovalService;
+use App\Services\AttendanceCorrectionDetailService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\PresenceFilingAttendanceLogSyncService;
@@ -19,6 +20,7 @@ use App\Services\PresenceFilingService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -29,6 +31,7 @@ class PresenceFilingController extends Controller
         private readonly PresenceFilingService $presenceFilingService,
         private readonly DataScopeService $dataScopeService,
         private readonly AttendanceCorrectionApprovalService $approvalService,
+        private readonly AttendanceCorrectionDetailService $attendanceCorrectionDetailService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PresenceFilingCorrectionFormatter $correctionFormatter,
         private readonly PresenceFilingAttendanceLogSyncService $attendanceLogSyncService,
@@ -154,14 +157,14 @@ class PresenceFilingController extends Controller
 
         $dayStart = Carbon::parse($dateKey, $tz)->startOfDay();
         $dayEnd = Carbon::parse($dateKey, $tz)->endOfDay();
-        $hasIn = AttendanceLog::query()
+        $hasIn = Schema::hasTable('attendance_logs') && AttendanceLog::query()
             ->where('user_id', $employee->id)
-            ->whereBetween('created_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
+            ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->exists();
-        $hasOut = AttendanceLog::query()
+        $hasOut = Schema::hasTable('attendance_logs') && AttendanceLog::query()
             ->where('user_id', $employee->id)
-            ->whereBetween('created_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
+            ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
             ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
             ->exists();
         $isIncompleteRecord = ($hasIn xor $hasOut) || (! $hasIn && ! $hasOut);
@@ -290,6 +293,237 @@ class PresenceFilingController extends Controller
             ]), $tz, includeEmployee: true, actor: $user, includeDisplayFields: true) : null,
             'approval_chain' => $this->correctionFormatter->chainPayload($this->approvalService->getApprovalChain($user)),
         ]);
+    }
+
+    public function attendanceDetail(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || (! $user->isEmployee() && ! $user->isAdmin())) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        $validated = $request->validate([
+            'date' => ['required', 'date'],
+            'issue_type' => ['required', 'string', 'in:missing_in,missing_out,both'],
+        ]);
+
+        $employee = User::query()
+            ->whereKey($user->id)
+            ->with('workingSchedule')
+            ->firstOrFail();
+
+        return response()->json($this->attendanceCorrectionDetailService->resolve(
+            $employee,
+            $validated['date'],
+            $validated['issue_type'],
+            adminContext: false
+        ));
+    }
+
+    public function adminStore(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'employee_id' => ['required', 'integer', 'exists:users,id'],
+            'date' => ['required', 'date', 'before_or_equal:today'],
+            'issue_kind' => ['required', 'string', 'in:missing_in,missing_out,both'],
+            'remarks' => ['required', 'string', 'min:1', 'max:65535'],
+            'time_in' => [
+                Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_in', 'both'], true)),
+                'nullable',
+                'date_format:H:i',
+            ],
+            'time_out' => [
+                Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_out', 'both'], true)),
+                'nullable',
+                'date_format:H:i',
+            ],
+        ]);
+
+        $employee = User::query()
+            ->whereKey((int) $validated['employee_id'])
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->with('workingSchedule')
+            ->firstOrFail();
+
+        $this->dataScopeService->ensureCorrectionSubjectAccessible($actor, $employee);
+
+        $tz = $this->presenceFilingService->attendanceTimezone();
+        $dateKey = $validated['date'];
+        $kind = $validated['issue_kind'];
+
+        try {
+            $d = Carbon::parse($dateKey)->startOfDay();
+            $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $employee->id, $d, $d);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $timeInStr = $kind === 'missing_out'
+            ? null
+            : $this->normalizeTimeToHi($validated['time_in'] ?? null);
+        $timeOutStr = $kind === 'missing_in'
+            ? null
+            : $this->normalizeTimeToHi($validated['time_out'] ?? null);
+
+        $timeIn = $timeInStr ? Carbon::parse($dateKey.' '.$timeInStr, $tz) : null;
+        $timeOut = $timeOutStr ? Carbon::parse($dateKey.' '.$timeOutStr, $tz) : null;
+        if ($timeIn && $timeOut && $timeOut->lessThanOrEqualTo($timeIn)) {
+            $scheduled = $this->presenceFilingService->resolveScheduleRegularPunches($employee, $dateKey);
+            if ($scheduled && $scheduled[1]->toDateString() !== $timeIn->toDateString()) {
+                $timeOut = $timeOut->copy()->addDay();
+            } else {
+                throw ValidationException::withMessages(['time_out' => ['Time out must be after time in.']]);
+            }
+        }
+
+        $issueLabel = match ($kind) {
+            'missing_in' => 'Missing Clock In',
+            'missing_out' => 'Missing Clock Out',
+            'both' => 'Missing Clock In and Out',
+        };
+        $fullRemarks = "[{$issueLabel}] ".trim((string) $validated['remarks']);
+
+        $dayStart = Carbon::parse($dateKey, $tz)->startOfDay();
+        $dayEnd = Carbon::parse($dateKey, $tz)->endOfDay();
+        $hasIn = Schema::hasTable('attendance_logs') && AttendanceLog::query()
+            ->where('user_id', $employee->id)
+            ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
+            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
+            ->exists();
+        $hasOut = Schema::hasTable('attendance_logs') && AttendanceLog::query()
+            ->where('user_id', $employee->id)
+            ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
+            ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
+            ->exists();
+        $isIncompleteRecord = ($hasIn xor $hasOut) || (! $hasIn && ! $hasOut);
+
+        $existing = AttendanceCorrection::query()
+            ->where('user_id', $employee->id)
+            ->whereDate('date', $dateKey)
+            ->first();
+
+        $routing = $this->approvalService->resolveRoutingDecision($employee);
+        if (($routing['chain'] ?? null) === null) {
+            throw ValidationException::withMessages([
+                'approval' => ['This employee cannot file attendance corrections right now.'],
+            ]);
+        }
+        $initialStage = $this->approvalService->initialApprovalStage($employee);
+        $firstApproverId = $initialStage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST
+            ? ($routing['first_level_approver']?->id)
+            : null;
+        $hrApproverId = $routing['hr_approver']?->id;
+        if (! $hrApproverId) {
+            throw ValidationException::withMessages([
+                'approval' => ['No active Admin (HR) approver is configured.'],
+            ]);
+        }
+
+        $correction = DB::transaction(function () use ($employee, $actor, $dateKey, $timeIn, $timeOut, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId) {
+            $correction = AttendanceCorrection::updateOrCreate(
+                [
+                    'user_id' => $employee->id,
+                    'date' => $dateKey,
+                ],
+                [
+                    'time_in' => $timeIn ? $timeIn->copy()->setTimezone('UTC') : null,
+                    'time_out' => $timeOut ? $timeOut->copy()->setTimezone('UTC') : null,
+                    'issue_kind' => $kind,
+                    'remarks' => $fullRemarks,
+                    'reason_code' => PresenceFilingService::REASON_FORGOT_PUNCH,
+                    'pending_approval' => true,
+                    'approved' => false,
+                    'approved_by' => null,
+                    'approved_at' => null,
+                    'filed_at' => now(),
+                    'filed_by' => $actor->id,
+                    'rejected_at' => null,
+                    'rejected_by' => null,
+                    'rejection_note' => null,
+                    'manual_presence_reason' => null,
+                    'approval_stage' => $initialStage,
+                    'first_approver_id' => $firstApproverId,
+                    'first_approved_at' => null,
+                    'second_approver_id' => $hrApproverId,
+                    'second_approved_at' => null,
+                    'is_incomplete_record' => $isIncompleteRecord,
+                ]
+            );
+
+            AttendanceCorrectionAudit::create([
+                'attendance_correction_id' => $correction->id,
+                'admin_id' => $actor->id,
+                'employee_id' => $employee->id,
+                'date' => $dateKey,
+                'previous_time_in' => $existing?->time_in,
+                'previous_time_out' => $existing?->time_out,
+                'new_time_in' => $correction->time_in,
+                'new_time_out' => $correction->time_out,
+                'reason' => $fullRemarks,
+                'action' => 'file',
+            ]);
+
+            AttendanceCorrectionApproval::create([
+                'attendance_correction_id' => $correction->id,
+                'approver_id' => $actor->id,
+                'level' => 0,
+                'status' => 'submitted',
+                'notes' => $fullRemarks,
+                'acted_at' => now(),
+            ]);
+
+            return $correction;
+        });
+
+        $correction->load([
+            'user',
+            'filedBy',
+            'firstApprover',
+            'secondApprover',
+            'attendanceLogsSyncedBy',
+            'rejectedBy',
+            'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
+            'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
+        ]);
+
+        return response()->json([
+            'message' => 'Attendance correction submitted for approval.',
+            'presence_filing' => $this->correctionFormatter->format($correction, $tz, includeEmployee: true, actor: $actor, includeDisplayFields: true),
+        ], 201);
+    }
+
+    public function adminAttendanceDetail(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'employee_id' => ['required', 'integer', 'exists:users,id'],
+            'date' => ['required', 'date'],
+            'issue_type' => ['required', 'string', 'in:missing_in,missing_out,both'],
+        ]);
+
+        $employee = User::query()
+            ->whereKey((int) $validated['employee_id'])
+            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->with('workingSchedule')
+            ->firstOrFail();
+
+        $this->dataScopeService->ensureCorrectionSubjectAccessible($actor, $employee);
+
+        return response()->json($this->attendanceCorrectionDetailService->resolve(
+            $employee,
+            $validated['date'],
+            $validated['issue_type'],
+            adminContext: true
+        ));
     }
 
     /**

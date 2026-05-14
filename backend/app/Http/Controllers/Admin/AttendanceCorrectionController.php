@@ -17,6 +17,7 @@ use App\Services\PresenceFilingService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class AttendanceCorrectionController extends Controller
@@ -315,12 +316,12 @@ class AttendanceCorrectionController extends Controller
             $dateCarbon->copy()->setTimezone('UTC'),
             $dateCarbon->copy()->endOfDay()->setTimezone('UTC'),
         ];
-        $hasIn = AttendanceLog::where('user_id', $employee->id)
-            ->whereBetween('created_at', [$dayStartUtc, $dayEndUtc])
+        $hasIn = Schema::hasTable('attendance_logs') && AttendanceLog::where('user_id', $employee->id)
+            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->exists();
-        $hasOut = AttendanceLog::where('user_id', $employee->id)
-            ->whereBetween('created_at', [$dayStartUtc, $dayEndUtc])
+        $hasOut = Schema::hasTable('attendance_logs') && AttendanceLog::where('user_id', $employee->id)
+            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
             ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
             ->exists();
 

@@ -121,6 +121,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/attendance', [AttendanceController::class, 'record']);
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::get('/attendance/summary', [AttendanceController::class, 'summary']);
+    Route::get('/employee/presence-filing/attendance-detail', [PresenceFilingController::class, 'attendanceDetail']);
     Route::post('/employee/presence-filing', [PresenceFilingController::class, 'store']);
     Route::get('/employee/presence-filing', [PresenceFilingController::class, 'mine']);
     Route::get('/employee/presence-filings', [PresenceFilingController::class, 'listMine']);
@@ -194,6 +195,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:attendance.corrections.approve')->group(function () {
             Route::get('/admin/presence-filings', [PresenceFilingController::class, 'adminIndex']);
+            Route::get('/admin/presence-filings/attendance-detail', [PresenceFilingController::class, 'adminAttendanceDetail']);
+            Route::post('/admin/presence-filings', [PresenceFilingController::class, 'adminStore']);
             Route::post('/admin/presence-filings/{id}/approve', [PresenceFilingController::class, 'approve']);
             Route::post('/admin/presence-filings/{id}/reject', [PresenceFilingController::class, 'reject']);
             Route::post('/admin/presence-filings/{id}/note', [PresenceFilingController::class, 'addHrNote']);

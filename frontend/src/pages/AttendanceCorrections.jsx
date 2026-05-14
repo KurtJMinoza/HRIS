@@ -73,9 +73,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {
   getAdminPresenceFilings,
+  getAdminPresenceFilingAttendanceDetail,
   getMyPresenceFilings,
+  getMyPresenceFilingAttendanceDetail,
+  getEmployees,
   approvePresenceFiling,
   rejectPresenceFiling,
+  submitAdminPresenceFiling,
   submitPresenceFiling,
   addPresenceFilingHrNote,
   deleteAdminPresenceFiling,
@@ -215,6 +219,73 @@ function formatDateTime(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
   return d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function formatAttendanceDetailTime(value) {
+  if (!value) return 'Missing'
+  if (/^\d{2}:\d{2}/.test(String(value))) {
+    const [hour, minute] = String(value).split(':')
+    const d = new Date()
+    d.setHours(Number(hour), Number(minute), 0, 0)
+    return d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })
+  }
+  return new Date(value).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })
+}
+
+function AttendanceDetailNotice({ detail, loading, error }) {
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-border bg-muted/25 px-4 py-3 text-sm text-muted-foreground">
+        <span className="inline-flex items-center gap-2 font-medium">
+          <Loader2 className="size-4 animate-spin" />
+          Loading attendance detail...
+        </span>
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+        {error}
+      </div>
+    )
+  }
+  if (!detail) return null
+
+  const toneClass =
+    detail.detail_tone === 'info'
+      ? 'border-sky-500/35 bg-sky-500/10 text-sky-950 dark:text-sky-100'
+      : detail.detail_tone === 'neutral-warning'
+        ? 'border-amber-500/35 bg-amber-500/10 text-amber-950 dark:text-amber-100'
+        : 'border-orange-500/40 bg-orange-500/10 text-orange-950 dark:text-orange-100'
+
+  return (
+    <div className={cn('rounded-xl border px-4 py-3 text-sm shadow-sm', toneClass)}>
+      <p className="text-xs font-black uppercase tracking-[0.14em] opacity-80">Attendance detail</p>
+      <p className="mt-2 font-bold leading-relaxed">{detail.message}</p>
+      <dl className="mt-3 grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed">
+        <dt className="font-semibold opacity-80">Clock In</dt>
+        <dd>{formatAttendanceDetailTime(detail.clock_in)}</dd>
+        <dt className="font-semibold opacity-80">Clock Out</dt>
+        <dd>{formatAttendanceDetailTime(detail.clock_out)}</dd>
+        <dt className="font-semibold opacity-80">Schedule</dt>
+        <dd>
+          {detail.schedule_start || detail.schedule_end
+            ? `${formatAttendanceDetailTime(detail.schedule_start)} - ${formatAttendanceDetailTime(detail.schedule_end)}`
+            : 'No schedule found'}
+        </dd>
+        <dt className="font-semibold opacity-80">Status</dt>
+        <dd>{detail.attendance_status || '—'}</dd>
+      </dl>
+      {Array.isArray(detail.notes) && detail.notes.length > 0 ? (
+        <div className="mt-3 space-y-1 border-t border-current/15 pt-3 text-xs leading-relaxed">
+          {detail.notes.map((note) => (
+            <p key={note}>{note}</p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 /** Compact date for dense tables (no time). */
@@ -497,10 +568,16 @@ export default function AttendanceCorrections() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
   const [fileDate, setFileDate] = useState('')
+  const [fileEmployeeId, setFileEmployeeId] = useState('')
+  const [fileEmployees, setFileEmployees] = useState([])
+  const [fileEmployeesLoading, setFileEmployeesLoading] = useState(false)
   const [fileIssueKind, setFileIssueKind] = useState('missing_in')
   const [fileTimeIn, setFileTimeIn] = useState('')
   const [fileTimeOut, setFileTimeOut] = useState('')
   const [fileRemarks, setFileRemarks] = useState('')
+  const [attendanceDetail, setAttendanceDetail] = useState(null)
+  const [attendanceDetailLoading, setAttendanceDetailLoading] = useState(false)
+  const [attendanceDetailError, setAttendanceDetailError] = useState('')
   const showFileTimeIn = fileIssueKind === 'missing_in' || fileIssueKind === 'both'
   const showFileTimeOut = fileIssueKind === 'missing_out' || fileIssueKind === 'both'
 
@@ -548,6 +625,64 @@ export default function AttendanceCorrections() {
       loadAll()
     }
   }, [tab, canSeeAll, loadAll])
+
+  useEffect(() => {
+    if (!fileOpen || !canSeeAll) return undefined
+
+    let cancelled = false
+    setFileEmployeesLoading(true)
+    getEmployees({ per_page: 200, fresh: true })
+      .then((data) => {
+        if (!cancelled) setFileEmployees(Array.isArray(data?.employees) ? data.employees : [])
+      })
+      .catch(() => {
+        if (!cancelled) setFileEmployees([])
+      })
+      .finally(() => {
+        if (!cancelled) setFileEmployeesLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [fileOpen, canSeeAll])
+
+  useEffect(() => {
+    if (!fileOpen || !fileDate || !fileIssueKind || (canSeeAll && !fileEmployeeId)) {
+      setAttendanceDetail(null)
+      setAttendanceDetailError('')
+      return undefined
+    }
+
+    let cancelled = false
+    setAttendanceDetailLoading(true)
+    setAttendanceDetailError('')
+    const loader = canSeeAll
+      ? getAdminPresenceFilingAttendanceDetail({
+          employee_id: fileEmployeeId,
+          date: fileDate,
+          issue_type: fileIssueKind,
+        })
+      : getMyPresenceFilingAttendanceDetail({ date: fileDate, issue_type: fileIssueKind })
+
+    loader
+      .then((data) => {
+        if (!cancelled) setAttendanceDetail(data)
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setAttendanceDetail(null)
+          setAttendanceDetailError(e.message || 'Failed to load attendance detail')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAttendanceDetailLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [fileOpen, canSeeAll, fileEmployeeId, fileDate, fileIssueKind])
 
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine' ? loadingMine : loadingAll
@@ -729,10 +864,13 @@ export default function AttendanceCorrections() {
   function openFile() {
     const today = new Date().toISOString().split('T')[0]
     setFileDate(today)
+    setFileEmployeeId('')
     setFileIssueKind('missing_in')
     setFileTimeIn('')
     setFileTimeOut('')
     setFileRemarks('')
+    setAttendanceDetail(null)
+    setAttendanceDetailError('')
     setFileOpen(true)
   }
 
@@ -798,6 +936,10 @@ export default function AttendanceCorrections() {
   }
 
   async function submitFile() {
+    if (canSeeAll && !fileEmployeeId) {
+      toast({ title: 'Employee required', description: 'Select the employee for this correction.', variant: 'error' })
+      return
+    }
     if (!fileDate) {
       toast({ title: 'Date required', description: 'Select the attendance date.', variant: 'error' })
       return
@@ -836,16 +978,26 @@ export default function AttendanceCorrections() {
     }
     try {
       setSubmitting(true)
-      await submitPresenceFiling({
+      const payload = {
         date: fileDate,
         issue_kind: fileIssueKind,
         time_in: needIn ? ti : undefined,
         time_out: needOut ? to : undefined,
         remarks: fileRemarks.trim(),
-      })
+      }
+      if (canSeeAll) {
+        await submitAdminPresenceFiling({
+          ...payload,
+          employee_id: fileEmployeeId,
+        })
+      } else {
+        await submitPresenceFiling(payload)
+      }
       toast({
         title: 'Request submitted',
-        description: 'Your correction request is pending approval.',
+        description: canSeeAll
+          ? 'The correction request is pending approval.'
+          : 'Your correction request is pending approval.',
         variant: 'success',
       })
       setFileOpen(false)
@@ -1768,6 +1920,24 @@ export default function AttendanceCorrections() {
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card px-7 py-6">
             <div className="space-y-5">
+              {canSeeAll ? (
+                <div className="space-y-2">
+                  <Label htmlFor="file-employee" className="text-sm font-bold text-foreground">Employee *</Label>
+                  <Select value={fileEmployeeId} onValueChange={setFileEmployeeId}>
+                    <SelectTrigger id="file-employee" className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm">
+                      <SelectValue placeholder={fileEmployeesLoading ? 'Loading employees...' : 'Select employee'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {fileEmployees.map((employee) => (
+                        <SelectItem key={employee.id} value={String(employee.id)}>
+                          {employee.name || employee.email || `Employee #${employee.id}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Select the employee whose attendance needs correction.</p>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label htmlFor="file-date" className="text-sm font-bold text-foreground">Date *</Label>
                 <Input
@@ -1794,6 +1964,11 @@ export default function AttendanceCorrections() {
                   </SelectContent>
                 </Select>
               </div>
+              <AttendanceDetailNotice
+                detail={attendanceDetail}
+                loading={attendanceDetailLoading}
+                error={attendanceDetailError}
+              />
               <Motion.div
                 layout
                 className={cn(

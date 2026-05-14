@@ -32,7 +32,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/use-toast'
-import { deleteMyPresenceFiling, getMyPresenceFilings, submitPresenceFiling } from '@/api'
+import {
+  deleteMyPresenceFiling,
+  getMyPresenceFilingAttendanceDetail,
+  getMyPresenceFilings,
+  submitPresenceFiling,
+} from '@/api'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -122,6 +127,73 @@ function formatDateTime(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
   return d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function formatAttendanceDetailTime(value) {
+  if (!value) return 'Missing'
+  if (/^\d{2}:\d{2}/.test(String(value))) {
+    const [hour, minute] = String(value).split(':')
+    const d = new Date()
+    d.setHours(Number(hour), Number(minute), 0, 0)
+    return d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })
+  }
+  return new Date(value).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })
+}
+
+function AttendanceDetailNotice({ detail, loading, error }) {
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-border bg-muted/25 px-4 py-3 text-sm text-muted-foreground">
+        <span className="inline-flex items-center gap-2 font-medium">
+          <Loader2 className="size-4 animate-spin" />
+          Loading attendance detail...
+        </span>
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+        {error}
+      </div>
+    )
+  }
+  if (!detail) return null
+
+  const toneClass =
+    detail.detail_tone === 'info'
+      ? 'border-sky-500/35 bg-sky-500/10 text-sky-950 dark:text-sky-100'
+      : detail.detail_tone === 'neutral-warning'
+        ? 'border-amber-500/35 bg-amber-500/10 text-amber-950 dark:text-amber-100'
+        : 'border-orange-500/40 bg-orange-500/10 text-orange-950 dark:text-orange-100'
+
+  return (
+    <div className={cn('rounded-xl border px-4 py-3 text-sm shadow-sm', toneClass)}>
+      <p className="text-xs font-black uppercase tracking-[0.14em] opacity-80">Attendance detail</p>
+      <p className="mt-2 font-bold leading-relaxed">{detail.message}</p>
+      <dl className="mt-3 grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed">
+        <dt className="font-semibold opacity-80">Clock In</dt>
+        <dd>{formatAttendanceDetailTime(detail.clock_in)}</dd>
+        <dt className="font-semibold opacity-80">Clock Out</dt>
+        <dd>{formatAttendanceDetailTime(detail.clock_out)}</dd>
+        <dt className="font-semibold opacity-80">Schedule</dt>
+        <dd>
+          {detail.schedule_start || detail.schedule_end
+            ? `${formatAttendanceDetailTime(detail.schedule_start)} - ${formatAttendanceDetailTime(detail.schedule_end)}`
+            : 'No schedule found'}
+        </dd>
+        <dt className="font-semibold opacity-80">Status</dt>
+        <dd>{detail.attendance_status || '—'}</dd>
+      </dl>
+      {Array.isArray(detail.notes) && detail.notes.length > 0 ? (
+        <div className="mt-3 space-y-1 border-t border-current/15 pt-3 text-xs leading-relaxed">
+          {detail.notes.map((note) => (
+            <p key={note}>{note}</p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function formatApproverLine(step) {
@@ -478,6 +550,9 @@ export default function EmployeeCorrectionRequests() {
   const [fileTimeOut, setFileTimeOut] = useState('')
   const [fileRemarks, setFileRemarks] = useState('')
   const [fileSubmitting, setFileSubmitting] = useState(false)
+  const [attendanceDetail, setAttendanceDetail] = useState(null)
+  const [attendanceDetailLoading, setAttendanceDetailLoading] = useState(false)
+  const [attendanceDetailError, setAttendanceDetailError] = useState('')
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null })
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
@@ -490,6 +565,35 @@ export default function EmployeeCorrectionRequests() {
 
   const showFileTimeIn = fileIssueKind === 'missing_in' || fileIssueKind === 'both'
   const showFileTimeOut = fileIssueKind === 'missing_out' || fileIssueKind === 'both'
+
+  useEffect(() => {
+    if (!fileOpen || !fileDate || !fileIssueKind) {
+      setAttendanceDetail(null)
+      setAttendanceDetailError('')
+      return undefined
+    }
+
+    let cancelled = false
+    setAttendanceDetailLoading(true)
+    setAttendanceDetailError('')
+    getMyPresenceFilingAttendanceDetail({ date: fileDate, issue_type: fileIssueKind })
+      .then((data) => {
+        if (!cancelled) setAttendanceDetail(data)
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setAttendanceDetail(null)
+          setAttendanceDetailError(e.message || 'Failed to load attendance detail')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAttendanceDetailLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [fileOpen, fileDate, fileIssueKind])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -636,6 +740,8 @@ export default function EmployeeCorrectionRequests() {
     setFileTimeIn('')
     setFileTimeOut('')
     setFileRemarks('')
+    setAttendanceDetail(null)
+    setAttendanceDetailError('')
     setFileOpen(true)
   }
 
@@ -1172,6 +1278,11 @@ export default function EmployeeCorrectionRequests() {
                   Choose the type of correction you&apos;re requesting.
                 </p>
               </div>
+              <AttendanceDetailNotice
+                detail={attendanceDetail}
+                loading={attendanceDetailLoading}
+                error={attendanceDetailError}
+              />
               <Motion.div
                 layout
                 className={cn(

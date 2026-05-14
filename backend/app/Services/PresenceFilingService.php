@@ -8,6 +8,7 @@ use App\Models\LeaveRequest;
 use App\Models\User;
 use App\Models\WorkingSchedule;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Employee presence filing (no punch) → pending correction → approval.
@@ -128,14 +129,14 @@ class PresenceFilingService
         $dayStartUtc = $dayStart->copy()->setTimezone('UTC');
         $dayEndUtc = $dayEnd->copy()->setTimezone('UTC');
 
-        $hasIn = AttendanceLog::query()
+        $hasIn = Schema::hasTable('attendance_logs') && AttendanceLog::query()
             ->where('user_id', $employee->id)
-            ->whereBetween('created_at', [$dayStartUtc, $dayEndUtc])
+            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->exists();
-        $hasOut = AttendanceLog::query()
+        $hasOut = Schema::hasTable('attendance_logs') && AttendanceLog::query()
             ->where('user_id', $employee->id)
-            ->whereBetween('created_at', [$dayStartUtc, $dayEndUtc])
+            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
             ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
             ->exists();
 

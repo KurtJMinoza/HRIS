@@ -4745,6 +4745,37 @@ export async function submitPresenceFiling(payload) {
   return data
 }
 
+export async function submitAdminPresenceFiling(payload) {
+  const body = {
+    employee_id: Number(payload.employee_id),
+    date: String(payload.date),
+    issue_kind: String(payload.issue_kind || payload.issue_type || ''),
+    remarks: String(payload.remarks || '').trim(),
+  }
+  if (payload.time_in != null && String(payload.time_in).trim() !== '') body.time_in = String(payload.time_in).trim()
+  if (payload.time_out != null && String(payload.time_out).trim() !== '') body.time_out = String(payload.time_out).trim()
+
+  const res = await authenticatedFetch('/admin/presence-filings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg =
+      firstValidationMessage(data) ||
+      data.errors?.employee_id?.[0] ||
+      data.errors?.date?.[0] ||
+      data.errors?.time_in?.[0] ||
+      data.errors?.time_out?.[0] ||
+      data.errors?.remarks?.[0] ||
+      data.message ||
+      'Failed to submit presence filing'
+    throw new Error(msg)
+  }
+  return data
+}
+
 /** Employee: list own correction / presence filings (history). */
 export async function getMyPresenceFilings(params = {}) {
   const q = new URLSearchParams()
@@ -4764,6 +4795,16 @@ export async function getMyPresenceFiling() {
   return data
 }
 
+export async function getMyPresenceFilingAttendanceDetail(params = {}) {
+  const q = new URLSearchParams()
+  if (params.date) q.set('date', String(params.date))
+  if (params.issue_type) q.set('issue_type', String(params.issue_type))
+  const res = await authenticatedFetch(`/employee/presence-filing/attendance-detail?${q}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to load attendance detail')
+  return data
+}
+
 /**
  * Approvers: presence filings in scope (pending, approved, rejected, or all).
  * @param {{ status?: 'all' | 'pending' | 'approved' | 'rejected', from_date?: string, to_date?: string, issue_type?: string, q?: string }} params
@@ -4779,6 +4820,17 @@ export async function getAdminPresenceFilings(params = {}) {
   const res = await authenticatedFetch(path)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load presence filings')
+  return data
+}
+
+export async function getAdminPresenceFilingAttendanceDetail(params = {}) {
+  const q = new URLSearchParams()
+  if (params.employee_id != null && params.employee_id !== '') q.set('employee_id', String(params.employee_id))
+  if (params.date) q.set('date', String(params.date))
+  if (params.issue_type) q.set('issue_type', String(params.issue_type))
+  const res = await authenticatedFetch(`/admin/presence-filings/attendance-detail?${q}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to load attendance detail')
   return data
 }
 
