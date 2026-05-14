@@ -14,6 +14,8 @@ function isSameAuthUser(a, b) {
     && String(a.updated_at ?? '') === String(b.updated_at ?? '')
     && String(a.role ?? '') === String(b.role ?? '')
     && String(a.hr_role ?? '') === String(b.hr_role ?? '')
+    && String(a.employee_id ?? '') === String(b.employee_id ?? '')
+    && String(a.employee_name ?? '') === String(b.employee_name ?? '')
     && String(a.profile_image_url ?? a.profile_image ?? '') === String(b.profile_image_url ?? b.profile_image ?? '')
 }
 
@@ -191,6 +193,7 @@ export function AuthProvider({ children }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth must be used within AuthProvider')

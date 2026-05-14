@@ -95,7 +95,7 @@ class AttendanceCorrectionApprovalService
                 return false;
             }
 
-            return (int) $actor->id !== (int) $correction->user_id;
+            return true;
         }
 
         return false;

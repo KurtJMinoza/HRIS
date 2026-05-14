@@ -244,12 +244,14 @@ class PresenceFilingCorrectionFormatter
         }
 
         if ($actor !== null) {
-            $row['actor_can_approve'] = $this->approvalService->canApprove($actor, $c);
+            $canApprove = $this->approvalService->canApprove($actor, $c);
+            $row['actor_can_approve'] = $canApprove;
             $row['actor_can_reject'] = $this->approvalService->canReject($actor, $c);
             $row['actor_can_delete'] = $this->canDeletePendingRequest($actor, $c);
             $actorHr = $this->hrRoleResolver->resolve($actor) === HrRole::AdminHr;
             $stage = $c->approval_stage ?? AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
             $row['hr_wait_message'] = null;
+            $row['actor_approval_block_reason'] = null;
             if ($actorHr && $chain !== null && count($chain) >= 2 && $stage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST
                 && $c->pending_approval && ! $c->approved && ! $c->rejected_at) {
                 $row['hr_wait_message'] = sprintf(
@@ -261,6 +263,11 @@ class PresenceFilingCorrectionFormatter
                         default => $chain[0]->badgeLabel(),
                     }
                 );
+                if (! $canApprove) {
+                    $row['actor_approval_block_reason'] = $row['hr_wait_message'];
+                }
+            } elseif (! $canApprove && $c->pending_approval && ! $c->approved && ! $c->rejected_at) {
+                $row['actor_approval_block_reason'] = 'You are not assigned to the current approval step.';
             }
             $row['actor_can_add_hr_note'] = $actorHr
                 && $c->pending_approval

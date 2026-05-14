@@ -818,6 +818,13 @@ class PresenceFilingController extends Controller
 
         $previousIn = $correction->time_in;
         $previousOut = $correction->time_out;
+        $isRequesterFinalApprover = (int) $actor->id === (int) ($correction->filed_by ?? $correction->user_id)
+            && $actorRole === HrRole::AdminHr
+            && $stage === AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND;
+        $finalApprovalNote = $validated['notes']
+            ?? ($isRequesterFinalApprover
+                ? 'Approved by requester as Admin/HR final approver.'
+                : 'Final approval (Admin HR).');
 
         try {
             $d = Carbon::parse($dateKey)->startOfDay();
@@ -826,7 +833,7 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        DB::transaction(function () use ($correction, $actor, $validated, $employee, $dateKey, $timeIn, $timeOut, $previousIn, $previousOut, $roleLabel, $issueKind) {
+        DB::transaction(function () use ($correction, $actor, $employee, $dateKey, $timeIn, $timeOut, $previousIn, $previousOut, $roleLabel, $issueKind, $finalApprovalNote) {
             // Update correction record with approved times (convert to UTC for storage)
             $correction->time_in = $timeIn?->copy()->setTimezone('UTC');
             $correction->time_out = $timeOut?->copy()->setTimezone('UTC');
@@ -848,7 +855,7 @@ class PresenceFilingController extends Controller
                 'previous_time_out' => $previousOut,
                 'new_time_in' => $correction->time_in,
                 'new_time_out' => $correction->time_out,
-                'reason' => $validated['notes'] ?? 'Final approval (Admin HR).',
+                'reason' => $finalApprovalNote,
                 'action' => 'approve_final',
                 'approver_role' => $roleLabel,
             ]);
@@ -858,7 +865,7 @@ class PresenceFilingController extends Controller
                 'approver_id' => $actor->id,
                 'level' => 2,
                 'status' => 'approved',
-                'notes' => $validated['notes'] ?? null,
+                'notes' => $finalApprovalNote,
                 'acted_at' => now(),
             ]);
 

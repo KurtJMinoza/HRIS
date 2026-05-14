@@ -570,7 +570,10 @@ class AuthController extends Controller
 
         $payload = [
             'id' => $user->id,
+            'user_id' => $user->id,
+            'employee_id' => $user->isRosterEligible() ? $user->id : null,
             'employee_code' => $user->employee_code,
+            'employee_name' => $user->isRosterEligible() ? $user->name : null,
             'name' => $user->name,
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,

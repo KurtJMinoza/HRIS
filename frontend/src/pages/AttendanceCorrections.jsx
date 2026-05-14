@@ -584,6 +584,21 @@ export default function AttendanceCorrections() {
   const searchInputRef = useRef(null)
   const [tableDensity, setTableDensity] = useState('comfortable')
 
+  const selfEmployeeId = user?.employee_id != null && user.employee_id !== '' ? String(user.employee_id) : ''
+  const selfEmployeeName = user?.employee_name || user?.name || 'My account'
+  const fileEmployeeOptions = useMemo(() => {
+    const list = Array.isArray(fileEmployees) ? [...fileEmployees] : []
+    if (selfEmployeeId && !list.some((employee) => String(employee.id) === selfEmployeeId)) {
+      list.unshift({
+        id: selfEmployeeId,
+        name: selfEmployeeName,
+        email: user?.email,
+      })
+    }
+
+    return list
+  }, [fileEmployees, selfEmployeeId, selfEmployeeName, user?.email])
+
   const loadMine = useCallback(async () => {
     setLoadingMine(true)
     try {
@@ -878,6 +893,19 @@ export default function AttendanceCorrections() {
     setFileIssueKind(next)
     if (next === 'missing_in') setFileTimeOut('')
     else if (next === 'missing_out') setFileTimeIn('')
+  }
+
+  function handleFileForMyself() {
+    if (!selfEmployeeId) {
+      toast({
+        title: 'Employee profile not linked',
+        description: 'Your account is not linked to an employee profile.',
+        variant: 'error',
+      })
+      return
+    }
+
+    setFileEmployeeId(selfEmployeeId)
   }
 
   async function submitApprove() {
@@ -1777,6 +1805,15 @@ export default function AttendanceCorrections() {
                     </div>
                   ) : null}
 
+                  {!selectedItem.actor_can_approve && selectedItem.actor_approval_block_reason ? (
+                    <div
+                      role="status"
+                      className="rounded-xl border border-slate-300 bg-muted/40 px-4 py-3 text-sm text-muted-foreground dark:border-white/10 dark:bg-muted/20"
+                    >
+                      {selectedItem.actor_approval_block_reason}
+                    </div>
+                  ) : null}
+
                   {selectedItem.actor_can_add_hr_note ? (
                     <section className="rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]">
                       <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
@@ -1822,6 +1859,33 @@ export default function AttendanceCorrections() {
                   <kbd className="rounded border border-border bg-background px-1 font-mono text-[10px]">Esc</kbd> to close
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
+                  {selectedItem.actor_can_approve ? (
+                    <Button
+                      type="button"
+                      className="gap-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700"
+                      onClick={() => {
+                        setViewOpen(false)
+                        openApprove(selectedItem)
+                      }}
+                    >
+                      <CheckCircle2 className="size-4" />
+                      Approve
+                    </Button>
+                  ) : null}
+                  {selectedItem.actor_can_reject ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => {
+                        setViewOpen(false)
+                        openReject(selectedItem)
+                      }}
+                    >
+                      <XCircle className="size-4" />
+                      Reject
+                    </Button>
+                  ) : null}
                   {selectedItem.actor_can_delete ? (
                     <Button type="button" variant="destructive" onClick={() => setDeleteDialog({ open: true, item: selectedItem })}>
                       <Trash2 className="size-4" />
@@ -1923,18 +1987,30 @@ export default function AttendanceCorrections() {
               {canSeeAll ? (
                 <div className="space-y-2">
                   <Label htmlFor="file-employee" className="text-sm font-bold text-foreground">Employee *</Label>
-                  <Select value={fileEmployeeId} onValueChange={setFileEmployeeId}>
-                    <SelectTrigger id="file-employee" className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm">
-                      <SelectValue placeholder={fileEmployeesLoading ? 'Loading employees...' : 'Select employee'} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {fileEmployees.map((employee) => (
-                        <SelectItem key={employee.id} value={String(employee.id)}>
-                          {employee.name || employee.email || `Employee #${employee.id}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex flex-col gap-2 @sm:flex-row">
+                    <div className="min-w-0 flex-1">
+                      <Select value={fileEmployeeId} onValueChange={setFileEmployeeId}>
+                        <SelectTrigger id="file-employee" className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm">
+                          <SelectValue placeholder={fileEmployeesLoading ? 'Loading employees...' : 'Select employee'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {fileEmployeeOptions.map((employee) => (
+                            <SelectItem key={employee.id} value={String(employee.id)}>
+                              {employee.name || employee.email || `Employee #${employee.id}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-[3.25rem] shrink-0 rounded-xl border-brand/40 bg-background px-4 text-sm font-bold text-brand hover:bg-brand/10 hover:text-brand"
+                      onClick={handleFileForMyself}
+                    >
+                      File for Myself
+                    </Button>
+                  </div>
                   <p className="text-xs text-muted-foreground">Select the employee whose attendance needs correction.</p>
                 </div>
               ) : null}
