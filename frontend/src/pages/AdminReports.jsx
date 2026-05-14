@@ -794,10 +794,10 @@ export default function AdminReports() {
               </div>
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-border/40 bg-background/80">
+            <div className="max-h-[70vh] overflow-auto rounded-xl border border-border/40 bg-background/80">
               <table className="min-w-max w-full text-xs @md:text-sm border-0">
-                <thead>
-                  <tr className="sticky top-0 z-10 border-b border-border/40 bg-muted/60">
+                <thead className="sticky top-0 z-20 bg-card dark:bg-card">
+                  <tr className="border-b border-border/40 bg-card dark:bg-card">
                     {cols.map((c) => {
                       const align = c.align || 'left'
                       const alignClass =
@@ -806,7 +806,7 @@ export default function AdminReports() {
                         <th
                           key={c.label}
                           style={c.minW ? { minWidth: `${c.minW}px` } : undefined}
-                          className={`px-4 py-3 whitespace-nowrap ${alignClass} text-[10px] font-semibold uppercase tracking-wide text-muted-foreground @md:text-xs`}
+                          className={`sticky top-0 z-20 bg-card px-4 py-3 whitespace-nowrap ${alignClass} text-[10px] font-semibold uppercase tracking-wide text-muted-foreground shadow-[inset_0_-1px_0_var(--border)] dark:bg-card @md:text-xs`}
                         >
                           {c.label}
                         </th>

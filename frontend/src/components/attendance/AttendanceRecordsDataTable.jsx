@@ -409,18 +409,21 @@ export function AttendanceRecordsDataTable({
   return (
     <>
       <div className="hidden w-full min-w-0 md:block">
-        <div className="w-full min-w-0 overflow-x-auto rounded-xl border border-border/50 bg-card shadow-sm">
-          <Table className="w-full min-w-[1100px]">
-            <TableHeader>
+        <div className="w-full min-w-0 rounded-xl border border-border/50 bg-card shadow-sm">
+          <Table
+            containerClassName="max-h-[70vh] rounded-xl"
+            className="w-full min-w-[1100px]"
+          >
+            <TableHeader className="bg-card dark:bg-card">
               {table.getHeaderGroups().map((hg) => (
                 <TableRow
                   key={hg.id}
-                  className="border-b border-border/50 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25"
+                  className="border-b border-border/50 bg-card hover:bg-card dark:bg-card"
                 >
                   {hg.headers.map((header) => (
                     <TableHead
                       key={header.id}
-                      className="text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground"
+                      className="bg-card text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground shadow-[inset_0_-1px_0_var(--border)] dark:bg-card"
                     >
                       {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                     </TableHead>

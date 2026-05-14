@@ -85,6 +85,7 @@ import {
   addPresenceFilingHrNote,
   deleteAdminPresenceFiling,
   deleteMyPresenceFiling,
+  profileImageUrl,
 } from '@/api'
 import {
   issueLabel,
@@ -101,6 +102,7 @@ import {
   TimeCell,
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 const APPROVAL_INFO_SHORT =
   'Multi-step approval: managers first, then HR finalizes and updates attendance.'
@@ -368,17 +370,20 @@ function CorrectionDetailSection({ icon: Icon, title, children, className }) {
   )
 }
 
-function CorrectionInitialsAvatar({ name, className }) {
+function CorrectionInitialsAvatar({ name, imageUrl, className }) {
   return (
-    <div
+    <Avatar
       className={cn(
         'flex size-12 shrink-0 items-center justify-center rounded-full border border-brand/15 bg-brand/10 text-sm font-black uppercase text-brand shadow-sm dark:border-brand/25 dark:bg-brand/15',
         className
       )}
       aria-hidden
     >
-      {getInitials(name)}
-    </div>
+      {imageUrl ? <AvatarImage src={profileImageUrl(imageUrl)} alt="" className="object-cover" /> : null}
+      <AvatarFallback className="bg-brand/10 text-sm font-black uppercase text-brand">
+        {getInitials(name)}
+      </AvatarFallback>
+    </Avatar>
   )
 }
 
@@ -439,7 +444,7 @@ function CorrectionApprovalChain({ steps }) {
                 )}
               >
                 <div className="flex gap-4">
-                  <CorrectionInitialsAvatar name={name} />
+                  <CorrectionInitialsAvatar name={name} imageUrl={step.profile_image_url} />
                   <div className="min-w-0 flex-1">
                     <p className="text-[15px] font-bold leading-snug text-foreground">{name}</p>
                     {role ? <p className="mt-1 text-sm font-medium text-foreground/85">{role}</p> : null}
@@ -1748,6 +1753,14 @@ export default function AttendanceCorrections() {
                       <CalendarDays className="size-5 shrink-0" aria-hidden />
                       Summary
                     </h3>
+                    <div className="mb-4 rounded-xl border border-border/60 bg-muted/20 p-4 dark:bg-muted/10">
+                      <EmployeeAvatarNameRoleCell
+                        name={selectedItem.employee_name || selectedItem.requested_by_name || 'Employee'}
+                        imageUrl={selectedItem.employee_profile_image_url || selectedItem.requested_by_profile_image_url}
+                        roleLabel={selectedItem.employee_role_label ?? selectedItem.requested_by_role_label}
+                        hrRole={selectedItem.employee_hr_role ?? selectedItem.requested_by_hr_role}
+                      />
+                    </div>
                     <div className="grid grid-cols-1 gap-x-8 gap-y-3 @lg:grid-cols-2">
                       <div className="grid grid-cols-[minmax(0,11rem)_1fr] gap-x-3 gap-y-2.5 text-sm">
                         <span className="text-muted-foreground">Attendance date</span>

@@ -4,6 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { profileImageUrl } from '@/api'
 import {
   issueLabel,
   reasonLabel,
@@ -14,6 +15,7 @@ import {
   formatTimeOnly,
 } from '@/lib/presenceFilingTable'
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function getInitials(name) {
   if (!name || typeof name !== 'string') return '?'
   const parts = name.trim().split(/\s+/).filter(Boolean)
@@ -58,7 +60,7 @@ export function EmployeeAvatarNameRoleCell({
         compact ? 'size-9' : 'size-11'
       )}
     >
-      {imageUrl ? <AvatarImage src={imageUrl} alt="" className="object-cover" /> : null}
+      {imageUrl ? <AvatarImage src={profileImageUrl(imageUrl)} alt="" className="object-cover" /> : null}
       <AvatarFallback className="bg-gradient-to-br from-slate-200 to-slate-300 text-xs font-bold text-slate-800 dark:from-slate-700 dark:to-slate-600 dark:text-slate-100">
         {getInitials(display)}
       </AvatarFallback>
@@ -118,7 +120,7 @@ export function EmployeeAvatarNameCell({
         compact ? 'size-9' : 'size-11'
       )}
     >
-      {imageUrl ? <AvatarImage src={imageUrl} alt="" className="object-cover" /> : null}
+      {imageUrl ? <AvatarImage src={profileImageUrl(imageUrl)} alt="" className="object-cover" /> : null}
       <AvatarFallback className="bg-gradient-to-br from-slate-200 to-slate-300 text-xs font-bold text-slate-800 dark:from-slate-700 dark:to-slate-600 dark:text-slate-100">
         {getInitials(display)}
       </AvatarFallback>
