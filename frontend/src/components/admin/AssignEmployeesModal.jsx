@@ -358,8 +358,12 @@ export default function AssignEmployeesModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
-        className="max-h-[min(92vh,58rem)] w-[min(calc(100vw-1.5rem),76rem)] max-w-none rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
-        innerClassName="p-0"
+        surfaceStyle={{
+          width: 'min(calc(100vw - 1rem), 88rem)',
+          maxWidth: 'none',
+        }}
+        className="max-h-[min(92vh,62rem)] min-w-0 !max-w-none sm:!max-w-none rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+        innerClassName="flex min-h-0 flex-1 flex-col !gap-0 !overflow-hidden !p-0"
         closeButtonClassName="right-5 top-5 size-10 rounded-xl border-border/80 bg-background text-foreground hover:bg-muted"
         overlayClassName="bg-black/55 backdrop-blur-sm"
         aria-describedby="dept-assign-employees-desc"
@@ -379,9 +383,10 @@ export default function AssignEmployeesModal({
           </div>
         </DialogHeader>
 
-        <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="grid min-h-0 flex-1 grid-cols-1 divide-y divide-border/80 overflow-hidden xl:grid-cols-[minmax(34rem,1.08fr)_minmax(26rem,0.92fr)] xl:divide-x xl:divide-y-0">
-            <div className="flex min-h-0 min-w-0 flex-col bg-card xl:min-h-[32rem]">
+        <form onSubmit={onSubmit} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {/* Two columns from sm (640px); below that stack. minmax(0,fr) avoids clipping the right column. */}
+          <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 divide-y divide-border/80 overflow-hidden sm:grid-cols-[minmax(0,1.2fr)_minmax(0,0.85fr)] sm:divide-x sm:divide-y-0">
+            <div className="flex min-h-0 min-w-0 flex-col bg-card sm:min-h-[34rem]">
               <div className="shrink-0 space-y-4 px-5 py-5 @md:px-6 @xl:px-8">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
@@ -487,7 +492,7 @@ export default function AssignEmployeesModal({
               </div>
             </div>
 
-            <div className="flex min-h-[min(36vh,22rem)] min-w-0 flex-col bg-card xl:min-h-0">
+            <div className="flex min-h-[min(42vh,26rem)] min-w-0 flex-col bg-card sm:min-h-0">
               <SelectedPanelHeader
                 department={department}
                 branchName={department?.branch_name}

@@ -42,6 +42,8 @@ function DialogContent({
   innerClassName,
   closeButtonClassName,
   overlayClassName,
+  /** Applied to the animated modal surface (motion.div), e.g. width/maxWidth when Tailwind conflicts with defaults. */
+  surfaceStyle,
   ...props
 }) {
   return (
@@ -58,6 +60,7 @@ function DialogContent({
         {React.createElement(
           motion.div,
           {
+            style: surfaceStyle,
             initial: { opacity: 0, scale: 0.96 },
             animate: { opacity: 1, scale: 1 },
             transition: { duration: DURATION, ease: EASE },
