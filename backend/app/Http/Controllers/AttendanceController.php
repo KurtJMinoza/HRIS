@@ -124,6 +124,17 @@ class AttendanceController extends Controller
         return $carbon->timezone($this->attendanceTimezone())->format('H:i');
     }
 
+    private function formatTimeForDisplay($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $carbon = $value instanceof Carbon ? $value->copy() : Carbon::parse($value);
+
+        return $carbon->timezone($this->attendanceTimezone())->format('g:i A');
+    }
+
     /**
      * Refreshes the user from the database so schedule validation uses current data (no cache/stale).
      */
@@ -2301,6 +2312,8 @@ class AttendanceController extends Controller
                 'schedule_out' => $scheduleOutDay,
                 'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
                 'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
+                'formatted_time_in' => $this->formatTimeForDisplay($effectiveTimeIn),
+                'formatted_time_out' => $this->formatTimeForDisplay($effectiveTimeOut),
                 'virtual_time_out_from_ot' => $virtualTimeOutFromOt,
                 'time_out_next_day' => $timeOutNextDay,
                 'scheduled_regular_hours' => $scheduledRegularMinutes !== null && $scheduledRegularMinutes > 0
@@ -2351,6 +2364,8 @@ class AttendanceController extends Controller
                 $todayStatus = $status;
                 $todayTimeIn = $this->formatTimeInAttendanceTz($effectiveTimeIn);
                 $todayTimeOut = $this->formatTimeInAttendanceTz($effectiveTimeOut);
+                $todayFormattedTimeIn = $this->formatTimeForDisplay($effectiveTimeIn);
+                $todayFormattedTimeOut = $this->formatTimeForDisplay($effectiveTimeOut);
                 $todayLateMinutes = $dayLateMinutes;
                 $todayLateLabel = $dayLateLabel;
                 $todayUndertimeMinutes = $dayUndertimeMinutes;
@@ -2435,6 +2450,8 @@ class AttendanceController extends Controller
                 'employee_status_label' => $todayEmployeeStatusLabel,
                 'time_in' => $todayTimeIn,
                 'time_out' => $todayTimeOut,
+                'formatted_time_in' => $todayFormattedTimeIn ?? null,
+                'formatted_time_out' => $todayFormattedTimeOut ?? null,
                 'virtual_time_out_from_ot' => $todayVirtualTimeOutFromOt,
                 'late_minutes' => $todayLateMinutes,
                 'late_label' => $todayLateLabel ?? null,

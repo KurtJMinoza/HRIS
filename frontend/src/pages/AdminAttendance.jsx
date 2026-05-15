@@ -32,6 +32,7 @@ import {
   resolveAdminStatusLabel,
   tableApprovedOtHours,
   tableOtHoursHrs,
+  displayAttendanceTime,
 } from '@/components/attendance/attendanceRecordUtils'
 import {
   DropdownMenu,
@@ -55,40 +56,6 @@ import ReportPdfDocument from '@/components/reports/ReportPdfDocument'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdminHrUser } from '@/lib/hrRoutes'
-
-function formatTime(value) {
-  if (!value) return '—'
-
-  // If backend sends full ISO strings (e.g. 2026-02-27T08:00:00Z or +08:00),
-  // ignore timezone and just take the local clock time portion to avoid shifts.
-  if (typeof value === 'string') {
-    const isoMatch = value.match(/T(\d{2}:\d{2})/)
-    const timePart = isoMatch ? isoMatch[1] : value.trim()
-
-    // Handle plain "HH:MM" values as well
-    if (/^\d{1,2}:\d{2}$/.test(timePart)) {
-      const [hStr, mStr] = timePart.split(':')
-      let h = Number(hStr)
-      if (Number.isNaN(h)) return timePart
-      const suffix = h >= 12 ? 'PM' : 'AM'
-      h = h % 12 || 12
-      const hourLabel = String(h).padStart(2, '0')
-      return `${hourLabel}:${mStr} ${suffix}`
-    }
-  }
-
-  // Fallback: try native Date parsing if it's not in the expected format.
-  try {
-    const d = new Date(value)
-    if (Number.isNaN(d.getTime())) return String(value)
-    return d.toLocaleTimeString(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return String(value)
-  }
-}
 
 function toCsvCell(value) {
   const s = value == null ? '' : String(value)
@@ -439,8 +406,8 @@ export default function AdminAttendance() {
       { key: 'date', label: 'Date', accessor: (r) => r.date || '' },
       { key: 'day_name', label: 'Day', accessor: (r) => formatDayName(r.date, r.day_name) },
       { key: 'schedule', label: 'Schedule', accessor: (r) => formatScheduleRange(r) },
-      { key: 'time_in', label: 'Time in', accessor: (r) => r.time_in || '—' },
-      { key: 'time_out', label: 'Time out', accessor: (r) => r.time_out || '—' },
+      { key: 'time_in', label: 'Time in', accessor: (r) => displayAttendanceTime(r.time_in, r.formatted_time_in) || '—' },
+      { key: 'time_out', label: 'Time out', accessor: (r) => displayAttendanceTime(r.time_out, r.formatted_time_out) || '—' },
       { key: 'total_hours', label: 'Total hours', accessor: (r) => tableRenderedHoursLabel(r) },
       { key: 'late_min', label: 'Late (min)', accessor: (r) => minutesCellText(tableLateMinutes(r)) },
       { key: 'undertime_min', label: 'Undertime (min)', accessor: (r) => minutesCellText(tableUndertimeMinutes(r)) },
@@ -482,7 +449,8 @@ export default function AdminAttendance() {
               ? String(row.total_hours)
               : '—',
       },
-      { label: 'Clock In', accessor: (row) => formatTime(row.time_in) },
+      { label: 'Clock In', accessor: (row) => displayAttendanceTime(row.time_in, row.formatted_time_in) || '—' },
+      { label: 'Clock Out', accessor: (row) => displayAttendanceTime(row.time_out, row.formatted_time_out) || '—' },
       {
         label: 'Late Minutes',
         accessor: (row) =>

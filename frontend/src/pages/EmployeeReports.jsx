@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { getMyAttendanceSummary } from '@/api'
 import { AttendanceStatusBadge } from '@/components/AttendanceStatusBadge'
 import { CardMetricSkeleton, TableBodySkeleton } from '@/components/skeletons'
-import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
+import { displayAttendanceTime, formatDayName } from '@/components/attendance/attendanceRecordUtils'
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10)
@@ -34,41 +34,9 @@ function formatHours(value) {
   return num.toFixed(2)
 }
 
-// Attendance report times: normalize to 24-hour HH:MM:SS (and strip broken prefixes like "—01:00").
-function formatTimeTo12Hour(value) {
-  if (!value) return '—'
-  let str = String(value).trim()
-  str = str.replace(/^[^\d]*/, '')
-
-  if (str.includes('T')) {
-    const isoWithSeconds = str.match(/T(\d{2}):(\d{2}):(\d{2})/)
-    if (isoWithSeconds) {
-      const [, hh, mm, ss] = isoWithSeconds
-      return `${hh}:${mm}:${ss}`
-    }
-    const isoWithoutSeconds = str.match(/T(\d{2}):(\d{2})/)
-    if (isoWithoutSeconds) {
-      const [, hh, mm] = isoWithoutSeconds
-      return `${hh}:${mm}:00`
-    }
-    return str
-  }
-
-  if (/^\d{1,2}:\d{2}:\d{2}$/.test(str)) {
-    const [hStr, mStr, sStr] = str.split(':')
-    const h = Number(hStr)
-    if (Number.isNaN(h)) return str
-    return `${String(h).padStart(2, '0')}:${mStr}:${sStr}`
-  }
-
-  if (/^\d{1,2}:\d{2}$/.test(str)) {
-    const [hStr, mStr] = str.split(':')
-    const h = Number(hStr)
-    if (Number.isNaN(h)) return str
-    return `${String(h).padStart(2, '0')}:${mStr}:00`
-  }
-
-  return str
+function reportClockTime(row, key) {
+  const formattedKey = key === 'time_in' ? 'formatted_time_in' : key === 'time_out' ? 'formatted_time_out' : null
+  return displayAttendanceTime(row?.[key], formattedKey ? row?.[formattedKey] : undefined) || '—'
 }
 
 const LEAVE_TYPE_LABELS = {
@@ -228,9 +196,9 @@ export default function EmployeeReports() {
         { label: 'Date', accessor: (row) => formatDate(row.date) },
         { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name) },
         { label: 'Schedule', accessor: (row) => row.schedule ?? '—' },
-        { label: 'Time In', accessor: (row) => (row.time_in ? formatTimeTo12Hour(row.time_in) : '—') },
-        { label: 'Time Out', accessor: (row) => (row.time_out ? formatTimeTo12Hour(row.time_out) : '—') },
-        { label: 'Early Out', accessor: (row) => (row.early_out_time ? formatTimeTo12Hour(row.early_out_time) : '—') },
+        { label: 'Time In', accessor: (row) => reportClockTime(row, 'time_in') },
+        { label: 'Time Out', accessor: (row) => reportClockTime(row, 'time_out') },
+        { label: 'Early Out', accessor: (row) => reportClockTime(row, 'early_out_time') },
         { label: 'Total Hrs', accessor: (row) => (row.total_hours != null ? Number(row.total_hours).toFixed(2) : '—') },
         { label: 'Late (min)', accessor: (row) => (row.late_minutes != null ? String(row.late_minutes) : '0') },
         { label: 'Undertime (min)', accessor: (row) => (row.undertime_minutes != null ? String(row.undertime_minutes) : '0') },
@@ -520,13 +488,13 @@ export default function EmployeeReports() {
                           <td style={{ minWidth: 100 }} className="px-3 py-2 whitespace-nowrap text-xs">{formatDayName(row.date, row.day_name)}</td>
                           <td style={{ minWidth: 110 }} className="px-3 py-2 whitespace-nowrap text-xs">{row.schedule ?? '—'}</td>
                           <td style={{ minWidth: 90 }} className="px-3 py-2 whitespace-nowrap text-center font-mono text-xs tabular-nums">
-                            {row.time_in ? formatTimeTo12Hour(row.time_in) : '—'}
+                            {reportClockTime(row, 'time_in')}
                           </td>
                           <td style={{ minWidth: 90 }} className="px-3 py-2 whitespace-nowrap text-center font-mono text-xs tabular-nums">
-                            {row.time_out ? formatTimeTo12Hour(row.time_out) : '—'}
+                            {reportClockTime(row, 'time_out')}
                           </td>
                           <td style={{ minWidth: 90 }} className="px-3 py-2 whitespace-nowrap text-center font-mono text-xs tabular-nums">
-                            {row.early_out_time ? formatTimeTo12Hour(row.early_out_time) : '—'}
+                            {reportClockTime(row, 'early_out_time')}
                           </td>
                           <td style={{ minWidth: 80 }} className="px-3 py-2 whitespace-nowrap text-right font-mono text-xs tabular-nums">
                             {row.total_hours != null ? Number(row.total_hours).toFixed(2) : '—'}

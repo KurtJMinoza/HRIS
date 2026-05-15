@@ -86,7 +86,12 @@ export function reviewStatusBadgeClass(key) {
 export function formatTimeOnly(iso) {
   if (!iso) return '—'
   try {
-    return new Date(iso).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
+    return new Date(iso).toLocaleTimeString('en-PH', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Manila',
+    })
   } catch {
     return '—'
   }

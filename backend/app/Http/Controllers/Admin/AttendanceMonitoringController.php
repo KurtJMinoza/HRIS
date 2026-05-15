@@ -47,6 +47,17 @@ class AttendanceMonitoringController extends Controller
         return Carbon::parse($date)->timezone($this->attendanceTimezone())->format('l');
     }
 
+    private function formatTimeForDisplay($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $carbon = $value instanceof Carbon ? $value->copy() : Carbon::parse($value);
+
+        return $carbon->timezone($this->attendanceTimezone())->format('g:i A');
+    }
+
     /**
      * Build a per-day schedule map from a WorkingSchedule row (same shape used in ReportsController).
      *
@@ -282,8 +293,8 @@ class AttendanceMonitoringController extends Controller
                     $r['company_name'] ?? null,
                     $r['date'] ?? null,
                     $r['day_name'] ?? (! empty($r['date']) ? $this->dayNameForDate((string) $r['date']) : null),
-                    $r['time_in'] ?? null,
-                    $r['time_out'] ?? null,
+                    $r['formatted_time_in'] ?? ($r['time_in'] ?? null),
+                    $r['formatted_time_out'] ?? ($r['time_out'] ?? null),
                     $r['status'] ?? null,
                     $r['overtime_status'] ?? null,
                     $r['schedule_in'] ?? null,
@@ -770,11 +781,13 @@ class AttendanceMonitoringController extends Controller
                             ? $effectiveTimeIn->copy()->timezone($tz)->format('H:i')
                             : Carbon::parse($effectiveTimeIn)->timezone($tz)->format('H:i'))
                         : null,
+                    'formatted_time_in' => $this->formatTimeForDisplay($effectiveTimeIn),
                     'time_out' => $effectiveTimeOut
                         ? ($effectiveTimeOut instanceof Carbon
                             ? $effectiveTimeOut->copy()->timezone($tz)->format('H:i')
                             : Carbon::parse($effectiveTimeOut)->timezone($tz)->format('H:i'))
                         : null,
+                    'formatted_time_out' => $this->formatTimeForDisplay($effectiveTimeOut),
                     'time_out_next_day' => $timeOutNextDay,
                     'scheduled_regular_hours' => $scheduledRegularMinutes !== null && $scheduledRegularMinutes > 0
                         ? round($scheduledRegularMinutes / 60, 2)

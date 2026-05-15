@@ -24,7 +24,7 @@ import { AttendanceStatusBadge } from '@/components/AttendanceStatusBadge'
 import { TableBodySkeleton } from '@/components/skeletons'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdminHrUser } from '@/lib/hrRoutes'
-import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
+import { displayAttendanceTime, formatDayName } from '@/components/attendance/attendanceRecordUtils'
 
 export { AttendanceStatusBadge }
 
@@ -54,44 +54,9 @@ function formatNumber(value) {
   return Number(value).toLocaleString()
 }
 
-// Attendance report times: normalize to 24-hour HH:MM:SS (and strip broken prefixes like "—01:00").
-function formatTimeTo12Hour(value) {
-  if (!value) return '—'
-  let str = String(value).trim()
-  str = str.replace(/^[^\d]*/, '')
-
-  // ISO timestamps: derive local time components.
-  if (str.includes('T')) {
-    const isoWithSeconds = str.match(/T(\d{2}):(\d{2}):(\d{2})/)
-    if (isoWithSeconds) {
-      const [, hh, mm, ss] = isoWithSeconds
-      return `${hh}:${mm}:${ss}`
-    }
-    const isoWithoutSeconds = str.match(/T(\d{2}):(\d{2})/)
-    if (isoWithoutSeconds) {
-      const [, hh, mm] = isoWithoutSeconds
-      return `${hh}:${mm}:00`
-    }
-    return str
-  }
-
-  // HH:MM:SS
-  if (/^\d{1,2}:\d{2}:\d{2}$/.test(str)) {
-    const [hStr, mStr, sStr] = str.split(':')
-    const h = Number(hStr)
-    if (Number.isNaN(h)) return str
-    return `${String(h).padStart(2, '0')}:${mStr}:${sStr}`
-  }
-
-  // HH:MM
-  if (/^\d{1,2}:\d{2}$/.test(str)) {
-    const [hStr, mStr] = str.split(':')
-    const h = Number(hStr)
-    if (Number.isNaN(h)) return str
-    return `${String(h).padStart(2, '0')}:${mStr}:00`
-  }
-
-  return str
+function reportClockTime(row, key) {
+  const formattedKey = key === 'time_in' ? 'formatted_time_in' : key === 'time_out' ? 'formatted_time_out' : null
+  return displayAttendanceTime(row?.[key], formattedKey ? row?.[formattedKey] : undefined) || '—'
 }
 
 const LEAVE_TYPE_LABELS = {
@@ -370,8 +335,8 @@ export default function AdminReports() {
       { label: 'Date', accessor: 'date', ...txt(100) },
       { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name), ...txt(100) },
       { label: 'Schedule', accessor: (row) => row.schedule || '—', ...txt(110) },
-      { label: 'Time In', accessor: (row) => (row.time_in ? formatTimeTo12Hour(row.time_in) : '—'), minW: 90, align: 'center' },
-      { label: 'Time Out', accessor: (row) => (row.time_out ? formatTimeTo12Hour(row.time_out) : '—'), minW: 90, align: 'center' },
+      { label: 'Time In', accessor: (row) => reportClockTime(row, 'time_in'), minW: 90, align: 'center' },
+      { label: 'Time Out', accessor: (row) => reportClockTime(row, 'time_out'), minW: 90, align: 'center' },
       { label: 'Total Hours', accessor: (row) => (row.total_hours != null ? row.total_hours.toFixed(2) : '—'), ...num() },
       { label: 'Late (min)', accessor: (row) => (row.late_minutes != null ? String(row.late_minutes) : '0'), ...num() },
       {
@@ -404,15 +369,15 @@ export default function AdminReports() {
       { label: 'Date', accessor: 'date', ...txt(100) },
       { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name), ...txt(100) },
       { label: 'Schedule', accessor: (row) => row.schedule || '—', ...txt(110) },
-      { label: 'Time In', accessor: (row) => (row.time_in ? formatTimeTo12Hour(row.time_in) : '—'), minW: 90, align: 'center' },
-      { label: 'Time Out', accessor: (row) => (row.time_out ? formatTimeTo12Hour(row.time_out) : '—'), minW: 90, align: 'center' },
+      { label: 'Time In', accessor: (row) => reportClockTime(row, 'time_in'), minW: 90, align: 'center' },
+      { label: 'Time Out', accessor: (row) => reportClockTime(row, 'time_out'), minW: 90, align: 'center' },
       {
         label: 'Early Out Time',
         accessor: (row) =>
           row.early_out_time
-            ? formatTimeTo12Hour(row.early_out_time)
+            ? reportClockTime(row, 'early_out_time')
             : row.status === 'undertime' && row.time_out
-              ? formatTimeTo12Hour(row.time_out)
+              ? reportClockTime(row, 'time_out')
               : '—',
         minW: 100,
         align: 'center',

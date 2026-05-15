@@ -243,6 +243,17 @@ class ReportsController extends Controller
         return $carbon->timezone($this->attendanceTimezone())->format('H:i');
     }
 
+    private function formatTimeForDisplay($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $carbon = $value instanceof Carbon ? $value->copy() : Carbon::parse($value);
+
+        return $carbon->timezone($this->attendanceTimezone())->format('g:i A');
+    }
+
     /**
      * Reuses the same extraction logic as AttendanceMonitoringController.
      *
@@ -1159,6 +1170,8 @@ class ReportsController extends Controller
                         'schedule' => $scheduleLabel,
                         'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
                         'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
+                        'formatted_time_in' => $this->formatTimeForDisplay($effectiveTimeIn),
+                        'formatted_time_out' => $this->formatTimeForDisplay($effectiveTimeOut),
                         'early_out_time' => $earlyOutTime,
                         // Scheduled shift length (e.g. 8.00) — use for "Duration"; not inflated by early clock-in.
                         'scheduled_duration_hours' => $scheduledDurationHours,

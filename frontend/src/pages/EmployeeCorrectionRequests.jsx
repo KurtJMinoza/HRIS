@@ -361,12 +361,8 @@ function ApprovalTimeline({ steps }) {
 }
 
 function AttendanceTimesBlock({ timeIn, timeOut }) {
-  const inLabel = timeIn
-    ? new Date(timeIn).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
-    : '?'
-  const outLabel = timeOut
-    ? new Date(timeOut).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
-    : '?'
+  const inLabel = formatTimeOnly(timeIn)
+  const outLabel = formatTimeOnly(timeOut)
   return (
     <div className="divide-y divide-border/70 dark:divide-white/10">
       <div className="flex min-h-14 items-center justify-between gap-4 py-2">

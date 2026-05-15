@@ -33,7 +33,7 @@ import { AttendanceStatusPill } from '@/components/attendance/AttendanceStatusPi
 
 function timeSortKey(value) {
   if (value == null || value === '') return null
-  if (typeof value === 'string' && /^\d{1,2}:\d{2}$/.test(value.trim())) {
+  if (typeof value === 'string' && /^\d{1,2}:\d{2}(?::\d{2})?$/.test(value.trim())) {
     const [h, m] = value.trim().split(':').map(Number)
     return h * 60 + m
   }
@@ -206,7 +206,7 @@ export function AttendanceRecordsDataTable({
         header: ({ column }) => <SortableHeader column={column} label="Time in" />,
         accessorFn: (row) => timeSortKey(row.time_in) ?? -1,
         cell: ({ row }) => {
-          const t = mutedTimeCell(row.original.time_in)
+          const t = mutedTimeCell(row.original.time_in, row.original.formatted_time_in)
           return (
             <span
               className={cn(
@@ -224,7 +224,7 @@ export function AttendanceRecordsDataTable({
         header: ({ column }) => <SortableHeader column={column} label="Time out" />,
         accessorFn: (row) => timeSortKey(row.time_out) ?? -1,
         cell: ({ row }) => {
-          const t = mutedTimeCell(row.original.time_out)
+          const t = mutedTimeCell(row.original.time_out, row.original.formatted_time_out)
           return (
             <span
               className={cn(
@@ -481,8 +481,8 @@ export function AttendanceRecordsDataTable({
         {rows.map((r) => {
           const id = isAdmin ? `${r.employee_id}-${r.date}` : r.date
           const label = isAdmin ? resolveAdminStatusLabel(r) : resolveEmployeeStatusLabel(r)
-          const ti = mutedTimeCell(r.time_in)
-          const to = mutedTimeCell(r.time_out)
+          const ti = mutedTimeCell(r.time_in, r.formatted_time_in)
+          const to = mutedTimeCell(r.time_out, r.formatted_time_out)
           return (
             <button
               key={id}

@@ -48,8 +48,22 @@ export function formatDateTimeReadable(value) {
   }
 }
 
-/** Clock display for admin rows (plain HH:MM) or ISO timestamps from APIs. */
-export function displayAttendanceTime(value) {
+function normalizeDisplayTime(value) {
+  if (value == null || value === '') return null
+  const raw = String(value).trim()
+  if (!raw || raw === '—' || raw === '--') return null
+  return raw
+}
+
+function formatClockPartsTo12Hour(hour, minute) {
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  const suffix = hour >= 12 ? 'PM' : 'AM'
+  const displayHour = hour % 12 || 12
+  return `${displayHour}:${String(minute).padStart(2, '0')} ${suffix}`
+}
+
+/** Actual attendance punch display: "g:i A" in Asia/Manila, with HH:mm fallbacks treated as local clock time. */
+export function formatAttendanceClockTime(value) {
   if (value == null || value === '') {
     return null
   }
@@ -61,33 +75,64 @@ export function displayAttendanceTime(value) {
       return null
     }
 
+    if (/^\d{1,2}:\d{2}\s?(AM|PM)$/i.test(t)) {
+      return t.replace(/\s?(AM|PM)$/i, (_, suffix) => ` ${suffix.toUpperCase()}`)
+    }
+
     // Some backends/old data may send strings like "—01:00" or "--08:00".
     // Strip leading non-digits before parsing to avoid showing the broken prefix.
     t = t.replace(/^[^\d]*/, '')
 
     // Already normalized form: "HH:MM:SS"
     if (/^\d{1,2}:\d{2}:\d{2}$/.test(t)) {
-      const [hStr, mStr, sStr] = t.split(':')
+      const [hStr, mStr] = t.split(':')
       const h = Number(hStr)
-      if (Number.isNaN(h)) return t
-      return `${String(h).padStart(2, '0')}:${mStr}:${sStr}`
+      const m = Number(mStr)
+      return formatClockPartsTo12Hour(h, m) || t
     }
 
-    // "HH:MM" -> normalize to "HH:MM:00" for consistent shift display.
+    // "HH:MM" from API is already in attendance timezone; do not convert through Date/UTC.
     if (/^\d{1,2}:\d{2}$/.test(t)) {
       const [hStr, mStr] = t.split(':')
       const h = Number(hStr)
-      if (Number.isNaN(h)) return t
-      return `${String(h).padStart(2, '0')}:${mStr}:00`
+      const m = Number(mStr)
+      return formatClockPartsTo12Hour(h, m) || t
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}T/.test(t)) {
+      const d = new Date(t)
+      if (!Number.isNaN(d.getTime())) {
+        return new Intl.DateTimeFormat('en-PH', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: 'Asia/Manila',
+        }).format(d)
+      }
     }
   }
 
-  // Fallback: shared ISO/Date formatter with seconds.
-  return formatTimeHhMmSs(value)
+  try {
+    const d = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(d.getTime())) return String(value)
+    return new Intl.DateTimeFormat('en-PH', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Manila',
+    }).format(d)
+  } catch {
+    return String(value)
+  }
 }
 
-export function mutedTimeCell(value) {
-  const d = displayAttendanceTime(value)
+/** Clock display for admin/employee attendance rows; prefer backend formatted_time_* fields. */
+export function displayAttendanceTime(value, formattedValue) {
+  return normalizeDisplayTime(formattedValue) || formatAttendanceClockTime(value)
+}
+
+export function mutedTimeCell(value, formattedValue) {
+  const d = displayAttendanceTime(value, formattedValue)
   if (d == null || d === '—') {
     return { text: '—', muted: true }
   }
@@ -137,33 +182,7 @@ export function minutesCellText(n) {
 }
 
 export function formatTimeHhMm(value) {
-  if (!value) return '—'
-  if (typeof value === 'string') {
-    const raw = value.trim()
-    // Admin / employee summary APIs: wall-clock "HH:MM" in company timezone (single source of truth).
-    if (/^\d{1,2}:\d{2}$/.test(raw)) {
-      // Requirement: display in 24-hour format for clarity (08:00–17:00).
-      const [hStr, mStr] = raw.split(':')
-      const h = Number(hStr)
-      if (Number.isNaN(h)) return raw
-      return `${String(h).padStart(2, '0')}:${mStr}`
-    }
-    // Full ISO timestamps: always interpret as an instant — do not use T(HH:MM) substring (breaks Z/UTC vs display TZ).
-    if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) {
-      const d = new Date(raw)
-      if (!Number.isNaN(d.getTime())) {
-        // Keep ISO timestamps readable but stable; still output 24-hour HH:MM.
-        return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
-      }
-    }
-  }
-  try {
-    const d = new Date(value)
-    if (Number.isNaN(d.getTime())) return String(value)
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
-  } catch {
-    return String(value)
-  }
+  return formatAttendanceClockTime(value) || '—'
 }
 
 /**

@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils'
 import {
   attendanceRecordRef,
   formatShortDate,
-  formatTimeHhMm,
+  displayAttendanceTime,
   adminHoursDetailSummary,
   employeeHoursDetailSummary,
   adminTypeReasonLabel,
@@ -104,6 +104,8 @@ export function AttendanceRecordDetailSheet({
 
   const statusLabel = isAdmin ? resolveAdminStatusLabel(row) : resolveEmployeeStatusLabel(row)
   const typeLabel = isAdmin ? adminTypeReasonLabel(row) : employeeTypeReasonLabel(row)
+  const timeInLabel = displayAttendanceTime(row.time_in, row.formatted_time_in) || '—'
+  const timeOutLabel = displayAttendanceTime(row.time_out, row.formatted_time_out) || '—'
   const duration = isAdmin
     ? adminHoursDetailSummary(row, { showPayroll: !!showPayrollColumns })
     : employeeHoursDetailSummary(row)
@@ -210,7 +212,7 @@ export function AttendanceRecordDetailSheet({
                 </h3>
                 <div className="rounded-xl border border-border/50 bg-card/50 p-4">
                   <TimelineItem
-                    title={row.time_in ? `Clock in · ${formatTimeHhMm(row.time_in)}` : 'No clock in'}
+                    title={row.time_in ? `Clock in · ${timeInLabel}` : 'No clock in'}
                     subtitle="First punch of the day"
                     done={!!row.time_in}
                     isLast={false}
@@ -218,7 +220,7 @@ export function AttendanceRecordDetailSheet({
                   <TimelineItem
                     title={
                       row.time_out
-                        ? `Clock out · ${formatTimeHhMm(row.time_out)}${row.time_out_next_day ? ' (next day)' : ''}`
+                        ? `Clock out · ${timeOutLabel}${row.time_out_next_day ? ' (next day)' : ''}`
                         : row.virtual_time_out_from_ot
                           ? `Expected end from approved OT${row.approved_ot_end_time ? ` · ${row.approved_ot_end_time}` : ''} (no punch-out)`
                           : row.has_approved_overtime && row.approved_ot_end_time
@@ -294,11 +296,11 @@ export function AttendanceRecordDetailSheet({
             <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <LogIn className="size-3.5 text-emerald-600" aria-hidden />
-                In: {row.time_in ? formatTimeHhMm(row.time_in) : '—'}
+                In: {timeInLabel}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <LogOut className="size-3.5 text-emerald-600" aria-hidden />
-                Out: {row.time_out ? formatTimeHhMm(row.time_out) : '—'}
+                Out: {timeOutLabel}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="size-3.5" aria-hidden />

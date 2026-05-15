@@ -40,6 +40,17 @@ class AttendanceCorrectionController extends Controller
         return Carbon::parse($date)->timezone($this->attendanceTimezone())->format('l');
     }
 
+    private function formatTimeForDisplay($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $carbon = $value instanceof Carbon ? $value->copy() : Carbon::parse($value);
+
+        return $carbon->timezone($this->attendanceTimezone())->format('g:i A');
+    }
+
     /**
      * Build a per-day schedule array from a WorkingSchedule model so that employees
      * assigned via the Schedule module (working_schedule_id) are handled the same as
@@ -485,6 +496,8 @@ class AttendanceCorrectionController extends Controller
                 'day_name' => $correction->date ? $this->dayNameForDate($correction->date) : null,
                 'time_in' => $correction->time_in?->copy()->timezone($responseTz)->toIso8601String(),
                 'time_out' => $correction->time_out?->copy()->timezone($responseTz)->toIso8601String(),
+                'formatted_time_in' => $this->formatTimeForDisplay($correction->time_in),
+                'formatted_time_out' => $this->formatTimeForDisplay($correction->time_out),
                 'remarks' => $correction->remarks,
                 'approved' => $correction->approved,
                 'approved_by' => $correction->approved_by,
