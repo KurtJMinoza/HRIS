@@ -768,13 +768,19 @@ export default function EmployeeDashboard() {
     setCalendarMonth(t.getMonth())
   }
 
+  /** Row for the clicked calendar day: API day, synthetic rest-day tile, or empty placeholder. */
   const selectedDayDetails = useMemo(() => {
     if (!selectedDay || !Array.isArray(days)) return null
     const iso = formatLocalDateKey(selectedDay)
-    const record = days.find((d) => d.date === iso)
-    if (!record) return null
-    return { ...record, date_iso: iso }
-  }, [selectedDay, days])
+    const fromApi = days.find((d) => d.date === iso)
+    if (fromApi) return { ...fromApi, date_iso: iso }
+    const st = statusByDate.get(iso)
+    const effective = st ?? '—'
+    if (isRestDay(iso) && (effective === '—' || effective === 'absent')) {
+      return { status: effective, date: iso, date_iso: iso }
+    }
+    return { date_iso: iso, status: null }
+  }, [selectedDay, days, statusByDate, isRestDay])
 
   const hasLeaveActivity = useMemo(() => {
     if (loading) return true
@@ -1049,6 +1055,16 @@ export default function EmployeeDashboard() {
     if (typeof record.total_hours === 'number') lines.push(`Total: ${record.total_hours.toFixed ? record.total_hours.toFixed(2) : record.total_hours}h`)
     if (typeof record.overtime_hours === 'number' && record.overtime_hours > 0) lines.push(`OT: ${record.overtime_hours.toFixed ? record.overtime_hours.toFixed(2) : record.overtime_hours}h`)
     return lines
+  }
+
+  function getAttendanceTotalHours(record) {
+    const hours =
+      typeof record?.total_rendered_hours === 'number'
+        ? record.total_rendered_hours
+        : typeof record?.total_hours === 'number'
+          ? record.total_hours
+          : null
+    return typeof hours === 'number' && Number.isFinite(hours) ? hours : null
   }
 
   return (
@@ -1649,7 +1665,7 @@ export default function EmployeeDashboard() {
                 Attendance calendar
               </CardTitle>
               <CardDescription className="text-sm text-muted-foreground @md:text-base">
-                Use the arrows or tap the month to jump to today. Each day shows your attendance status; hover for
+                Use the arrows or tap the month to jump to today. Each day shows your attendance status; tap a day for
                 time in/out and totals.
               </CardDescription>
             </CardHeader>
@@ -1770,80 +1786,113 @@ export default function EmployeeDashboard() {
                   </div>
                 </div>
               </div>
-              <div className="mx-auto w-full max-w-6xl space-y-2 px-3 pb-3 @sm:px-4 md:pb-4">
-              {selectedDayDetails && (
-                <div className="rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-xs text-muted-foreground @sm:text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-foreground">
-                      {new Date(`${selectedDayDetails.date_iso}T12:00:00`).toLocaleDateString('en-PH', {
-                        weekday: 'short',
-                        month: 'short',
-                        day: 'numeric',
-                      })}
-                    </span>
-                    <span className="inline-flex items-center rounded-md bg-card px-2 py-0.5 text-sm capitalize">
-                      {getDisplayStatus(
-                        selectedDayDetails.status,
-                        selectedDayDetails.date_iso,
-                        selectedDayDetails.late_label,
-                        selectedDayDetails.late_minutes,
-                      ) || '—'}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                    {selectedDayDetails.time_in && (
-                      <span>
-                        In:{' '}
-                        <span className="font-medium text-foreground">
-                          {formatTime(selectedDayDetails.time_in)}
-                        </span>
-                      </span>
-                    )}
-                    {selectedDayDetails.time_out && (
-                      <span>
-                        Out:{' '}
-                        <span className="font-medium text-foreground">
-                          {formatTime(selectedDayDetails.time_out)}
-                        </span>
-                      </span>
-                    )}
-                    {(selectedDayDetails.late_label ||
-                      (typeof selectedDayDetails.late_minutes === 'number' && selectedDayDetails.late_minutes > 0)) && (
-                      <span>
-                        Status:{' '}
-                        <span className="font-medium text-amber-600 dark:text-amber-400">
-                          {selectedDayDetails.late_label || `${selectedDayDetails.late_minutes} min`}
-                        </span>
-                      </span>
-                    )}
-                    {typeof selectedDayDetails.undertime_minutes === 'number' &&
-                      selectedDayDetails.undertime_minutes > 0 && (
-                        <span>
-                          Undertime:{' '}
-                          <span className="font-medium text-orange-600 dark:text-orange-400">
-                            {selectedDayDetails.undertime_minutes} min
-                          </span>
-                        </span>
-                      )}
-                    {typeof selectedDayDetails.total_hours === 'number' && (
-                      <span>
-                        Total:{' '}
-                        <span className="font-medium text-foreground">
-                          {selectedDayDetails.total_hours.toFixed
-                            ? selectedDayDetails.total_hours.toFixed(2)
-                            : selectedDayDetails.total_hours}
-                          h
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-              </div>
             </CardContent>
           </Card>
         </Motion.div>
       </Motion.div>
+
+      <Dialog
+        open={selectedDay != null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedDay(null)
+        }}
+      >
+        <DialogContent
+          className="max-w-md rounded-2xl border-border sm:max-w-md"
+          innerClassName="gap-0 p-0 pr-0"
+          closeButtonClassName="right-4 top-4 bg-card/95"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedDay(null)
+          }}
+        >
+          {selectedDayDetails && (
+            <>
+              <DialogHeader className="border-b border-border/70 bg-gradient-to-br from-orange-50 via-card to-card px-5 py-5 pr-16 text-left dark:from-orange-500/10 dark:via-card dark:to-card">
+                <div className="flex items-center gap-3">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-300">
+                    <CalendarDays className="size-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <DialogTitle className="truncate text-xl font-extrabold tracking-tight text-foreground">
+                      {formatTodayDate(selectedDayDetails.date_iso)}
+                    </DialogTitle>
+                    {selectedDayDetails.status != null && (
+                      <p className="mt-1 text-sm font-semibold text-orange-700 dark:text-orange-300">
+                        {getDisplayStatus(
+                          selectedDayDetails.status,
+                          selectedDayDetails.date_iso,
+                          selectedDayDetails.late_label,
+                          selectedDayDetails.late_minutes,
+                        ) || '—'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <DialogDescription className="sr-only">
+                  {`Attendance details for ${formatTodayDate(selectedDayDetails.date_iso)}.`}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 px-5 py-5">
+                {selectedDayDetails.status == null ? (
+                  <div className="rounded-xl border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                    No attendance record for this date.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid gap-2 text-sm">
+                      {selectedDayDetails.time_in ? (
+                        <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
+                          <span className="font-medium text-muted-foreground">In</span>
+                          <span className="font-semibold tabular-nums text-foreground">{formatTime(selectedDayDetails.time_in)}</span>
+                        </div>
+                      ) : null}
+                      {selectedDayDetails.time_out ? (
+                        <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
+                          <span className="font-medium text-muted-foreground">Out</span>
+                          <span className="font-semibold tabular-nums text-foreground">{formatTime(selectedDayDetails.time_out)}</span>
+                        </div>
+                      ) : null}
+                      {(selectedDayDetails.late_label ||
+                        (typeof selectedDayDetails.late_minutes === 'number' && selectedDayDetails.late_minutes > 0)) && (
+                        <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5">
+                          <span className="font-medium text-muted-foreground">Status</span>
+                          <span className="font-semibold text-amber-700 dark:text-amber-300">
+                            {selectedDayDetails.late_label || `${selectedDayDetails.late_minutes} min`}
+                          </span>
+                        </div>
+                      )}
+                      {typeof selectedDayDetails.undertime_minutes === 'number' &&
+                        selectedDayDetails.undertime_minutes > 0 && (
+                          <div className="flex items-center justify-between gap-3 rounded-xl border border-orange-500/25 bg-orange-500/10 px-3 py-2.5">
+                            <span className="font-medium text-muted-foreground">Undertime</span>
+                            <span className="font-semibold text-orange-700 dark:text-orange-300">
+                              {selectedDayDetails.undertime_minutes} min short
+                            </span>
+                          </div>
+                        )}
+                      {(() => {
+                        const th = getAttendanceTotalHours(selectedDayDetails)
+                        if (th == null) return null
+                        return (
+                          <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-card px-3 py-3 shadow-sm">
+                            <span className="font-semibold text-foreground">Total</span>
+                            <span className="text-lg font-extrabold tabular-nums text-foreground">{th.toFixed(2)}h</span>
+                          </div>
+                        )
+                      })()}
+                      {!selectedDayDetails.time_in && !selectedDayDetails.time_out && getAttendanceTotalHours(selectedDayDetails) == null && (
+                        <p className="rounded-xl border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                          No clock in/out details captured for this day.
+                        </p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={otDetailsOpen} onOpenChange={setOtDetailsOpen}>
         <DialogContent className="max-w-lg sm:max-w-2xl" innerClassName="gap-0">
