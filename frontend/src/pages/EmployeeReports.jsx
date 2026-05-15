@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { getMyAttendanceSummary } from '@/api'
 import { AttendanceStatusBadge } from '@/components/AttendanceStatusBadge'
 import { CardMetricSkeleton, TableBodySkeleton } from '@/components/skeletons'
+import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10)
@@ -165,6 +166,7 @@ export default function EmployeeReports() {
       return {
         ...att,
         schedule: schedLabel,
+        day_name: att.day_name || formatDayName(att.date),
         early_out_time: null,
         overtime_minutes: overtimeMinutes,
         night_hours: hasOut ? att.night_hours ?? null : null,
@@ -224,6 +226,7 @@ export default function EmployeeReports() {
             : '—'
       const columns = [
         { label: 'Date', accessor: (row) => formatDate(row.date) },
+        { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name) },
         { label: 'Schedule', accessor: (row) => row.schedule ?? '—' },
         { label: 'Time In', accessor: (row) => (row.time_in ? formatTimeTo12Hour(row.time_in) : '—') },
         { label: 'Time Out', accessor: (row) => (row.time_out ? formatTimeTo12Hour(row.time_out) : '—') },
@@ -446,6 +449,7 @@ export default function EmployeeReports() {
                 <thead>
                   <tr className="sticky top-0 z-10 border-b-0 bg-muted/40">
                     <th style={{ minWidth: 100 }} className="px-3 py-2 whitespace-nowrap text-left text-xs font-medium text-muted-foreground">Date</th>
+                    <th style={{ minWidth: 100 }} className="px-3 py-2 whitespace-nowrap text-left text-xs font-medium text-muted-foreground">Day</th>
                     <th style={{ minWidth: 110 }} className="px-3 py-2 whitespace-nowrap text-left text-xs font-medium text-muted-foreground">Schedule</th>
                     <th style={{ minWidth: 90 }} className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-muted-foreground">Time In</th>
                     <th style={{ minWidth: 90 }} className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-muted-foreground">Time Out</th>
@@ -474,7 +478,7 @@ export default function EmployeeReports() {
                     <TableBodySkeleton rows={6} cols={12} />
                   ) : !dailyBreakdownRows.length ? (
                     <tr>
-                      <td colSpan={21} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                      <td colSpan={22} className="px-3 py-8 text-center text-sm text-muted-foreground">
                         No attendance records for this period.
                       </td>
                     </tr>
@@ -513,6 +517,7 @@ export default function EmployeeReports() {
                       return (
                         <tr key={row.date} className="border-b-0 hover:bg-muted/30">
                           <td style={{ minWidth: 100 }} className="px-3 py-2 whitespace-nowrap text-xs">{formatDate(row.date)}</td>
+                          <td style={{ minWidth: 100 }} className="px-3 py-2 whitespace-nowrap text-xs">{formatDayName(row.date, row.day_name)}</td>
                           <td style={{ minWidth: 110 }} className="px-3 py-2 whitespace-nowrap text-xs">{row.schedule ?? '—'}</td>
                           <td style={{ minWidth: 90 }} className="px-3 py-2 whitespace-nowrap text-center font-mono text-xs tabular-nums">
                             {row.time_in ? formatTimeTo12Hour(row.time_in) : '—'}

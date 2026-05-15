@@ -16,6 +16,7 @@ import { TableBodySkeleton } from '@/components/skeletons'
 import {
   attendanceRecordRef,
   formatShortDate,
+  formatDayName,
   tableRenderedHoursLabel,
   resolveAdminStatusLabel,
   resolveEmployeeStatusLabel,
@@ -173,6 +174,22 @@ export function AttendanceRecordsDataTable({
         cell: ({ row }) => (
           <span className="whitespace-nowrap text-sm font-medium tabular-nums text-foreground">
             {formatShortDate(row.original.date)}
+          </span>
+        ),
+      },
+      {
+        id: 'day_name',
+        header: ({ column }) => <SortableHeader column={column} label="Day" />,
+        accessorFn: (row) => row.day_name || formatDayName(row.date),
+        sortingFn: (a, b) =>
+          String(a.original.day_name || formatDayName(a.original.date)).localeCompare(
+            String(b.original.day_name || formatDayName(b.original.date)),
+            undefined,
+            { sensitivity: 'base' }
+          ),
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap text-sm font-medium text-foreground">
+            {formatDayName(row.original.date, row.original.day_name)}
           </span>
         ),
       },
@@ -412,7 +429,7 @@ export function AttendanceRecordsDataTable({
         <div className="w-full min-w-0 rounded-xl border border-border/50 bg-card shadow-sm">
           <Table
             containerClassName="max-h-[70vh] rounded-xl"
-            className="w-full min-w-[1100px]"
+            className="w-full min-w-[1180px]"
           >
             <TableHeader className="bg-card dark:bg-card">
               {table.getHeaderGroups().map((hg) => (
@@ -497,6 +514,10 @@ export function AttendanceRecordsDataTable({
                     <p className="truncate text-foreground">{isAdmin ? r.department || '—' : viewerDepartment || '—'}</p>
                   </div>
                 ) : null}
+                <div className="col-span-2">
+                  <p className="font-semibold uppercase tracking-wide text-muted-foreground">Day</p>
+                  <p className="text-foreground">{formatDayName(r.date, r.day_name)}</p>
+                </div>
                 <div className="col-span-2">
                   <p className="font-semibold uppercase tracking-wide text-muted-foreground">Schedule</p>
                   <p className="text-foreground">{formatScheduleRange(r)}</p>

@@ -35,6 +35,11 @@ class AttendanceCorrectionController extends Controller
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
     }
 
+    private function dayNameForDate(string|\DateTimeInterface $date): string
+    {
+        return Carbon::parse($date)->timezone($this->attendanceTimezone())->format('l');
+    }
+
     /**
      * Build a per-day schedule array from a WorkingSchedule model so that employees
      * assigned via the Schedule module (working_schedule_id) are handled the same as
@@ -477,6 +482,7 @@ class AttendanceCorrectionController extends Controller
                 'id' => $correction->id,
                 'employee_id' => $correction->user_id,
                 'date' => $correction->date?->toDateString(),
+                'day_name' => $correction->date ? $this->dayNameForDate($correction->date) : null,
                 'time_in' => $correction->time_in?->copy()->timezone($responseTz)->toIso8601String(),
                 'time_out' => $correction->time_out?->copy()->timezone($responseTz)->toIso8601String(),
                 'remarks' => $correction->remarks,

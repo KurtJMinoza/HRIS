@@ -103,6 +103,7 @@ import {
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 
 const APPROVAL_INFO_SHORT =
   'Multi-step approval: managers first, then HR finalizes and updates attendance.'
@@ -1101,6 +1102,7 @@ export default function AttendanceCorrections() {
       'Employee',
       'Org role',
       'Attendance date',
+      'Day',
       'Issue type',
       'Reason',
       'Time in',
@@ -1116,6 +1118,7 @@ export default function AttendanceCorrections() {
         item.employee_name || item.requested_by_name || '',
         item.employee_role_label ?? item.requested_by_role_label ?? '',
         item.date || '',
+        formatDayName(item.date, item.day_name),
         issueLabel(item.issue_type),
         item.reason_code || '',
         tIn ? formatTimeOnly(tIn) : '',
@@ -1564,7 +1567,7 @@ export default function AttendanceCorrections() {
                   </div>
 
                   <div className="hidden w-full min-w-0 touch-pan-x overflow-x-auto bg-card px-4 pb-8 pt-2 sm:px-6 md:px-8 lg:block">
-                    <Table className="w-full min-w-[720px] xl:min-w-[980px]">
+                    <Table className="w-full min-w-[820px] xl:min-w-[1060px]">
                       <TableHeader>
                         <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25 dark:hover:bg-muted/25">
                           <TableHead className="min-w-[200px] py-3.5 pl-2 sm:pl-3 xl:min-w-[220px]">
@@ -1572,6 +1575,9 @@ export default function AttendanceCorrections() {
                           </TableHead>
                           <TableHead className="min-w-[7.5rem] py-3.5">
                             <SortHead col="date" label="Date" />
+                          </TableHead>
+                          <TableHead className="min-w-[7rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Day
                           </TableHead>
                           <TableHead className="min-w-[9rem] py-3.5 xl:min-w-[10rem]">
                             <SortHead col="issue_type" label="Issue type" />
@@ -1631,6 +1637,9 @@ export default function AttendanceCorrections() {
                               </TableCell>
                               <TableCell className={cn('align-middle tabular-nums text-foreground', cellPad)}>
                                 {item.date ? formatTableDate(`${item.date}T12:00:00`) : '—'}
+                              </TableCell>
+                              <TableCell className={cn('align-middle text-foreground', cellPad)}>
+                                {formatDayName(item.date, item.day_name)}
                               </TableCell>
                               <TableCell className={cn('align-top', cellPad)}>
                                 <IssueTypeCell issueType={item.issue_type} reasonCode={item.reason_code} />
@@ -1765,6 +1774,8 @@ export default function AttendanceCorrections() {
                       <div className="grid grid-cols-[minmax(0,11rem)_1fr] gap-x-3 gap-y-2.5 text-sm">
                         <span className="text-muted-foreground">Attendance date</span>
                         <span className="font-bold tabular-nums text-foreground">{formatDetailDate(selectedItem.date)}</span>
+                        <span className="text-muted-foreground">Day</span>
+                        <span className="font-bold text-foreground">{formatDayName(selectedItem.date, selectedItem.day_name)}</span>
                         <span className="text-muted-foreground">Issue type</span>
                         <span>
                           <Badge variant="outline" className="rounded-full border-brand/25 bg-brand/10 px-3 py-1 font-bold text-brand dark:border-brand/30 dark:bg-brand/15">

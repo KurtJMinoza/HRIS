@@ -31,6 +31,7 @@ import {
   employeeActivityLine,
   attendanceRecordRef,
   formatTimeHhMm,
+  formatDayName,
 } from '@/components/attendance/attendanceRecordUtils'
 import {
   DropdownMenu,
@@ -93,6 +94,7 @@ function mapSummaryDaysToRows(days, fromDate, toDate) {
       const lateLabel = d.late_label || (rawStatus === 'late' ? 'Late' : null)
       return {
         date: d.date,
+        day_name: d.day_name || formatDayName(d.date),
         time_in: isFuture ? null : d.time_in,
         time_out: isFuture ? null : d.time_out,
         virtual_time_out_from_ot: isFuture ? null : d.virtual_time_out_from_ot,
@@ -129,6 +131,7 @@ function mapSummaryTodayToAttendanceRow(todayIso, t) {
   const lateLabel = t.late_label || (rawStatus === 'late' ? 'Late' : null)
   return {
     date: t.date,
+    day_name: t.day_name || formatDayName(t.date),
     time_in: t.time_in ?? null,
     time_out: t.time_out ?? null,
     virtual_time_out_from_ot: t.virtual_time_out_from_ot ?? null,
@@ -456,6 +459,7 @@ export default function EmployeeAttendance() {
       const header = [
         'Record ID',
         'Date',
+        'Day',
         'Rendered Hours',
         'Type',
         'Documents',
@@ -467,6 +471,7 @@ export default function EmployeeAttendance() {
         ...exportRows.map((r) => [
           attendanceRecordRef(null, r.date),
           r.date,
+          formatDayName(r.date, r.day_name),
           employeeDurationLabel(r),
           employeeTypeReasonLabel(r),
           r.presence_filing ? 1 : 0,
@@ -500,10 +505,11 @@ export default function EmployeeAttendance() {
       })
       const baseRows = mapSummaryDaysToRows(data.days, fromDate, toDate)
       const exportRows = filterEmployeeAttendanceRows(baseRows, scopeSegment, debouncedSearchQuery, viewerUser)
-      const headers = ['Record ID', 'Date', 'Rendered Hours', 'Type', 'Documents', 'Activity', 'Status']
+      const headers = ['Record ID', 'Date', 'Day', 'Rendered Hours', 'Type', 'Documents', 'Activity', 'Status']
       const xRows = exportRows.map((r) => [
         attendanceRecordRef(null, r.date),
         r.date,
+        formatDayName(r.date, r.day_name),
         employeeDurationLabel(r),
         employeeTypeReasonLabel(r),
         r.presence_filing ? 1 : 0,

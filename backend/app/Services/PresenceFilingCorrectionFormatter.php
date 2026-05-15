@@ -57,6 +57,13 @@ class PresenceFilingCorrectionFormatter
         return $c->copy()->timezone($tz)->toIso8601String();
     }
 
+    private function dayNameForDate(mixed $date, string $tz): ?string
+    {
+        $c = $this->asCarbon($date);
+
+        return $c?->timezone($tz)->format('l');
+    }
+
     public function chainPayload(?array $chain): ?array
     {
         if ($chain === null) {
@@ -132,6 +139,7 @@ class PresenceFilingCorrectionFormatter
             'id' => $c->id,
             'user_id' => $c->user_id,
             'date' => $c->date?->toDateString(),
+            'day_name' => $this->dayNameForDate($c->date, $tz),
             'issue_kind' => $c->issue_kind,
             'time_in' => $this->toIso8601InTz($c->time_in, $tz),
             'time_out' => $this->toIso8601InTz($c->time_out, $tz),

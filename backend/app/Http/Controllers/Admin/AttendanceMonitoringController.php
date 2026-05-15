@@ -42,6 +42,11 @@ class AttendanceMonitoringController extends Controller
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
     }
 
+    private function dayNameForDate(string|\DateTimeInterface $date): string
+    {
+        return Carbon::parse($date)->timezone($this->attendanceTimezone())->format('l');
+    }
+
     /**
      * Build a per-day schedule map from a WorkingSchedule row (same shape used in ReportsController).
      *
@@ -246,6 +251,7 @@ class AttendanceMonitoringController extends Controller
                 'Department',
                 'Company',
                 'Date',
+                'Day',
                 'Time In',
                 'Time Out',
                 'Status',
@@ -275,6 +281,7 @@ class AttendanceMonitoringController extends Controller
                     $r['department'] ?? null,
                     $r['company_name'] ?? null,
                     $r['date'] ?? null,
+                    $r['day_name'] ?? (! empty($r['date']) ? $this->dayNameForDate((string) $r['date']) : null),
                     $r['time_in'] ?? null,
                     $r['time_out'] ?? null,
                     $r['status'] ?? null,
@@ -755,6 +762,7 @@ class AttendanceMonitoringController extends Controller
                     'department' => $employee->departmentRelation?->name ?? $employee->department,
                     'company_name' => $employeeCompanyNames[$employee->id] ?? null,
                     'date' => $dateKey,
+                    'day_name' => $this->dayNameForDate($dateKey),
                     'schedule_in' => $scheduleIn,
                     'schedule_out' => $scheduleOut,
                     'time_in' => $effectiveTimeIn

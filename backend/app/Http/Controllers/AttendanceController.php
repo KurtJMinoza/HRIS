@@ -65,6 +65,11 @@ class AttendanceController extends Controller
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
     }
 
+    private function dayNameForDate(string|\DateTimeInterface $date): string
+    {
+        return Carbon::parse($date)->timezone($this->attendanceTimezone())->format('l');
+    }
+
     /**
      * SmartDTR kiosk sends X-Kiosk-Attendance: 1 so we do not treat the request as the employee app
      * when a Sanctum session exists but no Bearer token is sent (same browser logged in elsewhere).
@@ -1711,7 +1716,7 @@ class AttendanceController extends Controller
         $yearMonth = $from->format('Y_m');
         $cachePrefix = $dashboardLite
             ? sprintf('employee_dashboard:%d:calendar:%s', $user->id, $yearMonth)
-            : 'employee_attendance_summary:v3';
+            : 'employee_attendance_summary:v4';
         $responseCacheKey = sprintf(
             '%s:%d:%s:%s:%s:%s:%d:%s',
             $cachePrefix,
@@ -2287,6 +2292,7 @@ class AttendanceController extends Controller
 
             $days[] = [
                 'date' => $dateKey,
+                'day_name' => $this->dayNameForDate($dateKey),
                 'status' => $status,
                 'is_rest_day' => $isRestDayRow,
                 'is_incomplete' => $isIncomplete,
@@ -2424,6 +2430,7 @@ class AttendanceController extends Controller
             'leave_count' => $metrics['leave_count'],
             'today' => [
                 'date' => $todayDate,
+                'day_name' => $this->dayNameForDate($todayDate),
                 'status' => $todayStatus,
                 'employee_status_label' => $todayEmployeeStatusLabel,
                 'time_in' => $todayTimeIn,

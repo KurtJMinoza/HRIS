@@ -14,6 +14,23 @@ export function formatShortDate(isoDate) {
   }
 }
 
+export function formatDayName(dateValue, fallback) {
+  if (fallback) return fallback
+  if (!dateValue) return '—'
+  try {
+    const raw = String(dateValue).trim()
+    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T12:00:00+08:00` : raw
+    const d = new Date(normalized)
+    if (Number.isNaN(d.getTime())) return '—'
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      timeZone: 'Asia/Manila',
+    }).format(d)
+  } catch {
+    return '—'
+  }
+}
+
 export function formatDateTimeReadable(value) {
   if (!value) return '—'
   try {

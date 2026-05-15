@@ -168,6 +168,11 @@ class ReportsController extends Controller
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
     }
 
+    private function dayNameForDate(string|\DateTimeInterface $date): string
+    {
+        return Carbon::parse($date)->timezone($this->attendanceTimezone())->format('l');
+    }
+
     /**
      * Build a per-day schedule array from a WorkingSchedule model.
      * Mirrors the same helper in AttendanceController so schedule resolution is consistent.
@@ -393,7 +398,7 @@ class ReportsController extends Controller
         $adminDetailedCacheKey = null;
         if ($isEmployeeSelfRoute) {
             $employeeDetailedCacheKey = sprintf(
-                'reports:employee:detailed:v2:%d:%s:%s:%d:%d:%s:%s:%s:%s:%s',
+                'reports:employee:detailed:v3:%d:%s:%s:%d:%d:%s:%s:%s:%s:%s',
                 (int) $request->user()->id,
                 $from->toDateString(),
                 $to->toDateString(),
@@ -442,7 +447,7 @@ class ReportsController extends Controller
                 'page' => $pagePref,
                 'per_page' => $perPage,
             ];
-            $adminDetailedCacheKey = 'reports:admin:detailed:v2:'.hash('xxh128', serialize($adminCacheIdentity), false);
+            $adminDetailedCacheKey = 'reports:admin:detailed:v3:'.hash('xxh128', serialize($adminCacheIdentity), false);
             $cachedAdminDetailed = Cache::get($adminDetailedCacheKey);
             if (is_array($cachedAdminDetailed) && isset($cachedAdminDetailed['rows'], $cachedAdminDetailed['meta'])) {
                 $cacheHitMs = (int) round((microtime(true) - $startedAt) * 1000);
@@ -1150,6 +1155,7 @@ class ReportsController extends Controller
                         'company_name' => $detailedEmployeeCompanyNames[$employee->id] ?? null,
                         'profile_image' => $employee->profile_image_url,
                         'date' => $dateKey,
+                        'day_name' => $this->dayNameForDate($dateKey),
                         'schedule' => $scheduleLabel,
                         'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
                         'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),

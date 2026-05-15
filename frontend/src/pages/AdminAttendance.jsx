@@ -22,6 +22,7 @@ import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRe
 import { AttendanceRecordDetailSheet } from '@/components/attendance/AttendanceRecordDetailSheet'
 import {
   attendanceRecordRef,
+  formatDayName,
   formatScheduleRange,
   tableRenderedHoursLabel,
   tableLateMinutes,
@@ -436,6 +437,7 @@ export default function AdminAttendance() {
       { key: 'company', label: 'Company', accessor: (r) => r.company_name || '—' },
       { key: 'department', label: 'Department', accessor: (r) => r.department || '—' },
       { key: 'date', label: 'Date', accessor: (r) => r.date || '' },
+      { key: 'day_name', label: 'Day', accessor: (r) => formatDayName(r.date, r.day_name) },
       { key: 'schedule', label: 'Schedule', accessor: (r) => formatScheduleRange(r) },
       { key: 'time_in', label: 'Time in', accessor: (r) => r.time_in || '—' },
       { key: 'time_out', label: 'Time out', accessor: (r) => r.time_out || '—' },
@@ -466,6 +468,7 @@ export default function AdminAttendance() {
       { label: 'Employee', accessor: 'employee_name' },
       { label: 'Department', accessor: (row) => row.department || 'No Department Assigned' },
       { label: 'Date', accessor: (row) => row.date },
+      { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name) },
       {
         label: 'Scheduled regular (h)',
         accessor: (row) => (row.scheduled_regular_hours != null ? String(row.scheduled_regular_hours) : '—'),

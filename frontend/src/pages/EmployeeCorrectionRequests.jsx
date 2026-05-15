@@ -77,6 +77,7 @@ import {
   TimeCell,
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
+import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 
 const ISSUE_KIND_OPTIONS = [
   { value: 'missing_in', label: 'Missing Clock In' },
@@ -1027,7 +1028,7 @@ export default function EmployeeCorrectionRequests() {
 
                 {/* Desktop / tablet: scrollable table; Remarks + Date filed only at xl+ */}
                 <div className="hidden w-full min-w-0 touch-pan-x overflow-x-auto border-t border-border bg-card lg:block">
-                  <Table className="w-full min-w-[720px] xl:min-w-[980px]">
+                  <Table className="w-full min-w-[820px] xl:min-w-[1060px]">
                     <TableHeader className="[&_tr]:border-b-0">
                       <TableRow className="border-0 bg-muted/30">
                         <TableHead className="min-w-[200px] py-3.5 pl-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -1035,6 +1036,9 @@ export default function EmployeeCorrectionRequests() {
                         </TableHead>
                         <TableHead className="min-w-[7.5rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="date" label="Date" />
+                        </TableHead>
+                        <TableHead className="min-w-[7rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Day
                         </TableHead>
                         <TableHead className="min-w-[9rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="issue_type" label="Issue type" />
@@ -1096,6 +1100,9 @@ export default function EmployeeCorrectionRequests() {
                             </TableCell>
                             <TableCell className="align-middle tabular-nums text-foreground">
                               {row.date ? formatTableDateShort(row.date) : '—'}
+                            </TableCell>
+                            <TableCell className="align-middle text-foreground">
+                              {formatDayName(row.date, row.day_name)}
                             </TableCell>
                             <TableCell className="align-top">
                               <IssueTypeCell issueType={row.issue_type} reasonCode={row.reason_code} />
@@ -1428,6 +1435,8 @@ export default function EmployeeCorrectionRequests() {
                   <dl className="grid grid-cols-[minmax(0,12.5rem)_1fr] gap-x-4 gap-y-4 text-sm">
                     <dt className="text-muted-foreground">Attendance date</dt>
                     <dd className="font-bold tabular-nums text-foreground">{formatDetailDate(selected.date)}</dd>
+                    <dt className="text-muted-foreground">Day</dt>
+                    <dd className="font-bold text-foreground">{formatDayName(selected.date, selected.day_name)}</dd>
                     <dt className="text-muted-foreground">Issue type</dt>
                     <dd>
                       <Badge

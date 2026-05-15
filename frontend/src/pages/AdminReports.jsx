@@ -24,6 +24,7 @@ import { AttendanceStatusBadge } from '@/components/AttendanceStatusBadge'
 import { TableBodySkeleton } from '@/components/skeletons'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdminHrUser } from '@/lib/hrRoutes'
+import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 
 export { AttendanceStatusBadge }
 
@@ -367,6 +368,7 @@ export default function AdminReports() {
       { label: 'Department', accessor: (row) => row.department || 'No Department Assigned', ...txt(130) },
       { label: 'Employment status', accessor: emp, ...txt(130) },
       { label: 'Date', accessor: 'date', ...txt(100) },
+      { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name), ...txt(100) },
       { label: 'Schedule', accessor: (row) => row.schedule || '—', ...txt(110) },
       { label: 'Time In', accessor: (row) => (row.time_in ? formatTimeTo12Hour(row.time_in) : '—'), minW: 90, align: 'center' },
       { label: 'Time Out', accessor: (row) => (row.time_out ? formatTimeTo12Hour(row.time_out) : '—'), minW: 90, align: 'center' },
@@ -400,6 +402,7 @@ export default function AdminReports() {
       { label: 'Employment status', accessor: emp, ...txt(130) },
       { label: 'Hire date', accessor: (row) => row.hire_date || '—', ...txt(100) },
       { label: 'Date', accessor: 'date', ...txt(100) },
+      { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name), ...txt(100) },
       { label: 'Schedule', accessor: (row) => row.schedule || '—', ...txt(110) },
       { label: 'Time In', accessor: (row) => (row.time_in ? formatTimeTo12Hour(row.time_in) : '—'), minW: 90, align: 'center' },
       { label: 'Time Out', accessor: (row) => (row.time_out ? formatTimeTo12Hour(row.time_out) : '—'), minW: 90, align: 'center' },
