@@ -2752,6 +2752,9 @@ export async function createDepartment(payload) {
     if (payload.office_location != null && String(payload.office_location).trim() !== '') {
       form.append('office_location', String(payload.office_location).trim())
     }
+    if (payload.description != null && String(payload.description).trim() !== '') {
+      form.append('description', String(payload.description).trim())
+    }
     form.append('logo', payload.logo)
     body = form
     delete headers['Content-Type']
@@ -2762,6 +2765,9 @@ export async function createDepartment(payload) {
       ...(payload.branch_id != null && payload.branch_id !== '' ? { branch_id: Number(payload.branch_id) } : {}),
       ...(payload.office_location != null && String(payload.office_location).trim() !== ''
         ? { office_location: String(payload.office_location).trim() }
+        : {}),
+      ...(payload.description != null && String(payload.description).trim() !== ''
+        ? { description: String(payload.description).trim() }
         : {}),
     })
   }
@@ -4245,6 +4251,8 @@ export async function updateDepartment(id, payload) {
     form.append('_method', 'PATCH')
     if (payload.name != null) form.append('name', payload.name)
     if (payload.office_location != null) form.append('office_location', String(payload.office_location))
+    if (payload.description != null) form.append('description', String(payload.description))
+    if (payload.branch_id != null && payload.branch_id !== '') form.append('branch_id', String(payload.branch_id))
     if (payload.department_head_id != null) form.append('department_head_id', payload.department_head_id === '' || payload.department_head_id === null ? '' : String(payload.department_head_id))
     form.append('logo', payload.logo)
     body = form

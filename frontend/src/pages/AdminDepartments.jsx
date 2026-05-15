@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Plus, Building2, Loader2, UserPlus, Users, Trash2, Eye, UserMinus, X, MoreVertical, Search, ChevronUp, ChevronDown, QrCode, GitBranch, Check, Network, AlertCircle } from 'lucide-react'
+import { Plus, Building2, Loader2, UserPlus, Users, Trash2, Eye, UserMinus, X, MoreVertical, Search, ChevronUp, ChevronDown, QrCode, GitBranch, Check, Network, AlertCircle, MapPin, FileText, Pencil } from 'lucide-react'
 import { TableBodySkeleton } from '@/components/skeletons'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -30,7 +30,6 @@ import { useToast } from '@/components/ui/use-toast'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { cn } from '@/lib/utils'
 import { isRosterStaffMember } from '@/lib/rosterStaff'
-import { FIELD_SELECT_CLASS_H8, FIELD_SELECT_CLASS_H10, FIELD_TEXTAREA_CLASS_SM } from '@/lib/fieldClasses'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
   ADMIN_FORM_DIALOG_DESC_CLASS,
@@ -106,12 +105,20 @@ export default function AdminDepartments() {
 
   const [branchFilter, setBranchFilter] = useState(() => searchParams.get('branch_id') || '')
   const [companyFilter, setCompanyFilter] = useState(() => searchParams.get('company_id') || '')
+  const [page, setPage] = useState(1)
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createBranchId, setCreateBranchId] = useState('')
   const [createOfficeLocation, setCreateOfficeLocation] = useState('')
   const [createSubmitting, setCreateSubmitting] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editDepartment, setEditDepartment] = useState(null)
+  const [editName, setEditName] = useState('')
+  const [editBranchId, setEditBranchId] = useState('')
+  const [editOfficeLocation, setEditOfficeLocation] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editSubmitting, setEditSubmitting] = useState(false)
 
   const [viewEmployeesOpen, setViewEmployeesOpen] = useState(false)
   const [viewEmployeesDept, setViewEmployeesDept] = useState(null)
@@ -256,6 +263,10 @@ export default function AdminDepartments() {
     setSearchParams(params, { replace: true })
   }, [branchFilter, companyFilter, setSearchParams])
 
+  useEffect(() => {
+    setPage(1)
+  }, [branchFilter, companyFilter, searchQuery, filterNoHead, filterHasQr])
+
   // Employees are heavy — only fetch when assign/head modal opens, and only once
   useEffect(() => {
     if ((headOpen || assignOpen) && employees.length === 0) fetchEmployees()
@@ -280,6 +291,7 @@ export default function AdminDepartments() {
         name: createName.trim(),
         branch_id: parseInt(createBranchId, 10),
         office_location: createOfficeLocation.trim() || undefined,
+        description: createDescription.trim() || undefined,
       })
       const savedName = createName.trim()
       if (data?.department?.id != null) {
@@ -305,6 +317,55 @@ export default function AdminDepartments() {
       toast({ title: 'Failed to create department', description: e.message, variant: 'error' })
     } finally {
       setCreateSubmitting(false)
+    }
+  }
+
+  const openEditDialog = (dept) => {
+    setEditDepartment(dept)
+    setEditName(dept?.name || '')
+    setEditBranchId(dept?.branch_id != null ? String(dept.branch_id) : '')
+    setEditOfficeLocation(dept?.office_location || '')
+    setEditDescription(dept?.description || '')
+    setEditOpen(true)
+    setError(null)
+  }
+
+  const handleEdit = async (e) => {
+    e.preventDefault()
+    if (!editDepartment) return
+    const nameError = validateDepartmentName(editName)
+    if (nameError) {
+      setError(nameError)
+      toast({ title: 'Invalid department name', description: nameError, variant: 'error' })
+      return
+    }
+    if (!editBranchId) {
+      toast({ title: 'Please select a branch', variant: 'error' })
+      return
+    }
+    setEditSubmitting(true)
+    setError(null)
+    try {
+      const data = await updateDepartment(editDepartment.id, {
+        name: editName.trim(),
+        branch_id: parseInt(editBranchId, 10),
+        office_location: editOfficeLocation.trim() || null,
+        description: editDescription.trim() || null,
+      })
+      if (data?.department?.id != null) {
+        setDepartments((prev) =>
+          prev.map((d) => (sameUserId(d.id, data.department.id) ? { ...d, ...data.department } : d)),
+        )
+      }
+      setEditOpen(false)
+      setEditDepartment(null)
+      await fetchDepartments()
+      toast({ title: `Department '${editName.trim()}' updated`, variant: 'success' })
+    } catch (err) {
+      setError(err.message)
+      toast({ title: 'Failed to update department', description: err.message, variant: 'error' })
+    } finally {
+      setEditSubmitting(false)
     }
   }
 
@@ -743,17 +804,31 @@ export default function AdminDepartments() {
     return list
   }, [departments, searchQuery, filterNoHead, filterHasQr, employees, sortCol, sortDir])
 
+  const pageSize = 10
+  const totalFilteredDepartments = filteredDepts.length
+  const pageCount = Math.max(1, Math.ceil(totalFilteredDepartments / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const pagedDepts = filteredDepts.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const rangeStart = totalFilteredDepartments === 0 ? 0 : (currentPage - 1) * pageSize + 1
+  const rangeEnd = Math.min(currentPage * pageSize, totalFilteredDepartments)
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount)
+  }, [page, pageCount])
+
   function toggleSort(col) {
     if (sortCol === col) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortCol(col); setSortDir('asc') }
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 @sm:flex-row @sm:items-center @sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Departments</h2>
-          <CardDescription>Organize departments by branch. Create departments, assign heads, and assign employees.</CardDescription>
+    <div className="min-h-full bg-background px-4 py-5 text-foreground @md:px-6">
+      <div className="mb-6 flex flex-col gap-4 @md:flex-row @md:items-start @md:justify-between">
+        <div className="space-y-1.5">
+          <h2 className="text-3xl font-extrabold tracking-normal text-foreground">Departments</h2>
+          <p className="max-w-3xl text-base leading-7 text-muted-foreground">
+            Organize departments by branch. Create departments, assign heads, and assign employees.
+          </p>
         </div>
         <Button
           onClick={() => {
@@ -764,46 +839,49 @@ export default function AdminDepartments() {
             setCreateDescription('')
             setError(null)
           }}
+          className="h-11 rounded-lg bg-brand px-5 text-sm font-bold text-brand-foreground shadow-sm shadow-brand/25 hover:bg-brand/90"
         >
-          <Plus className="size-4 mr-2" />
+          <Plus className="mr-2 size-4" />
           Create Department
         </Button>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+        <div className="mb-6 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive">
           {error}
         </div>
       )}
 
-      <Card className="overflow-hidden border border-border/60 bg-card shadow-md dark:border-border/50">
-        <CardHeader className="border-b border-border/40 bg-muted/20 dark:border-border/50">
-          <div className="flex flex-col gap-3 @md:flex-row @md:items-center @md:justify-between">
+      <Card className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-md shadow-slate-950/[0.04] dark:border-border/70 dark:shadow-black/25">
+        <CardHeader className="border-b border-border/80 bg-card px-5 py-5 @lg:px-6">
+          <div className="flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between">
             <div>
-              <CardTitle className="text-lg font-semibold">Department Directory</CardTitle>
-              <CardDescription>
+              <h3 className="text-xl font-extrabold tracking-normal text-foreground">Department Directory</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
                 {filteredDepts.length} of {departments.length} department(s)
-              </CardDescription>
+              </p>
             </div>
-            <div className="relative w-full @md:w-64">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <div className="relative w-full @lg:w-[320px]">
+              <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="text"
                 placeholder="Search departments..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-9 pl-8 text-sm"
+                className="h-11 rounded-xl border-border/80 bg-background pl-11 text-sm shadow-none dark:bg-input/30"
               />
             </div>
           </div>
 
-          {/* Filter chips */}
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <span className="text-xs text-muted-foreground">Branch:</span>
+          <div className="flex flex-wrap items-center gap-2.5 pt-3">
+            <span className="text-sm text-muted-foreground">Branch:</span>
             <select
-              className={cn('min-w-[160px] text-xs', FIELD_SELECT_CLASS_H8)}
+              className={cn(
+                'h-10 min-w-[210px] rounded-xl border border-border/80 bg-background px-3 text-sm font-semibold text-foreground shadow-none outline-none transition-colors focus:border-brand focus:ring-2 focus:ring-brand/20 dark:bg-input/30',
+                'disabled:cursor-not-allowed disabled:opacity-60'
+              )}
               value={branchFilter}
-              onChange={(e) => { setBranchFilter(e.target.value); setLoading(true) }}
+              onChange={(e) => { setBranchFilter(e.target.value); setLoading(true); setPage(1) }}
             >
               <option value="">All branches</option>
               {branches.map((b) => (
@@ -812,39 +890,39 @@ export default function AdminDepartments() {
             </select>
             <button
               type="button"
-              onClick={() => setFilterNoHead((v) => !v)}
+              onClick={() => { setFilterNoHead((v) => !v); setPage(1) }}
               className={[
-                'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                'inline-flex h-10 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition-colors',
                 filterNoHead
                   ? 'border-amber-400/50 bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                  : 'border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground dark:border-white/8',
+                  : 'border-border/80 bg-background text-foreground hover:border-brand/30 hover:bg-brand/5 dark:bg-input/30',
               ].join(' ')}
             >
-              <UserPlus className="size-3" />
+              <UserPlus className="size-4" />
               No head assigned
-              {filterNoHead && <X className="size-3 ml-0.5" />}
+              {filterNoHead && <X className="ml-0.5 size-4" />}
             </button>
             <button
               type="button"
-              onClick={() => setFilterHasQr((v) => !v)}
+              onClick={() => { setFilterHasQr((v) => !v); setPage(1) }}
               className={[
-                'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                'inline-flex h-10 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition-colors',
                 filterHasQr
                   ? 'border-sky-400/50 bg-sky-500/15 text-sky-600 dark:text-sky-400'
-                  : 'border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground dark:border-white/8',
+                  : 'border-border/80 bg-background text-foreground hover:border-brand/30 hover:bg-brand/5 dark:bg-input/30',
               ].join(' ')}
             >
-              <QrCode className="size-3" />
+              <QrCode className="size-4" />
               Has QR
-              {filterHasQr && <X className="size-3 ml-0.5" />}
+              {filterHasQr && <X className="ml-0.5 size-4" />}
             </button>
             {(filterNoHead || filterHasQr || searchQuery || branchFilter || companyFilter) && (
               <button
                 type="button"
-                onClick={() => { setFilterNoHead(false); setFilterHasQr(false); setSearchQuery(''); setBranchFilter(''); setCompanyFilter('') }}
-                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => { setFilterNoHead(false); setFilterHasQr(false); setSearchQuery(''); setBranchFilter(''); setCompanyFilter(''); setPage(1) }}
+                className="inline-flex h-10 items-center gap-2 rounded-full px-3 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
               >
-                <X className="size-3" />Clear
+                <X className="size-4" />Clear
               </button>
             )}
           </div>
@@ -883,16 +961,16 @@ export default function AdminDepartments() {
               </Button>
             </div>
           ) : filteredDepts.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">No companies match your filters.</p>
+            <p className="py-16 text-center text-base text-muted-foreground">No departments match your filters.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[980px] text-sm">
                 <thead>
-                  <tr className="border-b border-border/40 bg-muted/40 dark:border-border/50 dark:bg-muted/30">
-                    <th className="w-20 px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <tr className="border-b border-border/80 bg-muted/30 dark:bg-input/20">
+                    <th className="w-20 px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       Logo
                     </th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       <button
                         type="button"
                         onClick={() => toggleSort('name')}
@@ -904,16 +982,16 @@ export default function AdminDepartments() {
                           : <ChevronUp className="size-3 opacity-30" />}
                       </button>
                     </th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       Branch
                     </th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       Company
                     </th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       Head
                     </th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       <button
                         type="button"
                         onClick={() => toggleSort('total')}
@@ -925,13 +1003,13 @@ export default function AdminDepartments() {
                           : <ChevronUp className="size-3 opacity-30" />}
                       </button>
                     </th>
-                    <th className="px-5 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="px-5 py-4 text-right text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       Actions
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border/30 dark:divide-white/5">
-                  {filteredDepts.map((dept, idx) => {
+                <tbody className="divide-y divide-border/70 dark:divide-border/60">
+                  {pagedDepts.map((dept) => {
                     const stats = (() => {
                       let total = 0, active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0
                       employees.forEach((emp) => {
@@ -948,7 +1026,7 @@ export default function AdminDepartments() {
 
                     const deptInitials = (dept.name || '').trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '—'
                     const qrPct = stats.total > 0 ? Math.round((stats.withQr / stats.total) * 100) : 0
-                    const qrBarColor = qrPct === 100 ? '#10b981' : qrPct >= 50 ? '#f59e0b' : '#64748b'
+                    const qrBarColor = qrPct === 100 ? '#10b981' : qrPct >= 50 ? '#ff5a1f' : '#e5e7eb'
 
                     return (
                       <tr
@@ -964,20 +1042,17 @@ export default function AdminDepartments() {
                             setHoveredDept(null); setHoveredRowRect(null)
                           }, 100)
                         }}
-                        className={[
-                          'group cursor-pointer transition-all hover:bg-muted/30 dark:hover:bg-muted/40 dark:hover:shadow-[inset_3px_0_0_rgba(20,184,166,0.45)]',
-                          idx % 2 === 0 ? 'bg-white dark:bg-card' : 'bg-muted/30 dark:bg-muted/25',
-                        ].join(' ')}
+                        className="group cursor-pointer bg-card transition-colors hover:bg-muted/25 dark:hover:bg-muted/20"
                       >
                         {/* Logo */}
                         <td className="px-5 py-4 align-middle">
                           {departmentLogoUrl(dept) ? (
-                            <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-border/60 bg-muted/40 dark:border-white/8 dark:bg-white/4">
-                              <img src={departmentLogoUrl(dept)} alt="" className="h-10 w-10 rounded-lg object-cover" key={dept.logo || dept.id} />
+                            <div className="flex size-12 items-center justify-center overflow-hidden rounded-full border border-brand/50 bg-background shadow-sm dark:bg-input/30">
+                              <img src={departmentLogoUrl(dept)} alt="" className="size-10 rounded-full object-cover" key={dept.logo || dept.id} />
                             </div>
                           ) : (
-                            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border/60 bg-gradient-to-br from-muted to-muted/40 dark:border-border/50 dark:from-muted/50 dark:to-card">
-                              <span className="text-xs font-bold text-muted-foreground">{deptInitials}</span>
+                            <div className="flex size-12 items-center justify-center rounded-full border border-brand/40 bg-brand/10">
+                              <span className="text-xs font-extrabold text-brand">{deptInitials}</span>
                             </div>
                           )}
                         </td>
@@ -985,12 +1060,12 @@ export default function AdminDepartments() {
                         {/* Department name + date */}
                         <td className="px-5 py-4 align-middle">
                           <div className="space-y-0.5">
-                            <p className="font-semibold text-foreground">{dept.name}</p>
+                            <p className="text-base font-extrabold uppercase tracking-normal text-foreground">{dept.name}</p>
                             {dept.office_location && (
-                              <p className="text-[11px] text-muted-foreground/80">{dept.office_location}</p>
+                              <p className="text-sm text-muted-foreground/80">{dept.office_location}</p>
                             )}
                             {dept.created_at && (
-                              <p className="text-[11px] text-muted-foreground/60">
+                              <p className="text-xs text-muted-foreground">
                                 Created {relativeDate(dept.created_at)}
                               </p>
                             )}
@@ -1000,8 +1075,8 @@ export default function AdminDepartments() {
                         {/* Branch */}
                         <td className="px-5 py-4 align-middle">
                           {dept.branch_name ? (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800">
-                              <GitBranch className="size-3" />{dept.branch_name}
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-brand/35 bg-brand/10 px-3 py-1.5 text-sm font-bold uppercase text-brand dark:bg-brand/15">
+                              <GitBranch className="size-3.5" />{dept.branch_name}
                             </span>
                           ) : (
                             <span className="text-xs italic text-muted-foreground/50">—</span>
@@ -1011,7 +1086,7 @@ export default function AdminDepartments() {
                         {/* Company */}
                         <td className="px-5 py-4 align-middle">
                           {dept.company_name ? (
-                            <span className="text-sm text-foreground">{dept.company_name}</span>
+                            <span className="text-sm font-medium text-foreground">{dept.company_name}</span>
                           ) : (
                             <span className="text-xs italic text-muted-foreground/50">—</span>
                           )}
@@ -1021,45 +1096,45 @@ export default function AdminDepartments() {
                         <td className="px-5 py-4 align-middle">
                           {dept.department_head_name ? (
                             <div className="flex items-center gap-2">
-                              <Avatar className="size-7 shrink-0">
+                              <Avatar className="size-9 shrink-0">
                                 <AvatarImage
                                   src={profileImageUrl(dept.department_head_profile_image)}
                                   alt={dept.department_head_name}
                                 />
-                                <AvatarFallback className="bg-teal-500/20 text-[10px] font-bold text-teal-700 dark:text-teal-300">
+                                <AvatarFallback className="bg-brand/15 text-xs font-bold text-brand">
                                   {dept.department_head_name.trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
                                 </AvatarFallback>
                               </Avatar>
-                              <span className="max-w-[140px] truncate text-sm text-foreground">{dept.department_head_name}</span>
+                              <span className="max-w-[150px] truncate text-sm font-medium text-foreground">{dept.department_head_name}</span>
                             </div>
                           ) : (
-                            <span className="text-xs italic text-muted-foreground/50">Not assigned</span>
+                            <span className="text-sm italic text-muted-foreground">Not assigned</span>
                           )}
                         </td>
 
                         {/* Employee stats + QR bar */}
                         <td className="px-5 py-4 align-middle">
                           <div className="space-y-1.5">
-                            <p className="text-[13px] font-semibold text-foreground">
+                            <p className="text-base font-extrabold text-foreground">
                               {stats.total} {stats.total === 1 ? 'employee' : 'employees'}
                             </p>
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                                <span className="size-1.5 rounded-full bg-emerald-500" />{stats.active} active
+                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                                <span className="size-2 rounded-full bg-emerald-500" />{stats.active} active
                               </span>
                               {stats.inactive > 0 && (
-                                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-600 dark:text-rose-400">
-                                  <span className="size-1.5 rounded-full bg-rose-500" />{stats.inactive} inactive
+                                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">
+                                  <span className="size-2 rounded-full bg-rose-500" />{stats.inactive} inactive
                                 </span>
                               )}
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-600 dark:text-sky-400">
-                                <span className="size-1.5 rounded-full bg-sky-500" />{stats.withQr} QR
+                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400">
+                                <span className="size-2 rounded-full bg-blue-500" />{stats.withQr} QR
                               </span>
                             </div>
                             {stats.total > 0 && (
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-2">
                                 <div
-                                  className="h-1 w-16 overflow-hidden rounded-full bg-border/40 dark:bg-white/8"
+                                  className="h-1.5 w-20 overflow-hidden rounded-full bg-muted dark:bg-input/50"
                                   title={`QR issuance: ${stats.withQr} of ${stats.total} employees have QR codes for attendance check-in`}
                                 >
                                   <div
@@ -1068,7 +1143,7 @@ export default function AdminDepartments() {
                                   />
                                 </div>
                                 <span
-                                  className="text-[10px] tabular-nums text-muted-foreground cursor-default"
+                                  className="cursor-default text-xs tabular-nums text-muted-foreground"
                                   title={`${stats.withQr} of ${stats.total} employees issued QR codes`}
                                 >
                                   {qrPct}% QR
@@ -1079,14 +1154,14 @@ export default function AdminDepartments() {
                         </td>
 
                         {/* Actions — inline quick actions + kebab */}
-                        <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
+                        <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-1">
                             {/* Quick action buttons — visible on row hover */}
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
-                              className="h-7 gap-1 px-2.5 text-xs opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground hover:text-foreground dark:hover:bg-white/8"
+                              className="hidden"
                               onClick={(e) => { e.stopPropagation(); openAssignDialog(dept) }}
                               title="Assign employees to this department"
                             >
@@ -1097,7 +1172,7 @@ export default function AdminDepartments() {
                               type="button"
                               variant="ghost"
                               size="sm"
-                              className="h-7 gap-1 px-2.5 text-xs opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground hover:text-foreground dark:hover:bg-white/8"
+                              className="hidden"
                               onClick={(e) => { e.stopPropagation(); openViewEmployees(dept) }}
                               title="View this department's employees"
                             >
@@ -1110,7 +1185,7 @@ export default function AdminDepartments() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="size-8 rounded-full opacity-0 transition-opacity group-hover:opacity-100 hover:opacity-100 dark:hover:bg-white/8"
+                                  className="size-10 rounded-xl border border-border/80 bg-background text-foreground shadow-sm hover:bg-muted dark:bg-input/30 dark:hover:bg-input/50"
                                   aria-label="More actions"
                                   onClick={(e) => e.stopPropagation()}
                                 >
@@ -1120,6 +1195,9 @@ export default function AdminDepartments() {
                               <DropdownMenuContent align="end" className="w-52">
                                 <DropdownMenuItem onClick={() => openViewEmployees(dept)}>
                                   <Eye className="size-4" /><span>View employees</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openEditDialog(dept)}>
+                                  <Pencil className="size-4" /><span>Edit department</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openHeadDialog(dept)}>
                                   <UserPlus className="size-4" /><span>Assign head</span>
@@ -1141,10 +1219,51 @@ export default function AdminDepartments() {
                 </tbody>
               </table>
 
-              {/* Pagination hint */}
               {filteredDepts.length > 0 && (
-                <div className="border-t border-border/30 px-5 py-2.5 text-xs text-muted-foreground dark:border-white/5">
-                  Showing {filteredDepts.length} of {departments.length} {departments.length === 1 ? 'department' : 'departments'}
+                <div className="flex flex-col gap-3 border-t border-border/80 px-5 py-4 text-sm text-muted-foreground @md:flex-row @md:items-center @md:justify-between">
+                  <span>
+                    Showing {rangeStart} to {rangeEnd} of {totalFilteredDepartments} {totalFilteredDepartments === 1 ? 'department' : 'departments'}
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                      disabled={currentPage <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      aria-label="Previous page"
+                    >
+                      <ChevronDown className="size-4 rotate-90" />
+                    </Button>
+                    {Array.from({ length: pageCount }, (_, index) => index + 1).slice(0, 5).map((pageNumber) => (
+                      <Button
+                        key={pageNumber}
+                        type="button"
+                        variant="ghost"
+                        className={cn(
+                          'size-9 rounded-lg border text-sm font-semibold',
+                          pageNumber === currentPage
+                            ? 'border-brand bg-brand/5 text-brand hover:bg-brand/10'
+                            : 'border-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground'
+                        )}
+                        onClick={() => setPage(pageNumber)}
+                      >
+                        {pageNumber}
+                      </Button>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                      disabled={currentPage >= pageCount}
+                      onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                      aria-label="Next page"
+                    >
+                      <ChevronDown className="size-4 -rotate-90" />
+                    </Button>
+                  </div>
                 </div>
               )}
 
@@ -1372,35 +1491,54 @@ export default function AdminDepartments() {
       >
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
+          className="max-w-[min(100vw-1.5rem,42rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="p-0"
+          closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
+          overlayClassName="bg-black/55 backdrop-blur-sm"
           aria-describedby="dept-create-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={cn(ADMIN_FORM_DIALOG_TITLE_CLASS, 'flex items-center gap-2')}>
-                <Building2 className="size-5 text-foreground dark:text-foreground" />
+          <div className="px-6 pb-5 pt-7 pr-16 @md:px-8">
+            <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand">
+                <Building2 className="size-7" />
+              </div>
+              <div className="min-w-0 pt-1">
+              <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">
                 Create Department
               </DialogTitle>
-              <p id="dept-create-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
+              <p id="dept-create-desc" className="mt-3 max-w-xl text-base leading-7 text-muted-foreground">
                 Add a new department. Name is required — everything else is optional.
               </p>
+              </div>
             </DialogHeader>
           </div>
-          <form onSubmit={handleCreate} className="flex min-h-0 flex-1 flex-col text-foreground dark:text-zinc-50">
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-            <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="dept-name">Department name <span className="text-destructive">*</span></Label>
+          <form onSubmit={handleCreate} className="flex min-h-0 flex-1 flex-col text-foreground">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 @md:px-8">
+            <div className="space-y-5">
+                <div className="space-y-2">
+                  <Label htmlFor="dept-name" className="flex items-center gap-2 text-base font-semibold text-foreground">
+                    <span className="size-2.5 rounded-full bg-brand" />
+                    Department name <span className="text-brand">*</span>
+                  </Label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                      <Building2 className="size-5" />
+                    </span>
                   <Input
                     id="dept-name"
                     value={createName}
                     onChange={(e) => setCreateName(e.target.value)}
                     placeholder="e.g. Engineering"
+                    className="h-12 rounded-xl border-brand/70 bg-background pl-14 text-base shadow-sm focus-visible:ring-brand/20 dark:bg-input/35"
                     required
                   />
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label id="create-branch-picker-label">Branch *</Label>
+                <div className="space-y-2">
+                  <Label id="create-branch-picker-label" className="flex items-center gap-2 text-base font-semibold text-foreground">
+                    <span className="size-2.5 rounded-full bg-brand" />
+                    Branch <span className="text-brand">*</span>
+                  </Label>
                   <Popover open={createBranchPickerOpen} onOpenChange={setCreateBranchPickerOpen}>
                     <PopoverTrigger asChild>
                       <Button
@@ -1410,13 +1548,12 @@ export default function AdminDepartments() {
                         aria-labelledby="create-branch-picker-label"
                         aria-expanded={createBranchPickerOpen}
                         className={cn(
-                          FIELD_SELECT_CLASS_H10,
-                          'h-auto min-h-10 w-full justify-between gap-2 py-2 font-normal hover:bg-transparent'
+                          'h-12 w-full justify-between gap-2 rounded-xl border-border/80 bg-background px-4 py-2 text-base font-normal shadow-sm hover:bg-transparent dark:bg-input/35'
                         )}
                       >
                         {selectedCreateBranch ? (
                           <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                            <Avatar className="size-8 shrink-0 rounded-md border border-border/50">
+                            <Avatar className="size-8 shrink-0 rounded-lg border border-border/50">
                               <AvatarImage src={selectedCreateBranch.logo_url || undefined} alt="" />
                               <AvatarFallback className="rounded-md text-[10px]">
                                 {initials(selectedCreateBranch.company_name || selectedCreateBranch.name)}
@@ -1430,7 +1567,12 @@ export default function AdminDepartments() {
                             </span>
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">Select branch</span>
+                          <span className="inline-flex items-center gap-3 text-muted-foreground">
+                            <span className="flex size-9 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                              <Network className="size-5" />
+                            </span>
+                            Select branch
+                          </span>
                         )}
                         <ChevronDown className="size-4 shrink-0 opacity-50" aria-hidden />
                       </Button>
@@ -1478,45 +1620,197 @@ export default function AdminDepartments() {
                     </PopoverContent>
                   </Popover>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="dept-office-location">Office location (optional)</Label>
+                <div className="space-y-2">
+                  <Label htmlFor="dept-office-location" className="text-base font-semibold text-foreground">
+                    Office location <span className="font-normal text-muted-foreground">(optional)</span>
+                  </Label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                      <MapPin className="size-5" />
+                    </span>
                   <Input
                     id="dept-office-location"
                     value={createOfficeLocation}
                     onChange={(e) => setCreateOfficeLocation(e.target.value)}
                     placeholder="e.g. Makati HQ, Floor 3"
                     maxLength={255}
+                    className="h-12 rounded-xl border-border/80 bg-background pl-14 text-base shadow-sm dark:bg-input/35"
                   />
+                  </div>
                 </div>
             </div>
 
             {/* Description */}
-            <div className="space-y-1.5">
-              <Label htmlFor="dept-description">Description <span className="text-xs font-normal text-muted-foreground">(optional)</span></Label>
+            <div className="space-y-2">
+              <Label htmlFor="dept-description" className="text-base font-semibold text-foreground">
+                Description <span className="font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-3 flex size-9 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                  <FileText className="size-5" />
+                </span>
               <textarea
                 id="dept-description"
                 value={createDescription}
                 onChange={(e) => setCreateDescription(e.target.value)}
                 placeholder="Brief description of this department's role or scope…"
-                rows={2}
+                rows={3}
                 maxLength={500}
-                className={cn(FIELD_TEXTAREA_CLASS_SM, '!min-h-[60px]')}
+                className="min-h-[86px] w-full rounded-xl border border-border/80 bg-background py-3 pl-14 pr-4 text-base text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35"
               />
+              </div>
             </div>
             </div>
 
-            <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
               <Button
                 type="button"
                 variant="outline"
-                className="dark:border-white/10 dark:text-slate-300"
+                className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted"
                 onClick={() => setCreateOpen(false)}
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={createSubmitting || !createName.trim()} className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}>
-                {createSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4 mr-1" />}
+              <Button type="submit" disabled={createSubmitting || !createName.trim()} className="h-11 min-w-[180px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
+                {createSubmitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Plus className="mr-2 size-4" />}
                 Create Department
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Department */}
+      <Dialog
+        open={editOpen}
+        onOpenChange={(open) => {
+          setEditOpen(open)
+          if (!open) setEditDepartment(null)
+        }}
+      >
+        <DialogContent
+          showCloseButton
+          className="max-w-[min(100vw-1.5rem,42rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="p-0"
+          closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
+          overlayClassName="bg-black/55 backdrop-blur-sm"
+          aria-describedby="dept-edit-desc"
+        >
+          <form onSubmit={handleEdit} className="flex min-h-0 flex-1 flex-col text-foreground">
+            <div className="px-6 pb-5 pt-7 pr-16 @md:px-8">
+              <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
+                <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand">
+                  <Building2 className="size-7" />
+                </div>
+                <div className="min-w-0 pt-1">
+                  <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">
+                    Edit Department
+                  </DialogTitle>
+                  <p id="dept-edit-desc" className="mt-3 max-w-xl text-base leading-7 text-muted-foreground">
+                    Update department details, location, and branch assignment.
+                  </p>
+                </div>
+              </DialogHeader>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 @md:px-8">
+              <div className="space-y-2">
+                <Label htmlFor="edit-dept-name" className="flex items-center gap-2 text-base font-semibold text-foreground">
+                  <span className="size-2.5 rounded-full bg-brand" />
+                  Department name <span className="text-brand">*</span>
+                </Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                    <Building2 className="size-5" />
+                  </span>
+                  <Input
+                    id="edit-dept-name"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="e.g. Engineering"
+                    className="h-12 rounded-xl border-brand/70 bg-background pl-14 text-base shadow-sm focus-visible:ring-brand/20 dark:bg-input/35"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-dept-branch" className="flex items-center gap-2 text-base font-semibold text-foreground">
+                  <span className="size-2.5 rounded-full bg-brand" />
+                  Branch <span className="text-brand">*</span>
+                </Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                    <Network className="size-5" />
+                  </span>
+                  <select
+                    id="edit-dept-branch"
+                    value={editBranchId}
+                    onChange={(e) => setEditBranchId(e.target.value)}
+                    className="h-12 w-full appearance-none rounded-xl border border-border/80 bg-background pl-14 pr-10 text-base text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35 dark:[color-scheme:dark]"
+                    required
+                  >
+                    <option value="">Select branch</option>
+                    {sortedBranchesForPicker.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}{b.company_name ? ` (${b.company_name})` : ''}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-dept-office-location" className="text-base font-semibold text-foreground">
+                  Office location <span className="font-normal text-muted-foreground">(optional)</span>
+                </Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                    <MapPin className="size-5" />
+                  </span>
+                  <Input
+                    id="edit-dept-office-location"
+                    value={editOfficeLocation}
+                    onChange={(e) => setEditOfficeLocation(e.target.value)}
+                    placeholder="e.g. Makati HQ, Floor 3"
+                    maxLength={255}
+                    className="h-12 rounded-xl border-border/80 bg-background pl-14 text-base shadow-sm dark:bg-input/35"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-dept-description" className="text-base font-semibold text-foreground">
+                  Description <span className="font-normal text-muted-foreground">(optional)</span>
+                </Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-3 flex size-9 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                    <FileText className="size-5" />
+                  </span>
+                  <textarea
+                    id="edit-dept-description"
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    placeholder="Brief description of this department's role or scope..."
+                    rows={3}
+                    maxLength={500}
+                    className="min-h-[86px] w-full rounded-xl border border-border/80 bg-background py-3 pl-14 pr-4 text-base text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted"
+                onClick={() => setEditOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={editSubmitting || !editName.trim()} className="h-11 min-w-[160px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
+                {editSubmitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Pencil className="mr-2 size-4" />}
+                Save Changes
               </Button>
             </DialogFooter>
           </form>
@@ -1533,31 +1827,41 @@ export default function AdminDepartments() {
       >
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_MD, 'max-h-[min(92vh,85vh)]')}
+          className="max-w-[min(100vw-1.5rem,48rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="p-0"
+          closeButtonClassName="right-5 top-5 size-10 rounded-xl border-border/80 bg-background text-foreground hover:bg-muted"
+          overlayClassName="bg-black/55 backdrop-blur-sm"
           aria-describedby="dept-view-employees-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>View Employees</DialogTitle>
-              <p id="dept-view-employees-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
+          <div className="border-b border-border/80 px-6 pb-5 pt-7 pr-16 @md:px-8">
+            <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                <Users className="size-7" />
+              </div>
+              <div className="min-w-0 pt-1">
+              <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">View Employees</DialogTitle>
+              <p id="dept-view-employees-desc" className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
                 {viewEmployeesDept && (
-                  <>Employees in <strong>{viewEmployeesDept.name}</strong>. Unassign or assign more below.</>
+                  <>Employees in <strong className="font-extrabold uppercase text-brand">{viewEmployeesDept.name}</strong>. Unassign or assign more below.</>
                 )}
               </p>
+              </div>
             </DialogHeader>
           </div>
-          <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'flex min-h-0 flex-1 flex-col py-2')}>
+          <div className="flex min-h-0 flex-1 flex-col px-6 py-5 @md:px-8">
             {viewEmployeesLoading ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="size-8 animate-spin text-muted-foreground" />
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-border/70 py-10 text-sm text-muted-foreground dark:bg-input/20">
+                <Loader2 className="size-5 animate-spin text-brand" />
+                Loading employees...
               </div>
             ) : viewEmployeesList.length === 0 ? (
-              <p className="text-center text-muted-foreground py-6">No employees assigned to this department.</p>
+              <div className="rounded-xl border border-dashed border-border/80 px-6 py-10 text-center text-sm text-muted-foreground">
+                No employees assigned to this department.
+              </div>
             ) : (
               <>
-                {/* Select-all row */}
-                <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/30 dark:bg-white/5 px-3 py-2 mb-2">
-                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground select-none">
+                <div className="mb-4 flex items-center gap-4 rounded-xl border border-border/80 bg-background px-4 py-4 dark:bg-input/25">
+                  <label className="flex cursor-pointer select-none items-center gap-4 text-base font-medium text-muted-foreground hover:text-foreground">
                     <input
                       type="checkbox"
                       checked={
@@ -1567,7 +1871,7 @@ export default function AdminDepartments() {
                         )
                       }
                       onChange={toggleViewEmployeesSelectAll}
-                      className="rounded border-input accent-primary"
+                      className="size-5 rounded border-input accent-orange-600"
                     />
                     {viewEmployeesList.length > 0 &&
                     viewEmployeesList.every((emp) =>
@@ -1577,36 +1881,36 @@ export default function AdminDepartments() {
                       : 'Select all'}
                   </label>
                   {viewEmployeesSelectedIds.length > 0 && (
-                    <span className="text-xs text-muted-foreground tabular-nums">
+                    <span className="ml-auto rounded-full bg-brand/10 px-3 py-1 text-xs font-bold text-brand tabular-nums">
                       {viewEmployeesSelectedIds.length} selected
                     </span>
                   )}
                 </div>
-                <ul className="space-y-2">
+                <ul className="max-h-[min(48vh,24rem)] space-y-3 overflow-y-auto pr-1">
                   {viewEmployeesList.map((emp) => (
                     <li
                       key={emp.id}
-                      className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
+                      className={`flex items-center gap-4 rounded-xl border px-4 py-3 transition-colors ${
                         viewEmployeesSelectedIds.some((sid) => sameUserId(sid, emp.id))
-                          ? 'border-primary/50 bg-primary/5 dark:bg-primary/10'
-                          : 'border-border/60'
+                          ? 'border-brand/60 bg-brand/5 dark:bg-brand/10'
+                          : 'border-border/80 bg-background dark:bg-input/20'
                       }`}
                     >
                       <input
                         type="checkbox"
                         checked={viewEmployeesSelectedIds.some((sid) => sameUserId(sid, emp.id))}
                         onChange={() => toggleViewEmployeeSelection(emp.id)}
-                        className="rounded border-input accent-primary shrink-0"
+                        className="size-5 shrink-0 rounded border-input accent-orange-600"
                       />
-                      <Avatar className="size-10 shrink-0">
+                      <Avatar className="size-12 shrink-0 bg-brand/10">
                         <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" />
-                        <AvatarFallback className="text-sm">{initials(emp.name)}</AvatarFallback>
+                        <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">{initials(emp.name)}</AvatarFallback>
                       </Avatar>
-                      <span className="font-medium flex-1 min-w-0 truncate">{emp.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-base font-extrabold text-foreground">{emp.name}</span>
                       <Button
                         variant="outline"
                         size="sm"
-                        className="shrink-0 gap-1.5"
+                        className="h-10 shrink-0 gap-2 rounded-xl border-brand/70 px-4 text-sm font-semibold text-brand hover:bg-brand/10 hover:text-brand"
                         disabled={!!unassigningId}
                         onClick={() => handleUnassignFromView(emp)}
                         type="button"
@@ -1620,27 +1924,27 @@ export default function AdminDepartments() {
               </>
             )}
           </div>
-          <DialogFooter className={cn(ADMIN_FORM_DIALOG_FOOTER_CLASS, 'flex-wrap')}>
+          <DialogFooter className="shrink-0 flex-wrap gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
             {viewEmployeesSelectedIds.length > 0 && (
               <Button
                 variant="destructive"
                 size="sm"
                 disabled={!!unassigningId}
                 onClick={handleUnassignBulkFromView}
-                className="mr-auto"
+                className="mr-auto h-11 rounded-xl px-5 font-bold"
               >
                 {unassigningId === 'bulk' ? <Loader2 className="size-4 animate-spin mr-2" /> : <UserMinus className="size-4 mr-2" />}
                 Unassign selected ({viewEmployeesSelectedIds.length})
               </Button>
             )}
-            <Button variant="outline" onClick={() => setViewEmployeesOpen(false)}>
+            <Button variant="outline" onClick={() => setViewEmployeesOpen(false)} className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted">
               Close
             </Button>
             {viewEmployeesDept && (
               <Button
                 type="button"
                 onClick={openAssignFromViewModal}
-                className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}
+                className="h-11 min-w-[190px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong"
               >
                 <Users className="size-4 mr-2" />
                 Assign employees
@@ -1711,42 +2015,52 @@ export default function AdminDepartments() {
       >
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
+          className="max-w-[min(100vw-1.5rem,48rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="p-0"
+          closeButtonClassName="right-5 top-5 size-10 rounded-xl border-border/80 bg-background text-foreground hover:bg-muted"
+          overlayClassName="bg-black/55 backdrop-blur-sm"
           aria-describedby="dept-head-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Assign Department Head</DialogTitle>
-              <p id="dept-head-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
+          <div className="border-b border-border/80 px-6 pb-5 pt-7 pr-16 @md:px-8">
+            <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                <UserPlus className="size-7" />
+              </div>
+              <div className="min-w-0 pt-1">
+              <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">Assign Department Head</DialogTitle>
+              <p id="dept-head-desc" className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
                 {headDepartment && (
-                  <>Select the head for <strong>{headDepartment.name}</strong>.</>
+                  <>Select the head for <strong className="font-extrabold uppercase text-brand">{headDepartment.name}</strong>.</>
                 )}
               </p>
+              </div>
             </DialogHeader>
           </div>
           <form onSubmit={handleAssignHead} className="flex min-h-0 flex-1 flex-col">
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-            <div className="space-y-2">
-              <Label>Department Head</Label>
+            <div className="min-h-0 flex-1 px-6 py-5 @md:px-8">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+              <Label className="text-base font-semibold text-foreground">Department Head</Label>
               {headId !== '' && (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 border-destructive/40 text-destructive hover:bg-destructive/10"
+                  className="h-9 rounded-xl border-destructive/40 px-3 text-xs font-semibold text-destructive hover:bg-destructive/10"
                   onClick={() => setHeadId('')}
                 >
                   <UserMinus className="mr-1.5 size-3.5" />
                   Remove employee
                 </Button>
               )}
+              </div>
               {headModalLoading ? (
-                <div className="flex items-center justify-center gap-2 rounded-lg border border-border/60 py-10 text-sm text-muted-foreground dark:border-white/10">
-                  <Loader2 className="size-4 animate-spin shrink-0 text-teal-600" />
+                <div className="flex items-center justify-center gap-2 rounded-xl border border-border/70 py-10 text-sm text-muted-foreground dark:bg-input/20">
+                  <Loader2 className="size-5 animate-spin shrink-0 text-brand" />
                   Loading department members…
                 </div>
               ) : headModalLoadError ? (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
                   <p>{headModalLoadError}</p>
                   <Button
                     type="button"
@@ -1786,10 +2100,10 @@ export default function AdminDepartments() {
                 }
 
                 return (
-                  <div className="max-h-64 overflow-y-auto rounded-lg border border-border/60 dark:border-white/10">
+                  <div className="max-h-[min(48vh,24rem)] overflow-y-auto rounded-xl border border-border/80 dark:border-border/70">
                     <label className={[
-                      'flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40 dark:hover:bg-white/5',
-                      headId === '' ? 'bg-muted/30 dark:bg-white/5' : '',
+                      'flex cursor-pointer items-center gap-4 bg-background px-4 py-3 transition-colors hover:bg-muted/40 dark:bg-input/20 dark:hover:bg-input/35',
+                      headId === '' ? 'bg-brand/5 dark:bg-brand/10' : '',
                     ].join(' ')}>
                       <input
                         type="radio"
@@ -1797,9 +2111,9 @@ export default function AdminDepartments() {
                         value=""
                         checked={headId === ''}
                         onChange={() => setHeadId('')}
-                        className="accent-teal-500"
+                        className="size-5 accent-orange-600"
                       />
-                      <span className="flex size-8 items-center justify-center rounded-full border border-dashed border-border/60 dark:border-white/15">
+                      <span className="flex size-10 items-center justify-center rounded-full border border-dashed border-border/60 dark:border-white/15">
                         <UserMinus className="size-3.5 text-muted-foreground" />
                       </span>
                       <span className="text-sm text-muted-foreground italic">— Remove head —</span>
@@ -1819,10 +2133,10 @@ export default function AdminDepartments() {
                       <label
                         key={emp.id}
                         className={[
-                          'flex items-center gap-3 border-t border-border/40 px-3 py-2.5 transition-colors dark:border-white/6',
+                          'flex items-center gap-4 border-t border-border/70 bg-background px-4 py-3 transition-colors dark:border-border/60 dark:bg-input/20',
                           !isDisabled && 'cursor-pointer hover:bg-muted/40 dark:hover:bg-white/5',
                           isDisabled && 'opacity-60 cursor-not-allowed',
-                          String(headId) === String(emp.id) ? 'bg-teal-500/8 dark:bg-teal-500/10' : '',
+                          String(headId) === String(emp.id) ? 'bg-brand/5 dark:bg-brand/10' : '',
                         ].join(' ')}
                       >
                         <input
@@ -1832,23 +2146,23 @@ export default function AdminDepartments() {
                           checked={String(headId) === String(emp.id)}
                           onChange={() => { if (!isDisabled) setHeadId(String(emp.id)) }}
                           disabled={isDisabled}
-                          className="accent-teal-500 disabled:cursor-not-allowed"
+                          className="size-5 accent-orange-600 disabled:cursor-not-allowed"
                         />
-                        <Avatar className="size-8 shrink-0">
+                        <Avatar className="size-12 shrink-0">
                           <AvatarImage src={profileImageUrl(emp.profile_image_url || emp.profile_image)} alt={emp.name} />
-                          <AvatarFallback className="bg-teal-500/20 text-[10px] font-bold text-teal-700 dark:text-teal-300">
+                          <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">
                             {initials(emp.name)}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-foreground">{emp.name}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">{emp.position || emp.employee_code || ''}</p>
+                          <p className="truncate text-base font-extrabold text-foreground">{emp.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">{emp.position || emp.employee_code || ''}</p>
                           {isDisabled && reason && (
                             <p className="mt-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400" title={reason}>{reason}</p>
                           )}
                         </div>
                         {String(headId) === String(emp.id) && !isDisabled && (
-                          <span className="shrink-0 text-[10px] font-semibold text-teal-600 dark:text-teal-400">Selected</span>
+                          <span className="shrink-0 rounded-full bg-brand/10 px-2.5 py-1 text-[10px] font-bold text-brand">Selected</span>
                         )}
                       </label>
                       )
@@ -1858,10 +2172,10 @@ export default function AdminDepartments() {
               })()}
             </div>
             </div>
-            <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-              <Button type="button" variant="outline" className="dark:border-white/10 dark:text-slate-300" onClick={() => setHeadOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={headSubmitting || headModalLoading} className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}>
-                {headSubmitting ? <Loader2 className="size-4 animate-spin" /> : null}
+            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
+              <Button type="button" variant="outline" className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted" onClick={() => setHeadOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={headSubmitting || headModalLoading} className="h-11 min-w-[130px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
+                {headSubmitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
                 Save
               </Button>
             </DialogFooter>

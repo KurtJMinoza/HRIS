@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Plus, MapPin, Loader2, MoreVertical, Pencil, Trash2, Building2, Layers, Users, ExternalLink, ChevronRight, Search, ChevronDown } from 'lucide-react'
-import { TableBodySkeleton } from '@/components/skeletons'
+import { Plus, MapPin, Loader2, MoreVertical, Pencil, Trash2, Building2, Layers, Users, ExternalLink, ChevronRight, ChevronLeft, Search, ChevronDown } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -28,18 +26,14 @@ import { getBranches, getCompanies, getEmployees, createBranch, updateBranch, de
 import { isRosterStaffMember } from '@/lib/rosterStaff'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
-import { FIELD_SELECT_CLASS_H8, FIELD_SELECT_CLASS_H10 } from '@/lib/fieldClasses'
 import {
-  ADMIN_FORM_DIALOG_BODY_CLASS,
   ADMIN_FORM_DIALOG_DESC_CLASS,
   ADMIN_FORM_DIALOG_FOOTER_CLASS,
   ADMIN_FORM_DIALOG_HEADER_INNER_CLASS,
   ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS,
-  ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS,
   ADMIN_FORM_DIALOG_TITLE_CLASS,
   adminFormDialogContentClass,
   ADMIN_FORM_DIALOG_MAX_W_MD,
-  ADMIN_FORM_DIALOG_MAX_W_XL,
 } from '@/lib/adminFormDialogStyles'
 
 function initials(name) {
@@ -54,7 +48,7 @@ function buildBranchManagerMap(branches, excludeBranchId) {
   const map = new Map()
   for (const b of branches || []) {
     if (!b.branch_manager_id) continue
-    if (String(b.id) === String(excludeBranchId)) continue // editing this branch — manager can stay
+    if (String(b.id) === String(excludeBranchId)) continue // editing this branch - manager can stay
     map.set(String(b.branch_manager_id), {
       companyName: b.company_name || '',
       branchName: b.name || '',
@@ -63,8 +57,8 @@ function buildBranchManagerMap(branches, excludeBranchId) {
   return map
 }
 
-/** Searchable Branch Manager picker — QA spec: search, avatars, position, assignment status. */
-function BranchManagerPicker({ value, onChange, employees, branches, companies, companyId, excludeBranchId, disabled }) {
+/** Searchable Branch Manager picker - QA spec: search, avatars, position, assignment status. */
+function BranchManagerPicker({ value, onChange, employees, branches, companies, companyId, excludeBranchId, disabled, triggerClassName }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const branchManagerMap = useMemo(() => buildBranchManagerMap(branches, excludeBranchId), [branches, excludeBranchId])
@@ -93,7 +87,10 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
         <button
           type="button"
           disabled={disabled}
-          className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm text-left transition-colors hover:bg-muted/50 disabled:opacity-50 disabled:pointer-events-none dark:border-white/10 dark:bg-slate-900/50 dark:hover:bg-slate-800/60"
+          className={cn(
+            'flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 disabled:pointer-events-none disabled:opacity-50 dark:border-white/10 dark:bg-slate-900/50 dark:hover:bg-slate-800/60',
+            triggerClassName,
+          )}
         >
           {selected ? (
             <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -121,7 +118,7 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search by name, employee ID, position…"
+              placeholder="Search by name, employee ID, position..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-9 pl-8 dark:bg-slate-800/60 dark:border-slate-600"
@@ -166,7 +163,7 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
                   && emp.company_id && companyId && Number(emp.company_id) !== Number(companyId)
                 const isDisabled = !!branchAssignment || !!companyHeadOf || !!inDifferentCompany
                 const crossCompanyLabel = inDifferentCompany
-                  ? [emp.company_name, emp.branch_name, emp.department].filter(Boolean).join(' → ') || 'Another company'
+                  ? [emp.company_name, emp.branch_name, emp.department].filter(Boolean).join(' -> ') || 'Another company'
                   : null
                 return (
                   <button
@@ -178,7 +175,7 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
                       companyHeadOf
                         ? `Company Head of ${companyHeadOf}`
                         : branchAssignment
-                        ? `Assigned to ${branchAssignment.companyName} → ${branchAssignment.branchName}`
+                        ? `Assigned to ${branchAssignment.companyName} -> ${branchAssignment.branchName}`
                         : crossCompanyLabel
                         ? `Assigned to ${crossCompanyLabel}`
                         : undefined
@@ -194,21 +191,21 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium text-foreground">{emp.name}{emp.employee_code ? ` (${emp.employee_code})` : ''}</p>
                       <p className="truncate text-[11px] text-muted-foreground">
-                        {emp.position || emp.department || '—'}
+                        {emp.position || emp.department || '-'}
                       </p>
                       {companyHeadOf && (
                         <Badge variant="secondary" className="mt-1 h-5 text-[10px] bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300 border-0">
-                          Company Head — {companyHeadOf}
+                          Company Head - {companyHeadOf}
                         </Badge>
                       )}
                       {!companyHeadOf && branchAssignment && (
                         <Badge variant="secondary" className="mt-1 h-5 text-[10px] bg-amber-500/20 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 border-0">
-                          Branch Manager — {branchAssignment.companyName} › {branchAssignment.branchName}
+                          Branch Manager - {branchAssignment.companyName} / {branchAssignment.branchName}
                         </Badge>
                       )}
                       {crossCompanyLabel && (
                         <Badge variant="secondary" className="mt-1 h-5 text-[10px] bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300 border-0">
-                          🔴 Assigned: {crossCompanyLabel}
+                          Assigned: {crossCompanyLabel}
                         </Badge>
                       )}
                     </div>
@@ -238,6 +235,7 @@ export default function AdminBranches() {
   const [companies, setCompanies] = useState([])
   const [allEmployees, setAllEmployees] = useState([])
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
 
   // Read initial company filter from URL
   const [companyFilter, setCompanyFilter] = useState(() => searchParams.get('company_id') || '')
@@ -268,6 +266,10 @@ export default function AdminBranches() {
       setSearchParams({}, { replace: true })
     }
   }, [companyFilter, setSearchParams])
+
+  useEffect(() => {
+    setPage(1)
+  }, [companyFilter])
 
   const fetchBranches = useCallback(async () => {
     try {
@@ -303,12 +305,12 @@ export default function AdminBranches() {
     }
   }, [])
 
-  // Companies list (for filter dropdown) — load once when ready
+  // Companies list (for filter dropdown) - load once when ready
   useEffect(() => {
     void fetchCompanies()
   }, [fetchCompanies])
 
-  // Branches — refetch whenever company filter changes (includes initial mount)
+  // Branches - refetch whenever company filter changes (includes initial mount)
   useEffect(() => {
     setLoading(true)
     void fetchBranches()
@@ -396,77 +398,69 @@ export default function AdminBranches() {
   }
 
   const activeCompany = companies.find((c) => String(c.id) === String(companyFilter))
-  const useCardLayout = !loading && branches.length > 0 && branches.length < 10
+  const pageSize = 6
+  const totalBranches = branches.length
+  const pageCount = Math.max(1, Math.ceil(totalBranches / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const pagedBranches = branches.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const rangeStart = totalBranches > 0 ? (currentPage - 1) * pageSize + 1 : 0
+  const rangeEnd = Math.min(currentPage * pageSize, totalBranches)
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount)
+  }, [page, pageCount])
 
   return (
-    <div className="space-y-6 p-4 @md:p-6">
-      {/* Breadcrumb — always visible, reinforces hierarchy */}
-      <nav className="flex items-center gap-2 text-sm font-medium" aria-label="Breadcrumb">
-        <button type="button" onClick={() => navigate('/admin/companies')} className="text-muted-foreground hover:text-foreground transition-colors">Companies</button>
+    <div className="min-h-full bg-background px-4 py-6 text-foreground @md:px-6 @lg:px-8">
+      <div className="space-y-6">
+      {/* Breadcrumb - always visible, reinforces hierarchy */}
+      <nav className="flex items-center gap-2 text-sm font-semibold" aria-label="Breadcrumb">
+        <button type="button" onClick={() => navigate('/admin/companies')} className="text-brand transition-colors hover:text-brand-strong">Companies</button>
         <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-        {activeCompany ? (
-          <>
-            <button type="button" onClick={() => navigate('/admin/companies')} className="text-muted-foreground hover:text-foreground transition-colors truncate max-w-[140px]">{activeCompany.name}</button>
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-            <span className="font-bold text-base text-foreground">Branches</span>
-          </>
-        ) : (
-          <span className="font-bold text-base text-foreground">Branches</span>
-        )}
+        <span className="text-foreground">Branches</span>
       </nav>
 
-      <Card className="border-0 dark:border dark:bg-slate-900/50 dark:border-slate-700/50 dark:shadow-[0_4px_14px_rgba(0,0,0,0.25)]">
-        <CardHeader className="space-y-1">
-          <div className="flex flex-col gap-4 @sm:flex-row @sm:items-center @sm:justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <MapPin className="size-5" />
-                Branches
-                {activeCompany && (
-                  <Badge variant="secondary" className="ml-1 text-xs dark:bg-slate-700/50 dark:border-slate-600 dark:text-slate-200">
-                    {activeCompany.name}
-                  </Badge>
-                )}
-              </CardTitle>
-              <CardDescription>
-                {activeCompany
-                  ? `Showing branches under ${activeCompany.name}`
-                  : 'Branches represent physical or operational locations of your company.'}
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              {companyFilter && (
-                <Button variant="outline" size="sm" onClick={() => navigate('/admin/companies')}>
-                  <Building2 className="size-3.5 mr-1.5" />View Company
-                </Button>
-              )}
-              <Button className="bg-black hover:bg-black/85 text-white dark:bg-white dark:hover:bg-white/90 dark:text-black" onClick={() => { setCreateOpen(true); setCreateName(''); setCreateCompanyId(companyFilter || ''); setCreateAddress(''); setCreateManagerId('') }}>
-                <Plus className="size-4" />
-                Add Branch
-              </Button>
-            </div>
+      <section className="flex flex-col gap-5 @md:flex-row @md:items-center @md:justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex size-16 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+            <MapPin className="size-8" />
           </div>
-          {/* Filter bar */}
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <Label className="text-muted-foreground text-sm shrink-0">Filter:</Label>
-            <select
-              className={cn('min-w-[180px]', FIELD_SELECT_CLASS_H8)}
-              value={companyFilter}
-              onChange={(e) => setCompanyFilter(e.target.value)}
-            >
-              <option value="">All companies</option>
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-            {companyFilter && (
-              <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={() => setCompanyFilter('')}>
-                Clear filter
-              </Button>
-            )}
+          <div>
+            <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-foreground">Branches</h1>
+            <p className="mt-1 text-base font-medium text-muted-foreground">
+              Branches represent physical or operational locations of your company.
+            </p>
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
+        <Button
+          className="h-12 rounded-xl bg-brand px-6 text-base font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong"
+          onClick={() => { setCreateOpen(true); setCreateName(''); setCreateCompanyId(companyFilter || ''); setCreateAddress(''); setCreateManagerId('') }}
+        >
+          <Plus className="size-5" />
+          Add Branch
+        </Button>
+      </section>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Label className="text-base font-medium text-muted-foreground">Filter by company</Label>
+        <select
+          className="h-11 min-w-[260px] rounded-xl border border-border/80 bg-background px-4 text-sm font-semibold text-foreground shadow-sm dark:bg-input/35 dark:[color-scheme:dark]"
+          value={companyFilter}
+          onChange={(e) => setCompanyFilter(e.target.value)}
+        >
+          <option value="">All companies</option>
+          {companies.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        {companyFilter && (
+          <Button variant="ghost" size="sm" className="h-9 rounded-xl px-3 text-xs font-semibold text-muted-foreground hover:text-foreground" onClick={() => setCompanyFilter('')}>
+            Clear filter
+          </Button>
+        )}
+      </div>
+
+      <div>
           {loading ? (
             <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
               {[...Array(6)].map((_, i) => (
@@ -486,8 +480,8 @@ export default function AdminBranches() {
               ))}
             </div>
           ) : branches.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 px-8 text-center rounded-xl border-2 border-dashed border-border/60 dark:border-slate-700/50">
-              <div className="mb-5 flex size-20 items-center justify-center rounded-2xl bg-muted/80 dark:bg-slate-800/60">
+            <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/70 px-8 py-20 text-center dark:bg-card/40">
+              <div className="mb-5 flex size-20 items-center justify-center rounded-2xl bg-brand/10 text-brand">
                 <MapPin className="size-10 text-muted-foreground" />
               </div>
               <h3 className="text-xl font-bold text-foreground">No branches yet</h3>
@@ -496,30 +490,22 @@ export default function AdminBranches() {
                   ? `Start organizing ${activeCompany.name} by adding a branch. Branches group departments and employees by location.`
                   : 'Add a branch to get started. Select a company above to filter, or add a branch for any company.'}
               </p>
-              <Button className="mt-6 bg-black hover:bg-black/85 text-white dark:bg-white dark:hover:bg-white/90 dark:text-black shadow-md hover:shadow-lg transition-shadow" onClick={() => { setCreateOpen(true); setCreateName(''); setCreateCompanyId(companyFilter || ''); setCreateAddress(''); setCreateManagerId('') }}>
+              <Button className="mt-6 rounded-xl bg-brand font-bold text-brand-foreground shadow-md transition-shadow hover:bg-brand-strong hover:shadow-lg" onClick={() => { setCreateOpen(true); setCreateName(''); setCreateCompanyId(companyFilter || ''); setCreateAddress(''); setCreateManagerId('') }}>
                 <Plus className="size-4" />
                 Add Branch
               </Button>
             </div>
-          ) : useCardLayout ? (
-            <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
-              {branches.map((branch) => {
+          ) : (
+            <>
+            <div className="grid gap-5 @md:grid-cols-2 @xl:grid-cols-3">
+              {pagedBranches.map((branch) => {
                 return (
                   <div
                     key={branch.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => navigate(`/admin/departments?branch_id=${branch.id}`)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        navigate(`/admin/departments?branch_id=${branch.id}`)
-                      }
-                    }}
-                    className="group cursor-pointer rounded-xl border-2 border-border/60 dark:border-slate-600/50 bg-card dark:bg-slate-800 dark:shadow-[0_4px_14px_rgba(0,0,0,0.25)] p-5 transition-all duration-200 hover:scale-[1.02] hover:shadow-xl hover:border-primary/30 hover:-translate-y-0.5 active:scale-[0.99] dark:hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] dark:hover:border-slate-500"
+                    className="group rounded-2xl border border-border/80 bg-card p-5 shadow-sm shadow-slate-900/[0.03] transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-lg dark:shadow-black/25"
                   >
                     <div className="flex gap-4">
-                      <div className="shrink-0 flex size-14 items-center justify-center overflow-hidden rounded-xl border border-border/60 bg-muted/40 dark:bg-slate-700/50 shadow-sm">
+                      <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/80 bg-background shadow-sm dark:bg-input/35">
                         {departmentLogoUrl(branch) ? (
                           <img src={departmentLogoUrl(branch)} alt="" className="size-full object-cover" />
                         ) : (
@@ -527,12 +513,12 @@ export default function AdminBranches() {
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <h3 className="text-lg font-bold text-foreground truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{branch.name}</h3>
+                        <h3 className="truncate text-xl font-extrabold text-foreground transition-colors group-hover:text-brand">{branch.name}</h3>
                         {branch.company_name && (
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); navigate('/admin/companies') }}
-                            className="mt-0.5 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                            className="mt-1 flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
                           >
                             <Building2 className="size-3.5 shrink-0" />
                             <span>{branch.company_name} (Company)</span>
@@ -540,8 +526,8 @@ export default function AdminBranches() {
                         )}
                         <div className="mt-2.5 flex items-center gap-2">
                           {branch.branch_manager_name ? (
-                            <div className="inline-flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 dark:bg-teal-950/50 dark:border-teal-700/40 px-2.5 py-1 w-fit">
-                              <span className="text-[10px] font-semibold uppercase tracking-wider text-teal-600 dark:text-teal-400">Manager</span>
+                            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-brand/25 bg-brand/10 px-2.5 py-1">
+                              <span className="text-[10px] font-semibold uppercase tracking-normal text-brand">Manager</span>
                               <Avatar className="size-6 shrink-0">
                                 <AvatarImage src={profileImageUrl(branch.branch_manager_profile_image)} />
                                 <AvatarFallback className="text-[9px] font-bold bg-teal-500/20 text-teal-700 dark:bg-teal-400/90 dark:text-teal-950">{initials(branch.branch_manager_name)}</AvatarFallback>
@@ -549,21 +535,21 @@ export default function AdminBranches() {
                               <span className="truncate text-sm font-medium text-foreground max-w-[140px]">{branch.branch_manager_name}</span>
                             </div>
                           ) : (
-                            <span className="rounded-lg border border-amber-200 bg-amber-50/80 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">No manager assigned</span>
+                            <span className="rounded-full border border-brand/25 bg-brand/10 px-3 py-1 text-xs font-semibold text-brand">No manager assigned</span>
                           )}
                         </div>
-                        <div className="mt-3 pt-3 border-t border-border/40 flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-border/70 pt-4">
                           <button
                             type="button"
                             onClick={() => navigate(`/admin/departments?branch_id=${branch.id}`)}
-                            className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-medium text-cyan-700 transition-colors hover:bg-cyan-100 dark:bg-cyan-950/50 dark:text-cyan-400 dark:border-cyan-700/30 dark:hover:bg-cyan-950/60 cursor-pointer"
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-brand/10 px-4 py-2 text-sm font-bold text-brand transition-colors hover:bg-brand/15"
                             title="View departments"
                           >
                             <Layers className="size-3 shrink-0" />
                             {branch.departments_count ?? 0} Departments
                           </button>
                           <span
-                            className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-700/30"
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-muted px-4 py-2 text-sm font-bold text-foreground"
                             title={`${branch.employees_count ?? 0} employee(s) in this branch`}
                           >
                             <Users className="size-3 shrink-0" />
@@ -572,7 +558,7 @@ export default function AdminBranches() {
                           <div className="ml-auto">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                <Button variant="ghost" size="icon" className="size-8 rounded-full bg-muted/70 dark:bg-slate-700 dark:hover:bg-slate-600 transition-all hover:scale-105 opacity-90 hover:opacity-100 group-hover:opacity-100" aria-label="Branch actions">
+                                <Button variant="ghost" size="icon" className="size-9 rounded-full hover:bg-muted" aria-label="Branch actions">
                                   <MoreVertical className="size-4" />
                                 </Button>
                               </DropdownMenuTrigger>
@@ -597,145 +583,65 @@ export default function AdminBranches() {
                 )
               })}
             </div>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-border/50 dark:border-white/10 dark:shadow-[0_4px_14px_rgba(0,0,0,0.15)]">
-              <table className="w-full min-w-[700px]">
-                <thead className="bg-muted/40 dark:bg-slate-800/80">
-                  <tr>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-300">Branch</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-300">Company</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-300">Manager</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-300">Address</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-300">Depts</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-300">Employees</th>
-                    <th className="px-5 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-300">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/30 dark:divide-white/5">
-                  {branches.map((branch, idx) => {
-                    return (
-                      <tr key={branch.id} className={['group transition-colors hover:bg-muted/40 dark:hover:bg-slate-700/60', idx % 2 === 1 ? 'dark:bg-slate-800/40' : ''].join(' ')}>
-                        <td className="px-5 py-4 align-middle">
-                          <div className="flex items-center gap-2">
-                            <div className="shrink-0 flex size-8 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/40 dark:bg-slate-700/50">
-                              {departmentLogoUrl(branch) ? (
-                                <img src={departmentLogoUrl(branch)} alt="" className="size-full object-cover" />
-                              ) : (
-                                <Building2 className="size-4 text-muted-foreground" />
-                              )}
-                            </div>
-                            <p className="font-semibold text-foreground">{branch.name}</p>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4 align-middle">
-                          {branch.company_name ? (
-                            <button
-                              type="button"
-                              onClick={() => navigate('/admin/companies')}
-                              className="flex items-center gap-1.5 text-sm text-primary hover:underline"
-                            >
-                              <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
-                              {branch.company_name}
-                            </button>
-                          ) : <span className="text-sm text-muted-foreground">—</span>}
-                        </td>
-                        <td className="px-5 py-4 align-middle">
-                          {branch.branch_manager_name ? (
-                            <div className="flex items-center gap-2">
-                              <Avatar className="size-7 shrink-0">
-                                <AvatarImage src={profileImageUrl(branch.branch_manager_profile_image)} />
-                                <AvatarFallback className="text-[10px] font-bold bg-teal-500/20 text-teal-700 dark:bg-teal-400 dark:text-teal-950">{initials(branch.branch_manager_name)}</AvatarFallback>
-                              </Avatar>
-                              <span className="text-sm text-foreground truncate max-w-[110px]">{branch.branch_manager_name}</span>
-                            </div>
-                          ) : <span className="rounded-full border border-slate-300/60 bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-400">Not assigned</span>}
-                        </td>
-                        <td className="px-5 py-4 align-middle">
-                          {branch.address ? (
-                            <span className="flex items-center gap-1 text-sm text-muted-foreground max-w-[160px] truncate" title={branch.address}>
-                              <MapPin className="size-3 shrink-0" />{branch.address}
-                            </span>
-                          ) : <span className="text-sm text-muted-foreground">—</span>}
-                        </td>
-                        <td className="px-5 py-4 align-middle">
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/admin/departments?branch_id=${branch.id}`)}
-                            className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700 transition-colors hover:bg-cyan-100 dark:bg-cyan-950/50 dark:text-cyan-400 dark:border-cyan-700/30 dark:hover:bg-cyan-950/60 cursor-pointer"
-                            title={`${branch.departments_count ?? 0} department(s) — one functional unit each. Click to view.`}
-                          >
-                            <Layers className="size-3" />
-                            {branch.departments_count ?? 0}
-                          </button>
-                        </td>
-                        <td className="px-5 py-4 align-middle">
-                          <span
-                            className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-700/30"
-                            title={`${branch.employees_count ?? 0} employee(s) in this branch`}
-                          >
-                            <Users className="size-3" />
-                            {branch.employees_count ?? 0}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-right">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="size-8 rounded-md bg-muted/60 dark:bg-slate-700 dark:hover:bg-slate-600 opacity-80 group-hover:opacity-100 transition-opacity">
-                                <MoreVertical className="size-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem onClick={() => navigate(`/admin/departments?branch_id=${branch.id}`)}>
-                                <ExternalLink className="size-4" /><span>View Departments</span>
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openEdit(branch)}>
-                                <Pencil className="size-4" /><span>Edit</span>
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem variant="destructive" onClick={() => setDeleteConfirm(branch)}>
-                                <Trash2 className="size-4" /><span>Delete</span>
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+            <div className="mt-5 flex flex-col gap-3 border-t border-border/80 pt-5 text-sm text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between">
+              <span>
+                Showing {rangeStart} to {rangeEnd} of {totalBranches} branch{totalBranches === 1 ? '' : 'es'}
+              </span>
+              <div className="flex items-center justify-end gap-2">
+                <Button type="button" variant="ghost" size="icon" className="size-9 rounded-full" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <span className="flex size-10 items-center justify-center rounded-xl border border-brand bg-brand/10 text-sm font-bold text-brand">
+                  {currentPage}
+                </span>
+                <Button type="button" variant="ghost" size="icon" className="size-9 rounded-full" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={currentPage >= pageCount}>
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
             </div>
+            </>
           )}
-        </CardContent>
-      </Card>
-
-      {/* ── Create Branch ── */}
+        </div>
+      </div>
+      {/* Create Branch */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_XL)}
+          className="max-w-[min(100vw-1.5rem,42rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="p-0"
+          closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
+          overlayClassName="bg-black/55 backdrop-blur-sm"
           aria-describedby="branch-create-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Create Branch</DialogTitle>
-              <p id="branch-create-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Branches represent physical or operational locations of your company. Add departments after creation.
-              </p>
-            </DialogHeader>
-          </div>
           <form onSubmit={handleCreate} className="flex min-h-0 flex-1 flex-col">
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-            <div>
-              <Label>Company *</Label>
+            <div className="border-b border-border/80 px-6 pb-5 pt-7 pr-16 @md:px-8">
+              <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
+                <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand">
+                  <MapPin className="size-7" />
+                </div>
+                <div className="min-w-0 pt-1">
+                  <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">
+                    Create Branch
+                  </DialogTitle>
+                  <p id="branch-create-desc" className="mt-3 max-w-xl text-base leading-7 text-muted-foreground">
+                    Branches represent physical or operational locations of your company. Add departments after creation.
+                  </p>
+                </div>
+              </DialogHeader>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-6 @md:px-8">
+            <div className="space-y-2">
+              <Label className="text-base font-semibold text-foreground">Company <span className="text-brand">*</span></Label>
               {companyFilter ? (
-                <div className="mt-1 flex h-10 w-full items-center gap-2 rounded-md border border-input bg-muted/50 px-3 py-2 text-sm">
+                <div className="flex h-12 w-full items-center gap-3 rounded-xl border border-brand/60 bg-background px-4 text-sm text-foreground shadow-sm dark:bg-input/35">
                   <Building2 className="size-4 shrink-0 text-muted-foreground" />
                   <span className="font-medium">{companies.find((c) => String(c.id) === String(companyFilter))?.name || 'Company'}</span>
                   <span className="text-muted-foreground">(from current view)</span>
                 </div>
               ) : (
                 <select
-                  className={cn('mt-1', FIELD_SELECT_CLASS_H10)}
+                  className="h-12 w-full rounded-xl border border-brand/60 bg-background px-4 text-sm text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35 dark:[color-scheme:dark]"
                   value={createCompanyId}
                   onChange={(e) => { setCreateCompanyId(e.target.value); setCreateManagerId('') }}
                   required
@@ -752,20 +658,20 @@ export default function AdminBranches() {
                 </p>
               )}
             </div>
-            <div>
-              <Label htmlFor="create-branch-name">Branch Name *</Label>
-              <Input id="create-branch-name" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="e.g. Davao Branch" className="mt-1" required />
+            <div className="space-y-2">
+              <Label htmlFor="create-branch-name" className="text-base font-semibold text-foreground">Branch Name <span className="text-brand">*</span></Label>
+              <Input id="create-branch-name" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="e.g. Davao Branch" className="h-12 rounded-xl border-border/80 bg-background px-4 text-sm shadow-sm dark:bg-input/35" required />
             </div>
-            <div>
-              <Label htmlFor="create-branch-address" className="flex items-center gap-1.5">
-                <MapPin className="size-3.5 text-muted-foreground" />
+            <div className="space-y-2">
+              <Label htmlFor="create-branch-address" className="flex items-center gap-2 text-base font-semibold text-foreground">
+                <MapPin className="size-4 text-foreground" />
                 Address (optional)
               </Label>
-              <Input id="create-branch-address" value={createAddress} onChange={(e) => setCreateAddress(e.target.value)} placeholder="Full branch address" className="mt-1" />
+              <Input id="create-branch-address" value={createAddress} onChange={(e) => setCreateAddress(e.target.value)} placeholder="Full branch address" className="h-12 rounded-xl border-border/80 bg-background px-4 text-sm shadow-sm dark:bg-input/35" />
             </div>
-            <div>
-              <Label>Branch Manager (optional)</Label>
-              <div className="mt-1">
+            <div className="space-y-2">
+              <Label className="text-base font-semibold text-foreground">Branch Manager (optional)</Label>
+              <div>
                 <BranchManagerPicker
                   value={createManagerId}
                   onChange={setCreateManagerId}
@@ -775,13 +681,16 @@ export default function AdminBranches() {
                   companyId={createCompanyId}
                   excludeBranchId={null}
                   disabled={createSubmitting}
+                  triggerClassName="h-12 rounded-xl border-border/80 bg-background px-4 text-sm shadow-sm dark:bg-input/35"
                 />
               </div>
             </div>
             </div>
-            <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={createSubmitting} className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}>
+            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted">
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createSubmitting} className="h-11 min-w-[160px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
                 {createSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Create Branch'}
               </Button>
             </DialogFooter>
@@ -789,38 +698,42 @@ export default function AdminBranches() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Edit Branch ── */}
+      {/* Edit Branch */}
       <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) setEditBranch(null) }}>
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_XL)}
+          className="max-w-[min(100vw-1.5rem,42rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="p-0"
+          closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
+          overlayClassName="bg-black/55 backdrop-blur-sm"
           aria-describedby="branch-edit-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <div className="flex items-center gap-3">
-                <div className="shrink-0 flex size-12 items-center justify-center overflow-hidden rounded-xl border border-border/60 bg-muted/40 dark:bg-slate-700/50">
+          <form onSubmit={handleEdit} className="flex min-h-0 flex-1 flex-col">
+            <div className="border-b border-border/80 px-6 pb-5 pt-7 pr-16 @md:px-8">
+              <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
+                <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-brand/20 bg-brand/10 text-brand">
                   {departmentLogoUrl(editBranch) ? (
                     <img src={departmentLogoUrl(editBranch)} alt="" className="size-full object-cover" />
                   ) : (
-                    <MapPin className="size-6 text-muted-foreground" />
+                    <MapPin className="size-7" />
                   )}
                 </div>
-                <div className="min-w-0">
-                  <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Edit Branch</DialogTitle>
-                  <p id="branch-edit-desc" className={cn(ADMIN_FORM_DIALOG_DESC_CLASS, 'mt-0.5')}>
-                    {editBranch ? `${companies.find((c) => String(c.id) === String(editBranch.company_id))?.name || '—'} → ${editBranch.name}` : ''}
+                <div className="min-w-0 pt-1">
+                  <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">
+                    Edit Branch
+                  </DialogTitle>
+                  <p id="branch-edit-desc" className="mt-3 max-w-xl text-base leading-7 text-muted-foreground">
+                    {editBranch ? `Update ${editBranch.name} branch details and manager assignment.` : 'Update branch details and manager assignment.'}
                   </p>
                 </div>
-              </div>
-            </DialogHeader>
-          </div>
-          <form onSubmit={handleEdit} className="flex min-h-0 flex-1 flex-col">
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-            <div>
-              <Label>Company *</Label>
+              </DialogHeader>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-6 @md:px-8">
+            <div className="space-y-2">
+              <Label className="text-base font-semibold text-foreground">Company <span className="text-brand">*</span></Label>
               <select
-                className={cn('mt-1', FIELD_SELECT_CLASS_H10)}
+                className="h-12 w-full rounded-xl border border-brand/60 bg-background px-4 text-sm text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35 dark:[color-scheme:dark]"
                 value={editCompanyId}
                 onChange={(e) => { setEditCompanyId(e.target.value); setEditManagerId('') }}
               >
@@ -828,20 +741,20 @@ export default function AdminBranches() {
                 {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
-            <div>
-              <Label>Branch Name *</Label>
-              <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="mt-1" required />
+            <div className="space-y-2">
+              <Label className="text-base font-semibold text-foreground">Branch Name <span className="text-brand">*</span></Label>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-12 rounded-xl border-border/80 bg-background px-4 text-sm shadow-sm dark:bg-input/35" required />
             </div>
-            <div>
-              <Label className="flex items-center gap-1.5">
-                <MapPin className="size-3.5 text-muted-foreground" />
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2 text-base font-semibold text-foreground">
+                <MapPin className="size-4 text-foreground" />
                 Address (optional)
               </Label>
-              <Input value={editAddress} onChange={(e) => setEditAddress(e.target.value)} className="mt-1" placeholder="Full branch address" />
+              <Input value={editAddress} onChange={(e) => setEditAddress(e.target.value)} className="h-12 rounded-xl border-border/80 bg-background px-4 text-sm shadow-sm dark:bg-input/35" placeholder="Full branch address" />
             </div>
-            <div>
-              <Label>Branch Manager (optional)</Label>
-              <div className="mt-1">
+            <div className="space-y-2">
+              <Label className="text-base font-semibold text-foreground">Branch Manager (optional)</Label>
+              <div>
                 <BranchManagerPicker
                   value={editManagerId}
                   onChange={setEditManagerId}
@@ -851,13 +764,16 @@ export default function AdminBranches() {
                   companyId={editCompanyId}
                   excludeBranchId={editBranch?.id}
                   disabled={editSubmitting}
+                  triggerClassName="h-12 rounded-xl border-border/80 bg-background px-4 text-sm shadow-sm dark:bg-input/35"
                 />
               </div>
             </div>
             </div>
-            <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-              <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={editSubmitting} className={ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS}>
+            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
+              <Button type="button" variant="outline" onClick={() => setEditOpen(false)} className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted">
+                Cancel
+              </Button>
+              <Button type="submit" disabled={editSubmitting} className="h-11 min-w-[160px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
                 {editSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Save Changes'}
               </Button>
             </DialogFooter>
@@ -865,7 +781,7 @@ export default function AdminBranches() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Delete ── */}
+      {/* Delete */}
       <Dialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
         <DialogContent
           showCloseButton
@@ -876,7 +792,7 @@ export default function AdminBranches() {
             <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
               <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Delete Branch</DialogTitle>
               <p id="branch-delete-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Delete &quot;{deleteConfirm?.name}&quot;? Deletion will fail if the branch has departments — remove them first.
+                Delete &quot;{deleteConfirm?.name}&quot;? Deletion will fail if the branch has departments - remove them first.
               </p>
             </DialogHeader>
           </div>

@@ -15,6 +15,7 @@ class Department extends Model
         'name',
         'branch_id',
         'office_location',
+        'description',
         'logo',
         'department_head_id',
     ];

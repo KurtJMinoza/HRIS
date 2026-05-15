@@ -70,6 +70,7 @@ class DepartmentController extends Controller
             ],
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'office_location' => ['nullable', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:500'],
         ], [
             'name.regex' => 'Department name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
         ]);
@@ -85,6 +86,7 @@ class DepartmentController extends Controller
             'name' => $validated['name'],
             'branch_id' => $validated['branch_id'],
             'office_location' => isset($validated['office_location']) && trim((string) $validated['office_location']) !== '' ? trim((string) $validated['office_location']) : null,
+            'description' => isset($validated['description']) && trim((string) $validated['description']) !== '' ? trim((string) $validated['description']) : null,
             'logo' => null,
         ]);
 
@@ -146,6 +148,7 @@ class DepartmentController extends Controller
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'department_head_id' => ['nullable', 'integer', 'exists:users,id'],
             'office_location' => ['nullable', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:500'],
         ], [
             'name.regex' => 'Department name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
         ]);
@@ -213,6 +216,13 @@ class DepartmentController extends Controller
         if (array_key_exists('office_location', $validated)) {
             $department->office_location = is_string($validated['office_location']) && trim($validated['office_location']) !== ''
                 ? trim($validated['office_location'])
+                : null;
+            $department->save();
+        }
+
+        if (array_key_exists('description', $validated)) {
+            $department->description = is_string($validated['description']) && trim($validated['description']) !== ''
+                ? trim($validated['description'])
                 : null;
             $department->save();
         }
@@ -382,6 +392,7 @@ class DepartmentController extends Controller
             'company_id' => $d->branch?->company?->id,
             'company_name' => $d->branch?->company?->name,
             'office_location' => $d->office_location,
+            'description' => $d->description,
             'logo' => $companyLogo,
             'logo_url' => $logoUrl,
             'total_employees' => $d->employees_count ?? $d->employees()->count(),
