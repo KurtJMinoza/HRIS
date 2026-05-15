@@ -631,10 +631,8 @@ class FaceVerificationService
                 continue;
             }
             $storedNorm = self::l2Normalize($stored);
-            $sNorm = self::cosineSimilarity($storedNorm, $incomingNorm);
-            $sRaw = self::cosineSimilarity($stored, $incomingDescriptor);
-            $s = max($sNorm, $sRaw);
-            $d = self::euclideanDistance($stored, $incomingDescriptor);
+            $s = self::cosineSimilarity($storedNorm, $incomingNorm);
+            $d = self::euclideanDistance($storedNorm, $incomingNorm);
             if ($s > $bestCosineSim) {
                 $bestCosineSim = $s;
                 $bestDistance = $d;
@@ -759,7 +757,20 @@ class FaceVerificationService
 
         usort($passing, static fn (array $a, array $b) => $a['cmp'] <=> $b['cmp']);
         $best = $passing[0];
+
         if (count($passing) >= 2) {
+            $topN = array_slice($passing, 0, min(3, count($passing)));
+            Log::info('Face identification top matches', [
+                'matches' => array_map(fn ($p, $i) => [
+                    'rank' => $i + 1,
+                    'user_id' => config('attendance.face_log_identification_user_ids') ? $p['user']->id : null,
+                    'similarity' => round($p['similarity_score'], 4),
+                    'distance' => round($p['distance'], 4),
+                ], $topN, array_keys($topN)),
+                'margin' => round($passing[0]['similarity_score'] - $passing[1]['similarity_score'], 4),
+                'min_margin_required' => $minMargin,
+            ]);
+
             $second = $passing[1];
             if (($best['similarity_score'] - $second['similarity_score']) < $minMargin) {
                 Log::warning('Face identification rejected: top matches too close in similarity', [

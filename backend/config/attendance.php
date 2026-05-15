@@ -233,7 +233,7 @@ return [
     | - a margin vs the second-best match (prevents "close call" misidentifications)
     */
     'face_min_similarity_score' => (float) env('ATTENDANCE_FACE_MIN_SIMILARITY_SCORE', 0.40),
-    'face_min_similarity_margin' => (float) env('ATTENDANCE_FACE_MIN_SIMILARITY_MARGIN', 0.04),
+    'face_min_similarity_margin' => (float) env('ATTENDANCE_FACE_MIN_SIMILARITY_MARGIN', 0.08),
 
     /*
     |--------------------------------------------------------------------------
@@ -248,13 +248,13 @@ return [
     */
     'face_kiosk_cosine_distance_threshold' => is_numeric(env('ATTENDANCE_FACE_KIOSK_COSINE_DISTANCE_THRESHOLD'))
         ? (float) env('ATTENDANCE_FACE_KIOSK_COSINE_DISTANCE_THRESHOLD')
-        : 0.62,
+        : 0.48,
     'face_kiosk_min_similarity_score' => is_numeric(env('ATTENDANCE_FACE_KIOSK_MIN_SIMILARITY_SCORE'))
         ? (float) env('ATTENDANCE_FACE_KIOSK_MIN_SIMILARITY_SCORE')
-        : 0.35,
+        : 0.45,
     'face_kiosk_match_threshold' => is_numeric(env('ATTENDANCE_FACE_KIOSK_MATCH_THRESHOLD'))
         ? (float) env('ATTENDANCE_FACE_KIOSK_MATCH_THRESHOLD')
-        : 1.20,
+        : 1.05,
 
     'face_kiosk_account_mismatch_min_similarity' => (float) env('ATTENDANCE_FACE_KIOSK_ACCOUNT_MISMATCH_MIN_SIMILARITY', 0.60),
 
@@ -271,10 +271,10 @@ return [
         FILTER_VALIDATE_BOOL
     ),
     'face_cross_camera_high_liveness_score' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_HIGH_LIVENESS', 0.90),
-    'face_cross_camera_min_similarity_relax_delta' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_SIM_RELAX_DELTA', 0.05),
-    'face_cross_camera_cosine_distance_relax_delta' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_COS_DIST_RELAX_DELTA', 0.04),
-    'face_cross_camera_kiosk_min_similarity_floor' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_SIM_FLOOR', 0.33),
-    'face_cross_camera_min_similarity_margin' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_MARGIN', 0.06),
+    'face_cross_camera_min_similarity_relax_delta' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_SIM_RELAX_DELTA', 0.03),
+    'face_cross_camera_cosine_distance_relax_delta' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_COS_DIST_RELAX_DELTA', 0.02),
+    'face_cross_camera_kiosk_min_similarity_floor' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_SIM_FLOOR', 0.40),
+    'face_cross_camera_min_similarity_margin' => (float) env('ATTENDANCE_FACE_CROSS_CAMERA_MIN_MARGIN', 0.10),
 
     /*
     |--------------------------------------------------------------------------
@@ -284,7 +284,7 @@ return [
     | (e.g., kiosk login field). Prevents cross-employee matching.
     | InsightFace ArcFace: strict same-person cosine ≥ 0.50 and euc ≤ 1.0.
     */
-    'face_identity_min_similarity_score' => (float) env('ATTENDANCE_FACE_IDENTITY_MIN_SIMILARITY_SCORE', 0.55),
+    'face_identity_min_similarity_score' => (float) env('ATTENDANCE_FACE_IDENTITY_MIN_SIMILARITY_SCORE', 0.58),
     'face_identity_max_euclidean_distance' => (float) env('ATTENDANCE_FACE_IDENTITY_MAX_EUCLIDEAN_DISTANCE', 1.0),
 
     /*
