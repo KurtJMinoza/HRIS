@@ -287,10 +287,13 @@ class EmployeeOvertimeController extends Controller
         $perPage = (int) $request->query('per_page', 20);
         $maxPerPage = $hasRange ? 100 : 50;
         $perPage = max(1, min($maxPerPage, $perPage));
+        $dashboardLite = $request->boolean('dashboard_lite');
 
         $query = Overtime::query()
-            ->where('user_id', $user->id)
-            ->with([
+            ->where('user_id', $user->id);
+
+        if (! $dashboardLite) {
+            $query->with([
                 'approvedBy:id,name',
                 'user:id,name,position,profile_image,department_id,department,branch_id,company_id',
                 'filedBy:id,name,profile_image',
@@ -298,6 +301,7 @@ class EmployeeOvertimeController extends Controller
                 'secondApprover:id,name,profile_image',
                 'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
             ]);
+        }
 
         if (is_string($fromRaw) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fromRaw)) {
             $query->whereDate('date', '>=', $fromRaw);
@@ -311,7 +315,23 @@ class EmployeeOvertimeController extends Controller
             ->orderByDesc('id')
             ->paginate($perPage);
 
-        $items = $paginator->getCollection()->map(fn (Overtime $o) => $this->mapOvertimeRowForEmployee($o, $user))->values();
+        $items = $paginator->getCollection()->map(function (Overtime $o) use ($user, $dashboardLite) {
+            if (! $dashboardLite) {
+                return $this->mapOvertimeRowForEmployee($o, $user);
+            }
+
+            return [
+                'id' => $o->id,
+                'date' => $o->date?->toDateString(),
+                'status' => $o->status,
+                'display_status' => $o->status,
+                'schedule_end' => $o->schedule_end?->format('H:i'),
+                'start_time' => $o->schedule_end?->format('H:i'),
+                'end_time' => $o->expected_end_time?->format('H:i'),
+                'expected_end_time' => $o->expected_end_time?->format('H:i'),
+                'computed_hours' => (float) ($o->computed_hours ?? 0),
+            ];
+        })->values();
 
         return response()->json([
             'overtimes' => $items,

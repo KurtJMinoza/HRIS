@@ -1677,7 +1677,9 @@ class AttendanceController extends Controller
             'to_date' => ['nullable', 'date'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:'.self::EMPLOYEE_SUMMARY_MAX_PER_PAGE],
+            'dashboard_lite' => ['nullable', 'boolean'],
         ]);
+        $dashboardLite = $request->boolean('dashboard_lite');
 
         // Default: current month
         if (! empty($validated['from_date']) || ! empty($validated['to_date'])) {
@@ -1706,14 +1708,20 @@ class AttendanceController extends Controller
             : (string) min(self::EMPLOYEE_SUMMARY_MAX_PER_PAGE, max(1, $perPageInput));
 
         $revision = $this->employeeAttendanceSummaryResponseCacheRevision($user, $from, $to);
+        $yearMonth = $from->format('Y_m');
+        $cachePrefix = $dashboardLite
+            ? sprintf('employee_dashboard:%d:calendar:%s', $user->id, $yearMonth)
+            : 'employee_attendance_summary:v3';
         $responseCacheKey = sprintf(
-            'employee_attendance_summary:v3:%d:%s:%s:%s:%s:%d',
+            '%s:%d:%s:%s:%s:%s:%d:%s',
+            $cachePrefix,
             $user->id,
             $from->toDateString(),
             $to->toDateString(),
             $revision,
             $ppCacheKey,
             $pageInput,
+            $dashboardLite ? 'lite' : 'full',
         );
 
         if (($cachedPayload = Cache::get($responseCacheKey)) && is_array($cachedPayload)) {
@@ -1731,6 +1739,7 @@ class AttendanceController extends Controller
                 'user_id' => (int) $user->id,
                 'cache_key_suffix' => $revision.'|'.$ppCacheKey.'|'.$pageInput,
                 'total_ms' => $totalMs,
+                'employee_dashboard_total_ms' => $dashboardLite ? $totalMs : null,
             ]);
 
             return response()->json($cachedPayload);
@@ -1882,6 +1891,7 @@ class AttendanceController extends Controller
         $todayLeavePayStatus = null;
 
         // Resolve effective schedule once: prefer legacy JSON, fall back to working_schedule_id.
+        $profileStart = microtime(true);
         $user->loadMissing('workingSchedule');
         $effectiveSchedule = $user->schedule;
         if ((! is_array($effectiveSchedule) || $effectiveSchedule === []) && $user->working_schedule_id !== null) {
@@ -1890,6 +1900,7 @@ class AttendanceController extends Controller
                 $effectiveSchedule = $derived;
             }
         }
+        $profileMs = (int) round((microtime(true) - $profileStart) * 1000);
 
         $cursor = $from->copy();
         while ($cursor->lessThanOrEqualTo($to)) {
@@ -2365,7 +2376,9 @@ class AttendanceController extends Controller
         $hydratePayrollStart = microtime(true);
         if ($perPageInput === null || $perPageInput <= 0) {
             $responseDays = $days;
-            $this->hydrateEmployeeSummaryPayrollImpact($user, $responseDays, $attendanceTz);
+            if (! $dashboardLite) {
+                $this->hydrateEmployeeSummaryPayrollImpact($user, $responseDays, $attendanceTz);
+            }
             $daysMeta = [
                 'paginated' => false,
                 'total' => $totalDaysInRange,
@@ -2376,7 +2389,9 @@ class AttendanceController extends Controller
             $page = min($pageInput, $lastPage);
             $offset = ($page - 1) * $perPage;
             $responseDays = array_slice($days, $offset, $perPage);
-            $this->hydrateEmployeeSummaryPayrollImpact($user, $responseDays, $attendanceTz);
+            if (! $dashboardLite) {
+                $this->hydrateEmployeeSummaryPayrollImpact($user, $responseDays, $attendanceTz);
+            }
             $daysMeta = [
                 'paginated' => true,
                 'current_page' => $page,
@@ -2436,6 +2451,12 @@ class AttendanceController extends Controller
             'total_response_ms' => $totalMs,
             'days_meta' => $daysMeta,
             'cache_hit' => false,
+            'dashboard_lite' => $dashboardLite,
+            'employee_dashboard_profile_ms' => $dashboardLite ? $profileMs : null,
+            'employee_dashboard_calendar_ms' => $dashboardLite ? $bulkFetchMs + $transformMs : null,
+            'employee_dashboard_summary_ms' => $dashboardLite ? $transformMs : null,
+            'employee_dashboard_today_attendance_ms' => $dashboardLite ? $bulkFetchMs : null,
+            'employee_dashboard_total_ms' => $dashboardLite ? $totalMs : null,
         ];
         Log::info('Employee attendance summary prepared', $performancePayload);
         if ($totalMs >= self::EMPLOYEE_SUMMARY_SLOW_WARN_MS) {

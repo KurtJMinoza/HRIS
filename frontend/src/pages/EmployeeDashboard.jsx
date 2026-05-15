@@ -12,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { EmployeeDashboardSkeleton } from '@/components/skeletons'
 import { useAuth } from '@/contexts/AuthContext'
 import { getMyAttendanceSummary, getMyLeaveSummary, getAllMyOvertimeRequestsInRange } from '@/api'
 import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
@@ -399,6 +398,7 @@ export default function EmployeeDashboard() {
   const [leaveSummary, setLeaveSummary] = useState(null)
   const [leaveRequests, setLeaveRequests] = useState([])
   const [loading, setLoading] = useState(true)
+  const [calendarLoading, setCalendarLoading] = useState(true)
   const [error, setError] = useState(null)
   const [prevSummary, setPrevSummary] = useState(null)
   const [monthOtRequests, setMonthOtRequests] = useState([])
@@ -407,11 +407,19 @@ export default function EmployeeDashboard() {
   const [selectedDay, setSelectedDay] = useState(DEFAULT_CALENDAR_VALUE)
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear())
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth())
+  const dashboardRequestSeq = useRef(0)
+  const dashboardAbortRef = useRef(null)
 
   const loadDashboard = useCallback(async (opts = {}) => {
+    dashboardAbortRef.current?.abort()
+    const controller = new AbortController()
+    dashboardAbortRef.current = controller
+    const requestSeq = dashboardRequestSeq.current + 1
+    dashboardRequestSeq.current = requestSeq
     const soft = opts.soft === true
     if (!soft) {
       setLoading(true)
+      setCalendarLoading(true)
       setError(null)
     }
     try {
@@ -419,23 +427,36 @@ export default function EmployeeDashboard() {
       const mo = typeof opts.month === 'number' ? opts.month : calendarMonth
       const from = formatLocalDateKey(new Date(y, mo, 1))
       const to = formatLocalDateKey(new Date(y, mo + 1, 0))
-      const prevMonthEnd = new Date(y, mo, 0)
-      const prevFrom = formatLocalDateKey(new Date(prevMonthEnd.getFullYear(), prevMonthEnd.getMonth(), 1))
-      const prevTo = formatLocalDateKey(prevMonthEnd)
+      const today = formatLocalDateKey(new Date())
 
-      const [attendanceData, prevAttendanceData, leaveData, otList] = await Promise.all([
-        getMyAttendanceSummary({ from_date: from, to_date: to }),
-        getMyAttendanceSummary({ from_date: prevFrom, to_date: prevTo }),
-        getMyLeaveSummary({ from_date: from, to_date: to }),
-        getAllMyOvertimeRequestsInRange(from, to).catch(() => []),
+      const todayData = await getMyAttendanceSummary({
+        from_date: today,
+        to_date: today,
+        dashboard_lite: true,
+        merge_all_pages: false,
+        signal: controller.signal,
+      })
+      if (dashboardRequestSeq.current !== requestSeq) return
+      setSummary(todayData.summary || null)
+      if (calendarYear === new Date().getFullYear() && calendarMonth === new Date().getMonth()) {
+        setDays(Array.isArray(todayData.days) ? todayData.days : [])
+      }
+      if (!soft) setLoading(false)
+
+      const [attendanceData, leaveData, otList] = await Promise.all([
+        getMyAttendanceSummary({ from_date: from, to_date: to, dashboard_lite: true, signal: controller.signal }),
+        getMyLeaveSummary({ from_date: from, to_date: to, dashboard_lite: true, signal: controller.signal }),
+        getAllMyOvertimeRequestsInRange(from, to, { dashboard_lite: true, signal: controller.signal }).catch(() => []),
       ])
+      if (dashboardRequestSeq.current !== requestSeq) return
       setSummary(attendanceData.summary || null)
       setDays(Array.isArray(attendanceData.days) ? attendanceData.days : [])
-      setPrevSummary(prevAttendanceData.summary || null)
+      setPrevSummary(null)
       setLeaveSummary(leaveData.summary || null)
       setLeaveRequests(Array.isArray(leaveData.leave_requests) ? leaveData.leave_requests : [])
       setMonthOtRequests(Array.isArray(otList) ? otList : [])
     } catch (e) {
+      if (controller.signal.aborted) return
       if (!soft) setError(e.message)
       setSummary(null)
       setDays([])
@@ -443,12 +464,24 @@ export default function EmployeeDashboard() {
       setLeaveRequests([])
       setMonthOtRequests([])
     } finally {
-      if (!soft) setLoading(false)
+      if (dashboardRequestSeq.current === requestSeq) {
+        if (!soft) setLoading(false)
+        setCalendarLoading(false)
+      }
+      if (dashboardAbortRef.current === controller) {
+        dashboardAbortRef.current = null
+      }
     }
   }, [calendarYear, calendarMonth])
 
   useEffect(() => {
-    void loadDashboard()
+    const id = window.setTimeout(() => {
+      void loadDashboard()
+    }, 180)
+    return () => {
+      window.clearTimeout(id)
+      dashboardAbortRef.current?.abort()
+    }
   }, [loadDashboard])
 
   useEffect(() => {
@@ -1001,10 +1034,6 @@ export default function EmployeeDashboard() {
     return status
   }
 
-  if (loading && !summary && !error) {
-    return <EmployeeDashboardSkeleton />
-  }
-
   function tileTooltipLines(record, dateKey) {
     if (!record) return []
     const lines = []
@@ -1249,7 +1278,7 @@ export default function EmployeeDashboard() {
                 size="icon"
                 className="size-9 shrink-0 rounded-lg hover:bg-background/80 disabled:opacity-40"
                 onClick={goNextCalendarMonth}
-                disabled={!canGoNextMonth || loading}
+                disabled={!canGoNextMonth || loading || calendarLoading}
                 aria-label="Next month"
               >
                 <ChevronRight className="size-4" />
@@ -1273,25 +1302,25 @@ export default function EmployeeDashboard() {
                 <div>
                   <div className="text-sm text-muted-foreground">Late days</div>
                   <div className="mt-0.5 text-lg font-medium">
-                    {loading ? '—' : <AnimatedNumber value={summary?.late_count ?? 0} />}
+                    {loading || calendarLoading ? '—' : <AnimatedNumber value={summary?.late_count ?? 0} />}
                   </div>
                 </div>
                 <div>
                   <div className="text-sm text-muted-foreground">Late (min)</div>
                   <div className="mt-0.5 text-lg font-medium">
-                    {loading ? '—' : <AnimatedNumber value={summary?.late_minutes ?? 0} />}
+                    {loading || calendarLoading ? '—' : <AnimatedNumber value={summary?.late_minutes ?? 0} />}
                   </div>
                 </div>
                 <div>
                   <div className="text-sm text-muted-foreground">Undertime days</div>
                   <div className="mt-0.5 text-lg font-medium">
-                    {loading ? '—' : <AnimatedNumber value={summary?.undertime_count ?? 0} />}
+                    {loading || calendarLoading ? '—' : <AnimatedNumber value={summary?.undertime_count ?? 0} />}
                   </div>
                 </div>
                 <div>
                   <div className="text-sm text-muted-foreground">Total hours</div>
                   <div className="mt-0.5 text-lg font-medium">
-                    {loading ? '—' : <><AnimatedNumber value={summary?.total_hours ?? 0} duration={700} />h</>}
+                    {loading || calendarLoading ? '—' : <><AnimatedNumber value={summary?.total_hours ?? 0} duration={700} />h</>}
                   </div>
                 </div>
               </div>
@@ -1305,7 +1334,7 @@ export default function EmployeeDashboard() {
                       Pending
                     </div>
                     <div className="mt-1 text-base font-semibold tabular-nums text-amber-700 dark:text-amber-400">
-                      {loading ? '—' : `${otMonthBreakdown.pendingH}h`}
+                      {loading || calendarLoading ? '—' : `${otMonthBreakdown.pendingH}h`}
                     </div>
                   </div>
                   <div className="px-1">
@@ -1313,7 +1342,7 @@ export default function EmployeeDashboard() {
                       Approved
                     </div>
                     <div className="mt-1 text-base font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                      {loading ? '—' : `${otMonthBreakdown.approvedH}h`}
+                      {loading || calendarLoading ? '—' : `${otMonthBreakdown.approvedH}h`}
                     </div>
                   </div>
                   <div className="px-1">
@@ -1321,18 +1350,18 @@ export default function EmployeeDashboard() {
                       Unfiled
                     </div>
                     <div className="mt-1 text-base font-semibold tabular-nums text-slate-700 dark:text-slate-300">
-                      {loading ? '—' : `${otMonthBreakdown.unfiledH}h`}
+                      {loading || calendarLoading ? '—' : `${otMonthBreakdown.unfiledH}h`}
                     </div>
                   </div>
                 </div>
                 <p className="mt-2 text-center text-[10px] text-muted-foreground">Requests sync when you change month</p>
               </div>
-              {!loading && unfiledDatesLabel && (
+              {!loading && !calendarLoading && unfiledDatesLabel && (
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   <span className="font-medium text-foreground/80">Unfiled clock OT:</span> {unfiledDatesLabel}
                 </p>
               )}
-              {!loading && !unfiledDatesLabel && otMonthBreakdown.unfiledH <= 0 && (
+              {!loading && !calendarLoading && !unfiledDatesLabel && otMonthBreakdown.unfiledH <= 0 && (
                 <p className="text-xs text-muted-foreground">No clock-detected OT without an active filing this month.</p>
               )}
               <Button
@@ -1341,7 +1370,7 @@ export default function EmployeeDashboard() {
                 size="sm"
                 className="h-9 w-full gap-2 border-border/80 text-sm font-medium"
                 onClick={() => setOtDetailsOpen(true)}
-                disabled={loading}
+                disabled={loading || calendarLoading}
               >
                 <ListTree className="size-4 shrink-0 opacity-70" aria-hidden />
                 View OT details
@@ -1650,12 +1679,17 @@ export default function EmployeeDashboard() {
                     size="icon"
                     className="size-9 shrink-0 rounded-lg hover:bg-background/80 disabled:opacity-40 @sm:size-10"
                     onClick={goNextCalendarMonth}
-                    disabled={!canGoNextMonth || loading}
+                    disabled={!canGoNextMonth || loading || calendarLoading}
                     aria-label="Next month"
                   >
                     <ChevronRight className="size-4 @sm:size-[18px]" />
                   </Button>
                 </div>
+                {calendarLoading && (
+                  <div className="mx-auto mt-2 h-1 w-full max-w-6xl overflow-hidden rounded-full bg-muted">
+                    <div className="h-full w-1/3 animate-pulse rounded-full bg-orange-500/70" />
+                  </div>
+                )}
               </div>
               <div className="mt-2 space-y-2 px-3 pb-3 @sm:px-4 md:pb-4">
                 <div className="mx-auto w-full max-w-6xl min-w-0 overflow-x-auto @sm:overflow-x-visible">

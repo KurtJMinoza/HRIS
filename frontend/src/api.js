@@ -4145,8 +4145,9 @@ export async function getMyOvertimeRequests(params = {}) {
   if (params.from_date) q.set('from_date', String(params.from_date))
   if (params.to_date) q.set('to_date', String(params.to_date))
   if (params.page != null) q.set('page', String(params.page))
+  if (params.dashboard_lite) q.set('dashboard_lite', '1')
   const suffix = q.toString() ? `?${q.toString()}` : ''
-  const res = await authenticatedFetch(`/overtime/my${suffix}`)
+  const res = await authenticatedFetch(`/overtime/my${suffix}`, params.signal ? { signal: params.signal } : {})
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load overtime requests')
   return data
@@ -4157,7 +4158,7 @@ export async function getMyOvertimeRequests(params = {}) {
  * @param {string} from_date YYYY-MM-DD
  * @param {string} to_date YYYY-MM-DD
  */
-export async function getAllMyOvertimeRequestsInRange(from_date, to_date) {
+export async function getAllMyOvertimeRequestsInRange(from_date, to_date, options = {}) {
   const perPage = 50
   let page = 1
   let lastPage = 1
@@ -4168,6 +4169,8 @@ export async function getAllMyOvertimeRequestsInRange(from_date, to_date) {
       to_date,
       per_page: perPage,
       page,
+      dashboard_lite: options.dashboard_lite,
+      signal: options.signal,
     })
     const items = Array.isArray(data.overtimes) ? data.overtimes : []
     all.push(...items)
@@ -4654,7 +4657,7 @@ export async function getAttendance() {
 /**
  * Get monthly attendance summary for the authenticated employee.
  * Sends pagination hints so the API only runs payslip-parity payroll impact on the returned slice (merged automatically when the range spans multiple pages).
- * @param {{ from_date?: string, to_date?: string, page?: number, per_page?: number, full_summary?: boolean, merge_all_pages?: boolean }} params
+ * @param {{ from_date?: string, to_date?: string, page?: number, per_page?: number, full_summary?: boolean, merge_all_pages?: boolean, dashboard_lite?: boolean, signal?: AbortSignal }} params
  */
 export async function getMyAttendanceSummary(params = {}) {
   const maxPerPage = EMPLOYEE_ATTENDANCE_SUMMARY_MAX_PER_PAGE
@@ -4667,6 +4670,7 @@ export async function getMyAttendanceSummary(params = {}) {
     const query = new URLSearchParams()
     if (params.from_date) query.set('from_date', params.from_date)
     if (params.to_date) query.set('to_date', params.to_date)
+    if (params.dashboard_lite) query.set('dashboard_lite', '1')
     query.set('page', String(page))
 
     if (params.full_summary === true) {
@@ -4688,7 +4692,7 @@ export async function getMyAttendanceSummary(params = {}) {
   const pathBase = `/attendance/summary`
   const firstQuery = buildQuery(requestedPage)
   const path = `${pathBase}?${firstQuery.toString()}`
-  const res = await authenticatedFetch(path)
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : {})
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load attendance summary')
 
@@ -4697,7 +4701,7 @@ export async function getMyAttendanceSummary(params = {}) {
 
   const fetchPage = async (page) => {
     const q = buildQuery(page)
-    const r = await authenticatedFetch(`${pathBase}?${q.toString()}`)
+    const r = await authenticatedFetch(`${pathBase}?${q.toString()}`, params.signal ? { signal: params.signal } : {})
     const chunk = await r.json().catch(() => ({}))
     if (!r.ok) throw new Error(chunk.message || 'Failed to load attendance summary')
     return chunk
@@ -4905,8 +4909,9 @@ export async function getMyLeaveSummary(params = {}) {
   if (params.from_date) query.set('from_date', params.from_date)
   if (params.to_date) query.set('to_date', params.to_date)
   if (params.status) query.set('status', params.status)
+  if (params.dashboard_lite) query.set('dashboard_lite', '1')
   const path = `/leave/my${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : {})
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load leave summary')
   return data

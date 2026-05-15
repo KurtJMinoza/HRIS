@@ -328,16 +328,21 @@ class EmployeeLeaveController extends Controller
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date'],
             'status' => ['nullable', 'string', 'in:pending,approved,rejected'],
+            'dashboard_lite' => ['nullable', 'boolean'],
         ]);
+        $dashboardLite = $request->boolean('dashboard_lite');
 
         $query = LeaveRequest::query()
-            ->where('user_id', $user->id)
-            ->with([
+            ->where('user_id', $user->id);
+
+        if (! $dashboardLite) {
+            $query->with([
                 'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
                 'firstApprover:id,name,profile_image',
                 'secondApprover:id,name,profile_image',
                 'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
             ]);
+        }
 
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
@@ -375,7 +380,17 @@ class EmployeeLeaveController extends Controller
             })
             ->count();
 
-        $payloadLeaves = $leaves->map(function (LeaveRequest $l) use ($tz, $userForSchedule) {
+        $payloadLeaves = $leaves->map(function (LeaveRequest $l) use ($tz, $userForSchedule, $dashboardLite) {
+            if ($dashboardLite) {
+                return [
+                    'id' => $l->id,
+                    'type' => $l->type,
+                    'start_date' => $l->start_date?->toDateString(),
+                    'end_date' => $l->end_date?->toDateString(),
+                    'status' => $l->status,
+                ];
+            }
+
             $undertimeMinutes = null;
             if ($l->type === 'undertime' && $l->undertime_time) {
                 $dateKey = $l->start_date->toDateString();
@@ -397,8 +412,11 @@ class EmployeeLeaveController extends Controller
             return $base;
         });
 
-        $user->refresh();
-        $leaveCreditsPayload = $this->leaveCreditService->buildLeaveCreditsApiPayload($user);
+        $leaveCreditsPayload = null;
+        if (! $dashboardLite) {
+            $user->refresh();
+            $leaveCreditsPayload = $this->leaveCreditService->buildLeaveCreditsApiPayload($user);
+        }
 
         return response()->json([
             'summary' => [
