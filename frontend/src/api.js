@@ -3718,6 +3718,15 @@ export async function getLeaveRequests(status) {
   return data
 }
 
+/** Admin: fetch a single leave request by primary id (for dashboard deep-links). */
+export async function getAdminLeaveByRequestId(requestId) {
+  const q = new URLSearchParams({ request_id: String(requestId) })
+  const res = await authenticatedFetch(`/admin/leave?${q}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load leave request')
+  return data
+}
+
 /**
  * @param {object} payload
  * @param {boolean} [payload.bypass_leave_credit_check] Super-admin only: file leave despite insufficient credits.

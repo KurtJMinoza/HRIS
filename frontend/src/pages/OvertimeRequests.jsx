@@ -688,6 +688,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     next.delete('segments')
     setSearchParams(next, { replace: true })
   }, [isHr, dateFromUrl, segmentsFromUrl, searchParams, setSearchParams])
+
+  const deepLinkedOtRequestId = isHr && canSeeAllTab ? searchParams.get('request_id') : null
+  const handledOtDeepLinkRef = useRef(null)
+
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
   const [category, setCategory] = useState('regular')
@@ -859,6 +863,62 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       loadAll()
     }
   }, [tab, canSeeAllTab, loadAll])
+
+  useEffect(() => {
+    if (!deepLinkedOtRequestId) {
+      handledOtDeepLinkRef.current = null
+      return
+    }
+    if (!isHr || !canSeeAllTab) return
+    setTab('all')
+  }, [deepLinkedOtRequestId, isHr, canSeeAllTab])
+
+  useEffect(() => {
+    if (!deepLinkedOtRequestId || !isHr || !canSeeAllTab) return
+    if (tab !== 'all') return
+    if (handledOtDeepLinkRef.current === deepLinkedOtRequestId) return
+    const idNum = Number(deepLinkedOtRequestId)
+    if (!Number.isFinite(idNum) || idNum <= 0) return
+
+    handledOtDeepLinkRef.current = deepLinkedOtRequestId
+
+    const row = allItems.find((r) => Number(r?.id) === idNum)
+    const seed = row || { id: idNum }
+    setDetail(seed)
+    setViewOpen(true)
+    setDetailLoading(true)
+
+    getAdminOvertimeDetail(idNum)
+      .then((res) => {
+        const ot = res?.overtime ?? res?.data?.overtime
+        if (ot && typeof ot === 'object') {
+          setDetail(ot)
+        } else {
+          toast({
+            title: 'Could not load full details',
+            description: 'The server response was incomplete. Showing list data.',
+            variant: 'error',
+          })
+        }
+      })
+      .catch((e) => {
+        toast({
+          title: 'Failed to load details',
+          description: e.message || 'You can still see data from the list.',
+          variant: 'error',
+        })
+      })
+      .finally(() => setDetailLoading(false))
+
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('request_id')
+        return next
+      },
+      { replace: true },
+    )
+  }, [deepLinkedOtRequestId, isHr, canSeeAllTab, tab, allItems, setSearchParams, toast])
 
   useEffect(() => {
     let cancelled = false
@@ -1958,9 +2018,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         <DialogContent
           showCloseButton
           overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
-          closeButtonClassName="right-5 top-5 size-11 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
-          className="max-h-[94vh] max-w-[min(94vw,58rem)] overflow-hidden rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
-          innerClassName="gap-0 overflow-hidden p-0 pr-0"
+          closeButtonClassName="right-4 top-4 size-10 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted sm:right-5 sm:top-5 sm:size-11 dark:border-white/10 dark:bg-card/90"
+          className="w-[min(calc(100vw-1rem),58rem)] max-w-none max-h-[min(88vh,calc(100dvh-6rem))] min-h-0 flex flex-col overflow-hidden rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] sm:max-h-[min(90vh,calc(100dvh-8rem))] dark:border-white/10 dark:bg-card"
+          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0"
           aria-describedby="ot-detail-desc"
         >
           {detailLoading && !detail ? (
@@ -1971,24 +2031,24 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
           {detail ? (
             <>
-              <DialogHeader className="relative overflow-hidden border-b border-border/70 px-6 pb-6 pt-7 text-left dark:border-white/10 @md:px-8">
-                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-brand">Overtime request</p>
-                <div className="mt-4 flex flex-wrap items-center gap-4 pr-12">
-                  <DialogTitle className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
+              <DialogHeader className="relative shrink-0 overflow-hidden border-b border-border/70 px-5 pb-4 pt-6 text-left dark:border-white/10 @sm:px-6 @sm:pb-5 @sm:pt-7 @md:px-8 @md:pb-6">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand @sm:text-[11px]">Overtime request</p>
+                <div className="mt-3 flex flex-wrap items-center gap-3 pr-10 @sm:mt-4 @sm:gap-4 sm:pr-12">
+                  <DialogTitle className="font-mono text-3xl font-black leading-none tracking-tight text-foreground @sm:text-4xl">
                     #{detail.id}
                   </DialogTitle>
                   <OvertimeStatusPill row={detail} />
                   {detailLoading ? <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden /> : null}
                 </div>
-                <DialogDescription id="ot-detail-desc" className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">
+                <DialogDescription id="ot-detail-desc" className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground @sm:mt-4 @sm:text-base">
                   Review request information, overtime details, approval chain, and request history below.
                 </DialogDescription>
-                <div className="pointer-events-none absolute bottom-0 right-10 hidden text-brand/10 dark:text-brand/15 @lg:block" aria-hidden>
+                <div className="pointer-events-none absolute bottom-0 right-10 hidden overflow-hidden text-brand/10 opacity-70 dark:text-brand/15 @lg:block" aria-hidden>
                   <Timer className="size-36" strokeWidth={1.1} />
                 </div>
               </DialogHeader>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 @md:px-8">
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 @sm:px-6 @sm:py-6 @md:px-8 [scrollbar-gutter:stable]">
                 <div className="space-y-6">
                   <div className="space-y-6">
                     <DetailSection title="Summary">
@@ -2148,7 +2208,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             <p className="px-6 py-8 text-center text-sm text-muted-foreground">No request data to display.</p>
           ) : null}
 
-          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-6 py-5 dark:border-white/10 @md:px-8">
+          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-5 py-4 dark:border-white/10 @sm:px-6 @sm:py-5 @md:px-8">
             {detail && !detailLoading && detail.actor_can_delete ? (
               <Button
                 type="button"

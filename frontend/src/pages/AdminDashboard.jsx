@@ -28,7 +28,9 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  ArrowRight,
   Filter,
+  Send,
   Sun,
   Moon,
   Monitor,
@@ -297,6 +299,7 @@ export default function AdminDashboard() {
   const perms = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canViewCompanyDirectory = useMemo(() => perms.has('org.company.view'), [perms])
   const canViewOvertime = useMemo(() => perms.has('overtime.view'), [perms])
+  const canViewLeave = useMemo(() => perms.has('leave.view'), [perms])
   const canApproveAttendanceCorrections = useMemo(() => perms.has('attendance.corrections.approve'), [perms])
   const hrRole = String(user?.hr_role || '').trim()
   const isHrAdmin = hrRole === 'admin_hr' || String(user?.role || '').toLowerCase() === 'admin'
@@ -341,6 +344,14 @@ export default function AdminDashboard() {
   const [regularizationActionById, setRegularizationActionById] = useState({})
   const navigate = useNavigate()
   const hrBase = useHrBasePath()
+
+  const attendanceCorrectionsHref = useCallback((opts = {}) => {
+    const q = new URLSearchParams({ tab: 'corrections' })
+    if (opts.status) q.set('status', String(opts.status))
+    const rid = opts.request_id ?? opts.requestId
+    if (rid != null && rid !== '') q.set('request_id', String(rid))
+    return `${hrPanelPath(hrBase, 'attendance')}?${q}`
+  }, [hrBase])
 
   const dashboardQuery = useQuery({
     queryKey: ['admin-dashboard'],
@@ -1108,9 +1119,9 @@ export default function AdminDashboard() {
             'admin-dashboard-card h-[400px] max-h-[400px] min-h-[400px] gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px] @xl:max-h-[420px] @xl:min-h-[420px]',
           )}>
             <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col gap-2.5 @sm:flex-row @sm:items-start @sm:justify-between @sm:gap-4">
                 <div className="min-w-0">
-                  <CardTitle className="mb-3 flex min-w-0 flex-wrap items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
+                  <CardTitle className="mb-2.5 flex min-w-0 flex-wrap items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
                     <CalendarDays className="size-4 shrink-0 text-brand" aria-hidden="true" />
                     <span className="truncate">Today&apos;s Leaves</span>
                   </CardTitle>
@@ -1120,6 +1131,21 @@ export default function AdminDashboard() {
                       : 'Updates automatically from approved leave requests.'}
                   </CardDescription>
                 </div>
+                {canViewLeave ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      'h-8 w-full shrink-0 rounded-md border-border/70 bg-background/70 px-3 @sm:mt-1 @sm:w-auto',
+                      'text-xs font-medium shadow-sm hover:bg-accent/55',
+                    )}
+                    onClick={() => navigate(hrPanelPath(hrBase, 'leave'))}
+                  >
+                    View All
+                    <ArrowRight className="ml-1.5 size-3.5 opacity-70" aria-hidden />
+                  </Button>
+                ) : null}
               </div>
             </CardHeader>
             <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
@@ -1159,6 +1185,23 @@ export default function AdminDashboard() {
                             </div>
                           </div>
                         </div>
+                        {canViewLeave && (leave.leave_request_id != null || leave.request_id != null) ? (
+                          <div className="mt-3 border-t border-border/70 pt-3">
+                            <Button
+                              type="button"
+                              className="h-9 w-full rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"
+                              onClick={() => {
+                                const rid = leave.request_id ?? leave.leave_request_id
+                                navigate(
+                                  `${hrPanelPath(hrBase, 'leave')}?request_id=${encodeURIComponent(String(rid))}`,
+                                )
+                              }}
+                            >
+                              <Send className="mr-2 size-4" aria-hidden />
+                              Review Request
+                            </Button>
+                          </div>
+                        ) : null}
                       </article>
                     )
                   })}
@@ -1308,8 +1351,14 @@ export default function AdminDashboard() {
             pendingCount={canViewOvertime ? overtimePendingCount : 0}
             request={pendingOvertimeRequest}
             onViewAll={() => navigate(hrPanelPath(hrBase, 'overtime'))}
-            onViewDetails={() => navigate(hrPanelPath(hrBase, 'overtime'))}
-            onReviewRequest={() => navigate(hrPanelPath(hrBase, 'overtime'))}
+            onReviewRequest={(req) => {
+              const rid = req?.request_id ?? req?.id
+              if (rid == null || rid === '') {
+                navigate(hrPanelPath(hrBase, 'overtime'))
+                return
+              }
+              navigate(`${hrPanelPath(hrBase, 'overtime')}?request_id=${encodeURIComponent(String(rid))}`)
+            }}
           />
         </Motion.div>
 
@@ -1323,9 +1372,11 @@ export default function AdminDashboard() {
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
             requests={pendingAttendanceCorrectionPreviews}
-            onViewAll={() => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?status=pending`)}
-            onViewDetails={(item) => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?request_id=${encodeURIComponent(String(item?.correction_request_id ?? item?.id ?? ''))}`)}
-            onReviewRequest={(item) => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?status=pending${item?.correction_request_id || item?.id ? `&request_id=${encodeURIComponent(String(item?.correction_request_id ?? item?.id))}` : ''}`)}
+            onViewAll={() => navigate(attendanceCorrectionsHref({ status: 'pending' }))}
+            onReviewRequest={(item) => navigate(attendanceCorrectionsHref({
+              status: 'pending',
+              request_id: item?.correction_request_id ?? item?.id,
+            }))}
           />
         </Motion.div>
       </Motion.div>
@@ -1611,9 +1662,11 @@ export default function AdminDashboard() {
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
             requests={pendingAttendanceCorrectionPreviews}
-            onViewAll={() => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?status=pending`)}
-            onViewDetails={(item) => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?request_id=${encodeURIComponent(String(item?.correction_request_id ?? item?.id ?? ''))}`)}
-            onReviewRequest={(item) => navigate(`${hrPanelPath(hrBase, 'attendance-corrections')}?status=pending${item?.correction_request_id || item?.id ? `&request_id=${encodeURIComponent(String(item?.correction_request_id ?? item?.id))}` : ''}`)}
+            onViewAll={() => navigate(attendanceCorrectionsHref({ status: 'pending' }))}
+            onReviewRequest={(item) => navigate(attendanceCorrectionsHref({
+              status: 'pending',
+              request_id: item?.correction_request_id ?? item?.id,
+            }))}
           />
         </Motion.div>
       </Motion.div>

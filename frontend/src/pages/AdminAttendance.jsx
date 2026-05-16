@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { pdf } from '@react-pdf/renderer'
+import { useSearchParams } from 'react-router-dom'
 import {
   Calendar,
   CalendarDays,
@@ -18,6 +19,7 @@ import {
 import { exportRowsToXlsx } from '@/lib/excelExport'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath } from '@/lib/hrRoutes'
+import AttendanceCorrections from '@/pages/AttendanceCorrections'
 import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRecordsDataTable'
 import { AttendanceRecordDetailSheet } from '@/components/attendance/AttendanceRecordDetailSheet'
 import {
@@ -93,6 +95,8 @@ function paginationWindow(current, last) {
 export default function AdminAttendance() {
   const { user } = useAuth()
   const hrBase = useHrBasePath()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const correctionsTabActive = searchParams.get('tab') === 'corrections'
   const attendanceScope = user?.attendance_scope
   /** Full HR (no org hat): unrestricted org-wide filters. */
   const isUnrestrictedHr = !attendanceScope
@@ -584,6 +588,31 @@ export default function AdminAttendance() {
       rowsMatrix,
       `attendance-${fromDate || ''}-${toDate || ''}-${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`,
       'Attendance',
+    )
+  }
+
+  if (correctionsTabActive) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="border-border/70"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams)
+              next.delete('tab')
+              next.delete('request_id')
+              next.delete('status')
+              setSearchParams(next, { replace: true })
+            }}
+          >
+            ← Attendance overview
+          </Button>
+        </div>
+        <AttendanceCorrections />
+      </div>
     )
   }
 
@@ -1216,7 +1245,7 @@ export default function AdminAttendance() {
         row={detailRow}
         profileImageUrl={profileImageUrl}
         showPayrollColumns={showPayrollAttendanceColumns}
-        correctionsHref={hrPanelPath(hrBase, 'attendance-corrections')}
+        correctionsHref={`${hrPanelPath(hrBase, 'attendance')}?tab=corrections`}
       />
 
     </div>

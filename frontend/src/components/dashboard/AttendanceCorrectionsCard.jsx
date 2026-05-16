@@ -1,4 +1,4 @@
-import { ArrowRight, BriefcaseBusiness, CalendarDays, ClipboardCheck, Clock3, Eye, IdCard, Send } from 'lucide-react'
+import { ArrowRight, BriefcaseBusiness, CalendarDays, ClipboardCheck, Clock3, IdCard, Send } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -12,7 +12,6 @@ export function AttendanceCorrectionsCard({
   requests = [],
   loading = false,
   onViewAll,
-  onViewDetails,
   onReviewRequest,
 }) {
   const hasPending = Number(pendingCount) > 0
@@ -95,7 +94,6 @@ export function AttendanceCorrectionsCard({
             <PendingCorrectionItem
               key={item?.correction_request_id ?? item?.id ?? `${item?.user_id ?? item?.employee_id ?? 'employee'}-${item?.date ?? item?.attendance_date ?? index}`}
               request={item}
-              onViewDetails={onViewDetails}
               onReviewRequest={onReviewRequest}
             />
           ))
@@ -105,7 +103,7 @@ export function AttendanceCorrectionsCard({
   )
 }
 
-function PendingCorrectionItem({ request, onViewDetails, onReviewRequest }) {
+function PendingCorrectionItem({ request, onReviewRequest }) {
   const employeeName = request?.employee_name || request?.requested_by_name || 'Employee'
   const employeePosition = request?.employee_position || request?.requested_by_position || 'Employee'
   const employeeId = request?.user_id ?? request?.employee_id
@@ -181,19 +179,7 @@ function PendingCorrectionItem({ request, onViewDetails, onReviewRequest }) {
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] gap-2 border-t border-border/70 pt-3">
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 w-full rounded-lg px-4 text-xs font-medium"
-          onClick={(e) => {
-            e.stopPropagation()
-            onViewDetails?.(request)
-          }}
-        >
-          <Eye className="mr-2 size-4" aria-hidden />
-          View Details
-        </Button>
+      <div className="mt-3 border-t border-border/70 pt-3">
         <Button
           type="button"
           className="h-9 w-full rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"

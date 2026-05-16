@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Loader2,
   CheckCircle2,
@@ -41,6 +42,7 @@ import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   getLeaveRequests,
+  getAdminLeaveByRequestId,
   createLeaveRequest,
   approveLeaveRequest,
   rejectLeaveRequest,
@@ -155,6 +157,7 @@ function LeaveModalCalendarArt() {
 
 export default function AdminLeave() {
   const { toast } = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { user, refreshUser } = useAuth()
   const perms = new Set(user?.permissions ?? [])
   const canApproveLeave = perms.has('leave.approve')
@@ -507,6 +510,46 @@ export default function AdminLeave() {
     setDetailLeave(leave)
     setDetailOpen(true)
   }
+
+  const leaveRequestIdFromUrl = searchParams.get('request_id')
+  useEffect(() => {
+    if (!leaveRequestIdFromUrl) return
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await getAdminLeaveByRequestId(leaveRequestIdFromUrl)
+        const list = data.leave_requests || []
+        const leave = list[0]
+        if (cancelled) return
+        if (!leave) {
+          toast({
+            title: 'Leave request not found',
+            description: 'It may be outside your scope or was removed.',
+            variant: 'error',
+          })
+          return
+        }
+        openDetailDialog(leave)
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev)
+            next.delete('request_id')
+            return next
+          },
+          { replace: true },
+        )
+      } catch (e) {
+        if (!cancelled) {
+          toast({ title: 'Failed to load leave request', description: e.message, variant: 'error' })
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [leaveRequestIdFromUrl, setSearchParams, toast])
 
   const openApproveDialog = (leave) => {
     setApproveLeave(leave)

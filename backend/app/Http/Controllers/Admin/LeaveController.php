@@ -59,7 +59,10 @@ class LeaveController extends Controller
         $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
         $query->whereIn('user_id', $scope->select('users.id'));
 
-        if (in_array($status, [LeaveRequest::STATUS_PENDING, LeaveRequest::STATUS_APPROVED, LeaveRequest::STATUS_REJECTED], true)) {
+        $requestId = $request->query('request_id');
+        if ($requestId !== null && $requestId !== '' && ctype_digit((string) $requestId)) {
+            $query->where('id', (int) $requestId);
+        } elseif (in_array($status, [LeaveRequest::STATUS_PENDING, LeaveRequest::STATUS_APPROVED, LeaveRequest::STATUS_REJECTED], true)) {
             $query->where('status', $status);
         }
 

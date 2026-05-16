@@ -1,4 +1,4 @@
-import { ArrowRight, BriefcaseBusiness, CalendarDays, Clock3, Eye, IdCard, Send } from 'lucide-react'
+import { ArrowRight, BriefcaseBusiness, CalendarDays, Clock3, IdCard, Send } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -9,7 +9,6 @@ export function OvertimeRequestsCard({
   request = null,
   loading = false,
   onViewAll,
-  onViewDetails,
   onReviewRequest,
 }) {
   const hasPending = Number(pendingCount) > 0
@@ -156,19 +155,7 @@ export function OvertimeRequestsCard({
               />
             </div>
 
-            <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] gap-2 border-t border-border/70 pt-3">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9 w-full rounded-lg px-4 text-xs font-medium"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onViewDetails?.(activeRequest)
-                }}
-              >
-                <Eye className="mr-2 size-4" aria-hidden />
-                View Details
-              </Button>
+            <div className="mt-3 border-t border-border/70 pt-3">
               <Button
                 type="button"
                 className="h-9 w-full rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"

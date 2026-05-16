@@ -52,8 +52,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed inset-0 z-50 flex items-center justify-center px-4",
-          "sm:px-0"
+          "fixed inset-0 z-50 grid place-items-center overflow-y-auto overflow-x-hidden p-4 py-8 sm:p-6 sm:py-10",
         )}
         {...props}
       >
@@ -66,6 +65,7 @@ function DialogContent({
             transition: { duration: DURATION, ease: EASE },
             className: cn(
               "relative mx-auto flex max-h-[90vh] min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.04),0_8px_30px_rgba(0,0,0,0.08)] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_8px_40px_rgba(0,0,0,0.45)]",
+              "my-2 max-h-[min(90vh,calc(100dvh-6rem))] sm:my-4 sm:max-h-[min(90vh,calc(100dvh-8rem))]",
               "sm:max-w-xl",
               className
             ),
