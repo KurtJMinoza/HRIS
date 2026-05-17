@@ -70,7 +70,9 @@ return [
     'rekognition' => [
         'key' => env('AWS_ACCESS_KEY_ID'),
         'secret' => env('AWS_SECRET_ACCESS_KEY'),
-        'region' => env('REKOGNITION_REGION', 'us-east-1'),
+        'region' => env('REKOGNITION_REGION', env('AWS_DEFAULT_REGION', 'us-east-1')),
+        'connect_timeout_seconds' => (int) env('REKOGNITION_CONNECT_TIMEOUT_SECONDS', 10),
+        'timeout_seconds' => (int) env('REKOGNITION_TIMEOUT_SECONDS', 30),
     ],
 
     // Cognito Identity Pool for FaceLivenessDetector (frontend needs this to sign Rekognition requests)
