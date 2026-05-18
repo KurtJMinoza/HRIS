@@ -19,7 +19,7 @@ use Throwable;
  * Computes a draft payroll batch in the background and persists draft payslip rows.
  *
  * Run with:
- *   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=2
+ *   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=1
  */
 class GeneratePayrollBatchJob implements ShouldQueue
 {
@@ -27,7 +27,7 @@ class GeneratePayrollBatchJob implements ShouldQueue
 
     public int $timeout = 300;
 
-    public int $tries = 2;
+    public int $tries = 1;
 
     /** @var list<string>|null */
     private static ?array $payrollBatchRunColumns = null;
@@ -105,7 +105,7 @@ class GeneratePayrollBatchJob implements ShouldQueue
             ];
 
             $run->refresh();
-            $ids = $payslipService->generateBulkPayslips(
+            $bulk = $payslipService->generateBulkPayslips(
                 $run->company_id ? (int) $run->company_id : null,
                 $run->branch_id ? (int) $run->branch_id : null,
                 $run->department_id ? (int) $run->department_id : null,
@@ -115,6 +115,9 @@ class GeneratePayrollBatchJob implements ShouldQueue
                 withPdf: false,
                 progressRun: $run,
             );
+            $ids = $bulk['payslip_ids'];
+            $sectionTimings = $bulk['timings'] ?? [];
+            $sectionTimings['total_job_ms'] = round((microtime(true) - $jobStartedAt) * 1000, 2);
 
             PayrollBatchRun::query()->whereKey($run->id)->update($this->filterBatchRunPayload([
                 'status' => PayrollBatchRun::STATUS_DRAFT,
@@ -133,7 +136,8 @@ class GeneratePayrollBatchJob implements ShouldQueue
                 'batch_run_id' => (int) $run->id,
                 'payslip_count' => count($ids),
                 'total_net' => $run->total_net,
-                'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
+                'timings_ms' => $sectionTimings,
+                'elapsed_ms' => $sectionTimings['total_job_ms'] ?? round((microtime(true) - $jobStartedAt) * 1000, 2),
                 'peak_memory_mb' => round(memory_get_peak_usage(true) / 1048576, 2),
             ]);
         } catch (Throwable $e) {

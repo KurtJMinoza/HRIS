@@ -66,6 +66,169 @@ class PayrollComputationService
         $this->attendanceSession->flushRuntimeCache();
     }
 
+    /**
+     * Load attendance corrections, logs, approved OT stubs, approved leaves, and overtime aggregates once for
+     * all employees in the pay window so bulk payslip generation avoids per-employee-per-day queries.
+     *
+     * Pair with {@see endBulkPayrollAttendancePrefetch()} in a {@code finally} block.
+     *
+     * @param  list<int>  $userIds
+     * @return array{
+     *     corrections_ms: float,
+     *     ot_stub_ms: float,
+     *     logs_ms: float,
+     *     load_leaves_ms: float,
+     *     load_overtime_ms: float,
+     * }
+     */
+    public function beginBulkPayrollAttendancePrefetch(array $userIds, Carbon $from, Carbon $to): array
+    {
+        $out = [
+            'corrections_ms' => 0.0,
+            'ot_stub_ms' => 0.0,
+            'logs_ms' => 0.0,
+            'load_leaves_ms' => 0.0,
+            'load_overtime_ms' => 0.0,
+        ];
+
+        $ids = array_values(array_unique(array_map(static fn ($id) => (int) $id, $userIds)));
+        if ($ids === []) {
+            return $out;
+        }
+
+        $sessionTimings = $this->attendanceSession->beginBulkPayrollSession(
+            $ids,
+            $from->toDateString(),
+            $to->toDateString()
+        );
+        $out['corrections_ms'] = (float) ($sessionTimings['corrections_ms'] ?? 0);
+        $out['ot_stub_ms'] = (float) ($sessionTimings['ot_stub_ms'] ?? 0);
+        $out['logs_ms'] = (float) ($sessionTimings['logs_ms'] ?? 0);
+
+        $__t = microtime(true);
+        $this->seedBulkLeaveCachesForPayWindow($ids, $from, $to);
+        $out['load_leaves_ms'] = (microtime(true) - $__t) * 1000;
+
+        $__t = microtime(true);
+        $this->seedBulkOvertimeCachesForPayWindow($ids, $from, $to);
+        $out['load_overtime_ms'] = (microtime(true) - $__t) * 1000;
+
+        $tz = $this->getTimezone();
+        foreach ($ids as $uid) {
+            $cursor = $from->copy();
+            while ($cursor->lessThanOrEqualTo($to)) {
+                $dk = $cursor->toDateString();
+                $this->attendanceLogExistsCache[$uid.'|'.$dk.'|'.$tz] = $this->attendanceSession->hasAnyVerifiedLogOnLocalDate(
+                    $uid,
+                    $dk,
+                    $tz
+                );
+                $cursor->addDay();
+            }
+        }
+
+        return $out;
+    }
+
+    public function endBulkPayrollAttendancePrefetch(): void
+    {
+        $this->attendanceSession->endBulkPayrollSession();
+    }
+
+    /**
+     * @param  list<int>  $userIds
+     */
+    private function seedBulkLeaveCachesForPayWindow(array $userIds, Carbon $from, Carbon $to): void
+    {
+        $ids = array_values(array_unique(array_map(static fn ($id) => (int) $id, $userIds)));
+        if ($ids === []) {
+            return;
+        }
+
+        $leaves = LeaveRequest::query()
+            ->whereIn('user_id', $ids)
+            ->where('status', LeaveRequest::STATUS_APPROVED)
+            ->whereDate('start_date', '<=', $to->toDateString())
+            ->whereDate('end_date', '>=', $from->toDateString())
+            ->orderByDesc('id')
+            ->get();
+
+        /** @var array<int, list<LeaveRequest>> */
+        $byUser = [];
+        foreach ($leaves as $lr) {
+            $uid = (int) $lr->user_id;
+            $byUser[$uid][] = $lr;
+        }
+
+        foreach ($ids as $uid) {
+            $cursor = $from->copy();
+            while ($cursor->lessThanOrEqualTo($to)) {
+                $dk = $cursor->toDateString();
+                $chosen = null;
+                foreach ($byUser[$uid] ?? [] as $lr) {
+                    $sd = $lr->start_date instanceof Carbon
+                        ? $lr->start_date->toDateString()
+                        : Carbon::parse((string) $lr->start_date)->toDateString();
+                    $ed = $lr->end_date instanceof Carbon
+                        ? $lr->end_date->toDateString()
+                        : Carbon::parse((string) $lr->end_date)->toDateString();
+                    if ($dk >= $sd && $dk <= $ed) {
+                        $chosen = $lr;
+                        break;
+                    }
+                }
+                $this->approvedLeaveForDateCache[$uid.'|'.$dk] = $chosen;
+                $cursor->addDay();
+            }
+        }
+    }
+
+    /**
+     * Warm {@see $overtimeHoursCache} / {@see $overtimeExistsCache} for the pay window ±1 day (prev-day OT fallback).
+     *
+     * @param  list<int>  $userIds
+     */
+    private function seedBulkOvertimeCachesForPayWindow(array $userIds, Carbon $from, Carbon $to): void
+    {
+        $ids = array_values(array_unique(array_map(static fn ($id) => (int) $id, $userIds)));
+        if ($ids === []) {
+            return;
+        }
+
+        $fromExt = $from->copy()->startOfDay()->subDay();
+        $toExt = $to->copy()->startOfDay()->addDay();
+
+        foreach ($ids as $uid) {
+            $cursor = $fromExt->copy();
+            while ($cursor->lessThanOrEqualTo($toExt)) {
+                $d = $cursor->toDateString();
+                $existsKey = $uid.'|'.$d;
+                $this->overtimeExistsCache[$existsKey] = false;
+                foreach ([Overtime::STATUS_APPROVED, Overtime::STATUS_PENDING] as $st) {
+                    $this->overtimeHoursCache[$existsKey.'|'.$st] = 0.0;
+                }
+                $cursor->addDay();
+            }
+        }
+
+        $rows = Overtime::query()
+            ->whereIn('user_id', $ids)
+            ->whereDate('date', '>=', $fromExt->toDateString())
+            ->whereDate('date', '<=', $toExt->toDateString())
+            ->get(['user_id', 'date', 'status', 'computed_hours']);
+
+        foreach ($rows as $ot) {
+            $d = $ot->date instanceof Carbon
+                ? $ot->date->toDateString()
+                : Carbon::parse((string) $ot->date)->toDateString();
+            $uid = (int) $ot->user_id;
+            $existsKey = $uid.'|'.$d;
+            $this->overtimeExistsCache[$existsKey] = true;
+            $hk = $existsKey.'|'.(string) $ot->status;
+            $this->overtimeHoursCache[$hk] = ($this->overtimeHoursCache[$hk] ?? 0.0) + (float) ($ot->computed_hours ?? 0);
+        }
+    }
+
     public function getTimezone(): string
     {
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
@@ -420,16 +583,28 @@ class PayrollComputationService
             $isPolicyException = $isRestDay || $holiday !== null || $daySchedule === null;
 
             if ($isPolicyException) {
-                $noPunchApprovedOtHours = (float) Overtime::query()
-                    ->where('user_id', $user->id)
-                    ->where('status', Overtime::STATUS_APPROVED)
-                    ->whereDate('date', $dateKey)
-                    ->sum('computed_hours');
-                $noPunchHasOtRequest = $noPunchApprovedOtHours > 0.0001
-                    || Overtime::query()
+                $uid = (int) $user->id;
+                $hoursCacheKey = $uid.'|'.$dateKey.'|'.Overtime::STATUS_APPROVED;
+                $existsCacheKey = $uid.'|'.$dateKey;
+                if (array_key_exists($hoursCacheKey, $this->overtimeHoursCache)) {
+                    $noPunchApprovedOtHours = (float) $this->overtimeHoursCache[$hoursCacheKey];
+                } else {
+                    $noPunchApprovedOtHours = (float) Overtime::query()
                         ->where('user_id', $user->id)
+                        ->where('status', Overtime::STATUS_APPROVED)
                         ->whereDate('date', $dateKey)
-                        ->exists();
+                        ->sum('computed_hours');
+                }
+                if (array_key_exists($existsCacheKey, $this->overtimeExistsCache)) {
+                    $noPunchHasOtRequest = $noPunchApprovedOtHours > 0.0001
+                        || (bool) $this->overtimeExistsCache[$existsCacheKey];
+                } else {
+                    $noPunchHasOtRequest = $noPunchApprovedOtHours > 0.0001
+                        || Overtime::query()
+                            ->where('user_id', $user->id)
+                            ->whereDate('date', $dateKey)
+                            ->exists();
+                }
 
                 if ($noPunchApprovedOtHours > 0.0001) {
                     $noPunchOtApplied = $noPunchApprovedOtHours;
@@ -1104,6 +1279,9 @@ class PayrollComputationService
         ?float $overrideDailyRate = null,
         array $periodContext = []
     ): array {
+        $timingSink = $periodContext['_timing_sink'] ?? null;
+        $__segStart = microtime(true);
+
         $tz = $this->getTimezone();
         $monthlyBaseForRate = $this->resolveMonthlyBaseForDailyRate($user, $to->toDateString());
         [$effectiveSchedule] = $this->resolveEffectiveScheduleForDailyComputation($user);
@@ -1137,6 +1315,10 @@ class PayrollComputationService
                     $effectiveSchedule
                 ));
         if ($dailyRate <= 0) {
+            if (is_object($timingSink)) {
+                $timingSink->load_schedules_ms = ($timingSink->load_schedules_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
+            }
+
             return [
                 'user_id' => $user->id,
                 'from_date' => $from->toDateString(),
@@ -1163,6 +1345,11 @@ class PayrollComputationService
             ];
         }
 
+        if (is_object($timingSink)) {
+            $timingSink->load_schedules_ms = ($timingSink->load_schedules_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
+        }
+        $__segStart = microtime(true);
+
         $days = [];
         $cursor = $from->copy();
         while ($cursor->lessThanOrEqualTo($to)) {
@@ -1185,6 +1372,11 @@ class PayrollComputationService
             $days[] = $dayPayroll;
             $cursor->addDay();
         }
+
+        if (is_object($timingSink)) {
+            $timingSink->daily_iteration_ms = ($timingSink->daily_iteration_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
+        }
+        $__segStart = microtime(true);
 
         $totalPay = 0.0;
         $basicPayThisPeriod = 0.0;
@@ -1406,6 +1598,11 @@ class PayrollComputationService
             $scheduledDailyHours > 0.0 ? $scheduledDailyHours : 8.0
         );
 
+        if (is_object($timingSink)) {
+            $timingSink->compute_loop_ms = ($timingSink->compute_loop_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
+        }
+        $__segStart = microtime(true);
+
         $compensationSummary = $this->payrollCalculator->buildEmployeeCompensationSummary($user, [
             'as_of_date' => $to->toDateString(),
             'proration_factor' => 1,
@@ -1484,6 +1681,11 @@ class PayrollComputationService
         // Basic pay for payroll/payslip must come from daily computation (worked minutes, leave, holidays, OT context).
         // Overriding here with prorated monthly basic causes inaccurate finalize/preview totals.
 
+        if (is_object($timingSink)) {
+            $timingSink->load_pay_components_ms = ($timingSink->load_pay_components_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
+        }
+        $__segStart = microtime(true);
+
         $deductionSchedule = $this->deductionScheduleService->summarizeForPayrollComputation(
             $user,
             $refForSchedule,
@@ -1533,6 +1735,10 @@ class PayrollComputationService
             2
         ));
         $netPayAfterWithholding = max(0, round($netPay - $withholdingThisPeriod, 2));
+
+        if (is_object($timingSink)) {
+            $timingSink->load_deductions_ms = ($timingSink->load_deductions_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
+        }
 
         return [
             'user_id' => $user->id,
@@ -1815,6 +2021,10 @@ class PayrollComputationService
         ?Carbon $timeOut,
         string $tz
     ): array {
+        if ($this->attendanceSession->isBulkPayrollMode()) {
+            return $this->attendanceSession->allowanceAttendanceValidityForPayroll($user, $dateKey, $tz);
+        }
+
         $sources = [
             'raw_clock_in' => false,
             'raw_clock_out' => false,
@@ -2983,6 +3193,14 @@ class PayrollComputationService
         $cacheKey = ((int) $user->id).'|'.$dateKey.'|'.$tz;
         if (array_key_exists($cacheKey, $this->attendanceLogExistsCache)) {
             return $this->attendanceLogExistsCache[$cacheKey];
+        }
+
+        if ($this->attendanceSession->isBulkPayrollMode()) {
+            return $this->attendanceLogExistsCache[$cacheKey] = $this->attendanceSession->hasAnyVerifiedLogOnLocalDate(
+                (int) $user->id,
+                $dateKey,
+                $tz
+            );
         }
 
         $dayStart = Carbon::parse($dateKey, $tz)->startOfDay();

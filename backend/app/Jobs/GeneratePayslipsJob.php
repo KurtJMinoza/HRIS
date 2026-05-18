@@ -23,7 +23,7 @@ use Throwable;
  * with payroll computation or face registration.
  *
  * Run with:
- *   php artisan queue:work redis --queue=payslip --timeout=300 --sleep=1 --tries=2
+ *   php artisan queue:work redis --queue=payslip-pdf --timeout=300 --sleep=1 --tries=1
  */
 class GeneratePayslipsJob implements ShouldQueue
 {
@@ -31,14 +31,14 @@ class GeneratePayslipsJob implements ShouldQueue
 
     public int $timeout = 300;
 
-    public int $tries = 2;
+    public int $tries = 1;
 
     public function __construct(
         private readonly int $batchRunId,
         private readonly ?int $actorUserId = null
     ) {
         $this->onConnection('redis');
-        $this->onQueue('payslip');
+        $this->onQueue('payslip-pdf');
     }
 
     /**

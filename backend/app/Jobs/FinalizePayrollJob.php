@@ -23,7 +23,7 @@ use Throwable;
  *
  * Run a dedicated Redis worker:
  *
- *   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=2
+ *   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=1
  *
  * Set REDIS_QUEUE_RETRY_AFTER higher than this job's {@see $timeout}.
  */
@@ -33,7 +33,7 @@ class FinalizePayrollJob implements ShouldQueue
 
     public int $timeout = 300;
 
-    public int $tries = 2;
+    public int $tries = 1;
 
     /** @var list<string>|null */
     private static ?array $payrollBatchRunColumns = null;
@@ -108,13 +108,14 @@ class FinalizePayrollJob implements ShouldQueue
 
         try {
             $finalizeStartedAt = microtime(true);
-            $finalizePayrollService->finalizeQueuedRun($run->fresh(), $actor);
+            $finalizeResult = $finalizePayrollService->finalizeQueuedRun($run->fresh(), $actor);
             GeneratePayslipsJob::dispatch((int) $run->id, (int) $this->actorUserId)
                 ->onConnection('redis')
-                ->onQueue('payslip');
+                ->onQueue('payslip-pdf');
             Log::info('FinalizePayrollJob completed', [
                 'batch_run_id' => $this->batchRunId,
                 'finalize_core_ms' => round((microtime(true) - $finalizeStartedAt) * 1000, 2),
+                'finalize_timings_ms' => $finalizeResult['timings'] ?? null,
                 'total_elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
                 'peak_memory_mb' => round(memory_get_peak_usage(true) / 1048576, 2),
             ]);

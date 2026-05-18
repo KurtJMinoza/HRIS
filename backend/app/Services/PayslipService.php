@@ -79,6 +79,56 @@ class PayslipService
     }
 
     /**
+     * Batch-load YTD totals for many employees in one query (draft payroll generation hot path).
+     *
+     * @param  list<int>  $userIds
+     * @return array<int, array{ytd_gross: float, ytd_deductions: float, ytd_tax: float}>
+     */
+    public function bulkYtdPriorBalances(array $userIds, Carbon $periodStart): array
+    {
+        $byUser = [];
+        foreach ($userIds as $uid) {
+            $byUser[(int) $uid] = ['ytd_gross' => 0.0, 'ytd_deductions' => 0.0, 'ytd_tax' => 0.0];
+        }
+        if ($userIds === []) {
+            return $byUser;
+        }
+
+        $yearStart = Carbon::create((int) $periodStart->year, 1, 1)->startOfDay();
+        $prior = Payslip::query()
+            ->whereIn('user_id', $userIds)
+            ->whereDate('pay_period_end', '>=', $yearStart->toDateString())
+            ->whereDate('pay_period_end', '<', $periodStart->toDateString())
+            ->orderBy('pay_period_end')
+            ->get(['user_id', 'gross_pay', 'total_deductions', 'snapshot']);
+
+        foreach ($prior as $p) {
+            $uid = (int) $p->user_id;
+            if (! isset($byUser[$uid])) {
+                continue;
+            }
+            $byUser[$uid]['ytd_gross'] += (float) $p->gross_pay;
+            $byUser[$uid]['ytd_deductions'] += (float) $p->total_deductions;
+            $snap = $p->snapshot;
+            if (is_string($snap)) {
+                $snap = json_decode($snap, true);
+            }
+            if (is_array($snap)) {
+                $byUser[$uid]['ytd_tax'] += (float) data_get($snap, 'summary.withholding_tax_this_period_estimate', 0);
+            }
+        }
+
+        foreach ($byUser as &$row) {
+            $row['ytd_gross'] = round($row['ytd_gross'], 2);
+            $row['ytd_deductions'] = round($row['ytd_deductions'], 2);
+            $row['ytd_tax'] = round($row['ytd_tax'], 2);
+        }
+        unset($row);
+
+        return $byUser;
+    }
+
+    /**
      * @param  array<string, mixed>  $input
      *                                       from_date, to_date, pay_cycle_id?, reference_date?, payroll_period_id?,
      *                                       is_final_pay?, password_protect?
@@ -639,7 +689,9 @@ class PayslipService
         bool $enforcePayrollWindowMutable = false,
         ?array $precomputed = null,
         ?array $precomputedPreview = null,
-        ?PayCycle $precomputedCycle = null
+        ?PayCycle $precomputedCycle = null,
+        ?array $ytdPriorOverride = null,
+        ?object $timingSink = null,
     ): array
     {
         [$from, $to, $preview, $cycle] = $this->resolveComputationContext($employee, $input);
@@ -653,6 +705,15 @@ class PayslipService
             $this->assertPayrollPeriodMutableForUserWindow((int) $employee->id, $from, $to);
         }
 
+        $periodCtx = [
+            'pay_period_start' => $from->toDateString(),
+            'pay_period_end' => $to->toDateString(),
+            'selected_pay_date' => $preview['pay_date'] ?? null,
+        ];
+        if ($timingSink !== null) {
+            $periodCtx['_timing_sink'] = $timingSink;
+        }
+
         $computed = is_array($precomputed)
             ? $precomputed
             : $this->payrollComputation->computeEmployeePayroll(
@@ -660,11 +721,7 @@ class PayslipService
                 $from,
                 $to,
                 null,
-                [
-                    'pay_period_start' => $from->toDateString(),
-                    'pay_period_end' => $to->toDateString(),
-                    'selected_pay_date' => $preview['pay_date'] ?? null,
-                ]
+                $periodCtx
             );
         $summary = $computed['summary'] ?? [];
 
@@ -684,7 +741,9 @@ class PayslipService
         $taxable = (float) ($taxClass['taxable_total'] ?? 0);
         $nonTax = (float) ($taxClass['non_taxable_total'] ?? 0);
 
-        $ytdPrior = $this->calculateYtd($employee, $from);
+        $ytdPrior = is_array($ytdPriorOverride)
+            ? $ytdPriorOverride
+            : $this->calculateYtd($employee, $from);
 
         $snapshot = [
             'computed_at' => now()->toIso8601String(),
@@ -750,7 +809,7 @@ class PayslipService
      *
      * @param  array<string, mixed>  $periodInput  from_date, to_date, pay_cycle_id?, reference_date?
      * @param  bool  $withPdf  When false, persist rows only (no PDFs).
-     * @return list<int> Created or updated payslip ids
+     * @return array{payslip_ids: list<int>, timings: array<string, float>}
      */
     public function generateBulkPayslips(
         ?int $companyId,
@@ -764,8 +823,20 @@ class PayslipService
     ): array {
         $startedAt = microtime(true);
         $this->payrollComputation->flushRuntimeCaches();
+
+        $timingSink = null;
+        if (! $withPdf) {
+            $timingSink = (object) [
+                'load_schedules_ms' => 0.0,
+                'daily_iteration_ms' => 0.0,
+                'load_pay_components_ms' => 0.0,
+                'load_deductions_ms' => 0.0,
+                'compute_loop_ms' => 0.0,
+            ];
+        }
+
         $timings = [
-            'employee_query_ms' => 0.0,
+            'load_employees_ms' => 0.0,
             'generation_loop_ms' => 0.0,
             'bulk_upsert_ms' => 0.0,
         ];
@@ -790,6 +861,7 @@ class PayslipService
         }
 
         $orderedIds = (clone $q)->orderByLastName()->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $periodStartForYtd = Carbon::parse((string) ($periodInput['from_date'] ?? now()->toDateString()))->startOfDay();
 
         $ids = [];
         $processedEmployees = 0;
@@ -800,7 +872,21 @@ class PayslipService
                 'failed_employees' => 0,
             ]);
         }
-        foreach (array_chunk($orderedIds, self::DRAFT_GENERATION_CHUNK_SIZE) as $chunkIds) {
+
+        $fromStr = (string) ($periodInput['from_date'] ?? '');
+        $toStr = (string) ($periodInput['to_date'] ?? '');
+        $prefetchTimings = [];
+        $prefetchAttendance = ! $withPdf && $fromStr !== '' && $toStr !== '' && count($orderedIds) > 0;
+        if ($prefetchAttendance) {
+            $prefetchTimings = $this->payrollComputation->beginBulkPayrollAttendancePrefetch(
+                $orderedIds,
+                Carbon::parse($fromStr)->startOfDay(),
+                Carbon::parse($toStr)->startOfDay()
+            );
+        }
+
+        try {
+            foreach (array_chunk($orderedIds, self::DRAFT_GENERATION_CHUNK_SIZE) as $chunkIds) {
             if ($chunkIds === []) {
                 continue;
             }
@@ -820,7 +906,7 @@ class PayslipService
                 'payCycle',
                 'workingSchedule',
             ]);
-            $timings['employee_query_ms'] += (microtime(true) - $employeeQueryStartedAt) * 1000;
+            $timings['load_employees_ms'] += (microtime(true) - $employeeQueryStartedAt) * 1000;
 
             if ($withPdf) {
                 // PDF generation is intentionally not batched; callers use this only for small/single runs.
@@ -833,13 +919,28 @@ class PayslipService
                 continue;
             }
 
+            $ytdChunk = $this->bulkYtdPriorBalances($chunkIds, $periodStartForYtd);
+
             $now = now();
             $rows = [];
-            $lookupTriples = [];
+            $periodStartStr = null;
+            $periodEndStr = null;
             $loopStartedAt = microtime(true);
             foreach ($users as $user) {
-                $gen = $this->computePayslipGenerationData($user, $periodInput, true);
+                $uid = (int) $user->id;
+                $gen = $this->computePayslipGenerationData(
+                    $user,
+                    $periodInput,
+                    true,
+                    null,
+                    null,
+                    null,
+                    $ytdChunk[$uid] ?? ['ytd_gross' => 0.0, 'ytd_deductions' => 0.0, 'ytd_tax' => 0.0],
+                    $timingSink,
+                );
                 $row = array_merge($gen['unique'], $gen['attributes']);
+                $periodStartStr ??= (string) $gen['unique']['pay_period_start'];
+                $periodEndStr ??= (string) $gen['unique']['pay_period_end'];
                 if (isset($row['snapshot']) && is_array($row['snapshot'])) {
                     $row['snapshot'] = json_encode($row['snapshot'], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
                 }
@@ -847,15 +948,10 @@ class PayslipService
                 $row['updated_at'] = $now;
                 $row['created_at'] = $now;
                 $rows[] = $row;
-                $lookupTriples[] = [
-                    'user_id' => (int) $gen['unique']['user_id'],
-                    'pay_period_start' => (string) $gen['unique']['pay_period_start'],
-                    'pay_period_end' => (string) $gen['unique']['pay_period_end'],
-                ];
             }
             $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
 
-            if ($rows === []) {
+            if ($rows === [] || $periodStartStr === null || $periodEndStr === null) {
                 continue;
             }
 
@@ -890,19 +986,14 @@ class PayslipService
             });
 
             $persisted = Payslip::query()
-                ->whereIn('user_id', array_values(array_unique(array_column($lookupTriples, 'user_id'))))
-                ->where(function ($query) use ($lookupTriples) {
-                    foreach ($lookupTriples as $triple) {
-                        $query->orWhere(function ($sub) use ($triple) {
-                            $sub->where('user_id', $triple['user_id'])
-                                ->whereDate('pay_period_start', $triple['pay_period_start'])
-                                ->whereDate('pay_period_end', $triple['pay_period_end']);
-                        });
-                    }
-                })
+                ->whereIn('user_id', $chunkIds)
+                ->whereDate('pay_period_start', $periodStartStr)
+                ->whereDate('pay_period_end', $periodEndStr)
+                ->orderBy('user_id')
                 ->pluck('id')
                 ->map(fn ($id) => (int) $id)
                 ->all();
+
             $ids = array_merge($ids, $persisted);
             $timings['bulk_upsert_ms'] += (microtime(true) - $upsertStartedAt) * 1000;
             $processedEmployees += count($chunkIds);
@@ -913,18 +1004,46 @@ class PayslipService
                     'total_employees' => count($orderedIds),
                 ]);
             }
+            }
+        } finally {
+            if ($prefetchAttendance) {
+                $this->payrollComputation->endBulkPayrollAttendancePrefetch();
+            }
         }
+
+        $sink = $timingSink ?? (object) [];
+        $prefetchCorrectionsOt = (float) (($prefetchTimings['corrections_ms'] ?? 0) + ($prefetchTimings['ot_stub_ms'] ?? 0));
+        $payloadTimings = [
+            'load_employees_ms' => round($timings['load_employees_ms'], 2),
+            'load_attendance_ms' => round($prefetchCorrectionsOt, 2),
+            'load_attendance_logs_ms' => round((float) ($prefetchTimings['logs_ms'] ?? 0), 2),
+            'load_schedules_ms' => round((float) ($sink->load_schedules_ms ?? 0), 2),
+            'load_pay_components_ms' => round((float) ($sink->load_pay_components_ms ?? 0), 2),
+            'load_deductions_ms' => round((float) ($sink->load_deductions_ms ?? 0), 2),
+            'load_allowances_ms' => 0.0,
+            'load_leaves_ms' => round((float) ($prefetchTimings['load_leaves_ms'] ?? 0), 2),
+            'load_overtime_ms' => round((float) ($prefetchTimings['load_overtime_ms'] ?? 0), 2),
+            'compute_loop_ms' => round(
+                (float) ($sink->daily_iteration_ms ?? 0) + (float) ($sink->compute_loop_ms ?? 0),
+                2
+            ),
+            'insert_payroll_rows_ms' => round($timings['bulk_upsert_ms'], 2),
+            'insert_payroll_details_ms' => 0.0,
+            'bulk_insert_ms' => round($timings['bulk_upsert_ms'], 2),
+            'pdf_generation_ms' => $withPdf ? round($timings['generation_loop_ms'], 2) : 0.0,
+            'total_ms' => round((microtime(true) - $startedAt) * 1000, 2),
+        ];
 
         Log::info('Payslip bulk generation completed', [
             'generated_count' => count($ids),
-            'employee_query_ms' => round($timings['employee_query_ms'], 2),
-            'generation_loop_ms' => round($timings['generation_loop_ms'], 2),
-            'bulk_upsert_ms' => round($timings['bulk_upsert_ms'], 2),
-            'total_response_ms' => round((microtime(true) - $startedAt) * 1000, 2),
+            'timings_ms' => $payloadTimings,
             'with_pdf' => $withPdf,
         ]);
 
-        return $ids;
+        return [
+            'payslip_ids' => $ids,
+            'timings' => $payloadTimings,
+        ];
     }
 
     public function generatePdf(Payslip $payslip, User $employee, ?string $plainPassword = null, ?string $relativeOverride = null): string

@@ -117,7 +117,7 @@ class PayrollFinalizeController extends Controller
     }
 
     /**
-     * Persist payroll periods, generate payslip PDFs, lock periods, record {@see \App\Models\PayrollBatchRun}.
+     * Queue payroll finalization (persist periods, lock window, batch audit). Payslip PDFs are generated asynchronously on `payslip-pdf`.
      */
     public function execute(Request $request): JsonResponse
     {

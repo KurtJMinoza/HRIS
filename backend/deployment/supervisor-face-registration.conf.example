@@ -8,7 +8,7 @@
 
 [program:laravel-worker-payroll]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/HR/backend/artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=2 --max-time=3600
+command=php /var/www/HR/backend/artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=1 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -19,9 +19,9 @@ redirect_stderr=true
 stdout_logfile=/var/www/HR/backend/storage/logs/worker-payroll.log
 stopwaitsecs=3700
 
-[program:laravel-worker-payslip]
+[program:laravel-worker-payslip-pdf]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/HR/backend/artisan queue:work redis --queue=payslip --timeout=300 --sleep=1 --tries=2 --max-time=3600
+command=php /var/www/HR/backend/artisan queue:work redis --queue=payslip-pdf --timeout=300 --sleep=1 --tries=1 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -29,7 +29,7 @@ killasgroup=true
 user=www-data
 numprocs=1
 redirect_stderr=true
-stdout_logfile=/var/www/HR/backend/storage/logs/worker-payslip.log
+stdout_logfile=/var/www/HR/backend/storage/logs/worker-payslip-pdf.log
 stopwaitsecs=3700
 
 [program:laravel-worker-face-registration]
@@ -47,7 +47,7 @@ stopwaitsecs=3700
 
 [program:laravel-worker-default]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/HR/backend/artisan queue:work redis --queue=default --timeout=120 --sleep=1 --tries=2 --max-time=3600
+command=php /var/www/HR/backend/artisan queue:work redis --queue=default --timeout=120 --sleep=1 --tries=1 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
