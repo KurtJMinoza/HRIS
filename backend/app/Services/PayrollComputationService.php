@@ -26,6 +26,21 @@ class PayrollComputationService
 {
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
+    /** @var array<string, ?LeaveRequest> */
+    private array $approvedLeaveForDateCache = [];
+
+    /** @var array<string, string> */
+    private array $dayStatusCache = [];
+
+    /** @var array<string, float> */
+    private array $overtimeHoursCache = [];
+
+    /** @var array<string, bool> */
+    private array $overtimeExistsCache = [];
+
+    /** @var array<string, bool> */
+    private array $attendanceLogExistsCache = [];
+
     public function __construct(
         private readonly PayrollRulesEngineService $rulesEngine,
         private readonly PayrollCalculatorService $payrollCalculator,
@@ -40,6 +55,16 @@ class PayrollComputationService
         private readonly DeductionApplicationService $deductionApplicationService,
         private readonly LoanAmortizationService $loanAmortizationService,
     ) {}
+
+    public function flushRuntimeCaches(): void
+    {
+        $this->approvedLeaveForDateCache = [];
+        $this->dayStatusCache = [];
+        $this->overtimeHoursCache = [];
+        $this->overtimeExistsCache = [];
+        $this->attendanceLogExistsCache = [];
+        $this->attendanceSession->flushRuntimeCache();
+    }
 
     public function getTimezone(): string
     {
@@ -798,7 +823,12 @@ class PayrollComputationService
     private function sumOvertimeHoursForWorkday(User $user, string $dateKey, Carbon $timeInTz, string $status): float
     {
         $sumForDate = function (string $d) use ($user, $status): float {
-            return (float) Overtime::query()
+            $cacheKey = ((int) $user->id).'|'.$d.'|'.$status;
+            if (array_key_exists($cacheKey, $this->overtimeHoursCache)) {
+                return $this->overtimeHoursCache[$cacheKey];
+            }
+
+            return $this->overtimeHoursCache[$cacheKey] = (float) Overtime::query()
                 ->where('user_id', $user->id)
                 ->where('status', $status)
                 ->whereDate('date', $d)
@@ -828,7 +858,12 @@ class PayrollComputationService
     private function hasOvertimeRequestForWorkday(User $user, string $dateKey, Carbon $timeInTz): bool
     {
         $existsOn = function (string $d) use ($user): bool {
-            return Overtime::query()
+            $cacheKey = ((int) $user->id).'|'.$d;
+            if (array_key_exists($cacheKey, $this->overtimeExistsCache)) {
+                return $this->overtimeExistsCache[$cacheKey];
+            }
+
+            return $this->overtimeExistsCache[$cacheKey] = Overtime::query()
                 ->where('user_id', $user->id)
                 ->whereDate('date', $d)
                 ->exists();
@@ -886,25 +921,30 @@ class PayrollComputationService
 
     private function resolveDayStatus(User $user, string $dateKey, ?array $daySchedule): string
     {
-        $hasLeave = LeaveRequest::query()
-            ->where('user_id', $user->id)
-            ->where('status', LeaveRequest::STATUS_APPROVED)
-            ->whereDate('start_date', '<=', $dateKey)
-            ->whereDate('end_date', '>=', $dateKey)
-            ->exists();
-        if ($hasLeave) {
-            return 'leave';
-        }
-        if (! $daySchedule || empty($daySchedule['in'])) {
-            return 'rest_or_unscheduled';
+        $cacheKey = ((int) $user->id).'|'.$dateKey.'|'.($daySchedule && ! empty($daySchedule['in']) ? 'scheduled' : 'unscheduled');
+        if (array_key_exists($cacheKey, $this->dayStatusCache)) {
+            return $this->dayStatusCache[$cacheKey];
         }
 
-        return 'absent';
+        $hasLeave = $this->approvedPrimaryLeaveForDate($user, $dateKey) !== null;
+        if ($hasLeave) {
+            return $this->dayStatusCache[$cacheKey] = 'leave';
+        }
+        if (! $daySchedule || empty($daySchedule['in'])) {
+            return $this->dayStatusCache[$cacheKey] = 'rest_or_unscheduled';
+        }
+
+        return $this->dayStatusCache[$cacheKey] = 'absent';
     }
 
     private function approvedPrimaryLeaveForDate(User $user, string $dateKey): ?LeaveRequest
     {
-        return LeaveRequest::query()
+        $cacheKey = ((int) $user->id).'|'.$dateKey;
+        if (array_key_exists($cacheKey, $this->approvedLeaveForDateCache)) {
+            return $this->approvedLeaveForDateCache[$cacheKey];
+        }
+
+        return $this->approvedLeaveForDateCache[$cacheKey] = LeaveRequest::query()
             ->where('user_id', $user->id)
             ->where('status', LeaveRequest::STATUS_APPROVED)
             ->whereDate('start_date', '<=', $dateKey)
@@ -1369,7 +1409,8 @@ class PayrollComputationService
         $compensationSummary = $this->payrollCalculator->buildEmployeeCompensationSummary($user, [
             'as_of_date' => $to->toDateString(),
             'proration_factor' => 1,
-            'cache' => false,
+            'include_deduction_schedule_catalog' => false,
+            'cache' => true,
         ]);
         $basicSalary = (float) ($compensationSummary['basic_salary'] ?? 0);
         $statutory = $compensationSummary['statutory'] ?? $this->payrollCalculator->calculateAllStatutoryContributions($basicSalary);
@@ -2939,10 +2980,15 @@ class PayrollComputationService
 
     private function hasAnyAttendanceLogForDate(User $user, string $dateKey, string $tz): bool
     {
+        $cacheKey = ((int) $user->id).'|'.$dateKey.'|'.$tz;
+        if (array_key_exists($cacheKey, $this->attendanceLogExistsCache)) {
+            return $this->attendanceLogExistsCache[$cacheKey];
+        }
+
         $dayStart = Carbon::parse($dateKey, $tz)->startOfDay();
         $dayEnd = Carbon::parse($dateKey, $tz)->endOfDay();
 
-        return AttendanceLog::query()
+        return $this->attendanceLogExistsCache[$cacheKey] = AttendanceLog::query()
             ->where('user_id', $user->id)
             ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
             ->exists();

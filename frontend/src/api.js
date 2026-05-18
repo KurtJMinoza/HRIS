@@ -1889,10 +1889,8 @@ export async function adminGeneratePayslips(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    // Small/medium batches may still run synchronously on the backend. Keep this
-    // above PHP/server timeouts used locally so the UI does not fail while the
-    // payslip rows are still being written successfully.
-    timeoutMs: 180000,
+    // Bulk generation returns immediately after the Redis payroll job is queued.
+    timeoutMs: 30000,
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to generate payslips')

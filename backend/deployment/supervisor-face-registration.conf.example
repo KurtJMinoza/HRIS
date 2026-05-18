@@ -1,17 +1,40 @@
 ; Copy to e.g. /etc/supervisor/conf.d/laravel-face-registration.conf
 ; Adjust paths and user to match your server.
 ;
-; Worker --timeout must be greater than ProcessFaceRegistrationJob::$timeout (60s default).
-; queue:work --tries should be >= the job's $tries (3) so backoff/retries behave as intended.
+; Keep payroll, payslip PDFs, face registration, and default jobs on separate Redis workers.
+; queue:work --tries should be >= the job's $tries so backoff/retries behave as intended.
 ; Scale concurrency by increasing numprocs (example: 8, 20, 50).
-; One worker can process one job at a time, so queued face jobs run in parallel up to numprocs.
-;
-; If QUEUE_CONNECTION=database, use the same command with `database` instead of `redis`
-; and ensure php artisan queue:table is migrated.
+; One worker can process one job at a time.
+
+[program:laravel-worker-payroll]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/HR/backend/artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=2 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=2
+redirect_stderr=true
+stdout_logfile=/var/www/HR/backend/storage/logs/worker-payroll.log
+stopwaitsecs=3700
+
+[program:laravel-worker-payslip]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/HR/backend/artisan queue:work redis --queue=payslip --timeout=300 --sleep=1 --tries=2 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/www/HR/backend/storage/logs/worker-payslip.log
+stopwaitsecs=3700
 
 [program:laravel-worker-face-registration]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/HR/backend/artisan queue:work redis --sleep=1 --tries=3 --max-time=3600 --queue=face-registration,default --timeout=90
+command=php /var/www/HR/backend/artisan queue:work redis --queue=face-registration --timeout=180 --sleep=1 --tries=2 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -20,4 +43,17 @@ user=www-data
 numprocs=8
 redirect_stderr=true
 stdout_logfile=/var/www/HR/backend/storage/logs/worker-face-registration.log
+stopwaitsecs=3700
+
+[program:laravel-worker-default]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/HR/backend/artisan queue:work redis --queue=default --timeout=120 --sleep=1 --tries=2 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=2
+redirect_stderr=true
+stdout_logfile=/var/www/HR/backend/storage/logs/worker-default.log
 stopwaitsecs=3700

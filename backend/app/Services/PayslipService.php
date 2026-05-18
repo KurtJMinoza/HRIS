@@ -13,6 +13,7 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Spatie\Browsershot\Browsershot;
@@ -36,6 +37,11 @@ use Throwable;
  */
 class PayslipService
 {
+    private const DRAFT_GENERATION_CHUNK_SIZE = 10;
+
+    /** @var list<string>|null */
+    private static ?array $payrollBatchRunColumns = null;
+
     public function __construct(
         private readonly PayrollComputationService $payrollComputation,
         private readonly PayCycleService $payCycleService,
@@ -753,9 +759,11 @@ class PayslipService
         ?array $employeeIds,
         array $periodInput,
         ?User $actor = null,
-        bool $withPdf = true
+        bool $withPdf = true,
+        ?PayrollBatchRun $progressRun = null
     ): array {
         $startedAt = microtime(true);
+        $this->payrollComputation->flushRuntimeCaches();
         $timings = [
             'employee_query_ms' => 0.0,
             'generation_loop_ms' => 0.0,
@@ -784,7 +792,15 @@ class PayslipService
         $orderedIds = (clone $q)->orderByLastName()->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         $ids = [];
-        foreach (array_chunk($orderedIds, 100) as $chunkIds) {
+        $processedEmployees = 0;
+        if ($progressRun instanceof PayrollBatchRun) {
+            $this->updateBatchRunProgress($progressRun, [
+                'total_employees' => count($orderedIds),
+                'processed_employees' => 0,
+                'failed_employees' => 0,
+            ]);
+        }
+        foreach (array_chunk($orderedIds, self::DRAFT_GENERATION_CHUNK_SIZE) as $chunkIds) {
             if ($chunkIds === []) {
                 continue;
             }
@@ -889,6 +905,14 @@ class PayslipService
                 ->all();
             $ids = array_merge($ids, $persisted);
             $timings['bulk_upsert_ms'] += (microtime(true) - $upsertStartedAt) * 1000;
+            $processedEmployees += count($chunkIds);
+            if ($progressRun instanceof PayrollBatchRun) {
+                $this->updateBatchRunProgress($progressRun, [
+                    'processed_employees' => $processedEmployees,
+                    'employee_count' => count($ids),
+                    'total_employees' => count($orderedIds),
+                ]);
+            }
         }
 
         Log::info('Payslip bulk generation completed', [
@@ -2259,8 +2283,9 @@ class PayslipService
     public function syncBatchRunTotals(PayrollBatchRun $run): void
     {
         $agg = $this->aggregateForBatchRun($run);
-        $run->update([
+        $this->updateBatchRunProgress($run, [
             'employee_count' => $agg['payslip_count'],
+            'total_employees' => max((int) ($run->total_employees ?? 0), (int) $agg['payslip_count']),
             'total_gross' => $agg['total_gross_pay'],
             'total_deductions' => $agg['total_deductions'],
             'total_net' => $agg['total_net_pay'],
@@ -2268,9 +2293,34 @@ class PayslipService
     }
 
     /**
+     * Keep queue progress updates compatible while migrations roll across environments.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function updateBatchRunProgress(PayrollBatchRun $run, array $payload): void
+    {
+        if (self::$payrollBatchRunColumns === null) {
+            self::$payrollBatchRunColumns = Schema::hasTable('payroll_batch_runs')
+                ? Schema::getColumnListing('payroll_batch_runs')
+                : [];
+        }
+        if (self::$payrollBatchRunColumns === []) {
+            return;
+        }
+
+        $allowed = array_flip(self::$payrollBatchRunColumns);
+        $filtered = array_intersect_key($payload, $allowed);
+        if ($filtered === []) {
+            return;
+        }
+
+        PayrollBatchRun::query()->whereKey($run->id)->update($filtered);
+    }
+
+    /**
      * Remove draft payslips for this batch scope and delete the batch run.
      * Allowed when status is {@see PayrollBatchRun::STATUS_DRAFT} or {@see PayrollBatchRun::STATUS_QUEUED}
-     * (queued {@see \App\Jobs\GeneratePayslipsJob} exits harmlessly if the run was removed first).
+     * (queued {@see \App\Jobs\GeneratePayrollBatchJob} exits harmlessly if the run was removed first).
      */
     public function deleteDraftBatchRun(PayrollBatchRun $run): void
     {

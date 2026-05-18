@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\EmploymentStatus;
 use App\Http\Controllers\Controller;
-use App\Jobs\GeneratePayslipsJob;
+use App\Jobs\GeneratePayrollBatchJob;
 use App\Models\Company;
 use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
@@ -187,6 +187,9 @@ class PayslipController extends Controller
             $batchStatus = (string) $run->status;
             $payslipCount = (int) $agg['payslip_count'];
             $finalizedCount = (int) $agg['finalized_count'];
+            $totalEmployees = max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0), $payslipCount);
+            $processedEmployees = max((int) ($run->processed_employees ?? 0), $payslipCount);
+            $failedEmployees = (int) ($run->failed_employees ?? 0);
 
             $allPayslipsFinalized = $payslipCount > 0 && $finalizedCount >= $payslipCount;
             $runFinalized = $batchStatus === PayrollBatchRun::STATUS_FINALIZED;
@@ -235,6 +238,12 @@ class PayslipController extends Controller
                 'pay_cycle_source' => $run->pay_cycle_id ? 'template' : 'company_default',
                 'pay_cycle_source_label' => $run->pay_cycle_id ? 'Pay cycle template' : 'Company default',
                 'employee_count' => max((int) $agg['payslip_count'], (int) ($run->employee_count ?? 0)),
+                'total_employees' => $totalEmployees,
+                'processed_employees' => $processedEmployees,
+                'failed_employees' => $failedEmployees,
+                'progress_percent' => $totalEmployees > 0
+                    ? min(100, (int) round(($processedEmployees / $totalEmployees) * 100))
+                    : ($batchStatus === PayrollBatchRun::STATUS_DRAFT || $batchStatus === PayrollBatchRun::STATUS_FINALIZED ? 100 : 0),
                 'total_net_pay' => $agg['payslip_count'] > 0
                     ? round((float) $agg['total_net_pay'], 2)
                     : round((float) ($run->total_net ?? 0), 2),
@@ -504,6 +513,23 @@ class PayslipController extends Controller
         if ($existing && (string) $existing->status === PayrollBatchRun::STATUS_FINALIZED) {
             abort(422, 'This payroll period is already finalized for the selected scope.');
         }
+        if ($existing && (string) $existing->status === PayrollBatchRun::STATUS_PROCESSING) {
+            return response()->json([
+                'message' => 'Payroll draft is already processing.',
+                'queued' => true,
+                'payroll_batch_run_id' => (int) $existing->id,
+                'status' => (string) $existing->status,
+                'progress_status' => 'processing',
+                'pay_period_start' => $periodStart->toDateString(),
+                'pay_period_end' => $periodEnd->toDateString(),
+                'employee_count' => max((int) ($existing->employee_count ?? 0), (int) ($existing->total_employees ?? 0)),
+                'total_employees' => max((int) ($existing->total_employees ?? 0), (int) ($existing->employee_count ?? 0)),
+                'processed_employees' => (int) ($existing->processed_employees ?? 0),
+                'generated_count' => (int) ($existing->processed_employees ?? 0),
+                'skipped_count' => 0,
+                'failed_count' => (int) ($existing->failed_employees ?? 0),
+            ], 202);
+        }
 
         $employeeCount = (int) (clone $probeQ)->count();
         $runPayload = [
@@ -521,6 +547,9 @@ class PayslipController extends Controller
             'reference_date' => isset($periodInput['reference_date']) ? \Carbon\Carbon::parse((string) $periodInput['reference_date'])->toDateString() : null,
             'status' => PayrollBatchRun::STATUS_QUEUED,
             'employee_count' => $employeeCount,
+            'total_employees' => $employeeCount,
+            'processed_employees' => 0,
+            'failed_employees' => 0,
             'queued_at' => now(),
             'started_at' => null,
             'completed_at' => null,
@@ -532,79 +561,21 @@ class PayslipController extends Controller
             ? tap($existing)->update($runPayload)->fresh()
             : PayrollBatchRun::query()->create($runPayload);
 
-        $syncThreshold = max(1, (int) config('payroll.payslip_sync_threshold', 150));
-        if ($employeeCount <= $syncThreshold) {
-            PayrollBatchRun::query()->whereKey($run->id)->update([
-                'status' => PayrollBatchRun::STATUS_PROCESSING,
-                'started_at' => now(),
-                'error_message' => null,
-            ]);
-
-            try {
-                $ids = $this->payslipService->generateBulkPayslips(
-                    $run->company_id ? (int) $run->company_id : null,
-                    $run->branch_id ? (int) $run->branch_id : null,
-                    $run->department_id ? (int) $run->department_id : null,
-                    is_array($v['employee_ids'] ?? null) && count($v['employee_ids']) > 0 ? $v['employee_ids'] : null,
-                    $periodInput,
-                    $actor,
-                    withPdf: false,
-                );
-
-                PayrollBatchRun::query()->whereKey($run->id)->update([
-                    'status' => PayrollBatchRun::STATUS_DRAFT,
-                    'completed_at' => now(),
-                    'employee_count' => count($ids),
-                    'error_message' => null,
-                ]);
-                $run->refresh();
-                $this->payslipService->syncBatchRunTotals($run);
-
-                \Illuminate\Support\Facades\Log::info('Payslip generation completed synchronously', [
-                    'payroll_batch_run_id' => (int) $run->id,
-                    'generated_count' => count($ids),
-                    'sync_threshold' => $syncThreshold,
-                    'total_response_ms' => round((microtime(true) - $startedAt) * 1000, 2),
-                ]);
-
-                return response()->json([
-                    'message' => 'Payslips generated.',
-                    'queued' => false,
-                    'payroll_batch_run_id' => (int) $run->id,
-                    'status' => (string) $run->status,
-                    'pay_period_start' => $periodStart->toDateString(),
-                    'pay_period_end' => $periodEnd->toDateString(),
-                    'employee_count' => count($ids),
-                    'generated_count' => count($ids),
-                    'skipped_count' => 0,
-                    'failed_count' => 0,
-                ]);
-            } catch (\Throwable $e) {
-                report($e);
-                PayrollBatchRun::query()->whereKey($run->id)->update([
-                    'status' => PayrollBatchRun::STATUS_FAILED,
-                    'completed_at' => now(),
-                    'error_message' => $e->getMessage(),
-                ]);
-
-                throw $e;
-            }
-        }
-
-        // If already processing, don't double-dispatch.
-        $shouldDispatch = (string) $run->status !== PayrollBatchRun::STATUS_PROCESSING;
-        if ($shouldDispatch) {
-            GeneratePayslipsJob::dispatch((int) $run->id, (int) $actor->id)->onQueue('default');
-        }
+        GeneratePayrollBatchJob::dispatch((int) $run->id, (int) $actor->id)
+            ->onConnection('redis')
+            ->onQueue('payroll');
 
         return response()->json([
-            'message' => 'Payslip generation queued.',
+            'message' => 'Payroll draft generation queued.',
             'queued' => true,
             'payroll_batch_run_id' => (int) $run->id,
             'status' => (string) $run->status,
+            'progress_status' => 'pending',
             'pay_period_start' => $periodStart->toDateString(),
             'pay_period_end' => $periodEnd->toDateString(),
             'employee_count' => $employeeCount,
+            'total_employees' => $employeeCount,
+            'processed_employees' => 0,
             'generated_count' => 0,
             'skipped_count' => 0,
             'failed_count' => 0,

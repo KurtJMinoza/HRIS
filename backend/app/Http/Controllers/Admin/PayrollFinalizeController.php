@@ -185,7 +185,9 @@ class PayrollFinalizeController extends Controller
             );
             $run = $queued['run'];
             if (($queued['should_dispatch'] ?? false) === true) {
-                FinalizePayrollJob::dispatch((int) $run->id, (int) $user->id)->onQueue('default');
+                FinalizePayrollJob::dispatch((int) $run->id, (int) $user->id)
+                    ->onConnection('redis')
+                    ->onQueue('payroll');
             }
             Log::info('Payroll finalize execute queued', [
                 'batch_run_id' => (int) $run->id,
@@ -213,6 +215,8 @@ class PayrollFinalizeController extends Controller
             'queued' => true,
             'payroll_batch_run_id' => (int) $run->id,
             'status' => $run->status,
+            'progress_status' => $this->progressStatusForRun($run),
+            'progress' => $this->progressPayloadForRun($run),
         ], 202);
     }
 
@@ -231,18 +235,50 @@ class PayrollFinalizeController extends Controller
         return response()->json([
             'payroll_batch_run_id' => (int) $run->id,
             'status' => (string) $run->status,
+            'progress_status' => $this->progressStatusForRun($run),
             'error_message' => $run->error_message,
+            'progress' => $this->progressPayloadForRun($run),
             'totals' => [
                 'total_gross' => (float) $run->total_gross,
                 'total_deductions' => (float) $run->total_deductions,
                 'total_net' => (float) $run->total_net,
-                'employee_count' => (int) $run->employee_count,
+                'employee_count' => max((int) $run->employee_count, (int) ($run->total_employees ?? 0)),
             ],
             'queued_at' => $run->queued_at?->toIso8601String(),
             'started_at' => $run->started_at?->toIso8601String(),
             'completed_at' => $run->completed_at?->toIso8601String(),
             'finalized_at' => $run->finalized_at?->toIso8601String(),
         ]);
+    }
+
+    private function progressPayloadForRun(PayrollBatchRun $run): array
+    {
+        $total = max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0));
+        $processed = max(0, (int) ($run->processed_employees ?? 0));
+        $failed = max(0, (int) ($run->failed_employees ?? 0));
+
+        if ((string) $run->status === PayrollBatchRun::STATUS_FINALIZED || (string) $run->status === PayrollBatchRun::STATUS_DRAFT) {
+            $processed = max($processed, $total, (int) ($run->employee_count ?? 0));
+            $total = max($total, $processed);
+        }
+
+        return [
+            'total_employees' => $total,
+            'processed_employees' => $processed,
+            'failed_employees' => $failed,
+            'percent' => $total > 0 ? min(100, (int) round(($processed / $total) * 100)) : 0,
+        ];
+    }
+
+    private function progressStatusForRun(PayrollBatchRun $run): string
+    {
+        return match ((string) $run->status) {
+            PayrollBatchRun::STATUS_QUEUED => 'pending',
+            PayrollBatchRun::STATUS_PROCESSING => 'processing',
+            PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_FINALIZED => 'completed',
+            PayrollBatchRun::STATUS_FAILED => 'failed',
+            default => 'pending',
+        };
     }
 
     public function deleteBatch(Request $request, int $batchRunId): JsonResponse

@@ -9,6 +9,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -20,20 +21,19 @@ use Throwable;
  * Dispatched from {@see \App\Http\Controllers\Admin\PayrollFinalizeController::execute} after the HTTP
  * handler returns 202 — never run this work synchronously in the request (60s PHP limits, DB locks).
  *
- * Run a dedicated worker (database queue does not need Redis):
+ * Run a dedicated Redis worker:
  *
- *   php artisan queue:work database --queue=default --timeout=0
+ *   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=2
  *
- * Set DB_QUEUE_RETRY_AFTER in .env higher than this job's {@see $timeout} (e.g. 1900) so the job is not
- * released back to the queue while still running.
+ * Set REDIS_QUEUE_RETRY_AFTER higher than this job's {@see $timeout}.
  */
 class FinalizePayrollJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 1800;
+    public int $timeout = 300;
 
-    public int $tries = 1;
+    public int $tries = 2;
 
     /** @var list<string>|null */
     private static ?array $payrollBatchRunColumns = null;
@@ -41,7 +41,18 @@ class FinalizePayrollJob implements ShouldQueue
     public function __construct(
         private readonly int $batchRunId,
         private readonly ?int $actorUserId = null
-    ) {}
+    ) {
+        $this->onConnection('redis');
+        $this->onQueue('payroll');
+    }
+
+    /**
+     * @return array<int, object>
+     */
+    public function middleware(): array
+    {
+        return [(new WithoutOverlapping('finalize-payroll-'.$this->batchRunId))->expireAfter(600)];
+    }
 
     public function handle(FinalizePayrollService $finalizePayrollService): void
     {
@@ -84,6 +95,9 @@ class FinalizePayrollJob implements ShouldQueue
         $run->update($this->filterBatchRunPayload([
             'status' => PayrollBatchRun::STATUS_PROCESSING,
             'started_at' => now(),
+            'processed_employees' => 0,
+            'failed_employees' => 0,
+            'total_employees' => max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0)),
             'error_message' => null,
         ]));
 
@@ -95,6 +109,9 @@ class FinalizePayrollJob implements ShouldQueue
         try {
             $finalizeStartedAt = microtime(true);
             $finalizePayrollService->finalizeQueuedRun($run->fresh(), $actor);
+            GeneratePayslipsJob::dispatch((int) $run->id, (int) $this->actorUserId)
+                ->onConnection('redis')
+                ->onQueue('payslip');
             Log::info('FinalizePayrollJob completed', [
                 'batch_run_id' => $this->batchRunId,
                 'finalize_core_ms' => round((microtime(true) - $finalizeStartedAt) * 1000, 2),

@@ -1,17 +1,28 @@
- #!/bin/bash
-echo "🚀 Starting Laravel HRIS..."
+#!/bin/bash
+echo "Starting Laravel HRIS..."
 
 # Start the web server in background
 php artisan serve --port=8000 &
 
-# Start the queue worker for face registration in background
-# --timeout must exceed the job's $timeout (120s) to give it room to finish before the worker kills it.
-# Scale workers with QUEUE_WORKERS (example: QUEUE_WORKERS=8 ./start.sh).
-QUEUE_WORKERS="${QUEUE_WORKERS:-1}"
-echo "📋 Starting Face Registration Queue Workers (count: ${QUEUE_WORKERS})..."
-for i in $(seq 1 "$QUEUE_WORKERS"); do
-  php artisan queue:work database --queue=face-registration,default --timeout=150 --sleep=1 --tries=3 &
-done
+start_queue_workers() {
+  local queue="$1"
+  local timeout="$2"
+  local count="$3"
+  echo "Starting Redis queue '${queue}' workers (count: ${count})..."
+  for i in $(seq 1 "$count"); do
+    php artisan queue:work redis --queue="$queue" --timeout="$timeout" --sleep=1 --tries=2 &
+  done
+}
 
-echo "✅ Laravel HRIS is running!"
+PAYROLL_QUEUE_WORKERS="${PAYROLL_QUEUE_WORKERS:-1}"
+PAYSLIP_QUEUE_WORKERS="${PAYSLIP_QUEUE_WORKERS:-1}"
+FACE_QUEUE_WORKERS="${FACE_QUEUE_WORKERS:-1}"
+DEFAULT_QUEUE_WORKERS="${DEFAULT_QUEUE_WORKERS:-1}"
+
+start_queue_workers "payroll" 300 "$PAYROLL_QUEUE_WORKERS"
+start_queue_workers "payslip" 300 "$PAYSLIP_QUEUE_WORKERS"
+start_queue_workers "face-registration" 180 "$FACE_QUEUE_WORKERS"
+start_queue_workers "default" 120 "$DEFAULT_QUEUE_WORKERS"
+
+echo "Laravel HRIS is running!"
 wait

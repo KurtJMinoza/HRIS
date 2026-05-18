@@ -3,38 +3,51 @@
 namespace App\Jobs;
 
 use App\Models\PayrollBatchRun;
+use App\Models\Payslip;
 use App\Models\User;
 use App\Services\PayslipService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 /**
- * Background bulk generation of Draft payslips (DB rows + snapshot) for a {@see PayrollBatchRun}.
+ * Builds finalized payslip PDFs after payroll has been locked.
  *
- * Important: this job intentionally does NOT generate PDFs. PDFs are generated during Finalize Payroll
- * (lock step) or on-demand endpoints; generation should be fast and non-blocking for the admin UI.
+ * This job intentionally runs on a separate Redis queue so Chromium/PDF work never competes
+ * with payroll computation or face registration.
+ *
+ * Run with:
+ *   php artisan queue:work redis --queue=payslip --timeout=300 --sleep=1 --tries=2
  */
 class GeneratePayslipsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 1800;
+    public int $timeout = 300;
 
-    public int $tries = 1;
-
-    /** @var list<string>|null */
-    private static ?array $payrollBatchRunColumns = null;
+    public int $tries = 2;
 
     public function __construct(
         private readonly int $batchRunId,
         private readonly ?int $actorUserId = null
-    ) {}
+    ) {
+        $this->onConnection('redis');
+        $this->onQueue('payslip');
+    }
+
+    /**
+     * @return array<int, object>
+     */
+    public function middleware(): array
+    {
+        return [(new WithoutOverlapping('generate-payslip-pdfs-'.$this->batchRunId))->expireAfter(600)];
+    }
 
     public function handle(PayslipService $payslipService): void
     {
@@ -47,6 +60,8 @@ class GeneratePayslipsJob implements ShouldQueue
         Log::info('GeneratePayslipsJob started', [
             'batch_run_id' => $this->batchRunId,
             'actor_user_id' => $this->actorUserId,
+            'queue_connection' => $this->connection,
+            'queue' => $this->queue,
             'queue_timeout_seconds' => $this->timeout,
         ]);
 
@@ -57,94 +72,74 @@ class GeneratePayslipsJob implements ShouldQueue
             return;
         }
 
-        // If finalized, nothing to do here.
-        if ((string) $run->status === PayrollBatchRun::STATUS_FINALIZED) {
-            Log::info('GeneratePayslipsJob skipped: already finalized', [
-                'batch_run_id' => $this->batchRunId,
-                'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
+        if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
+            Log::info('GeneratePayslipsJob skipped: batch is not finalized', [
+                'batch_run_id' => (int) $run->id,
+                'status' => (string) $run->status,
             ]);
 
             return;
         }
 
-        PayrollBatchRun::query()->whereKey($run->id)->update($this->filterBatchRunPayload([
-            'status' => PayrollBatchRun::STATUS_PROCESSING,
-            'started_at' => now(),
-            'error_message' => null,
-        ]));
+        $generated = 0;
+        $failed = 0;
 
-        $actor = $this->actorUserId ? User::query()->find($this->actorUserId) : null;
+        $this->payslipsForBatchRun($run)
+            ->with(['employee.company', 'employee.branch', 'employee.departmentRelation', 'employee.governmentIds'])
+            ->chunkById(10, function ($payslips) use ($payslipService, &$generated, &$failed) {
+                /** @var Payslip $payslip */
+                foreach ($payslips as $payslip) {
+                    $employee = $payslip->employee;
+                    if (! $employee instanceof User) {
+                        $failed++;
 
-        try {
-            $payload = [
-                'from_date' => $run->pay_period_start?->toDateString(),
-                'to_date' => $run->pay_period_end?->toDateString(),
-                'pay_cycle_id' => $run->pay_cycle_id,
-                'reference_date' => $run->reference_date?->toDateString(),
-                'payroll_period_id' => $run->payroll_period_id,
-                'is_final_pay' => (bool) $run->is_final_pay,
-                'password_protect' => (bool) $run->password_protect,
-                // scope is taken from the batch run
-            ];
+                        continue;
+                    }
 
-            $ids = $payslipService->generateBulkPayslips(
-                $run->company_id ? (int) $run->company_id : null,
-                $run->branch_id ? (int) $run->branch_id : null,
-                $run->department_id ? (int) $run->department_id : null,
-                null,
-                $payload,
-                $actor,
-                withPdf: false,
-            );
+                    try {
+                        $payslipService->ensurePayslipPdfOnDisk($payslip, $employee);
+                        $generated++;
+                    } catch (Throwable $e) {
+                        $failed++;
+                        report($e);
+                        Log::error('GeneratePayslipsJob PDF failed', [
+                            'batch_run_id' => $this->batchRunId,
+                            'payslip_id' => (int) $payslip->id,
+                            'user_id' => (int) $employee->id,
+                            'message' => $e->getMessage(),
+                        ]);
+                    }
+                }
+            });
 
-            PayrollBatchRun::query()->whereKey($run->id)->update($this->filterBatchRunPayload([
-                'status' => PayrollBatchRun::STATUS_DRAFT,
-                'completed_at' => now(),
-                'employee_count' => count($ids),
-                'error_message' => null,
-            ]));
-
-            $run->refresh();
-            $payslipService->syncBatchRunTotals($run);
-
-            Log::info('GeneratePayslipsJob completed', [
-                'batch_run_id' => (int) $run->id,
-                'payslip_count' => count($ids),
-                'total_net' => $run->total_net,
-                'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
-                'peak_memory_mb' => round(memory_get_peak_usage(true) / 1048576, 2),
-            ]);
-        } catch (Throwable $e) {
-            report($e);
-            Log::error('GeneratePayslipsJob failed', [
-                'batch_run_id' => (int) $run->id,
-                'message' => $e->getMessage(),
-                'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
-            ]);
-            PayrollBatchRun::query()->whereKey($run->id)->update($this->filterBatchRunPayload([
-                'status' => PayrollBatchRun::STATUS_FAILED,
-                'error_message' => $e->getMessage(),
-                'completed_at' => now(),
-            ]));
-        }
+        Log::info('GeneratePayslipsJob completed', [
+            'batch_run_id' => (int) $run->id,
+            'generated_pdfs' => $generated,
+            'failed_pdfs' => $failed,
+            'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
+            'peak_memory_mb' => round(memory_get_peak_usage(true) / 1048576, 2),
+        ]);
     }
 
-    /**
-     * @param  array<string, mixed>  $payload
-     * @return array<string, mixed>
-     */
-    private function filterBatchRunPayload(array $payload): array
+    private function payslipsForBatchRun(PayrollBatchRun $run): Builder
     {
-        if (self::$payrollBatchRunColumns === null) {
-            self::$payrollBatchRunColumns = Schema::hasTable('payroll_batch_runs')
-                ? Schema::getColumnListing('payroll_batch_runs')
-                : [];
-        }
-        if (self::$payrollBatchRunColumns === []) {
-            return $payload;
-        }
-        $allowed = array_flip(self::$payrollBatchRunColumns);
+        $query = Payslip::query()
+            ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
 
-        return array_intersect_key($payload, $allowed);
+        if ($run->company_id !== null) {
+            $query->where('company_id', (int) $run->company_id);
+        }
+        if ($run->branch_id !== null) {
+            $query->where('branch_id', (int) $run->branch_id);
+        }
+        if ($run->department_id !== null) {
+            $query->where('department_id', (int) $run->department_id);
+        }
+        if ($run->employee_id !== null) {
+            $query->where('user_id', (int) $run->employee_id);
+        }
+
+        return $query;
     }
 }

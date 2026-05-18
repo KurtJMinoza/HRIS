@@ -7,6 +7,7 @@ use App\Models\EmployeeCompensationComponent;
 use App\Models\User;
 use App\Support\PayComponentSchedule;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -15,6 +16,8 @@ use Illuminate\Support\Facades\Log;
  */
 class DeductionScheduleService
 {
+    private const CACHE_PREFIX = 'payroll.deduction_schedule.';
+
     public function __construct(
         private readonly PayCycleService $payCycleService,
     ) {}
@@ -58,23 +61,27 @@ class DeductionScheduleService
      */
     public function resolveGlobalDeductionScheduleType(string $deductionKey, ?int $companyId): string
     {
-        $row = DeductionScheduleSetting::query()
-            ->where('deduction_key', $deductionKey)
-            ->when($companyId !== null, fn ($q) => $q->where(function ($sub) use ($companyId) {
-                $sub->where('company_id', $companyId)->orWhereNull('company_id');
-            }), fn ($q) => $q->whereNull('company_id'))
-            ->orderByRaw('CASE WHEN company_id IS NOT NULL THEN 0 ELSE 1 END')
-            ->first();
+        $cacheKey = self::CACHE_PREFIX.md5((string) ($companyId ?? 'global').'|'.$deductionKey);
 
-        if ($row && in_array($row->schedule_type, [
-            DeductionScheduleSetting::SCHEDULE_15TH,
-            DeductionScheduleSetting::SCHEDULE_30TH,
-            DeductionScheduleSetting::SCHEDULE_BOTH,
-        ], true)) {
-            return $row->schedule_type;
-        }
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($deductionKey, $companyId): string {
+            $row = DeductionScheduleSetting::query()
+                ->where('deduction_key', $deductionKey)
+                ->when($companyId !== null, fn ($q) => $q->where(function ($sub) use ($companyId) {
+                    $sub->where('company_id', $companyId)->orWhereNull('company_id');
+                }), fn ($q) => $q->whereNull('company_id'))
+                ->orderByRaw('CASE WHEN company_id IS NOT NULL THEN 0 ELSE 1 END')
+                ->first();
 
-        return DeductionScheduleSetting::SCHEDULE_BOTH;
+            if ($row && in_array($row->schedule_type, [
+                DeductionScheduleSetting::SCHEDULE_15TH,
+                DeductionScheduleSetting::SCHEDULE_30TH,
+                DeductionScheduleSetting::SCHEDULE_BOTH,
+            ], true)) {
+                return $row->schedule_type;
+            }
+
+            return DeductionScheduleSetting::SCHEDULE_BOTH;
+        });
     }
 
     /**
@@ -1233,13 +1240,16 @@ class DeductionScheduleService
             throw new \InvalidArgumentException('Invalid schedule_type.');
         }
 
-        return DeductionScheduleSetting::query()->updateOrCreate(
+        $row = DeductionScheduleSetting::query()->updateOrCreate(
             [
                 'company_id' => $companyId,
                 'deduction_key' => $deductionKey,
             ],
             ['schedule_type' => $scheduleType]
         );
+        $this->forgetScheduleCache($companyId, $deductionKey);
+
+        return $row;
     }
 
     /**
@@ -1257,5 +1267,13 @@ class DeductionScheduleService
         }
 
         return $saved;
+    }
+
+    private function forgetScheduleCache(?int $companyId, string $deductionKey): void
+    {
+        foreach (array_unique([$companyId, null]) as $scopeCompanyId) {
+            $cacheKey = self::CACHE_PREFIX.md5((string) ($scopeCompanyId ?? 'global').'|'.$deductionKey);
+            Cache::forget($cacheKey);
+        }
     }
 }

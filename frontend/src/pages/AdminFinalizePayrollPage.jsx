@@ -461,6 +461,19 @@ export default function AdminFinalizePayrollPage() {
   const employees = preview?.employees ?? []
   const totals = preview?.totals ?? { total_gross: 0, total_deductions: 0, total_net: 0, employee_count: 0 }
   const periodPreview = preview?.period_preview ?? null
+  const batchRun = preview?.batch_run ?? null
+  const batchRunStatus = String(batchRun?.status || '').toLowerCase()
+  const draftProcessing = batchRunStatus === 'queued' || batchRunStatus === 'processing'
+
+  useEffect(() => {
+    if (!draftProcessing || periodFinalized || finalizing) return undefined
+    const timer = window.setInterval(() => {
+      if (document.hidden) return
+      setRefreshToken(String(Date.now()))
+    }, 3000)
+
+    return () => window.clearInterval(timer)
+  }, [draftProcessing, periodFinalized, finalizing])
 
   const selectedCompany = useMemo(
     () => companies.find((c) => Number(c.id) === Number(effectivePayload.company_id)),
@@ -566,6 +579,11 @@ export default function AdminFinalizePayrollPage() {
       try {
         const status = await adminFinalizePayrollStatus(queuedRunId)
         const s = String(status?.status || '').toLowerCase()
+        const realProgress = status?.progress || null
+        if (realProgress && Number(realProgress.total_employees || 0) > 0) {
+          setProcessedCount(Number(realProgress.processed_employees || 0))
+          setProgress(Math.max(4, Math.min(99, Number(realProgress.percent || 0))))
+        }
         if (s === 'queued') {
           setFinalizeStage('Queued: waiting for worker')
           setProgress((p) => Math.max(p, 22))
@@ -943,10 +961,10 @@ export default function AdminFinalizePayrollPage() {
             >
               <div>
                 <p className="text-xs font-extrabold uppercase tracking-normal text-brand">
-                  {periodFinalized ? 'Status: Finalized' : 'Status: Draft'}
+                  {periodFinalized ? 'Status: Finalized' : draftProcessing ? `Status: ${batchRunStatus === 'queued' ? 'Pending' : 'Processing'}` : 'Status: Draft'}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {periodFinalized ? 'Locked - read only' : 'Editable before finalize'}
+                  {periodFinalized ? 'Locked - read only' : draftProcessing ? 'Redis worker is building the draft' : 'Editable before finalize'}
                 </p>
               </div>
               <Lock className="h-5 w-5 text-brand" />
@@ -1183,9 +1201,11 @@ export default function AdminFinalizePayrollPage() {
                   </Table>
                 </div>
               </div>
-            ) : Number(pagination.total || 0) === 0 ? (
+            ) : Number(pagination.total || 0) === 0 || (draftProcessing && pageRows.length === 0) ? (
               <div className="px-4 py-10 text-center text-sm text-muted-foreground @md:px-5">
-                No employees found in the selected scope.
+                {draftProcessing
+                  ? 'No employee rows are available yet.'
+                  : 'No employees found in the selected scope.'}
               </div>
             ) : (
               <div className="w-full px-0 pb-4 pt-1">
@@ -1404,7 +1424,7 @@ export default function AdminFinalizePayrollPage() {
                 <Button
                   type="button"
                   size="lg"
-                  disabled={!reviewConfirmed || finalizing || loading || Number(totals?.employee_count || 0) <= 0}
+                  disabled={!reviewConfirmed || finalizing || loading || draftProcessing || Number(totals?.employee_count || 0) <= 0}
                   onClick={handleFinalize}
                   className={cn(
                     'h-12 min-w-[260px] shrink-0 rounded-xl px-8 text-[16px] font-bold transition-transform active:scale-[0.99]',

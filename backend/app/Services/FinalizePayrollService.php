@@ -60,6 +60,31 @@ class FinalizePayrollService
         ?string $search = null
     ): array {
         $previewStartedAt = microtime(true);
+        $liveBatchRun = $this->resolvePayrollBatchRunSnapshot(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $singleEmployeeId,
+            $periodInput,
+            $actor
+        );
+        if ($liveBatchRun !== null && in_array((string) ($liveBatchRun['status'] ?? ''), [
+            PayrollBatchRun::STATUS_QUEUED,
+            PayrollBatchRun::STATUS_PROCESSING,
+        ], true)) {
+            return $this->processingPreviewFromStoredPayslips(
+                $liveBatchRun,
+                $companyId,
+                $branchId,
+                $departmentId,
+                $singleEmployeeId,
+                $periodInput,
+                $actor,
+                $page,
+                $perPage,
+                $search
+            );
+        }
 
         $cached = (function () use (
             $companyId,
@@ -484,7 +509,160 @@ class FinalizePayrollService
     }
 
     /**
-     * Current {@see PayrollBatchRun} for this scope + pay window (not cached — reflects finalize queue state).
+     * Lightweight preview while the Redis payroll worker is still filling draft rows.
+     *
+     * This avoids recomputing missing employees synchronously on the Finalize Payroll page;
+     * rows appear here only after the background job persists them.
+     *
+     * @param  array<string, mixed>  $batchRun
+     * @return array<string, mixed>
+     */
+    private function processingPreviewFromStoredPayslips(
+        array $batchRun,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $singleEmployeeId,
+        array $periodInput,
+        ?User $actor,
+        int $page,
+        int $perPage,
+        ?string $search
+    ): array {
+        $runId = (int) ($batchRun['payroll_batch_run_id'] ?? 0);
+        $run = $runId > 0 ? PayrollBatchRun::query()->find($runId) : null;
+        $limit = max(1, min(100, $perPage));
+        $currentPage = max(1, $page);
+        $offset = ($currentPage - 1) * $limit;
+
+        if (! $run instanceof PayrollBatchRun) {
+            return [
+                'totals' => [
+                    'total_gross' => 0.0,
+                    'total_deductions' => 0.0,
+                    'total_net' => 0.0,
+                    'employee_count' => 0,
+                ],
+                'period_preview' => null,
+                'employees' => [],
+                'batch_run' => $batchRun,
+                'period_locked' => false,
+                'pagination' => [
+                    'page' => 1,
+                    'per_page' => $limit,
+                    'total' => 0,
+                    'last_page' => 1,
+                ],
+            ];
+        }
+
+        $query = $this->payslipQueryForBatchRun($run)
+            ->with(['employee:id,name,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id']);
+
+        if ($search !== null && trim($search) !== '') {
+            $like = '%'.trim($search).'%';
+            $query->whereHas('employee', function ($employeeQuery) use ($like) {
+                $employeeQuery->where('name', 'like', $like)
+                    ->orWhere('employee_code', 'like', $like)
+                    ->orWhere('email', 'like', $like);
+            });
+        }
+
+        $storedCount = (clone $query)->count();
+        $payslips = $query
+            ->orderBy('id')
+            ->offset($offset)
+            ->limit($limit)
+            ->get();
+
+        $rows = [];
+        foreach ($payslips as $stored) {
+            $employee = $stored->employee;
+            if (! $employee instanceof User) {
+                continue;
+            }
+            $summary = is_array($stored->snapshot['summary'] ?? null)
+                ? (array) $stored->snapshot['summary']
+                : [];
+            $resolvedHrRole = $this->hrRoleResolver->resolveForApprovalSubject($employee);
+            $rows[] = [
+                'payslip_id' => (int) $stored->id,
+                'user_id' => (int) $employee->id,
+                'name' => (string) $employee->name,
+                'employee_code' => $employee->employee_code,
+                'department' => $employee->department,
+                'position' => $employee->position,
+                'profile_image_url' => $employee->profile_image_url,
+                'employee_hr_role' => $resolvedHrRole->value,
+                'employee_role_label' => $resolvedHrRole->badgeLabel(),
+                'basic_salary' => round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2),
+                'basic_salary_monthly' => round((float) (data_get($summary, 'compensation_breakdown.basic_salary', 0)), 2),
+                'basic_salary_schedule_factor' => (float) ($summary['basic_salary_schedule_factor'] ?? 1),
+                'daily_rate' => round((float) ($summary['daily_rate'] ?? 0), 2),
+                'basic_pay' => round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2),
+                'actual_days_worked' => round((float) ($summary['actual_days_worked'] ?? 0), 2),
+                'daily_computation_earning_lines' => is_array($summary['daily_computation_earning_lines'] ?? null)
+                    ? array_values($summary['daily_computation_earning_lines'])
+                    : [],
+                'attendance_display_summary' => is_array($summary['attendance_display_summary'] ?? null)
+                    ? $summary['attendance_display_summary']
+                    : [
+                        'working_days_count' => 0,
+                        'presence_days_count' => 0,
+                        'lines' => [],
+                        'total_regular_hours' => 0.0,
+                        'total_presence_regular_hours' => 0.0,
+                    ],
+                'gross_pay' => round((float) ($stored->gross_pay ?? 0), 2),
+                'total_deductions' => round((float) ($stored->total_deductions ?? 0), 2),
+                'net_pay' => round((float) ($stored->net_pay ?? 0), 2),
+                'status' => (string) ($stored->status ?? Payslip::STATUS_DRAFT),
+                'delivered_at' => $stored->delivered_at !== null ? $stored->delivered_at->toIso8601String() : null,
+                'is_sent' => (bool) ($stored->is_sent ?? false),
+                'sent_at' => isset($stored->sent_at) && $stored->sent_at !== null ? $stored->sent_at->toIso8601String() : null,
+                'has_stored_payslip' => true,
+            ];
+        }
+
+        $agg = $this->payslipQueryForBatchRun($run)
+            ->selectRaw('COALESCE(SUM(gross_pay), 0) as total_gross, COALESCE(SUM(total_deductions), 0) as total_ded, COALESCE(SUM(net_pay), 0) as total_net, COUNT(*) as cnt')
+            ->first();
+        $totalEmployees = max((int) ($batchRun['total_employees'] ?? 0), (int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0), $storedCount);
+
+        return [
+            'totals' => [
+                'total_gross' => round((float) ($agg->total_gross ?? $run->total_gross ?? 0), 2),
+                'total_deductions' => round((float) ($agg->total_ded ?? $run->total_deductions ?? 0), 2),
+                'total_net' => round((float) ($agg->total_net ?? $run->total_net ?? 0), 2),
+                'employee_count' => $totalEmployees,
+            ],
+            'period_preview' => [
+                'pay_cycle_name' => null,
+                'cycle_label' => null,
+                'cut_off_start_date' => $run->pay_period_start?->toDateString(),
+                'cut_off_end_date' => $run->pay_period_end?->toDateString(),
+                'next_cut_off_start' => $run->pay_period_start?->toDateString(),
+                'next_cut_off_end' => $run->pay_period_end?->toDateString(),
+                'pay_date' => $run->reference_date?->toDateString(),
+                'next_pay_date' => $run->reference_date?->toDateString(),
+                'pay_cycle_source_label' => $run->pay_cycle_id ? 'Selected pay cycle' : 'Company default',
+                'reference_date' => $run->reference_date?->toDateString(),
+            ],
+            'employees' => $rows,
+            'batch_run' => $batchRun,
+            'period_locked' => false,
+            'pagination' => [
+                'page' => $currentPage,
+                'per_page' => $limit,
+                'total' => $totalEmployees,
+                'last_page' => max(1, (int) ceil(max(1, $totalEmployees) / $limit)),
+                'computed_rows' => $storedCount,
+            ],
+        ];
+    }
+
+    /**
+     * Current {@see PayrollBatchRun} for this scope + pay window.
      *
      * @param  array<string, mixed>  $periodInput
      * @return array<string, mixed>|null
@@ -523,11 +701,29 @@ class FinalizePayrollService
         if ($run === null) {
             return null;
         }
+        $total = max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0));
+        $processed = max(0, (int) ($run->processed_employees ?? 0));
+        $failed = max(0, (int) ($run->failed_employees ?? 0));
+        if (in_array((string) $run->status, [PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_FINALIZED], true)) {
+            $processed = max($processed, $total, (int) ($run->employee_count ?? 0));
+            $total = max($total, $processed);
+        }
 
         return [
             'payroll_batch_run_id' => (int) $run->id,
             'batch_key' => $batchKey,
             'status' => (string) $run->status,
+            'progress_status' => match ((string) $run->status) {
+                PayrollBatchRun::STATUS_QUEUED => 'pending',
+                PayrollBatchRun::STATUS_PROCESSING => 'processing',
+                PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_FINALIZED => 'completed',
+                PayrollBatchRun::STATUS_FAILED => 'failed',
+                default => 'pending',
+            },
+            'total_employees' => $total,
+            'processed_employees' => $processed,
+            'failed_employees' => $failed,
+            'progress_percent' => $total > 0 ? min(100, (int) round(($processed / $total) * 100)) : 0,
             'finalized_at' => $run->finalized_at?->toIso8601String(),
             'finalized_by_user_id' => $run->finalized_by_user_id ? (int) $run->finalized_by_user_id : null,
             'error_message' => $run->error_message,
@@ -689,6 +885,7 @@ class FinalizePayrollService
         ?int $existingBatchRunId = null,
         bool $skipExistingBatchKeyCheck = false
     ): array {
+        $this->payrollComputation->flushRuntimeCaches();
         $employees = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor)
             ->orderBy('id')
             ->get();
@@ -913,6 +1110,9 @@ class FinalizePayrollService
                     'total_deductions' => round($totals['ded'], 2),
                     'total_net' => round($totals['net'], 2),
                     'employee_count' => $employees->count(),
+                    'total_employees' => $employees->count(),
+                    'processed_employees' => $employees->count(),
+                    'failed_employees' => 0,
                     'completed_at' => now(),
                     'finalized_by_user_id' => $adminUserId,
                     'finalized_at' => now(),
@@ -1036,6 +1236,9 @@ class FinalizePayrollService
                     'queued_at' => now(),
                     'started_at' => null,
                     'completed_at' => null,
+                    'total_employees' => $employees->count(),
+                    'processed_employees' => 0,
+                    'failed_employees' => 0,
                     'finalized_at' => null,
                     'finalized_by_user_id' => $adminUserId,
                 ]);
@@ -1061,6 +1264,9 @@ class FinalizePayrollService
                 'queued_at' => now(),
                 'started_at' => null,
                 'completed_at' => null,
+                'total_employees' => $employees->count(),
+                'processed_employees' => 0,
+                'failed_employees' => 0,
                 'finalized_at' => null,
                 'finalized_by_user_id' => $adminUserId,
             ]);
@@ -1086,6 +1292,9 @@ class FinalizePayrollService
                 : null,
             'status' => PayrollBatchRun::STATUS_QUEUED,
             'employee_count' => $employees->count(),
+            'total_employees' => $employees->count(),
+            'processed_employees' => 0,
+            'failed_employees' => 0,
             'queued_at' => now(),
             'finalized_by_user_id' => $adminUserId,
         ];

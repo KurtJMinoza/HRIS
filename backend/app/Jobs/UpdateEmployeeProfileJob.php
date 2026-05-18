@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Log;
  * HTTP must not run this synchronously: payroll summary/deduction/YTD/leave recomputation can be expensive.
  * Dispatched from {@see \App\Http\Controllers\Admin\EmployeeController::update} after the basic row save.
  *
- *   php artisan queue:work database --queue=default --timeout=0
+ *   php artisan queue:work redis --queue=default --timeout=120 --sleep=1 --tries=2
  */
 class UpdateEmployeeProfileJob implements ShouldQueue
 {

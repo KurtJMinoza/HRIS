@@ -13,8 +13,12 @@ return [
     |
     | Face registration (ProcessFaceRegistrationJob) uses the `face-registration` queue.
     | Prefer redis in production when available; set retry_after above your longest job
-    | worker --timeout (e.g. REDIS_QUEUE_RETRY_AFTER=120 with a 90s worker timeout).
-    | Example worker: php artisan queue:work redis --queue=face-registration,default --timeout=90
+    | worker --timeout (e.g. REDIS_QUEUE_RETRY_AFTER=360 with a 300s payroll worker timeout).
+    | Example workers:
+    |   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=2
+    |   php artisan queue:work redis --queue=payslip --timeout=300 --sleep=1 --tries=2
+    |   php artisan queue:work redis --queue=face-registration --timeout=180 --sleep=1 --tries=2
+    |   php artisan queue:work redis --queue=default --timeout=120 --sleep=1 --tries=2
     | See .env.example and deployment/supervisor-face-registration.conf.example.
     |
     */
@@ -75,8 +79,8 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            // Must exceed worker --timeout and longest job (face registration job timeout is 60s by default).
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 120),
+            // Must exceed the largest worker --timeout (payroll/payslip workers use 300s).
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 360),
             'block_for' => null,
             'after_commit' => false,
         ],

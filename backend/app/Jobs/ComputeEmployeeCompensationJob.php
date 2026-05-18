@@ -16,7 +16,8 @@ use Illuminate\Support\Facades\Log;
  * next HR profile / salary tab load is fast (cached) instead of recomputing during HTTP.
  *
  * Dispatched with {@see UpdateEmployeeProfileJob} after admin employee salary-related saves.
- * Same worker command as other queued jobs: php artisan queue:work database --queue=default --timeout=0
+ * Runs on the default Redis queue:
+ *   php artisan queue:work redis --queue=default --timeout=120 --sleep=1 --tries=2
  */
 class ComputeEmployeeCompensationJob implements ShouldQueue
 {

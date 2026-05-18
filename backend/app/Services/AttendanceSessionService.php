@@ -20,9 +20,23 @@ use Carbon\Carbon;
  */
 class AttendanceSessionService
 {
+    /** @var array<string, array{0: ?Carbon, 1: ?Carbon}> */
+    private array $timesForDateCache = [];
+
+    public function flushRuntimeCache(): void
+    {
+        $this->timesForDateCache = [];
+    }
+
     public function getTimesForDate(User $user, string $dateKey, ?string $tz = null): array
     {
         $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $cacheKey = ((int) $user->id).'|'.$dateKey.'|'.$tz;
+        if (array_key_exists($cacheKey, $this->timesForDateCache)) {
+            [$cachedIn, $cachedOut] = $this->timesForDateCache[$cacheKey];
+
+            return [$cachedIn?->copy(), $cachedOut?->copy()];
+        }
 
         $correction = AttendanceCorrection::query()
             ->where('user_id', $user->id)
@@ -111,8 +125,12 @@ class AttendanceSessionService
         }
 
         if ($timeIn === null || $timeOut === null) {
+            $this->timesForDateCache[$cacheKey] = [null, null];
+
             return [null, null];
         }
+
+        $this->timesForDateCache[$cacheKey] = [$timeIn->copy(), $timeOut->copy()];
 
         return [$timeIn, $timeOut];
     }

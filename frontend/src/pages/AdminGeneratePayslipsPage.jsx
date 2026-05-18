@@ -633,11 +633,11 @@ export default function AdminGeneratePayslipsPage() {
     try {
       const res = await adminGeneratePayslips(bulkPayload)
       toast({
-        title: res?.queued === false ? 'Payslips generated' : 'Generation queued',
+        title: res?.queued === false ? 'Payslips generated' : 'Payroll draft queued',
         description:
           res?.queued === false
             ? `${Number(res?.generated_count ?? res?.employee_count ?? 0)} draft payslip${Number(res?.generated_count ?? res?.employee_count ?? 0) === 1 ? '' : 's'} are ready.`
-            : 'Draft payslips are being generated in the background. The batch will appear in Recent Payslips immediately.',
+            : 'Finalize Payroll will open now while Redis computes employee rows in the background.',
       })
       loadCompanySummary()
       const q = new URLSearchParams(buildFinalizeQuery().toString())
@@ -1389,6 +1389,11 @@ export default function AdminGeneratePayslipsPage() {
                                 {r.employee_count ?? '—'}
                               </span>
                             </div>
+                            {['queued', 'processing'].includes(String(r.batch_run_status || '').toLowerCase()) ? (
+                              <div className="mt-1 text-[11px] font-medium tabular-nums text-muted-foreground">
+                                {Number(r.processed_employees || 0)}/{Number(r.total_employees || r.employee_count || 0)} computed
+                              </div>
+                            ) : null}
                           </TableCell>
                           <TableCell className="py-4 text-right">
                             <span className="text-base font-semibold tabular-nums text-foreground">
