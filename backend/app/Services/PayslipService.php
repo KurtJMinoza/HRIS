@@ -105,6 +105,47 @@ class PayslipService
     }
 
     /**
+     * Persist a payslip from payroll data already computed by finalize/payroll flows.
+     *
+     * This avoids recomputing attendance, premiums, deductions, tax, and contributions immediately
+     * after payroll computation has produced the same summary.
+     *
+     * @param  array<string, mixed>  $computed
+     * @param  array<string, mixed>|null  $preview
+     * @return array{payslip: Payslip, pdf_password: ?string}
+     */
+    public function generatePayslipFromComputedPayroll(
+        User $employee,
+        array $input,
+        array $computed,
+        ?array $preview = null,
+        ?PayCycle $cycle = null,
+        bool $withPdf = false
+    ): array {
+        $gen = $this->computePayslipGenerationData($employee, $input, true, $computed, $preview, $cycle);
+        $plainPassword = $gen['plain_password'];
+
+        $payslip = DB::transaction(function () use ($employee, $gen, $plainPassword, $withPdf) {
+            /** @var Payslip $payslip */
+            $payslip = Payslip::query()->updateOrCreate($gen['unique'], $gen['attributes']);
+            if ($withPdf) {
+                $pdfPath = $this->generatePdf($payslip->fresh(), $employee->fresh(), $plainPassword);
+                $payslip->update([
+                    'pdf_path' => $pdfPath,
+                    'pdf_password_protected' => $plainPassword !== null,
+                ]);
+            }
+
+            return $payslip->fresh();
+        });
+
+        return [
+            'payslip' => $payslip,
+            'pdf_password' => $plainPassword,
+        ];
+    }
+
+    /**
      * Release a payslip to employee self-service (My Payslips). Accepts any {@see Payslip::lockingStatuses()}
      * value (published payslip), including legacy {@see Payslip::STATUS_VIEWED} after an employee opened a PDF.
      *
@@ -586,24 +627,39 @@ class PayslipService
      * @param  array<string, mixed>  $input
      * @return array{unique: array<string, mixed>, attributes: array<string, mixed>, plain_password: ?string}
      */
-    private function computePayslipGenerationData(User $employee, array $input, bool $enforcePayrollWindowMutable = false): array
+    private function computePayslipGenerationData(
+        User $employee,
+        array $input,
+        bool $enforcePayrollWindowMutable = false,
+        ?array $precomputed = null,
+        ?array $precomputedPreview = null,
+        ?PayCycle $precomputedCycle = null
+    ): array
     {
         [$from, $to, $preview, $cycle] = $this->resolveComputationContext($employee, $input);
+        if (is_array($precomputedPreview)) {
+            $preview = $precomputedPreview;
+        }
+        if ($precomputedCycle instanceof PayCycle) {
+            $cycle = $precomputedCycle;
+        }
         if ($enforcePayrollWindowMutable) {
             $this->assertPayrollPeriodMutableForUserWindow((int) $employee->id, $from, $to);
         }
 
-        $computed = $this->payrollComputation->computeEmployeePayroll(
-            $employee,
-            $from,
-            $to,
-            null,
-            [
-                'pay_period_start' => $from->toDateString(),
-                'pay_period_end' => $to->toDateString(),
-                'selected_pay_date' => $preview['pay_date'] ?? null,
-            ]
-        );
+        $computed = is_array($precomputed)
+            ? $precomputed
+            : $this->payrollComputation->computeEmployeePayroll(
+                $employee,
+                $from,
+                $to,
+                null,
+                [
+                    'pay_period_start' => $from->toDateString(),
+                    'pay_period_end' => $to->toDateString(),
+                    'selected_pay_date' => $preview['pay_date'] ?? null,
+                ]
+            );
         $summary = $computed['summary'] ?? [];
 
         $grossPay = round(
@@ -699,6 +755,12 @@ class PayslipService
         ?User $actor = null,
         bool $withPdf = true
     ): array {
+        $startedAt = microtime(true);
+        $timings = [
+            'employee_query_ms' => 0.0,
+            'generation_loop_ms' => 0.0,
+            'bulk_upsert_ms' => 0.0,
+        ];
         $q = User::query()->activeRoster();
 
         if ($actor !== null) {
@@ -720,11 +782,111 @@ class PayslipService
         }
 
         $ids = [];
-        $q->orderBy('id')->chunkById(100, function ($users) use ($periodInput, $withPdf, &$ids) {
-            foreach ($users as $user) {
-                $ids[] = $this->generatePayslip($user, $periodInput, $withPdf)['payslip']->id;
+        $q->orderBy('id')->chunkById(100, function ($users) use ($periodInput, $withPdf, &$ids, &$timings) {
+            $employeeQueryStartedAt = microtime(true);
+            $users->loadMissing([
+                'company',
+                'branch',
+                'departmentRelation',
+                'governmentIds',
+                'payCycle',
+                'workingSchedule',
+            ]);
+            $timings['employee_query_ms'] += (microtime(true) - $employeeQueryStartedAt) * 1000;
+
+            if ($withPdf) {
+                // PDF generation is intentionally not batched; callers use this only for small/single runs.
+                $loopStartedAt = microtime(true);
+                foreach ($users as $user) {
+                    $ids[] = $this->generatePayslip($user, $periodInput, $withPdf)['payslip']->id;
+                }
+                $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
+
+                return;
             }
+
+            $now = now();
+            $rows = [];
+            $lookupTriples = [];
+            $loopStartedAt = microtime(true);
+            foreach ($users as $user) {
+                $gen = $this->computePayslipGenerationData($user, $periodInput, true);
+                $row = array_merge($gen['unique'], $gen['attributes']);
+                if (isset($row['snapshot']) && is_array($row['snapshot'])) {
+                    $row['snapshot'] = json_encode($row['snapshot'], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+                }
+                $row['pdf_password_protected'] = $gen['plain_password'] !== null;
+                $row['updated_at'] = $now;
+                $row['created_at'] = $now;
+                $rows[] = $row;
+                $lookupTriples[] = [
+                    'user_id' => (int) $gen['unique']['user_id'],
+                    'pay_period_start' => (string) $gen['unique']['pay_period_start'],
+                    'pay_period_end' => (string) $gen['unique']['pay_period_end'],
+                ];
+            }
+            $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
+
+            if ($rows === []) {
+                return;
+            }
+
+            $upsertStartedAt = microtime(true);
+            DB::transaction(function () use ($rows) {
+                Payslip::query()->upsert(
+                    $rows,
+                    ['user_id', 'pay_period_start', 'pay_period_end'],
+                    [
+                        'payroll_period_id',
+                        'pay_cycle_id',
+                        'company_id',
+                        'branch_id',
+                        'department_id',
+                        'pay_date',
+                        'cycle_label',
+                        'gross_pay',
+                        'total_deductions',
+                        'net_pay',
+                        'ytd_gross',
+                        'ytd_deductions',
+                        'ytd_tax',
+                        'taxable_total_this_period',
+                        'non_taxable_total_this_period',
+                        'is_final_pay',
+                        'snapshot',
+                        'status',
+                        'pdf_password_protected',
+                        'updated_at',
+                    ]
+                );
+            });
+
+            $persisted = Payslip::query()
+                ->whereIn('user_id', array_values(array_unique(array_column($lookupTriples, 'user_id'))))
+                ->where(function ($query) use ($lookupTriples) {
+                    foreach ($lookupTriples as $triple) {
+                        $query->orWhere(function ($sub) use ($triple) {
+                            $sub->where('user_id', $triple['user_id'])
+                                ->whereDate('pay_period_start', $triple['pay_period_start'])
+                                ->whereDate('pay_period_end', $triple['pay_period_end']);
+                        });
+                    }
+                })
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $ids = array_merge($ids, $persisted);
+            $timings['bulk_upsert_ms'] += (microtime(true) - $upsertStartedAt) * 1000;
         });
+
+        Log::info('Payslip bulk generation completed', [
+            'generated_count' => count($ids),
+            'employee_query_ms' => round($timings['employee_query_ms'], 2),
+            'generation_loop_ms' => round($timings['generation_loop_ms'], 2),
+            'bulk_upsert_ms' => round($timings['bulk_upsert_ms'], 2),
+            'total_response_ms' => round((microtime(true) - $startedAt) * 1000, 2),
+            'with_pdf' => $withPdf,
+        ]);
 
         return $ids;
     }
@@ -938,6 +1100,11 @@ class PayslipService
      */
     public function snapshotForPayslipRender(Payslip $payslip, User $employee): array
     {
+        $snapshotRaw = $payslip->snapshot ?? [];
+        if (is_array($snapshotRaw) && $snapshotRaw !== []) {
+            return $this->normalizeSnapshotForPayslipView($snapshotRaw);
+        }
+
         try {
             $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
             $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
@@ -951,8 +1118,6 @@ class PayslipService
                 'error' => $e->getMessage(),
             ]);
         }
-
-        $snapshotRaw = $payslip->snapshot ?? [];
 
         return $this->normalizeSnapshotForPayslipView(is_array($snapshotRaw) ? $snapshotRaw : []);
     }

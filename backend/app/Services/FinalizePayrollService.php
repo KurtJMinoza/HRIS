@@ -70,8 +70,10 @@ class FinalizePayrollService
             $actor,
             $search,
             $page,
-            $perPage
+            $perPage,
+            $previewStartedAt
         ) {
+            $t0 = microtime(true);
             $scopedEmployeesQuery = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor, $search);
             $activeEmployeeIds = (clone $scopedEmployeesQuery)
                 ->pluck('id')
@@ -88,6 +90,7 @@ class FinalizePayrollService
             );
             $scopedEmployeeIds = array_values(array_unique(array_merge($activeEmployeeIds, $storedPayslipEmployeeIds)));
             $scopedCount = count($scopedEmployeeIds);
+            $employeeQueryMs = round((microtime(true) - $t0) * 1000, 2);
             $currentPage = max(1, $page);
             $limit = max(1, min(100, $perPage));
             $offset = ($currentPage - 1) * $limit;
@@ -154,14 +157,25 @@ class FinalizePayrollService
 
             $pageTotals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
             $rows = [];
-            // Ensure relations required by computation are available without N+1.
-            $employees->loadMissing([
-                'company',
-                'branch',
-                'payCycle',
-                'governmentIds',
-                'workingSchedule',
-            ]);
+            $tLoop = microtime(true);
+
+            // Lazy-load computation-heavy relations only for employees that need payroll recomputation.
+            $needsComputeIds = [];
+            foreach ($employees as $employee) {
+                if (! $payslipByUser->has((int) $employee->id)) {
+                    $needsComputeIds[] = (int) $employee->id;
+                }
+            }
+            if ($needsComputeIds !== []) {
+                $employees->filter(fn ($e) => in_array((int) $e->id, $needsComputeIds, true))
+                    ->loadMissing([
+                        'company',
+                        'branch',
+                        'payCycle',
+                        'governmentIds',
+                        'workingSchedule',
+                    ]);
+            }
 
             foreach ($employees as $employee) {
                 $stored = $payslipByUser->get((int) $employee->id);
@@ -192,59 +206,15 @@ class FinalizePayrollService
                             'total_presence_regular_hours' => 0.0,
                         ];
 
-                    // Always recompute preview rows from attendance/daily computation, even when a
-                    // payslip already exists. Stored snapshots can contain stale Regular Pay units
-                    // (for example "2 days") after undertime corrections; preview must show actual
-                    // worked minutes for the selected pay period.
-                    $shouldRecomputeStoredPreview = true;
-                    if ($shouldRecomputeStoredPreview || (($baseMonthly <= 0 && $gross <= 0 && $net <= 0) || empty($dailyEarningLines))) {
-                        [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($employee, $periodInput);
-                        $computed = $this->payrollComputation->computeEmployeePayroll(
-                            $employee,
-                            $from,
-                            $to,
-                            null,
-                            [
-                                'pay_period_start' => $from->toDateString(),
-                                'pay_period_end' => $to->toDateString(),
-                                'selected_pay_date' => is_array($cyclePreview) ? ($cyclePreview['pay_date'] ?? null) : null,
-                            ]
-                        );
-                        $summary = is_array($computed['summary'] ?? null) ? $computed['summary'] : [];
-                        $gross = round(
-                            (float) ($summary['gross_pay_this_period']
-                                ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
-                            2
-                        );
-                        $ded = round(
-                            (float) ($summary['employee_statutory_this_period'] ?? 0)
-                            + (float) ($summary['custom_deductions_this_period'] ?? 0)
-                            + (float) ($summary['withholding_tax_this_period_estimate'] ?? 0),
-                            2
-                        );
-                        $net = round((float) ($summary['net_pay_after_withholding_estimate'] ?? 0), 2);
-                        $dailyRate = round((float) ($summary['daily_rate'] ?? ($computed['daily_rate'] ?? 0)), 2);
-                        $basicPay = round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2);
-                        $baseMonthly = round((float) ($computed['basic_salary_used'] ?? data_get($summary, 'compensation_breakdown.basic_salary', 0)), 2);
-                        $basicScheduleFactor = (float) ($summary['basic_salary_schedule_factor'] ?? 1);
-                        $basicSalaryThisPeriod = round(max(0.0, $baseMonthly * $basicScheduleFactor), 2);
-                        $actualDaysWorked = round((float) ($summary['actual_days_worked'] ?? 0), 2);
-                        $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
-                            ? array_values($summary['daily_computation_earning_lines'])
-                            : [];
-                        $attendanceDisplaySummary = is_array($summary['attendance_display_summary'] ?? null)
-                            ? $summary['attendance_display_summary']
-                            : [
-                                'working_days_count' => 0,
-                                'presence_days_count' => 0,
-                                'lines' => [],
-                                'total_regular_hours' => 0.0,
-                                'total_presence_regular_hours' => 0.0,
-                            ];
-                    } else {
-                        [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($employee, $periodInput);
-                    }
+                    [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($employee, $periodInput);
                 } else {
+                    $employee->loadMissing([
+                        'company',
+                        'branch',
+                        'payCycle',
+                        'governmentIds',
+                        'workingSchedule',
+                    ]);
                     [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($employee, $periodInput);
                     $computed = $this->payrollComputation->computeEmployeePayroll(
                         $employee,
@@ -360,84 +330,29 @@ class FinalizePayrollService
                 $pageTotals['ded'] += $ded;
                 $pageTotals['net'] += $net;
             }
+            $generationLoopMs = round((microtime(true) - $tLoop) * 1000, 2);
 
-            $fullTotals = [
-                'gross' => round((float) $pageTotals['gross'], 2),
-                'ded' => round((float) $pageTotals['ded'], 2),
-                'net' => round((float) $pageTotals['net'], 2),
-            ];
-            if ($scopedCount > $employees->count() && count($scopedEmployeeIds) > 0) {
-                $totalsEmployees = User::query()
-                    ->whereIn('id', $scopedEmployeeIds)
-                    ->select([
-                        'id',
-                        'name',
-                        'employee_code',
-                        'department',
-                        'position',
-                        'profile_image',
-                        'company_id',
-                        'branch_id',
-                        'department_id',
-                        'pay_cycle_id',
-                        'monthly_salary',
-                        'monthly_rate',
-                        'daily_rate',
-                        'working_schedule_id',
-                        'schedule',
-                        'employment_status',
-                        'is_active',
-                        'role',
-                    ])
-                    ->get();
-                $totalsEmployees->loadMissing([
-                    'company',
-                    'branch',
-                    'payCycle',
-                    'governmentIds',
-                    'workingSchedule',
-                ]);
+            // Use SQL aggregates on stored payslips for totals instead of recomputing
+            // payroll for every employee in scope (the main bottleneck for 100+ employees).
+            $totalsQuery = Payslip::query()
+                ->whereIn('user_id', $scopedEmployeeIds);
+            $this->applyPreviewPeriodFiltersEloquent($totalsQuery, $periodInput);
+            $agg = $totalsQuery->selectRaw('COALESCE(SUM(gross_pay), 0) as total_gross, COALESCE(SUM(total_deductions), 0) as total_ded, COALESCE(SUM(net_pay), 0) as total_net, COUNT(*) as cnt')
+                ->first();
 
-                $fullTotals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
-                foreach ($totalsEmployees as $totalsEmployee) {
-                    [$from, $to, $cyclePreview] = $this->payslipService->resolveComputationWindow($totalsEmployee, $periodInput);
-                    $computed = $this->payrollComputation->computeEmployeePayroll(
-                        $totalsEmployee,
-                        $from,
-                        $to,
-                        null,
-                        [
-                            'pay_period_start' => $from->toDateString(),
-                            'pay_period_end' => $to->toDateString(),
-                            'selected_pay_date' => is_array($cyclePreview) ? ($cyclePreview['pay_date'] ?? null) : null,
-                        ]
-                    );
-                    $summary = is_array($computed['summary'] ?? null) ? $computed['summary'] : [];
-                    $gross = round(
-                        (float) ($summary['gross_pay_this_period']
-                            ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
-                        2
-                    );
-                    $ded = round(
-                        (float) ($summary['employee_statutory_this_period'] ?? 0)
-                        + (float) ($summary['custom_deductions_this_period'] ?? 0)
-                        + (float) ($summary['withholding_tax_this_period_estimate'] ?? 0),
-                        2
-                    );
-                    $net = round((float) ($summary['net_pay_after_withholding_estimate'] ?? 0), 2);
-
-                    $fullTotals['gross'] += $gross;
-                    $fullTotals['ded'] += $ded;
-                    $fullTotals['net'] += $net;
-                }
-
-                $fullTotals = [
-                    'gross' => round((float) $fullTotals['gross'], 2),
-                    'ded' => round((float) $fullTotals['ded'], 2),
-                    'net' => round((float) $fullTotals['net'], 2),
+            if ($agg && (int) $agg->cnt > 0) {
+                $resolvedTotals = [
+                    'gross' => round((float) $agg->total_gross, 2),
+                    'ded' => round((float) $agg->total_ded, 2),
+                    'net' => round((float) $agg->total_net, 2),
+                ];
+            } else {
+                $resolvedTotals = [
+                    'gross' => round((float) $pageTotals['gross'], 2),
+                    'ded' => round((float) $pageTotals['ded'], 2),
+                    'net' => round((float) $pageTotals['net'], 2),
                 ];
             }
-            $resolvedTotals = $fullTotals;
 
             $periodPreview = null;
             if ($periodFromPayslip instanceof Payslip) {
@@ -492,6 +407,16 @@ class FinalizePayrollService
                 ];
             }
 
+            $totalResponseMs = round((microtime(true) - $previewStartedAt) * 1000, 2);
+            Log::info('Payroll finalize preview: timings', [
+                'employee_query_ms' => $employeeQueryMs,
+                'generation_loop_ms' => $generationLoopMs,
+                'total_response_ms' => $totalResponseMs,
+                'rows_returned' => count($rows),
+                'scoped_count' => $scopedCount,
+                'needs_compute' => count($needsComputeIds),
+            ]);
+
             return [
                 'totals' => [
                     'total_gross' => $resolvedTotals['gross'],
@@ -517,7 +442,6 @@ class FinalizePayrollService
             'department_id' => $departmentId,
             'employee_id' => $singleEmployeeId,
             'elapsed_ms' => round((microtime(true) - $previewStartedAt) * 1000, 2),
-            'cache_ttl_seconds' => 0,
         ]);
 
         $employees = $this->mergeFreshPayslipStatusesIntoPreviewRows(
@@ -912,7 +836,7 @@ class FinalizePayrollService
                     }
 
                     try {
-                        $generated = $this->generatePayslipForFinalize($user, $payslipInput, is_array($summary) ? $summary : []);
+                        $generated = $this->generatePayslipForFinalize($user, $payslipInput, $computed, is_array($summary) ? $summary : [], $cyclePreview, $cycle);
                     } catch (Throwable $e) {
                         Log::error('Finalize payroll: payslip generation failed for employee', [
                             'user_id' => (int) $user->id,
@@ -1434,7 +1358,10 @@ class FinalizePayrollService
                 $generated = $this->generatePayslipForFinalize(
                     $employee,
                     $payslipInput,
-                    is_array($computed['summary'] ?? null) ? $computed['summary'] : []
+                    $computed,
+                    is_array($computed['summary'] ?? null) ? $computed['summary'] : [],
+                    $cyclePreview,
+                    $cycle
                 );
             } catch (Throwable $e) {
                 Log::error('Finalize payroll: payslip generation failed for employee', [
@@ -1617,7 +1544,14 @@ class FinalizePayrollService
      * @param  array<string, mixed>  $payslipInput
      * @param  array<string, mixed>  $computedSummary  Payroll snapshot summary (for diagnostic counts before PDF).
      */
-    private function generatePayslipForFinalize(User $user, array $payslipInput, array $computedSummary = []): Payslip
+    private function generatePayslipForFinalize(
+        User $user,
+        array $payslipInput,
+        array $computed = [],
+        array $computedSummary = [],
+        ?array $cyclePreview = null,
+        ?\App\Models\PayCycle $cycle = null
+    ): Payslip
     {
         $verboseDiagnostics = (bool) env('PAYROLL_FINALIZE_VERBOSE_LOGS', false) || (bool) config('app.debug');
         $baseLogContext = [
@@ -1650,6 +1584,11 @@ class FinalizePayrollService
         try {
             // Finalize should lock payroll quickly. PDF rendering is intentionally deferred to
             // download/send paths because Chromium startup per employee is the slow part.
+            if ($computed !== []) {
+                return $this->payslipService
+                    ->generatePayslipFromComputedPayroll($user, $payslipInput, $computed, $cyclePreview, $cycle, withPdf: false)['payslip'];
+            }
+
             return $this->payslipService->generatePayslip($user, $payslipInput, withPdf: false)['payslip'];
         } catch (Throwable $e) {
             Log::error('Finalize payroll: PayslipService::generatePayslip failed', [

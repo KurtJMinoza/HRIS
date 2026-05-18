@@ -476,7 +476,7 @@ export default function AdminGeneratePayslipsPage() {
         company_id: companyId || undefined,
         branch_id: branchId || undefined,
         department_id: departmentId || undefined,
-        per_page: 50,
+        per_page: 15,
       })
       setCompanyRows(Array.isArray(res?.data) ? res.data : [])
     } catch (e) {
@@ -633,10 +633,13 @@ export default function AdminGeneratePayslipsPage() {
     try {
       const res = await adminGeneratePayslips(bulkPayload)
       toast({
-        title: 'Generation queued',
-        description: 'Draft payslips are being generated in the background. The batch will appear in Recent Payslips immediately.',
+        title: res?.queued === false ? 'Payslips generated' : 'Generation queued',
+        description:
+          res?.queued === false
+            ? `${Number(res?.generated_count ?? res?.employee_count ?? 0)} draft payslip${Number(res?.generated_count ?? res?.employee_count ?? 0) === 1 ? '' : 's'} are ready.`
+            : 'Draft payslips are being generated in the background. The batch will appear in Recent Payslips immediately.',
       })
-      await loadCompanySummary()
+      loadCompanySummary()
       const q = new URLSearchParams(buildFinalizeQuery().toString())
       if (res?.pay_period_start) q.set('from_date', String(res.pay_period_start))
       if (res?.pay_period_end) q.set('to_date', String(res.pay_period_end))

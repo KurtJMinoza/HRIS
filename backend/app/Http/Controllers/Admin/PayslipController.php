@@ -92,6 +92,7 @@ class PayslipController extends Controller
      */
     public function recentByCompany(Request $request): JsonResponse
     {
+        $startedAt = microtime(true);
         $this->ensurePayslipAccess($request);
         $v = $request->validate([
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
@@ -107,7 +108,7 @@ class PayslipController extends Controller
         $page = max(1, (int) ($v['page'] ?? $request->query('page', 1)));
 
         $q = PayrollBatchRun::query()
-            ->with(['company'])
+            ->with(['company:id,name,logo'])
             ->orderByDesc('created_at');
 
         // Non-admin org heads: restrict to their own org scope.
@@ -166,8 +167,11 @@ class PayslipController extends Controller
             $q->whereDate('pay_period_start', '<=', $v['to_date']);
         }
 
-        $rows = $q->get()->map(function (PayrollBatchRun $run) {
-            $agg = $this->payslipService->aggregateForBatchRun($run, recomputeDraftTotals: true);
+        $paginatedRuns = $q->paginate($perPage, ['*'], 'page', $page);
+        $rows = $paginatedRuns->getCollection()->map(function (PayrollBatchRun $run) {
+            // Use persisted payslip and batch-run totals. Live draft recomputation is intentionally avoided here:
+            // it recomputes payroll for every employee in every row and is the main list-load bottleneck.
+            $agg = $this->payslipService->aggregateForBatchRun($run, recomputeDraftTotals: false);
             $resolvedCompanyId = $run->company_id !== null
                 ? (int) $run->company_id
                 : (isset($agg['company_id']) ? (int) $agg['company_id'] : null);
@@ -245,41 +249,19 @@ class PayslipController extends Controller
             ];
         })->values();
 
-        // One clean row per company + pay period across template/company-default reruns.
-        $grouped = [];
-        foreach ($rows as $row) {
-            $key = $this->recentSummaryGroupKey($row);
-            if (! isset($grouped[$key])) {
-                $grouped[$key] = $row;
-
-                continue;
-            }
-            if ($this->shouldReplaceRecentSummaryRow($grouped[$key], $row)) {
-                $grouped[$key] = $row;
-            }
-        }
-
-        $deduped = array_values($grouped);
-        usort($deduped, function (array $a, array $b): int {
-            $aTs = strtotime((string) ($a['generated_at'] ?? '')) ?: 0;
-            $bTs = strtotime((string) ($b['generated_at'] ?? '')) ?: 0;
-            if ($aTs !== $bTs) {
-                return $bTs <=> $aTs;
-            }
-
-            return ((int) ($b['payroll_batch_run_id'] ?? 0)) <=> ((int) ($a['payroll_batch_run_id'] ?? 0));
-        });
-
-        $total = count($deduped);
-        $offset = ($page - 1) * $perPage;
-        $items = array_slice($deduped, $offset, $perPage);
         $paginator = new LengthAwarePaginator(
-            $items,
-            $total,
+            $rows,
+            $paginatedRuns->total(),
             $perPage,
             $page,
             ['path' => $request->url(), 'query' => $request->query()]
         );
+
+        \Illuminate\Support\Facades\Log::info('Payslip recent batch summary loaded', [
+            'rows_returned' => $rows->count(),
+            'total_rows' => $paginatedRuns->total(),
+            'transform_ms' => round((microtime(true) - $startedAt) * 1000, 2),
+        ]);
 
         return response()->json($paginator);
     }
@@ -419,6 +401,7 @@ class PayslipController extends Controller
      */
     public function generate(Request $request): JsonResponse
     {
+        $startedAt = microtime(true);
         $this->ensurePayslipAccess($request);
         $v = $request->validate([
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
@@ -549,6 +532,65 @@ class PayslipController extends Controller
             ? tap($existing)->update($runPayload)->fresh()
             : PayrollBatchRun::query()->create($runPayload);
 
+        $syncThreshold = max(1, (int) config('payroll.payslip_sync_threshold', 150));
+        if ($employeeCount <= $syncThreshold) {
+            PayrollBatchRun::query()->whereKey($run->id)->update([
+                'status' => PayrollBatchRun::STATUS_PROCESSING,
+                'started_at' => now(),
+                'error_message' => null,
+            ]);
+
+            try {
+                $ids = $this->payslipService->generateBulkPayslips(
+                    $run->company_id ? (int) $run->company_id : null,
+                    $run->branch_id ? (int) $run->branch_id : null,
+                    $run->department_id ? (int) $run->department_id : null,
+                    is_array($v['employee_ids'] ?? null) && count($v['employee_ids']) > 0 ? $v['employee_ids'] : null,
+                    $periodInput,
+                    $actor,
+                    withPdf: false,
+                );
+
+                PayrollBatchRun::query()->whereKey($run->id)->update([
+                    'status' => PayrollBatchRun::STATUS_DRAFT,
+                    'completed_at' => now(),
+                    'employee_count' => count($ids),
+                    'error_message' => null,
+                ]);
+                $run->refresh();
+                $this->payslipService->syncBatchRunTotals($run);
+
+                \Illuminate\Support\Facades\Log::info('Payslip generation completed synchronously', [
+                    'payroll_batch_run_id' => (int) $run->id,
+                    'generated_count' => count($ids),
+                    'sync_threshold' => $syncThreshold,
+                    'total_response_ms' => round((microtime(true) - $startedAt) * 1000, 2),
+                ]);
+
+                return response()->json([
+                    'message' => 'Payslips generated.',
+                    'queued' => false,
+                    'payroll_batch_run_id' => (int) $run->id,
+                    'status' => (string) $run->status,
+                    'pay_period_start' => $periodStart->toDateString(),
+                    'pay_period_end' => $periodEnd->toDateString(),
+                    'employee_count' => count($ids),
+                    'generated_count' => count($ids),
+                    'skipped_count' => 0,
+                    'failed_count' => 0,
+                ]);
+            } catch (\Throwable $e) {
+                report($e);
+                PayrollBatchRun::query()->whereKey($run->id)->update([
+                    'status' => PayrollBatchRun::STATUS_FAILED,
+                    'completed_at' => now(),
+                    'error_message' => $e->getMessage(),
+                ]);
+
+                throw $e;
+            }
+        }
+
         // If already processing, don't double-dispatch.
         $shouldDispatch = (string) $run->status !== PayrollBatchRun::STATUS_PROCESSING;
         if ($shouldDispatch) {
@@ -563,6 +605,9 @@ class PayslipController extends Controller
             'pay_period_start' => $periodStart->toDateString(),
             'pay_period_end' => $periodEnd->toDateString(),
             'employee_count' => $employeeCount,
+            'generated_count' => 0,
+            'skipped_count' => 0,
+            'failed_count' => 0,
         ], 202);
     }
 
@@ -585,9 +630,11 @@ class PayslipController extends Controller
         $immutableStatuses = Payslip::lockingStatuses();
         $isFinalized = in_array($status, $immutableStatuses, true);
 
-        // Keep finalized payslips immutable (snapshot parity), but recompute draft/queued/processing
-        // so preview aligns with current Daily Computation / Finalize Payroll / Salary-tab rate sources.
-        if (! $isFinalized) {
+        $hasStoredSnapshot = is_array($payslip->snapshot ?? null) && $payslip->snapshot !== [];
+
+        // Detail endpoints should be cheap: prefer the stored generation snapshot and only recompute
+        // older draft rows that do not have one yet.
+        if (! $isFinalized && ! $hasStoredSnapshot) {
             $periodInput = [
                 'from_date' => $payslip->pay_period_start?->toDateString(),
                 'to_date' => $payslip->pay_period_end?->toDateString(),

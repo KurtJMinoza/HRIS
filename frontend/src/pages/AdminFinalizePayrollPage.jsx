@@ -1034,9 +1034,13 @@ export default function AdminFinalizePayrollPage() {
             <CardContent className="p-5">
               <p className="text-[13px] font-semibold uppercase tracking-normal text-muted-foreground">Total gross pay</p>
               <div className="mt-3 flex items-center justify-between">
-                <p className={cn('text-[26px] font-extrabold tabular-nums leading-none', loading ? 'text-muted-foreground' : TEXT)}>
-                  {loading ? '—' : formatPeso(totals.total_gross)}
-                </p>
+                {loading ? (
+                  <div className="h-7 w-32 rounded bg-muted animate-pulse" />
+                ) : (
+                  <p className={cn('text-[26px] font-extrabold tabular-nums leading-none', TEXT)}>
+                    {formatPeso(totals.total_gross)}
+                  </p>
+                )}
                 <ArrowUpRight className="h-6 w-6 text-brand" />
               </div>
             </CardContent>
@@ -1046,9 +1050,13 @@ export default function AdminFinalizePayrollPage() {
             <CardContent className="p-5">
               <p className="text-[13px] font-semibold uppercase tracking-normal text-muted-foreground">Total deductions</p>
               <div className="mt-3 flex items-center justify-between">
-                <p className={cn('text-[26px] font-extrabold tabular-nums leading-none', loading ? 'text-muted-foreground' : TEXT)}>
-                  {loading ? '—' : formatPeso(totals.total_deductions)}
-                </p>
+                {loading ? (
+                  <div className="h-7 w-32 rounded bg-muted animate-pulse" />
+                ) : (
+                  <p className={cn('text-[26px] font-extrabold tabular-nums leading-none', TEXT)}>
+                    {formatPeso(totals.total_deductions)}
+                  </p>
+                )}
                 <ArrowUpRight className="h-6 w-6 text-brand" />
               </div>
             </CardContent>
@@ -1058,9 +1066,13 @@ export default function AdminFinalizePayrollPage() {
             <CardContent className="p-5">
               <p className="text-[13px] font-bold uppercase tracking-normal text-brand">Total net pay</p>
               <div className="mt-3 flex items-center justify-between">
-                <p className={cn('text-[30px] font-extrabold tabular-nums leading-none tracking-normal @md:text-[32px]', loading ? 'text-muted-foreground' : 'text-brand')}>
-                  {loading ? '—' : formatPeso(totals.total_net)}
-                </p>
+                {loading ? (
+                  <div className="h-8 w-36 rounded bg-brand/20 animate-pulse" />
+                ) : (
+                  <p className={cn('text-[30px] font-extrabold tabular-nums leading-none tracking-normal @md:text-[32px]', 'text-brand')}>
+                    {formatPeso(totals.total_net)}
+                  </p>
+                )}
                 <PhilippinePeso className="h-6 w-6 text-brand" />
               </div>
             </CardContent>
@@ -1070,7 +1082,11 @@ export default function AdminFinalizePayrollPage() {
             <CardContent className="p-5">
               <p className="text-[13px] font-semibold uppercase tracking-normal text-muted-foreground">Employee count</p>
               <div className="mt-3 flex items-center justify-between">
-                <p className={cn('text-[28px] font-extrabold tabular-nums leading-none', TEXT)}>{loading ? '—' : Number(totals.employee_count || 0)}</p>
+                {loading ? (
+                  <div className="h-7 w-12 rounded bg-muted animate-pulse" />
+                ) : (
+                  <p className={cn('text-[28px] font-extrabold tabular-nums leading-none', TEXT)}>{Number(totals.employee_count || 0)}</p>
+                )}
                 <div className="flex items-center -space-x-2">
                   {employees.slice(0, 3).map((row) => (
                     <Avatar key={row.user_id} className="h-8 w-8 border-2 border-background ring-1 ring-border/60">
@@ -1134,9 +1150,39 @@ export default function AdminFinalizePayrollPage() {
             ) : null}
 
             {loading ? (
-              <div className="flex items-center justify-center py-14 text-muted-foreground">
-                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Loading employees…
+              <div className="w-full px-0 pb-4 pt-1">
+                <div className="w-full overflow-x-auto">
+                  <Table className="min-w-[1020px] border-0 [&_td]:border-0 [&_th]:border-0">
+                    <TableHeader className="[&_tr]:border-0">
+                      <TableRow className="border-0 bg-background hover:bg-background dark:bg-input/25 dark:hover:bg-input/25">
+                        <TableHead className="h-auto py-2.5 pl-4 pr-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground first:pl-5">Employee</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Department</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Basic Salary</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Daily Rate</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Gross Pay</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Total Deductions</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-brand">Net pay</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Status</TableHead>
+                        <TableHead className="h-auto min-w-[220px] py-2.5 pl-2 pr-4 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground @md:pr-5">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="[&_tr]:border-0">
+                      {Array.from({ length: pageSize }, (_, i) => (
+                        <TableRow key={`skel-${i}`} className="border-0">
+                          <TableCell className="py-3 pl-5 pr-2"><div className="flex items-center gap-2.5"><div className="h-9 w-9 rounded-full bg-muted animate-pulse" /><div className="space-y-1.5"><div className="h-4 w-28 rounded bg-muted animate-pulse" /><div className="h-3 w-20 rounded bg-muted animate-pulse" /></div></div></TableCell>
+                          <TableCell className="py-3 px-2"><div className="h-4 w-20 rounded bg-muted animate-pulse" /></TableCell>
+                          <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-16 rounded bg-muted animate-pulse" /></TableCell>
+                          <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-14 rounded bg-muted animate-pulse" /></TableCell>
+                          <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-16 rounded bg-muted animate-pulse" /></TableCell>
+                          <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-16 rounded bg-muted animate-pulse" /></TableCell>
+                          <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-16 rounded bg-muted animate-pulse" /></TableCell>
+                          <TableCell className="py-3 px-2"><div className="h-5 w-14 rounded-full bg-muted animate-pulse" /></TableCell>
+                          <TableCell className="py-3 pl-2 pr-5 text-right"><div className="ml-auto h-7 w-20 rounded-lg bg-muted animate-pulse" /></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             ) : Number(pagination.total || 0) === 0 ? (
               <div className="px-4 py-10 text-center text-sm text-muted-foreground @md:px-5">

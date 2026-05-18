@@ -13,7 +13,9 @@ use App\Models\User;
 use App\Services\HolidayCalendarService;
 use App\Services\HolidayService;
 use App\Support\EmployeeProfileCache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -34,6 +36,17 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        DB::listen(function ($query): void {
+            if ((float) $query->time < 500.0) {
+                return;
+            }
+
+            Log::warning('Slow database query', [
+                'duration_ms' => round((float) $query->time, 2),
+                'sql' => $query->sql,
+            ]);
+        });
+
         User::saved(fn (User $user) => EmployeeProfileCache::invalidate((int) $user->id));
         User::deleted(fn (User $user) => EmployeeProfileCache::invalidate((int) $user->id));
 
