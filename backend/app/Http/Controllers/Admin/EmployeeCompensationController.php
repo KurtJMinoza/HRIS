@@ -68,23 +68,27 @@ class EmployeeCompensationController extends Controller
             $this->assertEmployeeOrgScope($request, $employee);
         }
 
-        $queued = false;
-        foreach ($employees as $employee) {
-            try {
-                ComputeCompensationSummaryJob::dispatch((int) $employee->id)->onQueue('default');
-                $queued = true;
-            } catch (\Throwable $e) {
-                Log::warning('Failed to queue compensation summary warm job', [
-                    'user_id' => $employee->id,
-                    'message' => $e->getMessage(),
-                ]);
-            }
-        }
-
         // UX: When the UI is requesting a single employee (Compensation Structure live preview),
         // compute on-demand so gross pay does not stay 0 while the queue warms the cache.
         // Bulk requests still default to "pending" to avoid expensive synchronous computation loops.
         $allowCompute = $employeeIds->count() === 1;
+
+        // Warm-cache jobs help bulk reads; for single-employee GET we already compute synchronously,
+        // so skip dispatch to reduce queue churn and response latency.
+        $queued = false;
+        if (! $allowCompute) {
+            foreach ($employees as $employee) {
+                try {
+                    ComputeCompensationSummaryJob::dispatch((int) $employee->id)->onQueue('default');
+                    $queued = true;
+                } catch (\Throwable $e) {
+                    Log::warning('Failed to queue compensation summary warm job', [
+                        'user_id' => $employee->id,
+                        'message' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
 
         return response()->json([
             'recalculation_queued' => $queued,

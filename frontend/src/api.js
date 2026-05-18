@@ -3016,12 +3016,13 @@ export async function deletePayCycle(id) {
 }
 
 export async function getEmployeeCompensation(params = {}) {
+  const { signal, employee_ids: employeeIdsParam, employee_id: employeeIdParam, as_of_date: asOfDateParam } = params
   const query = new URLSearchParams()
-  ;(params.employee_ids || []).forEach((id) => query.append('employee_ids[]', String(id)))
-  if (params.employee_id != null && params.employee_id !== '') query.set('employee_id', String(params.employee_id))
-  if (params.as_of_date) query.set('as_of_date', String(params.as_of_date))
+  ;(employeeIdsParam || []).forEach((id) => query.append('employee_ids[]', String(id)))
+  if (employeeIdParam != null && employeeIdParam !== '') query.set('employee_id', String(employeeIdParam))
+  if (asOfDateParam) query.set('as_of_date', String(asOfDateParam))
   const url = `/admin/employee-compensation${query.toString() ? `?${query.toString()}` : ''}`
-  const response = await authenticatedFetch(url)
+  const response = await authenticatedFetch(url, signal ? { signal } : {})
   const data = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(data.message || 'Failed to load employee compensation')
   return data

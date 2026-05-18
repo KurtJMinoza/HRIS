@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   BriefcaseBusiness,
@@ -130,44 +130,45 @@ function patchCompensationRowSchedule(row, assignment) {
 }
 
 /** Inline schedule PATCH: merge server assignment into cached summary so the UI updates before the next fetch finishes. */
-function mergeSchedulePatchIntoCompensationData(prevEmployees, employeeId, assignment) {
+function mergeSchedulePatchIntoDetailEntry(prevEntry, employeeId, assignment) {
   const aid = Number(assignment?.id)
   const eid = Number(employeeId)
-  if (!Number.isFinite(aid) || aid <= 0 || !Number.isFinite(eid)) return prevEmployees
-  if (!Array.isArray(prevEmployees)) return prevEmployees
+  if (!Number.isFinite(aid) || aid <= 0 || !Number.isFinite(eid)) return prevEntry
+  if (!prevEntry || typeof prevEntry !== 'object') return prevEntry
+  if (Number(prevEntry?.employee?.id) !== eid) return prevEntry
 
-  return prevEmployees.map((entry) => {
-    if (Number(entry?.employee?.id) !== eid) return entry
-    const summary = entry.summary
-    if (!summary || typeof summary !== 'object') return entry
+  const summary = prevEntry.summary
+  if (!summary || typeof summary !== 'object') return prevEntry
 
-    const patchLines = (lines) => {
-      if (!Array.isArray(lines)) return lines
-      return lines.map((line) => (Number(line?.id) === aid ? patchCompensationRowSchedule(line, assignment) : line))
-    }
+  const patchLines = (lines) => {
+    if (!Array.isArray(lines)) return lines
+    return lines.map((line) => (Number(line?.id) === aid ? patchCompensationRowSchedule(line, assignment) : line))
+  }
 
-    return {
-      ...entry,
-      summary: {
-        ...summary,
-        earnings: patchLines(summary.earnings),
-        deductions: patchLines(summary.deductions),
-      },
-    }
-  })
+  return {
+    ...prevEntry,
+    summary: {
+      ...summary,
+      earnings: patchLines(summary.earnings),
+      deductions: patchLines(summary.deductions),
+    },
+  }
 }
 
 export default function AdminEmployeeCompensationPage() {
   const { toast } = useToast()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const hrBase = useHrBasePath()
   const [employees, setEmployees] = useState([])
   const [components, setComponents] = useState([])
-  const [compensationData, setCompensationData] = useState([])
+  /** Single selected employee payload from GET /admin/employee-compensation (cached per id in compensationCacheRef). */
+  const [detailEntry, setDetailEntry] = useState(null)
   const [employeeSearch, setEmployeeSearch] = useState('')
   const [effectiveFrom] = useState(() => payrollCalendarDateYmd())
-  const [loading, setLoading] = useState(true)
+  const [listLoading, setListLoading] = useState(true)
+  const [listRefreshing, setListRefreshing] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [activeEmployeeId, setActiveEmployeeId] = useState(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -180,88 +181,268 @@ export default function AdminEmployeeCompensationPage() {
   const [editValue, setEditValue] = useState('')
   const [updatingValue, setUpdatingValue] = useState(false)
   const [updatingScheduleId, setUpdatingScheduleId] = useState(null)
-  const preselectedEmployeeId = Number(searchParams.get('employee_id') || 0)
-
-  const loadLookups = useCallback(async (searchTerm = employeeSearch) => {
-    setLoading(true)
+  const [urlEmployeeIdOnMount] = useState(() => {
     try {
-      const [employeeRes, componentRes] = await Promise.all([
-        getEmployees({ q: searchTerm, per_page: 100 }),
-        getPayComponents({ all: true }),
-      ])
+      return Number(new URLSearchParams(window.location.search).get('employee_id') || 0)
+    } catch {
+      return 0
+    }
+  })
+
+  const compensationCacheRef = useRef(new Map())
+  const compensationAbortRef = useRef(null)
+  const compensationGenRef = useRef(0)
+  const initialUrlEmployeeAppliedRef = useRef(false)
+  const employeesRef = useRef([])
+  const employeeSearchMountRef = useRef(true)
+  const employeeListScrollRef = useRef(null)
+  const prefetchTimerRef = useRef(null)
+  const detailEntryRef = useRef(null)
+
+  employeesRef.current = employees
+  detailEntryRef.current = detailEntry
+
+  const loadEmployeeList = useCallback(async (searchTerm) => {
+    const prevScroll = employeeListScrollRef.current?.scrollTop ?? 0
+    const hadRows = employeesRef.current.length > 0
+
+    if (!hadRows) {
+      setListLoading(true)
+    } else {
+      setListRefreshing(true)
+    }
+
+    try {
+      const trimmed = String(searchTerm || '').trim()
+      const employeeRes = await getEmployees({
+        q: searchTerm,
+        per_page: 100,
+        ...(trimmed ? { fresh: true } : {}),
+      })
       const employeeRows = Array.isArray(employeeRes?.employees) ? employeeRes.employees : []
       setEmployees(employeeRows)
-      setComponents(Array.isArray(componentRes?.components) ? componentRes.components : [])
-      if (employeeRows.length > 0) {
-        if (preselectedEmployeeId > 0 && employeeRows.some((row) => Number(row.id) === preselectedEmployeeId)) {
-          setActiveEmployeeId(preselectedEmployeeId)
-        } else if (activeEmployeeId == null) {
-          setActiveEmployeeId(employeeRows[0].id)
+
+      requestAnimationFrame(() => {
+        if (employeeListScrollRef.current) {
+          employeeListScrollRef.current.scrollTop = prevScroll
         }
-      }
+      })
+
+      setActiveEmployeeId((prev) => {
+        const urlOnMount = urlEmployeeIdOnMount
+        if (!initialUrlEmployeeAppliedRef.current && urlOnMount > 0 && employeeRows.some((row) => Number(row.id) === urlOnMount)) {
+          initialUrlEmployeeAppliedRef.current = true
+          return urlOnMount
+        }
+        if (prev != null && employeeRows.some((row) => Number(row.id) === Number(prev))) {
+          return prev
+        }
+        if (prev == null && employeeRows.length > 0) {
+          return employeeRows[0].id
+        }
+        return prev
+      })
     } catch (error) {
       toast({
         title: 'Employee compensation',
-        description: error.message || 'Failed to load compensation data',
+        description: error.message || 'Failed to load employees',
         variant: 'destructive',
       })
     } finally {
-      setLoading(false)
+      setListLoading(false)
+      setListRefreshing(false)
     }
-  }, [activeEmployeeId, employeeSearch, preselectedEmployeeId, toast])
+  }, [toast, urlEmployeeIdOnMount])
 
-  const refreshCompensation = useCallback(async (employeeId = activeEmployeeId) => {
-    const ids = employeeId ? [employeeId] : []
-    if (ids.length === 0) {
-      setCompensationData([])
+  const loadCompensationDetail = useCallback(
+    async (rawEmployeeId, options = {}) => {
+      const {
+        forceRefresh = false,
+        silentQueuedFollowUp = false,
+        retainStaleDetail = false,
+      } = options
+      const employeeId = rawEmployeeId != null ? Number(rawEmployeeId) : null
+      if (!employeeId || !Number.isFinite(employeeId)) {
+        compensationAbortRef.current?.abort()
+        setDetailEntry(null)
+        setDetailLoading(false)
+        return
+      }
+
+      if (forceRefresh) {
+        compensationCacheRef.current.delete(employeeId)
+      }
+
+      const cached = compensationCacheRef.current.get(employeeId)
+      const cacheMatches = cached?.employee?.id === employeeId
+
+      const currentDetail = detailEntryRef.current
+      const keepStaleVisible =
+        retainStaleDetail && forceRefresh && Number(currentDetail?.employee?.id) === employeeId
+
+      if (cacheMatches) {
+        setDetailEntry(cached)
+        setDetailLoading(false)
+      } else if (keepStaleVisible) {
+        setDetailLoading(true)
+      } else {
+        setDetailEntry(null)
+        setDetailLoading(true)
+      }
+
+      compensationAbortRef.current?.abort()
+      const ac = new AbortController()
+      compensationAbortRef.current = ac
+      const gen = ++compensationGenRef.current
+
+      try {
+        const data = await getEmployeeCompensation({
+          employee_ids: [employeeId],
+          as_of_date: effectiveFrom || undefined,
+          signal: ac.signal,
+        })
+        if (gen !== compensationGenRef.current) return
+
+        const row = Array.isArray(data?.employees) ? data.employees[0] : null
+        if (row?.employee?.id === employeeId) {
+          compensationCacheRef.current.set(employeeId, row)
+          setDetailEntry(row)
+        }
+
+        if (data?.recalculation_queued && !silentQueuedFollowUp) {
+          toast({
+            title: 'Recalculating compensation',
+            description: 'Updated totals will appear shortly after the background job finishes.',
+          })
+          window.setTimeout(() => {
+            if (gen !== compensationGenRef.current) return
+            void loadCompensationDetail(employeeId, {
+              forceRefresh: true,
+              silentQueuedFollowUp: true,
+              retainStaleDetail: true,
+            })
+          }, 3500)
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') return
+        toast({
+          title: 'Employee compensation',
+          description: error.message || 'Failed to load selected employee compensation',
+          variant: 'destructive',
+        })
+      } finally {
+        if (gen === compensationGenRef.current) {
+          setDetailLoading(false)
+        }
+      }
+    },
+    [effectiveFrom, toast],
+  )
+
+  const refreshCompensation = useCallback(
+    async (employeeId = activeEmployeeId) => {
+      await loadCompensationDetail(employeeId, {
+        forceRefresh: true,
+        silentQueuedFollowUp: true,
+        retainStaleDetail: true,
+      })
+    },
+    [activeEmployeeId, loadCompensationDetail],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const componentRes = await getPayComponents({ all: true })
+        if (!cancelled) {
+          setComponents(Array.isArray(componentRes?.components) ? componentRes.components : [])
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast({
+            title: 'Employee compensation',
+            description: error.message || 'Failed to load pay components',
+            variant: 'destructive',
+          })
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [toast])
+
+  useEffect(() => {
+    if (employeeSearchMountRef.current) {
+      employeeSearchMountRef.current = false
+      void loadEmployeeList(employeeSearch)
       return
     }
-    try {
-      const data = await getEmployeeCompensation({
-        employee_ids: ids,
-        as_of_date: effectiveFrom || undefined,
-      })
-      setCompensationData(Array.isArray(data?.employees) ? data.employees : [])
-      if (data?.recalculation_queued) {
-        toast({
-          title: 'Recalculating compensation',
-          description: 'Updated totals will appear shortly after the background job finishes.',
-        })
-        const id = ids[0]
-        setTimeout(() => {
-          void getEmployeeCompensation({
-            employee_ids: [id],
-            as_of_date: effectiveFrom || undefined,
-          })
-            .then((d) => {
-              if (Array.isArray(d?.employees)) setCompensationData(d.employees)
-            })
-            .catch(() => {})
-        }, 3500)
-      }
-    } catch (error) {
-      toast({
-        title: 'Employee compensation',
-        description: error.message || 'Failed to load selected employee compensation',
-        variant: 'destructive',
-      })
+    const timer = window.setTimeout(() => {
+      void loadEmployeeList(employeeSearch)
+    }, 320)
+    return () => window.clearTimeout(timer)
+  }, [employeeSearch, loadEmployeeList])
+
+  useEffect(() => {
+    void loadCompensationDetail(activeEmployeeId)
+  }, [activeEmployeeId, effectiveFrom, loadCompensationDetail])
+
+  useEffect(() => {
+    const id = activeEmployeeId
+    if (id == null) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (!next.has('employee_id')) return prev
+        next.delete('employee_id')
+        return next
+      }, { replace: true })
+      return
     }
-  }, [activeEmployeeId, effectiveFrom, toast])
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (next.get('employee_id') === String(id)) return prev
+      next.set('employee_id', String(id))
+      return next
+    }, { replace: true })
+  }, [activeEmployeeId, setSearchParams])
 
   useEffect(() => {
-    loadLookups()
-  }, [loadLookups])
+    return () => {
+      compensationAbortRef.current?.abort()
+      if (prefetchTimerRef.current) window.clearTimeout(prefetchTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      loadLookups(employeeSearch)
-    }, 260)
-    return () => clearTimeout(timer)
-  }, [employeeSearch, loadLookups])
+    if (prefetchTimerRef.current) window.clearTimeout(prefetchTimerRef.current)
+    if (!activeEmployeeId || employees.length < 2) return
 
-  useEffect(() => {
-    refreshCompensation()
-  }, [activeEmployeeId, effectiveFrom, refreshCompensation])
+    prefetchTimerRef.current = window.setTimeout(() => {
+      const idx = employees.findIndex((e) => e.id === activeEmployeeId)
+      const neighbors = [employees[idx - 1], employees[idx + 1]].filter(Boolean)
+      for (const n of neighbors) {
+        const nid = Number(n.id)
+        if (!Number.isFinite(nid) || compensationCacheRef.current.has(nid)) continue
+        getEmployeeCompensation({
+          employee_ids: [nid],
+          as_of_date: effectiveFrom || undefined,
+        })
+          .then((data) => {
+            const row = Array.isArray(data?.employees) ? data.employees[0] : null
+            if (row?.employee?.id === nid) {
+              compensationCacheRef.current.set(nid, row)
+            }
+          })
+          .catch(() => {})
+      }
+    }, 450)
+
+    return () => {
+      if (prefetchTimerRef.current) window.clearTimeout(prefetchTimerRef.current)
+    }
+  }, [activeEmployeeId, employees, effectiveFrom])
 
   useEffect(() => {
     setEditingId(null)
@@ -269,15 +450,15 @@ export default function AdminEmployeeCompensationPage() {
     setUpdatingScheduleId(null)
   }, [activeEmployeeId])
 
-  const activeEmployee = useMemo(
-    () => employees.find((employee) => employee.id === activeEmployeeId) || null,
-    [activeEmployeeId, employees],
-  )
+  const activeEmployee = useMemo(() => {
+    const fromList = employees.find((employee) => employee.id === activeEmployeeId) || null
+    if (fromList) return fromList
+    const fromDetail = detailEntry?.employee
+    if (fromDetail && fromDetail.id === activeEmployeeId) return fromDetail
+    return null
+  }, [employees, activeEmployeeId, detailEntry])
 
-  const activeCompensation = useMemo(
-    () => compensationData.find((entry) => entry.employee?.id === activeEmployeeId) || null,
-    [activeEmployeeId, compensationData],
-  )
+  const activeCompensation = detailEntry?.employee?.id === activeEmployeeId ? detailEntry : null
   const activeEmployeePhoto = employeeAvatarSrc(activeEmployee)
   const activeEmployeeFallbackClass = getEmployeeAvatarColorClass(activeEmployee?.id, activeEmployee?.name)
 
@@ -286,6 +467,8 @@ export default function AdminEmployeeCompensationPage() {
   const deductions = summary.deductions || []
   const gross = summary?.totals?.gross_earnings || 0
   const summaryPending = Boolean(summary?._summary_pending) || (Array.isArray(earnings) && earnings.length === 0 && Number(gross) === 0)
+  const detailMatchesSelection = detailEntry?.employee?.id === activeEmployeeId
+  const showDetailSkeleton = Boolean(activeEmployee && !detailMatchesSelection)
 
   async function handleRefreshPreview() {
     await refreshCompensation()
@@ -301,6 +484,14 @@ export default function AdminEmployeeCompensationPage() {
   function openNewAssignmentDialog() {
     if (!activeEmployee) {
       toast({ title: 'Employee compensation', description: 'Select an employee first.', variant: 'destructive' })
+      return
+    }
+    if (!detailMatchesSelection) {
+      toast({
+        title: 'Employee compensation',
+        description: 'Wait for compensation details to finish loading.',
+        variant: 'destructive',
+      })
       return
     }
     setDraftForm(EMPTY_FORM)
@@ -536,7 +727,12 @@ export default function AdminEmployeeCompensationPage() {
       await refreshCompensation(activeEmployee.id)
       // Merge after GET: cached compensation summaries may still be stale briefly; PATCH `assignment` is source of truth.
       if (assignment && typeof assignment === 'object') {
-        setCompensationData((prev) => mergeSchedulePatchIntoCompensationData(prev, activeEmployee.id, assignment))
+        setDetailEntry((prev) => {
+          const next = mergeSchedulePatchIntoDetailEntry(prev, activeEmployee.id, assignment)
+          const nid = next?.employee?.id
+          if (nid) compensationCacheRef.current.set(Number(nid), next)
+          return next
+        })
       }
       window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
     } catch (error) {
@@ -646,11 +842,17 @@ export default function AdminEmployeeCompensationPage() {
               onChange={(e) => setEmployeeSearch(e.target.value)}
               className={`${inputClass} pl-10`}
               placeholder="Search employee"
+              aria-busy={listRefreshing ? 'true' : undefined}
             />
+            {listRefreshing ? (
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                <RefreshCw className="size-4 animate-spin" aria-hidden />
+              </span>
+            ) : null}
           </label>
 
-          <div className="mt-4 max-h-[720px] space-y-2 overflow-y-auto pr-1">
-            {loading ? (
+          <div ref={employeeListScrollRef} className={cn('mt-4 max-h-[720px] space-y-2 overflow-y-auto pr-1', listRefreshing && 'opacity-90')}>
+            {listLoading && employees.length === 0 ? (
               Array.from({ length: 8 }).map((_, index) => (
                 <div key={index} className="h-20 animate-pulse rounded-xl bg-muted" />
               ))
@@ -684,10 +886,12 @@ export default function AdminEmployeeCompensationPage() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-foreground">{employee.name}</p>
                         <p className="mt-1 truncate text-xs text-muted-foreground">
-                          {employee.position || 'No position'}
+                          {[employee.position || 'No position', employee.department].filter(Boolean).join(' · ') || 'No position'}
                         </p>
                         <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                          {employee.employee_code || 'No code'}
+                          {[employee.employee_code, employee.employment_status_label || employee.employment_status]
+                            .filter(Boolean)
+                            .join(' · ') || '—'}
                         </p>
                       </div>
                       {active ? (
@@ -729,8 +933,17 @@ export default function AdminEmployeeCompensationPage() {
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <SummaryCard label="Basic Salary" value={summary.basic_salary} />
-                    <SummaryCard label="Gross Pay" value={gross} />
+                    {showDetailSkeleton ? (
+                      <>
+                        <div className="h-[4.5rem] animate-pulse rounded-xl bg-muted" />
+                        <div className="h-[4.5rem] animate-pulse rounded-xl bg-muted" />
+                      </>
+                    ) : (
+                      <>
+                        <SummaryCard label="Basic Salary" value={summary.basic_salary} />
+                        <SummaryCard label="Gross Pay" value={gross} />
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -741,12 +954,12 @@ export default function AdminEmployeeCompensationPage() {
                       variant="outline"
                       className="rounded-xl"
                       onClick={handleRefreshPreview}
-                      disabled={loading}
+                      disabled={detailLoading && !activeCompensation}
                     >
                       <RefreshCw className="mr-2 size-4" />
                       Refresh Preview
                     </Button>
-                    {summaryPending ? (
+                    {!showDetailSkeleton && summaryPending ? (
                       <span className="text-xs text-muted-foreground">
                         Preview is warming up. Click Refresh if values still show ₱0.00.
                       </span>
@@ -801,39 +1014,47 @@ export default function AdminEmployeeCompensationPage() {
                   </div>
 
                   <TabsContent value="earnings" className="mt-5">
-                    <CompTable
-                      items={earnings}
-                      emptyLabel="No earning components assigned yet."
-                      amountTone="earning"
-                      onRemove={(assignment) => requestRemoveAssignment(activeEmployee.id, assignment)}
-                      editingId={editingId}
-                      editValue={editValue}
-                      onEditStart={startEditing}
-                      onEditChange={setEditValue}
-                      onEditSave={saveEditedValue}
-                      onEditCancel={cancelEditing}
-                      updatingValue={updatingValue}
-                      updatingScheduleId={updatingScheduleId}
-                      onScheduleChange={saveScheduleOverride}
-                    />
+                    {showDetailSkeleton ? (
+                      <CompensationComponentsSkeleton />
+                    ) : (
+                      <CompTable
+                        items={earnings}
+                        emptyLabel="No earning components assigned yet."
+                        amountTone="earning"
+                        onRemove={(assignment) => requestRemoveAssignment(activeEmployee.id, assignment)}
+                        editingId={editingId}
+                        editValue={editValue}
+                        onEditStart={startEditing}
+                        onEditChange={setEditValue}
+                        onEditSave={saveEditedValue}
+                        onEditCancel={cancelEditing}
+                        updatingValue={updatingValue}
+                        updatingScheduleId={updatingScheduleId}
+                        onScheduleChange={saveScheduleOverride}
+                      />
+                    )}
                   </TabsContent>
 
                   <TabsContent value="deductions" className="mt-5">
-                    <CompTable
-                      items={deductions}
-                      emptyLabel="No deduction components assigned yet."
-                      amountTone="deduction"
-                      onRemove={(assignment) => requestRemoveAssignment(activeEmployee.id, assignment)}
-                      editingId={editingId}
-                      editValue={editValue}
-                      onEditStart={startEditing}
-                      onEditChange={setEditValue}
-                      onEditSave={saveEditedValue}
-                      onEditCancel={cancelEditing}
-                      updatingValue={updatingValue}
-                      updatingScheduleId={updatingScheduleId}
-                      onScheduleChange={saveScheduleOverride}
-                    />
+                    {showDetailSkeleton ? (
+                      <CompensationComponentsSkeleton />
+                    ) : (
+                      <CompTable
+                        items={deductions}
+                        emptyLabel="No deduction components assigned yet."
+                        amountTone="deduction"
+                        onRemove={(assignment) => requestRemoveAssignment(activeEmployee.id, assignment)}
+                        editingId={editingId}
+                        editValue={editValue}
+                        onEditStart={startEditing}
+                        onEditChange={setEditValue}
+                        onEditSave={saveEditedValue}
+                        onEditCancel={cancelEditing}
+                        updatingValue={updatingValue}
+                        updatingScheduleId={updatingScheduleId}
+                        onScheduleChange={saveScheduleOverride}
+                      />
+                    )}
                   </TabsContent>
                 </Tabs>
               </section>
@@ -1093,6 +1314,16 @@ export default function AdminEmployeeCompensationPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+function CompensationComponentsSkeleton() {
+  return (
+    <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-6">
+      <div className="h-4 w-40 animate-pulse rounded bg-muted" />
+      <div className="h-36 animate-pulse rounded-lg bg-muted" />
+      <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
     </div>
   )
 }
