@@ -143,6 +143,7 @@ class AttendanceController extends Controller
         $fresh = User::query()
             ->select(['id', 'name', 'username', 'email', 'phone_number', 'schedule', 'working_schedule_id', 'qr_token', 'is_active', 'role', 'profile_image'])
             ->where('id', $user->id)
+            ->active()
             ->first();
 
         return $fresh ?? $user;
@@ -165,7 +166,7 @@ class AttendanceController extends Controller
 
         $user = User::query()
             ->where('id', $employeeId)
-            ->where('is_active', true)
+            ->active()
             ->first();
 
         if (! $user || ! $user->canRecordOwnAttendanceViaQrOrFace()) {
@@ -226,7 +227,7 @@ class AttendanceController extends Controller
                 $query->whereRaw('LOWER(email) = ?', [$normalized])
                     ->orWhereRaw('LOWER(username) = ?', [$normalized]);
             })
-            ->where('is_active', true)
+            ->active()
             ->first();
 
         if (! $user || ! $user->canRecordOwnAttendanceViaQrOrFace()) {
@@ -789,9 +790,9 @@ class AttendanceController extends Controller
             ]);
         }
 
-        if (! $user->is_active) {
+        if ($user->isAccountDeactivated()) {
             throw ValidationException::withMessages([
-                'type' => ['Account is deactivated.'],
+                'type' => [User::DEACTIVATED_LOGIN_MESSAGE],
             ]);
         }
 
@@ -901,7 +902,14 @@ class AttendanceController extends Controller
     public function recordClockInForUser(User $user, Request $request, array $faceContext = []): array
     {
         try {
+            if ($user->isAccountDeactivated()) {
+                return ['recorded' => false, 'message' => User::DEACTIVATED_LOGIN_MESSAGE];
+            }
+
             $user = $this->refreshUserForScheduleCheck($user);
+            if ($user->isAccountDeactivated()) {
+                return ['recorded' => false, 'message' => User::DEACTIVATED_LOGIN_MESSAGE];
+            }
 
             if ($user->hasCompletedAttendanceToday()) {
                 return ['recorded' => false, 'message' => 'Your attendance for today is already completed.'];

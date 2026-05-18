@@ -139,9 +139,9 @@ class AuthController extends Controller
             'time_ms' => round((microtime(true) - $clearStateStart) * 1000),
         ]);
 
-        if (! $user->is_active) {
+        if ($user->isAccountDeactivated()) {
             throw ValidationException::withMessages([
-                'login' => ['Account is deactivated.'],
+                'login' => [User::DEACTIVATED_LOGIN_MESSAGE],
             ]);
         }
 
@@ -210,6 +210,13 @@ class AuthController extends Controller
         if (! $authUser) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
+        if ($authUser->isAccountDeactivated()) {
+            $authUser->currentAccessToken()?->delete();
+
+            return response()->json([
+                'message' => User::DEACTIVATED_LOGIN_MESSAGE,
+            ], 403);
+        }
         Log::info('Auth user endpoint timing start', [
             'endpoint' => 'Auth.user',
             'user_id' => $authUser?->id,
@@ -257,9 +264,9 @@ class AuthController extends Controller
             ]);
         }
 
-        if (! $user->is_active) {
+        if ($user->isAccountDeactivated()) {
             throw ValidationException::withMessages([
-                'qr_token' => ['Account is deactivated.'],
+                'qr_token' => [User::DEACTIVATED_LOGIN_MESSAGE],
             ]);
         }
 
@@ -374,6 +381,12 @@ class AuthController extends Controller
         }
 
         $user = $identified['user'];
+
+        if ($user->isAccountDeactivated()) {
+            throw ValidationException::withMessages([
+                'face' => [User::DEACTIVATED_LOGIN_MESSAGE],
+            ]);
+        }
 
         if (! $user->hasRegisteredFace()) {
             $this->recordFaceLoginFailure($request, $user->id, false, 'face_not_registered');
@@ -645,6 +658,9 @@ class AuthController extends Controller
             'schedule_per_day' => $user->schedule,
             'schedule_assigned' => self::userHasSchedule($user),
             'is_active' => (bool) $user->is_active,
+            'active_status' => $user->employment_active_status,
+            'is_deactivated' => $user->isAccountDeactivated(),
+            'deactivated_at' => $user->deactivated_at?->toIso8601String(),
             // Self-service profile: base pay (aligned with payroll fields on users)
             'monthly_salary' => $user->monthly_salary !== null ? (string) $user->monthly_salary : null,
             'daily_rate' => $user->daily_rate !== null ? (string) $user->daily_rate : null,

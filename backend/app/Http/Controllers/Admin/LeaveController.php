@@ -168,7 +168,7 @@ class LeaveController extends Controller
         }
 
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $employee = User::findOrFail($validated['user_id']);
+        $employee = User::query()->activeRoster()->findOrFail($validated['user_id']);
         $this->dataScopeService->ensureEmployeeAccessible($actor, $employee);
         try {
             $this->payrollPeriodMutationGuard->assertMutableForUserWindow(

@@ -6,6 +6,7 @@ use App\Models\DeductionScheduleSetting;
 use App\Models\DeductionType;
 use App\Models\LoanRequest;
 use App\Models\PayComponent;
+use App\Models\User;
 use App\Services\DeductionScheduleService;
 use App\Services\DeductionApplicationService;
 use App\Services\LoanAmortizationService;
@@ -176,6 +177,11 @@ class EmployeeLoanRequestController extends Controller
     public function store(Request $request): JsonResponse
     {
         $user = $request->user();
+        if ($user->isAccountDeactivated()) {
+            throw ValidationException::withMessages([
+                'user' => [User::DEACTIVATED_LOGIN_MESSAGE],
+            ]);
+        }
         if (! $user) {
             return response()->json(['message' => 'Unauthorized.'], 401);
         }

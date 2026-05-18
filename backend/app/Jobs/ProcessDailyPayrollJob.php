@@ -35,8 +35,7 @@ class ProcessDailyPayrollJob implements ShouldQueue
         $dateKey = $this->targetDate;
 
         $employees = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
+            ->activeRoster()
             ->with('workingSchedule')
             ->get();
 

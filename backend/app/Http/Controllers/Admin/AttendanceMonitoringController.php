@@ -354,9 +354,7 @@ class AttendanceMonitoringController extends Controller
         $fromUtc = $from->copy()->setTimezone('UTC');
         $toUtc = $to->copy()->setTimezone('UTC');
 
-        $employeesQuery = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $employeesQuery = User::query()->activeRoster();
 
         if (! empty($validated['department'])) {
             $deptName = $validated['department'];

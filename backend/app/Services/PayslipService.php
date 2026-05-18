@@ -127,9 +127,7 @@ class PayslipService
             return ['ok' => false, 'reason' => 'no_employee'];
         }
 
-        $allowedUserQuery = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $allowedUserQuery = User::query()->activeRoster();
         $this->dataScopeService->restrictEmployeeQuery($actor, $allowedUserQuery);
         if ($companyId) {
             $allowedUserQuery->where('company_id', $companyId);
@@ -303,9 +301,7 @@ class PayslipService
         array $periodInput,
         ?User $actor = null
     ): array {
-        $q = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $q = User::query()->activeRoster();
 
         if ($actor !== null) {
             $this->dataScopeService->restrictEmployeeQuery($actor, $q);
@@ -703,9 +699,7 @@ class PayslipService
         ?User $actor = null,
         bool $withPdf = true
     ): array {
-        $q = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $q = User::query()->activeRoster();
 
         if ($actor !== null) {
             $this->dataScopeService->restrictEmployeeQuery($actor, $q);
@@ -1883,9 +1877,7 @@ class PayslipService
      */
     public function employeeIdsForBatchScope(PayrollBatchRun $run): array
     {
-        $q = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $q = User::query()->activeRoster();
         if ($run->company_id) {
             $q->where('company_id', (int) $run->company_id);
         }

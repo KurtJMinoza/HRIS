@@ -1462,6 +1462,7 @@ export async function getAdminReportsDetailed(params = {}, fetchOpts = {}) {
   if (params.status) query.set('status', params.status)
   if (params.leave_type) query.set('leave_type', params.leave_type)
   if (params.overtime_status) query.set('overtime_status', params.overtime_status)
+  if (params.include_deactivated) query.set('include_deactivated', '1')
   const p = Number(params.page)
   query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
   const pp = Number(params.per_page)
@@ -2432,7 +2433,7 @@ export async function deleteAdminScheduleRequest(id) {
 
 /**
  * Get employees list (admin) with optional simple pagination.
- * @param {{ page?: number, per_page?: number, for_schedule_assignment?: boolean }} [params]
+ * @param {{ page?: number, per_page?: number, for_schedule_assignment?: boolean, active_filter?: 'active'|'deactivated'|'all' }} [params]
  *   - for_schedule_assignment: true → returns all employees (no pagination, for Assign Schedule modal).
  * @returns {Promise<{ employees: Array<{ id: number, name: string, email: string, role: string, department?: string|null, schedule: object|null, working_schedule_id?: number|null, is_active: boolean, created_at: string }>, meta?: { current_page: number, per_page: number, total: number, last_page: number } }>}
  */
@@ -2444,6 +2445,7 @@ export async function getEmployees(params = {}) {
   const employeesPerPage = normalizePerPage(params.per_page)
   if (employeesPerPage != null) query.set('per_page', String(employeesPerPage))
   if (params.for_schedule_assignment) query.set('for_schedule_assignment', '1')
+  if (params.active_filter) query.set('active_filter', String(params.active_filter))
   if (params.q) query.set('q', String(params.q))
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))

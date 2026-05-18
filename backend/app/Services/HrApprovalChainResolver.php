@@ -154,7 +154,7 @@ class HrApprovalChainResolver
     {
         return User::query()
             ->where('role', User::ROLE_ADMIN)
-            ->where('is_active', true)
+            ->active()
             ->orderByDesc('is_super_admin')
             ->orderBy('id')
             ->first();
@@ -223,7 +223,7 @@ class HrApprovalChainResolver
             return null;
         }
 
-        return User::find($department->department_head_id);
+        return User::query()->activeRoster()->find($department->department_head_id);
     }
 
     private function isBranchHeadOf(User $actor, User $employee): bool
@@ -260,7 +260,7 @@ class HrApprovalChainResolver
             return null;
         }
 
-        return User::find($branch->branch_manager_id);
+        return User::query()->activeRoster()->find($branch->branch_manager_id);
     }
 
     private function isCompanyHeadOf(User $actor, User $employee): bool
@@ -313,7 +313,7 @@ class HrApprovalChainResolver
             return null;
         }
 
-        return User::find($company->company_head_id);
+        return User::query()->activeRoster()->find($company->company_head_id);
     }
 
     /**
@@ -386,7 +386,7 @@ class HrApprovalChainResolver
             $reasons[] = $headKey.'_self_approval_conflict';
         }
 
-        if (! (bool) ($approver->is_active ?? false)) {
+        if ($approver->isAccountDeactivated()) {
             $reasons[] = $headKey.'_inactive';
         }
 

@@ -82,6 +82,11 @@ class PresenceFilingController extends Controller
         if (! $user || (! $user->isEmployee() && ! $user->isAdmin())) {
             return response()->json(['message' => 'Forbidden.'], 403);
         }
+        if ($user->isAccountDeactivated()) {
+            throw ValidationException::withMessages([
+                'user' => [User::DEACTIVATED_LOGIN_MESSAGE],
+            ]);
+        }
 
         $chain = $this->approvalService->getApprovalChain($user);
         if ($chain === null) {

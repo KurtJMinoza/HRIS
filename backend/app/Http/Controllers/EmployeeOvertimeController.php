@@ -503,9 +503,9 @@ class EmployeeOvertimeController extends Controller
         }
         $this->ensureSelfOvertimeAccess($user);
 
-        if (! $user->is_active) {
+        if ($user->isAccountDeactivated()) {
             throw ValidationException::withMessages([
-                'user' => ['Account is deactivated.'],
+                'user' => [User::DEACTIVATED_LOGIN_MESSAGE],
             ]);
         }
 
@@ -562,9 +562,9 @@ class EmployeeOvertimeController extends Controller
         }
         $this->ensureSelfOvertimeAccess($user);
 
-        if (! $user->is_active) {
+        if ($user->isAccountDeactivated()) {
             throw ValidationException::withMessages([
-                'user' => ['Account is deactivated.'],
+                'user' => [User::DEACTIVATED_LOGIN_MESSAGE],
             ]);
         }
 

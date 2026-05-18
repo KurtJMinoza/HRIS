@@ -1372,8 +1372,7 @@ class FinalizePayrollService
         ?User $actor = null
     ): array {
         $employee = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
+            ->activeRoster()
             ->findOrFail($employeeUserId);
 
         $inScope = $this->scopedEmployees($companyId, $branchId, $departmentId, null, $actor)
@@ -1811,9 +1810,7 @@ class FinalizePayrollService
         ?User $actor = null,
         ?string $search = null
     ): \Illuminate\Database\Eloquent\Builder {
-        $q = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $q = User::query()->activeRoster();
 
         if ($actor !== null) {
             $this->dataScopeService->restrictEmployeeQuery($actor, $q);

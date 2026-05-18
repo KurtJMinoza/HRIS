@@ -227,19 +227,51 @@ class AdminUserAccountController extends Controller
             $user->email = trim($validated['email']);
         }
         if (array_key_exists('is_active', $validated)) {
+            $previousStatus = [
+                'is_active' => (bool) $user->is_active,
+                'employment_status' => $user->employment_status,
+                'deactivated_at' => $user->deactivated_at?->toIso8601String(),
+            ];
             if ($actor->id === $user->id && $validated['is_active'] === false) {
                 throw ValidationException::withMessages([
                     'is_active' => ['You cannot deactivate your own account.'],
                 ]);
             }
             $this->assertNotLastAdminDeactivation($user, (bool) $validated['is_active']);
-            $user->is_active = (bool) $validated['is_active'];
+            $nextActive = (bool) $validated['is_active'];
+            $user->is_active = $nextActive;
+            if ($nextActive) {
+                $user->deactivated_at = null;
+                $user->deactivated_by = null;
+                $user->deactivation_reason = null;
+            } else {
+                $user->deactivated_at = now();
+                $user->deactivated_by = $actor->id;
+            }
         }
 
         $user->save();
+        if (array_key_exists('is_active', $validated) && ! (bool) $validated['is_active']) {
+            $user->tokens()->delete();
+        }
         $user->refresh();
 
-        $this->logActivity($actor, $user, 'user.updated', array_intersect_key($validated, array_flip(['name', 'email', 'is_active', 'hr_role'])));
+        $activityMeta = array_intersect_key($validated, array_flip(['name', 'email', 'is_active', 'hr_role']));
+        if (array_key_exists('is_active', $validated)) {
+            $activityMeta += [
+                'previous_status' => $previousStatus ?? null,
+                'new_status' => [
+                    'is_active' => (bool) $user->is_active,
+                    'employment_status' => $user->employment_status,
+                    'deactivated_at' => $user->deactivated_at?->toIso8601String(),
+                ],
+                'affected_user_id' => (int) $user->id,
+                'affected_employee_id' => (int) $user->id,
+                'deactivated_by' => $user->deactivated_by,
+                'reason' => $user->deactivation_reason,
+            ];
+        }
+        $this->logActivity($actor, $user, 'user.updated', $activityMeta);
 
         return response()->json([
             'message' => 'User updated.',
@@ -288,6 +320,11 @@ class AdminUserAccountController extends Controller
 
         foreach ($ids as $id) {
             $user = User::query()->findOrFail($id);
+            $previousStatus = [
+                'is_active' => (bool) $user->is_active,
+                'employment_status' => $user->employment_status,
+                'deactivated_at' => $user->deactivated_at?->toIso8601String(),
+            ];
             if ($actor->id === $user->id && ! $active) {
                 throw ValidationException::withMessages([
                     'user_ids' => ['You cannot deactivate your own account.'],
@@ -295,8 +332,30 @@ class AdminUserAccountController extends Controller
             }
             $this->assertNotLastAdminDeactivation($user, $active);
             $user->is_active = $active;
+            if ($active) {
+                $user->deactivated_at = null;
+                $user->deactivated_by = null;
+                $user->deactivation_reason = null;
+            } else {
+                $user->deactivated_at = now();
+                $user->deactivated_by = $actor->id;
+            }
             $user->save();
-            $this->logActivity($actor, $user, $active ? 'user.bulk_activated' : 'user.bulk_deactivated', []);
+            if (! $active) {
+                $user->tokens()->delete();
+            }
+            $this->logActivity($actor, $user, $active ? 'user.bulk_activated' : 'user.bulk_deactivated', [
+                'previous_status' => $previousStatus,
+                'new_status' => [
+                    'is_active' => (bool) $user->is_active,
+                    'employment_status' => $user->employment_status,
+                    'deactivated_at' => $user->deactivated_at?->toIso8601String(),
+                ],
+                'affected_user_id' => (int) $user->id,
+                'affected_employee_id' => (int) $user->id,
+                'deactivated_by' => $user->deactivated_by,
+                'reason' => $user->deactivation_reason,
+            ]);
         }
 
         return response()->json([

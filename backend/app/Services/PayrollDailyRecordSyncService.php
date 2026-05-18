@@ -120,8 +120,7 @@ class PayrollDailyRecordSyncService
 
         $users = User::query()
             ->whereIn('id', $userIds)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
+            ->activeRoster()
             ->with('workingSchedule')
             ->get();
 

@@ -9,6 +9,7 @@ use App\Services\HrRoleResolver;
 use App\Support\EmployeeProfileCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +40,63 @@ class User extends Authenticatable
     public function isRosterEligible(): bool
     {
         return in_array($this->role, self::ROSTER_ELIGIBLE_ROLES, true);
+    }
+
+    public const DEACTIVATED_LOGIN_MESSAGE = 'Your account has been deactivated. Please contact HR/Admin.';
+
+    /**
+     * Single source of truth for employee/account availability in active HRIS operations.
+     *
+     * Historical records still point at the user row, but new payroll, attendance, assignment,
+     * routing and dropdown queries should use active()/activeRoster() unless a request
+     * explicitly opts into deactivated employees.
+     */
+    public function isOperationallyActive(): bool
+    {
+        if (! (bool) $this->is_active) {
+            return false;
+        }
+
+        $status = \App\Enums\EmploymentStatus::tryFromStored($this->employment_status);
+
+        return $status === null || $status->isActive();
+    }
+
+    public function isAccountDeactivated(): bool
+    {
+        return ! $this->isOperationallyActive();
+    }
+
+    public function getEmploymentActiveStatusAttribute(): string
+    {
+        return $this->isOperationallyActive() ? 'active' : 'deactivated';
+    }
+
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where('is_active', true)
+            ->where(function (Builder $q): void {
+                $q->whereNull('employment_status')
+                    ->orWhereRaw("LOWER(REPLACE(REPLACE(employment_status, '-', '_'), ' ', '_')) NOT IN ('separated', 'inactive', 'resigned', 'terminated')");
+            });
+    }
+
+    public function scopeDeactivated(Builder $query): Builder
+    {
+        return $query->where(function (Builder $q): void {
+            $q->where('is_active', false)
+                ->orWhereRaw("LOWER(REPLACE(REPLACE(employment_status, '-', '_'), ' ', '_')) IN ('separated', 'inactive', 'resigned', 'terminated')");
+        });
+    }
+
+    public function scopeRoster(Builder $query): Builder
+    {
+        return $query->whereIn('role', self::ROSTER_ELIGIBLE_ROLES);
+    }
+
+    public function scopeActiveRoster(Builder $query): Builder
+    {
+        return $query->roster()->active();
     }
 
     /**
@@ -93,6 +151,9 @@ class User extends Authenticatable
         'pending_working_schedule_id',
         'pending_schedule_effective_from',
         'is_active',
+        'deactivated_at',
+        'deactivated_by',
+        'deactivation_reason',
         'department',
         'department_id',
         'company_id',
@@ -157,6 +218,7 @@ class User extends Authenticatable
             'face_embedding' => 'encrypted',
             'face_descriptor_samples' => EncryptedArray::class,
             'is_active' => 'boolean',
+            'deactivated_at' => 'datetime',
             'signature_signed_at' => 'datetime',
             'daily_rate' => 'decimal:2',
             'monthly_rate' => 'decimal:2',
@@ -178,6 +240,7 @@ class User extends Authenticatable
         'profile_picture_url',
         'avatar_url',
         'photo_url',
+        'employment_active_status',
     ];
 
     protected static function booted(): void

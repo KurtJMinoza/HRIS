@@ -148,7 +148,7 @@ class AttendanceCorrectionController extends Controller
 
         /** @var User $employee */
         $employee = User::where('id', $validated['employee_id'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->activeRoster()
             ->with('workingSchedule')
             ->firstOrFail();
 

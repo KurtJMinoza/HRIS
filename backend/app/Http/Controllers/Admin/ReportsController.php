@@ -345,6 +345,7 @@ class ReportsController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:25', 'max:100'],
             'search' => ['nullable', 'string', 'max:200'],
+            'include_deactivated' => ['nullable', 'boolean'],
         ]);
 
         // Normalize filters: trim department, lowercase status for consistent matching.
@@ -455,6 +456,7 @@ class ReportsController extends Controller
                 'leave_type' => $validated['leave_type'] ?? null,
                 'overtime_status' => $validated['overtime_status'] ?? null,
                 'search' => strtolower(trim((string) ($validated['search'] ?? ''))),
+                'include_deactivated' => (bool) ($validated['include_deactivated'] ?? false),
                 'page' => $pagePref,
                 'per_page' => $perPage,
             ];
@@ -494,14 +496,16 @@ class ReportsController extends Controller
             /** @var \Illuminate\Support\Collection<int, User> $employees */
             $employees = User::query()
                 ->whereKey($request->user()->id)
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-                ->where('is_active', true)
+                ->activeRoster()
                 ->with($employeeWithRelations)
                 ->get();
         } else {
             $employeesQuery = User::query()
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-                ->where('is_active', true);
+                ->roster();
+
+            if (! (bool) ($validated['include_deactivated'] ?? false)) {
+                $employeesQuery->active();
+            }
 
             if ($validated['department'] !== null && $validated['department'] !== '') {
                 $deptName = $validated['department'];
@@ -1250,6 +1254,7 @@ class ReportsController extends Controller
                 'last_page' => $lastPage,
                 'per_page' => $perPage,
                 'total' => $total,
+                'include_deactivated' => (bool) ($validated['include_deactivated'] ?? false),
             ],
         ];
 
@@ -1428,7 +1433,7 @@ class ReportsController extends Controller
     {
         $actor = $request->user();
         $query = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->activeRoster()
             ->orderBy('name');
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
         $users = $query->get([

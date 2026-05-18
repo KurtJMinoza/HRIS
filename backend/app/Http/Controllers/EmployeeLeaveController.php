@@ -615,6 +615,11 @@ class EmployeeLeaveController extends Controller
     public function apply(Request $request): JsonResponse
     {
         $user = $request->user();
+        if ($user->isAccountDeactivated()) {
+            throw ValidationException::withMessages([
+                'user' => [User::DEACTIVATED_LOGIN_MESSAGE],
+            ]);
+        }
 
         $validated = $request->validate([
             'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,undertime,half_day'],

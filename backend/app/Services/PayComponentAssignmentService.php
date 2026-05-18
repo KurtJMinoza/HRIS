@@ -19,12 +19,8 @@ class PayComponentAssignmentService
         $processed = 0;
 
         $query = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->activeRoster()
             ->orderBy('id');
-
-        if (Schema::hasColumn('users', 'is_active')) {
-            $query->where('is_active', true);
-        }
 
         $query->chunkById(200, function ($employees) use ($component, &$processed) {
             foreach ($employees as $employee) {

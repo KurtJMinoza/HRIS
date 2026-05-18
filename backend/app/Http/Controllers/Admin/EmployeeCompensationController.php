@@ -58,7 +58,7 @@ class EmployeeCompensationController extends Controller
 
         $employees = User::query()
             ->whereIn('id', $employeeIds)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->roster()
             ->orderBy('name')
             ->get();
 
@@ -107,6 +107,9 @@ class EmployeeCompensationController extends Controller
                         'department' => $employee->department,
                         'profile_image' => $employee->profile_image,
                         'profile_image_url' => $employee->profile_image_url,
+                        'is_active' => (bool) $employee->is_active,
+                        'active_status' => $employee->employment_active_status,
+                        'is_deactivated' => $employee->isAccountDeactivated(),
                     ],
                     'summary' => $summary,
                 ];
@@ -151,8 +154,14 @@ class EmployeeCompensationController extends Controller
 
         $employees = User::query()
             ->whereIn('id', $validated['employee_ids'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->activeRoster()
             ->get();
+
+        if ($employees->count() !== count(array_unique($validated['employee_ids']))) {
+            return response()->json([
+                'message' => 'One or more selected employees are deactivated and cannot receive new compensation assignments.',
+            ], 422);
+        }
 
         foreach ($employees as $employee) {
             $this->assertEmployeeOrgScope($request, $employee);
@@ -186,7 +195,7 @@ class EmployeeCompensationController extends Controller
         $userId = (int) $userId;
         $id = (int) $id;
 
-        $employee = User::query()->where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::query()->activeRoster()->where('id', $userId)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $assignment = EmployeeCompensationComponent::query()
@@ -284,7 +293,7 @@ class EmployeeCompensationController extends Controller
             throw (new ModelNotFoundException)->setModel(EmployeeCompensationComponent::class, [$id]);
         }
 
-        $employee = User::query()->where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::query()->activeRoster()->where('id', $userId)->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $assignment = EmployeeCompensationComponent::query()

@@ -41,8 +41,7 @@ class RegularizationController extends Controller
         }
 
         $query = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
+            ->activeRoster()
             ->whereNotNull('hire_date');
 
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
@@ -273,8 +272,7 @@ class RegularizationController extends Controller
             ->values();
 
         $q = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+            ->activeRoster();
         if ($ids->isNotEmpty()) {
             $q->whereIn('id', $ids->all());
         }

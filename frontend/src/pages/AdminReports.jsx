@@ -127,6 +127,7 @@ export default function AdminReports() {
   const [toDate, setToDate] = useState(() => todayIso())
   const [companyId, setCompanyId] = useState('all')
   const [employeeId, setEmployeeId] = useState('all')
+  const [includeDeactivated, setIncludeDeactivated] = useState(false)
   const [filterEmployees, setFilterEmployees] = useState([])
   const [data, setData] = useState({ from_date: '', to_date: '' })
   const [reportError, setReportError] = useState(null)
@@ -156,8 +157,9 @@ export default function AdminReports() {
       to_date: effectiveRange.to,
       company_id: companyId !== 'all' ? Number(companyId) : undefined,
       employee_id: employeeId !== 'all' ? Number(employeeId) : undefined,
+      include_deactivated: includeDeactivated || undefined,
     }),
-    [effectiveRange, companyId, employeeId],
+    [effectiveRange, companyId, employeeId, includeDeactivated],
   )
 
   useEffect(() => {
@@ -167,7 +169,7 @@ export default function AdminReports() {
 
   useEffect(() => {
     setDetailedPage(1)
-  }, [fromDate, toDate, companyId, employeeId, debouncedDetailedSearch])
+  }, [fromDate, toDate, companyId, employeeId, debouncedDetailedSearch, includeDeactivated])
 
   const detailedFetchParams = useMemo(
     () => ({
@@ -188,9 +190,9 @@ export default function AdminReports() {
   })
 
   const filterEmployeesQuery = useQuery({
-    queryKey: ['reports-filter-employees', isEmployeeSelfReport],
+    queryKey: ['reports-filter-employees', isEmployeeSelfReport, includeDeactivated],
     enabled: !isEmployeeSelfReport,
-    queryFn: () => getEmployees({ per_page: 200 }),
+    queryFn: () => getEmployees({ per_page: 200, active_filter: includeDeactivated ? 'all' : 'active' }),
   })
 
   useEffect(() => {
@@ -199,9 +201,9 @@ export default function AdminReports() {
       return undefined
     }
     const list = Array.isArray(filterEmployeesQuery.data?.employees) ? filterEmployeesQuery.data.employees : []
-    const active = list.filter((e) => e.is_active !== false)
+    const active = includeDeactivated ? list : list.filter((e) => e.is_active !== false)
     setFilterEmployees(active)
-  }, [isEmployeeSelfReport, filterEmployeesQuery.data])
+  }, [isEmployeeSelfReport, filterEmployeesQuery.data, includeDeactivated])
 
   useEffect(() => {
     const d = detailedQuery.data
@@ -648,6 +650,18 @@ export default function AdminReports() {
                     </SelectContent>
                   </Select>
                 </div>
+                <label className="flex min-h-9 items-center gap-2 self-end text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={includeDeactivated}
+                    onChange={(event) => {
+                      setIncludeDeactivated(event.target.checked)
+                      setEmployeeId('all')
+                    }}
+                    className="size-4 rounded border-border"
+                  />
+                  Include deactivated employees
+                </label>
               </>
             )}
           </div>

@@ -48,7 +48,7 @@ class DashboardController extends Controller
     {
         $q = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
         if ($onlyActive) {
-            $q->where('is_active', true);
+            $q->active();
         }
         $this->dataScopeService->restrictEmployeeQuery($actor, $q);
 
@@ -239,8 +239,7 @@ class DashboardController extends Controller
         $isHrAdmin = $this->hrRoleResolver->isAdminHrAccount($actor);
 
         $query = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
+            ->activeRoster()
             ->whereNotNull('hire_date')
             ->with(['departmentRelation:id,name,branch_id', 'departmentRelation.branch:id,name', 'branch:id,name']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
@@ -411,8 +410,7 @@ class DashboardController extends Controller
         $role = $this->hrRoleResolver->resolveForApprovalSubject($actor)->value;
 
         $query = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
+            ->activeRoster()
             ->whereNotNull('contract_end_date')
             ->whereDate('contract_end_date', '>=', $from->toDateString())
             ->whereDate('contract_end_date', '<=', $until->toDateString())
@@ -1094,8 +1092,7 @@ class DashboardController extends Controller
     private function departmentAttendanceDistribution(Carbon $today, User $actor): array
     {
         // Active employees in scope, grouped by department for accurate headcount.
-        $activeQuery = User::whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
+        $activeQuery = User::activeRoster()
             ->with(['departmentRelation:id,name,branch_id']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $activeQuery);
         $activeEmployees = $activeQuery->get();
@@ -1158,8 +1155,7 @@ class DashboardController extends Controller
     {
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         $companies = Company::orderBy('name')->get(['id', 'name', 'logo'])->keyBy('id');
-        $activeEmployeesQuery = User::whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true)
+        $activeEmployeesQuery = User::activeRoster()
             ->with(['workingSchedule', 'companyHeadships:id,company_head_id', 'company:id,name', 'branch:id,company_id', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $activeEmployeesQuery);
         $activeEmployees = $activeEmployeesQuery->get();
@@ -1616,7 +1612,7 @@ class DashboardController extends Controller
 
         $scheduledUsers = User::query()
             ->whereIn('id', $scopedActiveUserIds)
-            ->where('is_active', true)
+            ->active()
             ->with(['workingSchedule', 'companyHeadships:id,name,logo,company_head_id', 'company:id,name,logo', 'branch:id,company_id', 'branch.company:id,name,logo', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id', 'departmentRelation.branch.company:id,name,logo'])
             ->get();
 

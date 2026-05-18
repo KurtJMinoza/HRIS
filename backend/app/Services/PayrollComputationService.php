@@ -2034,9 +2034,7 @@ class PayrollComputationService
         $page = max(1, $page);
         $tz = $this->getTimezone();
 
-        $baseEmployeeQuery = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $baseEmployeeQuery = User::query()->activeRoster();
 
         $this->dataScopeService->restrictEmployeeQuery($actor, $baseEmployeeQuery);
 

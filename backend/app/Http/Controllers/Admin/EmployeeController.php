@@ -87,6 +87,13 @@ class EmployeeController extends Controller
         $departmentId = $request->filled('department_id') ? (int) $request->query('department_id') : null;
         $assignableToCompanyId = $request->filled('assignable_to_company_id') ? (int) $request->query('assignable_to_company_id') : null;
         $forDepartmentAssignment = $request->boolean('for_department_assignment', false);
+        $activeFilter = strtolower(trim((string) $request->query('active_filter', $request->query('status_filter', 'active'))));
+        if ($activeFilter === 'inactive') {
+            $activeFilter = 'deactivated';
+        }
+        if (! in_array($activeFilter, ['active', 'deactivated', 'all'], true)) {
+            $activeFilter = 'active';
+        }
         $assignmentBranchId = $request->filled('assignment_branch_id') ? (int) $request->query('assignment_branch_id') : null;
         $employeeScopeOptions = [];
         if ($forDepartmentAssignment && $assignmentBranchId !== null) {
@@ -280,8 +287,9 @@ class EmployeeController extends Controller
 
         if ($forScheduleAssignment || $perPageParam === 'all' || (int) $perPageParam === 0) {
             $buildStart = microtime(true);
-            $query = $applyOrgFilters($applySearch(User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->select($lite ? $liteSelectColumns : $selectColumns)))
+            $query = $applyOrgFilters($applySearch(User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns)))
                 ->orderBy('name');
+            $this->applyActiveFilter($query, $activeFilter);
             $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
             Log::info('AdminEmployees index timing step', [
                 'endpoint' => 'AdminEmployees.index',
@@ -339,8 +347,9 @@ class EmployeeController extends Controller
         $perPage = min($perPage, 100);
 
         $buildStart = microtime(true);
-        $query = $applyOrgFilters($applySearch(User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->select($lite ? $liteSelectColumns : $selectColumns)))
+        $query = $applyOrgFilters($applySearch(User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns)))
             ->orderBy('name');
+        $this->applyActiveFilter($query, $activeFilter);
         if (! $lite) {
             $query->with($fullEagerLoads);
         }
@@ -1583,9 +1592,51 @@ class EmployeeController extends Controller
     public function toggleActive(Request $request, int $id): JsonResponse
     {
         $employee = $this->loadScopedEmployee($request, $id, true);
+        $validated = $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
 
-        $employee->update(['is_active' => ! $employee->is_active]);
+        $previousStatus = [
+            'is_active' => (bool) $employee->is_active,
+            'employment_status' => $employee->employment_status,
+            'deactivated_at' => $employee->deactivated_at?->toIso8601String(),
+        ];
+        $nextActive = ! $employee->isOperationallyActive();
+        $payload = ['is_active' => $nextActive];
+        if ($nextActive) {
+            $payload['deactivated_at'] = null;
+            $payload['deactivated_by'] = null;
+            $payload['deactivation_reason'] = null;
+        } else {
+            $payload['deactivated_at'] = now();
+            $payload['deactivated_by'] = $request->user()?->id;
+            $payload['deactivation_reason'] = $validated['reason'] ?? null;
+        }
+
+        $employee->forceFill($payload)->save();
+        if (! $nextActive) {
+            $employee->tokens()->delete();
+        }
         $employee->refresh();
+
+        UserAdminActivityLog::query()->create([
+            'subject_user_id' => $employee->id,
+            'actor_user_id' => $request->user()?->id,
+            'action' => $employee->isOperationallyActive() ? 'employee_activated' : 'employee_deactivated',
+            'meta' => [
+                'previous_status' => $previousStatus,
+                'new_status' => [
+                    'is_active' => (bool) $employee->is_active,
+                    'employment_status' => $employee->employment_status,
+                    'deactivated_at' => $employee->deactivated_at?->toIso8601String(),
+                ],
+                'reason' => $validated['reason'] ?? null,
+                'affected_user_id' => (int) $employee->id,
+                'affected_employee_id' => (int) $employee->id,
+                'deactivated_by' => $employee->deactivated_by,
+            ],
+            'ip_address' => $request->ip(),
+        ]);
 
         try {
             UpdateEmployeeProfileJob::dispatch((int) $employee->id, false, false)->onQueue('default');
@@ -1597,7 +1648,7 @@ class EmployeeController extends Controller
         }
 
         return response()->json([
-            'message' => $employee->is_active ? 'Employee activated.' : 'Employee deactivated.',
+            'message' => $employee->isOperationallyActive() ? 'Employee activated.' : 'Employee deactivated.',
             'recalculation_queued' => true,
             'employee' => $this->employeeResponse($employee->fresh(), $this->viewerCanSensitive($request->user()), false, false),
         ]);
@@ -2220,7 +2271,10 @@ class EmployeeController extends Controller
             'monthly_rate' => $includeSensitive && $user->monthly_rate ? (float) $user->monthly_rate : null,
             'hourly_rate' => $includeSensitive && $user->hourly_rate !== null ? (string) $user->hourly_rate : null,
             'salary_effectivity_date' => $includeSensitive ? $user->salary_effectivity_date?->toDateString() : null,
-            'is_active' => $user->is_active,
+            'is_active' => (bool) $user->is_active,
+            'active_status' => $user->employment_active_status,
+            'is_deactivated' => $user->isAccountDeactivated(),
+            'deactivated_at' => $user->deactivated_at?->toIso8601String(),
             'created_at' => $user->created_at?->toIso8601String(),
             'updated_at' => $user->updated_at?->toIso8601String(),
             'profile_image' => $user->profile_image_url,
@@ -2642,6 +2696,21 @@ class EmployeeController extends Controller
         ];
     }
 
+    private function applyActiveFilter($query, string $activeFilter): void
+    {
+        if ($activeFilter === 'all') {
+            return;
+        }
+
+        if ($activeFilter === 'deactivated') {
+            $query->deactivated();
+
+            return;
+        }
+
+        $query->active();
+    }
+
     /**
      * Match {@see HrRoleResolver::resolveOrgHierarchyFromAssignments()} priority without N+1 queries per row.
      *
@@ -2756,6 +2825,9 @@ class EmployeeController extends Controller
             'hourly_rate' => $includeSensitive && $user->hourly_rate !== null ? (string) $user->hourly_rate : null,
             'salary_effectivity_date' => $includeSensitive ? $user->salary_effectivity_date?->toDateString() : null,
             'is_active' => (bool) $user->is_active,
+            'active_status' => $user->employment_active_status,
+            'is_deactivated' => $user->isAccountDeactivated(),
+            'deactivated_at' => $user->deactivated_at?->toIso8601String(),
             'created_at' => $user->created_at?->toIso8601String(),
             'updated_at' => $user->updated_at?->toIso8601String(),
             'profile_image' => $user->profile_image_url,

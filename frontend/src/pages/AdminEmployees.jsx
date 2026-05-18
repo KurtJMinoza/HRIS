@@ -162,10 +162,13 @@ function normalizeEmployeeFlags(employee) {
   if (!employee || typeof employee !== 'object') return employee
   const faceStatus = String(employee.face_status ?? '').trim().toLowerCase()
   const hasFace = toBooleanLike(employee.has_face) || faceStatus === 'registered'
+  const deactivated =
+    toBooleanLike(employee.is_deactivated)
+    || String(employee.active_status || employee.employment_active_status || '').toLowerCase() === 'deactivated'
   return {
     ...employee,
     has_face: hasFace,
-    is_active: toBooleanLike(employee.is_active),
+    is_active: !deactivated && toBooleanLike(employee.is_active),
   }
 }
 
@@ -229,7 +232,7 @@ export default function AdminEmployees() {
   const didInitialEmployeeLoadRef = useRef(false)
   /** Company id (string) or '' for all — passed to API as company_id */
   const [filterCompany, setFilterCompany] = useState('')
-  const [filterStatus, setFilterStatus] = useState('')
+  const [filterStatus, setFilterStatus] = useState('active')
   const [filterSchedule, setFilterSchedule] = useState('')
   const [filterFace, setFilterFace] = useState('')
   const [sortBy, setSortBy] = useState('')
@@ -333,7 +336,7 @@ export default function AdminEmployees() {
   const [manageFaceOpen, setManageFaceOpen] = useState(false)
   const [manageFaceEmployee, setManageFaceEmployee] = useState(null)
   const hasClientSideFilters = Boolean(
-    searchQuery.trim() || filterStatus || filterSchedule || filterFace
+    searchQuery.trim() || filterSchedule || filterFace
   )
   const listPerPage = hasClientSideFilters ? 1000 : 20
   const listPage = hasClientSideFilters ? 1 : page
@@ -349,7 +352,7 @@ export default function AdminEmployees() {
   }, [location.pathname, hrBase])
 
   const employeesQuery = useQuery({
-    queryKey: ['admin-employees-list', { page: listPage, perPage: listPerPage, q: debouncedSearchQuery, companyId: filterCompany || '' }],
+    queryKey: ['admin-employees-list', { page: listPage, perPage: listPerPage, q: debouncedSearchQuery, companyId: filterCompany || '', activeFilter: filterStatus }],
     queryFn: () =>
       getEmployees({
         lite: true,
@@ -357,6 +360,7 @@ export default function AdminEmployees() {
         per_page: listPerPage,
         q: debouncedSearchQuery || undefined,
         company_id: filterCompany || undefined,
+        active_filter: filterStatus || 'active',
       }),
     staleTime: 60 * 1000,
     gcTime: 2 * 60 * 1000,
@@ -829,7 +833,7 @@ export default function AdminEmployees() {
         if (!haystack.includes(normalizedSearchQuery)) return false
       }
       if (filterStatus === 'active' && !emp.is_active) return false
-      if (filterStatus === 'inactive' && emp.is_active) return false
+      if (filterStatus === 'deactivated' && emp.is_active) return false
       const hasSchedule = hasAssignedSchedule(emp)
       if (filterSchedule === 'scheduled' && !hasSchedule) return false
       if (filterSchedule === 'unscheduled' && hasSchedule) return false
@@ -1022,7 +1026,7 @@ export default function AdminEmployees() {
     if (targets.length === 0) {
       toast({
         title: 'Nothing to deactivate',
-        description: 'All selected employees are already inactive.',
+        description: 'All selected employees are already deactivated.',
         variant: 'default',
       })
       return
@@ -1543,7 +1547,7 @@ export default function AdminEmployees() {
                   <div className="flex flex-wrap items-center gap-2.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Filter:</span>
 
-                    {/* Company — neutral chip styling (matches Status/Inactive); avoids sky-on-sky + native option contrast issues */}
+                    {/* Company — neutral chip styling (matches status chips); avoids sky-on-sky + native option contrast issues */}
                     <div className="relative inline-flex items-center">
                       <select
                         value={filterCompany}
@@ -1575,7 +1579,7 @@ export default function AdminEmployees() {
                     </div>
 
                     {/* Status chips */}
-                    {[{ val: 'active', label: 'Active', color: 'emerald' }, { val: 'inactive', label: 'Inactive', color: 'zinc' }].map(({ val, label, color }) => (
+                    {[{ val: 'active', label: 'Active', color: 'emerald' }, { val: 'deactivated', label: 'Deactivated', color: 'zinc' }, { val: 'all', label: 'All', color: 'blue' }].map(({ val, label, color }) => (
                       <button
                         key={val}
                         type="button"
@@ -1957,7 +1961,7 @@ export default function AdminEmployees() {
                             </div>
                           </td>
 
-                          {/* Status — green dot (Active) / gray (Inactive) */}
+                          {/* Status — green dot (Active) / gray (Deactivated) */}
                           <td className="px-4 align-middle">
                             {emp.is_active ? (
                               <div className="inline-flex items-center gap-1.5">
@@ -1967,7 +1971,7 @@ export default function AdminEmployees() {
                             ) : (
                               <div className="inline-flex items-center gap-1.5">
                                 <span className="size-2 rounded-full bg-gray-400/60 dark:bg-gray-500/60 shrink-0" />
-                                <span className="text-[12px] text-gray-500 dark:text-gray-400">Inactive</span>
+                                <span className="text-[12px] text-gray-500 dark:text-gray-400">Deactivated</span>
                               </div>
                             )}
                           </td>
@@ -2964,7 +2968,7 @@ export default function AdminEmployees() {
                   <p className="text-muted-foreground">Email: {previewEmployee?.email || '—'}</p>
                   <p className="text-muted-foreground">Phone: {previewEmployee?.phone_number || '—'}</p>
                   <p className={previewEmployee?.is_active ? 'font-medium text-emerald-600 dark:text-emerald-500' : 'font-medium text-muted-foreground'}>
-                    Status: {previewEmployee?.is_active ? 'Active' : 'Inactive'}
+                    Status: {previewEmployee?.is_active ? 'Active' : 'Deactivated'}
                   </p>
                 </div>
               </div>

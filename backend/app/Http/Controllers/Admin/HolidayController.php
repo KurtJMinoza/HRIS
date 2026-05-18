@@ -841,9 +841,7 @@ class HolidayController extends Controller
      */
     private function employeesForHolidayScope(array $holiday): \Illuminate\Database\Eloquent\Builder
     {
-        $query = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('is_active', true);
+        $query = User::query()->activeRoster();
 
         $coverageType = $holiday['coverage_type'] ?? null;
         $coverageIds = $holiday['coverage_ids'] ?? [];
