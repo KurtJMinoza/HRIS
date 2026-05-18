@@ -38,10 +38,14 @@ import {
   LayoutList,
   Building2,
   X,
+  Cake,
+  Calendar,
+  Search,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -59,6 +63,7 @@ import {
   getAdminOvertime,
   getAdminPresenceFilings,
   profileImageUrl,
+  userProfileImageSrc,
   companyLogoUrl,
   submitRegularizationRecommendation,
   approveRegularizationRecommendation,
@@ -295,6 +300,76 @@ function formatEmploymentTypeLabel(raw) {
   return words.map((w) => w.slice(0, 1).toUpperCase() + w.slice(1)).join(' ')
 }
 
+function birthdayBadgeLabel(days, monthView = false) {
+  const n = Number(days)
+  if (!Number.isFinite(n) || n <= 0) return 'Today'
+  if (monthView && n > 31) return 'Birthday passed'
+  if (n === 1) return 'Tomorrow'
+  if (n === 7) return 'In 1 week'
+  if (n > 7 && n % 7 === 0) return `In ${n / 7} weeks`
+  return `In ${n} days`
+}
+
+function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, onOpen }) {
+  const name = person?.full_name || 'Employee'
+  const days = Number(person?.days_until_birthday ?? 0)
+  const birthdayAlreadyPassed = monthView && days > 31
+  const daysLabel = birthdayAlreadyPassed
+    ? 'Birthday already passed'
+    : days <= 0
+      ? '0 days remaining'
+      : `${days} day${days === 1 ? '' : 's'} remaining`
+  const badgeClass =
+    person?.is_today || tone === 'today'
+      ? 'border-brand/35 bg-brand/10 text-brand'
+      : birthdayAlreadyPassed
+        ? 'border-border/80 bg-muted/30 text-muted-foreground'
+        : days <= 7
+        ? 'border-brand/25 bg-brand/8 text-brand'
+        : 'border-brand/20 bg-background/80 text-brand'
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="admin-birthday-person group flex min-h-30 w-full items-start gap-3 rounded-lg border border-border/70 bg-background/70 px-3.5 py-3 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/35 hover:bg-card hover:shadow-md @md:min-h-32 @md:gap-4 @md:px-4"
+    >
+      <Avatar className="h-11 w-11 shrink-0 border border-brand/10 bg-brand/8 text-brand @md:h-12 @md:w-12">
+        <AvatarImage src={userProfileImageSrc(person)} alt="" className="object-cover" />
+        <AvatarFallback className="bg-brand/8 text-sm font-extrabold text-brand @md:text-base">
+          {String(name).slice(0, 1).toUpperCase()}
+        </AvatarFallback>
+      </Avatar>
+      <div className="flex min-w-0 flex-1 flex-col self-stretch">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="line-clamp-1 text-sm font-extrabold leading-snug text-foreground group-hover:text-brand @md:text-[15px]">
+              {name}
+            </p>
+            <p className="mt-1 line-clamp-2 text-[11px] font-medium uppercase leading-relaxed tracking-wide text-muted-foreground @md:text-xs">
+              {person?.department || 'Unassigned'} / {person?.position || 'Unassigned'}
+            </p>
+          </div>
+          <span className={cn('shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-bold @md:px-3 @md:text-xs', badgeClass)}>
+            {birthdayBadgeLabel(days, monthView)}
+          </span>
+        </div>
+        <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-4 text-[11px] font-medium text-muted-foreground @md:text-xs">
+          <span className="inline-flex items-center gap-1.5">
+            <Cake className="size-3.5 text-brand" aria-hidden />
+            Birthday: <span className="font-extrabold text-brand">{person?.birth_date_formatted || '-'}</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Calendar className="size-3.5 text-brand" aria-hidden />
+            <span className="text-foreground/80">{person?.day_name || '-'}</span>
+          </span>
+          <span className="text-foreground/80">{daysLabel}</span>
+        </div>
+      </div>
+    </button>
+  )
+}
+
 export default function AdminDashboard() {
   const { user, loading: authLoading } = useAuth()
   const perms = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
@@ -343,6 +418,8 @@ export default function AdminDashboard() {
   const [halfDayList, setHalfDayList] = useState(null)
   const [halfDayListLoading, setHalfDayListLoading] = useState(false)
   const [regularizationActionById, setRegularizationActionById] = useState({})
+  const [birthdayTab, setBirthdayTab] = useState('month')
+  const [birthdaySearch, setBirthdaySearch] = useState('')
   const navigate = useNavigate()
   const hrBase = useHrBasePath()
 
@@ -707,6 +784,36 @@ export default function AdminDashboard() {
     ? data.upcoming_regularizations
     : []
   const expiringContracts = Array.isArray(data?.expiring_contracts) ? data.expiring_contracts : []
+  const todayBirthdays = Array.isArray(data?.today_birthdays) ? data.today_birthdays : []
+  const currentMonthBirthdays = Array.isArray(data?.current_month_birthdays) ? data.current_month_birthdays : []
+  const upcomingBirthdays = Array.isArray(data?.upcoming_30_days)
+    ? data.upcoming_30_days
+    : Array.isArray(data?.upcoming_birthdays)
+      ? data.upcoming_birthdays
+      : []
+  const upcomingBirthdays90 = Array.isArray(data?.upcoming_90_days)
+    ? data.upcoming_90_days
+    : Array.isArray(data?.upcoming_birthdays_90)
+      ? data.upcoming_birthdays_90
+      : []
+  const birthdayMonthLabel = data?.birthday_month_label || 'This Month'
+  const birthdayMonthRangeLabel = data?.birthday_month_range_label || ''
+  const birthdayRowsForTab =
+    birthdayTab === 'upcoming90'
+      ? upcomingBirthdays90
+      : birthdayTab === 'upcoming30'
+        ? upcomingBirthdays
+        : currentMonthBirthdays
+  const birthdaySearchTerm = birthdaySearch.trim().toLowerCase()
+  const visibleBirthdayRows = birthdaySearchTerm
+    ? birthdayRowsForTab.filter((person) => [
+        person?.full_name,
+        person?.department,
+        person?.position,
+        person?.birth_date_formatted,
+        person?.day_name,
+      ].some((value) => String(value || '').toLowerCase().includes(birthdaySearchTerm)))
+    : birthdayRowsForTab
   const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
     ? Number(
         attendanceCorrectionsPendingQuery.data?.presence_filings?.length
@@ -1394,6 +1501,150 @@ export default function AdminDashboard() {
           />
         </Motion.div>
       </Motion.div>
+
+      {isHrAdmin ? (
+        <Motion.div
+          className="mt-3"
+          variants={containerVariants}
+          initial="hidden"
+          whileInView="visible"
+          viewport={scrollViewport}
+          transition={scrollRevealTransition}
+        >
+          <Motion.div variants={itemVariants}>
+            <Card className="admin-birthday-dashboard admin-dashboard-card overflow-hidden rounded-[1.25rem] py-0">
+              <CardHeader className="border-b border-border/70 px-5 py-7 @md:px-8 @xl:py-9">
+                <div className="flex flex-col gap-6 @xl:flex-row @xl:items-start @xl:justify-between">
+                  <div className="min-w-0">
+                    <CardTitle className="flex min-w-0 flex-wrap items-center gap-3 text-2xl font-extrabold tracking-tight text-foreground">
+                      <Cake className="size-9 shrink-0 text-brand" strokeWidth={2.4} aria-hidden="true" />
+                      <span>Employee Birthdays</span>
+                    </CardTitle>
+                    <CardDescription className="mt-3 max-w-2xl text-base leading-relaxed text-muted-foreground">
+                      Track today, this month, and upcoming birthdays.
+                      {birthdayMonthRangeLabel ? ` ${birthdayMonthLabel}: ${birthdayMonthRangeLabel}.` : ''}
+                    </CardDescription>
+                  </div>
+                  <div className="grid w-full grid-cols-1 gap-3 @sm:grid-cols-3 @xl:w-auto">
+                    <div className="admin-birthday-stat admin-birthday-stat--active rounded-lg border border-brand/25 bg-brand/5 px-5 py-4">
+                      <p className="flex items-center gap-3 text-sm font-extrabold uppercase tracking-wide text-brand">
+                        <Calendar className="size-5" aria-hidden />
+                        Today
+                      </p>
+                      <p className="mt-4 text-4xl font-extrabold leading-none text-brand">
+                        {todayBirthdays.length}
+                      </p>
+                    </div>
+                    <div className="admin-birthday-stat rounded-lg border border-border/70 bg-background/70 px-5 py-4">
+                      <p className="flex items-center gap-3 text-sm font-extrabold uppercase tracking-wide text-foreground">
+                        <CalendarDays className="size-5 text-muted-foreground" aria-hidden />
+                        Month
+                      </p>
+                      <p className="mt-4 text-4xl font-extrabold leading-none text-foreground">
+                        {currentMonthBirthdays.length}
+                      </p>
+                    </div>
+                    <div className="admin-birthday-stat rounded-lg border border-border/70 bg-background/70 px-5 py-4">
+                      <p className="flex items-center gap-3 text-sm font-extrabold uppercase tracking-wide text-foreground">
+                        <Cake className="size-5 text-muted-foreground" aria-hidden />
+                        90 Days
+                      </p>
+                      <p className="mt-4 text-4xl font-extrabold leading-none text-brand">
+                        {upcomingBirthdays90.length}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="px-5 py-7 @md:px-8">
+                <Tabs value={birthdayTab} onValueChange={setBirthdayTab} className="gap-6">
+                  <div className="flex flex-col gap-4 @xl:flex-row @xl:items-center @xl:justify-between">
+                    <TabsList className="admin-birthday-tabs grid h-auto w-full grid-cols-3 gap-1 overflow-visible rounded-lg border border-border/70 bg-muted/25 p-1 @xl:max-w-2xl">
+                      <TabsTrigger value="month" className="min-h-11 min-w-0 rounded-md px-2 text-xs font-bold data-[state=active]:border data-[state=active]:border-brand/35 data-[state=active]:bg-background data-[state=active]:text-brand data-[state=active]:shadow-sm @md:px-5 @md:text-sm">
+                        This Month
+                      </TabsTrigger>
+                      <TabsTrigger value="upcoming30" className="min-h-11 min-w-0 rounded-md px-2 text-xs font-bold data-[state=active]:border data-[state=active]:border-brand/35 data-[state=active]:bg-background data-[state=active]:text-brand data-[state=active]:shadow-sm @md:px-5 @md:text-sm">
+                        Upcoming 30 Days
+                      </TabsTrigger>
+                      <TabsTrigger value="upcoming90" className="min-h-11 min-w-0 rounded-md px-2 text-xs font-bold data-[state=active]:border data-[state=active]:border-brand/35 data-[state=active]:bg-background data-[state=active]:text-brand data-[state=active]:shadow-sm @md:px-5 @md:text-sm">
+                        Upcoming 90 Days
+                      </TabsTrigger>
+                    </TabsList>
+                    <div className="relative w-full @xl:max-w-md">
+                      <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-foreground/80" aria-hidden />
+                      <input
+                        type="search"
+                        value={birthdaySearch}
+                        onChange={(event) => setBirthdaySearch(event.target.value)}
+                        placeholder="Search birthdays..."
+                        className="admin-birthday-search h-14 w-full rounded-lg border border-border/70 bg-background/75 pl-12 pr-4 text-base text-foreground shadow-sm outline-none transition placeholder:text-muted-foreground focus:border-brand/45 focus:ring-2 focus:ring-brand/15"
+                      />
+                    </div>
+                  </div>
+
+                  <TabsContent value="month" className="mt-0">
+                    {visibleBirthdayRows.length === 0 ? (
+                      <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
+                        No birthdays found for this period.
+                      </div>
+                    ) : (
+                      <div className="admin-birthday-grid grid max-h-[520px] gap-3 overflow-y-auto pr-1 @lg:grid-cols-2 @3xl:grid-cols-3">
+                        {visibleBirthdayRows.map((person) => (
+                          <BirthdayPersonRow
+                            key={`month-${person.employee_id}`}
+                            person={person}
+                            tone={Number(person.days_until_birthday) === 0 ? 'today' : 'upcoming'}
+                            monthView
+                            onOpen={() => navigate(hrPanelPath(hrBase, `employees/${person.employee_id}`))}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="upcoming30" className="mt-0">
+                    {visibleBirthdayRows.length === 0 ? (
+                      <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
+                        No birthdays found for this period.
+                      </div>
+                    ) : (
+                      <div className="admin-birthday-grid grid max-h-[520px] gap-3 overflow-y-auto pr-1 @lg:grid-cols-2 @3xl:grid-cols-3">
+                        {visibleBirthdayRows.map((person) => (
+                          <BirthdayPersonRow
+                            key={`upcoming30-${person.employee_id}`}
+                            person={person}
+                            tone={Number(person.days_until_birthday) === 0 ? 'today' : 'upcoming'}
+                            onOpen={() => navigate(hrPanelPath(hrBase, `employees/${person.employee_id}`))}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="upcoming90" className="mt-0">
+                    {visibleBirthdayRows.length === 0 ? (
+                      <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
+                        No birthdays found for this period.
+                      </div>
+                    ) : (
+                      <div className="admin-birthday-grid grid max-h-[520px] gap-3 overflow-y-auto pr-1 @lg:grid-cols-2 @3xl:grid-cols-3">
+                        {visibleBirthdayRows.map((person) => (
+                          <BirthdayPersonRow
+                            key={`upcoming90-${person.employee_id}`}
+                            person={person}
+                            tone={Number(person.days_until_birthday) === 0 ? 'today' : 'upcoming'}
+                            onOpen={() => navigate(hrPanelPath(hrBase, `employees/${person.employee_id}`))}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
+          </Motion.div>
+        </Motion.div>
+      ) : null}
 
       <Motion.div
         className="grid items-stretch gap-5 @xl:grid-cols-3"
@@ -2701,6 +2952,63 @@ export default function AdminDashboard() {
           box-shadow:
             0 1px 0 rgba(255, 255, 255, 0.04),
             0 22px 52px rgba(0, 0, 0, 0.38);
+        }
+        .admin-birthday-dashboard {
+          background:
+            linear-gradient(180deg, color-mix(in oklab, var(--card) 98%, transparent), color-mix(in oklab, var(--card) 94%, transparent));
+        }
+        .admin-birthday-stat {
+          min-width: min(100%, 10rem);
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.045);
+        }
+        .admin-birthday-stat--active {
+          box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.55),
+            0 14px 34px rgba(249, 115, 22, 0.11);
+        }
+        .admin-birthday-tabs {
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+          overflow: visible;
+        }
+        .admin-birthday-tabs [data-slot='tabs-trigger']::after {
+          display: none;
+        }
+        .admin-birthday-tabs [data-slot='tabs-trigger'] {
+          width: 100%;
+          white-space: normal;
+          line-height: 1.15;
+        }
+        .admin-birthday-search {
+          color-scheme: light;
+        }
+        .admin-birthday-person {
+          background:
+            linear-gradient(180deg, color-mix(in oklab, var(--background) 82%, var(--card) 18%), color-mix(in oklab, var(--card) 94%, transparent));
+        }
+        .admin-birthday-grid {
+          scrollbar-width: thin;
+          scrollbar-color: color-mix(in oklab, var(--brand) 46%, transparent) transparent;
+        }
+        .dark .admin-birthday-dashboard {
+          background:
+            linear-gradient(180deg, color-mix(in oklab, var(--card) 94%, transparent), color-mix(in oklab, var(--background) 82%, var(--card) 18%));
+        }
+        .dark .admin-birthday-stat,
+        .dark .admin-birthday-tabs,
+        .dark .admin-birthday-search,
+        .dark .admin-birthday-person {
+          border-color: var(--border);
+          background-color: color-mix(in oklab, var(--card) 88%, transparent);
+          box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.035),
+            0 16px 38px rgba(0, 0, 0, 0.22);
+        }
+        .dark .admin-birthday-stat--active {
+          border-color: color-mix(in oklab, var(--brand) 38%, var(--border));
+          background-color: color-mix(in oklab, var(--brand) 10%, var(--card));
+        }
+        .dark .admin-birthday-search {
+          color-scheme: dark;
         }
         /* ── Recharts tooltip: transparent wrapper, themed inner ── */
         .recharts-tooltip-wrapper,

@@ -99,4 +99,108 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             Carbon::setTestNow();
         }
     }
+
+    public function test_admin_dashboard_returns_today_and_upcoming_birthdays_for_active_employees(): void
+    {
+        Config::set('attendance.timezone', 'Asia/Manila');
+        Carbon::setTestNow(Carbon::parse('2026-05-18 09:00:00', 'Asia/Manila'));
+
+        $admin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+            'date_of_birth' => null,
+        ]);
+        $todayBirthday = User::factory()->create([
+            'name' => 'Today Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'department' => 'Operations',
+            'position' => 'Coordinator',
+            'date_of_birth' => '1994-05-18',
+        ]);
+        $upcomingBirthday = User::factory()->create([
+            'name' => 'Upcoming Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'department' => 'Finance',
+            'position' => 'Analyst',
+            'date_of_birth' => '1992-06-01',
+        ]);
+        $monthStartBirthday = User::factory()->create([
+            'name' => 'Month Start Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1988-05-01',
+        ]);
+        $monthEndBirthday = User::factory()->create([
+            'name' => 'Month End Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1989-05-31',
+        ]);
+        User::factory()->create([
+            'name' => 'Deactivated Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => false,
+            'date_of_birth' => '1990-05-18',
+        ]);
+
+        try {
+            $response = $this->actingAs($admin)->getJson('/api/admin/dashboard');
+
+            $response->assertOk();
+            $todayRows = collect($response->json('today_birthdays'));
+            $monthRows = collect($response->json('current_month_birthdays'));
+            $upcomingRows = collect($response->json('upcoming_30_days'));
+            $upcoming90Rows = collect($response->json('upcoming_90_days'));
+
+            $this->assertTrue($todayRows->contains('employee_id', $todayBirthday->id));
+            $this->assertSame(0, $todayRows->firstWhere('employee_id', $todayBirthday->id)['days_until_birthday']);
+            $this->assertTrue((bool) $todayRows->firstWhere('employee_id', $todayBirthday->id)['is_today']);
+            $this->assertSame('05-18', $todayRows->firstWhere('employee_id', $todayBirthday->id)['birthday_month_day']);
+            $this->assertSame('Monday', $todayRows->firstWhere('employee_id', $todayBirthday->id)['day_name']);
+            $this->assertTrue($monthRows->contains('employee_id', $todayBirthday->id));
+            $this->assertTrue($monthRows->contains('employee_id', $monthStartBirthday->id));
+            $this->assertTrue($monthRows->contains('employee_id', $monthEndBirthday->id));
+            $this->assertSame($monthStartBirthday->id, $monthRows->first()['employee_id']);
+            $this->assertSame($monthEndBirthday->id, $monthRows->last()['employee_id']);
+            $this->assertTrue($upcomingRows->contains('employee_id', $todayBirthday->id));
+            $this->assertTrue($upcomingRows->contains('employee_id', $upcomingBirthday->id));
+            $this->assertSame(14, $upcomingRows->firstWhere('employee_id', $upcomingBirthday->id)['days_until_birthday']);
+            $this->assertTrue($upcoming90Rows->contains('employee_id', $upcomingBirthday->id));
+            $this->assertFalse($todayRows->contains('full_name', 'Deactivated Celebrant'));
+            $this->assertFalse($upcomingRows->contains('full_name', 'Deactivated Celebrant'));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_admin_dashboard_returns_empty_birthday_lists_when_none_are_in_range(): void
+    {
+        Config::set('attendance.timezone', 'Asia/Manila');
+        Carbon::setTestNow(Carbon::parse('2026-05-18 09:00:00', 'Asia/Manila'));
+
+        $admin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+            'date_of_birth' => null,
+        ]);
+        User::factory()->create([
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1991-10-10',
+        ]);
+
+        try {
+            $response = $this->actingAs($admin)->getJson('/api/admin/dashboard');
+
+            $response->assertOk()
+                ->assertJsonPath('today_birthdays', [])
+                ->assertJsonPath('current_month_birthdays', [])
+                ->assertJsonPath('upcoming_30_days', [])
+                ->assertJsonPath('upcoming_90_days', []);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
 }

@@ -1269,6 +1269,14 @@ export async function getDashboardData() {
     today_logs: Array.isArray(raw.today_logs) ? raw.today_logs : [],
     half_day_summary: raw.half_day_summary ?? { am_today: 0, pm_today: 0, total_today: 0, total_workforce: 0 },
     today_leaves: Array.isArray(raw.today_leaves) ? raw.today_leaves : [],
+    today_birthdays: Array.isArray(raw.today_birthdays) ? raw.today_birthdays : [],
+    current_month_birthdays: Array.isArray(raw.current_month_birthdays) ? raw.current_month_birthdays : [],
+    upcoming_30_days: Array.isArray(raw.upcoming_30_days) ? raw.upcoming_30_days : (Array.isArray(raw.upcoming_birthdays) ? raw.upcoming_birthdays : []),
+    upcoming_90_days: Array.isArray(raw.upcoming_90_days) ? raw.upcoming_90_days : (Array.isArray(raw.upcoming_birthdays_90) ? raw.upcoming_birthdays_90 : []),
+    upcoming_birthdays: Array.isArray(raw.upcoming_birthdays) ? raw.upcoming_birthdays : (Array.isArray(raw.upcoming_30_days) ? raw.upcoming_30_days : []),
+    upcoming_birthdays_90: Array.isArray(raw.upcoming_birthdays_90) ? raw.upcoming_birthdays_90 : (Array.isArray(raw.upcoming_90_days) ? raw.upcoming_90_days : []),
+    birthday_month_label: raw.birthday_month_label ?? '',
+    birthday_month_range_label: raw.birthday_month_range_label ?? '',
     // Widget payloads (required by dashboard cards).
     upcoming_regularizations: Array.isArray(raw.upcoming_regularizations) ? raw.upcoming_regularizations : [],
     expiring_contracts: Array.isArray(raw.expiring_contracts) ? raw.expiring_contracts : [],
@@ -1853,6 +1861,10 @@ export async function adminGeneratePayslips(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    // Small/medium batches may still run synchronously on the backend. Keep this
+    // above PHP/server timeouts used locally so the UI does not fail while the
+    // payslip rows are still being written successfully.
+    timeoutMs: 180000,
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to generate payslips')
