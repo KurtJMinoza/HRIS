@@ -42,7 +42,8 @@ class RegularizationController extends Controller
 
         $query = User::query()
             ->activeRoster()
-            ->whereNotNull('hire_date');
+            ->whereNotNull('hire_date')
+            ->orderByLastName();
 
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
 
@@ -278,7 +279,7 @@ class RegularizationController extends Controller
         }
         $this->dataScopeService->restrictEmployeeQuery($actor, $q);
 
-        $employees = $q->get(['id', 'name']);
+        $employees = $q->orderByLastName()->get(['id', 'name']);
         $rows = $employees->map(function (User $employee) {
             return [
                 'user_id' => $employee->id,

@@ -61,7 +61,10 @@ class GenerateDetailedReportCsvJob implements ShouldQueue
                     'pb.total_pay',
                 ])
                 ->orderBy('pb.date')
-                ->orderBy('u.name')
+                ->orderBy('u.last_name')
+                ->orderBy('u.first_name')
+                ->orderBy('u.middle_name')
+                ->orderBy('u.id')
                 ->get();
 
             $filename = 'reports/detailed/export_'.$run->id.'_'.Carbon::now()->format('Ymd_His').'.csv';

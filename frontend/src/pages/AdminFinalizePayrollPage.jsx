@@ -27,6 +27,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
+import { compareEmployeesByLastName } from '@/lib/employeeSort'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -468,9 +469,7 @@ export default function AdminFinalizePayrollPage() {
   const selectedCompanyLogo = companyLogoUrl(selectedCompany)
 
   const pageRows = useMemo(() => {
-    return [...employees].sort((a, b) =>
-      String(a?.name || '').localeCompare(String(b?.name || ''))
-    )
+    return [...employees].sort(compareEmployeesByLastName)
   }, [employees])
   const pagination = preview?.pagination ?? { page: 1, per_page: pageSize, total: pageRows.length, last_page: 1 }
   const pageCount = Math.max(1, Number(pagination.last_page || 1))

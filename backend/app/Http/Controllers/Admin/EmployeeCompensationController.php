@@ -59,7 +59,7 @@ class EmployeeCompensationController extends Controller
         $employees = User::query()
             ->whereIn('id', $employeeIds)
             ->roster()
-            ->orderBy('name')
+            ->orderByLastName()
             ->get();
 
         $asOf = isset($validated['as_of_date']) ? Carbon::parse($validated['as_of_date'])->toDateString() : now()->toDateString();

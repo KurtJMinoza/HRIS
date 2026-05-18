@@ -25,6 +25,7 @@ import { TableBodySkeleton } from '@/components/skeletons'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdminHrUser } from '@/lib/hrRoutes'
 import { displayAttendanceTime, formatDayName } from '@/components/attendance/attendanceRecordUtils'
+import { compareEmployeesByLastName } from '@/lib/employeeSort'
 
 export { AttendanceStatusBadge }
 
@@ -114,12 +115,20 @@ function dedupeDetailedReportRows(rows, employeeId, employeesOptions) {
     })
   }
   const seen = new Set()
-  return list.filter((row) => {
+  const out = list.filter((row) => {
     const key = `${row.employee_id ?? row.id}|${row.date || ''}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
   })
+  out.sort((a, b) => {
+    const byEmp = String(a.employee_sort_key || '').localeCompare(String(b.employee_sort_key || ''), undefined, {
+      sensitivity: 'base',
+    })
+    if (byEmp !== 0) return byEmp
+    return String(a.date || '').localeCompare(String(b.date || ''), undefined, { sensitivity: 'base' })
+  })
+  return out
 }
 
 export default function AdminReports() {
@@ -251,9 +260,15 @@ export default function AdminReports() {
         ? filterEmployees
         : filterEmployees.filter((e) => String(e.company_id ?? '') === String(companyId))
     return [...source]
-      .map((e) => ({ id: e.id, name: e.name || '' }))
+      .map((e) => ({
+        id: e.id,
+        name: e.name || '',
+        last_name: e.last_name,
+        first_name: e.first_name,
+        middle_name: e.middle_name,
+      }))
       .filter((e) => e.id != null && e.name !== undefined)
-      .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+      .sort(compareEmployeesByLastName)
   }, [filterEmployees, companyId])
 
   const periodLabel =

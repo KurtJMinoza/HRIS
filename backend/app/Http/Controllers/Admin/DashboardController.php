@@ -243,7 +243,7 @@ class DashboardController extends Controller
             ->whereNotNull('hire_date')
             ->with(['departmentRelation:id,name,branch_id', 'departmentRelation.branch:id,name', 'branch:id,name']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
-        $employees = $query->get();
+        $employees = $query->orderByLastName()->get();
         if ($employees->isEmpty()) {
             return [];
         }
@@ -390,12 +390,17 @@ class DashboardController extends Controller
                         && ($recommendation === null || $recommendation->status === RegularizationRecommendation::STATUS_REJECTED),
                     'can_review_approve' => $isHrAdmin && $recommendation !== null && $recommendation->status === RegularizationRecommendation::STATUS_PENDING,
                 ],
+                '__sort' => $employee->employeeListingSortKey(),
             ];
         })->filter()->sortBy([
             ['is_within_30_days', 'desc'],
             ['days_remaining', 'asc'],
-            ['name', 'asc'],
-        ])->values();
+            ['__sort', 'asc'],
+        ])->map(function (array $row) {
+            unset($row['__sort']);
+
+            return $row;
+        })->values();
 
         return $rows->take($limit)->all();
     }
@@ -421,7 +426,7 @@ class DashboardController extends Controller
             ->with(['departmentRelation:id,name,branch_id', 'departmentRelation.branch:id,name', 'branch:id,name']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
 
-        $rows = $query->get()->map(function (User $employee) use ($today, $role) {
+        $rows = $query->orderByLastName()->get()->map(function (User $employee) use ($today, $role) {
             $endDate = $employee->contract_end_date?->copy()->startOfDay();
             if (! $endDate) {
                 return null;
@@ -491,11 +496,16 @@ class DashboardController extends Controller
                     'can_review_contract' => in_array($role, ['admin_hr', 'company_head', 'branch_head', 'department_head'], true),
                     'review_button_label' => $buttonLabel,
                 ],
+                '__sort' => $employee->employeeListingSortKey(),
             ];
         })->filter()->sortBy([
             ['days_remaining', 'asc'],
-            ['name', 'asc'],
-        ])->values();
+            ['__sort', 'asc'],
+        ])->map(function (array $row) {
+            unset($row['__sort']);
+
+            return $row;
+        })->values();
 
         return $rows->take($limit)->all();
     }
@@ -963,7 +973,7 @@ class DashboardController extends Controller
         }
         $rows = $query
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'department', 'department_id', 'position', 'profile_image')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'department', 'department_id', 'position', 'profile_image')
                     ->with(['departmentRelation:id,name']);
             }])
             ->orderBy('start_date')
@@ -990,6 +1000,7 @@ class DashboardController extends Controller
                 'leave_request_id' => $leave->id,
                 'user_id' => $user->id,
                 'employee_name' => $user->name ?? '—',
+                'employee_sort_key' => $user->employeeListingSortKey(),
                 'leave_type' => $leaveType,
                 'duration_label' => $durationLabel,
                 'department' => $user->departmentRelation?->name ?? $user->department ?? null,
@@ -1001,7 +1012,7 @@ class DashboardController extends Controller
             ];
         }
 
-        usort($items, fn (array $a, array $b) => strcmp((string) $a['employee_name'], (string) $b['employee_name']));
+        usort($items, fn (array $a, array $b) => strcmp((string) ($a['employee_sort_key'] ?? ''), (string) ($b['employee_sort_key'] ?? '')));
 
         return $items;
     }
@@ -1033,7 +1044,7 @@ class DashboardController extends Controller
         }
         $leaveRequests = $leaveRequestsQuery
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'department', 'department_id', 'company_id', 'branch_id', 'profile_image')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'department', 'department_id', 'company_id', 'branch_id', 'profile_image')
                     ->with(['company:id,name', 'branch:id,name,company_id', 'branch.company:id,name', 'departmentRelation:id,name,branch_id', 'departmentRelation.branch:id,name']);
             }])
             ->orderBy('half_type')
@@ -1073,12 +1084,15 @@ class DashboardController extends Controller
             $rows[] = [
                 'user_id' => $user->id,
                 'employee_name' => $user->name ?? '—',
+                'employee_sort_key' => $user->employeeListingSortKey(),
                 'branch' => $branchName,
                 'time_in' => $timeIn ? $timeIn->format('H:i:s') : null,
                 'half_type' => $lr->half_type ?? '—',
                 'notes' => $lr->notes ? trim($lr->notes) : null,
             ];
         }
+
+        usort($rows, fn (array $a, array $b) => strcmp((string) ($a['employee_sort_key'] ?? ''), (string) ($b['employee_sort_key'] ?? '')));
 
         return response()->json([
             'date' => $dateKey,
@@ -1095,7 +1109,7 @@ class DashboardController extends Controller
         $activeQuery = User::activeRoster()
             ->with(['departmentRelation:id,name,branch_id']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $activeQuery);
-        $activeEmployees = $activeQuery->get();
+        $activeEmployees = $activeQuery->orderByLastName()->get();
 
         // Set of users who actually clocked in today (present).
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
@@ -1158,7 +1172,7 @@ class DashboardController extends Controller
         $activeEmployeesQuery = User::activeRoster()
             ->with(['workingSchedule', 'companyHeadships:id,company_head_id', 'company:id,name', 'branch:id,company_id', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id']);
         $this->dataScopeService->restrictEmployeeQuery($actor, $activeEmployeesQuery);
-        $activeEmployees = $activeEmployeesQuery->get();
+        $activeEmployees = $activeEmployeesQuery->orderByLastName()->get();
 
         // Ensure company filter respects the actor's scope
         if ($companyIds !== null && $companyIds !== []) {
@@ -1451,6 +1465,7 @@ class DashboardController extends Controller
         return [
             'id' => $user->id,
             'employee_name' => $user->name ?? '-',
+            'employee_sort_key' => $user->employeeListingSortKey(),
             'profile_image' => $user->profile_image_url,
             'department' => $user->department ?? '-',
             'company_name' => $companyName,
@@ -1471,7 +1486,7 @@ class DashboardController extends Controller
         [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($today, $tz);
         $logsQuery = AttendanceLog::query()
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
                     ->with(['workingSchedule', 'companyHeadships:id,name,logo,company_head_id', 'company:id,name,logo', 'branch:id,company_id', 'branch.company:id,name,logo', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id', 'departmentRelation.branch.company:id,name,logo']);
             }]);
         $logsQuery = $this->attendanceLogEffectivePunchWhereBetween($logsQuery, $rangeStart, $rangeEnd);
@@ -1502,6 +1517,7 @@ class DashboardController extends Controller
                 $grouped[$userId] = [
                     'id' => $userId,
                     'employee_name' => $user->name ?? '—',
+                    'employee_sort_key' => $user->employeeListingSortKey(),
                     'profile_image' => $profileImageUrl,
                     'department' => $user->department ?? '—',
                     'company_name' => $companyName,
@@ -1549,7 +1565,7 @@ class DashboardController extends Controller
         }
         $todayCorrections = $todayCorrectionsQuery
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
                     ->with(['workingSchedule', 'companyHeadships:id,name,logo,company_head_id', 'company:id,name,logo', 'branch:id,company_id', 'branch.company:id,name,logo', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id', 'departmentRelation.branch.company:id,name,logo']);
             }])
             ->get();
@@ -1567,6 +1583,7 @@ class DashboardController extends Controller
                 $grouped[$userId] = [
                     'id' => $userId,
                     'employee_name' => $user->name ?? '—',
+                    'employee_sort_key' => $user->employeeListingSortKey(),
                     'profile_image' => $user->profile_image_url,
                     'department' => $user->department ?? '—',
                     'company_name' => $companyName,
@@ -1614,6 +1631,7 @@ class DashboardController extends Controller
             ->whereIn('id', $scopedActiveUserIds)
             ->active()
             ->with(['workingSchedule', 'companyHeadships:id,name,logo,company_head_id', 'company:id,name,logo', 'branch:id,company_id', 'branch.company:id,name,logo', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id', 'departmentRelation.branch.company:id,name,logo'])
+            ->orderByLastName()
             ->get();
 
         foreach ($scheduledUsers as $user) {
@@ -1688,7 +1706,7 @@ class DashboardController extends Controller
                 return 1;
             }
 
-            return strcmp($a['employee_name'], $b['employee_name']);
+            return strcmp((string) ($a['employee_sort_key'] ?? ''), (string) ($b['employee_sort_key'] ?? ''));
         });
 
         return array_values($grouped);

@@ -121,8 +121,10 @@ class PremiumReportService
      */
     public function computeForEmployees(Collection $employees, Carbon $from, Carbon $to): array
     {
+        $ordered = $employees->sortBy(fn (User $u) => $u->employeeListingSortKey())->values();
+
         $results = [];
-        foreach ($employees as $user) {
+        foreach ($ordered as $user) {
             $results[] = $this->computeForEmployee($user, $from, $to);
         }
 

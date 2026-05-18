@@ -52,6 +52,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { RoleBadge } from '@/components/RoleBadge'
 import { cn } from '@/lib/utils'
+import { compareEmployeesByLastName } from '@/lib/employeeSort'
 import { isRosterStaffMember } from '@/lib/rosterStaff'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
@@ -1666,19 +1667,7 @@ export default function AdminCompanies() {
     const departmentHeads = rest.filter((e) => e.management_role === 'department_head')
     const employees = rest.filter((e) => e.management_role !== 'department_head')
 
-    const sortByName = (a, b) => {
-      const parts = (n) => (n || '').trim().split(/\s+/)
-      const lastFirst = (name) => {
-        const p = parts(name)
-        const last = p.length ? p[p.length - 1] : ''
-        const first = p.length > 1 ? p.slice(0, -1).join(' ') : ''
-        return [last, first]
-      }
-      const [la, fa] = lastFirst(a.name)
-      const [lb, fb] = lastFirst(b.name)
-      const c = la.localeCompare(lb)
-      return c !== 0 ? c : fa.localeCompare(fb)
-    }
+    const sortByName = (a, b) => compareEmployeesByLastName(a, b)
     departmentHeads.sort((a, b) => sortByName(a, b))
     employees.sort((a, b) => sortByName(a, b))
 

@@ -1064,7 +1064,7 @@ class PayslipController extends Controller
      * **Speed:** By default reuses {@see Payslip::$pdf_path} files from finalize (no Browsershot). Send JSON
      * `{ "force_regenerate": true }` to rebuild every PDF (slow).
      *
-     * **ZIP entry names:** `FirstName_PayDate.pdf` (duplicates → `FirstName_PayDate_{payslip_id}.pdf`), A–Z by first name.
+     * **ZIP entry names:** `LastName_FirstName_PayDate.pdf` (or `LastName_PayDate.pdf`); duplicates append payslip id.
      *
      * Route: {@code POST /admin/payroll-batches/{batchId}/bulk-download-pdf}
      */
@@ -1107,7 +1107,7 @@ class PayslipController extends Controller
                 $e = $p->employee;
 
                 return $e instanceof User
-                    ? $this->employeeFirstNameSortKey($e)
+                    ? $e->employeeListingSortKey()
                     : "\u{10FFFF}";
             })
             ->values();
@@ -1120,7 +1120,7 @@ class PayslipController extends Controller
 
         /** @var list<array{name: string, path: string}> $entries */
         $entries = [];
-        /** @var array<string, int> $zipNameCounts — detect collisions for `FirstName_PayDate.pdf` */
+        /** @var array<string, int> $zipNameCounts — detect collisions inside the ZIP */
         $zipNameCounts = [];
 
         foreach ($payslips as $payslip) {
@@ -1138,7 +1138,7 @@ class PayslipController extends Controller
                 return response()->json(['message' => 'PDF generation failed for one or more payslips.'], 500);
             }
 
-            // ZIP member name only (not stored path): `FirstName_PayDate.pdf`; $entries order is A–Z by first name.
+            // ZIP member order follows employee last-name ordering.
             $entries[] = [
                 'name' => $this->allocateBulkZipPdfEntryName($payslip, $employee, $zipNameCounts),
                 'path' => $full,
@@ -1208,56 +1208,38 @@ class PayslipController extends Controller
     }
 
     /**
-     * Case-insensitive sort key for ordering by first name (A–Z).
+     * Base ZIP filename stem (without extension): family name first (then given name when available).
      */
-    private function employeeFirstNameSortKey(User $employee): string
+    private function bulkZipPdfFilenameStem(Payslip $payslip, User $employee): string
     {
-        $fn = trim((string) ($employee->first_name ?? ''));
-        if ($fn !== '') {
-            return mb_strtolower($fn, 'UTF-8');
+        $payYmd = $this->payslipPayDateYmd($payslip);
+        $last = trim((string) ($employee->last_name ?? ''));
+        $first = trim((string) ($employee->first_name ?? ''));
+
+        if ($last !== '' && $first !== '') {
+            return $this->safeZipFilenameSegment($last).'_'.$this->safeZipFilenameSegment($first).'_'.$payYmd;
         }
-        $name = trim((string) ($employee->name ?? ''));
-        if ($name === '') {
-            return '';
+        if ($last !== '') {
+            return $this->safeZipFilenameSegment($last).'_'.$payYmd;
         }
-        $parts = preg_split('/\s+/u', $name, -1, PREG_SPLIT_NO_EMPTY);
-        if ($parts === false || $parts === []) {
-            return '';
+        if ($first !== '') {
+            return $this->safeZipFilenameSegment($first).'_'.$payYmd;
         }
 
-        return mb_strtolower((string) $parts[0], 'UTF-8');
+        $code = trim((string) ($employee->employee_code ?? ''));
+        if ($code !== '') {
+            return $this->safeZipFilenameSegment($code).'_'.$payYmd;
+        }
+
+        return 'emp_'.$employee->id.'_'.$payYmd;
     }
 
     /**
-     * First-name segment for `FirstName_PayDate.pdf` — uses {@see User::$first_name} or first token of {@see User::$name}.
-     */
-    private function employeeFirstNameForZipEntry(User $employee): string
-    {
-        $fn = trim((string) ($employee->first_name ?? ''));
-        if ($fn !== '') {
-            return $this->safeZipFilenameSegment($fn);
-        }
-        $name = trim((string) ($employee->name ?? ''));
-        if ($name === '') {
-            return 'Employee';
-        }
-        $parts = preg_split('/\s+/u', $name, -1, PREG_SPLIT_NO_EMPTY);
-        if ($parts === false || $parts === []) {
-            return 'Employee';
-        }
-        $first = (string) $parts[0];
-
-        return $this->safeZipFilenameSegment($first);
-    }
-
-    /**
-     * Unique entry inside the bulk ZIP: `FirstName_PayDate.pdf`, or `FirstName_PayDate_{payslip_id}.pdf` on duplicate.
+     * Unique entry inside the bulk ZIP (collision-safe).
      */
     private function allocateBulkZipPdfEntryName(Payslip $payslip, User $employee, array &$zipNameCounts): string
     {
-        $first = $this->employeeFirstNameForZipEntry($employee);
-        $payYmd = $this->payslipPayDateYmd($payslip);
-        $baseKey = $first.'_'.$payYmd;
+        $baseKey = $this->bulkZipPdfFilenameStem($payslip, $employee);
         $zipNameCounts[$baseKey] = ($zipNameCounts[$baseKey] ?? 0) + 1;
         if ($zipNameCounts[$baseKey] === 1) {
             return $baseKey.'.pdf';
@@ -1294,7 +1276,7 @@ class PayslipController extends Controller
                 $e = $p->employee;
 
                 return $e instanceof User
-                    ? $this->employeeFirstNameSortKey($e)
+                    ? $e->employeeListingSortKey()
                     : "\u{10FFFF}";
             })
             ->values();

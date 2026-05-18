@@ -717,6 +717,7 @@ class HolidayController extends Controller
         if ($scope === 'employee') {
             $employees = User::query()
                 ->whereIn('id', $this->normalizedIdList($valid['employee_ids'] ?? null, $valid['employee_id'] ?? null))
+                ->orderByLastName()
                 ->get()
                 ->keyBy('id');
 

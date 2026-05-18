@@ -46,7 +46,7 @@ class RemittanceService
             });
         }
 
-        $employees = $query->get(['id', 'name', 'employee_code', 'monthly_salary', 'monthly_rate', 'daily_rate']);
+        $employees = $query->orderByLastName()->get(['id', 'name', 'employee_code', 'monthly_salary', 'monthly_rate', 'daily_rate']);
 
         $sumEe = 0.0;
         $sumEr = 0.0;
@@ -184,7 +184,7 @@ class RemittanceService
             });
         }
 
-        $employees = $query->orderBy('employee_code')->get(['id', 'name', 'employee_code', 'monthly_salary', 'monthly_rate', 'daily_rate']);
+        $employees = $query->orderByLastName()->get(['id', 'name', 'employee_code', 'monthly_salary', 'monthly_rate', 'daily_rate']);
 
         $rows = [];
         $totalEe = 0.0;

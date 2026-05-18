@@ -16,6 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { compareEmployeesByLastName } from '@/lib/employeeSort'
 import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
@@ -247,7 +248,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
         results.flatMap((data) => toList(data, 'employees')).forEach((employee) => {
           if (employee?.id != null) map.set(String(employee.id), employee)
         })
-        setEmployees(Array.from(map.values()))
+        setEmployees(Array.from(map.values()).sort(compareEmployeesByLastName))
       })
       .catch(() => {
         if (!cancelled) setEmployees([])

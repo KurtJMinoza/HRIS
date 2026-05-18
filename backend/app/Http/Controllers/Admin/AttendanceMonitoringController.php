@@ -371,7 +371,7 @@ class AttendanceMonitoringController extends Controller
         $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeesQuery);
 
         $employees = $employeesQuery
-            ->orderBy('name')
+            ->orderByLastName()
             ->with([
                 'workingSchedule',
                 'companyHeadships:id,name,company_head_id',
@@ -767,6 +767,7 @@ class AttendanceMonitoringController extends Controller
                 $rows[] = [
                     'employee_id' => $employee->id,
                     'employee_name' => $employee->name,
+                    'employee_sort_key' => $employee->employeeListingSortKey(),
                     'profile_image' => $employee->profile_image_url,
                     'department' => $employee->departmentRelation?->name ?? $employee->department,
                     'company_name' => $employeeCompanyNames[$employee->id] ?? null,

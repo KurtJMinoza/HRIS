@@ -100,6 +100,32 @@ class User extends Authenticatable
     }
 
     /**
+     * Roster / payroll list ordering: family name first, then given names, then stable user id.
+     */
+    public function scopeOrderByLastName(Builder $query): Builder
+    {
+        return $query
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->orderBy('middle_name')
+            ->orderBy('id');
+    }
+
+    /**
+     * Stable sort key aligned with {@see scopeOrderByLastName()} for collections, ZIP ordering, and UI fallbacks.
+     */
+    public function employeeListingSortKey(): string
+    {
+        return sprintf(
+            '%s|%s|%s|%010d',
+            mb_strtolower(trim((string) ($this->last_name ?? '')), 'UTF-8'),
+            mb_strtolower(trim((string) ($this->first_name ?? '')), 'UTF-8'),
+            mb_strtolower(trim((string) ($this->middle_name ?? '')), 'UTF-8'),
+            (int) $this->id
+        );
+    }
+
+    /**
      * Admin (HR) with an explicit org scope on {@see $company_id} / {@see $branch_id} / {@see $department_id}.
      * When false and {@see isAdmin()}, HR data access is global (within RBAC).
      */

@@ -15,6 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { compareEmployeesByLastName } from '@/lib/employeeSort'
 import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
@@ -223,7 +224,7 @@ export function SwapHolidayModal({ open, onOpenChange, mode = 'create', editingI
         if (cancelled) return
         const map = new Map()
         results.flatMap((d) => toList(d, 'employees')).forEach((emp) => { if (emp?.id != null) map.set(String(emp.id), emp) })
-        setEmployees(Array.from(map.values()))
+        setEmployees(Array.from(map.values()).sort(compareEmployeesByLastName))
       })
       .catch(() => { if (!cancelled) setEmployees([]) })
     return () => { cancelled = true }

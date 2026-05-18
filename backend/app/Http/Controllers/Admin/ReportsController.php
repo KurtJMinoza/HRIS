@@ -537,7 +537,7 @@ class ReportsController extends Controller
 
             /** @var \Illuminate\Support\Collection<int, User> $employees */
             $employees = $employeesQuery
-                ->orderBy('name')
+                ->orderByLastName()
                 ->with($employeeWithRelations)
                 ->get();
         }
@@ -1165,6 +1165,7 @@ class ReportsController extends Controller
                     $pagedRows[] = array_merge([
                         'employee_id' => $employee->id,
                         'employee_name' => $employee->name,
+                        'employee_sort_key' => $employee->employeeListingSortKey(),
                         'department' => $employee->departmentRelation?->name ?? $employee->department,
                         'company_id' => $detailedEmployeeCompanyIds[$employee->id] ?? null,
                         'company_name' => $detailedEmployeeCompanyNames[$employee->id] ?? null,
@@ -1434,7 +1435,7 @@ class ReportsController extends Controller
         $actor = $request->user();
         $query = User::query()
             ->activeRoster()
-            ->orderBy('name');
+            ->orderByLastName();
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
         $users = $query->get([
             'id', 'name', 'employee_code', 'department_id', 'company_id', 'branch_id',

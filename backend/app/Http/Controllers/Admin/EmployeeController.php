@@ -288,7 +288,7 @@ class EmployeeController extends Controller
         if ($forScheduleAssignment || $perPageParam === 'all' || (int) $perPageParam === 0) {
             $buildStart = microtime(true);
             $query = $applyOrgFilters($applySearch(User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns)))
-                ->orderBy('name');
+                ->orderByLastName();
             $this->applyActiveFilter($query, $activeFilter);
             $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
             Log::info('AdminEmployees index timing step', [
@@ -348,7 +348,7 @@ class EmployeeController extends Controller
 
         $buildStart = microtime(true);
         $query = $applyOrgFilters($applySearch(User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns)))
-            ->orderBy('name');
+            ->orderByLastName();
         $this->applyActiveFilter($query, $activeFilter);
         if (! $lite) {
             $query->with($fullEagerLoads);
@@ -553,11 +553,11 @@ class EmployeeController extends Controller
                     'governmentIds:id,user_id,sss_number,philhealth_number,pagibig_number,tin_number',
                     'taxInfo:id,user_id,tax_regime,withholding_method,dependents',
                 ])
-                ->orderBy('id');
+                ->orderByLastName();
 
             $this->dataScopeService->restrictEmployeeQuery($viewer, $query);
 
-            $query->chunkById(250, function (Collection $users) use ($out) {
+            $query->chunk(250, function (Collection $users) use ($out) {
                 foreach ($users as $user) {
                     $departmentName = $user->departmentRelation?->name ?? $user->department;
                     $branchName = $user->branch?->name ?? $user->departmentRelation?->branch?->name;

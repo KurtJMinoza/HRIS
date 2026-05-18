@@ -30,6 +30,7 @@ import {
   minutesCellText,
 } from '@/components/attendance/attendanceRecordUtils'
 import { AttendanceStatusPill } from '@/components/attendance/AttendanceStatusPill'
+import { compareEmployeeRowsBySortKey } from '@/lib/employeeSort'
 
 function timeSortKey(value) {
   if (value == null || value === '') return null
@@ -89,12 +90,7 @@ export function AttendanceRecordsDataTable({
         header: 'Employee',
         enableSorting: true,
         accessorFn: (row) => (isAdmin ? row.employee_name || '' : viewerName || ''),
-        sortingFn: (a, b) =>
-          String(isAdmin ? a.original.employee_name || '' : viewerName || '').localeCompare(
-            String(isAdmin ? b.original.employee_name || '' : viewerName || ''),
-            undefined,
-            { sensitivity: 'base' }
-          ),
+        sortingFn: compareEmployeeRowsBySortKey,
         cell: ({ row }) => {
           const r = row.original
           if (isAdmin) {

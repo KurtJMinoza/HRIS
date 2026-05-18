@@ -2062,7 +2062,7 @@ class PayrollComputationService
         /** @var \Illuminate\Database\Eloquent\Collection<int, User> $scopedEmployees */
         $scopedEmployees = (clone $baseEmployeeQuery)
             ->with(['company', 'branch', 'departmentRelation.branch.company', 'workingSchedule', 'companyHeadships'])
-            ->orderBy('name')
+            ->orderByLastName()
             ->get();
 
         if ($scopedEmployees->isEmpty()) {

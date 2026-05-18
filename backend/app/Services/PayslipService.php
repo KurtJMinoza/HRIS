@@ -781,8 +781,20 @@ class PayslipService
             }
         }
 
+        $orderedIds = (clone $q)->orderByLastName()->pluck('id')->map(fn ($id) => (int) $id)->all();
+
         $ids = [];
-        $q->orderBy('id')->chunkById(100, function ($users) use ($periodInput, $withPdf, &$ids, &$timings) {
+        foreach (array_chunk($orderedIds, 100) as $chunkIds) {
+            if ($chunkIds === []) {
+                continue;
+            }
+
+            $users = User::query()
+                ->whereIn('id', $chunkIds)
+                ->get()
+                ->sortBy(fn (User $u) => array_search($u->id, $chunkIds, true))
+                ->values();
+
             $employeeQueryStartedAt = microtime(true);
             $users->loadMissing([
                 'company',
@@ -802,7 +814,7 @@ class PayslipService
                 }
                 $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
 
-                return;
+                continue;
             }
 
             $now = now();
@@ -828,7 +840,7 @@ class PayslipService
             $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
 
             if ($rows === []) {
-                return;
+                continue;
             }
 
             $upsertStartedAt = microtime(true);
@@ -877,7 +889,7 @@ class PayslipService
                 ->all();
             $ids = array_merge($ids, $persisted);
             $timings['bulk_upsert_ms'] += (microtime(true) - $upsertStartedAt) * 1000;
-        });
+        }
 
         Log::info('Payslip bulk generation completed', [
             'generated_count' => count($ids),
@@ -2056,7 +2068,7 @@ class PayslipService
             $q->where('id', (int) $run->employee_id);
         }
 
-        return $q->orderBy('id')->pluck('id')->map(fn ($id) => (int) $id)->all();
+        return $q->orderByLastName()->pluck('id')->map(fn ($id) => (int) $id)->all();
     }
 
     /**
@@ -2160,7 +2172,7 @@ class PayslipService
 
         $users = User::query()
             ->whereIn('id', $userIds)
-            ->orderBy('id')
+            ->orderByLastName()
             ->get();
         if ($users->isEmpty()) {
             return $stored;

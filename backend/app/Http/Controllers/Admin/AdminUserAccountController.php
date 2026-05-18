@@ -35,7 +35,7 @@ class AdminUserAccountController extends Controller
         $isActive = $request->query('is_active');
         $departmentId = $request->query('department_id');
 
-        $query = User::query()->orderBy('name');
+        $query = User::query()->orderByLastName();
 
         if ($departmentId !== null && $departmentId !== '') {
             $query->where('department_id', (int) $departmentId);

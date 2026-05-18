@@ -120,7 +120,7 @@ class FinalizePayrollService
                     'is_active',
                     'role',
                 ])
-                ->orderBy('name', 'asc')
+                ->orderByLastName()
                 ->offset($offset)
                 ->limit($limit)
                 ->get();

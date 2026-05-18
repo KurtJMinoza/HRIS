@@ -534,8 +534,9 @@ export default function AdminDashboard() {
           aVal = a.is_late ? 1 : 0
           bVal = b.is_late ? 1 : 0
         } else if (sortConfig.key === 'employee_name') {
-          aVal = (a.employee_name || '').toLowerCase()
-          bVal = (b.employee_name || '').toLowerCase()
+          const keyOf = (row) => String(row.employee_sort_key || row.employee_name || '').toLowerCase()
+          aVal = keyOf(a)
+          bVal = keyOf(b)
         }
         if (aVal < bVal) return sortConfig.dir === 'asc' ? -1 : 1
         if (aVal > bVal) return sortConfig.dir === 'asc' ? 1 : -1

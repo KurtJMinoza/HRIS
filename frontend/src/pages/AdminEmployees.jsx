@@ -41,6 +41,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Checkbox } from '@/components/ui/checkbox'
 import { AdminAddEmployeeDialog } from '@/components/admin/AdminAddEmployeeDialog'
 import { deriveAdminEmployeeListLeaveCredits } from '@/lib/leaveCreditsDisplay'
+import { compareEmployeesByLastName } from '@/lib/employeeSort'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -848,9 +849,7 @@ export default function AdminEmployees() {
       let va, vb
       switch (sortBy) {
         case 'name':
-          va = (a.name || '').toLowerCase()
-          vb = (b.name || '').toLowerCase()
-          return dir * (va < vb ? -1 : va > vb ? 1 : 0)
+          return dir * compareEmployeesByLastName(a, b)
         case 'company_name':
           va = (a.company_name || '').toLowerCase()
           vb = (b.company_name || '').toLowerCase()
@@ -923,7 +922,7 @@ export default function AdminEmployees() {
     if (Boolean(a.is_active) !== Boolean(b.is_active)) {
       return a.is_active ? -1 : 1
     }
-    return String(a.name || '').localeCompare(String(b.name || ''))
+    return compareEmployeesByLastName(a, b)
   }, [])
 
   const getCompanyHeadId = useCallback((companyId) => {
