@@ -203,4 +203,102 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             Carbon::setTestNow();
         }
     }
+
+    public function test_admin_dashboard_birthdays_endpoint_returns_past_month_birthdays(): void
+    {
+        Config::set('attendance.timezone', 'Asia/Manila');
+        Carbon::setTestNow(Carbon::parse('2026-05-18 09:00:00', 'Asia/Manila'));
+
+        $admin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+        ]);
+        $aprilBirthday = User::factory()->create([
+            'name' => 'April Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1990-04-12',
+        ]);
+        User::factory()->create([
+            'name' => 'May Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1991-05-10',
+        ]);
+
+        try {
+            $response = $this->actingAs($admin)->getJson('/api/admin/dashboard/birthdays?year=2026&month=4');
+
+            $response->assertOk()
+                ->assertJsonPath('year', 2026)
+                ->assertJsonPath('month', 4)
+                ->assertJsonPath('is_past_month', true)
+                ->assertJsonPath('is_current_month', false)
+                ->assertJsonPath('can_go_next', true)
+                ->assertJsonPath('birthday_month_label', 'April 2026');
+
+            $rows = collect($response->json('birthdays'));
+            $this->assertTrue($rows->contains('employee_id', $aprilBirthday->id));
+            $this->assertFalse($rows->contains('full_name', 'May Celebrant'));
+            $this->assertTrue((bool) $rows->firstWhere('employee_id', $aprilBirthday->id)['birthday_passed_in_view']);
+            $this->assertSame('Sunday', $rows->firstWhere('employee_id', $aprilBirthday->id)['day_name']);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_admin_dashboard_birthdays_endpoint_returns_future_month_birthdays(): void
+    {
+        Config::set('attendance.timezone', 'Asia/Manila');
+        Carbon::setTestNow(Carbon::parse('2026-05-18 09:00:00', 'Asia/Manila'));
+
+        $admin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+        ]);
+        $juneBirthday = User::factory()->create([
+            'name' => 'June Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1993-06-01',
+        ]);
+
+        try {
+            $response = $this->actingAs($admin)->getJson('/api/admin/dashboard/birthdays?year=2026&month=6');
+
+            $response->assertOk()
+                ->assertJsonPath('year', 2026)
+                ->assertJsonPath('month', 6)
+                ->assertJsonPath('is_future_month', true)
+                ->assertJsonPath('is_current_month', false)
+                ->assertJsonPath('birthday_month_label', 'June 2026');
+
+            $rows = collect($response->json('birthdays'));
+            $this->assertTrue($rows->contains('employee_id', $juneBirthday->id));
+            $this->assertFalse((bool) $rows->firstWhere('employee_id', $juneBirthday->id)['birthday_passed_in_view']);
+            $this->assertTrue((bool) $rows->firstWhere('employee_id', $juneBirthday->id)['birthday_upcoming_in_view']);
+            $this->assertSame(14, $rows->firstWhere('employee_id', $juneBirthday->id)['days_until_birthday']);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_admin_dashboard_birthdays_endpoint_rejects_month_beyond_future_window(): void
+    {
+        Config::set('attendance.timezone', 'Asia/Manila');
+        Carbon::setTestNow(Carbon::parse('2026-05-18 09:00:00', 'Asia/Manila'));
+
+        $admin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+        ]);
+
+        try {
+            $this->actingAs($admin)
+                ->getJson('/api/admin/dashboard/birthdays?year=2027&month=6')
+                ->assertStatus(422);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
 }

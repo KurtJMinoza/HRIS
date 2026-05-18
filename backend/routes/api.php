@@ -182,6 +182,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:dashboard.view')->group(function () {
             Route::get('/admin/dashboard', [DashboardController::class, 'index']);
+            Route::get('/admin/dashboard/birthdays', [DashboardController::class, 'birthdaysByMonth']);
             Route::get('/admin/dashboard/half-day-list', [DashboardController::class, 'halfDayList']);
             Route::get('/admin/dashboard/company-attendance', [DashboardController::class, 'companyAttendance']);
         });

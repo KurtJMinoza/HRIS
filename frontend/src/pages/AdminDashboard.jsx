@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+﻿import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion as Motion } from 'framer-motion'
@@ -46,6 +46,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -57,6 +58,7 @@ import { DashboardSkeleton } from '@/components/skeletons'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Cell, ReferenceLine, ReferenceDot } from 'recharts'
 import {
   getDashboardData,
+  getAdminDashboardBirthdays,
   getDashboardCompanyAttendance,
   getCompanies,
   getHalfDayList,
@@ -265,7 +267,7 @@ function getGreeting() {
 }
 
 function formatTime(iso) {
-  if (!iso) return '—'
+  if (!iso) return 'â€”'
   try {
     const d = new Date(iso)
     return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -275,7 +277,7 @@ function formatTime(iso) {
 }
 
 function formatDate(value) {
-  if (!value) return '—'
+  if (!value) return 'â€”'
   try {
     const d = new Date(value)
     return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -285,13 +287,13 @@ function formatDate(value) {
 }
 
 function formatDaysLabel(label) {
-  if (!label) return '—'
+  if (!label) return 'â€”'
   const s = String(label)
   return s.replace(/(\d+)(?:\.\d+)?\s+days\b/g, (_, n) => `${Number(n)} days`)
 }
 
 function formatEmploymentTypeLabel(raw) {
-  if (!raw) return '—'
+  if (!raw) return 'â€”'
   const words = String(raw)
     .replace(/_/g, ' ')
     .trim()
@@ -300,7 +302,73 @@ function formatEmploymentTypeLabel(raw) {
   return words.map((w) => w.slice(0, 1).toUpperCase() + w.slice(1)).join(' ')
 }
 
-function birthdayBadgeLabel(days, monthView = false) {
+function manilaCalendarParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: 'numeric',
+  }).formatToParts(date)
+  return {
+    year: Number(parts.find((p) => p.type === 'year')?.value ?? date.getFullYear()),
+    month: Number(parts.find((p) => p.type === 'month')?.value ?? date.getMonth() + 1),
+  }
+}
+
+function shiftCalendarMonth({ year, month }, delta) {
+  const d = new Date(year, month - 1 + delta, 1)
+  return { year: d.getFullYear(), month: d.getMonth() + 1 }
+}
+
+function compareCalendarMonth(a, b) {
+  if (a.year !== b.year) return a.year - b.year
+  return a.month - b.month
+}
+
+function isCalendarMonthBefore(a, b) {
+  return compareCalendarMonth(a, b) < 0
+}
+
+function isCalendarMonthAfter(a, b) {
+  return compareCalendarMonth(a, b) > 0
+}
+
+function calendarMonthKey({ year, month }) {
+  return `${year}-${String(month).padStart(2, '0')}`
+}
+
+function parseCalendarMonthKey(key) {
+  const [year, month] = String(key || '').split('-')
+  return { year: Number(year), month: Number(month) }
+}
+
+function formatCalendarMonthOptionLabel({ year, month }) {
+  const date = new Date(year, month - 1, 1)
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+const BIRTHDAY_CALENDAR_MONTHS_BACK = 24
+const BIRTHDAY_CALENDAR_MONTHS_AHEAD = 12
+
+function buildBirthdayMonthSelectOptions(earliest, latest, current) {
+  const options = []
+  let cursor = { ...earliest }
+  while (compareCalendarMonth(cursor, latest) <= 0) {
+    const isCurrent = cursor.year === current.year && cursor.month === current.month
+    const isFuture = compareCalendarMonth(cursor, current) > 0
+    options.push({
+      value: calendarMonthKey(cursor),
+      label: formatCalendarMonthOptionLabel(cursor),
+      isCurrent,
+      isFuture,
+    })
+    if (compareCalendarMonth(cursor, latest) === 0) break
+    cursor = shiftCalendarMonth(cursor, 1)
+  }
+  return options.reverse()
+}
+
+function birthdayBadgeLabel(days, monthView = false, passedInView = false) {
+  if (passedInView) return 'Celebrated'
   const n = Number(days)
   if (!Number.isFinite(n) || n <= 0) return 'Today'
   if (monthView && n > 31) return 'Birthday passed'
@@ -310,12 +378,39 @@ function birthdayBadgeLabel(days, monthView = false) {
   return `In ${n} days`
 }
 
-function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, onOpen }) {
+function birthdayMonthShortLabel(monthLabel) {
+  const trimmed = String(monthLabel || '').trim()
+  if (!trimmed) return 'Month'
+  const first = trimmed.split(/\s+/)[0]
+  return first || 'Month'
+}
+
+const BIRTHDAY_TAB_LIST_CLASS =
+  'admin-birthday-tabs grid h-auto w-full grid-cols-3 gap-1.5 rounded-xl border border-border/35 bg-muted/45 p-1.5 shadow-inner dark:border-border/40 dark:bg-muted/20'
+
+const BIRTHDAY_TAB_TRIGGER_CLASS = cn(
+  'group relative flex h-auto min-h-11 w-full min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border-0 px-2 py-2.5 transition-all @md:min-h-12 @md:gap-2.5 @md:px-4',
+  'shadow-none outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25',
+  'after:hidden',
+  'data-[state=active]:border-transparent data-[state=active]:bg-background data-[state=active]:text-brand data-[state=active]:shadow-sm',
+  'dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-card dark:data-[state=active]:shadow-md dark:data-[state=active]:shadow-black/20',
+  'data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground',
+  'hover:data-[state=inactive]:text-foreground'
+)
+
+function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, pastMonthView = false, futureMonthView = false, onOpen }) {
   const name = person?.full_name || 'Employee'
   const days = Number(person?.days_until_birthday ?? 0)
-  const birthdayAlreadyPassed = monthView && days > 31
+  const birthdayAlreadyPassed =
+    Boolean(person?.birthday_passed_in_view) || (monthView && days > 31 && !futureMonthView)
   const daysLabel = birthdayAlreadyPassed
-    ? 'Birthday already passed'
+    ? pastMonthView
+      ? 'Celebrated this month'
+      : 'Birthday already passed'
+    : futureMonthView && days > 0
+      ? `${days} day${days === 1 ? '' : 's'} until birthday`
+      : futureMonthView
+        ? 'Upcoming this month'
     : days <= 0
       ? '0 days remaining'
       : `${days} day${days === 1 ? '' : 's'} remaining`
@@ -351,7 +446,7 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, onOpe
             </p>
           </div>
           <span className={cn('shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-bold @md:px-3 @md:text-xs', badgeClass)}>
-            {birthdayBadgeLabel(days, monthView)}
+            {birthdayBadgeLabel(days, monthView, birthdayAlreadyPassed)}
           </span>
         </div>
         <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-4 text-[11px] font-medium text-muted-foreground @md:text-xs">
@@ -420,6 +515,8 @@ export default function AdminDashboard() {
   const [regularizationActionById, setRegularizationActionById] = useState({})
   const [birthdayTab, setBirthdayTab] = useState('month')
   const [birthdaySearch, setBirthdaySearch] = useState('')
+  const manilaToday = useMemo(() => manilaCalendarParts(), [])
+  const [birthdayBrowseMonth, setBirthdayBrowseMonth] = useState(() => manilaCalendarParts())
   const navigate = useNavigate()
   const hrBase = useHrBasePath()
 
@@ -438,6 +535,20 @@ export default function AdminDashboard() {
     refetchInterval: 15000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
+  })
+
+  const isBrowsingCurrentBirthdayMonth =
+    birthdayBrowseMonth.year === manilaToday.year && birthdayBrowseMonth.month === manilaToday.month
+
+  const birthdayMonthQuery = useQuery({
+    queryKey: ['admin-dashboard-birthdays', birthdayBrowseMonth.year, birthdayBrowseMonth.month],
+    queryFn: () =>
+      getAdminDashboardBirthdays({
+        year: birthdayBrowseMonth.year,
+        month: birthdayBrowseMonth.month,
+      }),
+    enabled: !authLoading && isHrAdmin && !isBrowsingCurrentBirthdayMonth,
+    staleTime: 60_000,
   })
 
   const overtimePendingQuery = useQuery({
@@ -634,6 +745,107 @@ export default function AdminDashboard() {
     return map
   }, [companiesList])
 
+  const todayBirthdays = Array.isArray(data?.today_birthdays) ? data.today_birthdays : []
+  const currentMonthBirthdays = Array.isArray(data?.current_month_birthdays) ? data.current_month_birthdays : []
+  const upcomingBirthdays = Array.isArray(data?.upcoming_30_days)
+    ? data.upcoming_30_days
+    : Array.isArray(data?.upcoming_birthdays)
+      ? data.upcoming_birthdays
+      : []
+  const upcomingBirthdays90 = Array.isArray(data?.upcoming_90_days)
+    ? data.upcoming_90_days
+    : Array.isArray(data?.upcoming_birthdays_90)
+      ? data.upcoming_birthdays_90
+      : []
+  const birthdayMonthLabel = data?.birthday_month_label || 'This Month'
+  const birthdayMonthRangeLabel = data?.birthday_month_range_label || ''
+  const browsedMonthBirthdays = isBrowsingCurrentBirthdayMonth
+    ? currentMonthBirthdays
+    : (birthdayMonthQuery.data?.birthdays ?? [])
+  const browsedBirthdayMonthLabel = isBrowsingCurrentBirthdayMonth
+    ? birthdayMonthLabel
+    : (birthdayMonthQuery.data?.birthday_month_label || birthdayMonthLabel)
+  const browsedBirthdayMonthRangeLabel = isBrowsingCurrentBirthdayMonth
+    ? birthdayMonthRangeLabel
+    : (birthdayMonthQuery.data?.birthday_month_range_label || '')
+  const browsedBirthdayIsPastMonth = isBrowsingCurrentBirthdayMonth
+    ? false
+    : Boolean(birthdayMonthQuery.data?.is_past_month)
+  const browsedBirthdayIsFutureMonth = isBrowsingCurrentBirthdayMonth
+    ? false
+    : Boolean(birthdayMonthQuery.data?.is_future_month)
+  const earliestBirthdayBrowseMonth = useMemo(
+    () => shiftCalendarMonth(manilaToday, -(BIRTHDAY_CALENDAR_MONTHS_BACK - 1)),
+    [manilaToday]
+  )
+  const latestBirthdayBrowseMonth = useMemo(
+    () => shiftCalendarMonth(manilaToday, BIRTHDAY_CALENDAR_MONTHS_AHEAD - 1),
+    [manilaToday]
+  )
+  const birthdayMonthSelectOptions = useMemo(
+    () => buildBirthdayMonthSelectOptions(earliestBirthdayBrowseMonth, latestBirthdayBrowseMonth, manilaToday),
+    [earliestBirthdayBrowseMonth, latestBirthdayBrowseMonth, manilaToday]
+  )
+  const birthdayBrowseMonthValue = calendarMonthKey(birthdayBrowseMonth)
+  const birthdayMonthBrowseLoading =
+    !isBrowsingCurrentBirthdayMonth && (birthdayMonthQuery.isLoading || birthdayMonthQuery.isFetching)
+  const birthdayMonthBrowseError = !isBrowsingCurrentBirthdayMonth ? birthdayMonthQuery.error : null
+  const birthdayMonthShortName = birthdayMonthShortLabel(browsedBirthdayMonthLabel)
+  const birthdayTabOptions = useMemo(
+    () => [
+      {
+        value: 'month',
+        label: birthdayMonthShortName,
+        ariaLabel: `Calendar month, ${browsedBirthdayMonthLabel}`,
+        count: browsedMonthBirthdays.length,
+      },
+      {
+        value: 'upcoming30',
+        label: '30 days',
+        ariaLabel: 'Upcoming 30 days',
+        count: upcomingBirthdays.length,
+      },
+      {
+        value: 'upcoming90',
+        label: '90 days',
+        ariaLabel: 'Upcoming 90 days',
+        count: upcomingBirthdays90.length,
+      },
+    ],
+    [
+      birthdayMonthShortName,
+      browsedBirthdayMonthLabel,
+      browsedMonthBirthdays.length,
+      upcomingBirthdays.length,
+      upcomingBirthdays90.length,
+    ]
+  )
+  const birthdayRowsForTab =
+    birthdayTab === 'upcoming90'
+      ? upcomingBirthdays90
+      : birthdayTab === 'upcoming30'
+        ? upcomingBirthdays
+        : browsedMonthBirthdays
+  const birthdaySearchTerm = birthdaySearch.trim().toLowerCase()
+  const visibleBirthdayRows = birthdaySearchTerm
+    ? birthdayRowsForTab.filter((person) => [
+        person?.full_name,
+        person?.department,
+        person?.position,
+        person?.birth_date_formatted,
+        person?.day_name,
+      ].some((value) => String(value || '').toLowerCase().includes(birthdaySearchTerm)))
+    : birthdayRowsForTab
+
+  const handleBirthdayMonthSelect = useCallback((value) => {
+    if (!value) return
+    const parsed = parseCalendarMonthKey(value)
+    if (!Number.isFinite(parsed.year) || !Number.isFinite(parsed.month)) return
+    if (isCalendarMonthBefore(parsed, earliestBirthdayBrowseMonth)) return
+    if (isCalendarMonthAfter(parsed, latestBirthdayBrowseMonth)) return
+    setBirthdayBrowseMonth(parsed)
+  }, [earliestBirthdayBrowseMonth, latestBirthdayBrowseMonth])
+
   if (authLoading || (loading && !data)) {
     return <DashboardSkeleton />
   }
@@ -648,7 +860,7 @@ export default function AdminDashboard() {
             <p className="text-destructive">{error}</p>
             <p className="mt-1 text-sm text-muted-foreground">
               {isPermError
-                ? 'If you just signed in, try Retry. If this persists, contact HR — your account may need the correct role permissions.'
+                ? 'If you just signed in, try Retry. If this persists, contact HR â€” your account may need the correct role permissions.'
                 : 'Check that the backend is running and you are signed in with an account that has dashboard access.'}
             </p>
             <Button
@@ -784,36 +996,6 @@ export default function AdminDashboard() {
     ? data.upcoming_regularizations
     : []
   const expiringContracts = Array.isArray(data?.expiring_contracts) ? data.expiring_contracts : []
-  const todayBirthdays = Array.isArray(data?.today_birthdays) ? data.today_birthdays : []
-  const currentMonthBirthdays = Array.isArray(data?.current_month_birthdays) ? data.current_month_birthdays : []
-  const upcomingBirthdays = Array.isArray(data?.upcoming_30_days)
-    ? data.upcoming_30_days
-    : Array.isArray(data?.upcoming_birthdays)
-      ? data.upcoming_birthdays
-      : []
-  const upcomingBirthdays90 = Array.isArray(data?.upcoming_90_days)
-    ? data.upcoming_90_days
-    : Array.isArray(data?.upcoming_birthdays_90)
-      ? data.upcoming_birthdays_90
-      : []
-  const birthdayMonthLabel = data?.birthday_month_label || 'This Month'
-  const birthdayMonthRangeLabel = data?.birthday_month_range_label || ''
-  const birthdayRowsForTab =
-    birthdayTab === 'upcoming90'
-      ? upcomingBirthdays90
-      : birthdayTab === 'upcoming30'
-        ? upcomingBirthdays
-        : currentMonthBirthdays
-  const birthdaySearchTerm = birthdaySearch.trim().toLowerCase()
-  const visibleBirthdayRows = birthdaySearchTerm
-    ? birthdayRowsForTab.filter((person) => [
-        person?.full_name,
-        person?.department,
-        person?.position,
-        person?.birth_date_formatted,
-        person?.day_name,
-      ].some((value) => String(value || '').toLowerCase().includes(birthdaySearchTerm)))
-    : birthdayRowsForTab
   const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
     ? Number(
         attendanceCorrectionsPendingQuery.data?.presence_filings?.length
@@ -1027,7 +1209,7 @@ export default function AdminDashboard() {
           <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 border-l-[3px] border-l-amber-500 bg-amber-500/8 px-3.5 py-2.5 dark:bg-amber-500/10">
             <AlertCircle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <p className="flex-1 text-sm text-foreground">
-              <span className="font-semibold text-amber-700 dark:text-amber-300">Low attendance — </span>
+              <span className="font-semibold text-amber-700 dark:text-amber-300">Low attendance â€” </span>
               Only{' '}
               <span className="font-bold">{Math.round(todaysAttendanceRate * 100)}%</span>{' '}
               of employees have clocked in. Follow up with managers.
@@ -1047,7 +1229,7 @@ export default function AdminDashboard() {
               <AlertCircle className="relative size-4 text-rose-600 dark:text-rose-400" />
             </span>
             <p className="flex-1 text-sm text-foreground">
-              <span className="font-semibold text-rose-700 dark:text-rose-300">High late activity — </span>
+              <span className="font-semibold text-rose-700 dark:text-rose-300">High late activity â€” </span>
               <span className="font-bold">{lateTodayCount} employees</span>{' '}
               marked late today. Consider sending reminders.
             </p>
@@ -1171,7 +1353,7 @@ export default function AdminDashboard() {
                           ) : deltaPct < 0 ? (
                             <span>-{formattedDelta}%</span>
                           ) : (
-                            <span>—</span>
+                            <span>â€”</span>
                           )
                         ) : labelKind === 'count' ? (
                           deltaCount > 0 ? (
@@ -1179,13 +1361,13 @@ export default function AdminDashboard() {
                           ) : deltaCount < 0 ? (
                             <span>{formattedCount}</span>
                           ) : (
-                            <span>—</span>
+                            <span>â€”</span>
                           )
                         ) : (
-                          <span>—</span>  
+                          <span>â€”</span>  
                         )
                       ) : (
-                        <span className="text-[11px] font-normal">—</span>
+                        <span className="text-[11px] font-normal">â€”</span>
                       )}
                     </div>
                   </div>
@@ -1225,7 +1407,7 @@ export default function AdminDashboard() {
         })}
       </Motion.div>
 
-      {/* ── Insight row: Today's Leaves · Half-Day Summary · Quick Actions ── */}
+      {/* â”€â”€ Insight row: Today's Leaves Â· Half-Day Summary Â· Quick Actions â”€â”€ */}
       <Motion.div
         className="mt-4 grid items-stretch gap-3 @sm:grid-cols-2 @xl:grid-cols-3"
         variants={containerVariants}
@@ -1293,10 +1475,10 @@ export default function AdminDashboard() {
                         <div className="flex items-start gap-3">
                           <Avatar className="size-9 shrink-0 rounded-full border border-border/70 ring-2 ring-primary/10 @sm:size-10">
                             <AvatarImage src={profileSrc} alt={leave.employee_name || 'Employee'} />
-                            <AvatarFallback>{(leave.employee_name || '—').slice(0, 2).toUpperCase()}</AvatarFallback>
+                            <AvatarFallback>{(leave.employee_name || 'â€”').slice(0, 2).toUpperCase()}</AvatarFallback>
                           </Avatar>
                           <div className="min-w-0 flex-1">
-                            <p className="wrap-break-word text-sm font-semibold leading-snug text-foreground">{leave.employee_name || '—'}</p>
+                            <p className="wrap-break-word text-sm font-semibold leading-snug text-foreground">{leave.employee_name || 'â€”'}</p>
                             <p className="mt-0.5 wrap-break-word text-xs leading-snug text-muted-foreground">{secondary}</p>
                             <div className="mt-2 flex flex-wrap items-center gap-1.5 @sm:gap-2">
                               <span className="inline-flex items-center rounded-full border border-violet-500/35 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300">
@@ -1332,7 +1514,7 @@ export default function AdminDashboard() {
           </Card>
         </Motion.div>
 
-        {/* 2. Half-Day Summary – clickable drill-down */}
+        {/* 2. Half-Day Summary â€“ clickable drill-down */}
         <Motion.div
           variants={itemVariants}
           whileHover={{ y: -2, scale: 1.02, transition: { duration: 0.15 } }}
@@ -1521,8 +1703,10 @@ export default function AdminDashboard() {
                       <span>Employee Birthdays</span>
                     </CardTitle>
                     <CardDescription className="mt-3 max-w-2xl text-base leading-relaxed text-muted-foreground">
-                      Track today, this month, and upcoming birthdays.
-                      {birthdayMonthRangeLabel ? ` ${birthdayMonthLabel}: ${birthdayMonthRangeLabel}.` : ''}
+                      Track today&apos;s celebrants, browse birthdays by month (including past months), and see who is coming up in the next 30 and 90 days.
+                      {browsedBirthdayMonthRangeLabel
+                        ? ` Viewing ${browsedBirthdayMonthLabel}: ${browsedBirthdayMonthRangeLabel}.`
+                        : ''}
                     </CardDescription>
                   </div>
                   <div className="grid w-full grid-cols-1 gap-3 @sm:grid-cols-3 @xl:w-auto">
@@ -1538,10 +1722,10 @@ export default function AdminDashboard() {
                     <div className="admin-birthday-stat rounded-lg border border-border/70 bg-background/70 px-5 py-4">
                       <p className="flex items-center gap-3 text-sm font-extrabold uppercase tracking-wide text-foreground">
                         <CalendarDays className="size-5 text-muted-foreground" aria-hidden />
-                        Month
+                        {birthdayMonthShortName}
                       </p>
                       <p className="mt-4 text-4xl font-extrabold leading-none text-foreground">
-                        {currentMonthBirthdays.length}
+                        {birthdayTab === 'month' ? browsedMonthBirthdays.length : currentMonthBirthdays.length}
                       </p>
                     </div>
                     <div className="admin-birthday-stat rounded-lg border border-border/70 bg-background/70 px-5 py-4">
@@ -1559,17 +1743,53 @@ export default function AdminDashboard() {
               <CardContent className="px-5 py-7 @md:px-8">
                 <Tabs value={birthdayTab} onValueChange={setBirthdayTab} className="gap-6">
                   <div className="flex flex-col gap-4 @xl:flex-row @xl:items-center @xl:justify-between">
-                    <TabsList className="admin-birthday-tabs grid h-auto w-full grid-cols-3 gap-1 overflow-visible rounded-lg border border-border/70 bg-muted/25 p-1 @xl:max-w-2xl">
-                      <TabsTrigger value="month" className="min-h-11 min-w-0 rounded-md px-2 text-xs font-bold data-[state=active]:border data-[state=active]:border-brand/35 data-[state=active]:bg-background data-[state=active]:text-brand data-[state=active]:shadow-sm @md:px-5 @md:text-sm">
-                        This Month
-                      </TabsTrigger>
-                      <TabsTrigger value="upcoming30" className="min-h-11 min-w-0 rounded-md px-2 text-xs font-bold data-[state=active]:border data-[state=active]:border-brand/35 data-[state=active]:bg-background data-[state=active]:text-brand data-[state=active]:shadow-sm @md:px-5 @md:text-sm">
-                        Upcoming 30 Days
-                      </TabsTrigger>
-                      <TabsTrigger value="upcoming90" className="min-h-11 min-w-0 rounded-md px-2 text-xs font-bold data-[state=active]:border data-[state=active]:border-brand/35 data-[state=active]:bg-background data-[state=active]:text-brand data-[state=active]:shadow-sm @md:px-5 @md:text-sm">
-                        Upcoming 90 Days
-                      </TabsTrigger>
+                    <div className="flex min-w-0 flex-col gap-3 @md:flex-row @md:items-stretch @md:gap-3">
+                    <TabsList className={cn(BIRTHDAY_TAB_LIST_CLASS, '@md:max-w-xl')}>
+                      {birthdayTabOptions.map(({ value, label, ariaLabel, count }) => (
+                        <TabsTrigger
+                          key={value}
+                          value={value}
+                          className={BIRTHDAY_TAB_TRIGGER_CLASS}
+                          aria-label={`${ariaLabel}, ${count} ${count === 1 ? 'employee' : 'employees'}`}
+                        >
+                          <span className="text-sm font-semibold leading-none @md:text-base">{label}</span>
+                          <span
+                            className={cn(
+                              'inline-flex min-w-7 items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums leading-none',
+                              'bg-background/90 text-muted-foreground ring-1 ring-border/50',
+                              'group-data-[state=active]:bg-brand/12 group-data-[state=active]:text-brand group-data-[state=active]:ring-brand/25'
+                            )}
+                          >
+                            {count}
+                          </span>
+                        </TabsTrigger>
+                      ))}
                     </TabsList>
+                    {birthdayTab === 'month' ? (
+                      <div className="admin-birthday-month-nav w-full shrink-0 @md:w-auto">
+                        <Select
+                          value={birthdayBrowseMonthValue}
+                          onValueChange={handleBirthdayMonthSelect}
+                          disabled={birthdayMonthBrowseLoading}
+                        >
+                          <SelectTrigger
+                            className="h-11 w-full min-w-[10.5rem] rounded-lg border-border/70 bg-background/90 text-sm font-semibold shadow-sm @md:min-w-[12rem]"
+                            aria-label="Select birthday calendar month"
+                          >
+                            <SelectValue placeholder="Select month" />
+                          </SelectTrigger>
+                          <SelectContent position="popper" className="max-h-72">
+                            {birthdayMonthSelectOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                                {option.isCurrent ? ' (current)' : option.isFuture ? ' (upcoming)' : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                    </div>
                     <div className="relative w-full @xl:max-w-md">
                       <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-foreground/80" aria-hidden />
                       <input
@@ -1582,19 +1802,30 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  <TabsContent value="month" className="mt-0">
-                    {visibleBirthdayRows.length === 0 ? (
-                      <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
-                        No birthdays found for this period.
-                      </div>
+                  <TabsContent value="month" className="mt-0 space-y-4">
+                    {birthdayMonthBrowseError ? (
+                      <Motion.div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                        {birthdayMonthBrowseError.message || 'Failed to load birthdays for this month.'}
+                      </Motion.div>
+                    ) : null}
+                    {birthdayMonthBrowseLoading ? (
+                      <Motion.div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
+                        Loading birthdays for {browsedBirthdayMonthLabel}…
+                      </Motion.div>
+                    ) : visibleBirthdayRows.length === 0 ? (
+                      <Motion.div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
+                        No birthdays found for {browsedBirthdayMonthLabel}.
+                      </Motion.div>
                     ) : (
                       <div className="admin-birthday-grid grid max-h-[520px] gap-3 overflow-y-auto pr-1 @lg:grid-cols-2 @3xl:grid-cols-3">
                         {visibleBirthdayRows.map((person) => (
                           <BirthdayPersonRow
-                            key={`month-${person.employee_id}`}
+                            key={`month-${person.employee_id}-${birthdayBrowseMonth.year}-${birthdayBrowseMonth.month}`}
                             person={person}
                             tone={Number(person.days_until_birthday) === 0 ? 'today' : 'upcoming'}
                             monthView
+                            pastMonthView={browsedBirthdayIsPastMonth}
+                            futureMonthView={browsedBirthdayIsFutureMonth}
                             onOpen={() => navigate(hrPanelPath(hrBase, `employees/${person.employee_id}`))}
                           />
                         ))}
@@ -1700,7 +1931,7 @@ export default function AdminDashboard() {
                       : 'border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300'
                 const employmentTypeLabel = formatEmploymentTypeLabel(emp.employment_type)
                 const deptBranchLabel = `${emp.department || 'Unassigned'}${emp.branch ? ` / ${emp.branch}` : ''}`
-                const statusBadgeText = `${emp.status_label || emp.indicator_label || 'Status'} • ${formatDaysLabel(emp.days_remaining_label)}`
+                const statusBadgeText = `${emp.status_label || emp.indicator_label || 'Status'} â€¢ ${formatDaysLabel(emp.days_remaining_label)}`
 
                 return (
                   <div
@@ -1740,12 +1971,12 @@ export default function AdminDashboard() {
 
                         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5 font-medium text-foreground/80">
-                            {emp.employee_code || '—'}
+                            {emp.employee_code || 'â€”'}
                           </span>
                           <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5 capitalize">
                             {employmentTypeLabel}
                           </span>
-                          <span className="text-muted-foreground/60">•</span>
+                          <span className="text-muted-foreground/60">â€¢</span>
                           <span>
                             Hired <span className="font-medium text-foreground/85">{formatDate(emp.hire_date)}</span>
                           </span>
@@ -1754,12 +1985,12 @@ export default function AdminDashboard() {
                         <div className="mt-2 grid gap-1.5 text-xs @sm:grid-cols-2">
                           <p className="text-muted-foreground">
                             Service length:{' '}
-                            <span className="font-medium text-foreground/85">{emp.service_length_label || '—'}</span>
+                            <span className="font-medium text-foreground/85">{emp.service_length_label || 'â€”'}</span>
                           </p>
                           <p className="text-muted-foreground">
                             Next milestone:{' '}
                             <span className="font-medium text-foreground/85">
-                              {emp.next_milestone || '—'} ({formatDate(emp.next_milestone_date)})
+                              {emp.next_milestone || 'â€”'} ({formatDate(emp.next_milestone_date)})
                             </span>
                           </p>
                         </div>
@@ -1769,7 +2000,7 @@ export default function AdminDashboard() {
                             Recommended action
                           </p>
                           <p className="mt-1 text-sm leading-snug text-foreground/90">
-                            {emp.recommended_action || '—'}
+                            {emp.recommended_action || 'â€”'}
                           </p>
                         </div>
 
@@ -1887,7 +2118,7 @@ export default function AdminDashboard() {
                               {emp.branch ? ` / ${emp.branch}` : ''}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              Start: {formatDate(emp.contract_start_date)} • End: {formatDate(emp.contract_end_date)}
+                              Start: {formatDate(emp.contract_start_date)} â€¢ End: {formatDate(emp.contract_end_date)}
                             </p>
                           </div>
                         </button>
@@ -1936,7 +2167,7 @@ export default function AdminDashboard() {
         </Motion.div>
       </Motion.div>
 
-      {/* Charts row – redesigned UI */}
+      {/* Charts row â€“ redesigned UI */}
       <Motion.div
         className="mt-4 grid gap-3 @lg:grid-cols-2"
         variants={containerVariants}
@@ -1945,7 +2176,7 @@ export default function AdminDashboard() {
         viewport={scrollViewport}
         transition={scrollRevealTransition}
       >
-        {/* Weekly Attendance – vertical bars, stronger contrast */}
+        {/* Weekly Attendance â€“ vertical bars, stronger contrast */}
         <Motion.div variants={chartCardVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
           <Card className="admin-dashboard-card overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
           <CardHeader className="px-5 pb-5 pt-6">
@@ -2030,7 +2261,7 @@ export default function AdminDashboard() {
         </Card>
         </Motion.div>
 
-        {/* Monthly Late – area + line trend */}
+        {/* Monthly Late â€“ area + line trend */}
         <Motion.div variants={chartCardVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
           <Card className="admin-dashboard-card overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
           <CardHeader className="px-5 pb-5 pt-6">
@@ -2148,7 +2379,7 @@ export default function AdminDashboard() {
         </Motion.div>
       </Motion.div>
 
-      {/* Company Attendance Comparison – horizontal bars with date + company filters */}
+      {/* Company Attendance Comparison â€“ horizontal bars with date + company filters */}
       <Motion.div
         variants={chartCardVariants}
         initial="hidden"
@@ -2168,7 +2399,7 @@ export default function AdminDashboard() {
               <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
                 {isSingleCompany
                   ? `Attendance summary for ${companyData[0]?.company ?? 'company'}`
-                  : 'Present employees by company · Attendance metrics per company'}
+                  : 'Present employees by company Â· Attendance metrics per company'}
               </CardDescription>
             </div>
             {topCompany && topCompany.present > 0 && !isSingleCompany && (
@@ -2178,7 +2409,7 @@ export default function AdminDashboard() {
                   Top company
                 </span>
                 <span className="text-[11px] font-semibold text-foreground">
-                  {topCompany.company} · {topCompany.present} present
+                  {topCompany.company} Â· {topCompany.present} present
                 </span>
               </div>
             )}
@@ -2193,7 +2424,7 @@ export default function AdminDashboard() {
                 onChange={(e) => setCompanyDateFrom(e.target.value)}
                 className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm @md:w-auto @md:flex-none"
               />
-              <span className="text-xs text-muted-foreground">→</span>
+              <span className="text-xs text-muted-foreground">â†’</span>
               <input
                 type="date"
                 value={companyDateTo}
@@ -2251,7 +2482,7 @@ export default function AdminDashboard() {
                   )
                 })}
                 {companiesList.length === 0 && (
-                  <span className="text-[11px] text-muted-foreground">Loading…</span>
+                  <span className="text-[11px] text-muted-foreground">Loadingâ€¦</span>
                 )}
               </div>
             </div>
@@ -2268,10 +2499,10 @@ export default function AdminDashboard() {
           {isSingleCompany && companyData[0] && (
             <p className="mt-1.5 text-[11px] text-muted-foreground">
               {companyData[0].company}: {companyData[0].present ?? 0} present ({companyData[0].attendance_pct ?? 0}%)
-              {(companyData[0].headcount ?? 0) > 0 && ` · ${companyData[0].headcount} total staff`}
+              {(companyData[0].headcount ?? 0) > 0 && ` Â· ${companyData[0].headcount} total staff`}
             </p>
           )}
-          {/* Company legend – plain text, scrollable when many */}
+          {/* Company legend â€“ plain text, scrollable when many */}
           {companyData.length > 0 && !isSingleCompany && (
             <div className="mt-3 overflow-x-auto overflow-y-hidden scrollbar-thin">
               <div className="flex flex-nowrap gap-3 pb-1 min-w-0">
@@ -2285,7 +2516,7 @@ export default function AdminDashboard() {
                       <span
                         className={`text-[11px] font-medium whitespace-nowrap ${isUnassigned ? 'text-muted-foreground italic' : ''}`}
                       >
-                        {cd.company} · {cd.headcount ?? 0} staff
+                        {cd.company} Â· {cd.headcount ?? 0} staff
                       </span>
                     </div>
                   )
@@ -2298,7 +2529,7 @@ export default function AdminDashboard() {
           <div className="h-[260px] w-full rounded-lg bg-background/35 px-1.5 pt-2 dark:bg-background/25 @sm:h-[280px] @md:h-[300px] @md:px-2">
             {companyChartLoading ? (
               <div className="flex h-full items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
-                Loading…
+                Loadingâ€¦
               </div>
             ) : companyData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -2329,7 +2560,7 @@ export default function AdminDashboard() {
                     tickFormatter={(value, index) => {
                       const item = companyData[index]
                       if (item?.headcount) {
-                        return `${value} · ${item.headcount} staff`
+                        return `${value} Â· ${item.headcount} staff`
                       }
                       return value
                     }}
@@ -2366,7 +2597,7 @@ export default function AdminDashboard() {
                           {headcount !== null && headcount > 0 && (
                             <>
                               <p className="mt-0.5 tabular-nums text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                                Late: {row.late} · Absent: {row.absent} · On leave: {row.on_leave}
+                                Late: {row.late} Â· Absent: {row.absent} Â· On leave: {row.on_leave}
                               </p>
                               <p className="mt-0.5 tabular-nums" style={{ color: 'var(--muted-foreground)' }}>
                                 Share: <span className="font-semibold">{shareOfToday}%</span>
@@ -2415,7 +2646,7 @@ export default function AdminDashboard() {
       </Card>
       </Motion.div>
 
-      {/* Data tables – Today's Attendance Logs (real-time) */}
+      {/* Data tables â€“ Today's Attendance Logs (real-time) */}
       <Motion.div
         className="space-y-3"
         variants={itemVariants}
@@ -2436,7 +2667,7 @@ export default function AdminDashboard() {
                   Today&apos;s Attendance
                 </CardTitle>
                 <CardDescription className="mt-0 text-sm font-normal leading-[1.55] text-muted-foreground">
-                  Live clock in / out activity · Auto-refresh 15s
+                  Live clock in / out activity Â· Auto-refresh 15s
                 </CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -2446,7 +2677,7 @@ export default function AdminDashboard() {
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
                   </span>
                   <span className="font-extrabold tracking-wide text-emerald-700 dark:text-emerald-400">Live</span>
-                  <span className="text-[11px] font-medium text-muted-foreground">· {updatedAgoLabel}</span>
+                  <span className="text-[11px] font-medium text-muted-foreground">Â· {updatedAgoLabel}</span>
                 </div>
                 <Button
                   variant="outline"
@@ -2566,7 +2797,7 @@ export default function AdminDashboard() {
                                 {log.employee_name}
                               </p>
                               <p className="truncate text-xs text-muted-foreground">
-                                {log.company_name ?? '—'}
+                                {log.company_name ?? 'â€”'}
                               </p>
                             </div>
                           </div>
@@ -2582,7 +2813,7 @@ export default function AdminDashboard() {
                               Time in
                             </p>
                             <p className="mt-1 font-mono text-[12px] tabular-nums text-foreground">
-                              {log.time_in ? formatTime(log.time_in) : '—'}
+                              {log.time_in ? formatTime(log.time_in) : 'â€”'}
                             </p>
                           </div>
                           <div className="rounded-lg border border-border/50 bg-muted/20 p-2">
@@ -2590,7 +2821,7 @@ export default function AdminDashboard() {
                               Time out
                             </p>
                             <p className="mt-1 font-mono text-[12px] tabular-nums text-foreground">
-                              {log.time_out ? formatTime(log.time_out) : '—'}
+                              {log.time_out ? formatTime(log.time_out) : 'â€”'}
                             </p>
                           </div>
                         </div>
@@ -2615,7 +2846,7 @@ export default function AdminDashboard() {
                               </span>
                             )
                           ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
+                            <span className="text-xs text-muted-foreground">â€”</span>
                           )}
                         </div>
                       </li>
@@ -2726,7 +2957,7 @@ export default function AdminDashboard() {
                                   </button>
                                   {!compact && (
                                     <span className="text-[11px] text-muted-foreground">
-                                      {log.company_name ?? '—'}
+                                      {log.company_name ?? 'â€”'}
                                     </span>
                                   )}
                                 </div>
@@ -2745,13 +2976,13 @@ export default function AdminDashboard() {
                                     <Building2 className="size-4" />
                                   </div>
                                 )}
-                                <span className="text-xs text-foreground truncate max-w-[140px]" title={log.company_name ?? '—'}>
-                                  {log.company_name ?? '—'}
+                                <span className="text-xs text-foreground truncate max-w-[140px]" title={log.company_name ?? 'â€”'}>
+                                  {log.company_name ?? 'â€”'}
                                 </span>
                               </div>
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle font-mono text-xs text-muted-foreground tabular-nums`}>
-                              {log.time_in ? formatTime(log.time_in) : '—'}
+                              {log.time_in ? formatTime(log.time_in) : 'â€”'}
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle`}>
                               {log.is_absent ? (
@@ -2773,7 +3004,7 @@ export default function AdminDashboard() {
                                   </span>
                                 )
                               ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
+                                <span className="text-xs text-muted-foreground">â€”</span>
                               )}
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle`}>
@@ -2802,7 +3033,7 @@ export default function AdminDashboard() {
                               </span>
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle font-mono text-xs text-muted-foreground tabular-nums`}>
-                              {log.time_out ? formatTime(log.time_out) : '—'}
+                              {log.time_out ? formatTime(log.time_out) : 'â€”'}
                             </td>
                           </tr>
                         ),
@@ -2817,19 +3048,19 @@ export default function AdminDashboard() {
                                   <p className="font-semibold text-foreground">
                                     {log.employee_name}{' '}
                                     {log.company_name && (
-                                      <span className="text-xs text-muted-foreground">· {log.company_name}</span>
+                                      <span className="text-xs text-muted-foreground">Â· {log.company_name}</span>
                                     )}
                                   </p>
                                   <p>
                                     First clock-in:{' '}
                                     <span className="font-mono text-[11px] text-foreground">
-                                      {log.time_in ? formatTime(log.time_in) : '—'}
+                                      {log.time_in ? formatTime(log.time_in) : 'â€”'}
                                     </span>
                                   </p>
                                   <p>
                                     Last clock-out:{' '}
                                     <span className="font-mono text-[11px] text-foreground">
-                                      {log.time_out ? formatTime(log.time_out) : '—'}
+                                      {log.time_out ? formatTime(log.time_out) : 'â€”'}
                                     </span>
                                   </p>
                                   {log.late_label && (
@@ -2879,7 +3110,7 @@ export default function AdminDashboard() {
                 <p className="text-xs text-muted-foreground @sm:text-sm">
                   Showing{' '}
                   <span className="font-medium text-foreground">
-                    {logsStart}–{logsEnd}
+                    {logsStart}â€“{logsEnd}
                   </span>{' '}
                   of{' '}
                   <span className="font-medium text-foreground">
@@ -2966,17 +3197,8 @@ export default function AdminDashboard() {
             inset 0 1px 0 rgba(255, 255, 255, 0.55),
             0 14px 34px rgba(249, 115, 22, 0.11);
         }
-        .admin-birthday-tabs {
-          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-          overflow: visible;
-        }
         .admin-birthday-tabs [data-slot='tabs-trigger']::after {
           display: none;
-        }
-        .admin-birthday-tabs [data-slot='tabs-trigger'] {
-          width: 100%;
-          white-space: normal;
-          line-height: 1.15;
         }
         .admin-birthday-search {
           color-scheme: light;
@@ -2994,7 +3216,6 @@ export default function AdminDashboard() {
             linear-gradient(180deg, color-mix(in oklab, var(--card) 94%, transparent), color-mix(in oklab, var(--background) 82%, var(--card) 18%));
         }
         .dark .admin-birthday-stat,
-        .dark .admin-birthday-tabs,
         .dark .admin-birthday-search,
         .dark .admin-birthday-person {
           border-color: var(--border);
@@ -3010,7 +3231,7 @@ export default function AdminDashboard() {
         .dark .admin-birthday-search {
           color-scheme: dark;
         }
-        /* ── Recharts tooltip: transparent wrapper, themed inner ── */
+        /* â”€â”€ Recharts tooltip: transparent wrapper, themed inner â”€â”€ */
         .recharts-tooltip-wrapper,
         .recharts-tooltip-wrapper *,
         [class*="recharts-tooltip"] {
@@ -3093,7 +3314,7 @@ export default function AdminDashboard() {
           <div className="flex-1 overflow-auto min-h-0 px-5 py-4">
             {halfDayListLoading ? (
               <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-                Loading…
+                Loadingâ€¦
               </div>
             ) : halfDayList?.employees?.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -3119,9 +3340,9 @@ export default function AdminDashboard() {
                     {halfDayList.employees.map((emp) => (
                       <tr key={emp.user_id} className="border-b border-border/60 hover:bg-muted/30">
                         <td className="py-2.5 px-2 font-medium">{emp.employee_name}</td>
-                        <td className="py-2.5 px-2 text-muted-foreground">{emp.branch ?? '—'}</td>
+                        <td className="py-2.5 px-2 text-muted-foreground">{emp.branch ?? 'â€”'}</td>
                         <td className="py-2.5 px-2 tabular-nums text-muted-foreground">
-                          {emp.time_in ? formatTime(`2000-01-01T${emp.time_in}`) : '—'}
+                          {emp.time_in ? formatTime(`2000-01-01T${emp.time_in}`) : 'â€”'}
                         </td>
                         <td className="py-2.5 px-2">
                           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -3132,14 +3353,14 @@ export default function AdminDashboard() {
                           </span>
                         </td>
                         <td className="py-2.5 px-2 text-muted-foreground max-w-[180px] truncate" title={emp.notes ?? undefined}>
-                          {emp.notes ?? '—'}
+                          {emp.notes ?? 'â€”'}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <p className="text-xs text-muted-foreground mt-3">
-                  {halfDayList.am_count ?? 0} AM · {halfDayList.pm_count ?? 0} PM · {halfDayList.total ?? 0} total
+                  {halfDayList.am_count ?? 0} AM Â· {halfDayList.pm_count ?? 0} PM Â· {halfDayList.total ?? 0} total
                 </p>
               </div>
             ) : (

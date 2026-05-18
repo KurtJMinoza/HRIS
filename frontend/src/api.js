@@ -1287,6 +1287,34 @@ export async function getDashboardData() {
 }
 
 /**
+ * Admin dashboard: birthdays for a specific calendar month (current or past).
+ * @param {{ year: number, month: number }} params — 1-based month
+ */
+export async function getAdminDashboardBirthdays({ year, month }) {
+  const query = new URLSearchParams({
+    year: String(year),
+    month: String(month),
+  })
+  const res = await authenticatedFetch(`/admin/dashboard/birthdays?${query.toString()}`)
+  const raw = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(raw.message || 'Failed to load birthdays for this month')
+  }
+  return {
+    birthdays: Array.isArray(raw.birthdays) ? raw.birthdays : [],
+    birthday_month_label: raw.birthday_month_label ?? '',
+    birthday_month_range_label: raw.birthday_month_range_label ?? '',
+    year: Number(raw.year ?? year),
+    month: Number(raw.month ?? month),
+    is_current_month: Boolean(raw.is_current_month),
+    is_past_month: Boolean(raw.is_past_month),
+    is_future_month: Boolean(raw.is_future_month),
+    can_go_previous: raw.can_go_previous !== false,
+    can_go_next: Boolean(raw.can_go_next),
+  }
+}
+
+/**
  * Fetch company attendance comparison data for the chart.
  * @param {{ from_date?: string, to_date?: string, company_ids?: number[] }} params
  */

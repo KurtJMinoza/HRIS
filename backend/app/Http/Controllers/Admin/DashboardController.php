@@ -238,6 +238,44 @@ class DashboardController extends Controller
         return response()->json($response);
     }
 
+    /** How many calendar months back admins may browse birthday history. */
+    private const BIRTHDAY_HISTORY_MONTHS = 24;
+
+    /** How many calendar months ahead admins may browse upcoming birthdays. */
+    private const BIRTHDAY_FUTURE_MONTHS = 12;
+
+    /**
+     * Birthdays for a specific calendar month (past, current, or future). Used by the dashboard month browser.
+     */
+    public function birthdaysByMonth(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        $tz = 'Asia/Manila';
+        $today = Carbon::now($tz)->startOfDay();
+        $year = (int) $request->integer('year', $today->year);
+        $month = (int) $request->integer('month', $today->month);
+
+        if ($month < 1 || $month > 12) {
+            abort(422, 'Invalid month.');
+        }
+
+        $selectedStart = Carbon::create($year, $month, 1, 0, 0, 0, $tz)->startOfMonth();
+        $currentMonthStart = $today->copy()->startOfMonth();
+        $earliestMonthStart = $currentMonthStart->copy()->subMonths(self::BIRTHDAY_HISTORY_MONTHS - 1);
+        $latestMonthStart = $currentMonthStart->copy()->addMonths(self::BIRTHDAY_FUTURE_MONTHS - 1);
+
+        if ($selectedStart->greaterThan($latestMonthStart)) {
+            abort(422, 'Birthday calendar is limited to the next '.self::BIRTHDAY_FUTURE_MONTHS.' months.');
+        }
+        if ($selectedStart->lessThan($earliestMonthStart)) {
+            abort(422, 'Birthday history is limited to the last '.self::BIRTHDAY_HISTORY_MONTHS.' months.');
+        }
+
+        return response()->json($this->birthdaysForCalendarMonth($actor, $year, $month));
+    }
+
     /**
      * Active employee birthdays for the admin dashboard.
      *
@@ -252,10 +290,7 @@ class DashboardController extends Controller
         $monthStart = $today->copy()->startOfMonth();
         $monthEnd = $today->copy()->endOfMonth();
 
-        $baseQuery = User::query()
-            ->activeRoster()
-            ->whereNotNull('date_of_birth');
-        $this->dataScopeService->restrictEmployeeQuery($actor, $baseQuery);
+        $baseQuery = $this->scopedBirthdayEmployeeQuery($actor);
 
         $fingerprintQuery = clone $baseQuery;
         $fingerprint = $fingerprintQuery
@@ -275,29 +310,140 @@ class DashboardController extends Controller
         ]);
 
         return Cache::remember($cacheKey, now()->addMinutes(15), function () use ($baseQuery, $today, $window, $extendedWindow, $monthStart, $monthEnd): array {
-            $query = (clone $baseQuery)
-                ->select([
-                    'users.id',
-                    'users.name',
-                    'users.first_name',
-                    'users.middle_name',
-                    'users.last_name',
-                    'users.profile_image',
-                    'users.department',
-                    'users.department_id',
-                    'users.position',
-                    'users.profile_image',
-                    'users.date_of_birth',
-                ])
-                ->selectSub(
-                    DB::table('departments')
-                        ->select('name')
-                        ->whereColumn('departments.id', 'users.department_id')
-                        ->limit(1),
-                    'department_name'
-                );
+            $rows = $this->buildBirthdayEmployeeRows($baseQuery, $today);
 
-            $rows = $query->get()
+            $clean = function (array $row): array {
+                unset($row['__sort_name']);
+
+                return $row;
+            };
+
+            $upcoming30 = $rows
+                ->filter(fn (array $row) => (int) $row['days_until_birthday'] >= 0 && (int) $row['days_until_birthday'] <= $window)
+                ->map($clean)
+                ->values()
+                ->all();
+            $upcoming90 = $rows
+                ->filter(fn (array $row) => (int) $row['days_until_birthday'] >= 0 && (int) $row['days_until_birthday'] <= $extendedWindow)
+                ->map($clean)
+                ->values()
+                ->all();
+
+            $currentMonthPayload = $this->filterBirthdaysForCalendarMonth($rows, $today->year, $today->month, $today);
+
+            return [
+                'today_birthdays' => $rows
+                    ->filter(fn (array $row) => (int) $row['days_until_birthday'] === 0)
+                    ->map($clean)
+                    ->values()
+                    ->all(),
+                'current_month_birthdays' => $currentMonthPayload['birthdays'],
+                'upcoming_30_days' => $upcoming30,
+                'upcoming_90_days' => $upcoming90,
+                'upcoming_birthdays' => $upcoming30,
+                'upcoming_birthdays_90' => $upcoming90,
+                'birthday_month_label' => $currentMonthPayload['birthday_month_label'],
+                'birthday_month_range_label' => $currentMonthPayload['birthday_month_range_label'],
+            ];
+        });
+    }
+
+    /**
+     * @return array{
+     *     birthdays: array<int, array<string, mixed>>,
+     *     birthday_month_label: string,
+     *     birthday_month_range_label: string,
+     *     year: int,
+     *     month: int,
+     *     is_current_month: bool,
+     *     is_past_month: bool,
+     *     is_future_month: bool,
+     *     can_go_previous: bool,
+     *     can_go_next: bool
+     * }
+     */
+    private function birthdaysForCalendarMonth(User $actor, int $year, int $month): array
+    {
+        $tz = 'Asia/Manila';
+        $today = Carbon::now($tz)->startOfDay();
+        $monthStart = Carbon::create($year, $month, 1, 0, 0, 0, $tz)->startOfMonth();
+        $currentMonthStart = $today->copy()->startOfMonth();
+        $earliestMonthStart = $currentMonthStart->copy()->subMonths(self::BIRTHDAY_HISTORY_MONTHS - 1);
+        $latestMonthStart = $currentMonthStart->copy()->addMonths(self::BIRTHDAY_FUTURE_MONTHS - 1);
+
+        $baseQuery = $this->scopedBirthdayEmployeeQuery($actor);
+        $fingerprintQuery = clone $baseQuery;
+        $fingerprint = $fingerprintQuery
+            ->select([
+                DB::raw('COUNT(*) as aggregate_count'),
+                DB::raw('MAX(updated_at) as aggregate_updated_at'),
+            ])
+            ->first();
+
+        $cacheKey = implode(':', [
+            'admin_dashboard_birthdays_month',
+            (int) $actor->id,
+            $monthStart->format('Y-m'),
+            $today->toDateString(),
+            (int) ($fingerprint?->aggregate_count ?? 0),
+            (string) ($fingerprint?->aggregate_updated_at ?? 'none'),
+        ]);
+
+        return Cache::remember($cacheKey, now()->addMinutes(15), function () use ($baseQuery, $today, $year, $month, $monthStart, $currentMonthStart, $earliestMonthStart, $latestMonthStart): array {
+            $rows = $this->buildBirthdayEmployeeRows($baseQuery, $today);
+            $payload = $this->filterBirthdaysForCalendarMonth($rows, $year, $month, $today);
+
+            return $payload + [
+                'year' => $year,
+                'month' => $month,
+                'is_current_month' => $monthStart->isSameMonth($today),
+                'is_past_month' => $monthStart->lessThan($currentMonthStart),
+                'is_future_month' => $monthStart->greaterThan($currentMonthStart),
+                'can_go_previous' => $monthStart->greaterThan($earliestMonthStart),
+                'can_go_next' => $monthStart->lessThan($latestMonthStart),
+            ];
+        });
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Builder<User> */
+    private function scopedBirthdayEmployeeQuery(User $actor)
+    {
+        $baseQuery = User::query()
+            ->activeRoster()
+            ->whereNotNull('date_of_birth');
+        $this->dataScopeService->restrictEmployeeQuery($actor, $baseQuery);
+
+        return $baseQuery;
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<User>  $baseQuery
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    private function buildBirthdayEmployeeRows($baseQuery, Carbon $today)
+    {
+        $query = (clone $baseQuery)
+            ->select([
+                'users.id',
+                'users.name',
+                'users.first_name',
+                'users.middle_name',
+                'users.last_name',
+                'users.profile_image',
+                'users.department',
+                'users.department_id',
+                'users.position',
+                'users.date_of_birth',
+            ])
+            ->selectSub(
+                DB::table('departments')
+                    ->select('name')
+                    ->whereColumn('departments.id', 'users.department_id')
+                    ->limit(1),
+                'department_name'
+            );
+
+        return $query->get()
             ->map(function (User $employee) use ($today): ?array {
                 $birthDate = $employee->date_of_birth?->copy()->timezone($today->timezone);
                 if (! $birthDate) {
@@ -344,6 +490,7 @@ class DashboardController extends Controller
                     'days_until_birthday' => $daysUntilBirthday,
                     'is_today' => $isToday,
                     'is_tomorrow' => $isTomorrow,
+                    'birthday_passed_in_view' => false,
                     '__sort_name' => $employee->employeeListingSortKey(),
                 ];
             })
@@ -353,6 +500,21 @@ class DashboardController extends Controller
                 ['__sort_name', 'asc'],
             ])
             ->values();
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, array<string, mixed>>  $rows
+     * @return array{birthdays: array<int, array<string, mixed>>, birthday_month_label: string, birthday_month_range_label: string}
+     */
+    private function filterBirthdaysForCalendarMonth($rows, int $year, int $month, Carbon $today): array
+    {
+        $tz = $today->timezone;
+        $monthStart = Carbon::create($year, $month, 1, 0, 0, 0, $tz)->startOfMonth();
+        $monthEnd = $monthStart->copy()->endOfMonth();
+        $currentMonthStart = $today->copy()->startOfMonth();
+        $isPastMonth = $monthStart->lessThan($currentMonthStart);
+        $isCurrentMonth = $monthStart->isSameMonth($today);
+        $isFutureMonth = $monthStart->greaterThan($currentMonthStart);
 
         $clean = function (array $row): array {
             unset($row['__sort_name']);
@@ -360,40 +522,33 @@ class DashboardController extends Controller
             return $row;
         };
 
-            $upcoming30 = $rows
-                ->filter(fn (array $row) => (int) $row['days_until_birthday'] >= 0 && (int) $row['days_until_birthday'] <= $window)
-                ->map($clean)
-                ->values()
-                ->all();
-            $upcoming90 = $rows
-                ->filter(fn (array $row) => (int) $row['days_until_birthday'] >= 0 && (int) $row['days_until_birthday'] <= $extendedWindow)
-                ->map($clean)
-                ->values()
-                ->all();
+        $birthdays = $rows
+            ->filter(fn (array $row) => (int) $row['birth_month'] === $month)
+            ->map(function (array $row) use ($year, $month, $today, $isPastMonth, $isCurrentMonth, $isFutureMonth, $tz): array {
+                $occurrence = Carbon::create($year, $month, (int) $row['birth_day'], 0, 0, 0, $tz)->startOfDay();
+                $daysUntilOccurrence = (int) $today->diffInDays($occurrence, false);
+                $row['day_name'] = $occurrence->format('l');
+                $row['days_until_birthday'] = $daysUntilOccurrence;
+                $row['is_today'] = $daysUntilOccurrence === 0;
+                $row['is_tomorrow'] = $daysUntilOccurrence === 1;
+                $row['birthday_passed_in_view'] = $isPastMonth || ($isCurrentMonth && $occurrence->lessThan($today));
+                $row['birthday_upcoming_in_view'] = $isFutureMonth || ($isCurrentMonth && $occurrence->greaterThan($today));
 
-            return [
-            'today_birthdays' => $rows
-                ->filter(fn (array $row) => (int) $row['days_until_birthday'] === 0)
-                ->map($clean)
-                ->values()
-                ->all(),
-            'current_month_birthdays' => $rows
-                ->filter(fn (array $row) => (int) $row['birth_month'] === (int) $today->month)
-                ->sortBy([
-                    ['birth_day', 'asc'],
-                    ['__sort_name', 'asc'],
-                ])
-                ->map($clean)
-                ->values()
-                ->all(),
-            'upcoming_30_days' => $upcoming30,
-            'upcoming_90_days' => $upcoming90,
-            'upcoming_birthdays' => $upcoming30,
-            'upcoming_birthdays_90' => $upcoming90,
-            'birthday_month_label' => $today->format('F Y'),
+                return $row;
+            })
+            ->sortBy([
+                ['birth_day', 'asc'],
+                ['__sort_name', 'asc'],
+            ])
+            ->map($clean)
+            ->values()
+            ->all();
+
+        return [
+            'birthdays' => $birthdays,
+            'birthday_month_label' => $monthStart->format('F Y'),
             'birthday_month_range_label' => $monthStart->format('M j').' to '.$monthEnd->format('M j'),
-            ];
-        });
+        ];
     }
 
     private function upcomingRegularizations(User $actor, int $limit = 8): array
