@@ -382,6 +382,73 @@ class OvertimeController extends Controller
     /**
      * Approve or reject an overtime entry (multi-level: line manager → HR final).
      */
+    public function bulkApprove(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'request_ids' => ['required', 'array', 'min:1', 'max:200'],
+            'request_ids.*' => ['integer', 'distinct'],
+            'remarks' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $ids = array_values(array_unique(array_map('intval', $validated['request_ids'])));
+        $remarks = $validated['remarks'] ?? null;
+        $approved = 0;
+        $skipped = 0;
+        $failed = 0;
+        $failedItems = [];
+
+        foreach ($ids as $id) {
+            try {
+                $single = $request->duplicate(null, [
+                    'status' => Overtime::STATUS_APPROVED,
+                    'remarks' => $remarks,
+                ]);
+                $single->setUserResolver(fn () => $actor);
+                $response = $this->updateStatus($single, $id);
+                $status = $response->getStatusCode();
+
+                if ($status >= 200 && $status < 300) {
+                    $approved++;
+                    continue;
+                }
+
+                $body = $response->getData(true);
+                $skipped++;
+                $failedItems[] = [
+                    'request_id' => $id,
+                    'reason' => (string) ($body['message'] ?? 'Overtime request was skipped.'),
+                ];
+            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+                $skipped++;
+                $failedItems[] = [
+                    'request_id' => $id,
+                    'reason' => 'Overtime request was not found.',
+                ];
+            } catch (\Throwable $e) {
+                $failed++;
+                $failedItems[] = [
+                    'request_id' => $id,
+                    'reason' => $e instanceof ValidationException
+                        ? (string) collect($e->errors())->flatten()->first()
+                        : ($e->getMessage() ?: 'Bulk approval failed for this overtime request.'),
+                ];
+            }
+        }
+
+        return response()->json([
+            'message' => $approved > 0 ? 'Bulk overtime approval completed.' : 'No overtime requests were approved.',
+            'approved_count' => $approved,
+            'skipped_count' => $skipped,
+            'failed_count' => $failed,
+            'failed_items' => $failedItems,
+        ]);
+    }
+
     public function updateStatus(Request $request, int $id): JsonResponse
     {
         $validated = $request->validate([

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion as Motion } from 'framer-motion'
 import {
   BarChart3,
@@ -72,6 +72,7 @@ import { cn } from '@/lib/utils'
 import { DIALOG_CONTENT_CLASS } from '@/lib/fieldClasses'
 import { OvertimeRequestsCard } from '@/components/dashboard/OvertimeRequestsCard'
 import { AttendanceCorrectionsCard } from '@/components/dashboard/AttendanceCorrectionsCard'
+import { HR_PENDING_APPROVALS_CHANGED } from '@/lib/hrPendingApprovalsEvents'
 
 const CARD_ICONS = {
   total: Users,
@@ -379,6 +380,18 @@ export default function AdminDashboard() {
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
   })
+
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    const onPendingApprovalsChanged = () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-dashboard-overtime-pending'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-dashboard-attendance-corrections-pending'] })
+    }
+    window.addEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
+    return () => window.removeEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
+  }, [queryClient])
 
   const loading = authLoading || dashboardQuery.isLoading
   const overtimePendingCount = Number(

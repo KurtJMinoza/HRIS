@@ -3793,6 +3793,19 @@ export async function approveLeaveRequest(id, notes, opts = {}) {
   return data
 }
 
+export async function bulkApproveLeaveRequests(requestIds, remarks = '') {
+  const res = await authenticatedFetch('/admin/leave/bulk-approve', {
+    method: 'POST',
+    body: JSON.stringify({
+      request_ids: Array.isArray(requestIds) ? requestIds.map(Number) : [],
+      remarks: String(remarks || '').trim() || undefined,
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to approve selected leave requests')
+  return data
+}
+
 export async function rejectLeaveRequest(id, reason) {
   const res = await authenticatedFetch(`/admin/leave/${id}/reject`, {
     method: 'POST',
@@ -4874,6 +4887,20 @@ export async function approvePresenceFiling(id, payload = {}) {
   return data
 }
 
+export async function bulkApprovePresenceFilings(requestIds, remarks = '') {
+  const res = await authenticatedFetch('/admin/presence-filings/bulk-approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      request_ids: Array.isArray(requestIds) ? requestIds.map(Number) : [],
+      remarks: String(remarks || '').trim() || undefined,
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to approve selected attendance corrections')
+  return data
+}
+
 export async function rejectPresenceFiling(id, rejectionNote) {
   const res = await authenticatedFetch(`/admin/presence-filings/${id}/reject`, {
     method: 'POST',
@@ -5140,6 +5167,19 @@ export async function updateAdminOvertimeStatus(id, status, remarks) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to update overtime status')
+  return data
+}
+
+export async function bulkApproveAdminOvertime(requestIds, remarks = '') {
+  const res = await authenticatedFetch('/admin/overtime/bulk-approve', {
+    method: 'POST',
+    body: JSON.stringify({
+      request_ids: Array.isArray(requestIds) ? requestIds.map(Number) : [],
+      remarks: String(remarks || '').trim() || undefined,
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to approve selected overtime requests')
   return data
 }
 

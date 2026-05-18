@@ -45,6 +45,7 @@ import {
   getAdminLeaveByRequestId,
   createLeaveRequest,
   approveLeaveRequest,
+  bulkApproveLeaveRequests,
   rejectLeaveRequest,
   getEmployees,
   updateLeaveNotes,
@@ -73,6 +74,8 @@ import {
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
 import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
+import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
+import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All' },
@@ -206,6 +209,11 @@ export default function AdminLeave() {
   const [approveLeave, setApproveLeave] = useState(null)
   const [approveNotes, setApproveNotes] = useState('')
   const [approveSubmitting, setApproveSubmitting] = useState(false)
+  const [selectedBulkIds, setSelectedBulkIds] = useState(() => new Set())
+  const [bulkApproveRemarks, setBulkApproveRemarks] = useState('')
+  const [bulkApproving, setBulkApproving] = useState(false)
+  const [bulkSummaryOpen, setBulkSummaryOpen] = useState(false)
+  const [bulkSummary, setBulkSummary] = useState(null)
   const [approveForceInsufficientCredits, setApproveForceInsufficientCredits] = useState(false)
   const [addBypassLeaveCredits, setAddBypassLeaveCredits] = useState(false)
   const [addRangeRestDay, setAddRangeRestDay] = useState(null)
@@ -590,6 +598,7 @@ export default function AdminLeave() {
       setApproveLeave(null)
       setApproveNotes('')
       await fetchLeaves()
+      notifyPendingApprovalsChanged()
       toast({ title: data.message || 'Leave approved', variant: 'success' })
     } catch (e) {
       setError(e.message)
@@ -597,6 +606,60 @@ export default function AdminLeave() {
     } finally {
       setApproveSubmitting(false)
       setActionLoadingId(null)
+    }
+  }
+
+  function toggleBulkRow(leave) {
+    const id = Number(leave?.id)
+    if (!id || leave?.status !== 'pending' || !leave?.actor_can_approve) return
+    setSelectedBulkIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleBulkSelectAll() {
+    setSelectedBulkIds((prev) => {
+      if (allBulkSelected) return new Set()
+      const next = new Set(prev)
+      for (const leave of bulkSelectableRows) next.add(Number(leave.id))
+      return next
+    })
+  }
+
+  async function handleBulkApprove() {
+    const ids = [...selectedBulkIds]
+    if (ids.length === 0) return
+    setBulkApproving(true)
+    setError(null)
+    try {
+      const res = await bulkApproveLeaveRequests(ids, bulkApproveRemarks)
+      const approved = Number(res?.approved_count || 0)
+      const skipped = Number(res?.skipped_count || 0)
+      const failed = Number(res?.failed_count || 0)
+      const failedItems = Array.isArray(res?.failed_items) ? res.failed_items : []
+      toast({
+        title: 'Bulk approval complete',
+        description: `${approved} approved${skipped || failed ? `, ${skipped + failed} skipped/failed` : ''}.`,
+        variant: approved > 0 ? 'success' : 'default',
+      })
+      setBulkSummary({
+        approved_count: approved,
+        skipped_count: skipped,
+        failed_count: failed,
+        failed_items: failedItems,
+      })
+      if (failedItems.length > 0) setBulkSummaryOpen(true)
+      if (approved > 0) notifyPendingApprovalsChanged()
+      setSelectedBulkIds(new Set())
+      await fetchLeaves()
+    } catch (e) {
+      setError(e.message)
+      toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
+    } finally {
+      setBulkApproving(false)
     }
   }
 
@@ -616,6 +679,7 @@ export default function AdminLeave() {
       setRejectOpen(false)
       setRejectLeave(null)
       await fetchLeaves()
+      notifyPendingApprovalsChanged()
     } catch (e) {
       setError(e.message)
       toast({ title: 'Failed to reject leave', description: e.message, variant: 'error' })
@@ -675,6 +739,20 @@ export default function AdminLeave() {
     approved: approvedCount,
     rejected: rejectedCount,
   }
+  const bulkSelectableRows = useMemo(
+    () => (canApproveLeave ? leaveRequests.filter((leave) => leave?.status === 'pending' && leave?.actor_can_approve) : []),
+    [canApproveLeave, leaveRequests]
+  )
+  const selectedBulkCount = selectedBulkIds.size
+  const allBulkSelected = bulkSelectableRows.length > 0 && bulkSelectableRows.every((leave) => selectedBulkIds.has(Number(leave.id)))
+
+  useEffect(() => {
+    setSelectedBulkIds((prev) => {
+      const allowed = new Set(bulkSelectableRows.map((leave) => Number(leave.id)))
+      const next = new Set([...prev].filter((id) => allowed.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [bulkSelectableRows])
 
   const today = new Date()
   const currentMonth = today.getMonth()
@@ -739,6 +817,37 @@ export default function AdminLeave() {
             {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Refresh
           </Button>
+          {canApproveLeave ? (
+            <div className="flex min-w-[12rem] max-w-full flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2 @xl:max-w-md">
+              <div className="space-y-1">
+                <Label htmlFor="leave-bulk-remarks" className="text-xs font-medium text-muted-foreground">
+                  Admin remarks (optional)
+                </Label>
+                <textarea
+                  id="leave-bulk-remarks"
+                  value={bulkApproveRemarks}
+                  onChange={(e) => setBulkApproveRemarks(e.target.value)}
+                  rows={2}
+                  placeholder="Applied to each approved request"
+                  disabled={bulkApproving}
+                  className={cn(FIELD_TEXTAREA_CLASS_SM, 'min-h-[2.75rem] resize-y text-sm')}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-semibold text-muted-foreground">{selectedBulkCount} selected</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-9 gap-2 rounded-lg"
+                  disabled={bulkApproving || selectedBulkCount === 0}
+                  onClick={handleBulkApprove}
+                >
+                  {bulkApproving ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+                  Approve Selected
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {canApproveLeave && (
           <Button
             className={cn(adminLeavePrimaryButtonClass, 'flex-1 @lg:flex-initial')}
@@ -959,6 +1068,16 @@ export default function AdminLeave() {
               <table className="w-full min-w-[min(100%,820px)] text-sm @md:text-[15px]">
                 <thead>
                   <tr className="border-b border-border/40 bg-muted/30 dark:bg-card">
+                    {canApproveLeave && (
+                    <th className="w-10 px-5 py-3.5 text-left">
+                      <Checkbox
+                        checked={allBulkSelected}
+                        disabled={bulkSelectableRows.length === 0 || bulkApproving}
+                        onCheckedChange={toggleBulkSelectAll}
+                        aria-label="Select all pending leave requests"
+                      />
+                    </th>
+                    )}
                     <th className="text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
                       Employee
                     </th>
@@ -1026,6 +1145,16 @@ export default function AdminLeave() {
 
                     return (
                       <tr key={leave.id} className={rowClassName}>
+                      {canApproveLeave && (
+                      <td className="px-4 py-4 align-middle">
+                        <Checkbox
+                          checked={selectedBulkIds.has(Number(leave.id))}
+                          disabled={leave.status !== 'pending' || !leave.actor_can_approve || bulkApproving}
+                          onCheckedChange={() => toggleBulkRow(leave)}
+                          aria-label={`Select leave request #${leave.id}`}
+                        />
+                      </td>
+                      )}
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-3">
                           <Avatar className="size-10 shrink-0 rounded-full">
@@ -1211,6 +1340,13 @@ export default function AdminLeave() {
           )}
         </CardContent>
       </Card>
+
+      <BulkApprovalSummaryDialog
+        open={bulkSummaryOpen}
+        onOpenChange={setBulkSummaryOpen}
+        title="Bulk leave approval"
+        summary={bulkSummary}
+      />
 
       {/* Approve with optional notes */}
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>

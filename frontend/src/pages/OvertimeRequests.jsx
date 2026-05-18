@@ -31,6 +31,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/use-toast'
@@ -69,6 +70,7 @@ import {
   getAdminOvertime,
   getAdminOvertimeDetail,
   updateAdminOvertimeStatus,
+  bulkApproveAdminOvertime,
   deleteAdminOvertimeRequest,
   exportAdminOvertimeCsv,
 } from '@/api'
@@ -84,6 +86,8 @@ import {
   adminFormDialogContentClass,
 } from '@/lib/adminFormDialogStyles'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
+import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
+import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
 
 const OT_TYPE_LABEL = {
   regular: 'Regular Day OT',
@@ -715,6 +719,11 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [actionRow, setActionRow] = useState(null)
   const [actionRemarks, setActionRemarks] = useState('')
   const [actionSubmitting, setActionSubmitting] = useState(false)
+  const [selectedBulkIds, setSelectedBulkIds] = useState(() => new Set())
+  const [bulkApproveRemarks, setBulkApproveRemarks] = useState('')
+  const [bulkApproving, setBulkApproving] = useState(false)
+  const [bulkSummaryOpen, setBulkSummaryOpen] = useState(false)
+  const [bulkSummary, setBulkSummary] = useState(null)
 
   const [exportingCsv, setExportingCsv] = useState(false)
   const [approvalInfoOpen, setApprovalInfoOpen] = useState(false)
@@ -982,8 +991,22 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine' ? loadingMine : loadingAll
+  const bulkSelectableRows = useMemo(
+    () => (tab === 'all' && canApproveOvertime ? activeItems.filter((row) => row?.status === 'pending' && row?.actor_can_approve) : []),
+    [activeItems, canApproveOvertime, tab]
+  )
+  const selectedBulkCount = selectedBulkIds.size
+  const allBulkSelected = bulkSelectableRows.length > 0 && bulkSelectableRows.every((row) => selectedBulkIds.has(Number(row.id)))
 
   const totalAllPages = allPagination?.last_page || 1
+
+  useEffect(() => {
+    setSelectedBulkIds((prev) => {
+      const allowed = new Set(bulkSelectableRows.map((row) => Number(row.id)))
+      const next = new Set([...prev].filter((id) => allowed.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [bulkSelectableRows])
 
   function openFile(optsMaybe) {
     const opts =
@@ -1097,6 +1120,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       await updateAdminOvertimeStatus(actionRow.id, 'approved', actionRemarks)
       toast({ title: 'Approval recorded', variant: 'success' })
       setApproveOpen(false)
+      notifyPendingApprovalsChanged()
       await loadAll()
       await loadMine()
       if (viewOpenRef.current && actionRow?.id != null) {
@@ -1109,6 +1133,59 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     }
   }
 
+  function toggleBulkRow(row) {
+    const id = Number(row?.id)
+    if (!id || row?.status !== 'pending' || !row?.actor_can_approve) return
+    setSelectedBulkIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleBulkSelectAll() {
+    setSelectedBulkIds((prev) => {
+      if (allBulkSelected) return new Set()
+      const next = new Set(prev)
+      for (const row of bulkSelectableRows) next.add(Number(row.id))
+      return next
+    })
+  }
+
+  async function submitBulkApprove() {
+    const ids = [...selectedBulkIds]
+    if (ids.length === 0) return
+    setBulkApproving(true)
+    try {
+      const res = await bulkApproveAdminOvertime(ids, bulkApproveRemarks)
+      const approved = Number(res?.approved_count || 0)
+      const skipped = Number(res?.skipped_count || 0)
+      const failed = Number(res?.failed_count || 0)
+      const failedItems = Array.isArray(res?.failed_items) ? res.failed_items : []
+      toast({
+        title: 'Bulk approval complete',
+        description: `${approved} approved${skipped || failed ? `, ${skipped + failed} skipped/failed` : ''}.`,
+        variant: approved > 0 ? 'success' : 'default',
+      })
+      setBulkSummary({
+        approved_count: approved,
+        skipped_count: skipped,
+        failed_count: failed,
+        failed_items: failedItems,
+      })
+      if (failedItems.length > 0) setBulkSummaryOpen(true)
+      if (approved > 0) notifyPendingApprovalsChanged()
+      setSelectedBulkIds(new Set())
+      await loadAll()
+      await loadMine()
+    } catch (e) {
+      toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
+    } finally {
+      setBulkApproving(false)
+    }
+  }
+
   async function submitReject() {
     if (!actionRow || !actionRemarks.trim()) return
     setActionSubmitting(true)
@@ -1116,6 +1193,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       await updateAdminOvertimeStatus(actionRow.id, 'rejected', actionRemarks)
       toast({ title: 'Request rejected', variant: 'success' })
       setRejectOpen(false)
+      notifyPendingApprovalsChanged()
       await loadAll()
       await loadMine()
       if (viewOpenRef.current && actionRow?.id != null) {
@@ -1601,6 +1679,37 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       Export CSV
                     </Button>
                   )}
+                  {tab === 'all' && canApproveOvertime ? (
+                    <div className="flex min-w-[12rem] max-w-full flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2 @xl:max-w-md">
+                      <div className="space-y-1">
+                        <Label htmlFor="ot-bulk-remarks" className="text-xs font-medium text-muted-foreground">
+                          Approval remarks (optional)
+                        </Label>
+                        <Textarea
+                          id="ot-bulk-remarks"
+                          value={bulkApproveRemarks}
+                          onChange={(e) => setBulkApproveRemarks(e.target.value)}
+                          rows={2}
+                          placeholder="Applied to each approved request"
+                          disabled={bulkApproving}
+                          className="min-h-[2.75rem] resize-y text-sm"
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-sm font-semibold text-muted-foreground">{selectedBulkCount} selected</span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-9 gap-2 rounded-lg"
+                          disabled={bulkApproving || selectedBulkCount === 0}
+                          onClick={submitBulkApprove}
+                        >
+                          {bulkApproving ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+                          Approve Selected
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -1635,6 +1744,16 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   <Table>
                     <TableHeader>
                       <TableRow className="sticky top-0 z-10 border-b border-border/80 bg-card hover:bg-card">
+                        {tab === 'all' && canApproveOvertime ? (
+                          <TableHead className="w-10 py-3.5">
+                            <Checkbox
+                              checked={allBulkSelected}
+                              disabled={bulkSelectableRows.length === 0 || bulkApproving}
+                              onCheckedChange={toggleBulkSelectAll}
+                              aria-label="Select all pending overtime requests"
+                            />
+                          </TableHead>
+                        ) : null}
                         <TableHead className="w-[88px] py-3.5">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">ID</span>
                         </TableHead>
@@ -1665,6 +1784,16 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                               rowIdx % 2 === 0 ? 'bg-card' : 'bg-muted/20 dark:bg-white/[0.02]'
                             )}
                           >
+                            {tab === 'all' && canApproveOvertime ? (
+                              <TableCell className="align-middle">
+                                <Checkbox
+                                  checked={selectedBulkIds.has(Number(row.id))}
+                                  disabled={row.status !== 'pending' || !row.actor_can_approve || bulkApproving}
+                                  onCheckedChange={() => toggleBulkRow(row)}
+                                  aria-label={`Select overtime request #${row.id}`}
+                                />
+                              </TableCell>
+                            ) : null}
                             <TableCell className="align-middle font-mono text-sm font-semibold text-foreground">
                               #{row.id}
                             </TableCell>
@@ -2311,6 +2440,13 @@ export default function OvertimeRequests({ variant = 'employee' }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BulkApprovalSummaryDialog
+        open={bulkSummaryOpen}
+        onOpenChange={setBulkSummaryOpen}
+        title="Bulk overtime approval"
+        summary={bulkSummary}
+      />
 
       <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, row: null })}>
         <DialogContent className={adminFormDialogContentClass('max-w-md')}>

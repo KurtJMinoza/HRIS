@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
 import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
@@ -79,6 +80,7 @@ import {
   getMyPresenceFilingAttendanceDetail,
   getEmployees,
   approvePresenceFiling,
+  bulkApprovePresenceFilings,
   rejectPresenceFiling,
   submitAdminPresenceFiling,
   submitPresenceFiling,
@@ -104,6 +106,8 @@ import {
 } from '@/components/presenceFiling/CorrectionTableCells'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
+import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
+import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
 
 const APPROVAL_INFO_SHORT =
   'Multi-step approval: managers first, then HR finalizes and updates attendance.'
@@ -571,6 +575,11 @@ export default function AttendanceCorrections() {
   const [rejectionNote, setRejectionNote] = useState('')
   const [hrNoteText, setHrNoteText] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [selectedBulkIds, setSelectedBulkIds] = useState(() => new Set())
+  const [bulkApproveRemarks, setBulkApproveRemarks] = useState('')
+  const [bulkApproving, setBulkApproving] = useState(false)
+  const [bulkSummaryOpen, setBulkSummaryOpen] = useState(false)
+  const [bulkSummary, setBulkSummary] = useState(null)
   const [hrNoteSubmitting, setHrNoteSubmitting] = useState(false)
   const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null })
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
@@ -857,6 +866,20 @@ export default function AttendanceCorrections() {
     currentPage * itemsPerPage
   )
   const totalPages = Math.max(1, Math.ceil(filteredSorted.length / itemsPerPage))
+  const bulkSelectableRows = useMemo(
+    () => (tab === 'all' && canSeeAll ? paginatedItems.filter((item) => item?.status === 'pending' && item?.actor_can_approve) : []),
+    [canSeeAll, paginatedItems, tab]
+  )
+  const selectedBulkCount = selectedBulkIds.size
+  const allBulkSelected = bulkSelectableRows.length > 0 && bulkSelectableRows.every((item) => selectedBulkIds.has(Number(item.id)))
+
+  useEffect(() => {
+    setSelectedBulkIds((prev) => {
+      const allowed = new Set(bulkSelectableRows.map((item) => Number(item.id)))
+      const next = new Set([...prev].filter((id) => allowed.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [bulkSelectableRows])
 
   function toggleSort(key) {
     if (sortKey === key) {
@@ -940,12 +963,66 @@ export default function AttendanceCorrections() {
       await approvePresenceFiling(selectedItem.id, { notes: approveNotes.trim() || undefined })
       toast({ title: 'Approved', description: 'The correction request was updated.', variant: 'success' })
       setApproveOpen(false)
+      notifyPendingApprovalsChanged()
       await loadAll()
       await loadMine()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  function toggleBulkRow(item) {
+    const id = Number(item?.id)
+    if (!id || item?.status !== 'pending' || !item?.actor_can_approve) return
+    setSelectedBulkIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleBulkSelectAll() {
+    setSelectedBulkIds((prev) => {
+      if (allBulkSelected) return new Set()
+      const next = new Set(prev)
+      for (const item of bulkSelectableRows) next.add(Number(item.id))
+      return next
+    })
+  }
+
+  async function submitBulkApprove() {
+    const ids = [...selectedBulkIds]
+    if (ids.length === 0) return
+    try {
+      setBulkApproving(true)
+      const res = await bulkApprovePresenceFilings(ids, bulkApproveRemarks)
+      const approved = Number(res?.approved_count || 0)
+      const skipped = Number(res?.skipped_count || 0)
+      const failed = Number(res?.failed_count || 0)
+      const failedItems = Array.isArray(res?.failed_items) ? res.failed_items : []
+      toast({
+        title: 'Bulk approval complete',
+        description: `${approved} approved${skipped || failed ? `, ${skipped + failed} skipped/failed` : ''}.`,
+        variant: approved > 0 ? 'success' : 'default',
+      })
+      setBulkSummary({
+        approved_count: approved,
+        skipped_count: skipped,
+        failed_count: failed,
+        failed_items: failedItems,
+      })
+      if (failedItems.length > 0) setBulkSummaryOpen(true)
+      if (approved > 0) notifyPendingApprovalsChanged()
+      setSelectedBulkIds(new Set())
+      await loadAll()
+      await loadMine()
+    } catch (e) {
+      toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
+    } finally {
+      setBulkApproving(false)
     }
   }
 
@@ -980,6 +1057,7 @@ export default function AttendanceCorrections() {
       await rejectPresenceFiling(selectedItem.id, rejectionNote)
       toast({ title: 'Rejected', description: 'The request was rejected.', variant: 'success' })
       setRejectOpen(false)
+      notifyPendingApprovalsChanged()
       await loadAll()
       await loadMine()
     } catch (e) {
@@ -1393,6 +1471,37 @@ export default function AttendanceCorrections() {
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
+                      {tab === 'all' && canSeeAll ? (
+                        <div className="flex min-w-[12rem] max-w-full flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2 @xl:max-w-md">
+                          <div className="space-y-1">
+                            <Label htmlFor="pf-bulk-remarks" className="text-xs font-medium text-muted-foreground">
+                              Approval remarks (optional)
+                            </Label>
+                            <Textarea
+                              id="pf-bulk-remarks"
+                              value={bulkApproveRemarks}
+                              onChange={(e) => setBulkApproveRemarks(e.target.value)}
+                              rows={2}
+                              placeholder="Notes applied to each approved request"
+                              disabled={bulkApproving}
+                              className="min-h-[2.75rem] resize-y text-sm"
+                            />
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span className="text-sm font-semibold text-muted-foreground">{selectedBulkCount} selected</span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-9 gap-2 rounded-lg"
+                              disabled={bulkApproving || selectedBulkCount === 0}
+                              onClick={submitBulkApprove}
+                            >
+                              {bulkApproving ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+                              Approve Selected
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="flex w-fit rounded-lg border border-border/70 bg-muted/30 p-0.5 dark:bg-muted/20">
                         <Button
                           type="button"
@@ -1501,6 +1610,15 @@ export default function AttendanceCorrections() {
                           className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm"
                         >
                           <div className="flex items-start justify-between gap-3">
+                            {tab === 'all' && canSeeAll ? (
+                              <Checkbox
+                                checked={selectedBulkIds.has(Number(item.id))}
+                                disabled={item.status !== 'pending' || !item.actor_can_approve || bulkApproving}
+                                onCheckedChange={() => toggleBulkRow(item)}
+                                aria-label={`Select attendance correction #${item.id}`}
+                                className="mt-1"
+                              />
+                            ) : null}
                             <div className="min-w-0">
                               <p className="font-mono text-xs font-semibold text-muted-foreground">#{item.id}</p>
                               <p className="mt-1 text-base font-semibold text-foreground">
@@ -1566,6 +1684,16 @@ export default function AttendanceCorrections() {
                     <Table className="w-full min-w-[820px] xl:min-w-[1060px]">
                       <TableHeader>
                         <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25 dark:hover:bg-muted/25">
+                          {tab === 'all' && canSeeAll ? (
+                            <TableHead className="w-10 py-3.5 pl-2 sm:pl-3">
+                              <Checkbox
+                                checked={allBulkSelected}
+                                disabled={bulkSelectableRows.length === 0 || bulkApproving}
+                                onCheckedChange={toggleBulkSelectAll}
+                                aria-label="Select all pending attendance corrections"
+                              />
+                            </TableHead>
+                          ) : null}
                           <TableHead className="min-w-[200px] py-3.5 pl-2 sm:pl-3 xl:min-w-[220px]">
                             <SortHead col="employee_name" label="Employee" />
                           </TableHead>
@@ -1621,6 +1749,16 @@ export default function AttendanceCorrections() {
                                 rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10'
                               )}
                             >
+                              {tab === 'all' && canSeeAll ? (
+                                <TableCell className={cn('align-middle', cellPad)}>
+                                  <Checkbox
+                                    checked={selectedBulkIds.has(Number(item.id))}
+                                    disabled={item.status !== 'pending' || !item.actor_can_approve || bulkApproving}
+                                    onCheckedChange={() => toggleBulkRow(item)}
+                                    aria-label={`Select attendance correction #${item.id}`}
+                                  />
+                                </TableCell>
+                              ) : null}
                               <TableCell className={cn('align-top', cellPad)}>
                                 <EmployeeAvatarNameRoleCell
                                   name={empName}
@@ -1950,6 +2088,13 @@ export default function AttendanceCorrections() {
           )}
         </DialogContent>
       </Dialog>
+
+      <BulkApprovalSummaryDialog
+        open={bulkSummaryOpen}
+        onOpenChange={setBulkSummaryOpen}
+        title="Bulk correction approval"
+        summary={bulkSummary}
+      />
 
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
         <DialogContent className="max-w-md rounded-2xl border-border bg-card">
