@@ -14,6 +14,7 @@ import {
   reviewStatusLabel,
   formatTimeOnly,
 } from '@/lib/presenceFilingTable'
+import { EMPTY_PLACEHOLDER } from '@/lib/formatEmpty'
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function getInitials(name) {
@@ -238,7 +239,7 @@ export function RemarksPreviewCell({ text }) {
 /** Time in / time out in tables: monospace time or muted em dash. */
 export function TimeCell({ iso }) {
   if (!iso) {
-    return <span className="font-mono text-sm text-muted-foreground">—</span>
+    return <span className="font-mono text-sm text-muted-foreground">{EMPTY_PLACEHOLDER}</span>
   }
   return (
     <span className="font-mono text-sm tabular-nums text-foreground">{formatTimeOnly(iso)}</span>

@@ -2,6 +2,8 @@
  * Display helpers for 24h API times (HH:mm). Storage and APIs stay 24-hour.
  */
 
+import { EMPTY_PLACEHOLDER, isEmptyValue, repairMojibake } from '@/lib/formatEmpty'
+
 /**
  * Value for `<input type="time">`: empty string or "HH:mm" (24h, zero-padded).
  * Parses "H:mm", "HH:mm:ss", ISO datetimes, and rejects placeholders like "—".
@@ -11,7 +13,7 @@
 export function toTimeInputValue(value) {
   if (value == null || value === '') return ''
   let s = String(value).trim().replace(/^\uFEFF/, '')
-  if (!s || s === '—' || s === '-') return ''
+  if (!s || s === EMPTY_PLACEHOLDER || s === '-' || s === '--') return ''
   const ampm = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(am|pm)\s*$/i)
   if (ampm) {
     let h = parseInt(ampm[1], 10)
@@ -82,7 +84,7 @@ export function formatHHmmTo12h(value) {
 export function formatShiftRange12h(start, end, sep = ' – ') {
   const a = formatHHmmTo12h(toHhMm(start))
   const b = formatHHmmTo12h(toHhMm(end))
-  if (!a && !b) return '—'
+  if (!a && !b) return EMPTY_PLACEHOLDER
   if (!a) return b
   if (!b) return a
   return `${a}${sep}${b}`
@@ -93,9 +95,9 @@ export function formatShiftRange12h(start, end, sep = ' – ') {
  * @param {string|null|undefined} label
  */
 export function formatScheduleLabel12h(label) {
-  if (label == null || label === '') return '—'
-  const s = String(label).trim()
-  if (s === 'Rest day' || s === '—' || s === '-') return s
+  if (isEmptyValue(label)) return EMPTY_PLACEHOLDER
+  const s = repairMojibake(String(label).trim())
+  if (s === 'Rest day' || s === EMPTY_PLACEHOLDER || s === '-') return s
   const range = s.match(/^(\d{1,2}:\d{2})\s*[-\u2013]\s*(\d{1,2}:\d{2})$/)
   if (range) return formatShiftRange12h(range[1], range[2])
   return s
@@ -106,11 +108,11 @@ export function formatScheduleLabel12h(label) {
  * @param {string|null|undefined} value
  */
 export function formatClockTimeDisplay(value) {
-  if (value == null || value === '') return '—'
+  if (isEmptyValue(value)) return EMPTY_PLACEHOLDER
   if (typeof value === 'string') {
-    const t = value.trim()
-    if (/^\d{1,2}:\d{2}$/.test(t)) return formatHHmmTo12h(t) || '—'
-    if (/^\d{1,2}:\d{2}:\d{2}$/.test(t)) return formatHHmmTo12h(t.slice(0, 5)) || '—'
+    const t = repairMojibake(value).trim()
+    if (/^\d{1,2}:\d{2}$/.test(t)) return formatHHmmTo12h(t) || EMPTY_PLACEHOLDER
+    if (/^\d{1,2}:\d{2}:\d{2}$/.test(t)) return formatHHmmTo12h(t.slice(0, 5)) || EMPTY_PLACEHOLDER
   }
   try {
     const d = new Date(value)

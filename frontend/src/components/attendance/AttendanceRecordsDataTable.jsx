@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { EMPTY_PLACEHOLDER, formatEmpty } from '@/lib/formatEmpty'
 import { TableBodySkeleton } from '@/components/skeletons'
 import {
   attendanceRecordRef,
@@ -143,7 +144,7 @@ export function AttendanceRecordsDataTable({
           isAdmin ? row.company_name || '' : viewerCompany || '',
         cell: ({ row }) => (
           <span className="block max-w-[10rem] truncate text-sm text-foreground">
-            {isAdmin ? row.original.company_name || '—' : viewerCompany || '—'}
+            {isAdmin ? formatEmpty(row.original.company_name) : viewerCompany || EMPTY_PLACEHOLDER}
           </span>
         ),
     }
@@ -156,7 +157,7 @@ export function AttendanceRecordsDataTable({
           isAdmin ? row.department || '' : viewerDepartment || '',
         cell: ({ row }) => (
           <span className="block max-w-[10rem] truncate text-sm text-foreground">
-            {isAdmin ? row.original.department || '—' : viewerDepartment || '—'}
+            {isAdmin ? row.original.department || EMPTY_PLACEHOLDER : viewerDepartment || EMPTY_PLACEHOLDER}
           </span>
         ),
     }
@@ -210,7 +211,7 @@ export function AttendanceRecordsDataTable({
                 t.muted ? 'text-muted-foreground' : 'text-foreground'
               )}
             >
-              {t.muted ? '—' : t.text}
+              {t.muted ? EMPTY_PLACEHOLDER : t.text}
             </span>
           )
         },
@@ -228,7 +229,7 @@ export function AttendanceRecordsDataTable({
                 t.muted ? 'text-muted-foreground' : 'text-foreground'
               )}
             >
-              {t.muted ? '—' : t.text}
+              {t.muted ? EMPTY_PLACEHOLDER : t.text}
               {row.original.time_out_next_day ? (
                 <span className="ml-1 text-[10px] font-sans font-normal text-muted-foreground">(+1)</span>
               ) : null}
@@ -314,7 +315,7 @@ export function AttendanceRecordsDataTable({
         enableSorting: false,
         cell: ({ row }) => (
           <span className="text-sm text-foreground">
-            {row.original.overtime_status ? String(row.original.overtime_status).replace(/_/g, ' ') : '—'}
+            {row.original.overtime_status ? String(row.original.overtime_status).replace(/_/g, ' ') : EMPTY_PLACEHOLDER}
           </span>
         ),
       },
@@ -501,13 +502,13 @@ export function AttendanceRecordsDataTable({
                 {!hideCompanyColumn ? (
                   <div>
                     <p className="font-semibold uppercase tracking-wide text-muted-foreground">Company</p>
-                    <p className="truncate text-foreground">{isAdmin ? r.company_name || '—' : viewerCompany || '—'}</p>
+                    <p className="truncate text-foreground">{isAdmin ? r.company_name || EMPTY_PLACEHOLDER : viewerCompany || EMPTY_PLACEHOLDER}</p>
                   </div>
                 ) : null}
                 {!hideDepartmentColumn ? (
                   <div>
                     <p className="font-semibold uppercase tracking-wide text-muted-foreground">Department</p>
-                    <p className="truncate text-foreground">{isAdmin ? r.department || '—' : viewerDepartment || '—'}</p>
+                    <p className="truncate text-foreground">{isAdmin ? r.department || EMPTY_PLACEHOLDER : viewerDepartment || EMPTY_PLACEHOLDER}</p>
                   </div>
                 ) : null}
                 <div className="col-span-2">
@@ -521,13 +522,13 @@ export function AttendanceRecordsDataTable({
                 <div>
                   <p className="font-semibold uppercase tracking-wide text-muted-foreground">In</p>
                   <p className={cn('font-mono tabular-nums', ti.muted && 'text-muted-foreground')}>
-                    {ti.muted ? '—' : ti.text}
+                    {ti.muted ? EMPTY_PLACEHOLDER : ti.text}
                   </p>
                 </div>
                 <div>
                   <p className="font-semibold uppercase tracking-wide text-muted-foreground">Out</p>
                   <p className={cn('font-mono tabular-nums', to.muted && 'text-muted-foreground')}>
-                    {to.muted ? '—' : to.text}
+                    {to.muted ? EMPTY_PLACEHOLDER : to.text}
                   </p>
                 </div>
                 <div>
@@ -550,7 +551,7 @@ export function AttendanceRecordsDataTable({
                 <div className="col-span-2">
                   <p className="font-semibold uppercase tracking-wide text-muted-foreground">Overtime Status / Payroll Impact</p>
                   <p className="text-[11px]">
-                    {(r.overtime_status ? String(r.overtime_status).replace(/_/g, ' ') : '—')} / {tableOtHoursHrs(r.payroll_impact_hours)} hrs
+                    {(r.overtime_status ? String(r.overtime_status).replace(/_/g, ' ') : EMPTY_PLACEHOLDER)} / {tableOtHoursHrs(r.payroll_impact_hours)} hrs
                   </p>
                 </div>
               </div>

@@ -132,6 +132,10 @@ class FinalizePayrollService
                 ->select([
                     'id',
                     'name',
+                    'first_name',
+                    'middle_name',
+                    'last_name',
+                    'suffix',
                     'employee_code',
                     'department',
                     'position',
@@ -293,8 +297,7 @@ class FinalizePayrollService
                     $rows[] = [
                         'payslip_id' => (int) $stored->id,
                         'user_id' => (int) $employee->id,
-                        'name' => (string) $employee->display_name,
-                        'formatted_name' => (string) $employee->formatted_name,
+                        ...$this->employeePreviewIdentityFields($employee),
                         'employee_code' => $employee->employee_code,
                         'department' => $employee->department,
                         'position' => $employee->position,
@@ -327,8 +330,7 @@ class FinalizePayrollService
                     $rows[] = [
                         'payslip_id' => null,
                         'user_id' => (int) $employee->id,
-                        'name' => (string) $employee->display_name,
-                        'formatted_name' => (string) $employee->formatted_name,
+                        ...$this->employeePreviewIdentityFields($employee),
                         'employee_code' => $employee->employee_code,
                         'department' => $employee->department,
                         'position' => $employee->position,
@@ -600,9 +602,7 @@ class FinalizePayrollService
         if ($search !== null && trim($search) !== '') {
             $like = '%'.trim($search).'%';
             $query->whereHas('employee', function ($employeeQuery) use ($like) {
-                $employeeQuery->where('name', 'like', $like)
-                    ->orWhere('employee_code', 'like', $like)
-                    ->orWhere('email', 'like', $like);
+                $this->applyEmployeeNameSearch($employeeQuery, $like);
             });
         }
 
@@ -626,8 +626,7 @@ class FinalizePayrollService
             $rows[] = [
                 'payslip_id' => (int) $stored->id,
                 'user_id' => (int) $employee->id,
-                'name' => (string) $employee->display_name,
-                'formatted_name' => (string) $employee->formatted_name,
+                ...$this->employeePreviewIdentityFields($employee),
                 'employee_code' => $employee->employee_code,
                 'department' => $employee->department,
                 'position' => $employee->position,
@@ -2454,11 +2453,12 @@ class FinalizePayrollService
         }
         if (is_string($search) && trim($search) !== '') {
             $needle = trim($search);
-            $query->whereHas('employee', function ($employeeQuery) use ($needle) {
-                $employeeQuery->where(function ($sub) use ($needle) {
-                    $sub->where('name', 'like', '%'.$needle.'%')
-                        ->orWhere('employee_code', 'like', '%'.$needle.'%')
-                        ->orWhere('department', 'like', '%'.$needle.'%');
+            $like = '%'.$needle.'%';
+            $query->whereHas('employee', function ($employeeQuery) use ($like) {
+                $employeeQuery->where(function ($sub) use ($like) {
+                    $this->applyEmployeeNameSearch($sub, $like);
+                    $sub->orWhere('employee_code', 'like', $like)
+                        ->orWhere('department', 'like', $like);
                 });
             });
         }
@@ -2503,13 +2503,39 @@ class FinalizePayrollService
         }
         if (is_string($search) && trim($search) !== '') {
             $needle = trim($search);
-            $q->where(function ($sub) use ($needle) {
-                $sub->where('name', 'like', '%'.$needle.'%')
-                    ->orWhere('employee_code', 'like', '%'.$needle.'%')
-                    ->orWhere('department', 'like', '%'.$needle.'%');
+            $like = '%'.$needle.'%';
+            $q->where(function ($sub) use ($like) {
+                $this->applyEmployeeNameSearch($sub, $like);
+                $sub->orWhere('employee_code', 'like', $like)
+                    ->orWhere('department', 'like', $like);
             });
         }
 
         return $q;
+    }
+
+    /**
+     * @return array{name: string, formatted_name: string, first_name: ?string, middle_name: ?string, last_name: ?string, suffix: ?string, employee_sort_key: string}
+     */
+    private function employeePreviewIdentityFields(User $employee): array
+    {
+        return [
+            'name' => (string) $employee->display_name,
+            'formatted_name' => (string) $employee->formatted_name,
+            'first_name' => $employee->first_name,
+            'middle_name' => $employee->middle_name,
+            'last_name' => $employee->last_name,
+            'suffix' => $employee->suffix,
+            'employee_sort_key' => $employee->employeeListingSortKey(),
+        ];
+    }
+
+    private function applyEmployeeNameSearch(\Illuminate\Database\Eloquent\Builder $query, string $like): void
+    {
+        $query->where('name', 'like', $like)
+            ->orWhere('first_name', 'like', $like)
+            ->orWhere('middle_name', 'like', $like)
+            ->orWhere('last_name', 'like', $like)
+            ->orWhere('suffix', 'like', $like);
     }
 }

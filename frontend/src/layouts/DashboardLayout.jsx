@@ -129,6 +129,7 @@ function SidebarContent({
   homePath,
   profilePath,
   user,
+  currentUserDisplayName,
   initials,
   onLogout,
   onNavClick,
@@ -603,6 +604,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           homePath={homePath}
           profilePath={profilePath}
           user={user}
+          currentUserDisplayName={currentUserDisplayName}
           initials={initials}
           onLogout={handleLogout}
           onNavClick={() => {}}
@@ -642,6 +644,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               homePath={homePath}
               profilePath={profilePath}
               user={user}
+              currentUserDisplayName={currentUserDisplayName}
               initials={initials}
               onLogout={handleLogout}
               onNavClick={() => setSheetOpen(false)}

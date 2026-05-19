@@ -1,3 +1,5 @@
+import { EMPTY_PLACEHOLDER, isEmptyValue, repairMojibake } from '@/lib/formatEmpty'
+
 export function attendanceRecordRef(employeeId, dateStr) {
   const d = String(dateStr || '').replace(/-/g, '')
   const id = employeeId != null ? String(employeeId) : '0'
@@ -5,7 +7,7 @@ export function attendanceRecordRef(employeeId, dateStr) {
 }
 
 export function formatShortDate(isoDate) {
-  if (!isoDate) return '—'
+  if (!isoDate) return EMPTY_PLACEHOLDER
   try {
     const d = new Date(`${isoDate}T12:00:00`)
     return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -16,23 +18,23 @@ export function formatShortDate(isoDate) {
 
 export function formatDayName(dateValue, fallback) {
   if (fallback) return fallback
-  if (!dateValue) return '—'
+  if (!dateValue) return EMPTY_PLACEHOLDER
   try {
     const raw = String(dateValue).trim()
     const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T12:00:00+08:00` : raw
     const d = new Date(normalized)
-    if (Number.isNaN(d.getTime())) return '—'
+    if (Number.isNaN(d.getTime())) return EMPTY_PLACEHOLDER
     return new Intl.DateTimeFormat('en-US', {
       weekday: 'long',
       timeZone: 'Asia/Manila',
     }).format(d)
   } catch {
-    return '—'
+    return EMPTY_PLACEHOLDER
   }
 }
 
 export function formatDateTimeReadable(value) {
-  if (!value) return '—'
+  if (isEmptyValue(value)) return EMPTY_PLACEHOLDER
   try {
     const d = new Date(value)
     if (Number.isNaN(d.getTime())) return String(value)
@@ -50,8 +52,8 @@ export function formatDateTimeReadable(value) {
 
 function normalizeDisplayTime(value) {
   if (value == null || value === '') return null
-  const raw = String(value).trim()
-  if (!raw || raw === '—' || raw === '--') return null
+  const raw = repairMojibake(String(value).trim())
+  if (!raw || raw === EMPTY_PLACEHOLDER || raw === '-' || raw === '--') return null
   return raw
 }
 
@@ -71,7 +73,7 @@ export function formatAttendanceClockTime(value) {
     let t = value.trim()
 
     // Treat pure em dash / placeholder as "no time".
-    if (t === '—' || t === '--') {
+    if (t === EMPTY_PLACEHOLDER || t === '-' || t === '--') {
       return null
     }
 
@@ -133,8 +135,8 @@ export function displayAttendanceTime(value, formattedValue) {
 
 export function mutedTimeCell(value, formattedValue) {
   const d = displayAttendanceTime(value, formattedValue)
-  if (d == null || d === '—') {
-    return { text: '—', muted: true }
+  if (d == null || d === EMPTY_PLACEHOLDER) {
+    return { text: EMPTY_PLACEHOLDER, muted: true }
   }
   return { text: d, muted: false }
 }
@@ -164,9 +166,9 @@ export function tableOvertimeMinutes(row) {
 
 /** OT hours (Reports detailed parity): fixed two decimals, em dash when none or ≤ 0. */
 export function tableOtHoursHrs(value) {
-  if (value == null || value === '') return '—'
+  if (value == null || value === '') return EMPTY_PLACEHOLDER
   const n = Number(value)
-  if (!Number.isFinite(n) || n <= 0) return '—'
+  if (!Number.isFinite(n) || n <= 0) return EMPTY_PLACEHOLDER
   return n.toFixed(2)
 }
 
@@ -177,12 +179,12 @@ export function tableApprovedOtHours(row) {
 }
 
 export function minutesCellText(n) {
-  if (n == null || typeof n !== 'number' || n <= 0) return '—'
+  if (n == null || typeof n !== 'number' || n <= 0) return EMPTY_PLACEHOLDER
   return String(Math.round(n))
 }
 
 export function formatTimeHhMm(value) {
-  return formatAttendanceClockTime(value) || '—'
+  return formatAttendanceClockTime(value) || EMPTY_PLACEHOLDER
 }
 
 /**
@@ -190,7 +192,7 @@ export function formatTimeHhMm(value) {
  * Used for shift-time displays so "08:00:00 – 17:00:00" stays consistent.
  */
 export function formatTimeHhMmSs(value) {
-  if (!value) return '—'
+  if (!value) return EMPTY_PLACEHOLDER
   if (typeof value === 'string') {
     const raw = value.trim()
 
@@ -243,7 +245,7 @@ export function formatScheduleRange(row) {
     if (typeof row?.scheduled_regular_hours === 'number' && row.scheduled_regular_hours > 0) {
       return `${Number(row.scheduled_regular_hours).toFixed(2)}h scheduled`
     }
-    return '—'
+    return EMPTY_PLACEHOLDER
   }
   const toIso = (t) => {
     if (!t || typeof t !== 'string') return null
@@ -254,7 +256,7 @@ export function formatScheduleRange(row) {
   }
   const left = formatTimeHhMmSs(toIso(a))
   const right = formatTimeHhMmSs(toIso(b))
-  if (left === '—' && right === '—') return '—'
+  if (left === EMPTY_PLACEHOLDER && right === EMPTY_PLACEHOLDER) return EMPTY_PLACEHOLDER
   const otEnd = row?.approved_ot_end_time
   if (otEnd && otEnd !== b) {
     const otRight = formatTimeHhMmSs(toIso(otEnd))
@@ -288,7 +290,7 @@ export function tableRenderedHoursLabel(row) {
   if (typeof r === 'number' && r > 0 && !Number.isNaN(r)) {
     return `${Number(r).toFixed(2)}h`
   }
-  return '—'
+  return EMPTY_PLACEHOLDER
 }
 
 /** @deprecated Use tableRenderedHoursLabel — kept for import compatibility. */
@@ -332,7 +334,7 @@ export function employeeHoursDetailSummary(row) {
   if (typeof row.night_hours === 'number' && row.night_hours > 0) {
     parts.push(`ND ${row.night_hours}h`)
   }
-  return parts.filter(Boolean).join(' · ') || '—'
+  return parts.filter(Boolean).join(' · ') || EMPTY_PLACEHOLDER
 }
 
 export function adminHoursDetailSummary(row, { showPayroll } = {}) {
@@ -356,7 +358,7 @@ export function adminHoursDetailSummary(row, { showPayroll } = {}) {
   if (showPayroll && row.premium_description) {
     parts.push(row.premium_description)
   }
-  return parts.filter(Boolean).join(' · ') || '—'
+  return parts.filter(Boolean).join(' · ') || EMPTY_PLACEHOLDER
 }
 
 /** Same as table column: total rendered hours (exports, employee history). */
@@ -400,7 +402,7 @@ export function resolveAdminStatusLabel(row) {
   if (rawStatus === 'incomplete') return 'Present (Incomplete)'
   if (rawStatus === 'leave') return 'On Leave'
   if (row.presence_label) return row.presence_label
-  return rawStatus || '—'
+  return rawStatus || EMPTY_PLACEHOLDER
 }
 
 export function resolveEmployeeStatusLabel(row) {
@@ -410,7 +412,7 @@ export function resolveEmployeeStatusLabel(row) {
     return 'Leave'
   }
   if (row.presence_label) return row.presence_label
-  if (row.status === '—') return '—'
+  if (row.status === EMPTY_PLACEHOLDER) return EMPTY_PLACEHOLDER
   if (row.status === 'upcoming') return 'Upcoming'
   if (row.status === 'late' && row.late_label) return row.late_label
   if (row.status === 'halfday') return row.late_label || 'Half Day'
@@ -419,7 +421,7 @@ export function resolveEmployeeStatusLabel(row) {
   if (row.status === 'present') return row.late_label || 'Present'
   if (row.status === 'undertime') return 'Undertime'
   if (row.status === 'clocked_in') return row.late_label || 'Clocked in'
-  return row.status || '—'
+  return row.status || EMPTY_PLACEHOLDER
 }
 
 export function isPendingAttentionRow(row) {

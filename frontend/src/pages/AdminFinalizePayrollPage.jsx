@@ -29,7 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
-import { compareEmployeesByLastName } from '@/lib/employeeSort'
+import { compareEmployeeRowsBySortKey, formatEmployeeName } from '@/lib/employeeSort'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -80,6 +80,10 @@ function formatDate(value) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return String(value)
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function payrollEmployeeDisplayName(row) {
+  return formatEmployeeName(row)
 }
 
 function initials(name) {
@@ -503,7 +507,7 @@ export default function AdminFinalizePayrollPage() {
   const selectedCompanyLogo = companyLogoUrl(selectedCompany)
 
   const pageRows = useMemo(() => {
-    return [...employees].sort(compareEmployeesByLastName)
+    return [...employees].sort((a, b) => compareEmployeeRowsBySortKey({ original: a }, { original: b }))
   }, [employees])
   const pagination = preview?.pagination ?? { page: 1, per_page: pageSize, total: pageRows.length, last_page: 1 }
   const pageCount = Math.max(1, Number(pagination.last_page || 1))
@@ -1149,7 +1153,7 @@ export default function AdminFinalizePayrollPage() {
                   {employees.slice(0, 3).map((row) => (
                     <Avatar key={row.user_id} className="h-8 w-8 border-2 border-background ring-1 ring-border/60">
                       <AvatarImage src={employeeAvatarSrc(row) || undefined} alt="" />
-                      <AvatarFallback className="text-[10px] font-semibold">{initials(row.name)}</AvatarFallback>
+                      <AvatarFallback className="text-[10px] font-semibold">{initials(payrollEmployeeDisplayName(row))}</AvatarFallback>
                     </Avatar>
                   ))}
                   <span className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
@@ -1308,10 +1312,10 @@ export default function AdminFinalizePayrollPage() {
                             <div className="flex items-start gap-2.5">
                               <Avatar className="h-9 w-9 ring-1 ring-border/80">
                                 <AvatarImage src={employeeAvatarSrc(row) || undefined} alt="" />
-                                <AvatarFallback className="text-[10px] font-semibold">{initials(row.name)}</AvatarFallback>
+                                <AvatarFallback className="text-[10px] font-semibold">{initials(payrollEmployeeDisplayName(row))}</AvatarFallback>
                               </Avatar>
                               <div className="min-w-0">
-                                <p className={cn('truncate text-base font-bold', TEXT)}>{row.name}</p>
+                                <p className={cn('truncate text-base font-bold', TEXT)}>{payrollEmployeeDisplayName(row)}</p>
                                 <div className="mt-0.5 flex flex-wrap items-center gap-2">
                                   <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium', roleBadgeMeta(employeeCompanyPosition(row)).className)}>
                                     {row?.employee_role_label || roleBadgeMeta(employeeCompanyPosition(row)).label}
@@ -1527,7 +1531,12 @@ export default function AdminFinalizePayrollPage() {
             <DialogHeader>
               <DialogTitle className={cn('text-xl font-bold', TEXT)}>Payroll breakdown</DialogTitle>
               <DialogDescription className="text-muted-foreground">
-                {breakdownRow?.name ? <span className="font-medium text-foreground">{breakdownRow.name}</span> : 'Employee'} ·{' '}
+                {payrollEmployeeDisplayName(breakdownRow) ? (
+                  <span className="font-medium text-foreground">{payrollEmployeeDisplayName(breakdownRow)}</span>
+                ) : (
+                  'Employee'
+                )}{' '}
+                ·{' '}
                 {breakdownRow?.employee_code || '—'}
               </DialogDescription>
             </DialogHeader>
