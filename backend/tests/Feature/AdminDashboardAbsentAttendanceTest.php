@@ -159,6 +159,12 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             $this->assertTrue((bool) $todayRows->firstWhere('employee_id', $todayBirthday->id)['is_today']);
             $this->assertSame('05-18', $todayRows->firstWhere('employee_id', $todayBirthday->id)['birthday_month_day']);
             $this->assertSame('Monday', $todayRows->firstWhere('employee_id', $todayBirthday->id)['day_name']);
+            $this->assertSame(32, $todayRows->firstWhere('employee_id', $todayBirthday->id)['current_age']);
+            $this->assertSame(32, $todayRows->firstWhere('employee_id', $todayBirthday->id)['next_age']);
+            $this->assertSame('today', $todayRows->firstWhere('employee_id', $todayBirthday->id)['birthday_status']);
+            $this->assertSame(14, $upcomingRows->firstWhere('employee_id', $upcomingBirthday->id)['days_until_birthday']);
+            $this->assertSame(34, $upcomingRows->firstWhere('employee_id', $upcomingBirthday->id)['next_age']);
+            $this->assertSame('upcoming', $upcomingRows->firstWhere('employee_id', $upcomingBirthday->id)['birthday_status']);
             $this->assertTrue($monthRows->contains('employee_id', $todayBirthday->id));
             $this->assertTrue($monthRows->contains('employee_id', $monthStartBirthday->id));
             $this->assertTrue($monthRows->contains('employee_id', $monthEndBirthday->id));
@@ -166,7 +172,6 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             $this->assertSame($monthEndBirthday->id, $monthRows->last()['employee_id']);
             $this->assertTrue($upcomingRows->contains('employee_id', $todayBirthday->id));
             $this->assertTrue($upcomingRows->contains('employee_id', $upcomingBirthday->id));
-            $this->assertSame(14, $upcomingRows->firstWhere('employee_id', $upcomingBirthday->id)['days_until_birthday']);
             $this->assertTrue($upcoming90Rows->contains('employee_id', $upcomingBirthday->id));
             $this->assertFalse($todayRows->contains('full_name', 'Deactivated Celebrant'));
             $this->assertFalse($upcomingRows->contains('full_name', 'Deactivated Celebrant'));
@@ -278,6 +283,73 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             $this->assertFalse((bool) $rows->firstWhere('employee_id', $juneBirthday->id)['birthday_passed_in_view']);
             $this->assertTrue((bool) $rows->firstWhere('employee_id', $juneBirthday->id)['birthday_upcoming_in_view']);
             $this->assertSame(14, $rows->firstWhere('employee_id', $juneBirthday->id)['days_until_birthday']);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_admin_dashboard_birthdays_include_upcoming_age_fields(): void
+    {
+        Config::set('attendance.timezone', 'Asia/Manila');
+        Carbon::setTestNow(Carbon::parse('2026-05-19 09:00:00', 'Asia/Manila'));
+
+        $admin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+        ]);
+        $todayCelebrant = User::factory()->create([
+            'name' => 'Maria Santos',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1996-05-19',
+        ]);
+        $tomorrowCelebrant = User::factory()->create([
+            'name' => 'Ana Garcia',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1997-05-20',
+        ]);
+        $upcomingCelebrant = User::factory()->create([
+            'name' => 'Juan Dela Cruz',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '2000-05-29',
+        ]);
+        User::factory()->create([
+            'name' => 'Past Celebrant',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'date_of_birth' => '1990-05-10',
+        ]);
+
+        try {
+            $response = $this->actingAs($admin)->getJson('/api/admin/dashboard');
+            $response->assertOk();
+
+            $todayRow = collect($response->json('today_birthdays'))
+                ->firstWhere('employee_id', $todayCelebrant->id);
+            $this->assertNotNull($todayRow);
+            $this->assertSame(30, $todayRow['current_age']);
+            $this->assertSame(30, $todayRow['next_age']);
+            $this->assertSame(0, $todayRow['days_until_birthday']);
+            $this->assertSame('today', $todayRow['birthday_status']);
+
+            $tomorrowRow = collect($response->json('upcoming_30_days'))
+                ->firstWhere('employee_id', $tomorrowCelebrant->id);
+            $this->assertNotNull($tomorrowRow);
+            $this->assertSame(28, $tomorrowRow['current_age']);
+            $this->assertSame(29, $tomorrowRow['next_age']);
+            $this->assertSame(1, $tomorrowRow['days_until_birthday']);
+            $this->assertSame('tomorrow', $tomorrowRow['birthday_status']);
+
+            $upcomingRow = collect($response->json('upcoming_30_days'))
+                ->firstWhere('employee_id', $upcomingCelebrant->id);
+            $this->assertNotNull($upcomingRow);
+            $this->assertSame(25, $upcomingRow['current_age']);
+            $this->assertSame(26, $upcomingRow['next_age']);
+            $this->assertSame(10, $upcomingRow['days_until_birthday']);
+            $this->assertSame('upcoming', $upcomingRow['birthday_status']);
+            $this->assertSame('May 29, 2026', $upcomingRow['next_birthday_formatted']);
         } finally {
             Carbon::setTestNow();
         }

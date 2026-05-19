@@ -370,12 +370,29 @@ function buildBirthdayMonthSelectOptions(earliest, latest, current) {
 function birthdayBadgeLabel(days, monthView = false, passedInView = false) {
   if (passedInView) return 'Celebrated'
   const n = Number(days)
-  if (!Number.isFinite(n) || n <= 0) return 'Today'
+  if (!Number.isFinite(n) || n <= 0) return '🎉 Today'
   if (monthView && n > 31) return 'Birthday passed'
-  if (n === 1) return 'Tomorrow'
+  if (n === 1) return '🎂 Tomorrow'
   if (n === 7) return 'In 1 week'
   if (n > 7 && n % 7 === 0) return `In ${n / 7} weeks`
   return `In ${n} days`
+}
+
+function birthdayAgeCountdownLabel(person, { monthView = false, passedInView = false } = {}) {
+  const nextAge = Number(person?.next_age)
+  const days = Number(person?.days_until_birthday ?? 0)
+  const status = String(person?.birthday_status || '')
+  const hasAge = Number.isFinite(nextAge) && nextAge > 0
+
+  if (passedInView || status === 'passed') {
+    return hasAge ? `Turned ${nextAge}` : null
+  }
+  if (!hasAge) return null
+  if (status === 'today' || person?.is_today || days === 0) return `🎉 Turns ${nextAge} Today`
+  if (status === 'tomorrow' || person?.is_tomorrow || days === 1) return `🎂 Turns ${nextAge} Tomorrow`
+  if (days > 1 && (!monthView || days <= 366)) return `🎂 Turns ${nextAge} in ${days} days`
+  if (monthView && days > 31) return hasAge ? `🎈 Turning ${nextAge}` : null
+  return `🎈 Turning ${nextAge}`
 }
 
 function birthdayMonthShortLabel(monthLabel) {
@@ -403,17 +420,11 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, pastM
   const days = Number(person?.days_until_birthday ?? 0)
   const birthdayAlreadyPassed =
     Boolean(person?.birthday_passed_in_view) || (monthView && days > 31 && !futureMonthView)
-  const daysLabel = birthdayAlreadyPassed
-    ? pastMonthView
-      ? 'Celebrated this month'
-      : 'Birthday already passed'
-    : futureMonthView && days > 0
-      ? `${days} day${days === 1 ? '' : 's'} until birthday`
-      : futureMonthView
-        ? 'Upcoming this month'
-    : days <= 0
-      ? '0 days remaining'
-      : `${days} day${days === 1 ? '' : 's'} remaining`
+  const ageCountdownLabel = birthdayAgeCountdownLabel(person, {
+    monthView,
+    passedInView: birthdayAlreadyPassed,
+  })
+  const occurrenceLabel = person?.next_birthday_formatted || person?.birth_date_formatted || '-'
   const badgeClass =
     person?.is_today || tone === 'today'
       ? 'border-brand/35 bg-brand/10 text-brand'
@@ -442,23 +453,28 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, pastM
               {name}
             </p>
             <p className="mt-1 line-clamp-2 text-[11px] font-medium uppercase leading-relaxed tracking-wide text-muted-foreground @md:text-xs">
-              {person?.department || 'Unassigned'} / {person?.position || 'Unassigned'}
+              {person?.department || 'Unassigned'} • {person?.position || 'Unassigned'}
             </p>
           </div>
           <span className={cn('shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-bold @md:px-3 @md:text-xs', badgeClass)}>
             {birthdayBadgeLabel(days, monthView, birthdayAlreadyPassed)}
           </span>
         </div>
-        <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-4 text-[11px] font-medium text-muted-foreground @md:text-xs">
-          <span className="inline-flex items-center gap-1.5">
-            <Cake className="size-3.5 text-brand" aria-hidden />
-            Birthday: <span className="font-extrabold text-brand">{person?.birth_date_formatted || '-'}</span>
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Calendar className="size-3.5 text-brand" aria-hidden />
-            <span className="text-foreground/80">{person?.day_name || '-'}</span>
-          </span>
-          <span className="text-foreground/80">{daysLabel}</span>
+        <div className="mt-auto space-y-1.5 pt-4 text-[11px] font-medium text-muted-foreground @md:text-xs">
+          <p className="text-foreground/90">
+            {occurrenceLabel}
+            {person?.day_name ? (
+              <>
+                {' '}
+                <span className="text-muted-foreground">•</span>
+                {' '}
+                {person.day_name}
+              </>
+            ) : null}
+          </p>
+          {ageCountdownLabel ? (
+            <p className="font-semibold text-brand">{ageCountdownLabel}</p>
+          ) : null}
         </div>
       </div>
     </button>

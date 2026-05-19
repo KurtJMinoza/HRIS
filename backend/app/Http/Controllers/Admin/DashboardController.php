@@ -473,6 +473,8 @@ class DashboardController extends Controller
                     $employee->last_name,
                 ])->filter(fn ($part) => is_string($part) && trim($part) !== '')->implode(' ')));
 
+                $ageFields = $this->computeBirthdayAgeFields($birthDate, $nextBirthday, $today);
+
                 return [
                     'employee_id' => (int) $employee->id,
                     'full_name' => $fullName !== '' ? $fullName : 'Employee #'.$employee->id,
@@ -483,11 +485,16 @@ class DashboardController extends Controller
                     'position' => $employee->position ?: 'Unassigned',
                     'birth_date' => $birthDate->toDateString(),
                     'birth_date_formatted' => $birthDate->format('M j'),
+                    'next_birthday_date' => $nextBirthday->toDateString(),
+                    'next_birthday_formatted' => $nextBirthday->format('M j, Y'),
                     'birthday_month_day' => $birthDate->format('m-d'),
                     'day_name' => $nextBirthday->format('l'),
                     'birth_month' => (int) $birthDate->month,
                     'birth_day' => (int) $birthDate->day,
                     'days_until_birthday' => $daysUntilBirthday,
+                    'current_age' => $ageFields['current_age'],
+                    'next_age' => $ageFields['next_age'],
+                    'birthday_status' => $ageFields['birthday_status'],
                     'is_today' => $isToday,
                     'is_tomorrow' => $isTomorrow,
                     'birthday_passed_in_view' => false,
@@ -527,11 +534,19 @@ class DashboardController extends Controller
             ->map(function (array $row) use ($year, $month, $today, $isPastMonth, $isCurrentMonth, $isFutureMonth, $tz): array {
                 $occurrence = Carbon::create($year, $month, (int) $row['birth_day'], 0, 0, 0, $tz)->startOfDay();
                 $daysUntilOccurrence = (int) $today->diffInDays($occurrence, false);
+                $birthDate = Carbon::parse((string) $row['birth_date'], $tz)->startOfDay();
+                $passedInView = $isPastMonth || ($isCurrentMonth && $occurrence->lessThan($today));
+                $ageFields = $this->computeBirthdayAgeFields($birthDate, $occurrence, $today, $passedInView);
                 $row['day_name'] = $occurrence->format('l');
+                $row['next_birthday_date'] = $occurrence->toDateString();
+                $row['next_birthday_formatted'] = $occurrence->format('M j, Y');
                 $row['days_until_birthday'] = $daysUntilOccurrence;
+                $row['current_age'] = $ageFields['current_age'];
+                $row['next_age'] = $ageFields['next_age'];
+                $row['birthday_status'] = $ageFields['birthday_status'];
                 $row['is_today'] = $daysUntilOccurrence === 0;
                 $row['is_tomorrow'] = $daysUntilOccurrence === 1;
-                $row['birthday_passed_in_view'] = $isPastMonth || ($isCurrentMonth && $occurrence->lessThan($today));
+                $row['birthday_passed_in_view'] = $passedInView;
                 $row['birthday_upcoming_in_view'] = $isFutureMonth || ($isCurrentMonth && $occurrence->greaterThan($today));
 
                 return $row;
@@ -548,6 +563,37 @@ class DashboardController extends Controller
             'birthdays' => $birthdays,
             'birthday_month_label' => $monthStart->format('F Y'),
             'birthday_month_range_label' => $monthStart->format('M j').' to '.$monthEnd->format('M j'),
+        ];
+    }
+
+    /**
+     * @return array{current_age: int, next_age: int, birthday_status: string}
+     */
+    private function computeBirthdayAgeFields(
+        Carbon $birthDate,
+        Carbon $occurrence,
+        Carbon $today,
+        bool $passedInView = false
+    ): array {
+        $birthDate = $birthDate->copy()->startOfDay();
+        $occurrence = $occurrence->copy()->startOfDay();
+        $today = $today->copy()->startOfDay();
+
+        $currentAge = (int) $birthDate->diff($today)->y;
+        $nextAge = (int) $occurrence->year - (int) $birthDate->year;
+        $daysUntil = (int) $today->diffInDays($occurrence, false);
+
+        $birthdayStatus = match (true) {
+            $passedInView || $daysUntil < 0 => 'passed',
+            $daysUntil === 0 => 'today',
+            $daysUntil === 1 => 'tomorrow',
+            default => 'upcoming',
+        };
+
+        return [
+            'current_age' => $currentAge,
+            'next_age' => $nextAge,
+            'birthday_status' => $birthdayStatus,
         ];
     }
 
