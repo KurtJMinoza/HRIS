@@ -20,6 +20,7 @@ use App\Services\HrRoleResolver;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PresenceFilingService;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -87,8 +88,11 @@ class DashboardController extends Controller
         return 'COALESCE(verified_at, created_at)';
     }
 
-    /** @param  \Illuminate\Database\Eloquent\Builder<AttendanceLog>|\Illuminate\Database\Query\Builder  $query */
-    private function attendanceLogEffectivePunchWhereBetween($query, Carbon $rangeStartUtc, Carbon $rangeEndUtc)
+    /**
+     * @param  Builder<AttendanceLog>  $query
+     * @return Builder<AttendanceLog>
+     */
+    private function attendanceLogEffectivePunchWhereBetween(Builder $query, Carbon $rangeStartUtc, Carbon $rangeEndUtc): Builder
     {
         return $query->whereRaw(
             $this->attendanceLogEffectivePunchColumnSql().' between ? and ?',

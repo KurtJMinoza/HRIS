@@ -415,7 +415,7 @@ const BIRTHDAY_TAB_TRIGGER_CLASS = cn(
   'hover:data-[state=inactive]:text-foreground'
 )
 
-function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, pastMonthView = false, futureMonthView = false, onOpen }) {
+function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, futureMonthView = false, onOpen }) {
   const name = person?.full_name || 'Employee'
   const days = Number(person?.days_until_birthday ?? 0)
   const birthdayAlreadyPassed =
@@ -784,9 +784,6 @@ export default function AdminDashboard() {
   const browsedBirthdayMonthRangeLabel = isBrowsingCurrentBirthdayMonth
     ? birthdayMonthRangeLabel
     : (birthdayMonthQuery.data?.birthday_month_range_label || '')
-  const browsedBirthdayIsPastMonth = isBrowsingCurrentBirthdayMonth
-    ? false
-    : Boolean(birthdayMonthQuery.data?.is_past_month)
   const browsedBirthdayIsFutureMonth = isBrowsingCurrentBirthdayMonth
     ? false
     : Boolean(birthdayMonthQuery.data?.is_future_month)
@@ -1840,7 +1837,6 @@ export default function AdminDashboard() {
                             person={person}
                             tone={Number(person.days_until_birthday) === 0 ? 'today' : 'upcoming'}
                             monthView
-                            pastMonthView={browsedBirthdayIsPastMonth}
                             futureMonthView={browsedBirthdayIsFutureMonth}
                             onOpen={() => navigate(hrPanelPath(hrBase, `employees/${person.employee_id}`))}
                           />
