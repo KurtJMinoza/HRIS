@@ -17,6 +17,8 @@ import {
   fetchAllEmployeeReportsDetailedRows,
   profileImageUrl,
   REPORTS_AND_ATTENDANCE_PAGE_SIZE,
+  ATTENDANCE_PAGE_SIZE_OPTIONS,
+  normalizeAttendancePerPage,
 } from '@/api'
 import { formatEmploymentStatusForViewer } from '@/lib/employmentStatus'
 import ReportPdfDocument from '@/components/reports/ReportPdfDocument'
@@ -103,6 +105,20 @@ function isWeekendDate(value) {
   return dayOfWeek === 0 || dayOfWeek === 6
 }
 
+const ADMIN_REPORTS_PER_PAGE_KEY = 'hr-admin-reports-per-page'
+const EMPLOYEE_REPORTS_PER_PAGE_KEY = 'hr-employee-reports-per-page'
+
+function readStoredReportsPerPage(storageKey) {
+  try {
+    return normalizeAttendancePerPage(
+      Number(localStorage.getItem(storageKey)),
+      REPORTS_AND_ATTENDANCE_PAGE_SIZE,
+    )
+  } catch {
+    return REPORTS_AND_ATTENDANCE_PAGE_SIZE
+  }
+}
+
 function dedupeDetailedReportRows(rows, employeeId, employeesOptions) {
   let list = Array.isArray(rows) ? [...rows] : []
   if (employeeId !== 'all') {
@@ -145,11 +161,16 @@ export default function AdminReports() {
   const [debouncedDetailedSearch, setDebouncedDetailedSearch] = useState('')
   const [exportingPdf, setExportingPdf] = useState(false)
   const [exportingExcel, setExportingExcel] = useState(false)
-  const pageSize = REPORTS_AND_ATTENDANCE_PAGE_SIZE
 
   const { user } = useAuth()
   const location = useLocation()
   const isEmployeeSelfReport = location.pathname.startsWith('/employee/reports')
+  const reportsPerPageStorageKey = isEmployeeSelfReport
+    ? EMPLOYEE_REPORTS_PER_PAGE_KEY
+    : ADMIN_REPORTS_PER_PAGE_KEY
+  const [reportsPerPage, setReportsPerPage] = useState(() =>
+    readStoredReportsPerPage(reportsPerPageStorageKey),
+  )
   const viewerIsAdminHr = isAdminHrUser(user)
   const showPayrollReports = viewerIsAdminHr || isEmployeeSelfReport
 
@@ -178,16 +199,28 @@ export default function AdminReports() {
 
   useEffect(() => {
     setDetailedPage(1)
-  }, [fromDate, toDate, companyId, employeeId, debouncedDetailedSearch, includeDeactivated])
+  }, [fromDate, toDate, companyId, employeeId, debouncedDetailedSearch, includeDeactivated, reportsPerPage])
 
   const detailedFetchParams = useMemo(
     () => ({
       ...reportFilters,
       page: detailedPage,
+      per_page: reportsPerPage,
       search: debouncedDetailedSearch || undefined,
     }),
-    [reportFilters, detailedPage, debouncedDetailedSearch],
+    [reportFilters, detailedPage, reportsPerPage, debouncedDetailedSearch],
   )
+
+  function handleReportsPerPageChange(value) {
+    const next = normalizeAttendancePerPage(value, REPORTS_AND_ATTENDANCE_PAGE_SIZE)
+    setReportsPerPage(next)
+    setDetailedPage(1)
+    try {
+      localStorage.setItem(reportsPerPageStorageKey, String(next))
+    } catch {
+      /* ignore */
+    }
+  }
 
   const detailedQuery = useQuery({
     queryKey: ['reports-detailed', isEmployeeSelfReport, detailedFetchParams],
@@ -464,7 +497,8 @@ export default function AdminReports() {
   const detailedReportMeta = detailedQuery.data?.meta
   const pageCountForUi = Math.max(1, Number(detailedReportMeta?.last_page ?? 1))
   const paginationCurrentPage = Math.min(detailedPage, pageCountForUi)
-  const tableRowsForRender = filteredRows
+  const reportsPerPageResolved = Number(detailedReportMeta?.per_page) || reportsPerPage
+  const tableRowsForRender = useMemo(() => filteredRows, [filteredRows])
 
   const summaryKpi = useMemo(() => {
     const totalCount = Number(detailedReportMeta?.total ?? filteredRows.length)
@@ -473,10 +507,10 @@ export default function AdminReports() {
       primary: { label: 'Total records (all pages)', value: totalCount },
       secondary: [
         { label: 'Total hours (this page)', value: totalHoursPage.toFixed(2) },
-        { label: 'Rows per page', value: pageSize },
+        { label: 'Rows per page', value: reportsPerPageResolved },
       ],
     }
-  }, [detailedReportMeta?.total, filteredRows, pageSize])
+  }, [detailedReportMeta?.total, filteredRows, reportsPerPageResolved])
 
   function buildFiltersSummary() {
     const parts = []
@@ -576,7 +610,7 @@ export default function AdminReports() {
   }
 
   const hasRows = Number(detailedReportMeta?.total ?? 0) > 0
-  const showTableSkeleton = detailedQuery.isLoading
+  const showTableSkeleton = detailedQuery.isLoading && !detailedQuery.isPlaceholderData
 
   return (
     <div className="space-y-6">
@@ -909,16 +943,34 @@ export default function AdminReports() {
                 </tbody>
               </table>
               {hasRows && !showTableSkeleton && (
-                <div className="flex items-center justify-between border-t border-border/40 px-4 py-3 text-[11px] text-muted-foreground @md:text-xs">
-                  <span>
-                    Page {paginationCurrentPage} of {pageCountForUi}
-                  </span>
+                <div className="flex flex-col gap-2 border-t border-border/40 px-4 py-3 text-[11px] text-muted-foreground @md:flex-row @md:items-center @md:justify-between @md:text-xs">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span>
+                      Page {paginationCurrentPage} of {pageCountForUi} · Showing {tableRowsForRender.length} of{' '}
+                      {formatNumber(detailedReportMeta?.total ?? 0)} records
+                    </span>
+                    <label className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Rows per page:</span>
+                      <Select value={String(reportsPerPage)} onValueChange={handleReportsPerPageChange}>
+                        <SelectTrigger className="h-8 w-[72px] text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ATTENDANCE_PAGE_SIZE_OPTIONS.map((n) => (
+                            <SelectItem key={n} value={String(n)}>
+                              {n}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </label>
+                  </div>
                   <div className="flex gap-2">
                     <Button
                       type="button"
                       size="xs"
                       variant="outline"
-                      disabled={paginationCurrentPage <= 1}
+                      disabled={paginationCurrentPage <= 1 || detailedQuery.isFetching}
                       onClick={() => setDetailedPage((p) => Math.max(1, p - 1))}
                     >
                       Previous
@@ -927,7 +979,7 @@ export default function AdminReports() {
                       type="button"
                       size="xs"
                       variant="outline"
-                      disabled={paginationCurrentPage >= pageCountForUi}
+                      disabled={paginationCurrentPage >= pageCountForUi || detailedQuery.isFetching}
                       onClick={() => setDetailedPage((p) => Math.min(pageCountForUi, p + 1))}
                     >
                       Next

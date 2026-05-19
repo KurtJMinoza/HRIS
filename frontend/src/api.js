@@ -232,17 +232,37 @@ function normalizePerPage(perPage, fallback = undefined, max = 100) {
 const TIMEOUT_ERROR_MSG =
   'Server request timed out. Check if the backend API is running and reachable.'
 
-/** Page size enforced by Laravel for Admin Reports (detailed) list endpoints. */
+/** Default page size for Admin / Employee detailed reports (server-validated: 25, 50, 100). */
 export const REPORTS_AND_ATTENDANCE_PAGE_SIZE = 50
 
-/** Admin → Attendance monitoring list (matches backend AttendanceMonitoringController::ROWS_PER_PAGE). */
-export const ADMIN_ATTENDANCE_PAGE_SIZE = 20
+/** @deprecated alias */
+export const REPORTS_PAGE_SIZE = REPORTS_AND_ATTENDANCE_PAGE_SIZE
 
-/** Matches backend AttendanceController::EMPLOYEE_SUMMARY_MAX_PER_PAGE — caps payroll hydration per request. */
+/** Allowed page sizes for Admin / Employee attendance tables (server-validated). */
+export const ATTENDANCE_PAGE_SIZE_OPTIONS = [25, 50, 100]
+
+/** Default attendance table page size. */
+export const ADMIN_ATTENDANCE_PAGE_SIZE = 50
+
+/** @deprecated Use ADMIN_ATTENDANCE_PAGE_SIZE */
+export const ADMIN_ATTENDANCE_DEFAULT_PAGE_SIZE = ADMIN_ATTENDANCE_PAGE_SIZE
+
+/** Matches backend AttendanceController legacy full-range cap when per_page is omitted. */
 export const EMPLOYEE_ATTENDANCE_SUMMARY_MAX_PER_PAGE = 124
 
-/** Employee → Attendance: server page size (rows per page; ≤ backend max). */
-export const EMPLOYEE_ATTENDANCE_PAGE_SIZE = 20
+/** Employee → Attendance: default server page size. */
+export const EMPLOYEE_ATTENDANCE_PAGE_SIZE = 50
+
+/**
+ * Normalize attendance list page size to 25, 50, or 100.
+ * @param {unknown} perPage
+ * @param {number} [fallback=50]
+ */
+export function normalizeAttendancePerPage(perPage, fallback = ADMIN_ATTENDANCE_PAGE_SIZE) {
+  const n = Number(perPage)
+  if (ATTENDANCE_PAGE_SIZE_OPTIONS.includes(n)) return n
+  return ATTENDANCE_PAGE_SIZE_OPTIONS.includes(fallback) ? fallback : 50
+}
 
 /** @deprecated Use EMPLOYEE_ATTENDANCE_PAGE_SIZE */
 export const EMPLOYEE_ATTENDANCE_INITIAL_PER_PAGE = EMPLOYEE_ATTENDANCE_PAGE_SIZE
@@ -1359,7 +1379,7 @@ export async function getAdminAttendance(params = {}) {
 
   const p = Number(params.page)
   query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
-  query.set('per_page', String(ADMIN_ATTENDANCE_PAGE_SIZE))
+  query.set('per_page', String(normalizeAttendancePerPage(params.per_page, ADMIN_ATTENDANCE_PAGE_SIZE)))
 
   if (params.search) query.set('search', String(params.search).trim())
   if (params.company) query.set('company', String(params.company))
@@ -1367,7 +1387,8 @@ export async function getAdminAttendance(params = {}) {
 
   if (params.premium_type) query.set('premium_type', params.premium_type)
   const path = `/admin/attendance${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
+  const fetchOpts = params.signal ? { signal: params.signal } : {}
+  const res = await authenticatedFetch(path, fetchOpts)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load attendance')
   return data
@@ -1501,10 +1522,7 @@ export async function getAdminReportsDetailed(params = {}, fetchOpts = {}) {
   if (params.include_deactivated) query.set('include_deactivated', '1')
   const p = Number(params.page)
   query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
-  const pp = Number(params.per_page)
-  const perPage =
-    Number.isFinite(pp) && pp >= 25 && pp <= 100 ? Math.floor(pp) : REPORTS_AND_ATTENDANCE_PAGE_SIZE
-  query.set('per_page', String(perPage))
+  query.set('per_page', String(normalizeAttendancePerPage(params.per_page, REPORTS_AND_ATTENDANCE_PAGE_SIZE)))
   if (params.search) query.set('search', String(params.search).trim())
 
   const path = `/admin/reports/detailed${query.toString() ? `?${query.toString()}` : ''}`
@@ -1553,10 +1571,7 @@ export async function getEmployeeReportsDetailed(params = {}, fetchOpts = {}) {
   if (params.to_date) query.set('to_date', params.to_date)
   const p = Number(params.page)
   query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
-  const pp = Number(params.per_page)
-  const perPage =
-    Number.isFinite(pp) && pp >= 25 && pp <= 100 ? Math.floor(pp) : REPORTS_AND_ATTENDANCE_PAGE_SIZE
-  query.set('per_page', String(perPage))
+  query.set('per_page', String(normalizeAttendancePerPage(params.per_page, REPORTS_AND_ATTENDANCE_PAGE_SIZE)))
   if (params.search) query.set('search', String(params.search).trim())
 
   const path = `/employee/reports/detailed${query.toString() ? `?${query.toString()}` : ''}`
@@ -4738,15 +4753,15 @@ export async function getMyAttendanceSummary(params = {}) {
 
     if (params.full_summary === true) {
       // omit per_page → legacy path (hydrates payroll for every day in range; slower)
-    } else {
-      let perPage = Number(params.per_page)
-      if (!Number.isFinite(perPage) || perPage < 1) {
-        const span = inclusiveAttendanceDaySpan(params.from_date, params.to_date)
-        perPage = Math.min(maxPerPage, Math.max(1, span))
-      } else {
-        perPage = Math.min(maxPerPage, Math.max(1, Math.floor(perPage)))
-      }
+    } else if (params.per_page != null && params.per_page !== '') {
+      const perPage = normalizeAttendancePerPage(params.per_page, EMPLOYEE_ATTENDANCE_PAGE_SIZE)
       query.set('per_page', String(perPage))
+    } else if (params.merge_all_pages) {
+      const span = inclusiveAttendanceDaySpan(params.from_date, params.to_date)
+      const perPage = Math.min(maxPerPage, Math.max(1, span))
+      query.set('per_page', String(perPage))
+    } else {
+      query.set('per_page', String(normalizeAttendancePerPage(params.per_page, EMPLOYEE_ATTENDANCE_PAGE_SIZE)))
     }
 
     return query

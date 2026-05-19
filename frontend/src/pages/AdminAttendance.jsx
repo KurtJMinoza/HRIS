@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { pdf } from '@react-pdf/renderer'
 import { useSearchParams } from 'react-router-dom'
 import {
@@ -53,6 +53,8 @@ import {
   getEmployees,
   profileImageUrl,
   ADMIN_ATTENDANCE_PAGE_SIZE,
+  ATTENDANCE_PAGE_SIZE_OPTIONS,
+  normalizeAttendancePerPage,
 } from '@/api'
 import ReportPdfDocument from '@/components/reports/ReportPdfDocument'
 import { cn } from '@/lib/utils'
@@ -73,6 +75,19 @@ function getLocalDateString(d = new Date()) {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+const ADMIN_ATTENDANCE_PER_PAGE_KEY = 'hr-admin-attendance-per-page'
+
+function readStoredAttendancePerPage() {
+  try {
+    return normalizeAttendancePerPage(
+      Number(localStorage.getItem(ADMIN_ATTENDANCE_PER_PAGE_KEY)),
+      ADMIN_ATTENDANCE_PAGE_SIZE,
+    )
+  } catch {
+    return ADMIN_ATTENDANCE_PAGE_SIZE
+  }
 }
 
 function paginationWindow(current, last) {
@@ -127,6 +142,7 @@ export default function AdminAttendance() {
   const [searchQuery, setSearchQuery] = useState('')
   const [scopeSegment, setScopeSegment] = useState('all')
   const [attendancePage, setAttendancePage] = useState(1)
+  const [attendancePerPage, setAttendancePerPage] = useState(readStoredAttendancePerPage)
   const [debouncedAttendanceSearch, setDebouncedAttendanceSearch] = useState('')
   const [lastRefresh, setLastRefresh] = useState(() => new Date())
   const [, forceTickUpdate] = useState(0)
@@ -201,13 +217,14 @@ export default function AdminAttendance() {
   )
 
   const attendanceParams = useMemo(
-    () => ({ ...attendanceFilters, page: attendancePage }),
-    [attendanceFilters, attendancePage],
+    () => ({ ...attendanceFilters, page: attendancePage, per_page: attendancePerPage }),
+    [attendanceFilters, attendancePage, attendancePerPage],
   )
 
   const attendanceQuery = useQuery({
     queryKey: ['admin-attendance', attendanceParams],
-    queryFn: () => getAdminAttendance(attendanceParams),
+    placeholderData: keepPreviousData,
+    queryFn: ({ signal }) => getAdminAttendance({ ...attendanceParams, signal }),
     refetchInterval: 15000,
     refetchOnWindowFocus: true,
   })
@@ -245,10 +262,10 @@ export default function AdminAttendance() {
       setRows([])
       setError(attendanceQuery.error.message || 'Failed to load attendance')
       setLoading(false)
-    } else if (attendanceQuery.isLoading) {
+    } else if (attendanceQuery.isLoading && !attendanceQuery.isPlaceholderData) {
       setLoading(true)
     }
-  }, [attendanceQuery.data, attendanceQuery.error, attendanceQuery.isLoading])
+  }, [attendanceQuery.data, attendanceQuery.error, attendanceQuery.isLoading, attendanceQuery.isPlaceholderData])
 
   useEffect(() => {
     const cp = attendanceQuery.data?.meta?.current_page
@@ -282,7 +299,19 @@ export default function AdminAttendance() {
     debouncedAttendanceSearch,
     companyFilter,
     scopeSegment,
+    attendancePerPage,
   ])
+
+  function handleAttendancePerPageChange(value) {
+    const next = normalizeAttendancePerPage(value, ADMIN_ATTENDANCE_PAGE_SIZE)
+    setAttendancePerPage(next)
+    setAttendancePage(1)
+    try {
+      localStorage.setItem(ADMIN_ATTENDANCE_PER_PAGE_KEY, String(next))
+    } catch {
+      /* ignore */
+    }
+  }
 
   // Apply: reload with current filter values (from/to, department, employee, status)
   function applyFilters() {
@@ -374,6 +403,7 @@ export default function AdminAttendance() {
 
   const attendanceTotalMatched = Number(attendanceListMeta?.total ?? rows.length ?? 0)
   const attendanceLastPage = Math.max(1, Number(attendanceListMeta?.last_page ?? 1))
+  const attendancePerPageResolved = Number(attendanceListMeta?.per_page) || attendancePerPage
 
   const todayIso = getLocalDateString()
   const dateFilterApplied = fromDate !== todayIso || toDate !== todayIso
@@ -549,7 +579,7 @@ export default function AdminAttendance() {
     }
   }
 
-  const displayRows = rows
+  const displayRows = useMemo(() => rows, [rows])
 
   const secondsAgo = Math.floor((Date.now() - lastRefresh.getTime()) / 1000)
   const pageButtons = paginationWindow(attendancePage, attendanceLastPage)
@@ -1127,7 +1157,7 @@ export default function AdminAttendance() {
             <CardDescription className="text-xs">
               Page {Math.min(attendancePage, attendanceLastPage)} of {attendanceLastPage} · Showing{' '}
               {displayRows.length} / {attendanceTotalMatched} record
-              {attendanceTotalMatched !== 1 ? 's' : ''} · {ADMIN_ATTENDANCE_PAGE_SIZE} per page ·{' '}
+              {attendanceTotalMatched !== 1 ? 's' : ''} · {attendancePerPageResolved} per page ·{' '}
               {periodLabel || 'selected period'}
             </CardDescription>
           </div>
@@ -1165,7 +1195,7 @@ export default function AdminAttendance() {
           <AttendanceRecordsDataTable
             mode="admin"
             rows={displayRows}
-            loading={loading}
+            loading={loading && !attendanceQuery.isPlaceholderData}
             profileImageUrl={profileImageUrl}
             hideCompanyColumn={hideCompanyColumn}
             hideDepartmentColumn={hideDepartmentColumn}
@@ -1183,10 +1213,28 @@ export default function AdminAttendance() {
           />
           {attendanceTotalMatched > 0 && (
             <div className="flex flex-col gap-2 border-t border-border/40 px-4 py-3 text-[11px] text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between">
-              <span className="tabular-nums">
-                Showing {Math.min((attendancePage - 1) * ADMIN_ATTENDANCE_PAGE_SIZE + 1, attendanceTotalMatched)} to{' '}
-                {Math.min(attendancePage * ADMIN_ATTENDANCE_PAGE_SIZE, attendanceTotalMatched)} of {attendanceTotalMatched} records
-              </span>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="tabular-nums">
+                  Showing {Math.min((attendancePage - 1) * attendancePerPageResolved + 1, attendanceTotalMatched)} to{' '}
+                  {Math.min(attendancePage * attendancePerPageResolved, attendanceTotalMatched)} of {attendanceTotalMatched}{' '}
+                  records
+                </span>
+                <label className="flex items-center gap-2 text-[11px]">
+                  <span className="text-muted-foreground">Rows per page:</span>
+                  <Select value={String(attendancePerPage)} onValueChange={handleAttendancePerPageChange}>
+                    <SelectTrigger className="h-8 w-[72px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ATTENDANCE_PAGE_SIZE_OPTIONS.map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 <Button
                   type="button"

@@ -9,6 +9,7 @@ use App\Models\FailedFaceAttempt;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
+use App\Services\AttendanceCacheService;
 use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceStatusService;
 use App\Services\FaceAuthService;
@@ -22,7 +23,6 @@ use App\Services\PresenceFilingCorrectionFormatter;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -1648,42 +1648,6 @@ class AttendanceController extends Controller
     }
 
     /**
-     * Cheap fingerprint so cached `/attendance/summary` payloads invalidate when punches, corrections,
-     * overlapping leaves, overtime rows, or the employee profile (schedule) change.
-     */
-    private function employeeAttendanceSummaryResponseCacheRevision(User $user, Carbon $from, Carbon $to): string
-    {
-        $fromUtc = $from->copy()->timezone('UTC');
-        $toUtc = $to->copy()->timezone('UTC');
-        $fromStr = $from->toDateString();
-        $toStr = $to->toDateString();
-
-        $parts = [
-            AttendanceLog::query()
-                ->where('user_id', $user->id)
-                ->whereBetween('verified_at', [$fromUtc, $toUtc])
-                ->max('updated_at'),
-            AttendanceCorrection::query()
-                ->where('user_id', $user->id)
-                ->whereBetween('date', [$fromStr, $toStr])
-                ->max('updated_at'),
-            LeaveRequest::query()
-                ->where('user_id', $user->id)
-                ->where('status', LeaveRequest::STATUS_APPROVED)
-                ->where('start_date', '<=', $toStr)
-                ->where('end_date', '>=', $fromStr)
-                ->max('updated_at'),
-            Overtime::query()
-                ->where('user_id', $user->id)
-                ->whereBetween('date', [$fromStr, $toStr])
-                ->max('updated_at'),
-            User::query()->whereKey($user->id)->value('updated_at'),
-        ];
-
-        return substr(md5(implode('|', array_map(fn ($v) => (string) ($v ?? ''), $parts))), 0, 24);
-    }
-
-    /**
      * Monthly-style attendance summary for the authenticated user.
      *
      * Returns:
@@ -1696,14 +1660,26 @@ class AttendanceController extends Controller
         $startedAt = microtime(true);
         $user = $request->user();
 
+        $dashboardLite = $request->boolean('dashboard_lite');
+
         $validated = $request->validate([
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:'.self::EMPLOYEE_SUMMARY_MAX_PER_PAGE],
+            'status' => ['nullable', 'string', 'max:32'],
             'dashboard_lite' => ['nullable', 'boolean'],
         ]);
-        $dashboardLite = $request->boolean('dashboard_lite');
+        if (
+            isset($validated['per_page'])
+            && (int) $validated['per_page'] > 0
+            && ! $dashboardLite
+            && ! in_array((int) $validated['per_page'], AttendanceCacheService::ALLOWED_PER_PAGE, true)
+        ) {
+            throw ValidationException::withMessages([
+                'per_page' => ['per_page must be one of: '.implode(', ', AttendanceCacheService::ALLOWED_PER_PAGE).'.'],
+            ]);
+        }
 
         // Default: current month
         if (! empty($validated['from_date']) || ! empty($validated['to_date'])) {
@@ -1727,28 +1703,22 @@ class AttendanceController extends Controller
 
         $perPageInput = isset($validated['per_page']) ? (int) $validated['per_page'] : null;
         $pageInput = max(1, (int) ($validated['page'] ?? 1));
-        $ppCacheKey = ($perPageInput === null || $perPageInput <= 0)
+        $statusFilter = isset($validated['status']) ? strtolower(trim((string) $validated['status'])) : 'all';
+        $ppForCache = ($perPageInput === null || $perPageInput <= 0)
             ? 'all'
-            : (string) min(self::EMPLOYEE_SUMMARY_MAX_PER_PAGE, max(1, $perPageInput));
+            : (string) AttendanceCacheService::normalizePerPage($perPageInput);
 
-        $revision = $this->employeeAttendanceSummaryResponseCacheRevision($user, $from, $to);
-        $yearMonth = $from->format('Y_m');
-        $cachePrefix = $dashboardLite
-            ? sprintf('employee_dashboard:%d:calendar:%s', $user->id, $yearMonth)
-            : 'employee_attendance_summary:v4';
-        $responseCacheKey = sprintf(
-            '%s:%d:%s:%s:%s:%s:%d:%s',
-            $cachePrefix,
-            $user->id,
-            $from->toDateString(),
-            $to->toDateString(),
-            $revision,
-            $ppCacheKey,
-            $pageInput,
-            $dashboardLite ? 'lite' : 'full',
-        );
+        $responseCacheKey = AttendanceCacheService::employeeListKey([
+            'employee_id' => $user->id,
+            'start_date' => $from->toDateString(),
+            'end_date' => $to->toDateString(),
+            'status' => $statusFilter,
+            'page' => $pageInput,
+            'per_page' => $ppForCache,
+            'dashboard_lite' => $dashboardLite ? 1 : 0,
+        ]);
 
-        if (($cachedPayload = Cache::get($responseCacheKey)) && is_array($cachedPayload)) {
+        if (($cachedPayload = AttendanceCacheService::get($responseCacheKey)) && is_array($cachedPayload)) {
             $cachedPayload['summary']['today']['ot_detection'] = $this->otDetectionService->detectForToday($user, $attendanceTz);
             $totalMs = (int) round((microtime(true) - $startedAt) * 1000);
             if (! isset($cachedPayload['meta']) || ! is_array($cachedPayload['meta'])) {
@@ -1761,7 +1731,7 @@ class AttendanceController extends Controller
             $cachedPayload['meta']['performance']['total_ms'] = $totalMs;
             Log::info('Employee attendance summary cache hit', [
                 'user_id' => (int) $user->id,
-                'cache_key_suffix' => $revision.'|'.$ppCacheKey.'|'.$pageInput,
+                'cache_key_suffix' => substr($responseCacheKey, -48),
                 'total_ms' => $totalMs,
                 'employee_dashboard_total_ms' => $dashboardLite ? $totalMs : null,
             ]);
@@ -2413,7 +2383,7 @@ class AttendanceController extends Controller
                 'total' => $totalDaysInRange,
             ];
         } else {
-            $perPage = min(self::EMPLOYEE_SUMMARY_MAX_PER_PAGE, max(1, $perPageInput));
+            $perPage = AttendanceCacheService::normalizePerPage($perPageInput);
             $lastPage = max(1, (int) ceil($totalDaysInRange / $perPage));
             $page = min($pageInput, $lastPage);
             $offset = ($page - 1) * $perPage;
@@ -2515,7 +2485,10 @@ class AttendanceController extends Controller
         $cachePayload = $payload;
         $cachePayload['summary']['today']['ot_detection'] = null;
         $cachePayload['meta']['performance']['total_ms'] = null;
-        Cache::put($responseCacheKey, $cachePayload, self::EMPLOYEE_SUMMARY_RESPONSE_CACHE_SECONDS);
+        $cacheTtl = ($perPageInput === null || $perPageInput <= 0)
+            ? AttendanceCacheService::SUMMARY_TTL_SECONDS
+            : AttendanceCacheService::TABLE_TTL_SECONDS;
+        AttendanceCacheService::put($responseCacheKey, $cachePayload, $cacheTtl, (int) $user->id);
 
         return response()->json($payload);
     }

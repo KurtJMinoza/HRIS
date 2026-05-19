@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\PayrollBatchRun;
 use App\Models\User;
 use App\Services\FinalizePayrollService;
+use App\Services\ReportsCacheService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -121,6 +122,8 @@ class FinalizePayrollJob implements ShouldQueue
             GeneratePayslipsJob::dispatch((int) $run->id, (int) $this->actorUserId)
                 ->onConnection('redis')
                 ->onQueue('payslip-pdf');
+            ReportsCacheService::invalidate();
+
             Log::info('FinalizePayrollJob completed', [
                 'batch_run_id' => $this->batchRunId,
                 'finalize_core_ms' => round((microtime(true) - $finalizeStartedAt) * 1000, 2),

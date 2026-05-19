@@ -64,8 +64,11 @@ import {
   recordAttendance,
   getStoredUser,
   EMPLOYEE_ATTENDANCE_PAGE_SIZE,
+  ATTENDANCE_PAGE_SIZE_OPTIONS,
+  normalizeAttendancePerPage,
 } from '@/api'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScannerInput } from '@/components/ScannerInput'
 import { useToast } from '@/components/ui/use-toast'
 function formatHours(value) {
@@ -163,6 +166,19 @@ function mapSummaryTodayToAttendanceRow(todayIso, t) {
   }
 }
 
+const EMPLOYEE_ATTENDANCE_PER_PAGE_KEY = 'hr-employee-attendance-per-page'
+
+function readStoredEmployeeAttendancePerPage() {
+  try {
+    return normalizeAttendancePerPage(
+      Number(localStorage.getItem(EMPLOYEE_ATTENDANCE_PER_PAGE_KEY)),
+      EMPLOYEE_ATTENDANCE_PAGE_SIZE,
+    )
+  } catch {
+    return EMPLOYEE_ATTENDANCE_PAGE_SIZE
+  }
+}
+
 function filterEmployeeAttendanceRows(list, scopeSegment, debouncedSearchQuery, viewerUser) {
   let out = list
   if (scopeSegment === 'pending') {
@@ -194,6 +210,8 @@ export default function EmployeeAttendance() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [daysListMeta, setDaysListMeta] = useState(null)
   const [historyPage, setHistoryPage] = useState(1)
+  const [historyPerPage, setHistoryPerPage] = useState(readStoredEmployeeAttendancePerPage)
+  const historyFetchAbortRef = useRef(null)
   const [error, setError] = useState(null)
   const [successMessage, setSuccessMessage] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -255,6 +273,9 @@ export default function EmployeeAttendance() {
       const lastPage = Math.max(1, Number(daysListMeta?.last_page) || 1)
       const target = Math.min(Math.max(1, Math.floor(Number(page)) || 1), lastPage)
       if (!daysListMeta?.paginated || target === historyPage || loading || loadingMore) return
+      historyFetchAbortRef.current?.abort()
+      const controller = new AbortController()
+      historyFetchAbortRef.current = controller
       setLoadingMore(true)
       setError(null)
       try {
@@ -262,22 +283,26 @@ export default function EmployeeAttendance() {
           from_date: fromDate,
           to_date: toDate,
           merge_all_pages: false,
-          per_page: EMPLOYEE_ATTENDANCE_PAGE_SIZE,
+          per_page: historyPerPage,
           page: target,
+          signal: controller.signal,
         })
+        if (controller.signal.aborted) return
         setAttSummary(data.summary ?? null)
         setDaysListMeta(data.meta?.days ?? null)
         setHistoryPage(Number(data.meta?.days?.current_page) || target)
         setRows(mapSummaryDaysToRows(data.days, fromDate, toDate))
       } catch (e) {
+        if (e?.name === 'AbortError') return
         setError(e.message)
       } finally {
-        setLoadingMore(false)
+        if (!controller.signal.aborted) setLoadingMore(false)
       }
     },
     [
       fromDate,
       toDate,
+      historyPerPage,
       daysListMeta?.paginated,
       daysListMeta?.last_page,
       historyPage,
@@ -286,15 +311,28 @@ export default function EmployeeAttendance() {
     ],
   )
 
+  function handleHistoryPerPageChange(value) {
+    const next = normalizeAttendancePerPage(value, EMPLOYEE_ATTENDANCE_PAGE_SIZE)
+    setHistoryPerPage(next)
+    setHistoryPage(1)
+    try {
+      localStorage.setItem(EMPLOYEE_ATTENDANCE_PER_PAGE_KEY, String(next))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  useEffect(() => {
+    fetchHistory()
+  }, [historyPerPage, fetchHistory])
+
   const historyLastPage = Math.max(1, Number(daysListMeta?.last_page) || 1)
   const paginatedMultiPage =
     Boolean(daysListMeta?.paginated) && historyLastPage > 1
 
-  useEffect(() => {
-    fetchHistory()
-  }, [fetchHistory])
-
   const viewerUser = getStoredUser()
+
+  const historyPerPageResolved = Number(daysListMeta?.per_page) || historyPerPage
 
   const displayRows = useMemo(
     () => filterEmployeeAttendanceRows(rows, scopeSegment, debouncedSearchQuery, viewerUser),
@@ -856,7 +894,7 @@ export default function EmployeeAttendance() {
               {daysListMeta?.paginated && typeof daysListMeta.total === 'number' ? (
                 <span className="mt-1 block text-xs">
                   Page {historyPage} of {daysListMeta.last_page ?? '—'} ·{' '}
-                  {daysListMeta.per_page ?? EMPLOYEE_ATTENDANCE_PAGE_SIZE} days per page ·{' '}
+                  {historyPerPageResolved} days per page ·{' '}
                   {daysListMeta.total} days in this period.
                 </span>
               ) : null}
@@ -866,7 +904,7 @@ export default function EmployeeAttendance() {
             <AttendanceRecordsDataTable
               mode="employee"
               rows={displayRows}
-              loading={loading}
+              loading={loading && rows.length === 0}
               onOpenDetails={(r) => {
                 setDetailRow(r)
                 setDetailOpen(true)
@@ -882,8 +920,23 @@ export default function EmployeeAttendance() {
                   : 'No records match your search or filters.'
               }
             />
-            {paginatedMultiPage ? (
+            {paginatedMultiPage || daysListMeta?.paginated ? (
               <div className="mt-4 flex w-full flex-col items-end gap-3 border-t border-border/60 pt-4">
+                <label className="flex w-full flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+                  <span>Rows per page:</span>
+                  <Select value={String(historyPerPage)} onValueChange={handleHistoryPerPageChange}>
+                    <SelectTrigger className="h-8 w-[72px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ATTENDANCE_PAGE_SIZE_OPTIONS.map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <Button
                     type="button"

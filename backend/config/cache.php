@@ -50,6 +50,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Attendance list / summary cache (Admin + Employee attendance modules)
+    |--------------------------------------------------------------------------
+    |
+    | Prefer redis in production. Unset to use the default CACHE_STORE driver.
+    |
+    */
+    'attendance_store' => env('CACHE_ATTENDANCE_STORE'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reports detailed list cache (Admin + Employee reports modules)
+    |--------------------------------------------------------------------------
+    */
+    'reports_store' => env('CACHE_REPORTS_STORE'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cache Stores
     |--------------------------------------------------------------------------
     |

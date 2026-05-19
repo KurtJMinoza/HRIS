@@ -4,15 +4,21 @@ namespace App\Providers;
 
 use App\Events\ScheduleUpdated;
 use App\Listeners\RecalculatePayrollDailyRecords;
+use App\Models\AttendanceCorrection;
+use App\Models\AttendanceLog;
 use App\Models\EmployeeBenefit;
+use App\Models\LeaveRequest;
+use App\Models\Overtime;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeEmergencyContact;
 use App\Models\EmployeeGovernmentId;
 use App\Models\Holiday;
 use App\Models\User;
+use App\Services\AttendanceCacheService;
 use App\Services\HolidayCalendarService;
 use App\Services\HolidayService;
 use App\Support\EmployeeProfileCache;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
@@ -47,8 +53,62 @@ class AppServiceProvider extends ServiceProvider
             ]);
         });
 
-        User::saved(fn (User $user) => EmployeeProfileCache::invalidate((int) $user->id));
-        User::deleted(fn (User $user) => EmployeeProfileCache::invalidate((int) $user->id));
+        User::saved(function (User $user): void {
+            EmployeeProfileCache::invalidate((int) $user->id);
+            if ($user->wasChanged(['schedule', 'working_schedule_id', 'pending_working_schedule_id'])) {
+                AttendanceCacheService::invalidate((int) $user->id);
+            }
+        });
+        User::deleted(function (User $user): void {
+            EmployeeProfileCache::invalidate((int) $user->id);
+            AttendanceCacheService::invalidate((int) $user->id);
+        });
+
+        $invalidateAttendanceForLog = function (AttendanceLog $log): void {
+            if (! $log->user_id) {
+                return;
+            }
+            $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+            $stamp = $log->verified_at ?? $log->created_at;
+            $date = $stamp !== null
+                ? Carbon::parse($stamp)->timezone($tz)->toDateString()
+                : null;
+            AttendanceCacheService::invalidate((int) $log->user_id, $date);
+        };
+        AttendanceLog::saved($invalidateAttendanceForLog);
+        AttendanceLog::deleted($invalidateAttendanceForLog);
+
+        AttendanceCorrection::saved(function (AttendanceCorrection $correction): void {
+            if ($correction->user_id) {
+                $date = $correction->date?->toDateString();
+                AttendanceCacheService::invalidate((int) $correction->user_id, $date);
+            }
+        });
+        AttendanceCorrection::deleted(function (AttendanceCorrection $correction): void {
+            if ($correction->user_id) {
+                $date = $correction->date?->toDateString();
+                AttendanceCacheService::invalidate((int) $correction->user_id, $date);
+            }
+        });
+
+        LeaveRequest::saved(function (LeaveRequest $leave): void {
+            if (! $leave->user_id) {
+                return;
+            }
+            if ($leave->wasChanged('status') || $leave->status === LeaveRequest::STATUS_APPROVED) {
+                AttendanceCacheService::invalidate((int) $leave->user_id);
+            }
+        });
+
+        Overtime::saved(function (Overtime $overtime): void {
+            if (! $overtime->user_id) {
+                return;
+            }
+            if ($overtime->wasChanged('status') || $overtime->status === Overtime::STATUS_APPROVED) {
+                $date = $overtime->date?->toDateString();
+                AttendanceCacheService::invalidate((int) $overtime->user_id, $date);
+            }
+        });
 
         EmployeeGovernmentId::saved(function (EmployeeGovernmentId $record): void {
             if ($record->user_id) {
@@ -110,5 +170,10 @@ class AppServiceProvider extends ServiceProvider
         });
 
         Event::listen(ScheduleUpdated::class, RecalculatePayrollDailyRecords::class);
+        Event::listen(ScheduleUpdated::class, function (ScheduleUpdated $event): void {
+            foreach ($event->affectedUserIds as $userId) {
+                AttendanceCacheService::invalidate((int) $userId);
+            }
+        });
     }
 }

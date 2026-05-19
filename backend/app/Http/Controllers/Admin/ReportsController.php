@@ -20,24 +20,16 @@ use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
 use App\Services\PayrollComputationService;
 use App\Services\PremiumReportService;
+use App\Services\ReportsCacheService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class ReportsController extends Controller
 {
-    /** Employee self-service detailed report response cache (short TTL; narrows repeated filter churn). */
-    private const EMPLOYEE_DETAILED_CACHE_TTL_SECONDS = 90;
-
-    /** Admin detailed report cache — repeat loads (pagination / refresh) avoid full recompute briefly. */
-    private const ADMIN_DETAILED_CACHE_TTL_SECONDS = 45;
-
-    /** Default page size for detailed report list responses; overridden by per_page (25–100). */
-    private const DETAILED_ROWS_PER_PAGE_DEFAULT = 50;
-
     /** Maximum calendar span for detailed report (admin dashboards; exports use separate flows). */
     private const DETAILED_MAX_RANGE_DAYS = 186;
 
@@ -336,6 +328,7 @@ class ReportsController extends Controller
             'from_date' => ['required', 'date'],
             'to_date' => ['nullable', 'date'],
             'department' => ['nullable', 'string', 'max:255'],
+            'department_id' => ['nullable', 'integer', 'exists:departments,id'],
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
@@ -343,7 +336,7 @@ class ReportsController extends Controller
             'leave_type' => ['nullable', 'string', 'max:50'],
             'overtime_status' => ['nullable', 'string', 'max:50'],
             'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', 'min:25', 'max:100'],
+            'per_page' => ['nullable', 'integer', Rule::in(ReportsCacheService::ALLOWED_PER_PAGE)],
             'search' => ['nullable', 'string', 'max:200'],
             'include_deactivated' => ['nullable', 'boolean'],
         ]);
@@ -373,6 +366,7 @@ class ReportsController extends Controller
         // Employee self-service: never apply org-wide filters (ignore forged query params).
         if ($isEmployeeSelfRoute) {
             $validated['department'] = null;
+            $validated['department_id'] = null;
             $validated['company_id'] = null;
             $validated['branch_id'] = null;
         }
@@ -400,70 +394,64 @@ class ReportsController extends Controller
 
         $attendanceTz = $attendanceTzForValidation;
 
-        $perPage = (int) ($validated['per_page'] ?? self::DETAILED_ROWS_PER_PAGE_DEFAULT);
-        $perPage = min(100, max(25, $perPage));
+        $perPage = ReportsCacheService::normalizePerPage($validated['per_page'] ?? null);
         $pagePref = max(1, (int) ($validated['page'] ?? 1));
 
         $filtersParseMs = (int) round((microtime(true) - $startedAt) * 1000);
 
+        $statusForCache = isset($validated['status']) ? strtolower(trim((string) $validated['status'])) : null;
+        $searchForCache = strtolower(trim((string) ($validated['search'] ?? '')));
+
         $employeeDetailedCacheKey = null;
         $adminDetailedCacheKey = null;
+
         if ($isEmployeeSelfRoute) {
-            $employeeDetailedCacheKey = sprintf(
-                'reports:employee:detailed:v3:%d:%s:%s:%d:%d:%s:%s:%s:%s:%s',
-                (int) $request->user()->id,
-                $from->toDateString(),
-                $to->toDateString(),
-                $perPage,
-                $pagePref,
-                $validated['status'] ?? '',
-                $validated['leave_type'] ?? '',
-                $validated['overtime_status'] ?? '',
-                strtolower(trim((string) ($validated['search'] ?? ''))),
-                hash('xxh128', implode('|', [
-                    (string) ($validated['from_date'] ?? ''),
-                    (string) ($validated['to_date'] ?? ''),
-                ]), false)
-            );
-            $cachedDetailed = Cache::get($employeeDetailedCacheKey);
-            if (is_array($cachedDetailed)) {
+            $employeeDetailedCacheKey = ReportsCacheService::employeeListKey([
+                'employee_id' => (int) $request->user()->id,
+                'start_date' => $from->toDateString(),
+                'end_date' => $to->toDateString(),
+                'status' => $statusForCache ?? 'all',
+                'page' => $pagePref,
+                'per_page' => $perPage,
+                'search' => $searchForCache,
+            ]);
+            $cachedDetailed = ReportsCacheService::get($employeeDetailedCacheKey);
+            if (is_array($cachedDetailed) && isset($cachedDetailed['rows'], $cachedDetailed['meta'])) {
                 $cacheHitMs = (int) round((microtime(true) - $startedAt) * 1000);
+                $cachedDetailed['meta']['cache_hit'] = true;
+                $cachedDetailed['meta']['total_response_ms'] = $cacheHitMs;
                 Log::info('Employee detailed attendance report cache hit', [
                     'actor_user_id' => (int) $request->user()->id,
                     'cache_key_suffix' => substr((string) $employeeDetailedCacheKey, -32),
                     'rows_returned' => count($cachedDetailed['rows'] ?? []),
                     'total_response_ms' => $cacheHitMs,
                 ]);
-                if ($cacheHitMs > 500) {
-                    Log::warning('Employee detailed attendance report cache hit slow', [
-                        'duration_ms' => $cacheHitMs,
-                        'rows_returned' => count($cachedDetailed['rows'] ?? []),
-                    ]);
-                }
 
                 return response()->json($cachedDetailed);
             }
         } else {
-            $adminCacheIdentity = [
-                'uid' => (int) $request->user()->id,
-                'from' => $from->toDateString(),
-                'to' => $to->toDateString(),
+            $adminDetailedCacheKey = ReportsCacheService::adminListKey([
+                'scope' => (int) $request->user()->id,
                 'company_id' => $validated['company_id'] ?? null,
                 'branch_id' => $validated['branch_id'] ?? null,
-                'department' => $validated['department'] ?? null,
+                'department_id' => $validated['department_id'] ?? null,
                 'employee_id' => $validated['employee_id'] ?? null,
-                'status' => isset($validated['status']) ? strtolower(trim((string) $validated['status'])) : null,
-                'leave_type' => $validated['leave_type'] ?? null,
-                'overtime_status' => $validated['overtime_status'] ?? null,
-                'search' => strtolower(trim((string) ($validated['search'] ?? ''))),
-                'include_deactivated' => (bool) ($validated['include_deactivated'] ?? false),
+                'start_date' => $from->toDateString(),
+                'end_date' => $to->toDateString(),
+                'status' => $statusForCache,
                 'page' => $pagePref,
                 'per_page' => $perPage,
-            ];
-            $adminDetailedCacheKey = 'reports:admin:detailed:v3:'.hash('xxh128', serialize($adminCacheIdentity), false);
-            $cachedAdminDetailed = Cache::get($adminDetailedCacheKey);
+                'department' => $validated['department'] ?? null,
+                'leave_type' => $validated['leave_type'] ?? null,
+                'overtime_status' => $validated['overtime_status'] ?? null,
+                'search' => $searchForCache,
+                'include_deactivated' => ! empty($validated['include_deactivated']) ? 1 : 0,
+            ]);
+            $cachedAdminDetailed = ReportsCacheService::get($adminDetailedCacheKey);
             if (is_array($cachedAdminDetailed) && isset($cachedAdminDetailed['rows'], $cachedAdminDetailed['meta'])) {
                 $cacheHitMs = (int) round((microtime(true) - $startedAt) * 1000);
+                $cachedAdminDetailed['meta']['cache_hit'] = true;
+                $cachedAdminDetailed['meta']['total_response_ms'] = $cacheHitMs;
                 Log::info('Admin detailed report cache hit', [
                     'actor_user_id' => (int) $request->user()->id,
                     'filters_parse_ms' => $filtersParseMs,
@@ -527,6 +515,10 @@ class ReportsController extends Controller
 
             if (! empty($validated['branch_id'])) {
                 $employeesQuery->where('branch_id', (int) $validated['branch_id']);
+            }
+
+            if (! empty($validated['department_id'])) {
+                $employeesQuery->where('department_id', (int) $validated['department_id']);
             }
 
             if ($requestedEmployeeId > 0) {
@@ -1256,6 +1248,7 @@ class ReportsController extends Controller
                 'per_page' => $perPage,
                 'total' => $total,
                 'include_deactivated' => (bool) ($validated['include_deactivated'] ?? false),
+                'cache_hit' => false,
             ],
         ];
 
@@ -1291,11 +1284,20 @@ class ReportsController extends Controller
         }
 
         if ($adminDetailedCacheKey !== null) {
-            Cache::put($adminDetailedCacheKey, $response, now()->addSeconds(self::ADMIN_DETAILED_CACHE_TTL_SECONDS));
+            ReportsCacheService::put(
+                $adminDetailedCacheKey,
+                $response,
+                ReportsCacheService::TABLE_TTL_SECONDS,
+            );
         }
 
         if ($employeeDetailedCacheKey !== null) {
-            Cache::put($employeeDetailedCacheKey, $response, now()->addSeconds(self::EMPLOYEE_DETAILED_CACHE_TTL_SECONDS));
+            ReportsCacheService::put(
+                $employeeDetailedCacheKey,
+                $response,
+                ReportsCacheService::TABLE_TTL_SECONDS,
+                (int) $request->user()->id,
+            );
         }
 
         return response()->json($response);

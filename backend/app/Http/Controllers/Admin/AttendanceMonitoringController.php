@@ -10,6 +10,7 @@ use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
 use App\Models\WorkingSchedule;
+use App\Services\AttendanceCacheService;
 use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
@@ -19,12 +20,10 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class AttendanceMonitoringController extends Controller
 {
-    /** Fixed page size for admin attendance list (pagination + payloads). Client cannot override. */
-    private const ROWS_PER_PAGE = 20;
-
     /** Skip payslip-parity payroll impact during bulk row materialization; hydrate only for paginated rows (index). */
     private const SLOW_MONITORING_MS = 500;
 
@@ -118,16 +117,58 @@ class AttendanceMonitoringController extends Controller
             'date' => ['nullable', 'date'], // legacy single-date filter
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date'],
+            'company_id' => ['nullable', 'integer'],
+            'branch_id' => ['nullable', 'integer'],
+            'department_id' => ['nullable', 'integer'],
             'department' => ['nullable', 'string', 'max:255'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
             'status' => ['nullable', 'string', 'in:present,late,absent,halfday,undertime,incomplete'],
             'premium_type' => ['nullable', 'string', 'in:ordinary,rest_day,special_holiday,regular_holiday,special_holiday_rest_day,regular_holiday_rest_day'],
             'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer'], // ignored — fixed at ROWS_PER_PAGE
+            'per_page' => ['nullable', 'integer', Rule::in(AttendanceCacheService::ALLOWED_PER_PAGE)],
             'search' => ['nullable', 'string', 'max:200'],
             'company' => ['nullable', 'string', 'max:255'],
             'pending_attention' => ['sometimes', 'boolean'],
         ]);
+
+        $perPage = AttendanceCacheService::normalizePerPage($validated['per_page'] ?? null);
+        $page = max(1, (int) ($validated['page'] ?? 1));
+
+        $fromDate = $validated['from_date'] ?? $validated['to_date'] ?? $validated['date'] ?? Carbon::now($this->attendanceTimezone())->toDateString();
+        $toDate = $validated['to_date'] ?? $validated['from_date'] ?? $validated['date'] ?? $fromDate;
+
+        $cacheKeyParts = [
+            'company_id' => $validated['company_id'] ?? null,
+            'branch_id' => $validated['branch_id'] ?? null,
+            'department_id' => $validated['department_id'] ?? null,
+            'employee_id' => $validated['employee_id'] ?? null,
+            'start_date' => $fromDate,
+            'end_date' => $toDate,
+            'status' => $validated['status'] ?? null,
+            'page' => $page,
+            'per_page' => $perPage,
+            'scope' => (int) $request->user()->id,
+            'premium_type' => $validated['premium_type'] ?? null,
+            'pending_attention' => ! empty($validated['pending_attention']) ? 1 : 0,
+            'search' => $validated['search'] ?? '',
+            'company' => $validated['company'] ?? '',
+            'department' => $validated['department'] ?? '',
+        ];
+
+        $cacheKey = AttendanceCacheService::adminListKey($cacheKeyParts);
+        $cached = AttendanceCacheService::get($cacheKey);
+        if (is_array($cached) && isset($cached['rows'], $cached['meta'])) {
+            $totalMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $cached['meta']['cache_hit'] = true;
+            $cached['meta']['total_response_ms'] = $totalMs;
+            Log::info('Admin attendance monitoring cache hit', [
+                'actor_user_id' => (int) $request->user()->id,
+                'cache_key_suffix' => substr($cacheKey, -48),
+                'total_response_ms' => $totalMs,
+            ]);
+
+            return response()->json($cached);
+        }
 
         $computeStart = microtime(true);
         $computed = $this->computeMonitoringRows($request, $validated, includePayrollImpact: false);
@@ -144,12 +185,17 @@ class AttendanceMonitoringController extends Controller
         $rows = $this->applyAttendanceMonitoringFilters($rows, $validated);
         $filterMs = (int) round((microtime(true) - $filterStart) * 1000);
 
-        $totalsStart = microtime(true);
-        $totals = $this->attendanceMonitoringTotals($rows);
-        $totalsMs = (int) round((microtime(true) - $totalsStart) * 1000);
+        $summaryCacheKey = AttendanceCacheService::adminSummaryKey($cacheKeyParts);
+        $totals = AttendanceCacheService::get($summaryCacheKey);
+        if (! is_array($totals)) {
+            $totalsStart = microtime(true);
+            $totals = $this->attendanceMonitoringTotals($rows);
+            $totalsMs = (int) round((microtime(true) - $totalsStart) * 1000);
+            AttendanceCacheService::put($summaryCacheKey, $totals, AttendanceCacheService::SUMMARY_TTL_SECONDS);
+        } else {
+            $totalsMs = 0;
+        }
 
-        $perPage = self::ROWS_PER_PAGE;
-        $page = max(1, (int) ($validated['page'] ?? 1));
         $total = count($rows);
         $lastPage = max(1, (int) ceil($total / $perPage));
         $page = min($page, $lastPage);
@@ -174,10 +220,14 @@ class AttendanceMonitoringController extends Controller
                 'per_page' => $perPage,
                 'total' => $total,
                 'totals' => $totals,
+                'cache_hit' => false,
             ],
         ];
 
+        AttendanceCacheService::put($cacheKey, $response, AttendanceCacheService::TABLE_TTL_SECONDS);
+
         $totalMs = (int) round((microtime(true) - $startedAt) * 1000);
+        $response['meta']['total_response_ms'] = $totalMs;
         $payload = [
             'actor_user_id' => (int) $request->user()->id,
             'from_date' => (string) $computed['from_date'],
@@ -355,6 +405,18 @@ class AttendanceMonitoringController extends Controller
         $toUtc = $to->copy()->setTimezone('UTC');
 
         $employeesQuery = User::query()->activeRoster();
+
+        if (! empty($validated['company_id'])) {
+            $employeesQuery->where('company_id', (int) $validated['company_id']);
+        }
+
+        if (! empty($validated['branch_id'])) {
+            $employeesQuery->where('branch_id', (int) $validated['branch_id']);
+        }
+
+        if (! empty($validated['department_id'])) {
+            $employeesQuery->where('department_id', (int) $validated['department_id']);
+        }
 
         if (! empty($validated['department'])) {
             $deptName = $validated['department'];
