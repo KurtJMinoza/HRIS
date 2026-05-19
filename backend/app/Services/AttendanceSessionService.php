@@ -88,6 +88,7 @@ class AttendanceSessionService
             }
         }
         $timings['corrections_ms'] = (microtime(true) - $__t) * 1000;
+        $timings['corrections_count'] = $correctionRows->count();
 
         $__t = microtime(true);
         $otRows = Overtime::query()
@@ -126,6 +127,7 @@ class AttendanceSessionService
             $this->bulkLogsByUserId[$uid][] = $log;
         }
         $timings['logs_ms'] = (microtime(true) - $__t) * 1000;
+        $timings['logs_count'] = $logs->count();
 
         return $timings;
     }
@@ -211,6 +213,14 @@ class AttendanceSessionService
         $this->bulkCorrectionsByUserDate = [];
         $this->bulkOvertimeByUserDate = [];
         $this->bulkLogsByUserId = [];
+    }
+
+    /**
+     * @return array<int, list<AttendanceLog>>
+     */
+    public function bulkLogsByUserId(): array
+    {
+        return $this->bulkLogsByUserId;
     }
 
     public function getTimesForDate(User $user, string $dateKey, ?string $tz = null): array

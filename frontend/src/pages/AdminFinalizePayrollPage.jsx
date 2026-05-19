@@ -464,6 +464,23 @@ export default function AdminFinalizePayrollPage() {
   const batchRun = preview?.batch_run ?? null
   const batchRunStatus = String(batchRun?.status || '').toLowerCase()
   const draftProcessing = batchRunStatus === 'queued' || batchRunStatus === 'processing'
+  const draftReady = batchRunStatus === 'draft'
+  const draftToastShownRef = useRef(false)
+
+  useEffect(() => {
+    draftToastShownRef.current = false
+  }, [finalizeScopeKey])
+
+  useEffect(() => {
+    if (draftToastShownRef.current || periodFinalized || finalizing) return
+    if (!draftReady || draftProcessing) return
+    if (loading) return
+    draftToastShownRef.current = true
+    toastRef.current({
+      title: 'Payroll draft generated successfully.',
+      description: 'Employee salary rows are ready for review.',
+    })
+  }, [draftReady, draftProcessing, periodFinalized, finalizing, loading])
 
   useEffect(() => {
     if (!draftProcessing || periodFinalized || finalizing) return undefined
@@ -964,7 +981,7 @@ export default function AdminFinalizePayrollPage() {
                   {periodFinalized ? 'Status: Finalized' : draftProcessing ? `Status: ${batchRunStatus === 'queued' ? 'Pending' : 'Processing'}` : 'Status: Draft'}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {periodFinalized ? 'Locked - read only' : draftProcessing ? 'Redis worker is building the draft' : 'Editable before finalize'}
+                  {periodFinalized ? 'Locked - read only' : draftProcessing ? 'Generating payroll draft…' : 'Editable before finalize'}
                 </p>
               </div>
               <Lock className="h-5 w-5 text-brand" />

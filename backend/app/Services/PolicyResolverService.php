@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\PayrollRule;
 use App\Models\Policy;
 use App\Models\PolicyMultiplier;
+use Carbon\Carbon;
 
 /**
  * Resolves active pay policy by scope (branch → company → global) and date.
@@ -12,12 +13,53 @@ use App\Models\PolicyMultiplier;
  */
 class PolicyResolverService
 {
+    /** @var array<string, Policy|null> */
+    private array $activePolicyCache = [];
+
+    /** @var array<string, array{first_8: float, ot: float, nd_base: float, nd_addon: float}> */
+    private array $multiplierCache = [];
+
+    /** @var array<string, array{first_8: float, ot: float, nd_base: float, nd_addon: float}>|null */
+    private ?array $payrollRulesByCode = null;
+
+    public function flushRuntimeCaches(): void
+    {
+        $this->activePolicyCache = [];
+        $this->multiplierCache = [];
+        $this->payrollRulesByCode = null;
+    }
+
+    /**
+     * @param  list<array{company_id: ?int, branch_id: ?int}>  $scopes
+     */
+    public function preloadActivePoliciesForDateRange(array $scopes, string $fromDate, string $toDate): void
+    {
+        $cursor = Carbon::parse($fromDate)->startOfDay();
+        $end = Carbon::parse($toDate)->startOfDay();
+        while ($cursor->lessThanOrEqualTo($end)) {
+            $dateKey = $cursor->toDateString();
+            foreach ($scopes as $scope) {
+                $this->getActivePolicy(
+                    isset($scope['company_id']) ? (int) $scope['company_id'] : null,
+                    isset($scope['branch_id']) ? (int) $scope['branch_id'] : null,
+                    $dateKey
+                );
+            }
+            $cursor->addDay();
+        }
+    }
+
     /**
      * Get the active policy for a given scope and date.
      * Precedence: branch → company → global. Within each scope, latest effective_date <= date wins.
      */
     public function getActivePolicy(?int $companyId, ?int $branchId, string $dateKey): ?Policy
     {
+        $cacheKey = ($companyId ?? 'null').'|'.($branchId ?? 'null').'|'.$dateKey;
+        if (array_key_exists($cacheKey, $this->activePolicyCache)) {
+            return $this->activePolicyCache[$cacheKey];
+        }
+
         $query = Policy::query()
             ->active()
             ->whereDate('effective_date', '<=', $dateKey)
@@ -26,18 +68,18 @@ class PolicyResolverService
         if ($branchId !== null) {
             $policy = (clone $query)->where('branch_id', $branchId)->first();
             if ($policy) {
-                return $policy;
+                return $this->activePolicyCache[$cacheKey] = $policy;
             }
         }
 
         if ($companyId !== null) {
             $policy = (clone $query)->where('company_id', $companyId)->whereNull('branch_id')->first();
             if ($policy) {
-                return $policy;
+                return $this->activePolicyCache[$cacheKey] = $policy;
             }
         }
 
-        return $query->whereNull('company_id')->whereNull('branch_id')->first();
+        return $this->activePolicyCache[$cacheKey] = $query->whereNull('company_id')->whereNull('branch_id')->first();
     }
 
     /**
@@ -47,6 +89,11 @@ class PolicyResolverService
      */
     public function getMultipliersForRule(?Policy $policy, string $ruleCode): array
     {
+        $cacheKey = ($policy?->id ?? 'null').'|'.$ruleCode;
+        if (isset($this->multiplierCache[$cacheKey])) {
+            return $this->multiplierCache[$cacheKey];
+        }
+
         if ($policy) {
             $multiplier = PolicyMultiplier::query()
                 ->where('policy_id', $policy->id)
@@ -56,7 +103,7 @@ class PolicyResolverService
             if ($multiplier) {
                 $base = (float) $multiplier->first8_multiplier;
 
-                return [
+                return $this->multiplierCache[$cacheKey] = [
                     'first_8' => $base,
                     'ot' => (float) $multiplier->ot_multiplier,
                     'nd_base' => $base,
@@ -65,7 +112,7 @@ class PolicyResolverService
             }
         }
 
-        return $this->fallbackMultipliersForRule($ruleCode);
+        return $this->multiplierCache[$cacheKey] = $this->fallbackMultipliersForRule($ruleCode);
     }
 
     /**
@@ -73,15 +120,22 @@ class PolicyResolverService
      */
     private function fallbackMultipliersForRule(string $ruleCode): array
     {
-        $rule = PayrollRule::query()->where('code', $ruleCode)->first();
+        if ($this->payrollRulesByCode === null) {
+            $this->payrollRulesByCode = [];
+            foreach (PayrollRule::query()->get(['code', 'first8_multiplier', 'ot_multiplier', 'nd_base_multiplier']) as $rule) {
+                $this->payrollRulesByCode[(string) $rule->code] = [
+                    'first_8' => (float) $rule->first8_multiplier,
+                    'ot' => (float) $rule->ot_multiplier,
+                    'nd_base' => (float) $rule->nd_base_multiplier,
+                    'nd_addon' => (float) config('payroll.nd_premium', 0.10),
+                ];
+            }
+        }
+
+        $rule = $this->payrollRulesByCode[$ruleCode] ?? null;
 
         if ($rule) {
-            return [
-                'first_8' => (float) $rule->first8_multiplier,
-                'ot' => (float) $rule->ot_multiplier,
-                'nd_base' => (float) $rule->nd_base_multiplier,
-                'nd_addon' => (float) config('payroll.nd_premium', 0.10),
-            ];
+            return $rule;
         }
 
         $rules = config('payroll.rules', []);

@@ -17,30 +17,50 @@ final class PayrollPeriodLock
      */
     public static function assertMutableForUserWindow(int $userId, Carbon $from, Carbon $to): void
     {
-        PayrollPeriodOrphanLockService::reconcileForUserWindow($userId, $from, $to);
+        static::assertMutableForUserIds([$userId], $from, $to);
+    }
+
+    /**
+     * Bulk payroll-period lock check for draft generation (two queries instead of per employee).
+     *
+     * @param  list<int>  $userIds
+     * @throws \RuntimeException When the window is locked (user-facing message).
+     */
+    public static function assertMutableForUserIds(array $userIds, Carbon $from, Carbon $to): void
+    {
+        $userIds = array_values(array_unique(array_map(static fn ($id) => (int) $id, $userIds)));
+        if ($userIds === []) {
+            return;
+        }
+
+        if (PayrollPeriodOrphanLockService::isAutoReconcileEnabled()) {
+            foreach ($userIds as $userId) {
+                PayrollPeriodOrphanLockService::reconcileForUserWindow($userId, $from, $to);
+            }
+        }
 
         $fs = $from->toDateString();
         $te = $to->toDateString();
 
-        $hasFinalizedPayslip = Payslip::query()
-            ->where('user_id', $userId)
+        $lockedUserId = Payslip::query()
+            ->whereIn('user_id', $userIds)
             ->whereIn('status', Payslip::lockingStatuses())
             ->whereDate('pay_period_start', '<=', $te)
             ->whereDate('pay_period_end', '>=', $fs)
-            ->exists();
+            ->value('user_id');
 
-        if ($hasFinalizedPayslip) {
+        if ($lockedUserId !== null) {
             throw new \RuntimeException('This payroll period has already been finalized and is locked.');
         }
 
-        $hasLockedPeriod = PayrollPeriod::query()
-            ->where('user_id', $userId)
+        $lockedPeriodUserId = PayrollPeriod::query()
+            ->whereIn('user_id', $userIds)
             ->where('status', PayrollPeriod::STATUS_LOCKED)
             ->whereDate('from_date', '<=', $te)
             ->whereDate('to_date', '>=', $fs)
-            ->exists();
+            ->value('user_id');
 
-        if ($hasLockedPeriod) {
+        if ($lockedPeriodUserId !== null) {
             throw new \RuntimeException('This payroll period has already been finalized and is locked.');
         }
     }

@@ -10,6 +10,7 @@ use App\Models\PayCycle;
 use App\Models\SssBracket;
 use App\Models\StatutoryContribution;
 use App\Models\User;
+use App\Support\BulkPayrollDraftContext;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
@@ -1495,11 +1496,13 @@ class PayrollCalculatorService
             );
             $cached = $cacheStore->get($cacheKey);
             if (is_array($cached)) {
-                Log::info('Payroll compensation summary cache hit', [
-                    'employee_id' => $user->id,
-                    'as_of_date' => $asOfDate,
-                    'cache_key' => $cacheKey,
-                ]);
+                if (! BulkPayrollDraftContext::$active) {
+                    Log::info('Payroll compensation summary cache hit', [
+                        'employee_id' => $user->id,
+                        'as_of_date' => $asOfDate,
+                        'cache_key' => $cacheKey,
+                    ]);
+                }
 
                 return $cached;
             }
@@ -1518,11 +1521,13 @@ class PayrollCalculatorService
                 'cache' => false,
             ]));
             $cacheStore->put($cacheKey, $computed, now()->addMinutes(5));
-            Log::info('Payroll compensation summary cache miss', [
-                'employee_id' => $user->id,
-                'as_of_date' => $asOfDate,
-                'cache_key' => $cacheKey,
-            ]);
+            if (! BulkPayrollDraftContext::$active) {
+                Log::info('Payroll compensation summary cache miss', [
+                    'employee_id' => $user->id,
+                    'as_of_date' => $asOfDate,
+                    'cache_key' => $cacheKey,
+                ]);
+            }
 
             return $computed;
         }

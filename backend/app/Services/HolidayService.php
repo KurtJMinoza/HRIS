@@ -16,9 +16,17 @@ class HolidayService
     private const COVERAGE_CACHE_PREFIX = 'holiday_coverage:';
     private const COVERAGE_CACHE_TTL = 3600;
 
+    /** @var array<string, array<string, mixed>|null> */
+    private array $resolvedHolidayCache = [];
+
     public function __construct(
         private readonly HolidayCalendarService $holidayCalendar,
     ) {}
+
+    public function flushRuntimeCaches(): void
+    {
+        $this->resolvedHolidayCache = [];
+    }
 
     /**
      * Check if a date is a swap holiday for a specific employee.
@@ -256,12 +264,17 @@ class HolidayService
         ?int $branchId = null,
         ?int $departmentId = null
     ): ?array {
-        $swap = $this->isSwapHolidayForEmployee($user, $dateKey);
-        if ($swap) {
-            return $swap;
+        $cacheKey = (int) $user->id.'|'.$dateKey;
+        if (array_key_exists($cacheKey, $this->resolvedHolidayCache)) {
+            return $this->resolvedHolidayCache[$cacheKey];
         }
 
-        return $this->holidayCalendar->holidayForDate(
+        $swap = $this->isSwapHolidayForEmployee($user, $dateKey);
+        if ($swap) {
+            return $this->resolvedHolidayCache[$cacheKey] = $swap;
+        }
+
+        return $this->resolvedHolidayCache[$cacheKey] = $this->holidayCalendar->holidayForDate(
             $dateKey,
             $companyId ?? ($user->getEffectiveCompanyId() !== null ? (int) $user->getEffectiveCompanyId() : null),
             $branchId ?? ($user->branch_id !== null ? (int) $user->branch_id : null),

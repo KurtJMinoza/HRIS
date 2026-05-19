@@ -148,6 +148,32 @@ class PayrollRulesEngineService
     }
 
     /**
+     * @param  array{name?: string, type?: string}|null  $holiday
+     */
+    public function holidayTypeFromHolidayRow(?array $holiday): ?string
+    {
+        if (! $holiday) {
+            return null;
+        }
+
+        $raw = strtolower(trim((string) ($holiday['type'] ?? '')));
+        if ($raw === '') {
+            return 'special';
+        }
+
+        $map = config('payroll.holiday_types', [
+            'regular' => 'regular',
+            'special' => 'special',
+            'special_non_working' => 'special',
+            'special_working' => 'special',
+            'double' => 'double',
+            'company' => 'special',
+        ]);
+
+        return $map[$raw] ?? 'special';
+    }
+
+    /**
      * Get holiday classification for a date (rules engine).
      * Returns: "regular" | "special" | "double" | null — must align with resolveRuleCode().
      * Checks both standard holidays and swap holidays with coverage.

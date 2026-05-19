@@ -23,11 +23,30 @@ class HolidayCalendarService
     /** @var array<int, array<string, array<string, mixed>>> */
     private array $mergedByYear = [];
 
+    /** @var array<int, list<array<string, mixed>>> */
+    private array $holidaysListByYear = [];
+
     public function flushMergedYearCaches(): void
     {
         $this->mergedByYear = [];
+        $this->holidaysListByYear = [];
         foreach (range(2020, 2035) as $year) {
             Cache::forget(self::CACHE_KEY_PREFIX.$year);
+        }
+    }
+
+    /**
+     * Warm {@see holidaysForYear} for every year touched by a pay window (bulk payroll draft).
+     */
+    public function preloadYearsForDateRange(string $fromDate, string $toDate): void
+    {
+        $fromYear = (int) substr($fromDate, 0, 4);
+        $toYear = (int) substr($toDate, 0, 4);
+        if ($fromYear < 2000 || $toYear < 2000) {
+            return;
+        }
+        for ($year = $fromYear; $year <= $toYear; $year++) {
+            $this->holidaysForYear($year);
         }
     }
 
@@ -73,6 +92,10 @@ class HolidayCalendarService
     public function holidaysForYear(int $year): array
     {
         $year = max(2020, min(2035, $year));
+        if (isset($this->holidaysListByYear[$year])) {
+            return $this->holidaysListByYear[$year];
+        }
+
         $rows = [];
         $explicitKeys = [];
 
@@ -127,6 +150,8 @@ class HolidayCalendarService
 
             return $this->scopePrecedence($b) <=> $this->scopePrecedence($a);
         });
+
+        $this->holidaysListByYear[$year] = $rows;
 
         return $rows;
     }

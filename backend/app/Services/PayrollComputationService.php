@@ -64,6 +64,8 @@ class PayrollComputationService
         $this->overtimeExistsCache = [];
         $this->attendanceLogExistsCache = [];
         $this->attendanceSession->flushRuntimeCache();
+        $this->policyResolver->flushRuntimeCaches();
+        $this->holidayService->flushRuntimeCaches();
     }
 
     /**
@@ -89,6 +91,10 @@ class PayrollComputationService
             'logs_ms' => 0.0,
             'load_leaves_ms' => 0.0,
             'load_overtime_ms' => 0.0,
+            'corrections_count' => 0,
+            'logs_count' => 0,
+            'leave_rows_count' => 0,
+            'overtime_rows_count' => 0,
         ];
 
         $ids = array_values(array_unique(array_map(static fn ($id) => (int) $id, $userIds)));
@@ -104,30 +110,90 @@ class PayrollComputationService
         $out['corrections_ms'] = (float) ($sessionTimings['corrections_ms'] ?? 0);
         $out['ot_stub_ms'] = (float) ($sessionTimings['ot_stub_ms'] ?? 0);
         $out['logs_ms'] = (float) ($sessionTimings['logs_ms'] ?? 0);
+        $out['corrections_count'] = (int) ($sessionTimings['corrections_count'] ?? 0);
+        $out['logs_count'] = (int) ($sessionTimings['logs_count'] ?? 0);
 
         $__t = microtime(true);
         $this->seedBulkLeaveCachesForPayWindow($ids, $from, $to);
         $out['load_leaves_ms'] = (microtime(true) - $__t) * 1000;
+        $out['leave_rows_count'] = count($this->approvedLeaveForDateCache);
 
         $__t = microtime(true);
         $this->seedBulkOvertimeCachesForPayWindow($ids, $from, $to);
         $out['load_overtime_ms'] = (microtime(true) - $__t) * 1000;
+        $out['overtime_rows_count'] = count(array_filter($this->overtimeExistsCache));
 
         $tz = $this->getTimezone();
-        foreach ($ids as $uid) {
-            $cursor = $from->copy();
-            while ($cursor->lessThanOrEqualTo($to)) {
-                $dk = $cursor->toDateString();
-                $this->attendanceLogExistsCache[$uid.'|'.$dk.'|'.$tz] = $this->attendanceSession->hasAnyVerifiedLogOnLocalDate(
-                    $uid,
-                    $dk,
-                    $tz
-                );
-                $cursor->addDay();
+        $__t = microtime(true);
+        $this->seedBulkAttendanceLogExistsCache($ids, $from, $to, $tz);
+        $out['seed_attendance_log_cache_ms'] = (microtime(true) - $__t) * 1000;
+
+        $__t = microtime(true);
+        $this->holidayCalendar->preloadYearsForDateRange($from->toDateString(), $to->toDateString());
+        $this->holidayService->preloadSwapHolidaysForRange($from->toDateString(), $to->toDateString());
+        $this->preloadPoliciesForUsers($ids, $from, $to);
+        $out['load_compute_context_ms'] = (microtime(true) - $__t) * 1000;
+
+        return $out;
+    }
+
+    /**
+     * @param  list<int>  $userIds
+     */
+    private function seedBulkAttendanceLogExistsCache(array $userIds, Carbon $from, Carbon $to, string $tz): void
+    {
+        /** @var array<string, true> $datesWithLogs */
+        $datesWithLogs = [];
+        foreach ($this->attendanceSession->bulkLogsByUserId() as $uid => $logs) {
+            foreach ($logs as $log) {
+                $verifiedAt = $log->verified_at;
+                if ($verifiedAt === null) {
+                    continue;
+                }
+                $localDate = $verifiedAt->copy()->timezone($tz)->toDateString();
+                $datesWithLogs[(int) $uid.'|'.$localDate.'|'.$tz] = true;
             }
         }
 
-        return $out;
+        foreach ($userIds as $uid) {
+            $cursor = $from->copy();
+            while ($cursor->lessThanOrEqualTo($to)) {
+                $dk = $cursor->toDateString();
+                $cacheKey = (int) $uid.'|'.$dk.'|'.$tz;
+                $this->attendanceLogExistsCache[$cacheKey] = isset($datesWithLogs[$cacheKey]);
+                $cursor->addDay();
+            }
+        }
+    }
+
+    /**
+     * @param  list<int>  $userIds
+     */
+    private function preloadPoliciesForUsers(array $userIds, Carbon $from, Carbon $to): void
+    {
+        $users = User::query()
+            ->whereIn('id', $userIds)
+            ->get(['id', 'company_id', 'branch_id']);
+        $scopes = [];
+        $seen = [];
+        foreach ($users as $user) {
+            $companyId = $user->getEffectiveCompanyId();
+            $branchId = $user->branch_id !== null ? (int) $user->branch_id : null;
+            $key = ($companyId ?? 'null').'|'.($branchId ?? 'null');
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $scopes[] = ['company_id' => $companyId, 'branch_id' => $branchId];
+        }
+        if ($scopes === []) {
+            return;
+        }
+        $this->policyResolver->preloadActivePoliciesForDateRange(
+            $scopes,
+            $from->toDateString(),
+            $to->toDateString()
+        );
     }
 
     public function endBulkPayrollAttendancePrefetch(): void
@@ -490,14 +556,7 @@ class PayrollComputationService
         $companyId = $user->getEffectiveCompanyId();
         $branchId = $user->branch_id;
         $policy = $this->policyResolver->getActivePolicy($companyId, $branchId, $dateKey);
-        $resolvedHolidayType = $this->rulesEngine->getHolidayTypeForUser($user, $dateKey)
-            ?? $this->rulesEngine->getHolidayType(
-                $dateKey,
-                $companyId,
-                $branchId !== null ? (int) $branchId : null,
-                $user->department_id !== null ? (int) $user->department_id : null,
-                (int) $user->id
-            );
+        $resolvedHolidayType = $holiday ? $this->rulesEngine->holidayTypeFromHolidayRow($holiday) : null;
         $ruleCode = $this->rulesEngine->resolveRuleCode($isRestDay, $resolvedHolidayType);
         $multipliers = $this->rulesEngine->getMultipliersForRule($ruleCode, $policy);
         $first8 = $multipliers['first_8'];

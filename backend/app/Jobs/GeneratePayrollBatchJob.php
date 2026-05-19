@@ -11,6 +11,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Throwable;
@@ -56,6 +57,11 @@ class GeneratePayrollBatchJob implements ShouldQueue
         @ini_set('max_execution_time', '0');
 
         $jobStartedAt = microtime(true);
+        $queryCount = 0;
+        DB::listen(static function () use (&$queryCount): void {
+            $queryCount++;
+        });
+
         Log::info('GeneratePayrollBatchJob started', [
             'batch_run_id' => $this->batchRunId,
             'actor_user_id' => $this->actorUserId,
@@ -118,6 +124,7 @@ class GeneratePayrollBatchJob implements ShouldQueue
             $ids = $bulk['payslip_ids'];
             $sectionTimings = $bulk['timings'] ?? [];
             $sectionTimings['total_job_ms'] = round((microtime(true) - $jobStartedAt) * 1000, 2);
+            $sectionTimings['query_count'] = $queryCount;
 
             PayrollBatchRun::query()->whereKey($run->id)->update($this->filterBatchRunPayload([
                 'status' => PayrollBatchRun::STATUS_DRAFT,
@@ -135,6 +142,10 @@ class GeneratePayrollBatchJob implements ShouldQueue
             Log::info('GeneratePayrollBatchJob completed', [
                 'batch_run_id' => (int) $run->id,
                 'payslip_count' => count($ids),
+                'employee_count' => $sectionTimings['employee_count'] ?? count($ids),
+                'attendance_rows_count' => $sectionTimings['attendance_rows_count'] ?? null,
+                'pay_component_rows_count' => $sectionTimings['pay_component_rows_count'] ?? null,
+                'query_count' => $queryCount,
                 'total_net' => $run->total_net,
                 'timings_ms' => $sectionTimings,
                 'elapsed_ms' => $sectionTimings['total_job_ms'] ?? round((microtime(true) - $jobStartedAt) * 1000, 2),

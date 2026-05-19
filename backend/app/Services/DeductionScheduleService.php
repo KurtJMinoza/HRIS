@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\DeductionScheduleSetting;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\User;
+use App\Support\BulkPayrollDraftContext;
 use App\Support\PayComponentSchedule;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -146,18 +147,20 @@ class DeductionScheduleService
             'schedule_source' => $effectiveOverride ? 'employee_override' : 'default_schedule',
         ];
 
-        Log::debug('deduction_schedule.pay_component_resolved', [
-            'employee_id' => $userId,
-            'company_id' => $companyId,
-            'pay_component_id' => $payComponentId,
-            'compensation_assignment_id' => $compensationAssignmentId,
-            'used_loaded_assignment_row' => $useLoadedAssignmentRow,
-            'raw_assignment_schedule_override_input' => $useLoadedAssignmentRow ? $loadedAssignmentScheduleOverride : null,
-            'db_schedule_override_normalized' => $normalizedSlug,
-            'resolved_schedule' => $resolved,
-            'schedule_source' => $result['schedule_source'],
-            'default_schedule_settings' => $defaultType,
-        ]);
+        if (! BulkPayrollDraftContext::$active) {
+            Log::debug('deduction_schedule.pay_component_resolved', [
+                'employee_id' => $userId,
+                'company_id' => $companyId,
+                'pay_component_id' => $payComponentId,
+                'compensation_assignment_id' => $compensationAssignmentId,
+                'used_loaded_assignment_row' => $useLoadedAssignmentRow,
+                'raw_assignment_schedule_override_input' => $useLoadedAssignmentRow ? $loadedAssignmentScheduleOverride : null,
+                'db_schedule_override_normalized' => $normalizedSlug,
+                'resolved_schedule' => $resolved,
+                'schedule_source' => $result['schedule_source'],
+                'default_schedule_settings' => $defaultType,
+            ]);
+        }
 
         return $result;
     }
@@ -686,7 +689,7 @@ class DeductionScheduleService
             if (! $isBasic) {
                 $nonBasicEarningsThisPeriod += $thisAmt;
             }
-            if ($pcId && ! $isBasic) {
+            if ($pcId && ! $isBasic && ! BulkPayrollDraftContext::$active) {
                 Log::debug('payroll.earning_line_schedule_for_run', [
                     'employee_id' => (int) $user->id,
                     'pay_component_id' => (int) $pcId,
@@ -886,6 +889,10 @@ class DeductionScheduleService
                 $assignmentId,
             )
             : null;
+
+        if (BulkPayrollDraftContext::$active) {
+            return;
+        }
 
         Log::info('payroll.allowance_proration', [
             'employee_id' => (int) $user->id,
