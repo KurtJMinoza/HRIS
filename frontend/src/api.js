@@ -2029,26 +2029,112 @@ export async function adminDownloadPayslipsZip(payslipIds) {
 }
 
 /**
- * Finalized batch only: payslip PDFs as one ZIP (reuses on-disk PDFs unless forceRegenerate).
- * @param {number|string} batchRunId — {@see PayrollBatchRun} id
- * @param {{ forceRegenerate?: boolean }} [options]
- * @returns {Promise<Blob>}
+ * Queue bulk payslip ZIP on payslip-pdf Redis queue (instant HTTP response).
+ * @param {number|string} batchRunId
+ * @param {{ forceRegenerate?: boolean, employeeIds?: number[] }} [options]
+ * @returns {Promise<{ request_id: number, message: string, bulk_download: Record<string, unknown> }>}
  */
-export async function adminBulkDownloadPayrollBatchPdfZip(batchRunId, options = {}) {
+export async function adminQueueBulkPayslipDownload(batchRunId, options = {}) {
   const res = await authenticatedFetch(
     `/admin/payroll-batches/${encodeURIComponent(String(batchRunId))}/bulk-download-pdf`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json, application/zip, */*' },
-      body: JSON.stringify({ force_regenerate: Boolean(options.forceRegenerate) }),
-      timeoutMs: 300000,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        force_regenerate: Boolean(options.forceRegenerate),
+        employee_ids: Array.isArray(options.employeeIds) ? options.employeeIds : undefined,
+      }),
+      timeoutMs: 15000,
     }
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.message || 'Failed to queue bulk payslip download')
+  }
+  return data
+}
+
+/** @param {number|string} requestId */
+export async function adminPayslipBulkDownloadStatus(requestId) {
+  const res = await authenticatedFetch(
+    `/admin/payslip-bulk-downloads/${encodeURIComponent(String(requestId))}/status`,
+    { timeoutMs: 15000 }
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.message || 'Failed to load bulk download status')
+  }
+  return data
+}
+
+/**
+ * Download completed bulk ZIP file.
+ * @param {number|string} requestId
+ * @returns {Promise<Blob>}
+ */
+export async function adminDownloadPayslipBulkZipFile(requestId) {
+  const res = await authenticatedFetch(
+    `/admin/payslip-bulk-downloads/${encodeURIComponent(String(requestId))}/download`,
+    { timeoutMs: 120000 }
   )
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(data.message || 'Failed to build batch ZIP')
+    throw new Error(data.message || 'Failed to download bulk ZIP')
   }
   return res.blob()
+}
+
+const BULK_PAYSLIP_POLL_MS = 2500
+
+/**
+ * Poll bulk download until ready, then return ZIP blob.
+ * @param {number|string} requestId
+ * @param {{ onProgress?: (status: Record<string, unknown>) => void, signal?: AbortSignal }} [options]
+ * @returns {Promise<{ blob: Blob, bulk_download: Record<string, unknown> }>}
+ */
+export async function adminPollAndDownloadBulkPayslipZip(requestId, options = {}) {
+  const { onProgress, signal } = options
+  const sleep = (ms) =>
+    new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, ms)
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(t)
+          reject(new DOMException('Aborted', 'AbortError'))
+        },
+        { once: true }
+      )
+    })
+
+  while (true) {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError')
+    }
+    const data = await adminPayslipBulkDownloadStatus(requestId)
+    const bulk = data?.bulk_download ?? data
+    onProgress?.(bulk)
+    const status = String(bulk?.status || '').toLowerCase()
+    if (status === 'completed' && bulk?.ready) {
+      const blob = await adminDownloadPayslipBulkZipFile(requestId)
+      return { blob, bulk_download: bulk }
+    }
+    if (status === 'failed') {
+      throw new Error(bulk?.error_message || 'Bulk payslip download failed. Please try again.')
+    }
+    await sleep(BULK_PAYSLIP_POLL_MS)
+  }
+}
+
+/** @deprecated Use adminQueueBulkPayslipDownload + adminPollAndDownloadBulkPayslipZip */
+export async function adminBulkDownloadPayrollBatchPdfZip(batchRunId, options = {}) {
+  const queued = await adminQueueBulkPayslipDownload(batchRunId, options)
+  const requestId = Number(queued?.request_id ?? queued?.bulk_download?.id ?? 0)
+  if (!requestId) {
+    throw new Error('Server did not return a bulk download request id.')
+  }
+  const { blob } = await adminPollAndDownloadBulkPayslipZip(requestId)
+  return blob
 }
 
 /** @param {number|string} id */

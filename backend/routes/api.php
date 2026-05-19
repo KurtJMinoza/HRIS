@@ -386,6 +386,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/payslips/{id}/pdf', [AdminPayslipController::class, 'download'])->whereNumber('id');
             Route::post('/admin/payslips/zip', [AdminPayslipController::class, 'downloadZip']);
             Route::post('/admin/payroll-batches/{batchId}/bulk-download-pdf', [AdminPayslipController::class, 'bulkDownloadBatchPdf'])->whereNumber('batchId');
+            Route::get('/admin/payslip-bulk-downloads/{id}/status', [AdminPayslipController::class, 'bulkDownloadStatus'])->whereNumber('id');
+            Route::get('/admin/payslip-bulk-downloads/{id}/download', [AdminPayslipController::class, 'downloadBulkZip'])->whereNumber('id');
         });
         Route::middleware('permission:payroll.policies')->group(function () {
             Route::get('/admin/payroll/policies', [PayPolicyController::class, 'index']);

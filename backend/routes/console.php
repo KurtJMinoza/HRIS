@@ -1,5 +1,6 @@
 <?php
 
+use App\Jobs\CleanupExpiredPayslipBulkDownloadsJob;
 use App\Jobs\ProcessDailyPayrollJob;
 use App\Jobs\ProcessEmployeeStatusTransitionsJob;
 use App\Models\EmployeeCompensationComponent;
@@ -69,6 +70,11 @@ Schedule::call(function () {
 Schedule::call(function () {
     Artisan::call('schedule:apply-pending');
 })->dailyAt('00:10')->timezone(config('attendance.timezone', 'Asia/Manila'));
+
+// Remove bulk payslip ZIP exports older than 7 days
+Schedule::call(function () {
+    CleanupExpiredPayslipBulkDownloadsJob::dispatchSync(7);
+})->dailyAt('02:30')->timezone(config('attendance.timezone', 'Asia/Manila'));
 
 Artisan::command('payroll:process {date? : Date to process (Y-m-d). Default: yesterday}', function (?string $date = null) {
     $dateKey = $date ?? Carbon::yesterday(config('attendance.timezone', 'Asia/Manila'))->toDateString();

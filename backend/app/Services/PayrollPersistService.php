@@ -42,27 +42,44 @@ class PayrollPersistService
             return null;
         }
 
-        $period = PayrollPeriod::create([
-            'user_id' => $user->id,
-            'pay_cycle_id' => $cycle?->id,
-            'from_date' => $from->toDateString(),
-            'to_date' => $to->toDateString(),
-            'pay_cycle_code' => $cyclePreview['code'] ?? $cycle?->code,
-            'cycle_label' => $cyclePreview['cycle_label'] ?? null,
-            'reference_date' => $cyclePreview['reference_date'] ?? $from->toDateString(),
-            'cut_off_start_date' => $cyclePreview['cut_off_start_date'] ?? $from->toDateString(),
-            'cut_off_end_date' => $cyclePreview['cut_off_end_date'] ?? $to->toDateString(),
-            'pay_date' => $cyclePreview['pay_date'] ?? null,
-            'pro_ration_type' => $cyclePreview['pro_ration_type'] ?? $cycle?->pro_ration_type,
-            'daily_rate' => $computed['daily_rate'],
-            'basic_salary_used' => $computed['basic_salary_used'] ?? 0,
-            'total_pay' => $computed['summary']['total_pay'],
-            'employee_statutory_total' => $computed['summary']['employee_statutory_total'] ?? 0,
-            'employer_statutory_total' => $computed['summary']['employer_statutory_total'] ?? 0,
-            'net_pay' => $computed['summary']['net_pay'] ?? $computed['summary']['total_pay'],
-            'total_worked_minutes' => $computed['summary']['total_worked_minutes'],
-            'status' => PayrollPeriod::STATUS_DRAFT,
-        ]);
+        $existing = PayrollPeriod::query()
+            ->where('user_id', $user->id)
+            ->whereDate('from_date', $from->toDateString())
+            ->whereDate('to_date', $to->toDateString())
+            ->first();
+        if ($existing instanceof PayrollPeriod && (string) $existing->status === PayrollPeriod::STATUS_LOCKED) {
+            return $existing;
+        }
+
+        $period = PayrollPeriod::updateOrCreate(
+            [
+                'user_id' => $user->id,
+                'from_date' => $from->toDateString(),
+                'to_date' => $to->toDateString(),
+            ],
+            [
+                'pay_cycle_id' => $cycle?->id,
+                'pay_cycle_code' => $cyclePreview['code'] ?? $cycle?->code,
+                'cycle_label' => $cyclePreview['cycle_label'] ?? null,
+                'reference_date' => $cyclePreview['reference_date'] ?? $from->toDateString(),
+                'cut_off_start_date' => $cyclePreview['cut_off_start_date'] ?? $from->toDateString(),
+                'cut_off_end_date' => $cyclePreview['cut_off_end_date'] ?? $to->toDateString(),
+                'pay_date' => $cyclePreview['pay_date'] ?? null,
+                'pro_ration_type' => $cyclePreview['pro_ration_type'] ?? $cycle?->pro_ration_type,
+                'daily_rate' => $computed['daily_rate'],
+                'basic_salary_used' => $computed['basic_salary_used'] ?? 0,
+                'total_pay' => $computed['summary']['total_pay'],
+                'employee_statutory_total' => $computed['summary']['employee_statutory_total'] ?? 0,
+                'employer_statutory_total' => $computed['summary']['employer_statutory_total'] ?? 0,
+                'net_pay' => $computed['summary']['net_pay'] ?? $computed['summary']['total_pay'],
+                'total_worked_minutes' => $computed['summary']['total_worked_minutes'],
+                'status' => PayrollPeriod::STATUS_DRAFT,
+            ]
+        );
+
+        if (! $period->wasRecentlyCreated) {
+            return $period;
+        }
 
         foreach ($computed['days'] as $day) {
             if ($day['total_pay'] > 0 || $day['worked_minutes'] > 0) {

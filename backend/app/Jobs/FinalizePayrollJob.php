@@ -79,8 +79,18 @@ class FinalizePayrollJob implements ShouldQueue
         }
 
         if ($run->status === PayrollBatchRun::STATUS_FINALIZED) {
+            $payslipRows = \App\Models\Payslip::query()
+                ->when($run->pay_period_start, fn ($q) => $q->whereDate('pay_period_start', $run->pay_period_start->toDateString()))
+                ->when($run->pay_period_end, fn ($q) => $q->whereDate('pay_period_end', $run->pay_period_end->toDateString()))
+                ->when($run->company_id, fn ($q) => $q->where('company_id', (int) $run->company_id))
+                ->count();
             Log::info('FinalizePayrollJob skipped: already finalized', [
                 'batch_run_id' => $this->batchRunId,
+                'status_before' => PayrollBatchRun::STATUS_FINALIZED,
+                'status_after' => PayrollBatchRun::STATUS_FINALIZED,
+                'payslip_rows_count' => $payslipRows,
+                'total_net_before' => (float) ($run->total_net ?? 0),
+                'total_net_after' => (float) ($run->total_net ?? 0),
                 'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
             ]);
 
@@ -119,9 +129,11 @@ class FinalizePayrollJob implements ShouldQueue
         try {
             $finalizeStartedAt = microtime(true);
             $finalizeResult = $finalizePayrollService->finalizeQueuedRun($run->fresh(), $actor);
-            GeneratePayslipsJob::dispatch((int) $run->id, (int) $this->actorUserId)
-                ->onConnection('redis')
-                ->onQueue('payslip-pdf');
+            if (! (($finalizeResult['skipped'] ?? false) && ($finalizeResult['already_finalized'] ?? false))) {
+                GeneratePayslipsJob::dispatch((int) $run->id, (int) $this->actorUserId)
+                    ->onConnection('redis')
+                    ->onQueue('payslip-pdf');
+            }
             ReportsCacheService::invalidate();
 
             Log::info('FinalizePayrollJob completed', [

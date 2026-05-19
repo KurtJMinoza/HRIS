@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { bulkPayslipDownloadStatusLabel, saveBulkPayslipZipBlob } from '../lib/bulkPayslipDownload'
 import { useNavigate } from 'react-router-dom'
 import {
   adminGeneratePayslips,
-  adminBulkDownloadPayrollBatchPdfZip,
+  adminQueueBulkPayslipDownload,
+  adminPollAndDownloadBulkPayslipZip,
   adminPreviewPayslipSampleBlob,
   adminPreviewPayslipSampleData,
   getAdminPayslipPreviewScope,
@@ -299,6 +301,9 @@ export default function AdminGeneratePayslipsPage() {
 
   const [listLoading, setListLoading] = useState(false)
   const [bulkDownloadingBatchId, setBulkDownloadingBatchId] = useState(null)
+  /** @type {import('react').MutableRefObject<AbortController|null>} */
+  const bulkDownloadAbortRef = useRef(null)
+  const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
   const [deletingBatchId, setDeletingBatchId] = useState(null)
   const [deleteBatchDialogRow, setDeleteBatchDialogRow] = useState(null)
   const [samplePreviewLoading, setSamplePreviewLoading] = useState(false)
@@ -675,27 +680,45 @@ export default function AdminGeneratePayslipsPage() {
     if (id == null || bulkDownloadingBatchId != null) return
     if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
     if (!canBulkDownloadPayslipZip) return
+
+    bulkDownloadAbortRef.current?.abort()
+    const abort = new AbortController()
+    bulkDownloadAbortRef.current = abort
+
     setBulkDownloadingBatchId(id)
-    toast({
-      title: 'Preparing download…',
-      description: 'Reusing saved PDFs when available. First-time or forced rebuilds may take several minutes.',
-    })
+    setBulkDownloadProgress({ status: 'pending', progress_percent: 0 })
     try {
-      const blob = await adminBulkDownloadPayrollBatchPdfZip(id)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      const safeCo = String(row?.company_name || 'batch')
-        .replace(/[^\w-]+/g, '-')
-        .slice(0, 40)
-      a.download = `payslips-${safeCo}-${id}.zip`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast({ title: 'Download started', description: 'Your ZIP file of payslip PDFs is downloading.' })
+      const queued = await adminQueueBulkPayslipDownload(id)
+      toast({
+        title: queued?.message || 'Bulk payslip download is being prepared.',
+        description: 'PDFs are generated in the background. You can keep using this page.',
+      })
+      const requestId = Number(queued?.request_id ?? queued?.bulk_download?.id ?? 0)
+      if (!requestId) {
+        throw new Error('Server did not return a bulk download request id.')
+      }
+      const { blob, bulk_download: doneBulk } = await adminPollAndDownloadBulkPayslipZip(requestId, {
+        signal: abort.signal,
+        onProgress: (b) => setBulkDownloadProgress(b),
+      })
+      const filename =
+        String(doneBulk?.download_filename || '') ||
+        `Payslips_${String(row?.company_name || 'batch').replace(/[^\w-]+/g, '_')}.zip`
+      saveBulkPayslipZipBlob(blob, filename)
+      toast({ title: 'Bulk payslip download is ready.', description: 'Your ZIP download has started.' })
     } catch (e) {
-      toast({ title: 'Download failed', description: e.message || 'Could not build ZIP.', variant: 'destructive' })
+      if (e?.name === 'AbortError') return
+      toast({
+        title: 'Bulk payslip download failed',
+        description: e.message || 'Bulk payslip download failed. Please try again.',
+        variant: 'destructive',
+      })
     } finally {
       setBulkDownloadingBatchId(null)
+      setBulkDownloadProgress(null)
+      if (bulkDownloadAbortRef.current === abort) {
+        bulkDownloadAbortRef.current = null
+      }
     }
   }
 
@@ -1430,7 +1453,13 @@ export default function AdminGeneratePayslipsPage() {
                                   ) : (
                                     <FileDown className="mr-1.5 h-4 w-4" />
                                   )}
-                                  Bulk Download PDF
+                                  {bulkDownloadingBatchId === r.payroll_batch_run_id && bulkDownloadProgress
+                                    ? `${bulkPayslipDownloadStatusLabel(bulkDownloadProgress)}${
+                                        bulkDownloadProgress.progress_percent != null
+                                          ? ` (${bulkDownloadProgress.progress_percent}%)`
+                                          : ''
+                                      }`
+                                    : 'Bulk Download PDF'}
                                 </Button>
                               )}
                               {showDelete && (

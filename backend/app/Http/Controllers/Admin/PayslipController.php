@@ -9,8 +9,10 @@ use App\Models\Company;
 use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\User;
+use App\Models\PayslipBulkDownload;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\PayslipBulkDownloadService;
 use App\Services\PayslipService;
 use App\Support\PayslipStoredSnapshotViewPayload;
 use Illuminate\Http\JsonResponse;
@@ -30,6 +32,7 @@ class PayslipController extends Controller
 {
     public function __construct(
         private readonly PayslipService $payslipService,
+        private readonly PayslipBulkDownloadService $payslipBulkDownloadService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly DataScopeService $dataScopeService,
     ) {}
@@ -1038,18 +1041,19 @@ class PayslipController extends Controller
     }
 
     /**
-     * Build a ZIP of payslip PDFs for a finalized {@see PayrollBatchRun}.
-     *
-     * **Speed:** By default reuses {@see Payslip::$pdf_path} files from finalize (no Browsershot). Send JSON
-     * `{ "force_regenerate": true }` to rebuild every PDF (slow).
-     *
-     * **ZIP entry names:** `LastName_FirstName_PayDate.pdf` (or `LastName_PayDate.pdf`); duplicates append payslip id.
+     * Queue bulk payslip ZIP generation on `payslip-pdf` (non-blocking).
      *
      * Route: {@code POST /admin/payroll-batches/{batchId}/bulk-download-pdf}
      */
-    public function bulkDownloadBatchPdf(Request $request, int $batchId): JsonResponse|StreamedResponse
+    public function bulkDownloadBatchPdf(Request $request, int $batchId): JsonResponse
     {
         $this->ensurePayslipAccess($request);
+
+        $v = $request->validate([
+            'force_regenerate' => ['nullable', 'boolean'],
+            'employee_ids' => ['nullable', 'array', 'max:500'],
+            'employee_ids.*' => ['integer', 'exists:users,id'],
+        ]);
 
         $run = PayrollBatchRun::query()->findOrFail($batchId);
         if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
@@ -1058,115 +1062,93 @@ class PayslipController extends Controller
             ], 422);
         }
 
-        $agg = $this->payslipService->aggregateForBatchRun($run);
-        /** @var list<int> $ids */
-        $ids = $agg['payslip_ids'] ?? [];
-        if (count($ids) === 0) {
-            return response()->json(['message' => 'No payslips found for this batch.'], 422);
-        }
-
-        $max = 500;
-        if (count($ids) > $max) {
-            return response()->json([
-                'message' => 'This batch exceeds the maximum of '.$max.' payslips for one ZIP export.',
-            ], 422);
-        }
-
-        // Eager-load everything {@see PayslipService::generatePdf} may touch so bulk runs avoid N+1 when PDFs must be built.
-        $payslips = Payslip::query()
-            ->with([
-                'employee.company',
-                'employee.branch',
-                'employee.departmentRelation',
-                'employee.governmentIds',
-            ])
-            ->whereIn('id', $ids)
-            ->get()
-            ->sortBy(function (Payslip $p) {
-                $e = $p->employee;
-
-                return $e instanceof User
-                    ? $e->employeeListingSortKey()
-                    : "\u{10FFFF}";
-            })
-            ->values();
-
         $actor = $request->user();
         abort_unless($actor instanceof User, 403);
 
-        /** When false (default), reuse existing finalized PDFs on disk — much faster than re-running Browsershot per row. */
-        $forceRegenerate = $request->boolean('force_regenerate');
-
-        /** @var list<array{name: string, path: string}> $entries */
-        $entries = [];
-        /** @var array<string, int> $zipNameCounts — detect collisions inside the ZIP */
-        $zipNameCounts = [];
-
-        foreach ($payslips as $payslip) {
-            $employee = $payslip->employee;
-            if (! $employee instanceof User) {
-                return response()->json(['message' => 'A payslip in this batch is missing an employee record.'], 422);
-            }
-
-            $this->dataScopeService->ensureEmployeeAccessible($actor, $employee);
-
-            $relative = $this->payslipService->ensurePayslipPdfOnDisk($payslip, $employee, $forceRegenerate);
-
-            $full = storage_path('app/private/'.$relative);
-            if (! is_file($full)) {
-                return response()->json(['message' => 'PDF generation failed for one or more payslips.'], 500);
-            }
-
-            // ZIP member order follows employee last-name ordering.
-            $entries[] = [
-                'name' => $this->allocateBulkZipPdfEntryName($payslip, $employee, $zipNameCounts),
-                'path' => $full,
-            ];
+        try {
+            $download = $this->payslipBulkDownloadService->queueDownload(
+                $run,
+                $actor,
+                isset($v['employee_ids']) ? array_map('intval', $v['employee_ids']) : null,
+                $request->boolean('force_regenerate')
+            );
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $periodLabel = $run->pay_period_start && $run->pay_period_end
-            ? $run->pay_period_start->format('Y-m-d').'_'.$run->pay_period_end->format('Y-m-d')
-            : (string) $run->id;
+        $payload = $this->payslipBulkDownloadService->statusPayload($download);
+        $status = (string) $download->status;
+        $inFlight = in_array($status, [PayslipBulkDownload::STATUS_PENDING, PayslipBulkDownload::STATUS_PROCESSING], true);
+        if ($status === PayslipBulkDownload::STATUS_COMPLETED && ($payload['ready'] ?? false)) {
+            $message = 'Bulk payslip download is ready.';
+        } elseif ($inFlight && ! $download->wasRecentlyCreated) {
+            $message = 'Bulk download is already being prepared.';
+        } else {
+            $message = 'Bulk payslip download is being prepared.';
+        }
 
-        $downloadName = 'payroll-batch-'.$run->id.'-'.$periodLabel.'.zip';
+        return response()->json([
+            'message' => $message,
+            'request_id' => (int) $download->id,
+            'bulk_download' => $payload,
+        ], ($payload['ready'] ?? false) ? 200 : 202);
+    }
 
-        return response()->streamDownload(function () use ($entries): void {
-            $out = fopen('php://output', 'wb');
-            if ($out === false) {
-                throw new \RuntimeException('Could not open output stream for ZIP.');
-            }
+    /**
+     * Poll bulk download progress.
+     *
+     * Route: {@code GET /admin/payslip-bulk-downloads/{id}/status}
+     */
+    public function bulkDownloadStatus(Request $request, int $id): JsonResponse
+    {
+        $this->ensurePayslipAccess($request);
 
-            $zip = new ZipStream(
-                operationMode: OperationMode::NORMAL,
-                outputStream: $out,
-                defaultCompressionMethod: CompressionMethod::STORE,
-                sendHttpHeaders: false,
-            );
+        $download = PayslipBulkDownload::query()->findOrFail($id);
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+        if ((int) $download->requested_by_user_id !== (int) $actor->id && ! $actor->isAdmin()) {
+            abort(403, 'You do not have access to this bulk download.');
+        }
 
-            foreach ($entries as $entry) {
-                $path = $entry['path'];
-                $size = filesize($path);
-                if ($size === false) {
-                    throw new \RuntimeException('Could not read payslip file size.');
-                }
+        return response()->json([
+            'bulk_download' => $this->payslipBulkDownloadService->statusPayload($download),
+        ]);
+    }
 
-                $zip->addFileFromCallback(
-                    fileName: $entry['name'],
-                    callback: function () use ($path) {
-                        $h = fopen($path, 'rb');
-                        if ($h === false) {
-                            throw new \RuntimeException('Could not open payslip PDF for ZIP.');
-                        }
+    /**
+     * Download completed bulk ZIP.
+     *
+     * Route: {@code GET /admin/payslip-bulk-downloads/{id}/download}
+     */
+    public function downloadBulkZip(Request $request, int $id): JsonResponse|BinaryFileResponse
+    {
+        $this->ensurePayslipAccess($request);
 
-                        return $h;
-                    },
-                    exactSize: (int) $size,
-                    compressionMethod: CompressionMethod::STORE,
-                );
-            }
+        $download = PayslipBulkDownload::query()->with('payrollBatchRun')->findOrFail($id);
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+        if ((int) $download->requested_by_user_id !== (int) $actor->id && ! $actor->isAdmin()) {
+            abort(403, 'You do not have access to this bulk download.');
+        }
 
-            $zip->finish();
-        }, $downloadName, [
+        if ((string) $download->status !== PayslipBulkDownload::STATUS_COMPLETED) {
+            return response()->json([
+                'message' => 'Bulk download is not ready yet.',
+                'bulk_download' => $this->payslipBulkDownloadService->statusPayload($download),
+            ], 409);
+        }
+
+        $full = $this->payslipBulkDownloadService->absoluteZipPath($download);
+        if ($full === null) {
+            return response()->json(['message' => 'ZIP file is missing. Please queue a new bulk download.'], 404);
+        }
+
+        $run = $download->payrollBatchRun;
+        $filename = $run instanceof PayrollBatchRun
+            ? $this->payslipBulkDownloadService->downloadFilename($run)
+            : 'Payslips_batch_'.$download->id.'.zip';
+
+        return response()->download($full, $filename, [
             'Content-Type' => 'application/zip',
         ]);
     }

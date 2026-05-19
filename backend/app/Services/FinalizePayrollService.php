@@ -361,19 +361,33 @@ class FinalizePayrollService
             }
             $generationLoopMs = round((microtime(true) - $tLoop) * 1000, 2);
 
-            // Use SQL aggregates on stored payslips for totals instead of recomputing
-            // payroll for every employee in scope (the main bottleneck for 100+ employees).
+            // One row per employee (latest active payslip) — never SUM duplicate payslip rows.
+            $totalsProbe = $employees->first();
+            [$totalsFrom, $totalsTo] = $this->payslipService->resolveComputationWindow($totalsProbe, $periodInput);
             $totalsQuery = Payslip::query()
-                ->whereIn('user_id', $scopedEmployeeIds);
-            $this->applyPreviewPeriodFiltersEloquent($totalsQuery, $periodInput);
-            $agg = $totalsQuery->selectRaw('COALESCE(SUM(gross_pay), 0) as total_gross, COALESCE(SUM(total_deductions), 0) as total_ded, COALESCE(SUM(net_pay), 0) as total_net, COUNT(*) as cnt')
-                ->first();
+                ->whereIn('user_id', $scopedEmployeeIds)
+                ->whereDate('pay_period_start', $totalsFrom->toDateString())
+                ->whereDate('pay_period_end', $totalsTo->toDateString());
+            if ($companyId) {
+                $totalsQuery->where('company_id', $companyId);
+            }
+            if ($branchId) {
+                $totalsQuery->where('branch_id', $branchId);
+            }
+            if ($departmentId) {
+                $totalsQuery->where('department_id', $departmentId);
+            }
+            if ($singleEmployeeId) {
+                $totalsQuery->where('user_id', $singleEmployeeId);
+            }
+            $uniquePayslipIds = $this->payslipService->latestUniquePayslipIdsForQuery($totalsQuery);
+            $uniqueSums = $this->payslipService->sumUniquePayslipsByIds($uniquePayslipIds);
 
-            if ($agg && (int) $agg->cnt > 0) {
+            if ($uniqueSums['employee_count'] > 0) {
                 $resolvedTotals = [
-                    'gross' => round((float) $agg->total_gross, 2),
-                    'ded' => round((float) $agg->total_ded, 2),
-                    'net' => round((float) $agg->total_net, 2),
+                    'gross' => $uniqueSums['total_gross'],
+                    'ded' => $uniqueSums['total_deductions'],
+                    'net' => $uniqueSums['total_net'],
                 ];
             } else {
                 $resolvedTotals = [
@@ -492,13 +506,31 @@ class FinalizePayrollService
         );
         $periodLocked = $this->computePeriodLockedForPreview($batchRun, $employees);
 
+        $totals = $cached['totals'] ?? [
+            'total_gross' => 0.0,
+            'total_deductions' => 0.0,
+            'total_net' => 0.0,
+            'employee_count' => 0,
+        ];
+        if ($batchRun !== null && (string) ($batchRun['status'] ?? '') === PayrollBatchRun::STATUS_FINALIZED) {
+            $runModel = PayrollBatchRun::query()->find((int) ($batchRun['payroll_batch_run_id'] ?? 0));
+            if ($runModel instanceof PayrollBatchRun) {
+                $agg = $this->payslipService->aggregateForBatchRun($runModel);
+                $totals = [
+                    'total_gross' => $agg['total_gross_pay'],
+                    'total_deductions' => $agg['total_deductions'],
+                    'total_net' => $agg['total_net_pay'],
+                    'employee_count' => max(
+                        (int) ($cached['totals']['employee_count'] ?? 0),
+                        (int) $agg['payslip_count'],
+                        (int) ($runModel->employee_count ?? 0)
+                    ),
+                ];
+            }
+        }
+
         return [
-            'totals' => $cached['totals'] ?? [
-                'total_gross' => 0.0,
-                'total_deductions' => 0.0,
-                'total_net' => 0.0,
-                'employee_count' => 0,
-            ],
+            'totals' => $totals,
             'period_preview' => $cached['period_preview'] ?? null,
             'employees' => $employees,
             'batch_run' => $batchRun,
@@ -628,16 +660,27 @@ class FinalizePayrollService
             ];
         }
 
-        $agg = $this->payslipQueryForBatchRun($run)
-            ->selectRaw('COALESCE(SUM(gross_pay), 0) as total_gross, COALESCE(SUM(total_deductions), 0) as total_ded, COALESCE(SUM(net_pay), 0) as total_net, COUNT(*) as cnt')
-            ->first();
-        $totalEmployees = max((int) ($batchRun['total_employees'] ?? 0), (int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0), $storedCount);
+        $uniqueIds = $this->payslipService->latestUniquePayslipIdsForQuery($this->payslipQueryForBatchRun($run));
+        $uniqueSums = $this->payslipService->sumUniquePayslipsByIds($uniqueIds);
+        $totalEmployees = max(
+            (int) ($batchRun['total_employees'] ?? 0),
+            (int) ($run->total_employees ?? 0),
+            (int) ($run->employee_count ?? 0),
+            $uniqueSums['employee_count'],
+            $storedCount
+        );
 
         return [
             'totals' => [
-                'total_gross' => round((float) ($agg->total_gross ?? $run->total_gross ?? 0), 2),
-                'total_deductions' => round((float) ($agg->total_ded ?? $run->total_deductions ?? 0), 2),
-                'total_net' => round((float) ($agg->total_net ?? $run->total_net ?? 0), 2),
+                'total_gross' => $uniqueSums['employee_count'] > 0
+                    ? $uniqueSums['total_gross']
+                    : round((float) ($run->total_gross ?? 0), 2),
+                'total_deductions' => $uniqueSums['employee_count'] > 0
+                    ? $uniqueSums['total_deductions']
+                    : round((float) ($run->total_deductions ?? 0), 2),
+                'total_net' => $uniqueSums['employee_count'] > 0
+                    ? $uniqueSums['total_net']
+                    : round((float) ($run->total_net ?? 0), 2),
                 'employee_count' => $totalEmployees,
             ],
             'period_preview' => [
@@ -929,6 +972,15 @@ class FinalizePayrollService
         $fromDate = $periodStart->toDateString();
         $toDate = $periodEnd->toDateString();
 
+        if ($existingBatchRunId !== null) {
+            $existingRun = PayrollBatchRun::query()->find($existingBatchRunId);
+            if ($existingRun instanceof PayrollBatchRun && (string) $existingRun->status === PayrollBatchRun::STATUS_FINALIZED) {
+                $this->logDuplicateFinalizeAttempt($existingRun, 'finalizeBatch');
+
+                return $this->idempotentFinalizeResult($existingRun);
+            }
+        }
+
         if ($existingBatchRunId !== null
             && $this->canFinalizeUsingDraftPayslipsOnly(
                 $employees,
@@ -969,7 +1021,7 @@ class FinalizePayrollService
             if ($existingKeyRun !== null) {
                 $st = (string) $existingKeyRun->status;
                 if ($st === PayrollBatchRun::STATUS_FINALIZED) {
-                    throw new \RuntimeException('This payroll period has already been finalized for the selected scope.');
+                    throw new \RuntimeException('This payroll batch is already finalized.');
                 }
                 if ($st === PayrollBatchRun::STATUS_VOIDED) {
                     throw new \RuntimeException('This payroll period was voided. Regenerate a new payroll draft to continue.');
@@ -1010,6 +1062,8 @@ class FinalizePayrollService
                     ->whereIn('user_id', $employeeIds)
                     ->whereDate('pay_period_start', $fromDate)
                     ->whereDate('pay_period_end', $toDate)
+                    ->where('period_slot', 0)
+                    ->where('status', '!=', Payslip::STATUS_VOIDED)
                     ->orderByDesc('id')
                     ->get()
                     ->unique('user_id')
@@ -1184,6 +1238,9 @@ class FinalizePayrollService
             ? PayrollBatchRun::query()->findOrFail($existingBatchRunId)
             : PayrollBatchRun::query()->where('batch_key', $batchKey)->firstOrFail();
 
+        $this->payslipService->syncBatchRunTotals($run);
+        $run = $run->fresh();
+
         Log::info('Payroll FINALIZED', [
             'batch_run_id' => (int) $run->id,
             'batch_key' => $batchKey,
@@ -1258,42 +1315,8 @@ class FinalizePayrollService
         if ($existing) {
             $status = (string) $existing->status;
             if ($status === PayrollBatchRun::STATUS_FINALIZED) {
-                $scopedUserIds = $employees->pluck('id')->map(fn ($id) => (int) $id)->all();
-                $hasFinalizedPayslips = Payslip::query()
-                    ->where('company_id', $companyId)
-                    ->whereDate('pay_period_start', $periodStart->toDateString())
-                    ->whereDate('pay_period_end', $periodEnd->toDateString())
-                    ->where('status', '!=', Payslip::STATUS_VOIDED)
-                    ->when(count($scopedUserIds) > 0, fn ($q) => $q->whereIn('user_id', $scopedUserIds))
-                    ->whereIn('status', Payslip::lockingStatuses())
-                    ->exists();
-                if ($hasFinalizedPayslips) {
-                    throw new \RuntimeException('This payroll period has already been finalized for the selected scope.');
-                }
-
-                Log::warning('Payroll finalize re-queue: stale finalized batch without payslips', [
-                    'batch_run_id' => $existing->id,
-                    'batch_key' => $batchKey,
-                    'company_id' => $companyId,
-                    'pay_period_start' => $periodStart->toDateString(),
-                    'pay_period_end' => $periodEnd->toDateString(),
-                    'scoped_employee_count' => count($scopedUserIds),
-                ]);
-                $retryPayload = $this->filterBatchRunPayload([
-                    'status' => PayrollBatchRun::STATUS_QUEUED,
-                    'error_message' => null,
-                    'queued_at' => now(),
-                    'started_at' => null,
-                    'completed_at' => null,
-                    'total_employees' => $employees->count(),
-                    'processed_employees' => 0,
-                    'failed_employees' => 0,
-                    'finalized_at' => null,
-                    'finalized_by_user_id' => $adminUserId,
-                ]);
-                PayrollBatchRun::query()->whereKey($existing->id)->update($retryPayload);
-
-                return ['run' => $existing->fresh(), 'should_dispatch' => true];
+                $this->logDuplicateFinalizeAttempt($existing, 'queueFinalizeBatch');
+                throw new \RuntimeException('This payroll batch is already finalized.');
             }
             if ($status === PayrollBatchRun::STATUS_PROCESSING) {
                 return ['run' => $existing, 'should_dispatch' => false];
@@ -1388,32 +1411,83 @@ class FinalizePayrollService
 
     public function finalizeQueuedRun(PayrollBatchRun $run, ?User $actor = null): array
     {
-        $periodInput = [
-            'from_date' => $run->pay_period_start?->toDateString(),
-            'to_date' => $run->pay_period_end?->toDateString(),
-            'pay_cycle_id' => $run->pay_cycle_id,
-            'reference_date' => $run->reference_date?->toDateString(),
-            'payroll_period_id' => $run->payroll_period_id,
-            'is_final_pay' => (bool) $run->is_final_pay,
-            'password_protect' => (bool) $run->password_protect,
-        ];
+        return DB::transaction(function () use ($run, $actor) {
+            $locked = PayrollBatchRun::query()->whereKey($run->id)->lockForUpdate()->first();
+            if (! $locked instanceof PayrollBatchRun) {
+                throw new \RuntimeException('Payroll batch run not found.');
+            }
 
-        $adminUserId = (int) ($run->finalized_by_user_id ?? 0);
-        if ($adminUserId <= 0 && $actor !== null) {
-            $adminUserId = (int) $actor->id;
-        }
+            $statusBefore = (string) $locked->status;
+            $netBefore = (float) ($locked->total_net ?? 0);
+            $scopedQuery = $this->payslipQueryForBatchRun($locked);
+            $payslipRowsBefore = (clone $scopedQuery)->count();
+            $uniqueBefore = count($this->payslipService->latestUniquePayslipIdsForQuery($scopedQuery));
 
-        return $this->finalizeBatch(
-            $run->company_id ? (int) $run->company_id : null,
-            $run->branch_id ? (int) $run->branch_id : null,
-            $run->department_id ? (int) $run->department_id : null,
-            $run->employee_id ? (int) $run->employee_id : null,
-            $periodInput,
-            $adminUserId,
-            $actor,
-            (int) $run->id,
-            true
-        );
+            if ($statusBefore === PayrollBatchRun::STATUS_FINALIZED) {
+                $this->logDuplicateFinalizeAttempt($locked, 'finalizeQueuedRun');
+                $result = $this->idempotentFinalizeResult($locked);
+                Log::info('Finalize payroll skipped: batch already finalized', [
+                    'batch_run_id' => (int) $locked->id,
+                    'status_before' => $statusBefore,
+                    'status_after' => PayrollBatchRun::STATUS_FINALIZED,
+                    'payslip_rows_count' => $payslipRowsBefore,
+                    'unique_payslip_rows_count' => $uniqueBefore,
+                    'duplicate_payslip_rows_detected' => max(0, $payslipRowsBefore - $uniqueBefore),
+                    'total_net_before' => $netBefore,
+                    'total_net_after' => (float) ($result['totals']['total_net'] ?? $netBefore),
+                ]);
+
+                return $result;
+            }
+
+            $periodInput = [
+                'from_date' => $locked->pay_period_start?->toDateString(),
+                'to_date' => $locked->pay_period_end?->toDateString(),
+                'pay_cycle_id' => $locked->pay_cycle_id,
+                'reference_date' => $locked->reference_date?->toDateString(),
+                'payroll_period_id' => $locked->payroll_period_id,
+                'is_final_pay' => (bool) $locked->is_final_pay,
+                'password_protect' => (bool) $locked->password_protect,
+            ];
+
+            $adminUserId = (int) ($locked->finalized_by_user_id ?? 0);
+            if ($adminUserId <= 0 && $actor !== null) {
+                $adminUserId = (int) $actor->id;
+            }
+
+            $result = $this->finalizeBatch(
+                $locked->company_id ? (int) $locked->company_id : null,
+                $locked->branch_id ? (int) $locked->branch_id : null,
+                $locked->department_id ? (int) $locked->department_id : null,
+                $locked->employee_id ? (int) $locked->employee_id : null,
+                $periodInput,
+                $adminUserId,
+                $actor,
+                (int) $locked->id,
+                true
+            );
+
+            $lockedAfter = PayrollBatchRun::query()->find((int) $locked->id);
+            $scopedAfter = $lockedAfter instanceof PayrollBatchRun
+                ? $this->payslipQueryForBatchRun($lockedAfter)
+                : $scopedQuery;
+            $payslipRowsAfter = (clone $scopedAfter)->count();
+            $uniqueAfter = count($this->payslipService->latestUniquePayslipIdsForQuery($scopedAfter));
+
+            Log::info('Finalize payroll completed', [
+                'batch_run_id' => (int) $locked->id,
+                'status_before' => $statusBefore,
+                'status_after' => (string) ($lockedAfter->status ?? $statusBefore),
+                'payslip_rows_count' => $payslipRowsAfter,
+                'unique_payslip_rows_count' => $uniqueAfter,
+                'duplicate_payslip_rows_detected' => max(0, $payslipRowsAfter - $uniqueAfter),
+                'total_net_before' => $netBefore,
+                'total_net_after' => (float) ($result['totals']['total_net'] ?? 0),
+                'skipped' => (bool) ($result['skipped'] ?? false),
+            ]);
+
+            return $result;
+        });
     }
 
     /**
@@ -2018,6 +2092,13 @@ class FinalizePayrollService
         string $fromDate,
         string $toDate,
     ): array {
+        $runGuard = PayrollBatchRun::query()->find($existingBatchRunId);
+        if ($runGuard instanceof PayrollBatchRun && (string) $runGuard->status === PayrollBatchRun::STATUS_FINALIZED) {
+            $this->logDuplicateFinalizeAttempt($runGuard, 'finalizeBatchUsingDraftPayslipsWithoutRecompute');
+
+            return $this->idempotentFinalizeResult($runGuard);
+        }
+
         $jobStartedAt = microtime(true);
         $timings = [
             'load_employees_ms' => 0.0,
@@ -2068,6 +2149,11 @@ class FinalizePayrollService
                 &$totals,
                 &$payslipIds
             ) {
+                $lockedRun = PayrollBatchRun::query()->whereKey($existingBatchRunId)->lockForUpdate()->firstOrFail();
+                if ((string) $lockedRun->status === PayrollBatchRun::STATUS_FINALIZED) {
+                    throw new \RuntimeException('__PAYROLL_BATCH_ALREADY_FINALIZED__');
+                }
+
                 foreach ($employees as $user) {
                     $payslip = $draftPayslips->get((int) $user->id);
                     if (! $payslip instanceof Payslip) {
@@ -2158,6 +2244,11 @@ class FinalizePayrollService
                 PayrollBatchRun::query()->whereKey($existingBatchRunId)->update($this->filterBatchRunPayload($payload));
             });
         } catch (Throwable $e) {
+            if ($e->getMessage() === '__PAYROLL_BATCH_ALREADY_FINALIZED__') {
+                $run = PayrollBatchRun::query()->findOrFail($existingBatchRunId);
+
+                return $this->idempotentFinalizeResult($run);
+            }
             report($e);
             $prev = $e->getPrevious();
             throw new \RuntimeException(
@@ -2173,6 +2264,8 @@ class FinalizePayrollService
         $timings['total_ms'] = round((microtime(true) - $jobStartedAt) * 1000, 2);
 
         $run = PayrollBatchRun::query()->findOrFail($existingBatchRunId);
+        $this->payslipService->syncBatchRunTotals($run);
+        $run = $run->fresh();
 
         Log::info('Payroll FINALIZED (draft snapshot fast path)', [
             'batch_run_id' => (int) $run->id,
@@ -2242,6 +2335,50 @@ class FinalizePayrollService
             $payPeriodEnd,
             (string) ($payCycleId ?? 'x'),
         ]));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function idempotentFinalizeResult(PayrollBatchRun $run): array
+    {
+        $this->payslipService->syncBatchRunTotals($run);
+        $run = $run->fresh();
+        if (! $run instanceof PayrollBatchRun) {
+            throw new \RuntimeException('Payroll batch run not found.');
+        }
+        $agg = $this->payslipService->aggregateForBatchRun($run);
+
+        return [
+            'payroll_batch_run_id' => (int) $run->id,
+            'payslip_ids' => $agg['payslip_ids'],
+            'totals' => [
+                'total_gross' => (float) ($run->total_gross ?? $agg['total_gross_pay']),
+                'total_deductions' => (float) ($run->total_deductions ?? $agg['total_deductions']),
+                'total_net' => (float) ($run->total_net ?? $agg['total_net_pay']),
+                'employee_count' => max((int) ($run->employee_count ?? 0), (int) $agg['payslip_count']),
+            ],
+            'skipped' => true,
+            'already_finalized' => true,
+        ];
+    }
+
+    private function logDuplicateFinalizeAttempt(PayrollBatchRun $run, string $source): void
+    {
+        $scopedQuery = $this->payslipQueryForBatchRun($run);
+        $allCount = (clone $scopedQuery)->count();
+        $uniqueCount = count($this->payslipService->latestUniquePayslipIdsForQuery($scopedQuery));
+
+        Log::notice('Payroll finalize ignored: duplicate finalize attempt on finalized batch', [
+            'batch_run_id' => (int) $run->id,
+            'batch_key' => $run->batch_key,
+            'source' => $source,
+            'status' => (string) $run->status,
+            'total_net_pay' => (float) ($run->total_net ?? 0),
+            'payslip_rows_count' => $allCount,
+            'unique_payslip_rows_count' => $uniqueCount,
+            'duplicate_payslip_rows_detected' => max(0, $allCount - $uniqueCount),
+        ]);
     }
 
     private function payslipQueryForBatchRun(PayrollBatchRun $run): \Illuminate\Database\Eloquent\Builder

@@ -2298,12 +2298,66 @@ class PayslipService
     }
 
     /**
+     * Restrict queries to the active payslip row per employee (non-voided, current period slot).
+     */
+    public function applyActivePayslipScope(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query
+            ->where('period_slot', 0)
+            ->where('status', '!=', Payslip::STATUS_VOIDED);
+    }
+
+    /**
+     * Latest payslip id per user for the given scoped query (one row per employee).
+     *
+     * @return list<int>
+     */
+    public function latestUniquePayslipIdsForQuery(\Illuminate\Database\Eloquent\Builder $baseQuery): array
+    {
+        return $this->applyActivePayslipScope(clone $baseQuery)
+            ->selectRaw('MAX(id) as id')
+            ->groupBy('user_id')
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array{total_gross: float, total_deductions: float, total_net: float, employee_count: int}
+     */
+    public function sumUniquePayslipsByIds(array $payslipIds): array
+    {
+        if ($payslipIds === []) {
+            return [
+                'total_gross' => 0.0,
+                'total_deductions' => 0.0,
+                'total_net' => 0.0,
+                'employee_count' => 0,
+            ];
+        }
+
+        $agg = Payslip::query()
+            ->whereIn('id', $payslipIds)
+            ->selectRaw('COALESCE(SUM(gross_pay), 0) as total_gross, COALESCE(SUM(total_deductions), 0) as total_ded, COALESCE(SUM(net_pay), 0) as total_net, COUNT(*) as cnt')
+            ->first();
+
+        return [
+            'total_gross' => round((float) ($agg->total_gross ?? 0), 2),
+            'total_deductions' => round((float) ($agg->total_ded ?? 0), 2),
+            'total_net' => round((float) ($agg->total_net ?? 0), 2),
+            'employee_count' => (int) ($agg->cnt ?? 0),
+        ];
+    }
+
+    /**
      * Payslip totals for rows belonging to this batch scope (company/branch/dept + pay window).
      *
      * Queries payslips directly by company_id + pay_period dates instead of relying on currently-active
      * employee IDs, which would miss payslips for employees deactivated after generation.
+     * Totals use one row per employee (latest active payslip id) to avoid duplicate SUM inflation.
      *
-     * @return array{payslip_count: int, total_net_pay: float, generated_at: ?\Carbon\Carbon, finalized_count: int, payslip_ids: list<int>, company_id: ?int}
+     * @return array{payslip_count: int, total_net_pay: float, generated_at: ?\Carbon\Carbon, finalized_count: int, payslip_ids: list<int>, company_id: ?int, total_gross_pay: float, total_deductions: float}
      */
     public function aggregateForBatchRun(PayrollBatchRun $run, bool $recomputeDraftTotals = false): array
     {
@@ -2316,12 +2370,8 @@ class PayslipService
 
         $q = Payslip::query()
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
-            ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
-            ->where('status', '!=', Payslip::STATUS_VOIDED)
-            ->where('period_slot', 0);
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
 
-        // Aggregate from persisted payslip scope fields, not current employee roster scope.
-        // This keeps Recent Payslips totals correct after edits, transfers, or deactivation.
         if ($run->company_id) {
             $q->where('company_id', (int) $run->company_id);
         }
@@ -2335,9 +2385,8 @@ class PayslipService
             $q->where('user_id', (int) $run->employee_id);
         }
 
-        $rows = $q->get(['id', 'user_id', 'company_id', 'gross_pay', 'total_deductions', 'net_pay', 'status', 'created_at']);
-
-        if ($rows->isEmpty()) {
+        $uniqueIds = $this->latestUniquePayslipIdsForQuery($q);
+        if ($uniqueIds === []) {
             return [
                 'payslip_count' => 0,
                 'total_net_pay' => 0.0,
@@ -2350,26 +2399,31 @@ class PayslipService
             ];
         }
 
+        $rows = Payslip::query()
+            ->whereIn('id', $uniqueIds)
+            ->get(['id', 'user_id', 'company_id', 'gross_pay', 'total_deductions', 'net_pay', 'status', 'created_at']);
+
         $lockedForBatch = Payslip::lockingStatuses();
         $finalized = $rows->filter(fn ($p) => in_array((string) $p->status, $lockedForBatch, true))->count();
         $resolvedCompanyId = $run->company_id !== null
             ? (int) $run->company_id
             : $rows->pluck('company_id')->filter(fn ($id) => $id !== null)->map(fn ($id) => (int) $id)->first();
-        $totalGrossPay = round((float) $rows->sum('gross_pay'), 2);
-        $totalDeductions = round((float) $rows->sum('total_deductions'), 2);
-        $totalNetPay = round((float) $rows->sum('net_pay'), 2);
+        $sums = $this->sumUniquePayslipsByIds($uniqueIds);
+        $totalGrossPay = $sums['total_gross'];
+        $totalDeductions = $sums['total_deductions'];
+        $totalNetPay = $sums['total_net'];
         if ($totalNetPay <= 0.0 && $totalGrossPay > 0.0) {
             $totalNetPay = round((float) ($run->total_net ?? max(0.0, $totalGrossPay - $totalDeductions)), 2);
         }
 
         return [
-            'payslip_count' => $rows->count(),
+            'payslip_count' => $sums['employee_count'],
             'total_net_pay' => $totalNetPay,
             'total_gross_pay' => $totalGrossPay,
             'total_deductions' => $totalDeductions,
             'generated_at' => $rows->max('created_at'),
             'finalized_count' => $finalized,
-            'payslip_ids' => $rows->pluck('id')->values()->all(),
+            'payslip_ids' => $uniqueIds,
             'company_id' => $resolvedCompanyId,
         ];
     }
