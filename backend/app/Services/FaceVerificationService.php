@@ -575,7 +575,7 @@ class FaceVerificationService
      */
     public static function identifyUserByFace(array $incomingDescriptor): ?User
     {
-        $result = self::identifyUserByFaceWithScore($incomingDescriptor);
+        $result = self::identifyUserByFaceWithScoreFromCache($incomingDescriptor);
 
         return $result ? $result['user'] : null;
     }
@@ -610,7 +610,13 @@ class FaceVerificationService
             return null;
         }
 
-        $candidates = self::descriptorCandidatesForUserCached($user);
+        $payload = FaceEmbeddingCacheService::getEmployeeEmbeddings((int) $user->id);
+        $candidates = FaceEmbeddingCacheService::vectorsFromPayload($payload);
+        if ($candidates === []) {
+            // Database-backed fallback keeps registration/update flows usable while
+            // Redis is cold; refreshEmployeeFaceCache() remains the normal hot path.
+            $candidates = self::descriptorCandidatesForUserCached($user);
+        }
         if ($candidates === []) {
             $eff = self::getEffectiveDescriptor($user);
             if ($eff !== null && count($eff) === $dim) {
@@ -618,6 +624,20 @@ class FaceVerificationService
             }
         }
         if ($candidates === []) {
+            return null;
+        }
+
+        return self::aggregateBestMatchForVectors($candidates, $incomingDescriptor, $kioskMode, $livenessScore);
+    }
+
+    /**
+     * @param  array<int, array<int, float>>  $candidates
+     * @return array{similarity_score: float, distance: float, cmp: float, passes: bool}|null
+     */
+    public static function aggregateBestMatchForVectors(array $candidates, array $incomingDescriptor, bool $kioskMode = false, ?float $livenessScore = null): ?array
+    {
+        $dim = self::EMBEDDING_DIM;
+        if (count($incomingDescriptor) !== $dim || $candidates === []) {
             return null;
         }
 
@@ -702,9 +722,9 @@ class FaceVerificationService
      *
      * @param  array<int, float>  $incomingDescriptor  128D descriptor
      * @param  bool  $kioskMode  Use relaxed kiosk thresholds (liveness already proven by Rekognition)
-     * @return array{user: User, distance: float, similarity_score: float}|null
+     * @return array{user: User, distance: float, similarity_score: float, second_best_score?: float|null, margin_score?: float|null}|null
      */
-    public static function identifyUserByFaceWithScore(array $incomingDescriptor, bool $kioskMode = false, ?float $livenessScore = null): ?array
+    public static function identifyUserByFaceWithScore(array $incomingDescriptor, bool $kioskMode = false, ?float $livenessScore = null, ?int $companyId = null): ?array
     {
         if (count($incomingDescriptor) !== self::EMBEDDING_DIM) {
             return null;
@@ -790,13 +810,138 @@ class FaceVerificationService
     }
 
     /**
+     * Redis-backed identification for kiosk/global recognition. Loads company
+     * embedding indexes from cache and queries the database only for the final
+     * accepted employee row.
+     *
+     * @return array{user: User, distance: float, similarity_score: float, second_best_score?: float|null, margin_score?: float|null}|null
+     */
+    public static function identifyUserByFaceWithScoreFromCache(array $incomingDescriptor, bool $kioskMode = false, ?float $livenessScore = null, ?int $companyId = null): ?array
+    {
+        if (count($incomingDescriptor) !== self::EMBEDDING_DIM) {
+            return null;
+        }
+
+        $index = FaceEmbeddingCacheService::getCompanyEmbeddingIndex($companyId);
+        $employeePayloads = isset($index['employees']) && is_array($index['employees'])
+            ? $index['employees']
+            : [];
+
+        $minMargin = self::minSimilarityMargin();
+        if (
+            $kioskMode
+            && self::crossCameraRelaxEnabled()
+            && $livenessScore !== null
+            && $livenessScore >= self::crossCameraHighLivenessScore()
+        ) {
+            $minMargin = max($minMargin, self::crossCameraMinMargin());
+        }
+
+        $passing = [];
+        $nearMiss = [];
+        foreach ($employeePayloads as $employeeId => $payload) {
+            if (! is_array($payload)) {
+                continue;
+            }
+
+            $vectors = FaceEmbeddingCacheService::vectorsFromPayload($payload);
+            $agg = self::aggregateBestMatchForVectors($vectors, $incomingDescriptor, $kioskMode, $livenessScore);
+            if ($agg === null) {
+                continue;
+            }
+
+            $resolvedEmployeeId = (int) ($payload['employee_id'] ?? $employeeId);
+            $nearMiss[] = [
+                'employee_id' => $resolvedEmployeeId,
+                'similarity_score' => $agg['similarity_score'],
+            ];
+
+            if (! $agg['passes']) {
+                continue;
+            }
+
+            $passing[] = [
+                'employee_id' => $resolvedEmployeeId,
+                'distance' => $agg['distance'],
+                'similarity_score' => $agg['similarity_score'],
+                'cmp' => $agg['cmp'],
+            ];
+        }
+
+        if ($passing === []) {
+            self::logIdentificationNearMissFromScores($nearMiss, count($employeePayloads));
+
+            return null;
+        }
+
+        usort($passing, static fn (array $a, array $b) => $a['cmp'] <=> $b['cmp']);
+        $best = $passing[0];
+
+        if (count($passing) >= 2) {
+            $topN = array_slice($passing, 0, min(3, count($passing)));
+            Log::info('Face identification top matches', [
+                'matches' => array_map(fn ($p, $i) => [
+                    'rank' => $i + 1,
+                    'user_id' => config('attendance.face_log_identification_user_ids') ? $p['employee_id'] : null,
+                    'similarity' => round($p['similarity_score'], 4),
+                    'distance' => round($p['distance'], 4),
+                ], $topN, array_keys($topN)),
+                'margin' => round($passing[0]['similarity_score'] - $passing[1]['similarity_score'], 4),
+                'min_margin_required' => $minMargin,
+                'company_id' => $companyId,
+                'cache_key' => FaceEmbeddingCacheService::companyIndexKey($companyId),
+            ]);
+
+            $second = $passing[1];
+            if (($best['similarity_score'] - $second['similarity_score']) < $minMargin) {
+                Log::warning('Face identification rejected: top matches too close in similarity', [
+                    'margin_required' => $minMargin,
+                    'best_similarity' => $best['similarity_score'],
+                    'second_similarity' => $second['similarity_score'],
+                    'company_id' => $companyId,
+                ]);
+
+                return null;
+            }
+        }
+
+        $user = self::faceIdentificationCandidateQuery()
+            ->select([
+                'id', 'name', 'email', 'role', 'is_active',
+                'face_status', 'face_descriptor', 'face_descriptor_samples',
+                'face_embedding', 'face_registered_at',
+                'profile_image',
+                'company_id',
+                'updated_at',
+            ])
+            ->whereKey($best['employee_id'])
+            ->first();
+
+        if (! $user || ! $user->hasRegisteredFace() || $user->needsFaceReregistration()) {
+            FaceEmbeddingCacheService::invalidateFaceCache((int) $best['employee_id'], $companyId);
+
+            return null;
+        }
+
+        $secondBest = $passing[1]['similarity_score'] ?? null;
+
+        return [
+            'user' => $user,
+            'distance' => $best['distance'],
+            'similarity_score' => $best['similarity_score'],
+            'second_best_score' => $secondBest,
+            'margin_score' => $secondBest !== null ? $best['similarity_score'] - $secondBest : null,
+        ];
+    }
+
+    /**
      * Verify incoming descriptor against one specific employee only (identity-bound).
      *
      * @return array{passes: bool, similarity_score: float, distance: float}|null
      */
     public static function verifySpecificUserByFaceWithScore(User $user, array $incomingDescriptor, ?float $livenessScore = null): ?array
     {
-        if (! $user->hasRegisteredFace() || count($incomingDescriptor) !== self::EMBEDDING_DIM) {
+        if (! $user->isOperationallyActive() || ! $user->hasRegisteredFace() || count($incomingDescriptor) !== self::EMBEDDING_DIM) {
             return null;
         }
 
@@ -853,6 +998,33 @@ class FaceVerificationService
             'pool_size' => $employees->count(),
             'best_cosine_similarity' => $bestSim >= 0 ? round($bestSim, 4) : null,
             'nearest_user_id' => ((bool) config('attendance.face_log_identification_user_ids', false)) ? $bestUserId : null,
+            'uses_cosine' => self::useCosineThreshold(),
+            'cosine_distance_threshold' => self::useCosineThreshold() ? self::cosineDistanceThreshold() : null,
+            'euclidean_threshold' => self::useCosineThreshold() ? null : self::matchThreshold(),
+            'min_similarity_required' => self::minSimilarityScore(),
+        ]);
+    }
+
+    /**
+     * @param  array<int, array{employee_id: int, similarity_score: float}>  $scores
+     */
+    private static function logIdentificationNearMissFromScores(array $scores, int $poolSize): void
+    {
+        if (! config('attendance.face_log_identification_misses', true)) {
+            return;
+        }
+
+        $best = null;
+        foreach ($scores as $score) {
+            if ($best === null || $score['similarity_score'] > $best['similarity_score']) {
+                $best = $score;
+            }
+        }
+
+        Log::warning('Face identification miss (no cached employee met match threshold)', [
+            'pool_size' => $poolSize,
+            'best_cosine_similarity' => $best ? round((float) $best['similarity_score'], 4) : null,
+            'nearest_user_id' => ($best && (bool) config('attendance.face_log_identification_user_ids', false)) ? $best['employee_id'] : null,
             'uses_cosine' => self::useCosineThreshold(),
             'cosine_distance_threshold' => self::useCosineThreshold() ? self::cosineDistanceThreshold() : null,
             'euclidean_threshold' => self::useCosineThreshold() ? null : self::matchThreshold(),

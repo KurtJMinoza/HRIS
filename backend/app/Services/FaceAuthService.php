@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\User;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 
 class FaceAuthService
 {
@@ -18,42 +19,25 @@ class FaceAuthService
      */
     public static function embedFace(string $imageBase64): ?array
     {
-        $url = rtrim((string) config('services.face_verification.url', 'http://127.0.0.1:5000'), '/').'/embed';
+        $data = self::postJsonToFaceService(
+            '/embed',
+            ['image_base64' => $imageBase64],
+            (int) config('services.face_verification.embed_timeout_seconds', 8),
+            'embed'
+        );
 
-        try {
-            $response = Http::timeout((int) config('services.face_verification.embed_timeout_seconds', 8))
-                ->connectTimeout((int) config('services.face_verification.connect_timeout_seconds', 3))
-                ->post($url, [
-                    'image_base64' => $imageBase64,
-                ]);
-
-            if (! $response->successful()) {
-                Log::warning('Face embed service error', [
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
-
-                return null;
-            }
-
-            $data = $response->json();
-            if (! is_array($data)) {
-                return null;
-            }
-
-            $descriptor = isset($data['descriptor']) && is_array($data['descriptor'])
-                ? array_map('floatval', array_values($data['descriptor']))
-                : null;
-
-            return [
-                'descriptor' => $descriptor,
-                'message' => (string) ($data['message'] ?? ''),
-            ];
-        } catch (\Throwable $e) {
-            Log::error('Face embed service exception', ['message' => $e->getMessage()]);
-
+        if ($data === null) {
             return null;
         }
+
+        $descriptor = isset($data['descriptor']) && is_array($data['descriptor'])
+            ? array_map('floatval', array_values($data['descriptor']))
+            : null;
+
+        return [
+            'descriptor' => $descriptor,
+            'message' => (string) ($data['message'] ?? ''),
+        ];
     }
 
     /**
@@ -65,7 +49,7 @@ class FaceAuthService
      * @param  bool  $forRegistration  When true and face_registration_light_liveness is false, applies stricter registration floor
      * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float, reference_image_base64?: string}|null
      */
-    public static function verifyFaceWithLivenessSession(string $sessionId, bool $forRegistration = false): ?array
+    public static function verifyFaceWithLivenessSession(string $sessionId, bool $forRegistration = false, ?int $employeeId = null): ?array
     {
         $registrationFloor = null;
         if ($forRegistration && ! (bool) config('attendance.face_registration_light_liveness', true)) {
@@ -75,6 +59,7 @@ class FaceAuthService
         if ($result === null) {
             return null;
         }
+        FaceLivenessSessionCacheService::put($sessionId, $result, $employeeId);
         if (! $result['is_live']) {
             return [
                 'is_live' => false,
@@ -150,46 +135,27 @@ class FaceAuthService
      */
     public static function verifyFace(string $imageBase64): ?array
     {
-        $url = rtrim((string) config('services.face_verification.url', 'http://127.0.0.1:5000'), '/').'/verify';
+        $data = self::postJsonToFaceService(
+            '/verify',
+            ['image_base64' => $imageBase64],
+            (int) config('services.face_verification.verify_timeout_seconds', 10),
+            'verification'
+        );
 
-        try {
-            $response = Http::timeout((int) config('services.face_verification.verify_timeout_seconds', 10))
-                ->connectTimeout((int) config('services.face_verification.connect_timeout_seconds', 3))
-                ->post($url, [
-                    'image_base64' => $imageBase64,
-                ]);
-
-            if (! $response->successful()) {
-                Log::warning('Face verification service error', [
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
-
-                return null;
-            }
-
-            $data = $response->json();
-            if (! is_array($data)) {
-                return null;
-            }
-
-            return [
-                'is_live' => (bool) ($data['is_live'] ?? false),
-                'descriptor' => isset($data['descriptor']) && is_array($data['descriptor'])
-                    ? array_map('floatval', array_values($data['descriptor']))
-                    : null,
-                'message' => (string) ($data['message'] ?? ''),
-                'spoof_confidence' => isset($data['spoof_confidence'])
-                    ? (float) $data['spoof_confidence']
-                    : null,
-            ];
-        } catch (\Throwable $e) {
-            Log::error('Face verification service exception', [
-                'message' => $e->getMessage(),
-            ]);
-
+        if ($data === null) {
             return null;
         }
+
+        return [
+            'is_live' => (bool) ($data['is_live'] ?? false),
+            'descriptor' => isset($data['descriptor']) && is_array($data['descriptor'])
+                ? array_map('floatval', array_values($data['descriptor']))
+                : null,
+            'message' => (string) ($data['message'] ?? ''),
+            'spoof_confidence' => isset($data['spoof_confidence'])
+                ? (float) $data['spoof_confidence']
+                : null,
+        ];
     }
 
     /**
@@ -205,8 +171,129 @@ class FaceAuthService
      *
      * @return array{user: User, distance: float, similarity_score: float}|null
      */
-    public static function identifyUserWithScore(array $descriptor, bool $kioskMode = false, ?float $livenessScore = null): ?array
+    public static function identifyUserWithScore(array $descriptor, bool $kioskMode = false, ?float $livenessScore = null, ?int $companyId = null): ?array
     {
-        return FaceVerificationService::identifyUserByFaceWithScore($descriptor, $kioskMode, $livenessScore);
+        return FaceVerificationService::identifyUserByFaceWithScoreFromCache($descriptor, $kioskMode, $livenessScore, $companyId);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function faceServiceBaseUrls(): array
+    {
+        $urls = [];
+        $appendUrls = static function (mixed $value) use (&$urls): void {
+            foreach (explode(',', (string) $value) as $url) {
+                $url = rtrim(trim($url), '/');
+                if ($url !== '') {
+                    $urls[] = $url;
+                }
+            }
+        };
+
+        $configured = config('services.face_verification.urls', []);
+        if (is_array($configured)) {
+            foreach ($configured as $url) {
+                $appendUrls($url);
+            }
+        }
+
+        $runtimeUrls = getenv('FACE_VERIFICATION_URLS');
+        if (is_string($runtimeUrls)) {
+            $appendUrls($runtimeUrls);
+        }
+
+        $runtimeUrl = getenv('FACE_VERIFICATION_URL');
+        if (is_string($runtimeUrl)) {
+            $appendUrls($runtimeUrl);
+        }
+
+        if ($urls === []) {
+            $appendUrls(config('services.face_verification.url', 'http://127.0.0.1:5000'));
+        }
+
+        return array_values(array_unique($urls));
+    }
+
+    /**
+     * Rotate configured face service endpoints so multiple warm Python
+     * processes can share real-time clock-in/out embedding extraction.
+     *
+     * @return list<string>
+     */
+    private static function orderedFaceServiceUrls(): array
+    {
+        $urls = self::faceServiceBaseUrls();
+        $count = count($urls);
+        if ($count <= 1) {
+            return $urls;
+        }
+
+        try {
+            $counter = (int) Redis::connection()->incr('face:service:round-robin');
+            Redis::connection()->expire('face:service:round-robin', 86400);
+        } catch (\Throwable $e) {
+            $counter = mt_rand(1, $count);
+            Log::debug('Face service Redis round-robin unavailable; using local random endpoint order.', [
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        $offset = ($counter - 1) % $count;
+
+        return array_merge(array_slice($urls, $offset), array_slice($urls, 0, $offset));
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private static function postJsonToFaceService(string $path, array $payload, int $timeoutSeconds, string $context): ?array
+    {
+        $path = '/'.ltrim($path, '/');
+        $urls = self::orderedFaceServiceUrls();
+
+        foreach ($urls as $baseUrl) {
+            $url = $baseUrl.$path;
+
+            try {
+                $response = Http::timeout($timeoutSeconds)
+                    ->connectTimeout((int) config('services.face_verification.connect_timeout_seconds', 3))
+                    ->post($url, $payload);
+
+                if (! $response->successful()) {
+                    Log::warning("Face {$context} service error", [
+                        'face_service_url' => $url,
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+
+                    if ($response->clientError()) {
+                        return null;
+                    }
+
+                    continue;
+                }
+
+                $data = $response->json();
+                if (is_array($data)) {
+                    return $data;
+                }
+
+                Log::warning("Face {$context} service returned invalid JSON", [
+                    'face_service_url' => $url,
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning("Face {$context} service exception", [
+                    'face_service_url' => $url,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        Log::error("All face {$context} service endpoints failed", [
+            'face_service_urls' => $urls,
+        ]);
+
+        return null;
     }
 }

@@ -67,6 +67,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Face recognition cache
+    |--------------------------------------------------------------------------
+    |
+    | Face embeddings, company embedding indexes, liveness results, and short
+    | face verification markers should live in Redis in production. Tests can
+    | inherit CACHE_STORE=array.
+    |
+    */
+    'face_store' => env('CACHE_FACE_STORE', env('CACHE_STORE', 'redis')),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cache Stores
     |--------------------------------------------------------------------------
     |

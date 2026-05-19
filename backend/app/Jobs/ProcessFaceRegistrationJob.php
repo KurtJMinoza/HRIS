@@ -6,6 +6,7 @@ use App\Models\DuplicateFaceRegistrationAttempt;
 use App\Models\User;
 use App\Models\UserAdminActivityLog;
 use App\Services\FaceAuthService;
+use App\Services\FaceEmbeddingCacheService;
 use App\Services\FaceRegistrationStatusService;
 use App\Services\FaceVerificationService;
 use Illuminate\Bus\Queueable;
@@ -38,7 +39,7 @@ class ProcessFaceRegistrationJob implements ShouldQueue
      */
     public int $timeout = 120;
 
-    public int $tries = 3;
+    public int $tries = 2;
 
     /** Seconds to wait before each retry after a failure. */
     public int $backoff = 15;
@@ -53,7 +54,9 @@ class ProcessFaceRegistrationJob implements ShouldQueue
         public ?string $ipAddress,
         public ?string $userAgent,
         public string $channel,
-    ) {}
+    ) {
+        $this->onConnection('redis')->onQueue('face-registration');
+    }
 
     /**
      * After all retries are exhausted, ensure polling clients do not hang on "processing" forever.
@@ -93,7 +96,7 @@ class ProcessFaceRegistrationJob implements ShouldQueue
         FaceRegistrationStatusService::markProcessing($this->trackId);
 
         $result = $this->livenessSessionId
-            ? FaceAuthService::verifyFaceWithLivenessSession($this->livenessSessionId, true)
+            ? FaceAuthService::verifyFaceWithLivenessSession($this->livenessSessionId, true, $this->targetUserId)
             : FaceAuthService::verifyFaceForRegistration((string) $this->imageBase64);
 
         if ($result === null) {
@@ -198,6 +201,7 @@ class ProcessFaceRegistrationJob implements ShouldQueue
                                 'euclidean_norm_distance' => $dupResult['euclidean_distance'] ?? null,
                                 'detection_method' => $dupResult['detection_method'] ?? null,
                             ]);
+                            FaceEmbeddingCacheService::invalidateFaceCache((int) $user->id, $user->company_id ? (int) $user->company_id : null);
                             FaceRegistrationStatusService::fail(
                                 $this->trackId,
                                 FaceVerificationService::duplicateRegistrationUserMessage(),
@@ -245,6 +249,7 @@ class ProcessFaceRegistrationJob implements ShouldQueue
                         FaceVerificationService::bumpDuplicateEmbeddingIndexVersion();
                     }
                     if ($registeredOk) {
+                        FaceEmbeddingCacheService::refreshAfterFaceChange($this->targetUserId);
                         Log::info('ProcessFaceRegistrationJob succeeded', [
                             'track_id' => $this->trackId,
                             'target_user_id' => $this->targetUserId,

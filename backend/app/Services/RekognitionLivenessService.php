@@ -69,6 +69,17 @@ class RekognitionLivenessService
      */
     public static function getSessionResults(string $sessionId, ?float $minimumConfidenceFraction = null): ?array
     {
+        $cached = FaceLivenessSessionCacheService::get($sessionId);
+        if ($cached !== null) {
+            return [
+                'is_live' => (bool) ($cached['is_live'] ?? false),
+                'confidence' => $cached['confidence'] ?? null,
+                'reference_image_base64' => $cached['reference_image_base64'] ?? null,
+                'message' => (string) ($cached['message'] ?? ''),
+                'result' => (string) ($cached['result'] ?? ($cached['status'] ?? 'FAIL')),
+            ];
+        }
+
         $config = config('services.rekognition');
         if (empty($config['key']) || empty($config['secret'])) {
             Log::warning('Rekognition Face Liveness: AWS credentials not configured');
@@ -122,13 +133,17 @@ class RekognitionLivenessService
                 ]);
             }
 
-            return [
+            $payload = [
                 'is_live' => $isLive,
                 'confidence' => $confidence !== null ? (float) $confidence : null,
                 'reference_image_base64' => $referenceBase64,
                 'message' => $isLive ? 'OK' : 'Liveness confidence too low.',
                 'result' => $isLive ? 'PASS' : 'FAIL',
             ];
+
+            FaceLivenessSessionCacheService::put($sessionId, $payload);
+
+            return $payload;
         } catch (\Throwable $e) {
             Log::error('Rekognition GetFaceLivenessSessionResults failed', [
                 'session_id' => $sessionId,

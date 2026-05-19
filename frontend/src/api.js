@@ -5198,6 +5198,9 @@ export async function recordAttendanceKioskFace(type, payload) {
           login: payload?.login,
           liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
+          company_id: payload?.company_id,
+          device_id: payload?.device_id,
+          camera_info: payload?.camera_info,
           client_capture_started_at_ms: payload?.client_capture_started_at_ms,
         }
   const res = await fetchWithSanctumCsrf('/attendance/kiosk/face', {

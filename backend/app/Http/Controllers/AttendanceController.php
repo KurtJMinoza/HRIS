@@ -12,8 +12,11 @@ use App\Models\User;
 use App\Services\AttendanceCacheService;
 use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceStatusService;
+use App\Services\FaceAttemptThrottleService;
 use App\Services\FaceAuthService;
+use App\Services\FaceRecognitionAuditService;
 use App\Services\FaceVerificationService;
+use App\Services\FaceVerificationResultCacheService;
 use App\Services\LeaveCreditService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeService;
@@ -412,6 +415,7 @@ class AttendanceController extends Controller
             'is_spoof' => $isSpoof,
             'failure_reason' => $failureReason,
         ]);
+        FaceAttemptThrottleService::recordFailure($request, $userId);
 
         Log::warning('Face attendance verification failed', [
             'employee_id' => $userId,
@@ -1233,6 +1237,9 @@ class AttendanceController extends Controller
             'login' => ['nullable', 'string', 'max:255'],
             'liveness_session_id' => ['nullable', 'string', 'max:255'],
             'image_base64' => ['nullable', 'string'],
+            'company_id' => ['nullable', 'integer', 'min:1'],
+            'device_id' => ['nullable', 'string', 'max:120'],
+            'camera_info' => ['nullable', 'string', 'max:255'],
             'client_capture_started_at_ms' => ['nullable', 'numeric'],
         ]);
         $login = trim((string) ($validated['login'] ?? ''));
@@ -1273,11 +1280,40 @@ class AttendanceController extends Controller
 
         }
 
+        $companyId = $claimedUser?->company_id !== null
+            ? (int) $claimedUser->company_id
+            : (isset($validated['company_id']) ? (int) $validated['company_id'] : null);
+
+        $throttle = FaceAttemptThrottleService::hit($request, $claimedUser?->id);
+        if ($throttle !== null) {
+            $this->recordFailedAttempt($claimedUser?->id, $request, false, 'rate_limited');
+            FaceRecognitionAuditService::record($request, [
+                'employee_id' => $claimedUser?->id,
+                'decision' => 'rejected',
+                'reason' => 'rate_limited',
+                'mode' => $claimedUser ? 'claimed' : 'kiosk',
+                'metadata' => ['retry_after' => $throttle['retry_after']],
+            ]);
+
+            return response()->json([
+                'message' => 'Too many face attempts. Please wait a moment and try again.',
+                'errors' => ['face' => ['Too many face attempts. Please wait a moment and try again.']],
+                'error_code' => 'rate_limited',
+                'retry_after' => $throttle['retry_after'],
+            ], 429);
+        }
+
         $result = $sessionId
-            ? FaceAuthService::verifyFaceWithLivenessSession($sessionId)
+            ? FaceAuthService::verifyFaceWithLivenessSession($sessionId, false, $claimedUser?->id)
             : FaceAuthService::verifyFace($imageBase64);
         if ($result === null) {
             $this->recordFailedAttempt(null, $request, false, 'service_unavailable');
+            FaceRecognitionAuditService::record($request, [
+                'employee_id' => $claimedUser?->id,
+                'decision' => 'rejected',
+                'reason' => 'service_unavailable',
+                'mode' => $claimedUser ? 'claimed' : 'kiosk',
+            ]);
 
             return response()->json([
                 'message' => 'Face verification service unavailable. Please try again or use QR.',
@@ -1287,6 +1323,13 @@ class AttendanceController extends Controller
         }
         if (! $result['is_live']) {
             $this->recordFailedAttempt(null, $request, true, 'spoof_detected');
+            FaceRecognitionAuditService::record($request, [
+                'employee_id' => $claimedUser?->id,
+                'liveness_score' => $result['spoof_confidence'] ?? null,
+                'decision' => 'rejected',
+                'reason' => 'spoof_detected',
+                'mode' => $claimedUser ? 'claimed' : 'kiosk',
+            ]);
 
             return response()->json([
                 'message' => 'Face not clear. Please face the camera straight with good lighting and hold still.',
@@ -1302,6 +1345,13 @@ class AttendanceController extends Controller
             $this->recordFailedAttempt($claimedUser?->id, $request, true, 'liveness_failed', [
                 'liveness_score' => $spoofConfidence,
             ]);
+            FaceRecognitionAuditService::record($request, [
+                'employee_id' => $claimedUser?->id,
+                'liveness_score' => $spoofConfidence,
+                'decision' => 'rejected',
+                'reason' => 'liveness_failed',
+                'mode' => $claimedUser ? 'claimed' : 'kiosk',
+            ]);
 
             return response()->json([
                 'message' => 'Face not clear. Please face the camera straight with good lighting and hold still.',
@@ -1312,6 +1362,13 @@ class AttendanceController extends Controller
 
         if (empty($result['descriptor']) || count($result['descriptor']) !== FaceVerificationService::EMBEDDING_DIM) {
             $this->recordFailedAttempt(null, $request, false, 'no_face_detected');
+            FaceRecognitionAuditService::record($request, [
+                'employee_id' => $claimedUser?->id,
+                'liveness_score' => $spoofConfidence,
+                'decision' => 'rejected',
+                'reason' => 'no_face_detected',
+                'mode' => $claimedUser ? 'claimed' : 'kiosk',
+            ]);
 
             return response()->json([
                 'message' => 'Face not clear. Please face the camera straight with good lighting and hold still.',
@@ -1323,11 +1380,18 @@ class AttendanceController extends Controller
         $matchStarted = microtime(true);
         $similarityScore = null;
         if ($claimedUser) {
-            $strictMatch = FaceVerificationService::verifySpecificUserByFaceWithScore($claimedUser, $result['descriptor'], $spoofConfidence);
+            $cachedVerification = FaceVerificationResultCacheService::getForSession($claimedUser->id, $request, $sessionId);
+            $strictMatch = $cachedVerification !== null
+                ? [
+                    'passes' => true,
+                    'similarity_score' => (float) ($cachedVerification['similarity_score'] ?? 1.0),
+                    'distance' => (float) ($cachedVerification['distance'] ?? 0.0),
+                ]
+                : FaceVerificationService::verifySpecificUserByFaceWithScore($claimedUser, $result['descriptor'], $spoofConfidence);
             $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
             if (! $strictMatch || ! $strictMatch['passes']) {
                 $mismatchMinSimilarity = (float) config('attendance.face_kiosk_account_mismatch_min_similarity', 0.60);
-                $identifiedOther = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true, livenessScore: $spoofConfidence);
+                $identifiedOther = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true, livenessScore: $spoofConfidence, companyId: $companyId);
                 if (
                     $identifiedOther
                     && (int) $identifiedOther['user']->id !== (int) $claimedUser->id
@@ -1345,6 +1409,17 @@ class AttendanceController extends Controller
                         'matched_user_id' => $otherUser->id,
                         'matched_similarity_score' => $identifiedOther['similarity_score'] ?? null,
                         'threshold' => $mismatchMinSimilarity,
+                    ]);
+                    FaceRecognitionAuditService::record($request, [
+                        'employee_id' => $claimedUser->id,
+                        'matched_employee_id' => $otherUser->id,
+                        'similarity_score' => $strictMatch['similarity_score'] ?? null,
+                        'second_best_score' => $identifiedOther['second_best_score'] ?? null,
+                        'margin_score' => $identifiedOther['margin_score'] ?? null,
+                        'liveness_score' => $spoofConfidence,
+                        'decision' => 'rejected',
+                        'reason' => 'face_account_mismatch',
+                        'mode' => 'claimed',
                     ]);
 
                     return response()->json([
@@ -1372,6 +1447,15 @@ class AttendanceController extends Controller
                     'min_similarity_required' => (float) config('attendance.face_identity_min_similarity_score', 0.55),
                     'max_distance_allowed' => (float) config('attendance.face_identity_max_euclidean_distance', 1.0),
                 ]);
+                FaceRecognitionAuditService::record($request, [
+                    'employee_id' => $claimedUser->id,
+                    'similarity_score' => $strictMatch['similarity_score'] ?? null,
+                    'liveness_score' => $spoofConfidence,
+                    'decision' => 'rejected',
+                    'reason' => 'face_not_recognized',
+                    'mode' => 'claimed',
+                    'metadata' => ['distance' => $strictMatch['distance'] ?? null],
+                ]);
 
                 return response()->json([
                     'message' => 'Face not recognized. Please try again.',
@@ -1386,12 +1470,25 @@ class AttendanceController extends Controller
                 ], 422);
             }
             $similarityScore = $strictMatch['similarity_score'];
+            FaceVerificationResultCacheService::put($claimedUser->id, $request, [
+                'session_id' => $sessionId,
+                'similarity_score' => $strictMatch['similarity_score'],
+                'distance' => $strictMatch['distance'] ?? null,
+                'liveness_score' => $spoofConfidence,
+            ]);
             $user = $this->refreshUserForScheduleCheck($claimedUser);
         } else {
-            $identified = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true, livenessScore: $spoofConfidence);
+            $identified = FaceAuthService::identifyUserWithScore($result['descriptor'], kioskMode: true, livenessScore: $spoofConfidence, companyId: $companyId);
             $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
             if (! $identified) {
                 $this->recordFailedAttempt(null, $request, false, 'face_not_recognized');
+                FaceRecognitionAuditService::record($request, [
+                    'liveness_score' => $spoofConfidence,
+                    'decision' => 'rejected',
+                    'reason' => 'face_not_recognized',
+                    'mode' => 'kiosk',
+                    'metadata' => ['company_id' => $companyId, 'match_ms' => $matchMs],
+                ]);
 
                 return response()->json([
                     'message' => 'Face not recognized. Please try again.',
@@ -1412,6 +1509,16 @@ class AttendanceController extends Controller
                     'employee_id' => $identifiedUser->id,
                     'similarity_score' => $identified['similarity_score'] ?? null,
                     'min_similarity_required' => $strictMinSimilarity,
+                ]);
+                FaceRecognitionAuditService::record($request, [
+                    'matched_employee_id' => $identifiedUser->id,
+                    'similarity_score' => $identified['similarity_score'] ?? null,
+                    'second_best_score' => $identified['second_best_score'] ?? null,
+                    'margin_score' => $identified['margin_score'] ?? null,
+                    'liveness_score' => $spoofConfidence,
+                    'decision' => 'rejected',
+                    'reason' => 'weak_match',
+                    'mode' => 'kiosk',
                 ]);
 
                 return response()->json([
@@ -1438,6 +1545,14 @@ class AttendanceController extends Controller
                 ], 422);
             }
             $similarityScore = $identified['similarity_score'];
+            FaceVerificationResultCacheService::put($identifiedUser->id, $request, [
+                'session_id' => $sessionId,
+                'similarity_score' => $identified['similarity_score'],
+                'distance' => $identified['distance'] ?? null,
+                'second_best_score' => $identified['second_best_score'] ?? null,
+                'margin_score' => $identified['margin_score'] ?? null,
+                'liveness_score' => $spoofConfidence,
+            ]);
             $user = $this->refreshUserForScheduleCheck($identifiedUser);
         }
         $type = $validated['type'];
@@ -1455,6 +1570,15 @@ class AttendanceController extends Controller
         } catch (ValidationException $e) {
             $reason = $e->getMessage() && str_contains($e->getMessage(), 'schedule') ? 'schedule_validation_failed' : 'leave_restriction';
             $this->recordFailedAttempt($user->id, $request, false, $reason);
+            FaceRecognitionAuditService::record($request, [
+                'employee_id' => $claimedUser?->id,
+                'matched_employee_id' => $user->id,
+                'similarity_score' => $similarityScore,
+                'liveness_score' => $result['spoof_confidence'] ?? null,
+                'decision' => 'rejected',
+                'reason' => $reason,
+                'mode' => $claimedUser ? 'claimed' : 'kiosk',
+            ]);
             throw $e;
         }
         if ($user->hasCompletedAttendanceToday()) {
@@ -1487,6 +1611,22 @@ class AttendanceController extends Controller
         $suggestCorrectionAfterClockOut = $type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->hasTimedInToday();
 
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
+        FaceRecognitionAuditService::record($request, [
+            'employee_id' => $claimedUser?->id,
+            'matched_employee_id' => $user->id,
+            'similarity_score' => $similarityScore,
+            'second_best_score' => isset($identified) && is_array($identified) ? ($identified['second_best_score'] ?? null) : null,
+            'margin_score' => isset($identified) && is_array($identified) ? ($identified['margin_score'] ?? null) : null,
+            'liveness_score' => $result['spoof_confidence'] ?? null,
+            'decision' => 'accepted',
+            'reason' => $type,
+            'mode' => $claimedUser ? 'claimed' : 'kiosk',
+            'metadata' => [
+                'attendance_log_id' => $log->id,
+                'company_id' => $companyId,
+                'used_liveness_session' => ! empty($sessionId),
+            ],
+        ]);
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
             $this->overtimeService->syncClockOutToFiledOvertime($user, $log);

@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Casts\EncryptedArray;
+use App\Services\FaceEmbeddingCacheService;
 use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
 use App\Support\EmployeeProfileCache;
@@ -343,10 +344,31 @@ class User extends Authenticatable
     {
         static::saved(function (User $user): void {
             EmployeeProfileCache::forgetForUser((int) $user->id);
+
+            if ($user->wasChanged([
+                'is_active',
+                'employment_status',
+                'company_id',
+                'face_descriptor',
+                'face_embedding',
+                'face_descriptor_samples',
+                'face_status',
+                'face_registered_at',
+            ])) {
+                $oldCompanyId = $user->getOriginal('company_id');
+                FaceEmbeddingCacheService::invalidateFaceCache(
+                    (int) $user->id,
+                    $oldCompanyId !== null ? (int) $oldCompanyId : ($user->company_id ? (int) $user->company_id : null)
+                );
+                if ($oldCompanyId !== null && (int) $oldCompanyId !== (int) $user->company_id) {
+                    FaceEmbeddingCacheService::forgetCompanyIndex($user->company_id ? (int) $user->company_id : null);
+                }
+            }
         });
 
         static::deleted(function (User $user): void {
             EmployeeProfileCache::forgetForUser((int) $user->id);
+            FaceEmbeddingCacheService::invalidateFaceCache((int) $user->id, $user->company_id ? (int) $user->company_id : null);
         });
     }
 
@@ -611,6 +633,7 @@ class User extends Authenticatable
 
             FaceVerificationService::bumpDuplicateEmbeddingIndexVersion();
         });
+        FaceEmbeddingCacheService::invalidateFaceCache((int) $this->id, $this->company_id ? (int) $this->company_id : null);
     }
 
     /**

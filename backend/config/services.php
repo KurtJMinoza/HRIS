@@ -50,12 +50,16 @@ return [
         'base_url' => env('PHILSMS_BASE_URL', 'https://dashboard.philsms.com/api/v3'),
     ],
 
-    // Face verification (Python FastAPI: DeepFace embedding only; liveness via Amazon Rekognition)
+    // Face verification (Python FastAPI: InsightFace ArcFace embeddings; liveness via Amazon Rekognition)
     'face_verification' => [
         'url' => env('FACE_VERIFICATION_URL', 'http://127.0.0.1:5000'),
-        // Performance defaults prioritize faster embedding generation for registration/login.
-        'model_name' => env('FACE_VERIFICATION_MODEL_NAME', 'Facenet'),
-        'detector_backend' => env('FACE_VERIFICATION_DETECTOR_BACKEND', 'mediapipe'),
+        'urls' => array_values(array_unique(array_filter(array_map(
+            static fn ($url) => rtrim(trim((string) $url), '/'),
+            explode(',', (string) env('FACE_VERIFICATION_URLS', env('FACE_VERIFICATION_URL', 'http://127.0.0.1:5000')))
+        )))),
+        // Legacy option keys retained for compatibility; the current ONNX service uses ArcFace + SCRFD.
+        'model_name' => env('FACE_VERIFICATION_MODEL_NAME', 'ArcFace'),
+        'detector_backend' => env('FACE_VERIFICATION_DETECTOR_BACKEND', 'scrfd'),
         'enforce_detection' => filter_var(env('FACE_VERIFICATION_ENFORCE_DETECTION', true), FILTER_VALIDATE_BOOL),
         'align' => filter_var(env('FACE_VERIFICATION_ALIGN', true), FILTER_VALIDATE_BOOL),
         'input_width' => (int) env('FACE_VERIFICATION_INPUT_WIDTH', 640),

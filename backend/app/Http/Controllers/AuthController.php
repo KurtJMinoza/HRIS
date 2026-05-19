@@ -9,7 +9,9 @@ use App\Models\FailedFaceAttempt;
 use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\EmployeeStatusService;
+use App\Services\FaceAttemptThrottleService;
 use App\Services\FaceAuthService;
+use App\Services\FaceRecognitionAuditService;
 use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
@@ -323,12 +325,35 @@ class AuthController extends Controller
             ], 422);
         }
 
+        $throttle = FaceAttemptThrottleService::hit($request);
+        if ($throttle !== null) {
+            $this->recordFaceLoginFailure($request, null, false, 'rate_limited');
+            FaceRecognitionAuditService::record($request, [
+                'decision' => 'rejected',
+                'reason' => 'rate_limited',
+                'mode' => 'face_login',
+                'metadata' => ['retry_after' => $throttle['retry_after']],
+            ]);
+
+            return response()->json([
+                'message' => 'Too many face attempts. Please wait a moment and try again.',
+                'errors' => ['face' => ['Too many face attempts. Please wait a moment and try again.']],
+                'error_code' => 'rate_limited',
+                'retry_after' => $throttle['retry_after'],
+            ], 429);
+        }
+
         $result = $sessionId
             ? FaceAuthService::verifyFaceWithLivenessSession($sessionId)
             : FaceAuthService::verifyFace($imageBase64);
 
         if ($result === null) {
             $this->recordFaceLoginFailure($request, null, false, 'service_unavailable');
+            FaceRecognitionAuditService::record($request, [
+                'decision' => 'rejected',
+                'reason' => 'service_unavailable',
+                'mode' => 'face_login',
+            ]);
 
             return response()->json([
                 'message' => 'Face verification service unavailable. Please try again or use credentials.',
@@ -339,6 +364,12 @@ class AuthController extends Controller
 
         if (! $result['is_live']) {
             $this->recordFaceLoginFailure($request, null, true, 'spoof_detected');
+            FaceRecognitionAuditService::record($request, [
+                'liveness_score' => $result['spoof_confidence'] ?? null,
+                'decision' => 'rejected',
+                'reason' => 'spoof_detected',
+                'mode' => 'face_login',
+            ]);
 
             return response()->json([
                 'message' => 'Spoof attempt detected. Please perform a live face scan.',
@@ -356,6 +387,12 @@ class AuthController extends Controller
             $spoofConfidence = isset($result['spoof_confidence']) ? (float) $result['spoof_confidence'] : null;
             if ($spoofConfidence === null || $spoofConfidence < $minLiveness) {
                 $this->recordFaceLoginFailure($request, null, true, 'liveness_failed');
+                FaceRecognitionAuditService::record($request, [
+                    'liveness_score' => $spoofConfidence,
+                    'decision' => 'rejected',
+                    'reason' => 'liveness_failed',
+                    'mode' => 'face_login',
+                ]);
 
                 return response()->json([
                     'message' => 'Liveness confidence too low. Please complete the face liveness check again.',
@@ -368,6 +405,12 @@ class AuthController extends Controller
         if (empty($result['descriptor']) || count($result['descriptor']) !== FaceVerificationService::EMBEDDING_DIM) {
             $this->recordFaceLoginFailure($request, null, false, 'no_face_detected');
             $msg = $result['message'] ?: 'No face detected. Position your face in the frame.';
+            FaceRecognitionAuditService::record($request, [
+                'liveness_score' => $result['spoof_confidence'] ?? null,
+                'decision' => 'rejected',
+                'reason' => 'no_face_detected',
+                'mode' => 'face_login',
+            ]);
 
             return response()->json([
                 'message' => $msg,
@@ -380,6 +423,12 @@ class AuthController extends Controller
 
         if (! $identified) {
             $this->recordFaceLoginFailure($request, null, false, 'face_not_recognized');
+            FaceRecognitionAuditService::record($request, [
+                'liveness_score' => $result['spoof_confidence'] ?? null,
+                'decision' => 'rejected',
+                'reason' => 'face_not_recognized',
+                'mode' => 'face_login',
+            ]);
 
             return response()->json([
                 'message' => 'We could not match your face to an enrolled profile. Face the camera straight-on, use even lighting (no glare), then try again—or sign in with username/email and password.',
@@ -429,6 +478,16 @@ class AuthController extends Controller
             'authentication_method' => AttendanceLog::AUTH_METHOD_FACE,
         ];
         $attendanceResult = app(AttendanceController::class)->recordClockInForUser($user, $request, $faceContext);
+        FaceRecognitionAuditService::record($request, [
+            'matched_employee_id' => $user->id,
+            'similarity_score' => $identified['similarity_score'],
+            'second_best_score' => $identified['second_best_score'] ?? null,
+            'margin_score' => $identified['margin_score'] ?? null,
+            'liveness_score' => $livenessScore,
+            'decision' => 'accepted',
+            'reason' => 'face_login_clock_in',
+            'mode' => 'face_login',
+        ]);
 
         $payload = [
             'user' => $this->userResponse($user),
@@ -460,6 +519,7 @@ class AuthController extends Controller
             'is_spoof' => $isSpoof,
             'failure_reason' => $failureReason,
         ]);
+        FaceAttemptThrottleService::recordFailure($request, $userId);
     }
 
     private function clearSessionAuthState(Request $request): void

@@ -261,7 +261,7 @@ class ProfileController extends Controller
             $request->ip(),
             $request->userAgent(),
             'self_service',
-        )->onQueue('face-registration');
+        )->onConnection('redis')->onQueue('face-registration');
 
         return $this->faceRegistrationHttpResponse($request, $trackId, $user->id, true);
     }

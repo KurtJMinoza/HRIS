@@ -21,6 +21,7 @@ use App\Models\UserPhoneChangeLog;
 use App\Models\WorkingSchedule;
 use App\Services\DataScopeService;
 use App\Services\ESignatureService;
+use App\Services\FaceEmbeddingCacheService;
 use App\Services\FaceRegistrationStatusService;
 use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
@@ -1632,6 +1633,13 @@ class EmployeeController extends Controller
             $employee->tokens()->delete();
         }
         $employee->refresh();
+        if ($employee->hasRegisteredFace()) {
+            if ($employee->isOperationallyActive()) {
+                FaceEmbeddingCacheService::refreshAfterFaceChange((int) $employee->id, $employee->company_id ? (int) $employee->company_id : null);
+            } else {
+                FaceEmbeddingCacheService::invalidateFaceCache((int) $employee->id, $employee->company_id ? (int) $employee->company_id : null);
+            }
+        }
 
         UserAdminActivityLog::query()->create([
             'subject_user_id' => $employee->id,
@@ -1704,7 +1712,7 @@ class EmployeeController extends Controller
             $request->ip(),
             $request->userAgent(),
             'admin',
-        )->onQueue('face-registration');
+        )->onConnection('redis')->onQueue('face-registration');
 
         return $this->adminFaceRegistrationHttpResponse($request, $trackId, $employee->id, true);
     }
@@ -1869,6 +1877,8 @@ class EmployeeController extends Controller
                 return response()->json(['message' => 'Employee not found.'], 404);
             }
             if (($outcome['status'] ?? '') === 'duplicate') {
+                FaceEmbeddingCacheService::invalidateFaceCache((int) $employee->id, $employee->company_id ? (int) $employee->company_id : null);
+
                 return response()->json([
                     'message' => FaceVerificationService::duplicateRegistrationUserMessage(),
                     'errors' => ['face' => [FaceVerificationService::duplicateRegistrationUserMessage()]],
@@ -1877,6 +1887,7 @@ class EmployeeController extends Controller
             }
 
             FaceVerificationService::bumpDuplicateEmbeddingIndexVersion();
+            FaceEmbeddingCacheService::refreshAfterFaceChange((int) $employee->id, $employee->company_id ? (int) $employee->company_id : null);
 
             return response()->json([
                 'message' => 'Face registered.',

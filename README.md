@@ -1,6 +1,6 @@
 # HRIS — Human Resource Information System
 
-Full-stack **HRIS** for workforce management, attendance (including face-verified DTR), payroll, and employee self-service. The app is a **React (Vite)** SPA talking to a **Laravel 12** REST API, with optional **Python (FastAPI + DeepFace)** for face embeddings and integrations with **Amazon Rekognition** / **Amplify Face Liveness**.
+Full-stack **HRIS** for workforce management, attendance (including face-verified DTR), payroll, and employee self-service. The app is a **React (Vite)** SPA talking to a **Laravel 12** REST API, with optional **Python (FastAPI + InsightFace/ONNX Runtime)** for face embeddings and integrations with **Amazon Rekognition** / **Amplify Face Liveness**.
 
 **Repository:** [github.com/KurtJMinoza/HRIS](https://github.com/KurtJMinoza/HRIS)
 
@@ -14,7 +14,7 @@ Full-stack **HRIS** for workforce management, attendance (including face-verifie
 |--------|------------|--------|
 | **PHP** | **8.2+** (`^8.2` in Composer) | Required extensions: `pdo_mysql`, `mbstring`, `openssl`, `curl`, `json`, `tokenizer`, `xml`, `ctype`, `fileinfo`, `intl` (as needed) |
 | **Node.js** | **20+ LTS** recommended | Used for Vite build and frontend tooling |
-| **Python** | **3.10+** recommended | For `face_service/` (FastAPI + DeepFace) |
+| **Python** | **3.10+** recommended | For `face_service/` (FastAPI + InsightFace/ONNX Runtime) |
 
 ### Backend (`backend/`)
 
@@ -69,8 +69,8 @@ Full-stack **HRIS** for workforce management, attendance (including face-verifie
 | Technology | Role |
 |------------|------|
 | **FastAPI** (`>=0.104`) | HTTP API (`uvicorn`) |
-| **DeepFace** (`>=0.0.79`) | **Facenet**-style **128D embeddings** (ArcFace model configurable from Laravel) |
-| **OpenCV** (`>=4.8`), **NumPy** | Image preprocessing |
+| **ONNX Runtime** | Runs the SCRFD detector and ArcFace recognizer |
+| **OpenCV** (`>=4.8`), **NumPy** | Image preprocessing and face alignment |
 | **Endpoints** | `/embed`, `/verify` (legacy), `/health` — used after Rekognition liveness supplies a reference image |
 
 Liveness and anti-spoofing are handled by **Amazon Rekognition Face Liveness** (Amplify **FaceLivenessDetector**); this service focuses on **embedding extraction** and optional legacy verify paths.
@@ -92,7 +92,7 @@ Liveness and anti-spoofing are handled by **Amazon Rekognition Face Liveness** (
 HR/
 ├── backend/           # Laravel 12 API (Composer, artisan)
 ├── frontend/          # React 19 + Vite 7 SPA (npm)
-├── face_service/      # Python FastAPI + DeepFace embedding service
+├── face_service/      # Python FastAPI + InsightFace embedding service
 ├── README.md          # This file
 └── (root)             # Optional workspace scripts if present
 ```
@@ -134,19 +134,20 @@ php artisan serve
 
 API base is typically `http://localhost:8000/api` (see `routes/api.php`).
 
-### 3. Queue worker (payroll, face registration, mail)
+### 3. Redis workers (payroll, face registration, mail)
 
 ```bash
 cd backend
-php artisan queue:work database --queue=face-registration,default --timeout=90
+php artisan queue:work redis --queue=face-registration --timeout=180 --sleep=1 --tries=2
 ```
 
-For concurrency bursts (e.g. 20+ employees clocking in with face recognition), do **not** open 20 terminals manually.
-Run multiple worker processes under a supervisor (Linux) or process manager:
+Face registration is queued because embedding generation, duplicate checks, and
+cache refreshes can be heavy. Run multiple workers under Supervisor, Horizon, or
+the included start scripts:
 
 ```bash
 # Linux (Supervisor): use backend/deployment/supervisor-face-registration.conf.example
-# Increase numprocs (e.g. 8, 20, 50) and reload supervisor.
+# Increase numprocs for laravel-worker-face-registration and reload supervisor.
 sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl restart laravel-worker-face-registration:*
@@ -155,10 +156,12 @@ sudo supervisorctl restart laravel-worker-face-registration:*
 Windows local quick scale example (PowerShell):
 
 ```powershell
-1..8 | ForEach-Object { Start-Process php -ArgumentList "artisan queue:work database --queue=face-registration,default --timeout=150 --sleep=1 --tries=3" -WorkingDirectory ".\backend" }
+1..4 | ForEach-Object { Start-Process php -ArgumentList "artisan queue:work redis --queue=face-registration --timeout=180 --sleep=1 --tries=2" -WorkingDirectory ".\backend" }
 ```
 
-Rule of thumb: you do **not** need one worker per employee. Start with 6-10 workers, monitor queue delay, then scale up if needed.
+Real-time clock-in/out is not queued by default. Scale concurrent face
+recognition by running multiple warm Python face-service instances and setting
+`FACE_VERIFICATION_URLS`.
 
 ### 4. Frontend
 
@@ -179,7 +182,26 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 5000
 ```
 
-Point Laravel `FACE_VERIFICATION_URL` (or equivalent in `config/services.php`) at this service.
+Point Laravel `FACE_VERIFICATION_URL` at this service for single-instance local
+development.
+
+For concurrent face recognition, keep several model processes warm:
+
+```bash
+uvicorn main:app --host 127.0.0.1 --port 5000
+uvicorn main:app --host 127.0.0.1 --port 5001
+uvicorn main:app --host 127.0.0.1 --port 5002
+uvicorn main:app --host 127.0.0.1 --port 5003
+```
+
+Then configure Laravel:
+
+```env
+FACE_VERIFICATION_URLS=http://127.0.0.1:5000,http://127.0.0.1:5001,http://127.0.0.1:5002,http://127.0.0.1:5003
+```
+
+`backend/start.ps1` and `backend/start.sh` can launch those local services when
+`START_FACE_SERVICE=true` and `FACE_SERVICE_PORTS=5000,5001,5002,5003` are set.
 
 ---
 

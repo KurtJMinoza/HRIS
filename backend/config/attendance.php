@@ -170,7 +170,7 @@ return [
     | Backend validates and returns PASS/FAIL; React never calls Rekognition directly.
     |--------------------------------------------------------------------------
     */
-    'face_min_liveness_score' => (float) env('ATTENDANCE_FACE_MIN_LIVENESS_SCORE', 0.52),
+    'face_min_liveness_score' => (float) env('FACE_LIVENESS_MIN_SCORE', env('ATTENDANCE_FACE_MIN_LIVENESS_SCORE', 0.52)),
 
     /*
     |--------------------------------------------------------------------------
@@ -179,7 +179,7 @@ return [
     | Additional guard for attendance scanFace endpoint. Keeps Amplify/Rekognition
     | mandatory and requires a stronger confidence floor before face matching.
     */
-    'face_clock_min_liveness_score' => (float) env('ATTENDANCE_FACE_CLOCK_MIN_LIVENESS_SCORE', 0.60),
+    'face_clock_min_liveness_score' => (float) env('FACE_LIVENESS_MIN_SCORE', env('ATTENDANCE_FACE_CLOCK_MIN_LIVENESS_SCORE', 0.60)),
 
     /*
     |--------------------------------------------------------------------------
@@ -188,7 +188,7 @@ return [
     | Applied only when enrolling a new face template. Higher = fewer spoofs, more retakes.
     |--------------------------------------------------------------------------
     */
-    'face_registration_min_liveness_score' => (float) env('ATTENDANCE_FACE_REGISTRATION_MIN_LIVENESS_SCORE', 0.62),
+    'face_registration_min_liveness_score' => (float) env('FACE_LIVENESS_MIN_SCORE', env('ATTENDANCE_FACE_REGISTRATION_MIN_LIVENESS_SCORE', 0.62)),
 
     /*
     |--------------------------------------------------------------------------
@@ -211,7 +211,7 @@ return [
     | Used only when cosine threshold is disabled (face_cosine_distance_threshold=null).
     |--------------------------------------------------------------------------
     */
-    'face_match_threshold' => (float) env('ATTENDANCE_FACE_MATCH_THRESHOLD', 1.10),
+    'face_match_threshold' => (float) env('FACE_MATCH_THRESHOLD', env('ATTENDANCE_FACE_MATCH_THRESHOLD', 1.10)),
 
     /*
     |--------------------------------------------------------------------------
@@ -233,7 +233,21 @@ return [
     | - a margin vs the second-best match (prevents "close call" misidentifications)
     */
     'face_min_similarity_score' => (float) env('ATTENDANCE_FACE_MIN_SIMILARITY_SCORE', 0.40),
-    'face_min_similarity_margin' => (float) env('ATTENDANCE_FACE_MIN_SIMILARITY_MARGIN', 0.08),
+    'face_min_similarity_margin' => (float) env('FACE_AMBIGUOUS_MARGIN', env('ATTENDANCE_FACE_MIN_SIMILARITY_MARGIN', 0.08)),
+    'face_quality_min_score' => (float) env('FACE_QUALITY_MIN_SCORE', env('ATTENDANCE_FACE_QUALITY_MIN_SCORE', 0.0)),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Redis face cache and throttling
+    |--------------------------------------------------------------------------
+    */
+    'face_embedding_cache_ttl_seconds' => (int) env('FACE_EMBEDDING_CACHE_TTL_SECONDS', 86400),
+    'face_liveness_session_ttl_seconds' => (int) env('FACE_LIVENESS_SESSION_TTL_SECONDS', 300),
+    'face_attempts_limit' => (int) env('FACE_ATTEMPTS_PER_MINUTE', 5),
+    'face_attempts_window_seconds' => (int) env('FACE_ATTEMPTS_WINDOW_SECONDS', 60),
+    'face_attempts_cooldown_seconds' => (int) env('FACE_ATTEMPTS_COOLDOWN_SECONDS', 60),
+    'face_failed_attempts_cooldown_threshold' => (int) env('FACE_FAILED_ATTEMPTS_COOLDOWN_THRESHOLD', 5),
+    'face_verified_ttl_seconds' => (int) env('FACE_VERIFIED_TTL_SECONDS', 20),
 
     /*
     |--------------------------------------------------------------------------
