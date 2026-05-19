@@ -20,6 +20,9 @@ class Payslip extends Model
 
     public const STATUS_VIEWED = 'viewed';
 
+    /** Archived after a finalized payroll batch was voided; not shown in active lists. */
+    public const STATUS_VOIDED = 'voided';
+
     /**
      * Statuses that lock the pay window and are treated as published (finalize / delivery pipeline).
      *
@@ -45,6 +48,7 @@ class Payslip extends Model
         'department_id',
         'pay_period_start',
         'pay_period_end',
+        'period_slot',
         'pay_date',
         'cycle_label',
         'gross_pay',
@@ -61,6 +65,7 @@ class Payslip extends Model
         'status',
         'finalized_at',
         'finalized_by_user_id',
+        'voided_at',
         'emailed_at',
         'delivered_at',
         'is_sent',
@@ -90,6 +95,8 @@ class Payslip extends Model
             'sent_at' => 'datetime',
             'pdf_password_protected' => 'boolean',
             'finalized_at' => 'datetime',
+            'voided_at' => 'datetime',
+            'period_slot' => 'integer',
         ];
     }
 

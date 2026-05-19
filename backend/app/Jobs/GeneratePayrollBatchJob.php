@@ -86,6 +86,15 @@ class GeneratePayrollBatchJob implements ShouldQueue
             return;
         }
 
+        if ((string) $run->status === PayrollBatchRun::STATUS_VOIDED) {
+            Log::info('GeneratePayrollBatchJob skipped: batch voided', [
+                'batch_run_id' => $this->batchRunId,
+                'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
+            ]);
+
+            return;
+        }
+
         $expectedTotal = max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0));
         PayrollBatchRun::query()->whereKey($run->id)->update($this->filterBatchRunPayload([
             'status' => PayrollBatchRun::STATUS_PROCESSING,

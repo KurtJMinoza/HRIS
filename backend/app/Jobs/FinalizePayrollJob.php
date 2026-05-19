@@ -86,6 +86,15 @@ class FinalizePayrollJob implements ShouldQueue
             return;
         }
 
+        if ($run->status === PayrollBatchRun::STATUS_VOIDED) {
+            Log::info('FinalizePayrollJob skipped: batch voided', [
+                'batch_run_id' => $this->batchRunId,
+                'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
+            ]);
+
+            return;
+        }
+
         $actor = $this->actorUserId ? User::query()->find($this->actorUserId) : null;
 
         if ($run->status === PayrollBatchRun::STATUS_FAILED) {

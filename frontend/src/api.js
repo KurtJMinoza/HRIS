@@ -1872,7 +1872,7 @@ export async function adminFinalizePayrollStatus(batchRunId) {
 }
 
 /**
- * Admin/HR: delete a finalized payroll batch and all generated payslips/PDFs for that batch scope.
+ * Admin/HR: void a finalized payroll batch (preserves snapshots; does not revert to draft).
  */
 export async function adminDeleteFinalizedPayrollBatch(batchRunId) {
   const res = await authenticatedFetch(`/admin/payroll/finalize/batch/${encodeURIComponent(String(batchRunId))}`, {

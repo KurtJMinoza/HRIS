@@ -140,6 +140,7 @@ class EmployeePayslipController extends Controller
                     ->orWhereNotNull('finalized_at');
             })
             ->where('status', '!=', Payslip::STATUS_DRAFT)
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
             ->orderByDesc('pay_date')
             ->orderByDesc('created_at')
             ->paginate($perPage);

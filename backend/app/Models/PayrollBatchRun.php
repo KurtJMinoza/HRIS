@@ -21,6 +21,9 @@ class PayrollBatchRun extends Model
 
     public const STATUS_FINALIZED = 'finalized';
 
+    /** Finalized batch voided/cancelled; snapshots preserved, not editable as draft. */
+    public const STATUS_VOIDED = 'voided';
+
     protected $fillable = [
         'batch_key',
         'company_id',
@@ -48,6 +51,9 @@ class PayrollBatchRun extends Model
         'completed_at',
         'finalized_by_user_id',
         'finalized_at',
+        'voided_at',
+        'voided_by_user_id',
+        'void_reason',
     ];
 
     protected function casts(): array
@@ -68,6 +74,7 @@ class PayrollBatchRun extends Model
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
             'finalized_at' => 'datetime',
+            'voided_at' => 'datetime',
         ];
     }
 

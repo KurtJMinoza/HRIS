@@ -1008,6 +1008,7 @@ class PayslipService
                     skipMutableCheck: true,
                 );
                 $row = array_merge($gen['unique'], $gen['attributes']);
+                $row['period_slot'] = 0;
                 $periodStartStr ??= (string) $gen['unique']['pay_period_start'];
                 $periodEndStr ??= (string) $gen['unique']['pay_period_end'];
                 if (isset($row['snapshot']) && is_array($row['snapshot'])) {
@@ -1076,6 +1077,8 @@ class PayslipService
                 ->whereIn('user_id', $orderedIds)
                 ->whereDate('pay_period_start', $fromStr)
                 ->whereDate('pay_period_end', $toStr)
+                ->where('period_slot', 0)
+                ->where('status', '!=', Payslip::STATUS_VOIDED)
                 ->orderBy('user_id')
                 ->pluck('id')
                 ->map(fn ($id) => (int) $id)
@@ -2313,7 +2316,9 @@ class PayslipService
 
         $q = Payslip::query()
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
-            ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
+            ->where('period_slot', 0);
 
         // Aggregate from persisted payslip scope fields, not current employee roster scope.
         // This keeps Recent Payslips totals correct after edits, transfers, or deactivation.
@@ -2352,12 +2357,14 @@ class PayslipService
             : $rows->pluck('company_id')->filter(fn ($id) => $id !== null)->map(fn ($id) => (int) $id)->first();
         $totalGrossPay = round((float) $rows->sum('gross_pay'), 2);
         $totalDeductions = round((float) $rows->sum('total_deductions'), 2);
+        $totalNetPay = round((float) $rows->sum('net_pay'), 2);
+        if ($totalNetPay <= 0.0 && $totalGrossPay > 0.0) {
+            $totalNetPay = round((float) ($run->total_net ?? max(0.0, $totalGrossPay - $totalDeductions)), 2);
+        }
 
         return [
             'payslip_count' => $rows->count(),
-            // Derive net from gross-deductions so Recent Payslips reflects latest edits immediately
-            // even when persisted net_pay is temporarily stale.
-            'total_net_pay' => round($totalGrossPay - $totalDeductions, 2),
+            'total_net_pay' => $totalNetPay,
             'total_gross_pay' => $totalGrossPay,
             'total_deductions' => $totalDeductions,
             'generated_at' => $rows->max('created_at'),
@@ -2527,6 +2534,9 @@ class PayslipService
         if ($status === PayrollBatchRun::STATUS_FINALIZED) {
             throw new \RuntimeException('Finalized payslips cannot be deleted.');
         }
+        if ($status === PayrollBatchRun::STATUS_VOIDED) {
+            throw new \RuntimeException('Voided payroll batches cannot be deleted.');
+        }
         if ($status === PayrollBatchRun::STATUS_PROCESSING) {
             throw new \RuntimeException('Cannot delete while payslip generation is in progress.');
         }
@@ -2546,7 +2556,8 @@ class PayslipService
             $base = Payslip::query()
                 ->whereIn('user_id', $userIds)
                 ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
-                ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+                ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
+                ->where('period_slot', 0);
             if ($run->company_id) {
                 $base->where('company_id', (int) $run->company_id);
             }

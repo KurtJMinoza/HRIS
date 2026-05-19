@@ -762,8 +762,8 @@ export default function AdminFinalizePayrollPage() {
       setSelectedPayslipIds(new Set())
       setRefreshToken(String(Date.now()))
       toastRef.current({
-        title: 'Finalized batch deleted',
-        description: 'All payslips and sent records were removed. Regenerate payroll to finalize again.',
+        title: 'Finalized batch voided',
+        description: 'The finalized payroll record was voided. Snapshot values were preserved and the batch was not converted back to draft.',
       })
     } catch (e) {
       toastRef.current({
@@ -1049,7 +1049,7 @@ export default function AdminFinalizePayrollPage() {
                     disabled={deletingBatch}
                   >
                     {deletingBatch ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                    Delete Finalized Batch
+                    Void Finalized Batch
                   </Button>
                 </div>
               ) : null}
@@ -1605,9 +1605,9 @@ export default function AdminFinalizePayrollPage() {
         >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle className={cn('text-xl font-bold', TEXT)}>Delete finalized batch?</DialogTitle>
+              <DialogTitle className={cn('text-xl font-bold', TEXT)}>Void finalized batch?</DialogTitle>
               <DialogDescription className="text-sm text-muted-foreground">
-                This will delete all payslips and sent records. You will need to regenerate the payroll.
+                You are deleting a finalized payroll batch. This will void the finalized payroll record but will not convert it back to draft. Snapshot values and audit history are preserved.
               </DialogDescription>
             </DialogHeader>
             <div className="flex justify-end gap-2 pt-2">
@@ -1616,7 +1616,7 @@ export default function AdminFinalizePayrollPage() {
               </Button>
               <Button type="button" variant="destructive" onClick={() => handleDeleteFinalizedBatch()} disabled={deletingBatch}>
                 {deletingBatch ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Delete Finalized Batch
+                Void Finalized Batch
               </Button>
             </div>
           </DialogContent>

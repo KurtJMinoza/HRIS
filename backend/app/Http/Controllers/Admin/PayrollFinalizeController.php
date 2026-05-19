@@ -276,6 +276,7 @@ class PayrollFinalizeController extends Controller
             PayrollBatchRun::STATUS_QUEUED => 'pending',
             PayrollBatchRun::STATUS_PROCESSING => 'processing',
             PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_FINALIZED => 'completed',
+            PayrollBatchRun::STATUS_VOIDED => 'voided',
             PayrollBatchRun::STATUS_FAILED => 'failed',
             default => 'pending',
         };
@@ -287,14 +288,22 @@ class PayrollFinalizeController extends Controller
         $actor = $request->user();
         abort_unless($actor instanceof User, 403);
 
+        $v = $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
         try {
-            $result = $this->finalizePayrollService->deleteFinalizedPayrollBatch($batchRunId, $actor);
+            $result = $this->finalizePayrollService->deleteFinalizedPayrollBatch(
+                $batchRunId,
+                $actor,
+                isset($v['reason']) ? (string) $v['reason'] : null
+            );
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
         return response()->json([
-            'message' => 'Finalized payroll batch deleted. Regenerate payroll to proceed.',
+            'message' => 'Finalized payroll batch voided. Snapshot values were preserved and the batch was not converted back to draft.',
             ...$result,
         ]);
     }

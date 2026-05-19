@@ -125,7 +125,9 @@ class GeneratePayslipsJob implements ShouldQueue
     {
         $query = Payslip::query()
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
-            ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
+            ->where('period_slot', 0);
 
         if ($run->company_id !== null) {
             $query->where('company_id', (int) $run->company_id);

@@ -111,6 +111,11 @@ class PayslipController extends Controller
             ->with(['company:id,name,logo'])
             ->orderByDesc('created_at');
 
+        $includeVoided = filter_var($request->query('include_voided', false), FILTER_VALIDATE_BOOL);
+        if (! $includeVoided) {
+            $q->where('status', '!=', PayrollBatchRun::STATUS_VOIDED);
+        }
+
         // Non-admin org heads: restrict to their own org scope.
         $actor = $request->user();
         if ($actor && ! $actor->isAdmin()) {
@@ -212,6 +217,9 @@ class PayslipController extends Controller
             } elseif ($batchStatus === PayrollBatchRun::STATUS_FAILED) {
                 $displayStatus = 'failed';
                 $displayLabel = 'Failed';
+            } elseif ($batchStatus === PayrollBatchRun::STATUS_VOIDED) {
+                $displayStatus = PayrollBatchRun::STATUS_VOIDED;
+                $displayLabel = 'Voided';
             } else {
                 $displayStatus = Payslip::STATUS_DRAFT;
                 $displayLabel = 'Draft';
