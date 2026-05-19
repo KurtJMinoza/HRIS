@@ -170,6 +170,7 @@ class EmployeeProfileController extends Controller
                 'first_name',
                 'middle_name',
                 'last_name',
+                'suffix',
                 'date_of_birth',
                 'gender',
                 'civil_status',
@@ -212,7 +213,7 @@ class EmployeeProfileController extends Controller
                 'departmentRelation:id,name,branch_id',
                 'departmentRelation.branch:id,name,company_id',
                 'departmentRelation.branch.company:id,name',
-                'supervisor:id,name',
+                'supervisor:id,name,first_name,middle_name,last_name,suffix',
                 'workingSchedule:id,name,time_in,time_out,rest_days',
                 'payCycle:id,name,code',
                 'compensationComponents:id,user_id,pay_component_id,name,type,value,is_active',
@@ -266,7 +267,7 @@ class EmployeeProfileController extends Controller
         $includePayCyclePreview = (bool) ($flags['include_pay_cycle_preview'] ?? false);
 
         $cacheDescriptor = [
-            'version' => 2,
+            'version' => 3,
             'lite' => $lite,
             'include_government_ids' => $includeGov,
             'include_emergency_contacts' => $includeEmergency,
@@ -288,7 +289,7 @@ class EmployeeProfileController extends Controller
                         'branch:id,name,company_id',
                         'departmentRelation:id,name,branch_id',
                         'workingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
-                        'supervisor:id,name',
+                        'supervisor:id,name,first_name,middle_name,last_name,suffix',
                     ]);
                 }
                 if ($includeGov) {
@@ -464,10 +465,14 @@ class EmployeeProfileController extends Controller
         return [
             'id' => $user->id,
             'employee_code' => $user->employee_code,
-            'name' => $user->name,
+            'name' => $user->display_name,
+            'display_name' => $user->display_name,
+            'formatted_name' => $user->formatted_name,
+            'full_name_last_first' => $user->full_name_last_first,
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,
             'last_name' => $user->last_name,
+            'suffix' => $user->suffix,
             'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
@@ -500,7 +505,7 @@ class EmployeeProfileController extends Controller
             'contract_start_date' => $user->contract_start_date?->toDateString(),
             'contract_end_date' => $user->contract_end_date?->toDateString(),
             'supervisor_id' => $user->supervisor_id,
-            'supervisor_name' => $user->supervisor?->name,
+            'supervisor_name' => $user->supervisor?->display_name,
             'pay_cycle_id' => $user->pay_cycle_id,
             'working_schedule_id' => $user->working_schedule_id,
             'pending_working_schedule_id' => $user->pending_working_schedule_id,
@@ -545,10 +550,14 @@ class EmployeeProfileController extends Controller
         return [
             'id' => $user->id,
             'employee_code' => $user->employee_code,
-            'name' => $user->name,
+            'name' => $user->display_name,
+            'display_name' => $user->display_name,
+            'formatted_name' => $user->formatted_name,
+            'full_name_last_first' => $user->full_name_last_first,
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,
             'last_name' => $user->last_name,
+            'suffix' => $user->suffix,
             'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
@@ -613,6 +622,7 @@ class EmployeeProfileController extends Controller
             'first_name',
             'middle_name',
             'last_name',
+            'suffix',
             'username',
             'email',
             'phone_number',
@@ -669,6 +679,7 @@ class EmployeeProfileController extends Controller
             'First Name',
             'Middle Name',
             'Last Name',
+            'Suffix',
             'Date of Birth',
             'Gender',
             'Marital Status',
@@ -798,10 +809,11 @@ class EmployeeProfileController extends Controller
 
         return [
             (string) ($user->employee_code ?? ''),
-            (string) ($user->name ?? ''),
+            (string) ($user->display_name ?? ''),
             (string) ($user->first_name ?? ''),
             (string) ($user->middle_name ?? ''),
             (string) ($user->last_name ?? ''),
+            (string) ($user->suffix ?? ''),
             $this->csvDate($user->date_of_birth),
             (string) ($user->gender ?? ''),
             (string) ($user->civil_status ?? ''),
@@ -825,7 +837,7 @@ class EmployeeProfileController extends Controller
             (string) ($departmentName ?? ''),
             (string) ($branchName ?? ''),
             (string) ($companyName ?? ''),
-            (string) ($user->supervisor?->name ?? ''),
+            (string) ($user->supervisor?->display_name ?? ''),
             (string) ($user->workingSchedule?->name ?? ''),
             (string) ($user->workingSchedule?->time_in ?? ''),
             (string) ($user->workingSchedule?->time_out ?? ''),
@@ -944,6 +956,7 @@ class EmployeeProfileController extends Controller
                 'first_name' => ['sometimes', 'required', 'string', 'max:255'],
                 'middle_name' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'last_name' => ['sometimes', 'required', 'string', 'max:255'],
+                'suffix' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'username' => ['sometimes', 'required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username,'.$user->id],
                 'date_of_birth' => ['sometimes', 'nullable', 'date'],
                 'gender' => ['sometimes', 'nullable', 'string', 'max:50'],
@@ -962,6 +975,10 @@ class EmployeeProfileController extends Controller
                 $raw = $validated['middle_name'];
                 $user->middle_name = is_string($raw) && trim($raw) !== '' ? trim($raw) : null;
             }
+            if (array_key_exists('suffix', $validated)) {
+                $raw = $validated['suffix'];
+                $user->suffix = is_string($raw) && trim($raw) !== '' ? trim($raw) : null;
+            }
             if (array_key_exists('username', $validated)) {
                 $raw = $validated['username'];
                 $user->username = is_string($raw) && trim($raw) !== '' ? trim($raw) : null;
@@ -975,14 +992,14 @@ class EmployeeProfileController extends Controller
                 $user->home_address = is_string($raw) && trim($raw) !== '' ? trim($raw) : null;
             }
 
-            if (array_key_exists('first_name', $validated) || array_key_exists('middle_name', $validated) || array_key_exists('last_name', $validated)) {
-                $parts = [
-                    trim((string) ($user->first_name ?? '')),
-                    is_string($user->middle_name) ? trim($user->middle_name) : '',
-                    trim((string) ($user->last_name ?? '')),
-                ];
-                $parts = array_values(array_filter($parts, fn ($p) => $p !== ''));
-                $user->name = trim(implode(' ', $parts));
+            if (array_key_exists('first_name', $validated) || array_key_exists('middle_name', $validated) || array_key_exists('last_name', $validated) || array_key_exists('suffix', $validated)) {
+                $user->name = User::formatEmployeeDisplayName(
+                    $user->first_name,
+                    $user->middle_name,
+                    $user->last_name,
+                    $user->suffix,
+                    $user->getRawOriginal('name'),
+                );
             }
 
             $user->save();

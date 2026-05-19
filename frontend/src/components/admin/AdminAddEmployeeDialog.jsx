@@ -86,6 +86,7 @@ const INITIAL_ADD_FORM = {
   first_name: '',
   middle_name: '',
   last_name: '',
+  suffix: '',
   preferred_name: '',
   date_of_birth: '',
   gender: '',
@@ -334,6 +335,7 @@ export function AdminAddEmployeeDialog({
         first_name: addForm.first_name.trim(),
         middle_name: addForm.middle_name.trim() || undefined,
         last_name: addForm.last_name.trim(),
+        suffix: addForm.suffix.trim() || undefined,
         date_of_birth: addForm.date_of_birth?.trim() || undefined,
         gender: addForm.gender?.trim() || undefined,
         civil_status: addForm.civil_status?.trim() || undefined,
@@ -533,6 +535,13 @@ export function AdminAddEmployeeDialog({
                         onChange={(e) => setAddForm((f) => ({ ...f, last_name: e.target.value }))}
                         placeholder="e.g. Scott"
                         required
+                      />
+                    </AddFormField>
+                    <AddFormField id="add-suffix" label="Suffix" optional icon={UserRound}>
+                      <Input
+                        value={addForm.suffix}
+                        onChange={(e) => setAddForm((f) => ({ ...f, suffix: e.target.value }))}
+                        placeholder="e.g. Jr."
                       />
                     </AddFormField>
                     <AddFormField

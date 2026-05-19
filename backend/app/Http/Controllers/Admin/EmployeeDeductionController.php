@@ -314,7 +314,7 @@ class EmployeeDeductionController extends Controller
 
         $row = EmployeeDeduction::query()->where('user_id', $userId)->findOrFail($id);
         $logs = $row->auditLogs()
-            ->with(['actor:id,name,email'])
+            ->with(['actor:id,name,first_name,middle_name,last_name,suffix,email'])
             ->limit(200)
             ->get();
 

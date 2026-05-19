@@ -38,7 +38,7 @@ class EmployeeStatusController extends Controller
         $monthsSinceHire = $this->statusService->getMonthsSinceHire($employee);
 
         $history = EmployeeStatusHistory::query()
-            ->with(['actor:id,name'])
+            ->with(['actor:id,name,first_name,middle_name,last_name,suffix'])
             ->where('user_id', $employee->id)
             ->orderByDesc('effective_date')
             ->orderByDesc('created_at')
@@ -50,7 +50,7 @@ class EmployeeStatusController extends Controller
                     'new_status' => $h->new_status,
                     'effective_date' => $h->effective_date->toDateString(),
                     'trigger_type' => $h->trigger_type,
-                    'actor_name' => $h->actor?->name,
+                    'actor_name' => $h->actor?->display_name,
                     'remarks' => $h->remarks,
                     'created_at' => $h->created_at->toIso8601String(),
                 ];
@@ -59,7 +59,8 @@ class EmployeeStatusController extends Controller
         return response()->json([
             'employee' => [
                 'id' => $employee->id,
-                'name' => $employee->name,
+                'name' => $employee->display_name,
+                'formatted_name' => $employee->formatted_name,
                 'employee_code' => $employee->employee_code,
                 'hire_date' => $employee->hire_date?->toDateString(),
                 'employment_status' => $employee->employment_status,
@@ -126,7 +127,7 @@ class EmployeeStatusController extends Controller
                 'new_status' => $history->new_status,
                 'effective_date' => $history->effective_date->toDateString(),
                 'trigger_type' => $history->trigger_type,
-                'actor_name' => $history->actor?->name,
+                'actor_name' => $history->actor?->display_name,
                 'remarks' => $history->remarks,
             ],
         ]);
@@ -230,7 +231,7 @@ class EmployeeStatusController extends Controller
             ->map(fn ($rows) => $rows->first());
 
         $recommendationsByUser = RegularizationRecommendation::query()
-            ->with(['recommendedBy:id,name'])
+            ->with(['recommendedBy:id,name,first_name,middle_name,last_name,suffix'])
             ->whereIn('user_id', $scopeIds)
             ->where('recommendation_type', RegularizationRecommendation::TYPE_PROBATION_TO_REGULAR)
             ->orderByDesc('recommended_at')
@@ -336,7 +337,8 @@ class EmployeeStatusController extends Controller
 
             return [
                 'id' => $employee->id,
-                'name' => $employee->name,
+                'name' => $employee->display_name,
+                'formatted_name' => $employee->formatted_name,
                 'profile_image_url' => $employee->profile_image_url,
                 'employee_code' => $employee->employee_code,
                 'position' => $employee->position,
@@ -437,7 +439,8 @@ class EmployeeStatusController extends Controller
 
             return [
                 'id' => $employee->id,
-                'name' => $employee->name,
+                'name' => $employee->display_name,
+                'formatted_name' => $employee->formatted_name,
                 'profile_image_url' => $employee->profile_image_url,
                 'employee_code' => $employee->employee_code,
                 'position' => $employee->position,

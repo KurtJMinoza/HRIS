@@ -91,7 +91,7 @@ class AttendanceController extends Controller
             'kiosk_correction' => [
                 'reason' => $reason,
                 'employee_id' => $user->id,
-                'employee_name' => $user->name,
+                'employee_name' => $user->display_name,
                 'employee_profile_image_url' => $user->profile_image_url,
                 'employee_profile_image' => $user->profile_image,
             ],
@@ -107,7 +107,7 @@ class AttendanceController extends Controller
             'suggested' => true,
             'reason' => 'clock_out_without_clock_in',
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
             'employee_profile_image_url' => $user->profile_image_url,
             'employee_profile_image' => $user->profile_image,
         ];
@@ -141,7 +141,7 @@ class AttendanceController extends Controller
     private function refreshUserForScheduleCheck(User $user): User
     {
         $fresh = User::query()
-            ->select(['id', 'name', 'username', 'email', 'phone_number', 'schedule', 'working_schedule_id', 'qr_token', 'is_active', 'role', 'profile_image'])
+            ->select(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'username', 'email', 'phone_number', 'schedule', 'working_schedule_id', 'qr_token', 'is_active', 'role', 'profile_image'])
             ->where('id', $user->id)
             ->active()
             ->first();
@@ -681,7 +681,7 @@ class AttendanceController extends Controller
         $payload = [
             'message' => $type === 'clock_in' ? 'Clocked in successfully.' : 'Clocked out successfully.',
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
             'employee_profile_image_url' => $user->profile_image_url,
             'employee_profile_image' => $user->profile_image,
             'attendance' => [
@@ -879,7 +879,7 @@ class AttendanceController extends Controller
         return response()->json([
             'message' => $type === 'clock_in' ? 'Clocked in successfully.' : 'Clocked out successfully.',
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
             'employee_profile_image_url' => $user->profile_image_url,
             'employee_profile_image' => $user->profile_image,
             'attendance' => [
@@ -1113,7 +1113,7 @@ class AttendanceController extends Controller
         $payload = [
             'message' => $type === 'clock_in' ? 'Clocked in successfully.' : 'Clocked out successfully.',
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
             'employee_profile_image_url' => $user->profile_image_url,
             'employee_profile_image' => $user->profile_image,
             'attendance' => [
@@ -1527,7 +1527,7 @@ class AttendanceController extends Controller
         $payload = [
             'message' => $type === AttendanceLog::TYPE_CLOCK_IN ? 'Clocked in successfully.' : 'Clocked out successfully.',
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
             'employee_profile_image_url' => $user->profile_image_url,
             /** Storage path fallback — SPA resolves via same logic as Employee Profile (`profile_image` + `profile_image_url`). */
             'employee_profile_image' => $user->profile_image,
@@ -2709,7 +2709,7 @@ class AttendanceController extends Controller
 
         $logEntries = AttendanceLog::query()
             ->with([
-                'user:id,name,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
+                'user:id,name,first_name,middle_name,last_name,suffix,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
                 'user.workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days',
                 'user.companyHeadships:id,name,logo,company_head_id',
                 'user.company:id,name,logo',
@@ -2735,7 +2735,7 @@ class AttendanceController extends Controller
                     'id' => $log->id,
                     'type' => $log->type,
                     'employee_id' => $user?->id,
-                    'employee_name' => $log->user?->name ?? '—',
+                    'employee_name' => $log->user?->display_name ?: '—',
                     'employee_profile_image_url' => $user?->profile_image_url,
                     'employee_profile_image' => $user?->profile_image,
                     'company' => ['name' => $company?->name, 'logo_url' => $companyLogoUrl],

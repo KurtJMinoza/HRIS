@@ -377,24 +377,22 @@ class PayslipBulkDownloadService
      */
     private function allocateZipEntryName(Payslip $payslip, User $employee, array &$zipNameCounts): string
     {
-        $payYmd = $payslip->pay_date
-            ? $payslip->pay_date->format('Y-m-d')
-            : ($payslip->pay_period_end?->format('Y-m-d') ?? now()->format('Y-m-d'));
+        $periodLabel = $this->payslipPeriodFilenameLabel($payslip);
 
         $last = trim((string) ($employee->last_name ?? ''));
         $first = trim((string) ($employee->first_name ?? ''));
 
         if ($last !== '' && $first !== '') {
-            $baseKey = $this->safeFilenameSegment($last).'_'.$this->safeFilenameSegment($first).'_'.$payYmd;
+            $baseKey = $this->safeFilenameSegment($last).'_'.$this->safeFilenameSegment($first).'_'.$periodLabel;
         } elseif ($last !== '') {
-            $baseKey = $this->safeFilenameSegment($last).'_'.$payYmd;
+            $baseKey = $this->safeFilenameSegment($last).'_'.$periodLabel;
         } elseif ($first !== '') {
-            $baseKey = $this->safeFilenameSegment($first).'_'.$payYmd;
+            $baseKey = $this->safeFilenameSegment($first).'_'.$periodLabel;
         } else {
             $code = trim((string) ($employee->employee_code ?? ''));
             $baseKey = $code !== ''
-                ? $this->safeFilenameSegment($code).'_'.$payYmd
-                : 'emp_'.$employee->id.'_'.$payYmd;
+                ? $this->safeFilenameSegment($code).'_'.$periodLabel
+                : 'emp_'.$employee->id.'_'.$periodLabel;
         }
 
         $zipNameCounts[$baseKey] = ($zipNameCounts[$baseKey] ?? 0) + 1;
@@ -403,6 +401,24 @@ class PayslipBulkDownloadService
         }
 
         return $baseKey.'_'.$payslip->id.'.pdf';
+    }
+
+    private function payslipPeriodFilenameLabel(Payslip $payslip): string
+    {
+        if ($payslip->pay_period_start && $payslip->pay_period_end) {
+            $start = $payslip->pay_period_start;
+            $end = $payslip->pay_period_end;
+
+            if ((int) $start->year === (int) $end->year) {
+                return $start->format('M').$start->format('j').'-'.$end->format('M').$end->format('j').'-'.$end->format('Y');
+            }
+
+            return $start->format('M').$start->format('j').'-'.$start->format('Y').'-'.$end->format('M').$end->format('j').'-'.$end->format('Y');
+        }
+
+        return $payslip->pay_date
+            ? $payslip->pay_date->format('Y-m-d')
+            : ($payslip->pay_period_end?->format('Y-m-d') ?? now()->format('Y-m-d'));
     }
 
     private function safeFilenameSegment(string $value): string

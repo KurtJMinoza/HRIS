@@ -251,7 +251,7 @@ class ScheduleController extends Controller
                     : self::formatCustomScheduleTime($emp->schedule);
                 $otherSchedule[] = [
                     'employee_id' => $emp->id,
-                    'employee_name' => $emp->name,
+                    'employee_name' => $emp->display_name,
                     'current_schedule' => $currentName,
                     'current_time' => $currentTime,
                 ];

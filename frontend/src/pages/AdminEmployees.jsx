@@ -41,7 +41,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Checkbox } from '@/components/ui/checkbox'
 import { AdminAddEmployeeDialog } from '@/components/admin/AdminAddEmployeeDialog'
 import { deriveAdminEmployeeListLeaveCredits } from '@/lib/leaveCreditsDisplay'
-import { compareEmployeesByLastName } from '@/lib/employeeSort'
+import { compareEmployeesByLastName, formatEmployeeName } from '@/lib/employeeSort'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -168,6 +168,7 @@ function normalizeEmployeeFlags(employee) {
     || String(employee.active_status || employee.employment_active_status || '').toLowerCase() === 'deactivated'
   return {
     ...employee,
+    name: formatEmployeeName(employee, employee.name || 'Employee'),
     has_face: hasFace,
     is_active: !deactivated && toBooleanLike(employee.is_active),
   }
@@ -290,6 +291,7 @@ export default function AdminEmployees() {
     first_name: '',
     middle_name: '',
     last_name: '',
+    suffix: '',
     username: '',
     email: '',
     phone_number: '',
@@ -534,6 +536,7 @@ export default function AdminEmployees() {
         first_name: personalInfoForm.first_name.trim(),
         middle_name: personalInfoForm.middle_name.trim() || null,
         last_name: personalInfoForm.last_name.trim(),
+        suffix: personalInfoForm.suffix.trim() || null,
         username: personalInfoForm.username.trim(),
         email: personalInfoForm.email.trim(),
         phone_number: phoneRaw || null,
@@ -558,6 +561,7 @@ export default function AdminEmployees() {
         first_name: emp?.first_name || '',
         middle_name: emp?.middle_name || '',
         last_name: emp?.last_name || '',
+        suffix: emp?.suffix || '',
         username: emp?.username || '',
         email: emp?.email || '',
         phone_number: emp?.phone_number || '',
@@ -3107,6 +3111,16 @@ export default function AdminEmployees() {
                           placeholder="Enter middle name"
                           value={personalInfoForm.middle_name}
                           onChange={(e) => setPersonalInfoForm((f) => ({ ...f, middle_name: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-medium text-muted-foreground">Suffix</label>
+                        <Input
+                          type="text"
+                          className="h-9 text-sm"
+                          placeholder="e.g. Jr."
+                          value={personalInfoForm.suffix}
+                          onChange={(e) => setPersonalInfoForm((f) => ({ ...f, suffix: e.target.value }))}
                         />
                       </div>
                       <div>

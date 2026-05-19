@@ -224,7 +224,7 @@ class GovernmentContributionController extends Controller
         $page = (int) ($validated['page'] ?? 1);
         $perPage = (int) ($validated['per_page'] ?? 20);
         $query = StatutoryRateHistory::query()
-            ->with(['changedBy:id,name,email'])
+            ->with(['changedBy:id,name,first_name,middle_name,last_name,suffix,email'])
             ->orderByDesc('created_at');
 
         if (! empty($validated['code'])) {
@@ -249,7 +249,8 @@ class GovernmentContributionController extends Controller
             'changed_fields' => $row->changed_fields,
             'changed_by' => $row->changedBy ? [
                 'id' => $row->changedBy->id,
-                'name' => $row->changedBy->name,
+                'name' => $row->changedBy->display_name,
+                'formatted_name' => $row->changedBy->formatted_name,
                 'email' => $row->changedBy->email,
             ] : null,
             'created_at' => optional($row->created_at)->toDateTimeString(),
@@ -506,7 +507,7 @@ class GovernmentContributionController extends Controller
         $info = EmployeeTaxInfo::query()->where('user_id', $employee->id)->first();
 
         return response()->json([
-            'employee' => ['id' => $employee->id, 'name' => $employee->name],
+            'employee' => ['id' => $employee->id, 'name' => $employee->display_name, 'formatted_name' => $employee->formatted_name],
             'tax_profile' => $info,
         ]);
     }
@@ -556,7 +557,7 @@ class GovernmentContributionController extends Controller
             ->get();
 
         return response()->json([
-            'employee' => ['id' => $employee->id, 'name' => $employee->name],
+            'employee' => ['id' => $employee->id, 'name' => $employee->display_name, 'formatted_name' => $employee->formatted_name],
             'contributions' => $rows,
         ]);
     }

@@ -685,6 +685,7 @@ export default function EmployeeProfile() {
     first_name: '',
     middle_name: '',
     last_name: '',
+    suffix: '',
     username: '',
     date_of_birth: '',
     gender: '',
@@ -827,6 +828,7 @@ export default function EmployeeProfile() {
       first_name: toStr(u?.first_name),
       middle_name: toStr(u?.middle_name),
       last_name: toStr(u?.last_name),
+      suffix: toStr(u?.suffix),
       username: toStr(u?.username),
       date_of_birth: toStr(u?.date_of_birth),
       gender: toStr(u?.gender),
@@ -872,6 +874,7 @@ export default function EmployeeProfile() {
       first_name: toStr(u?.first_name),
       middle_name: toStr(u?.middle_name),
       last_name: toStr(u?.last_name),
+      suffix: toStr(u?.suffix),
       username: toStr(u?.username),
       date_of_birth: toStr(u?.date_of_birth),
       gender: toStr(u?.gender),
@@ -1506,6 +1509,7 @@ export default function EmployeeProfile() {
       first_name: String(personal.first_name ?? '').trim(),
       middle_name: String(personal.middle_name ?? '').trim() || null,
       last_name: String(personal.last_name ?? '').trim(),
+      suffix: String(personal.suffix ?? '').trim() || null,
       username: String(personal.username ?? '').trim(),
       date_of_birth: personal.date_of_birth ? String(personal.date_of_birth).trim() : null,
       gender: String(personal.gender ?? '').trim() || null,
@@ -2759,6 +2763,20 @@ export default function EmployeeProfile() {
                   className={cn('h-11', personalErrors.last_name && 'border-destructive')}
                 />
                 {personalErrors.last_name && <p className="text-sm text-destructive">{personalErrors.last_name}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="suffix" className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <UserRound className="size-4 shrink-0 text-muted-foreground" />
+                  <span>Suffix</span>
+                  <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+                </Label>
+                <Input
+                  id="suffix"
+                  value={personal.suffix}
+                  onChange={(e) => updatePersonalField('suffix', e.target.value)}
+                  className="h-11"
+                  placeholder="e.g. Jr."
+                />
               </div>
               <div className="space-y-2 @sm:col-span-2">
                 <Label htmlFor="profile_username" className="flex items-center gap-2 text-sm font-medium text-foreground">

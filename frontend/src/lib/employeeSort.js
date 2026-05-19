@@ -18,6 +18,26 @@ export function compareEmployeesByLastName(a, b) {
   return (Number(a?.id) || 0) - (Number(b?.id) || 0)
 }
 
+export function formatEmployeeName(employee, fallback = '') {
+  const preferred =
+    employee?.formatted_name ||
+    employee?.display_name ||
+    employee?.full_name_last_first
+  if (preferred && String(preferred).trim() !== '') return String(preferred).trim()
+
+  const first = String(employee?.first_name ?? '').trim()
+  const middle = String(employee?.middle_name ?? '').trim()
+  const last = String(employee?.last_name ?? '').trim()
+  const suffix = String(employee?.suffix ?? '').trim()
+  const given = [first, middle].filter(Boolean).join(' ')
+  const base = last && given ? `${last}, ${given}` : last || given
+  const formatted = [base, suffix].filter(Boolean).join(' ').trim()
+  if (formatted) return formatted
+
+  const legacy = employee?.employee_name || employee?.name
+  return legacy && String(legacy).trim() !== '' ? String(legacy).trim() : fallback
+}
+
 /** For TanStack Table row objects (`rowA.original`, `rowB.original`) with optional `employee_sort_key`. */
 export function compareEmployeeRowsBySortKey(rowA, rowB) {
   const ra = rowA?.original

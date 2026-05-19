@@ -135,7 +135,7 @@ class AttendanceCorrectionApprovalService
         $rejected = $correction->rejected_at !== null;
         $finalOk = (bool) $correction->approved;
 
-        $submitterName = $correction->filedBy?->name ?? $employee->name;
+        $submitterName = $correction->filedBy?->display_name ?? $employee->display_name;
 
         $photoForSubmitted = $correction->filedBy ?? $employee;
 
@@ -180,7 +180,7 @@ class AttendanceCorrectionApprovalService
                 'status' => $interStatus,
                 'approver_role_label' => $roleLabel,
                 'submitter_name' => null,
-                'approver_name' => $firstApprover?->name,
+                'approver_name' => $firstApprover?->display_name,
                 'profile_image_url' => $firstApprover?->profile_image_url,
                 'acted_at' => $this->toIso8601String($correction->first_approved_at),
                 'remarks' => null,
@@ -209,7 +209,7 @@ class AttendanceCorrectionApprovalService
             'status' => $hrStatus,
             'approver_role_label' => 'Admin (HR)',
             'submitter_name' => null,
-            'approver_name' => $secondApprover?->name,
+            'approver_name' => $secondApprover?->display_name,
             'profile_image_url' => $secondApprover?->profile_image_url,
             'acted_at' => $this->toIso8601String($correction->second_approved_at),
             'remarks' => null,

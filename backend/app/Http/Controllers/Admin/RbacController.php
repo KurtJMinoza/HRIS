@@ -157,7 +157,7 @@ class RbacController extends Controller
         }
 
         $logs = PermissionAuditLog::query()
-            ->with(['actor:id,name,email', 'permission:id,slug'])
+            ->with(['actor:id,name,first_name,middle_name,last_name,suffix,email', 'permission:id,slug'])
             ->orderByDesc('id')
             ->limit(100)
             ->get();

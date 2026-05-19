@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { getMyAttendanceSummary, getMyLeaveSummary, getAllMyOvertimeRequestsInRange } from '@/api'
 import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
 import { cn } from '@/lib/utils'
+import { formatEmployeeName } from '@/lib/employeeSort'
 
 const DEFAULT_CALENDAR_VALUE = null
 
@@ -391,7 +392,7 @@ function LiveClock() {
 export default function EmployeeDashboard() {
   const navigate = useNavigate()
   const { user, refreshUser } = useAuth()
-  const firstName = user?.name?.trim().split(/\s+/)[0] ?? 'there'
+  const employeeDisplayName = formatEmployeeName(user, 'there')
 
   const [summary, setSummary] = useState(null)
   const [days, setDays] = useState([])
@@ -1086,7 +1087,7 @@ export default function EmployeeDashboard() {
         <div className="min-w-0 space-y-2">
           <div>
             <h2 className="text-2xl font-extrabold tracking-tight text-foreground @md:text-[1.7rem]">
-              Welcome back, {firstName} <span className="align-middle text-xl">{'\u{1F44B}'}</span>
+              Welcome back, {employeeDisplayName} <span className="align-middle text-xl">{'\u{1F44B}'}</span>
             </h2>
             {user?.position && (
               <p className="mt-1 text-xs font-extrabold uppercase tracking-wide text-orange-600">

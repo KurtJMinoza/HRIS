@@ -87,12 +87,12 @@ class LoanRequestService
                 'label' => 'Request submitted',
                 'status' => 'completed',
                 'approver_role_label' => null,
-                'submitter_name' => $filer->name,
+                'submitter_name' => $filer->display_name,
                 'approver_name' => null,
                 'profile_image_url' => $filer->profile_image_url,
                 'acted_at' => $loan->created_at?->toIso8601String(),
                 'remarks' => (int) $filer->id !== (int) $employee->id
-                    ? 'Borrower: '.$employee->name
+                    ? 'Borrower: '.$employee->display_name
                     : null,
             ],
             [
@@ -101,7 +101,7 @@ class LoanRequestService
                 'status' => $hrStatus,
                 'approver_role_label' => 'Admin (HR)',
                 'submitter_name' => null,
-                'approver_name' => $secondApprover?->name,
+                'approver_name' => $secondApprover?->display_name,
                 'profile_image_url' => $secondApprover?->profile_image_url,
                 'acted_at' => $loan->second_approved_at?->toIso8601String(),
                 'remarks' => null,

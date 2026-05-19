@@ -433,6 +433,7 @@ class DashboardController extends Controller
                 'users.first_name',
                 'users.middle_name',
                 'users.last_name',
+                'users.suffix',
                 'users.profile_image',
                 'users.department',
                 'users.department_id',
@@ -471,17 +472,14 @@ class DashboardController extends Controller
                 $daysUntilBirthday = (int) $today->diffInDays($nextBirthday, false);
                 $isToday = $daysUntilBirthday === 0;
                 $isTomorrow = $daysUntilBirthday === 1;
-                $fullName = trim((string) ($employee->name ?: collect([
-                    $employee->first_name,
-                    $employee->middle_name,
-                    $employee->last_name,
-                ])->filter(fn ($part) => is_string($part) && trim($part) !== '')->implode(' ')));
+                $fullName = trim((string) $employee->display_name);
 
                 $ageFields = $this->computeBirthdayAgeFields($birthDate, $nextBirthday, $today);
 
                 return [
                     'employee_id' => (int) $employee->id,
                     'full_name' => $fullName !== '' ? $fullName : 'Employee #'.$employee->id,
+                    'formatted_name' => $fullName !== '' ? $fullName : 'Employee #'.$employee->id,
                     'profile_image' => $employee->profile_image,
                     'profile_image_url' => $employee->profile_image_url,
                     'profile_picture_url' => $employee->profile_image_url,
@@ -623,7 +621,7 @@ class DashboardController extends Controller
         }
 
         $recommendationsByUser = RegularizationRecommendation::query()
-            ->with(['recommendedBy:id,name'])
+            ->with(['recommendedBy:id,name,first_name,middle_name,last_name,suffix'])
             ->whereIn('user_id', $employees->pluck('id')->all())
             ->where('recommendation_type', RegularizationRecommendation::TYPE_PROBATION_TO_REGULAR)
             ->orderByDesc('recommended_at')
@@ -724,7 +722,8 @@ class DashboardController extends Controller
 
             return [
                 'id' => $employee->id,
-                'name' => $employee->name,
+                'name' => $employee->display_name,
+                'formatted_name' => $employee->formatted_name,
                 'profile_image_url' => $employee->profile_image_url,
                 'employee_code' => $employee->employee_code,
                 'employment_type' => $employee->employment_type,
@@ -749,7 +748,7 @@ class DashboardController extends Controller
                 'recommendation' => $recommendation ? [
                     'id' => $recommendation->id,
                     'status' => $recommendation->status,
-                    'recommended_by_name' => $recommendation->recommendedBy?->name,
+                    'recommended_by_name' => $recommendation->recommendedBy?->display_name,
                     'recommended_at' => $recommendation->recommended_at?->toIso8601String(),
                 ] : null,
                 'required_actions' => $requiredActions,
@@ -855,7 +854,8 @@ class DashboardController extends Controller
 
             return [
                 'id' => $employee->id,
-                'name' => $employee->name,
+                'name' => $employee->display_name,
+                'formatted_name' => $employee->formatted_name,
                 'profile_image_url' => $employee->profile_image_url,
                 'contract_type' => $contractTypeLabel,
                 'department' => $departmentName,
@@ -1347,7 +1347,7 @@ class DashboardController extends Controller
         }
         $rows = $query
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'department', 'department_id', 'position', 'profile_image')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'department', 'department_id', 'position', 'profile_image')
                     ->with(['departmentRelation:id,name']);
             }])
             ->orderBy('start_date')
@@ -1373,7 +1373,7 @@ class DashboardController extends Controller
             $items[] = [
                 'leave_request_id' => $leave->id,
                 'user_id' => $user->id,
-                'employee_name' => $user->name ?? '—',
+                'employee_name' => $user->display_name ?: '—',
                 'employee_sort_key' => $user->employeeListingSortKey(),
                 'leave_type' => $leaveType,
                 'duration_label' => $durationLabel,
@@ -1418,7 +1418,7 @@ class DashboardController extends Controller
         }
         $leaveRequests = $leaveRequestsQuery
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'department', 'department_id', 'company_id', 'branch_id', 'profile_image')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'department', 'department_id', 'company_id', 'branch_id', 'profile_image')
                     ->with(['company:id,name', 'branch:id,name,company_id', 'branch.company:id,name', 'departmentRelation:id,name,branch_id', 'departmentRelation.branch:id,name']);
             }])
             ->orderBy('half_type')
@@ -1457,7 +1457,7 @@ class DashboardController extends Controller
 
             $rows[] = [
                 'user_id' => $user->id,
-                'employee_name' => $user->name ?? '—',
+                'employee_name' => $user->display_name ?: '—',
                 'employee_sort_key' => $user->employeeListingSortKey(),
                 'branch' => $branchName,
                 'time_in' => $timeIn ? $timeIn->format('H:i:s') : null,
@@ -1838,7 +1838,7 @@ class DashboardController extends Controller
 
         return [
             'id' => $user->id,
-            'employee_name' => $user->name ?? '-',
+            'employee_name' => $user->display_name ?: '-',
             'employee_sort_key' => $user->employeeListingSortKey(),
             'profile_image' => $user->profile_image_url,
             'department' => $user->department ?? '-',
@@ -1860,7 +1860,7 @@ class DashboardController extends Controller
         [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($today, $tz);
         $logsQuery = AttendanceLog::query()
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
                     ->with(['workingSchedule', 'companyHeadships:id,name,logo,company_head_id', 'company:id,name,logo', 'branch:id,company_id', 'branch.company:id,name,logo', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id', 'departmentRelation.branch.company:id,name,logo']);
             }]);
         $logsQuery = $this->attendanceLogEffectivePunchWhereBetween($logsQuery, $rangeStart, $rangeEnd);
@@ -1890,7 +1890,7 @@ class DashboardController extends Controller
                 $companyLogoUrl = $company?->logo ? $this->departmentLogoUrl($company->logo) : null;
                 $grouped[$userId] = [
                     'id' => $userId,
-                    'employee_name' => $user->name ?? '—',
+                    'employee_name' => $user->display_name ?: '—',
                     'employee_sort_key' => $user->employeeListingSortKey(),
                     'profile_image' => $profileImageUrl,
                     'department' => $user->department ?? '—',
@@ -1939,7 +1939,7 @@ class DashboardController extends Controller
         }
         $todayCorrections = $todayCorrectionsQuery
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'schedule', 'working_schedule_id', 'profile_image', 'department', 'department_id', 'company_id', 'branch_id')
                     ->with(['workingSchedule', 'companyHeadships:id,name,logo,company_head_id', 'company:id,name,logo', 'branch:id,company_id', 'branch.company:id,name,logo', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id', 'departmentRelation.branch.company:id,name,logo']);
             }])
             ->get();
@@ -1956,7 +1956,7 @@ class DashboardController extends Controller
                 $companyLogoUrl = $company?->logo ? $this->departmentLogoUrl($company->logo) : null;
                 $grouped[$userId] = [
                     'id' => $userId,
-                    'employee_name' => $user->name ?? '—',
+                    'employee_name' => $user->display_name ?: '—',
                     'employee_sort_key' => $user->employeeListingSortKey(),
                     'profile_image' => $user->profile_image_url,
                     'department' => $user->department ?? '—',

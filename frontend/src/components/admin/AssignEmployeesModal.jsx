@@ -18,6 +18,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { RoleBadge } from '@/components/RoleBadge'
 import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
+import { formatEmployeeName } from '@/lib/employeeSort'
 export function FilterTabs({ value, onChange, counts }) {
   const tabs = [
     { key: 'available', label: 'Available', count: counts.available },
@@ -60,6 +61,7 @@ export function FilterTabs({ value, onChange, counts }) {
 
 export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn }) {
   const { emp, status, checked, checkboxDisabled, isInactive, assignedElsewhere } = row
+  const employeeName = formatEmployeeName(emp, 'employee')
   return (
     <li
       className={cn(
@@ -80,7 +82,7 @@ export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn }) {
           }}
           disabled={checkboxDisabled}
           className="size-5 rounded border-border accent-orange-600 transition focus:ring-ring/40"
-          aria-label={`Select ${emp.name || 'employee'}`}
+          aria-label={`Select ${employeeName}`}
         />
       </div>
       <button
@@ -97,14 +99,14 @@ export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn }) {
         <Avatar className="size-12 border-2 border-background bg-brand/10 shadow-sm dark:border-border dark:shadow-none">
           <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" />
           <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">
-            {initialsFn(emp.name)}
+            {initialsFn(employeeName)}
           </AvatarFallback>
         </Avatar>
       </button>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className="truncate text-base font-extrabold tracking-tight text-foreground">
-            {emp.name}
+            {employeeName}
           </span>
           <RoleBadge management_role={emp.management_role} />
         </div>
@@ -287,6 +289,7 @@ export function SelectedEmptyState({ assignIdsLength, assignCounts, loading }) {
 }
 
 export function SelectedEmployeeCard({ emp, isAlreadyInDept, onOpenProfile, onRemove, initialsFn }) {
+  const employeeName = formatEmployeeName(emp, 'Employee')
   return (
     <li className="flex items-center gap-4 rounded-xl border border-border/80 bg-card p-4 shadow-sm transition duration-200 dark:bg-input/20">
       <button
@@ -296,11 +299,11 @@ export function SelectedEmployeeCard({ emp, isAlreadyInDept, onOpenProfile, onRe
       >
         <Avatar className="size-12 border-2 border-background bg-brand/10 shadow dark:border-border">
           <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" />
-          <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">{initialsFn(emp.name)}</AvatarFallback>
+          <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">{initialsFn(employeeName)}</AvatarFallback>
         </Avatar>
       </button>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-base font-extrabold text-foreground">{emp.name}</p>
+        <p className="truncate text-base font-extrabold text-foreground">{employeeName}</p>
         <p className="truncate text-xs text-muted-foreground">{emp.employee_code || emp.position || '—'}</p>
         <div className="mt-1.5">
           {isAlreadyInDept ? (

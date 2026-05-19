@@ -152,7 +152,8 @@ class RegularizationApprovalController extends Controller
             'recommendation_type' => $rec->recommendation_type ?? RegularizationRecommendation::TYPE_PROBATION_TO_REGULAR,
             'effective_date' => $rec->effective_date?->toDateString(),
             'expiration_date' => $rec->expiration_date?->toDateString(),
-            'employee_name' => $employee?->name,
+            'employee_name' => $employee?->display_name,
+            'employee_formatted_name' => $employee?->formatted_name,
             'employee_code' => $employee?->employee_code,
             'employee_profile_image' => $employee?->profile_image_url,
             'employee_hire_date' => $employee?->hire_date?->toDateString(),
@@ -162,7 +163,7 @@ class RegularizationApprovalController extends Controller
             'months_since_hire' => $monthsSinceHire ? round($monthsSinceHire, 1) : null,
             'milestones' => $milestones,
             'recommended_by_id' => $rec->recommended_by,
-            'recommended_by_name' => $rec->recommendedBy?->name,
+            'recommended_by_name' => $rec->recommendedBy?->display_name,
             'recommended_by_profile_image' => $rec->recommendedBy?->profile_image_url,
             'recommended_by_hr_role' => $rec->recommendedBy
                 ? $this->hrRoleResolver->resolveForApprovalSubject($rec->recommendedBy)->value
@@ -172,7 +173,7 @@ class RegularizationApprovalController extends Controller
                 : null,
             'recommendation_notes' => $rec->recommendation_notes,
             'status' => $rec->status,
-            'hr_reviewed_by_name' => $rec->hrReviewedBy?->name,
+            'hr_reviewed_by_name' => $rec->hrReviewedBy?->display_name,
             'hr_reviewed_by_profile_image' => $rec->hrReviewedBy?->profile_image_url,
             'hr_reviewed_by_hr_role' => $rec->hrReviewedBy
                 ? $this->hrRoleResolver->resolveForApprovalSubject($rec->hrReviewedBy)->value

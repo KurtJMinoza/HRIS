@@ -293,7 +293,8 @@ class FinalizePayrollService
                     $rows[] = [
                         'payslip_id' => (int) $stored->id,
                         'user_id' => (int) $employee->id,
-                        'name' => (string) $employee->name,
+                        'name' => (string) $employee->display_name,
+                        'formatted_name' => (string) $employee->formatted_name,
                         'employee_code' => $employee->employee_code,
                         'department' => $employee->department,
                         'position' => $employee->position,
@@ -326,7 +327,8 @@ class FinalizePayrollService
                     $rows[] = [
                         'payslip_id' => null,
                         'user_id' => (int) $employee->id,
-                        'name' => (string) $employee->name,
+                        'name' => (string) $employee->display_name,
+                        'formatted_name' => (string) $employee->formatted_name,
                         'employee_code' => $employee->employee_code,
                         'department' => $employee->department,
                         'position' => $employee->position,
@@ -593,7 +595,7 @@ class FinalizePayrollService
         }
 
         $query = $this->payslipQueryForBatchRun($run)
-            ->with(['employee:id,name,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id']);
+            ->with(['employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id']);
 
         if ($search !== null && trim($search) !== '') {
             $like = '%'.trim($search).'%';
@@ -624,7 +626,8 @@ class FinalizePayrollService
             $rows[] = [
                 'payslip_id' => (int) $stored->id,
                 'user_id' => (int) $employee->id,
-                'name' => (string) $employee->name,
+                'name' => (string) $employee->display_name,
+                'formatted_name' => (string) $employee->formatted_name,
                 'employee_code' => $employee->employee_code,
                 'department' => $employee->department,
                 'position' => $employee->position,

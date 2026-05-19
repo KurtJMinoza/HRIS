@@ -32,7 +32,7 @@ class DepartmentController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Department::with('departmentHead:id,name,profile_image')
+        $query = Department::with('departmentHead:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->with('branch:id,name,company_id')
             ->with('branch.company:id,name,logo')
             ->withCount('employees');
@@ -115,11 +115,12 @@ class DepartmentController extends Controller
         // membership for this screen must match Assign Employees (department_id FK).
         $employees = $department->employees()
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->orderBy('name')
-            ->get(['id', 'name', 'profile_image'])
+            ->orderByLastName()
+            ->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image'])
             ->map(fn (User $u) => [
                 'id' => $u->id,
-                'name' => $u->name,
+                'name' => $u->display_name,
+                'formatted_name' => $u->formatted_name,
                 'profile_image' => $u->profile_image_url,
             ]);
 
@@ -267,7 +268,7 @@ class DepartmentController extends Controller
             ->map(fn ($id) => (int) $id)
             ->toArray();
         if (count($companyHeadIds) > 0) {
-            $headNames = $users->whereIn('id', $companyHeadIds)->pluck('name')->toArray();
+            $headNames = $users->whereIn('id', $companyHeadIds)->map(fn (User $user) => $user->display_name)->toArray();
             throw ValidationException::withMessages([
                 'employee_ids' => [
                     'The following employees are assigned as Company Heads and cannot be assigned to a department: '.implode(', ', $headNames).'.',
@@ -283,7 +284,7 @@ class DepartmentController extends Controller
             ->values()
             ->toArray();
         if (count($branchManagerIds) > 0) {
-            $managerNames = $users->whereIn('id', $branchManagerIds)->pluck('name')->toArray();
+            $managerNames = $users->whereIn('id', $branchManagerIds)->map(fn (User $user) => $user->display_name)->toArray();
             throw ValidationException::withMessages([
                 'employee_ids' => [
                     'The following employees are Branch Managers and cannot be assigned to a department: '.implode(', ', $managerNames).'. A Branch Manager holds a managerial role and cannot also serve as a department member.',
@@ -295,7 +296,7 @@ class DepartmentController extends Controller
         foreach ($users as $user) {
             $effective = $user->getEffectiveCompanyId();
             if ($effective !== null && (int) $effective !== (int) $targetCompanyId) {
-                $conflicts[] = $user->name;
+                $conflicts[] = $user->display_name;
             }
         }
         if (count($conflicts) > 0) {
@@ -322,7 +323,7 @@ class DepartmentController extends Controller
         return response()->json([
             'message' => 'Employees assigned successfully.',
             'department' => $this->departmentResponse($department->fresh([
-                'departmentHead:id,name,profile_image',
+                'departmentHead:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'branch:id,name,company_id',
                 'branch.company:id,name,logo',
             ])->loadCount('employees')),
@@ -349,7 +350,7 @@ class DepartmentController extends Controller
         return response()->json([
             'message' => 'Employees unassigned successfully.',
             'department' => $this->departmentResponse($department->fresh([
-                'departmentHead:id,name,profile_image',
+                'departmentHead:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'branch:id,name,company_id',
                 'branch.company:id,name,logo',
             ])->loadCount('employees')),
@@ -397,7 +398,7 @@ class DepartmentController extends Controller
             'logo_url' => $logoUrl,
             'total_employees' => $d->employees_count ?? $d->employees()->count(),
             'department_head_id' => $d->department_head_id,
-            'department_head_name' => $d->departmentHead?->name,
+            'department_head_name' => $d->departmentHead?->display_name,
             'department_head_profile_image' => $d->departmentHead?->profile_image_url ?? null,
             'created_at' => $d->created_at?->toIso8601String(),
         ];

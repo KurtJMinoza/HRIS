@@ -84,7 +84,7 @@ class OvertimeApprovalService
         $submitter = $overtime->relationLoaded('filedBy') && $overtime->filedBy
             ? $overtime->filedBy
             : null;
-        $submitterName = $submitter?->name ?? $employee->name;
+        $submitterName = $submitter?->display_name ?? $employee->display_name;
         $submitterForPhoto = $submitter ?? $employee;
 
         $filedAt = $overtime->filed_at ?? $overtime->created_at;
@@ -130,7 +130,7 @@ class OvertimeApprovalService
                 'status' => $interStatus,
                 'approver_role_label' => $roleLabel,
                 'submitter_name' => null,
-                'approver_name' => $firstApprover?->name,
+                'approver_name' => $firstApprover?->display_name,
                 'profile_image_url' => $firstApprover?->profile_image_url,
                 'acted_at' => $overtime->first_approved_at?->toIso8601String(),
                 'remarks' => null,
@@ -159,7 +159,7 @@ class OvertimeApprovalService
             'status' => $hrStatus,
             'approver_role_label' => 'Admin (HR)',
             'submitter_name' => null,
-            'approver_name' => $secondApprover?->name,
+            'approver_name' => $secondApprover?->display_name,
             'profile_image_url' => $secondApprover?->profile_image_url,
             'acted_at' => $overtime->second_approved_at?->toIso8601String(),
             'remarks' => null,

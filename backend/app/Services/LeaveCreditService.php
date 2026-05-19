@@ -905,7 +905,7 @@ class LeaveCreditService
             ->where('user_id', $userId)
             ->orderByDesc('id')
             ->limit(max(1, min(200, $limit)))
-            ->with(['actor:id,name'])
+            ->with(['actor:id,name,first_name,middle_name,last_name,suffix'])
             ->get()
             ->map(fn (LeaveCreditTransaction $row) => [
                 'id' => $row->id,
@@ -915,7 +915,7 @@ class LeaveCreditService
                 'reason' => $row->reason,
                 'leave_type_context' => $row->leave_type_context,
                 'leave_request_id' => $row->leave_request_id,
-                'actor_name' => $row->actor?->name,
+                'actor_name' => $row->actor?->display_name,
                 'created_at' => $row->created_at?->toIso8601String(),
             ])
             ->values()

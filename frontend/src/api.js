@@ -1179,7 +1179,7 @@ export async function getAdminEmployeeScheduleRatePreview(employeeId, workingSch
 
 /**
  * Update authenticated employee personal info (Profile tab).
- * @param {{ first_name?: string, middle_name?: string|null, last_name?: string, date_of_birth?: string|null, gender?: string|null, civil_status?: string|null, nationality?: string|null, home_address?: string|null }} payload
+ * @param {{ first_name?: string, middle_name?: string|null, last_name?: string, suffix?: string|null, date_of_birth?: string|null, gender?: string|null, civil_status?: string|null, nationality?: string|null, home_address?: string|null }} payload
  */
 export async function updateMyPersonalInfo(payload, options = {}) {
   const { timeoutMs } = options
@@ -2704,7 +2704,7 @@ export async function exportMyProfileCsv() {
 // the full schedules payload ({ schedules: [...] }). Do not redeclare it here.
 
 /**
- * @param {{ first_name: string, middle_name?: string, last_name: string, date_of_birth?: string, gender?: string, civil_status?: string, nationality?: string, home_address?: string, email: string, password: string, phone_number?: string, schedule?: object, department?: string|null, position?: string|null, profile_photo?: File|null }} payload
+ * @param {{ first_name: string, middle_name?: string, last_name: string, suffix?: string, date_of_birth?: string, gender?: string, civil_status?: string, nationality?: string, home_address?: string, email: string, password: string, phone_number?: string, schedule?: object, department?: string|null, position?: string|null, profile_photo?: File|null }} payload
  */
 export async function addEmployee(payload) {
   const hasFile = payload?.profile_photo instanceof File

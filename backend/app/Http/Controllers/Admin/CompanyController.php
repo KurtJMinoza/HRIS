@@ -72,7 +72,7 @@ class CompanyController extends Controller
         $companiesQuery = Company::query()
             ->select('companies.*')
             ->selectSub($totalEmployeesSub, 'total_employees')
-            ->with('companyHead:id,name')
+            ->with('companyHead:id,name,first_name,middle_name,last_name,suffix')
             ->withCount(['branches', 'departments as departments_count'])
             ->orderBy('name');
 
@@ -138,7 +138,7 @@ class CompanyController extends Controller
     {
         $company = Company::findOrFail($id);
         $branches = $company->branches()
-            ->with('branchManager:id,name,profile_image')
+            ->with('branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->withCount('departments')
             ->withTotalEmployeesCount()
             ->orderBy('name')
@@ -152,7 +152,7 @@ class CompanyController extends Controller
                 'logo_url' => $this->publicMediaUrl($company->logo),
                 'address' => $b->address,
                 'branch_manager_id' => $b->branch_manager_id,
-                'branch_manager_name' => $b->branchManager?->name,
+                'branch_manager_name' => $b->branchManager?->display_name,
                 'branch_manager_profile_image' => $b->branchManager?->profile_image_url ?? null,
                 'departments_count' => $b->departments_count,
                 'employees_count' => $b->employees_count,
@@ -241,7 +241,7 @@ class CompanyController extends Controller
 
         return response()->json([
             'message' => 'Company updated successfully.',
-            'company' => $this->companyResponse($company->fresh(['companyHead:id,name'])),
+            'company' => $this->companyResponse($company->fresh(['companyHead:id,name,first_name,middle_name,last_name,suffix'])),
         ]);
     }
 
@@ -290,7 +290,7 @@ class CompanyController extends Controller
 
         return response()->json([
             'message' => 'Company profile updated successfully.',
-            'company' => $this->companyResponse($company->fresh(['companyHead:id,name'])),
+            'company' => $this->companyResponse($company->fresh(['companyHead:id,name,first_name,middle_name,last_name,suffix'])),
         ]);
     }
 
@@ -324,7 +324,7 @@ class CompanyController extends Controller
             'logo' => $c->logo,
             'logo_url' => $this->publicMediaUrl($c->logo),
             'company_head_id' => $c->company_head_id,
-            'company_head_name' => $c->companyHead?->name,
+            'company_head_name' => $c->companyHead?->display_name,
             'phone' => $c->phone,
             'email' => $c->email,
             'tin' => $c->tin,

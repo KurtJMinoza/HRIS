@@ -35,10 +35,10 @@ const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024
 
 const EMPLOYEE_IMPORT_TEMPLATE_HEADERS = [
   'Employee ID',
-  'Full Name',
   'First Name',
   'Middle Name',
   'Last Name',
+  'Suffix',
   'Date of Birth',
   'Gender',
   'Marital Status',
@@ -94,6 +94,7 @@ const HEADER_ALIASES = {
   first_name: ['first_name', 'firstname', 'given_name'],
   middle_name: ['middle_name', 'middlename', 'middle'],
   last_name: ['last_name', 'lastname', 'surname'],
+  suffix: ['suffix', 'name_suffix', 'employee_suffix'],
   email: ['email', 'email_address'],
   department: ['department', 'department_name'],
   branch: ['branch', 'branch_name'],
@@ -105,7 +106,7 @@ const HEADER_GROUPS = [
     id: 'personal',
     label: 'Personal Information',
     keys: [
-      'full_name', 'name', 'first_name', 'middle_name', 'last_name',
+      'full_name', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'name_suffix',
       'date_of_birth', 'dob', 'birth_date', 'gender', 'sex', 'legal_sex', 'legal_gender', 'marital_status', 'civil_status', 'nationality', 'citizenship',
       'email', 'email_address', 'phone_number', 'phone', 'mobile',
       'home_address', 'address', 'full_address', 'complete_address', 'street', 'street_address', 'municipality', 'town', 'barangay', 'brgy', 'city', 'province', 'postal_code', 'zip_code', 'zip', 'postcode',
@@ -262,6 +263,17 @@ function inferNamePartsFromFullName(raw) {
   return { first: parts[0], last: parts[parts.length - 1] }
 }
 
+function formatPreviewEmployeeName({ first, middle, last, suffix, legacy }) {
+  const cleanFirst = String(first || '').trim()
+  const cleanMiddle = String(middle || '').trim()
+  const cleanLast = String(last || '').trim()
+  const cleanSuffix = String(suffix || '').trim()
+  const cleanLegacy = String(legacy || '').trim()
+  const given = [cleanFirst, cleanMiddle].filter(Boolean).join(' ')
+  const base = cleanLast && given ? `${cleanLast}, ${given}` : cleanLast || given || cleanLegacy
+  return [base, cleanSuffix].filter(Boolean).join(' ').trim()
+}
+
 function validatePreviewRows(rows) {
   const emailSet = new Set()
   return rows.map((raw, index) => {
@@ -272,11 +284,17 @@ function validatePreviewRows(rows) {
 
     let first = String(normalized.first_name || '').trim()
     let last = String(normalized.last_name || '').trim()
+    const middle = String(normalized.middle_name || '').trim()
+    const suffix = String(normalized.suffix || '').trim()
+    const legacyName = String(
+      normalized.full_name || valueFromRow(raw, ['employee_name', 'complete_name']) || ''
+    ).trim()
     if (!first || !last) {
       const inferred = inferNamePartsFromFullName(raw)
       if (!first) first = inferred.first
       if (!last) last = inferred.last
     }
+    const displayName = formatPreviewEmployeeName({ first, middle, last, suffix, legacy: legacyName })
 
     const hints = []
     if (!first && !last) {
@@ -306,6 +324,7 @@ function validatePreviewRows(rows) {
       index: index + 1,
       row: raw,
       normalized,
+      displayName,
       issues: hints,
       isValid: true,
     }
@@ -320,10 +339,10 @@ function csvCell(value) {
 function downloadEmployeeImportTemplate() {
   const exampleRow = [
     'EMP-0001',
-    'Juan Dela Cruz',
     'Juan',
-    '',
+    'Santos',
     'Dela Cruz',
+    'Jr.',
     '1995-01-31',
     'Male',
     'Single',
@@ -819,6 +838,7 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
                                 {seg.label}
                               </th>
                             ))}
+                            <th className="bg-muted px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">Display Name</th>
                             <th className="bg-muted px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">Validation</th>
                           </tr>
                         )}
@@ -829,6 +849,7 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
                               {header}
                             </th>
                           ))}
+                          <th className="min-w-64 bg-background px-4 py-3 text-left font-semibold">Display Name</th>
                           <th className="min-w-72 bg-background px-4 py-3 text-left font-semibold">Validation</th>
                         </tr>
                       </thead>
@@ -845,6 +866,9 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
                                   </td>
                                 )
                               })}
+                              <td className="px-4 py-2.5 font-medium text-foreground">
+                                {item.displayName || <span className="text-muted-foreground">-</span>}
+                              </td>
                               <td className="px-4 py-2.5">
                                 <div className="space-y-1">
                                   <span className="inline-flex items-center gap-1 font-medium text-emerald-600 dark:text-emerald-300">
@@ -861,7 +885,7 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
                           ))
                         ) : (
                           <tr>
-                            <td className="px-4 py-12 text-center text-muted-foreground" colSpan={Math.max(2, previewHeaders.length + 2)}>
+                            <td className="px-4 py-12 text-center text-muted-foreground" colSpan={Math.max(3, previewHeaders.length + 3)}>
                               No employee rows were found in this file.
                             </td>
                           </tr>

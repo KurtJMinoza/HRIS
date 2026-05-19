@@ -172,7 +172,8 @@ class ProfileController extends Controller
 
         return response()->json([
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
+            'employee_formatted_name' => $user->formatted_name,
             'qr_token' => $user->qr_token,
             'qr_token_generated_at' => $user->qr_token_generated_at?->toIso8601String(),
             'has_qr' => true,
@@ -211,7 +212,8 @@ class ProfileController extends Controller
         return response()->json([
             'message' => 'QR code regenerated. Use the new code for attendance scanning.',
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
+            'employee_formatted_name' => $user->formatted_name,
             'qr_token' => $user->qr_token,
             'qr_token_generated_at' => $user->qr_token_generated_at?->toIso8601String(),
             'has_qr' => true,

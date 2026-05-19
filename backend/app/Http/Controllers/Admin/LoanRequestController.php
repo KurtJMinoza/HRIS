@@ -35,10 +35,10 @@ class LoanRequestController extends Controller
             ->with([
                 // Full user so profile_image / profile_image_url (appended) resolve like Employees list.
                 'user',
-                'requestedByUser:id,name,employee_code',
+                'requestedByUser:id,name,first_name,middle_name,last_name,suffix,employee_code',
                 'deductionType',
                 'payComponent:id,name,code,category,is_loan',
-                'approvedByUser:id,name',
+                'approvedByUser:id,name,first_name,middle_name,last_name,suffix',
             ])
             ->orderByDesc('created_at')
             ->limit(200)
@@ -54,13 +54,13 @@ class LoanRequestController extends Controller
         $loan = LoanRequest::query()
             ->with([
                 'user',
-                'requestedByUser:id,name,employee_code',
+                'requestedByUser:id,name,first_name,middle_name,last_name,suffix,employee_code',
                 'deductionType',
                 'payComponent:id,name,code,category,is_loan',
-                'firstApprover:id,name',
-                'secondApprover:id,name',
-                'approvedByUser:id,name',
-                'rejectedByUser:id,name',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix',
+                'approvedByUser:id,name,first_name,middle_name,last_name,suffix',
+                'rejectedByUser:id,name,first_name,middle_name,last_name,suffix',
                 'employeeDeduction.amortizationSchedule',
             ])
             ->findOrFail($id);

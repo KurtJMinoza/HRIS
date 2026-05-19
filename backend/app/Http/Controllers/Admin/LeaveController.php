@@ -47,12 +47,12 @@ class LeaveController extends Controller
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
         // Include org + role columns so approval checks (department head, etc.) match the approve() endpoint.
         $query = LeaveRequest::with([
-            'user:id,name,profile_image,position,schedule,working_schedule_id,role,department_id,branch_id,company_id',
-            'reviewedByUser:id,name',
-            'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
-            'firstApprover:id,name,profile_image',
-            'secondApprover:id,name,profile_image',
-            'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,schedule,working_schedule_id,role,department_id,branch_id,company_id',
+            'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
+            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
         ]);
 
         $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
@@ -109,7 +109,7 @@ class LeaveController extends Controller
             return array_merge([
                 'id' => $l->id,
                 'employee_id' => $l->user_id,
-                'employee_name' => $l->user?->name,
+                'employee_name' => $l->user?->display_name,
                 'employee_profile_image' => $l->user?->profile_image_url,
                 'type' => $l->type,
                 'start_date' => $l->start_date->toDateString(),
@@ -128,7 +128,7 @@ class LeaveController extends Controller
                 'filed_on_time' => null,
                 'filed_after_leave_date' => false,
                 'reviewed_at' => $l->reviewed_at?->toIso8601String(),
-                'reviewed_by_name' => $l->reviewedByUser?->name,
+                'reviewed_by_name' => $l->reviewedByUser?->display_name,
                 'created_at' => $l->created_at->toIso8601String(),
                 'display_status' => $this->leaveApprovalService->deriveDisplayStatusLabel($l),
                 'approval_stage' => $l->approval_stage,
@@ -296,7 +296,7 @@ class LeaveController extends Controller
         return response()->json([
             'message' => 'Leave request created.',
             'leave_request' => $this->leaveResponse($leave->fresh([
-                'user', 'filedBy', 'firstApprover', 'secondApprover', 'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+                'user', 'filedBy', 'firstApprover', 'secondApprover', 'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $request->user()),
         ], 201);
     }
@@ -456,7 +456,7 @@ class LeaveController extends Controller
                 'message' => 'First approval recorded. Pending Admin (HR) final approval.',
                 'leave_request' => $this->leaveResponse($leave->fresh([
                     'user', 'filedBy', 'firstApprover', 'secondApprover',
-                    'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+                    'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
                 ]), $actor),
             ]);
         }
@@ -523,7 +523,7 @@ class LeaveController extends Controller
             'message' => 'Leave request approved.',
             'leave_request' => $this->leaveResponse($leave->fresh([
                 'user', 'reviewedByUser', 'filedBy', 'firstApprover', 'secondApprover',
-                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $actor),
         ]);
     }
@@ -577,7 +577,7 @@ class LeaveController extends Controller
             'message' => 'Leave request rejected.',
             'leave_request' => $this->leaveResponse($leave->fresh([
                 'user', 'reviewedByUser', 'filedBy', 'firstApprover', 'secondApprover', 'rejectedBy',
-                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $actor),
         ]);
     }
@@ -600,8 +600,8 @@ class LeaveController extends Controller
         return response()->json([
             'message' => 'Notes updated.',
             'leave_request' => $this->leaveResponse($leave->fresh([
-                'user:id,name', 'reviewedByUser:id,name',
-                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+                'user:id,name,first_name,middle_name,last_name,suffix', 'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
+                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $request->user()),
         ]);
     }
@@ -834,7 +834,7 @@ class LeaveController extends Controller
 
         return [
             'requested_by_id' => $requester->id,
-            'requested_by_name' => $requester->name,
+            'requested_by_name' => $requester->display_name,
             'requested_by_profile_image_url' => $requester->profile_image_url,
             'requested_by_position' => $requester->position,
             'requested_by_hr_role' => $hr->value,
@@ -846,13 +846,13 @@ class LeaveController extends Controller
     {
         $l->loadMissing([
             'user', 'reviewedByUser', 'filedBy', 'firstApprover', 'secondApprover', 'rejectedBy',
-            'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name'),
+            'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
         ]);
 
         $base = array_merge([
             'id' => $l->id,
             'employee_id' => $l->user_id,
-            'employee_name' => $l->user?->name,
+            'employee_name' => $l->user?->display_name,
             'type' => $l->type,
             'start_date' => $l->start_date->toDateString(),
             'end_date' => $l->end_date->toDateString(),
@@ -867,7 +867,7 @@ class LeaveController extends Controller
             'rest_day_bypass_reason' => $l->rest_day_bypass_reason,
             'rest_day_bypass_at' => $l->rest_day_bypass_at?->toIso8601String(),
             'reviewed_at' => $l->reviewed_at?->toIso8601String(),
-            'reviewed_by_name' => $l->reviewedByUser?->name,
+            'reviewed_by_name' => $l->reviewedByUser?->display_name,
             'created_at' => $l->created_at->toIso8601String(),
             'display_status' => $this->leaveApprovalService->deriveDisplayStatusLabel($l),
             'approval_stage' => $l->approval_stage,
@@ -881,7 +881,7 @@ class LeaveController extends Controller
                     'approver_role' => $a->approver_role,
                     'details' => $a->details,
                     'at' => $a->created_at?->toIso8601String(),
-                    'actor_name' => $a->actor?->name,
+                    'actor_name' => $a->actor?->display_name,
                 ];
             })->values()->all(),
         ], $this->documentPayload($l));

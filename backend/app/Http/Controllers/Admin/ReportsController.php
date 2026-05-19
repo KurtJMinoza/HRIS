@@ -1156,7 +1156,8 @@ class ReportsController extends Controller
                 if ($needsHeavy) {
                     $pagedRows[] = array_merge([
                         'employee_id' => $employee->id,
-                        'employee_name' => $employee->name,
+                        'employee_name' => $employee->display_name,
+                        'employee_formatted_name' => $employee->formatted_name,
                         'employee_sort_key' => $employee->employeeListingSortKey(),
                         'department' => $employee->departmentRelation?->name ?? $employee->department,
                         'company_id' => $detailedEmployeeCompanyIds[$employee->id] ?? null,

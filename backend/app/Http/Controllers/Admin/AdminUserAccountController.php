@@ -370,7 +370,7 @@ class AdminUserAccountController extends Controller
 
         $logs = UserAdminActivityLog::query()
             ->where('subject_user_id', $id)
-            ->with(['actor:id,name,email'])
+            ->with(['actor:id,name,first_name,middle_name,last_name,suffix,email'])
             ->orderByDesc('id')
             ->limit(80)
             ->get();
@@ -559,7 +559,8 @@ class AdminUserAccountController extends Controller
         return [
             'id' => $user->id,
             'employee_code' => $user->employee_code,
-            'name' => $user->name,
+            'name' => $user->display_name,
+            'formatted_name' => $user->formatted_name,
             'email' => $user->email,
             'role' => $user->role,
             'is_hr_admin' => $user->isAdmin(),

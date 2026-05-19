@@ -221,7 +221,7 @@ class PayrollController extends Controller
                 'net_pay',
                 'created_at',
             ])
-            ->with('user:id,name,employee_code,department')
+            ->with('user:id,name,first_name,middle_name,last_name,suffix,employee_code,department')
             ->whereIn('user_id', $scope->select('users.id'));
 
         if ($request->has('employee_id')) {
@@ -248,7 +248,7 @@ class PayrollController extends Controller
     public function showPeriod(Request $request, int $id): JsonResponse
     {
         $period = PayrollPeriod::query()
-            ->with(['user:id,name,employee_code,department,daily_rate', 'breakdowns'])
+            ->with(['user:id,name,first_name,middle_name,last_name,suffix,employee_code,department,daily_rate', 'breakdowns'])
             ->findOrFail($id);
 
         if ($period->user) {

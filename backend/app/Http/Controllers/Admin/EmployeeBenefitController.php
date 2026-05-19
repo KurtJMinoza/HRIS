@@ -32,7 +32,8 @@ class EmployeeBenefitController extends Controller
 
         return response()->json([
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
+            'employee_formatted_name' => $user->formatted_name,
             'department_id' => $user->department_id,
             'benefits' => $assignments,
         ]);

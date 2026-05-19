@@ -828,7 +828,8 @@ class AttendanceMonitoringController extends Controller
 
                 $rows[] = [
                     'employee_id' => $employee->id,
-                    'employee_name' => $employee->name,
+                    'employee_name' => $employee->display_name,
+                    'employee_formatted_name' => $employee->formatted_name,
                     'employee_sort_key' => $employee->employeeListingSortKey(),
                     'profile_image' => $employee->profile_image_url,
                     'department' => $employee->departmentRelation?->name ?? $employee->department,

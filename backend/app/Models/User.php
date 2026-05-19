@@ -125,6 +125,72 @@ class User extends Authenticatable
         );
     }
 
+    public static function formatEmployeeDisplayName(
+        ?string $firstName,
+        ?string $middleName,
+        ?string $lastName,
+        ?string $suffix = null,
+        ?string $legacyFullName = null
+    ): string {
+        $first = trim((string) $firstName);
+        $middle = trim((string) $middleName);
+        $last = trim((string) $lastName);
+        $suffix = trim((string) $suffix);
+        $legacy = trim((string) $legacyFullName);
+
+        $given = trim(implode(' ', array_values(array_filter([$first, $middle], fn (string $part) => $part !== ''))));
+
+        if ($last !== '' && $given !== '') {
+            $name = $last.', '.$given;
+        } elseif ($last !== '') {
+            $name = $last;
+        } elseif ($given !== '') {
+            $name = $given;
+        } else {
+            $name = $legacy;
+        }
+
+        if ($name !== '' && $suffix !== '') {
+            $name = trim($name.' '.$suffix);
+        }
+
+        return $name;
+    }
+
+    public function getDisplayNameAttribute(): string
+    {
+        return self::formatEmployeeDisplayName(
+            $this->attributes['first_name'] ?? null,
+            $this->attributes['middle_name'] ?? null,
+            $this->attributes['last_name'] ?? null,
+            $this->attributes['suffix'] ?? null,
+            $this->attributes['name'] ?? null,
+        );
+    }
+
+    public function getFormattedNameAttribute(): string
+    {
+        return $this->display_name;
+    }
+
+    public function getFullNameLastFirstAttribute(): string
+    {
+        return $this->display_name;
+    }
+
+    public function getNameAttribute($value): ?string
+    {
+        $display = self::formatEmployeeDisplayName(
+            $this->attributes['first_name'] ?? null,
+            $this->attributes['middle_name'] ?? null,
+            $this->attributes['last_name'] ?? null,
+            $this->attributes['suffix'] ?? null,
+            is_string($value) ? $value : null,
+        );
+
+        return $display !== '' ? $display : (is_string($value) ? $value : null);
+    }
+
     /**
      * Admin (HR) with an explicit org scope on {@see $company_id} / {@see $branch_id} / {@see $department_id}.
      * When false and {@see isAdmin()}, HR data access is global (within RBAC).
@@ -147,6 +213,7 @@ class User extends Authenticatable
         'first_name',
         'middle_name',
         'last_name',
+        'suffix',
         'email',
         'phone_number',
         'date_of_birth',
@@ -267,6 +334,9 @@ class User extends Authenticatable
         'avatar_url',
         'photo_url',
         'employment_active_status',
+        'display_name',
+        'formatted_name',
+        'full_name_last_first',
     ];
 
     protected static function booted(): void

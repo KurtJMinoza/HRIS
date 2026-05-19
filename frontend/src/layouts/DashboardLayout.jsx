@@ -26,6 +26,7 @@ import { hrPanelPath } from '@/lib/hrRoutes'
 import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
+import { formatEmployeeName } from '@/lib/employeeSort'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
@@ -306,14 +307,14 @@ function SidebarContent({
                     <AvatarFallback
                       className={cn(
                         'rounded-full text-xs font-bold',
-                        getEmployeeAvatarColorClass(user?.id, user?.name),
+                        getEmployeeAvatarColorClass(user?.id, currentUserDisplayName),
                       )}
                     >
                       {initials}
                     </AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold text-foreground">{user?.name ?? 'User'}</p>
+                    <p className="truncate text-xs font-semibold text-foreground">{currentUserDisplayName}</p>
                     <p className="truncate text-[11px] text-muted-foreground">{user?.email ?? ''}</p>
                   </div>
                   <ChevronDown className="size-4 text-muted-foreground" />
@@ -323,7 +324,7 @@ function SidebarContent({
             <DropdownMenuContent align="end" side="top" className="w-56">
               <DropdownMenuLabel>
                 <div className="flex flex-col">
-                  <span>{user?.name ?? 'User'}</span>
+                  <span>{currentUserDisplayName}</span>
                   <span className="text-xs font-normal text-muted-foreground">{user?.email}</span>
                   <span className="mt-1">
                     <RoleBadge user={user} size="sm" />
@@ -421,8 +422,9 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
     navigate('/login', { replace: true })
   }
 
-  const initials = user?.name
-    ? user.name
+  const currentUserDisplayName = formatEmployeeName(user, 'User')
+  const initials = currentUserDisplayName
+    ? currentUserDisplayName
         .trim()
         .split(/\s+/)
         .map((n) => n[0])
@@ -492,7 +494,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
     const employees = (employeeResults || []).map((e) => ({
       type: 'employee',
       id: String(e.id),
-      label: e.name ?? 'Employee',
+      label: formatEmployeeName(e, 'Employee'),
       meta: [e.department, e.position, e.email].filter(Boolean).join(' • '),
       to: `${hrPanelPath(hrBasePath, 'employees/list')}?q=${encodeURIComponent(trimmedQuery)}`,
     }))
@@ -787,7 +789,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                             const item = {
                               type: 'employee',
                               id: String(emp.id),
-                              label: emp.name ?? 'Employee',
+                              label: formatEmployeeName(emp, 'Employee'),
                               meta: [emp.department, emp.position, emp.email].filter(Boolean).join(' • '),
                               to: `${hrPanelPath(hrBasePath, 'employees/list')}?q=${encodeURIComponent(trimmedQuery)}`,
                             }
@@ -1067,7 +1069,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                   <AvatarFallback
                     className={cn(
                       'rounded-full text-sm font-bold',
-                      getEmployeeAvatarColorClass(user?.id, user?.name),
+                      getEmployeeAvatarColorClass(user?.id, currentUserDisplayName),
                     )}
                   >
                     {initials}
@@ -1078,7 +1080,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>
                 <div className="flex flex-col">
-                  <span>{user?.name ?? 'User'}</span>
+                  <span>{currentUserDisplayName}</span>
                   <span className="text-xs font-normal text-muted-foreground">{user?.email}</span>
                   <span className="mt-1">
                     <RoleBadge user={user} size="sm" />

@@ -208,13 +208,13 @@ class MyScheduleController extends Controller
     protected function requestRelations(): array
     {
         return [
-            'user:id,name,position,profile_image,role,department_id,branch_id,company_id',
+            'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,role,department_id,branch_id,company_id',
             'workingSchedule:id,name,time_in,time_out,break_start,break_end,rest_days,grace_period_minutes',
-            'filedBy:id,name,profile_image',
-            'firstApprover:id,name,profile_image',
-            'secondApprover:id,name,profile_image',
-            'rejectedBy:id,name',
-            'approvalAudits' => fn ($query) => $query->with('actor:id,name')->orderBy('created_at'),
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'rejectedBy:id,name,first_name,middle_name,last_name,suffix',
+            'approvalAudits' => fn ($query) => $query->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
         ];
     }
 
@@ -287,7 +287,7 @@ class MyScheduleController extends Controller
             'key' => 'submitted',
             'label' => 'Request submitted',
             'status' => 'completed',
-            'submitter_name' => $user->name,
+            'submitter_name' => $user->display_name,
             'profile_image_url' => $user->profile_image_url,
             'acted_at' => null,
             'remarks' => null,
@@ -301,7 +301,7 @@ class MyScheduleController extends Controller
                 'key' => 'line_approval',
                 'label' => $this->lineApproverLabel($user).' approval',
                 'status' => 'pending',
-                'approver_name' => $firstApprover->name,
+                'approver_name' => $firstApprover->display_name,
                 'profile_image_url' => $firstApprover->profile_image_url,
                 'acted_at' => null,
                 'remarks' => null,
@@ -315,7 +315,7 @@ class MyScheduleController extends Controller
             'key' => 'hr_final',
             'label' => 'Admin (HR) final approval',
             'status' => 'pending',
-            'approver_name' => $hrApprover?->name,
+            'approver_name' => $hrApprover?->display_name,
             'profile_image_url' => $hrApprover?->profile_image_url,
             'acted_at' => null,
             'remarks' => null,
@@ -433,8 +433,8 @@ class MyScheduleController extends Controller
             'request_kind' => $request->request_kind ?? ScheduleRequest::KIND_TEMPLATE,
             'custom_schedule_payload' => $request->custom_schedule_payload,
             'effective_from' => $request->effective_from?->toDateString(),
-            'employee_name' => $request->user?->name,
-            'requested_by_name' => $request->user?->name,
+            'employee_name' => $request->user?->display_name,
+            'requested_by_name' => $request->user?->display_name,
             'requested_by_position' => $request->user?->position,
             'requested_by_profile_image_url' => $request->user?->profile_image_url,
             'requested_by_hr_role' => $this->hrRoleResolver->resolveForApprovalSubject($request->user)->value,
@@ -458,7 +458,7 @@ class MyScheduleController extends Controller
                     'approver_role' => $audit->approver_role,
                     'details' => $audit->details,
                     'at' => $audit->created_at?->toIso8601String(),
-                    'actor_name' => $audit->actor?->name,
+                    'actor_name' => $audit->actor?->display_name,
                 ];
             })->values()->all(),
             'actor_can_approve' => $this->scheduleApprovalService->canApprove($actor, $request),

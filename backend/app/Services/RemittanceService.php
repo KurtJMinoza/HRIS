@@ -46,7 +46,7 @@ class RemittanceService
             });
         }
 
-        $employees = $query->orderByLastName()->get(['id', 'name', 'employee_code', 'monthly_salary', 'monthly_rate', 'daily_rate']);
+        $employees = $query->orderByLastName()->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'employee_code', 'monthly_salary', 'monthly_rate', 'daily_rate']);
 
         $sumEe = 0.0;
         $sumEr = 0.0;
@@ -184,7 +184,7 @@ class RemittanceService
             });
         }
 
-        $employees = $query->orderByLastName()->get(['id', 'name', 'employee_code', 'monthly_salary', 'monthly_rate', 'daily_rate']);
+        $employees = $query->orderByLastName()->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'employee_code', 'monthly_salary', 'monthly_rate', 'daily_rate']);
 
         $rows = [];
         $totalEe = 0.0;
@@ -205,7 +205,8 @@ class RemittanceService
                 $rows[] = [
                     'employee_id' => $emp->id,
                     'employee_code' => $emp->employee_code,
-                    'name' => $emp->name,
+                    'name' => $emp->display_name,
+                    'formatted_name' => $emp->formatted_name,
                     'monthly_salary' => round($basic, 2),
                     'msc' => $sss['msc_used'] ?? null,
                     'employee_ss' => $sss['employee_amount'] ?? 0,
@@ -218,7 +219,8 @@ class RemittanceService
                 $rows[] = [
                     'employee_id' => $emp->id,
                     'employee_code' => $emp->employee_code,
-                    'name' => $emp->name,
+                    'name' => $emp->display_name,
+                    'formatted_name' => $emp->formatted_name,
                     'monthly_salary' => round($basic, 2),
                     'premium_base' => $ph['metadata']['applied_salary'] ?? null,
                     'employee_share' => $ph['employee_amount'] ?? 0,
@@ -230,7 +232,8 @@ class RemittanceService
                 $rows[] = [
                     'employee_id' => $emp->id,
                     'employee_code' => $emp->employee_code,
-                    'name' => $emp->name,
+                    'name' => $emp->display_name,
+                    'formatted_name' => $emp->formatted_name,
                     'monthly_salary' => round($basic, 2),
                     'employee_share' => $hdmf['employee_amount'] ?? 0,
                     'employer_share' => $hdmf['employer_amount'] ?? 0,
@@ -246,7 +249,8 @@ class RemittanceService
                 $rows[] = [
                     'employee_id' => $emp->id,
                     'employee_code' => $emp->employee_code,
-                    'name' => $emp->name,
+                    'name' => $emp->display_name,
+                    'formatted_name' => $emp->formatted_name,
                     'gross_taxable_monthly' => $wht['gross_monthly_taxable_compensation'] ?? $basic,
                     'taxable_monthly' => $wht['monthly_taxable_compensation'] ?? $basic,
                     'withholding_tax_monthly' => $wht['withholding_per_month'] ?? 0,

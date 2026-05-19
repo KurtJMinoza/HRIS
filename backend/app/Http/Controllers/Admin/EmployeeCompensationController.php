@@ -105,7 +105,8 @@ class EmployeeCompensationController extends Controller
                 return [
                     'employee' => [
                         'id' => $employee->id,
-                        'name' => $employee->name,
+                        'name' => $employee->display_name,
+                        'formatted_name' => $employee->formatted_name,
                         'employee_code' => $employee->employee_code,
                         'position' => $employee->position,
                         'department' => $employee->department,

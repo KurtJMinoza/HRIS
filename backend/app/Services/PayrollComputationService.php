@@ -2514,8 +2514,8 @@ class PayrollComputationService
             if ($cmp !== 0) {
                 return $cmp;
             }
-            $nameA = (string) ($byId->get($a['user_id'])?->name ?? '');
-            $nameB = (string) ($byId->get($b['user_id'])?->name ?? '');
+            $nameA = (string) ($byId->get($a['user_id'])?->employeeListingSortKey() ?? '');
+            $nameB = (string) ($byId->get($b['user_id'])?->employeeListingSortKey() ?? '');
 
             return strcmp($nameA, $nameB);
         });
@@ -2599,7 +2599,7 @@ class PayrollComputationService
             'id' => ((int) $user->id).'-'.$dateKey,
             'user_id' => (int) $user->id,
             'employeeId' => $user->employee_code ? (string) $user->employee_code : 'EMP-'.((int) $user->id),
-            'name' => (string) ($user->name ?? ''),
+            'name' => (string) ($user->display_name ?? ''),
             'department' => $user->department ? (string) $user->department : null,
             'position' => $user->position ? (string) $user->position : null,
             'company_name' => $this->resolveCompanyDisplayName($user),
@@ -2609,7 +2609,7 @@ class PayrollComputationService
             'effective_daily_rate' => round($computedDailyRate, 2),
             'schedule_rate_basis' => $usedScheduleFallback ? 'default_office' : 'employee_schedule',
             'profile_image' => $user->profile_image ? (string) $user->profile_image : null,
-            'initials' => $this->initialsFromName((string) ($user->name ?? '')),
+            'initials' => $this->initialsFromName((string) ($user->display_name ?? '')),
             'avatarColor' => $this->avatarColorForUserId((int) $user->id),
             'schedule_label' => $scheduleLabel,
             'schedule_source' => $usedScheduleFallback ? 'fallback' : 'assigned',

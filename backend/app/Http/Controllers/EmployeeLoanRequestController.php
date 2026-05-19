@@ -139,7 +139,7 @@ class EmployeeLoanRequestController extends Controller
         $this->deductionApplicationService->autoProcessDueInstallments(now(), (int) $user->id);
 
         $assignments = $user->employeeDeductions()
-            ->with(['deductionType', 'payComponent:id,name,code', 'amortizationSchedule', 'auditLogs.actor:id,name'])
+            ->with(['deductionType', 'payComponent:id,name,code', 'amortizationSchedule', 'auditLogs.actor:id,name,first_name,middle_name,last_name,suffix'])
             ->orderByDesc('start_date')
             ->get();
 
@@ -157,9 +157,9 @@ class EmployeeLoanRequestController extends Controller
             $requestsQuery->where('user_id', $user->id);
         }
 
-        $with = ['deductionType', 'payComponent:id,name,code', 'user:id,name,employee_code'];
+        $with = ['deductionType', 'payComponent:id,name,code', 'user:id,name,first_name,middle_name,last_name,suffix,employee_code'];
         if (Schema::hasColumn('pay_loan_requests', 'requested_by_user_id')) {
-            $with[] = 'requestedByUser:id,name';
+            $with[] = 'requestedByUser:id,name,first_name,middle_name,last_name,suffix';
         }
 
         $requests = $requestsQuery
@@ -242,9 +242,9 @@ class EmployeeLoanRequestController extends Controller
             $validated['deduction_schedule'] ?? null,
         );
 
-        $load = ['deductionType', 'payComponent:id,name,code', 'user:id,name'];
+        $load = ['deductionType', 'payComponent:id,name,code', 'user:id,name,first_name,middle_name,last_name,suffix'];
         if (Schema::hasColumn('pay_loan_requests', 'requested_by_user_id')) {
-            $load[] = 'requestedByUser:id,name';
+            $load[] = 'requestedByUser:id,name,first_name,middle_name,last_name,suffix';
         }
 
         return response()->json([
@@ -262,7 +262,7 @@ class EmployeeLoanRequestController extends Controller
 
         $withShow = ['deductionType', 'user', 'payComponent:id,name,code'];
         if (Schema::hasColumn('pay_loan_requests', 'requested_by_user_id')) {
-            $withShow[] = 'requestedByUser:id,name';
+            $withShow[] = 'requestedByUser:id,name,first_name,middle_name,last_name,suffix';
         }
         $loan = LoanRequest::query()->with($withShow)->findOrFail($id);
         $isBorrower = (int) $loan->user_id === (int) $user->id;

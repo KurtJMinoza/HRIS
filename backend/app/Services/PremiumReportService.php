@@ -101,7 +101,8 @@ class PremiumReportService
 
         return [
             'employee_id' => $user->id,
-            'employee_name' => $user->name,
+            'employee_name' => $user->display_name,
+            'employee_formatted_name' => $user->formatted_name,
             'profile_image' => $user->profile_image_url,
             'from_date' => $fromDate->toDateString(),
             'to_date' => $toDate->toDateString(),

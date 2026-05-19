@@ -145,7 +145,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                     $this->errors[] = [
                         'row' => $excelRowNumber,
                         'email' => (string) ($this->value($data, ['email']) ?? ''),
-                        'name' => (string) ($this->value($data, ['full_name', 'first_name']) ?? ''),
+                        'name' => (string) ($this->value($data, ['last_name', 'full_name', 'first_name']) ?? ''),
                         'message' => $e->getMessage(),
                     ];
                     Log::warning('Employee import row skipped', [
@@ -214,6 +214,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         $first = $this->clean($this->value($row, ['first_name', 'firstname', 'given_name']));
         $middle = $this->clean($this->value($row, ['middle_name', 'middlename', 'middle']));
         $last = $this->clean($this->value($row, ['last_name', 'lastname', 'surname', 'family_name']));
+        $suffix = $this->clean($this->value($row, ['suffix', 'name_suffix', 'employee_suffix']));
 
         if (! $first || ! $last) {
             [$fallbackFirst, $fallbackMiddle, $fallbackLast] = $this->splitName($fullName);
@@ -273,10 +274,11 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         }
 
         return [
-            'name' => $this->composeName($first, $middle, $last),
+            'name' => User::formatEmployeeDisplayName($first, $middle, $last, $suffix, $fullName),
             'first_name' => $first,
             'middle_name' => $middle,
             'last_name' => $last,
+            'suffix' => $suffix,
             'date_of_birth' => $this->parseImportDate(
                 $this->value($row, ['date_of_birth', 'dob', 'birth_date']),
                 strictCalendarString: true
@@ -486,6 +488,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'first_name' => $payload['first_name'],
             'middle_name' => $payload['middle_name'],
             'last_name' => $payload['last_name'],
+            'suffix' => $payload['suffix'],
             'email' => $emailForUser,
             'username' => $username,
             'password' => Hash::make(self::DEFAULT_IMPORT_PASSWORD),
@@ -1884,17 +1887,6 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         }
 
         return [$parts[0], implode(' ', array_slice($parts, 1, -1)), $parts[count($parts) - 1]];
-    }
-
-    private function composeName(string $first, ?string $middle, string $last): string
-    {
-        $parts = [$first];
-        if ($middle) {
-            $parts[] = $middle;
-        }
-        $parts[] = $last;
-
-        return trim(implode(' ', $parts));
     }
 
     private function normalizeEmploymentType(mixed $value): ?string

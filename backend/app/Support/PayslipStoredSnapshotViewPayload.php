@@ -94,7 +94,8 @@ final class PayslipStoredSnapshotViewPayload
             ],
             'employee' => [
                 'id' => (int) $employee->id,
-                'name' => $employee->name,
+                'name' => $employee->display_name,
+                'formatted_name' => $employee->formatted_name,
                 'employee_code' => $employee->employee_code,
                 'department' => $employee->departmentRelation?->name ?? $employee->department,
                 'position' => $employee->position,

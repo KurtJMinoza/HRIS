@@ -167,7 +167,7 @@ class PresenceFilingCorrectionFormatter
             'last_updated' => $this->toIso8601($c->updated_at),
         ];
         if ($includeEmployee && $c->relationLoaded('user') && $c->user) {
-            $row['employee_name'] = $c->user->name;
+            $row['employee_name'] = $c->user->display_name;
             $row['employee_code'] = $c->user->employee_code;
             $row['employee_profile_image_url'] = $c->user->profile_image_url;
             $row['employee_position'] = $c->user->position;
@@ -202,7 +202,7 @@ class PresenceFilingCorrectionFormatter
             $requester = ($c->relationLoaded('filedBy') && $c->filedBy) ? $c->filedBy : $employee;
             if ($requester) {
                 $row['requested_by_id'] = $requester->id;
-                $row['requested_by_name'] = $requester->name;
+                $row['requested_by_name'] = $requester->display_name;
                 $row['requested_by_profile_image_url'] = $requester->profile_image_url;
                 $row['requested_by_position'] = $requester->position;
                 $hrRole = $requester->isAdmin()
@@ -214,10 +214,10 @@ class PresenceFilingCorrectionFormatter
                 $row['requested_by_name'] = null;
             }
             if ($c->relationLoaded('firstApprover') && $c->firstApprover) {
-                $row['first_approver_name'] = $c->firstApprover->name;
+                $row['first_approver_name'] = $c->firstApprover->display_name;
             }
             if ($c->relationLoaded('secondApprover') && $c->secondApprover) {
-                $row['second_approver_name'] = $c->secondApprover->name;
+                $row['second_approver_name'] = $c->secondApprover->display_name;
             }
             if ($c->relationLoaded('attendanceLogsSyncedBy') && $c->attendanceLogsSyncedBy) {
                 $row['attendance_logs_synced_by_name'] = $c->attendanceLogsSyncedBy->name;
@@ -234,7 +234,7 @@ class PresenceFilingCorrectionFormatter
                         'notes' => $ev->notes,
                         'at' => $this->toIso8601($ev->acted_at ?? $ev->created_at),
                         'approver_id' => $ev->approver_id,
-                        'approver_name' => $ev->relationLoaded('approver') && $ev->approver ? $ev->approver->name : null,
+                        'approver_name' => $ev->relationLoaded('approver') && $ev->approver ? $ev->approver->display_name : null,
                     ];
                 })->values()->all();
             }
@@ -245,7 +245,7 @@ class PresenceFilingCorrectionFormatter
                         'approver_role' => $a->approver_role,
                         'details' => $a->reason,
                         'at' => $this->toIso8601($a->created_at),
-                        'actor_name' => $a->relationLoaded('admin') && $a->admin ? $a->admin->name : null,
+                        'actor_name' => $a->relationLoaded('admin') && $a->admin ? $a->admin->display_name : null,
                     ];
                 })->values()->all();
             }

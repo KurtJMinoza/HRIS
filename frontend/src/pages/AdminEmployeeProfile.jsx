@@ -36,6 +36,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { cn } from '@/lib/utils'
+import { formatEmployeeName } from '@/lib/employeeSort'
 import {
   SalaryAutomatedDeductionsCard,
   SalaryCompensationStructureCard,
@@ -677,6 +678,7 @@ function buildProfileSnapshot(form, skills, certifications, govIds, secondaryIds
       first_name: form.first_name || '',
       middle_name: form.middle_name || '',
       last_name: form.last_name || '',
+      suffix: form.suffix || '',
       email: form.email || '',
       phone_number: form.phone_number || '',
       date_of_birth: form.date_of_birth || '',
@@ -1038,6 +1040,7 @@ export default function AdminEmployeeProfile() {
     first_name: '',
     middle_name: '',
     last_name: '',
+    suffix: '',
     username: '',
     email: '',
     phone_number: '',
@@ -1342,6 +1345,7 @@ export default function AdminEmployeeProfile() {
             first_name: found.first_name || firstName || '',
             middle_name: found.middle_name || '',
             last_name: found.last_name || restNames.join(' ') || '',
+            suffix: found.suffix || '',
             username: found.username || '',
             email: found.email || '',
             phone_number: found.phone_number || '',
@@ -3877,6 +3881,7 @@ export default function AdminEmployeeProfile() {
         first_name: form.first_name || undefined,
         middle_name: form.middle_name || null,
         last_name: form.last_name || undefined,
+        suffix: form.suffix || null,
         username: form.username || undefined,
         email: form.email || undefined,
         phone_number: form.phone_number || undefined,
@@ -3928,7 +3933,7 @@ export default function AdminEmployeeProfile() {
       const optimisticPatch = Object.fromEntries(
         Object.entries(requestPayload).filter(([, v]) => v !== undefined)
       )
-      const optimisticName = [payload.first_name, payload.middle_name, payload.last_name].filter(Boolean).join(' ')
+      const optimisticName = formatEmployeeName(payload)
       setEmployee((prev) => {
         if (!prev) return prev
         return {
@@ -4328,6 +4333,14 @@ export default function AdminEmployeeProfile() {
                       <span className="text-destructive" aria-hidden>*</span>
                     </Label>
                     <Input className="h-11" value={form.last_name} onChange={(e) => setForm((f) => ({ ...f, last_name: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      <UserRound className="size-4 shrink-0 text-muted-foreground" />
+                      Suffix
+                      <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+                    </Label>
+                    <Input className="h-11" value={form.suffix || ''} onChange={(e) => setForm((f) => ({ ...f, suffix: e.target.value }))} placeholder="e.g. Jr." />
                   </div>
                   <div className="space-y-2">
                   <Label className="flex items-center gap-2 text-sm font-medium text-foreground">

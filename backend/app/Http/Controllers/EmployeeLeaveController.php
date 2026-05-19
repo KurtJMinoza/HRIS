@@ -103,11 +103,11 @@ class EmployeeLeaveController extends Controller
     private function mapEmployeeLeaveRow(LeaveRequest $l): array
     {
         $l->loadMissing([
-            'user:id,name,profile_image,position,role,department_id,department,branch_id,company_id',
-            'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
-            'firstApprover:id,name,profile_image',
-            'secondApprover:id,name,profile_image',
-            'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id',
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
+            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
         ]);
 
         return array_merge([
@@ -137,7 +137,7 @@ class EmployeeLeaveController extends Controller
                     'approver_role' => $a->approver_role,
                     'details' => $a->details,
                     'at' => $a->created_at?->toIso8601String(),
-                    'actor_name' => $a->actor?->name,
+                    'actor_name' => $a->actor?->display_name,
                 ];
             })->values()->all(),
         ], $this->documentFieldsForLeave($l), $this->leaveRequesterMeta($l), [
@@ -180,7 +180,7 @@ class EmployeeLeaveController extends Controller
 
         return [
             'requested_by_id' => $requester->id,
-            'requested_by_name' => $requester->name,
+            'requested_by_name' => $requester->display_name,
             'requested_by_profile_image_url' => $requester->profile_image_url,
             'requested_by_position' => $requester->position,
             'requested_by_hr_role' => $hr->value,
@@ -337,10 +337,10 @@ class EmployeeLeaveController extends Controller
 
         if (! $dashboardLite) {
             $query->with([
-                'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
-                'firstApprover:id,name,profile_image',
-                'secondApprover:id,name,profile_image',
-                'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
             ]);
         }
 
@@ -762,11 +762,11 @@ class EmployeeLeaveController extends Controller
         });
 
         $leave->load([
-            'user:id,name,profile_image,position,role,department_id,department,branch_id,company_id',
-            'filedBy:id,name,profile_image,position,role,department_id,branch_id,company_id',
-            'firstApprover:id,name,profile_image',
-            'secondApprover:id,name,profile_image',
-            'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id',
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
+            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
         ]);
 
         return response()->json([

@@ -120,7 +120,7 @@ class EmployeeOvertimeController extends Controller
 
         return [
             'requested_by_id' => $subject->id,
-            'requested_by_name' => $subject->name,
+            'requested_by_name' => $subject->display_name,
             'requested_by_position' => $subject->position,
             'requested_by_profile_image_url' => $subject->profile_image_url,
             'requested_by_hr_role' => $hr->value,
@@ -216,12 +216,12 @@ class EmployeeOvertimeController extends Controller
     private function mapOvertimeRowForEmployee(Overtime $o, ?User $actor = null): array
     {
         $o->loadMissing([
-            'approvedBy:id,name',
-            'user:id,name,position,profile_image,department_id,department,branch_id,company_id',
-            'filedBy:id,name,profile_image',
-            'firstApprover:id,name,profile_image',
-            'secondApprover:id,name,profile_image',
-            'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+            'approvedBy:id,name,first_name,middle_name,last_name,suffix',
+            'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
         ]);
 
         $subject = $o->user;
@@ -245,7 +245,7 @@ class EmployeeOvertimeController extends Controller
             'attachment_url' => $this->publicMediaUrl($o->attachment_path),
             'attachment_filename' => $this->attachmentBasename($o->attachment_path),
             'approved_at' => $o->approved_at?->toIso8601String(),
-            'approved_by_name' => $o->approvedBy?->name,
+            'approved_by_name' => $o->approvedBy?->display_name,
             'created_at' => $o->created_at?->toIso8601String(),
             'filed_at' => $o->filed_at?->toIso8601String(),
             'display_status' => $this->overtimeApprovalService->deriveDisplayStatusLabel($o),
@@ -260,7 +260,7 @@ class EmployeeOvertimeController extends Controller
                     'approver_role' => $a->approver_role,
                     'details' => $a->details,
                     'at' => $a->created_at?->toIso8601String(),
-                    'actor_name' => $a->actor?->name,
+                    'actor_name' => $a->actor?->display_name,
                 ];
             })->values()->all(),
             'actor_can_delete' => $actor ? $this->canDeleteOvertimeRequest($actor, $o) : false,
@@ -294,12 +294,12 @@ class EmployeeOvertimeController extends Controller
 
         if (! $dashboardLite) {
             $query->with([
-                'approvedBy:id,name',
-                'user:id,name,position,profile_image,department_id,department,branch_id,company_id',
-                'filedBy:id,name,profile_image',
-                'firstApprover:id,name,profile_image',
-                'secondApprover:id,name,profile_image',
-                'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+                'approvedBy:id,name,first_name,middle_name,last_name,suffix',
+                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
             ]);
         }
 
@@ -360,12 +360,12 @@ class EmployeeOvertimeController extends Controller
             ->where('user_id', $user->id)
             ->where('id', $id)
             ->with([
-                'approvedBy:id,name',
-                'user:id,name,position,profile_image,department_id,department,branch_id,company_id',
-                'filedBy:id,name,profile_image',
-                'firstApprover:id,name,profile_image',
-                'secondApprover:id,name,profile_image',
-                'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+                'approvedBy:id,name,first_name,middle_name,last_name,suffix',
+                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
             ])
             ->firstOrFail();
 
@@ -435,17 +435,17 @@ class EmployeeOvertimeController extends Controller
         ]);
         $overtime->save();
 
-        $overtime->load('approvedBy:id,name');
+        $overtime->load('approvedBy:id,name,first_name,middle_name,last_name,suffix');
 
         return response()->json([
             'message' => 'Overtime request updated.',
             'overtime' => $this->mapOvertimeRowForEmployee($overtime->fresh([
-                'approvedBy:id,name',
-                'user:id,name,position,profile_image,department_id,department,branch_id,company_id',
-                'filedBy:id,name,profile_image',
-                'firstApprover:id,name,profile_image',
-                'secondApprover:id,name,profile_image',
-                'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+                'approvedBy:id,name,first_name,middle_name,last_name,suffix',
+                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
             ]), $user),
         ]);
     }
@@ -719,12 +719,12 @@ class EmployeeOvertimeController extends Controller
                 ? 'Overtime requests submitted successfully.'
                 : 'Overtime request submitted successfully.',
             'overtimes' => $overtimes->map(fn (Overtime $overtime) => $this->mapOvertimeRowForEmployee($overtime->fresh([
-                'approvedBy:id,name',
-                'user:id,name,position,profile_image,department_id,department,branch_id,company_id',
-                'filedBy:id,name,profile_image',
-                'firstApprover:id,name,profile_image',
-                'secondApprover:id,name,profile_image',
-                'approvalAudits' => fn ($q) => $q->with('actor:id,name')->orderBy('created_at'),
+                'approvedBy:id,name,first_name,middle_name,last_name,suffix',
+                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
             ]), $user))->values(),
         ], 201);
     }

@@ -23,7 +23,7 @@ class BranchController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = Branch::with('company:id,name,logo')
-            ->with('branchManager:id,name,profile_image')
+            ->with('branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->withCount('departments')
             ->withTotalEmployeesCount();
 
@@ -77,7 +77,7 @@ class BranchController extends Controller
 
         return response()->json([
             'message' => 'Branch created successfully.',
-            'branch' => $this->branchResponse($branch->load('company:id,name,logo')->load('branchManager:id,name,profile_image')),
+            'branch' => $this->branchResponse($branch->load('company:id,name,logo')->load('branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image')),
         ], 201);
     }
 
@@ -90,7 +90,7 @@ class BranchController extends Controller
         $this->dataScopeService->restrictBranchQuery($request->user(), $branchQuery);
         $branch = $branchQuery->firstOrFail();
         $departments = $branch->departments()
-            ->with('departmentHead:id,name')
+            ->with('departmentHead:id,name,first_name,middle_name,last_name,suffix')
             ->withCount('employees')
             ->orderBy('name')
             ->get()
@@ -105,7 +105,7 @@ class BranchController extends Controller
                 'logo_url' => $this->companyLogoUrl($branch->company?->logo),
                 'office_location' => $d->office_location,
                 'department_head_id' => $d->department_head_id,
-                'department_head_name' => $d->departmentHead?->name,
+                'department_head_name' => $d->departmentHead?->display_name,
                 'employees_count' => $d->employees_count,
             ]);
 
@@ -200,7 +200,7 @@ class BranchController extends Controller
             }
         }
 
-        $refreshed = Branch::with(['company:id,name,logo', 'branchManager:id,name,profile_image'])
+        $refreshed = Branch::with(['company:id,name,logo', 'branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image'])
             ->withCount('departments')
             ->withTotalEmployeesCount()
             ->findOrFail($branch->id);
@@ -243,7 +243,7 @@ class BranchController extends Controller
             'logo_url' => $logoUrl,
             'address' => $b->address,
             'branch_manager_id' => $b->branch_manager_id,
-            'branch_manager_name' => $b->branchManager?->name,
+            'branch_manager_name' => $b->branchManager?->display_name,
             'branch_manager_profile_image' => $this->companyLogoUrl($b->branchManager?->profile_image),
             'departments_count' => $b->departments_count ?? $b->departments()->count(),
             'employees_count' => $b->employees_count ?? $b->employees()->count(),

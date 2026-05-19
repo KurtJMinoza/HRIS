@@ -356,7 +356,7 @@
       <div class="section-title">Employee Information</div>
       <table class="employee-grid">
         <tr>
-          <td><div class="k">Name</div><div class="v">{{ $employee->name ?? '—' }}</div></td>
+          <td><div class="k">Name</div><div class="v">{{ $employee->display_name ?? $employee->name ?? '—' }}</div></td>
           <td><div class="k">Employee ID</div><div class="v">{{ $employee->employee_code ?? '—' }}</div></td>
           <td><div class="k">Department</div><div class="v">{{ $employee->departmentRelation?->name ?? $employee->department ?? '—' }}</div></td>
           <td><div class="k">Position</div><div class="v">{{ trim((string) ($employee->position ?? '')) !== '' ? trim((string) $employee->position) : '—' }}</div></td>

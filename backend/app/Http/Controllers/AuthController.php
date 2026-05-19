@@ -46,7 +46,9 @@ class AuthController extends Controller
 
         $validated = $request->validate([
             'first_name' => ['required', 'string', 'max:255'],
+            'middle_name' => ['nullable', 'string', 'max:255'],
             'last_name' => ['required', 'string', 'max:255'],
+            'suffix' => ['nullable', 'string', 'max:50'],
             'username' => ['required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users'],
             'password' => ['required', 'string', 'min:8'],
@@ -58,9 +60,17 @@ class AuthController extends Controller
 
         $rawPhone = $validated['phone_number'] ?? null;
         $phone = is_string($rawPhone) && trim($rawPhone) !== '' ? \App\Services\SmsService::normalizePhone($rawPhone) : null;
+        $firstName = trim((string) $validated['first_name']);
+        $middleName = isset($validated['middle_name']) && trim((string) $validated['middle_name']) !== '' ? trim((string) $validated['middle_name']) : null;
+        $lastName = trim((string) $validated['last_name']);
+        $suffix = isset($validated['suffix']) && trim((string) $validated['suffix']) !== '' ? trim((string) $validated['suffix']) : null;
 
         $user = User::create([
-            'name' => trim($validated['first_name'].' '.$validated['last_name']),
+            'name' => User::formatEmployeeDisplayName($firstName, $middleName, $lastName, $suffix),
+            'first_name' => $firstName,
+            'middle_name' => $middleName,
+            'last_name' => $lastName,
+            'suffix' => $suffix,
             'username' => trim((string) $validated['username']),
             'email' => $validated['email'],
             'phone_number' => $phone,
@@ -166,7 +176,7 @@ class AuthController extends Controller
         $userPayload = EmployeeProfileCache::remember(
             (int) $user->id,
             'auth_user_payload',
-            ['version' => 5, 'include_leave_credits' => false],
+            ['version' => 6, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($user, ['include_leave_credits' => false])
         );
@@ -227,7 +237,7 @@ class AuthController extends Controller
         $payload = EmployeeProfileCache::remember(
             (int) $authUser->id,
             'auth_user_payload',
-            ['version' => 5, 'include_leave_credits' => false],
+            ['version' => 6, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($authUser, ['include_leave_credits' => false])
         );
@@ -586,11 +596,15 @@ class AuthController extends Controller
             'user_id' => $user->id,
             'employee_id' => $user->isRosterEligible() ? $user->id : null,
             'employee_code' => $user->employee_code,
-            'employee_name' => $user->isRosterEligible() ? $user->name : null,
-            'name' => $user->name,
+            'employee_name' => $user->isRosterEligible() ? $user->display_name : null,
+            'name' => $user->display_name,
+            'display_name' => $user->display_name,
+            'formatted_name' => $user->formatted_name,
+            'full_name_last_first' => $user->full_name_last_first,
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,
             'last_name' => $user->last_name,
+            'suffix' => $user->suffix,
             'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
@@ -634,7 +648,7 @@ class AuthController extends Controller
             'contract_start_date' => $user->contract_start_date?->toDateString(),
             'contract_end_date' => $user->contract_end_date?->toDateString(),
             'supervisor_id' => $user->supervisor_id,
-            'supervisor_name' => $user->supervisor?->name,
+            'supervisor_name' => $user->supervisor?->display_name,
             'pay_cycle_id' => $user->pay_cycle_id,
             'pay_cycle_preview' => $lite ? null : $payCycleService->previewForUser($user),
             'pay_cycle_inherited_from_company' => $lite ? false : $payCycleService->isPayCycleInheritedFromCompany($user),

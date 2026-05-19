@@ -52,7 +52,7 @@ class PayslipController extends Controller
         ]);
 
         $q = Payslip::query()
-            ->with(['employee:id,name,employee_code,department,profile_image', 'company:id,name'])
+            ->with(['employee:id,name,first_name,middle_name,last_name,suffix,employee_code,department,profile_image', 'company:id,name'])
             ->orderByDesc('pay_period_end')
             ->orderByDesc('id');
 
@@ -1154,45 +1154,48 @@ class PayslipController extends Controller
     }
 
     /**
-     * Payslip pay date for filenames: prefer {@see Payslip::$pay_date}, else period end.
-     */
-    private function payslipPayDateYmd(Payslip $payslip): string
-    {
-        if ($payslip->pay_date) {
-            return $payslip->pay_date->format('Y-m-d');
-        }
-        if ($payslip->pay_period_end) {
-            return $payslip->pay_period_end->format('Y-m-d');
-        }
-
-        return now()->format('Y-m-d');
-    }
-
-    /**
-     * Base ZIP filename stem (without extension): family name first (then given name when available).
+     * Base ZIP filename stem (without extension): LastName_FirstName_PayPeriod.
      */
     private function bulkZipPdfFilenameStem(Payslip $payslip, User $employee): string
     {
-        $payYmd = $this->payslipPayDateYmd($payslip);
+        $periodLabel = $this->payslipPeriodFilenameLabel($payslip);
         $last = trim((string) ($employee->last_name ?? ''));
         $first = trim((string) ($employee->first_name ?? ''));
 
         if ($last !== '' && $first !== '') {
-            return $this->safeZipFilenameSegment($last).'_'.$this->safeZipFilenameSegment($first).'_'.$payYmd;
+            return $this->safeZipFilenameSegment($last).'_'.$this->safeZipFilenameSegment($first).'_'.$periodLabel;
         }
         if ($last !== '') {
-            return $this->safeZipFilenameSegment($last).'_'.$payYmd;
+            return $this->safeZipFilenameSegment($last).'_'.$periodLabel;
         }
         if ($first !== '') {
-            return $this->safeZipFilenameSegment($first).'_'.$payYmd;
+            return $this->safeZipFilenameSegment($first).'_'.$periodLabel;
         }
 
         $code = trim((string) ($employee->employee_code ?? ''));
         if ($code !== '') {
-            return $this->safeZipFilenameSegment($code).'_'.$payYmd;
+            return $this->safeZipFilenameSegment($code).'_'.$periodLabel;
         }
 
-        return 'emp_'.$employee->id.'_'.$payYmd;
+        return 'emp_'.$employee->id.'_'.$periodLabel;
+    }
+
+    private function payslipPeriodFilenameLabel(Payslip $payslip): string
+    {
+        if ($payslip->pay_period_start && $payslip->pay_period_end) {
+            $start = $payslip->pay_period_start;
+            $end = $payslip->pay_period_end;
+
+            if ((int) $start->year === (int) $end->year) {
+                return $start->format('M').$start->format('j').'-'.$end->format('M').$end->format('j').'-'.$end->format('Y');
+            }
+
+            return $start->format('M').$start->format('j').'-'.$start->format('Y').'-'.$end->format('M').$end->format('j').'-'.$end->format('Y');
+        }
+
+        return $payslip->pay_date
+            ? $payslip->pay_date->format('Y-m-d')
+            : ($payslip->pay_period_end?->format('Y-m-d') ?? now()->format('Y-m-d'));
     }
 
     /**

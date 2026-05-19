@@ -182,6 +182,7 @@ class EmployeeController extends Controller
             'first_name',
             'middle_name',
             'last_name',
+            'suffix',
             'username',
             'email',
             'phone_number',
@@ -218,6 +219,7 @@ class EmployeeController extends Controller
             'first_name',
             'middle_name',
             'last_name',
+            'suffix',
             'username',
             'email',
             'phone_number',
@@ -430,6 +432,7 @@ class EmployeeController extends Controller
             'First Name',
             'Middle Name',
             'Last Name',
+            'Suffix',
             'Date of Birth',
             'Gender',
             'Marital Status',
@@ -500,6 +503,7 @@ class EmployeeController extends Controller
                     'first_name',
                     'middle_name',
                     'last_name',
+                    'suffix',
                     'date_of_birth',
                     'gender',
                     'civil_status',
@@ -542,7 +546,7 @@ class EmployeeController extends Controller
                     'departmentRelation:id,name,branch_id',
                     'departmentRelation.branch:id,name,company_id',
                     'departmentRelation.branch.company:id,name',
-                    'supervisor:id,name',
+                    'supervisor:id,name,first_name,middle_name,last_name,suffix',
                     'workingSchedule:id,name,time_in,time_out,rest_days',
                     'payCycle:id,name,code',
                     'compensationComponents:id,user_id,pay_component_id,name,type,value,is_active',
@@ -630,11 +634,12 @@ class EmployeeController extends Controller
 
                     fputcsv($out, [
                         (string) ($user->employee_code ?? ''),
-                        (string) ($user->name ?? ''),
+                        (string) ($user->display_name ?? ''),
                         (string) ($user->username ?? ''),
                         (string) ($user->first_name ?? ''),
                         (string) ($user->middle_name ?? ''),
                         (string) ($user->last_name ?? ''),
+                        (string) ($user->suffix ?? ''),
                         $this->csvDate($user->date_of_birth),
                         (string) ($user->gender ?? ''),
                         (string) ($user->civil_status ?? ''),
@@ -657,7 +662,7 @@ class EmployeeController extends Controller
                         (string) ($departmentName ?? ''),
                         (string) ($branchName ?? ''),
                         (string) ($companyName ?? ''),
-                        (string) ($user->supervisor?->name ?? ''),
+                        (string) ($user->supervisor?->display_name ?? ''),
                         (string) ($user->workingSchedule?->name ?? ''),
                         (string) ($user->workingSchedule?->time_in ?? ''),
                         (string) ($user->workingSchedule?->time_out ?? ''),
@@ -713,6 +718,7 @@ class EmployeeController extends Controller
             'first_name' => ['required', 'string', 'max:255'],
             'middle_name' => ['nullable', 'string', 'max:255'],
             'last_name' => ['required', 'string', 'max:255'],
+            'suffix' => ['nullable', 'string', 'max:50'],
             'date_of_birth' => ['nullable', 'date'],
             'gender' => ['nullable', 'string', 'max:50'],
             'civil_status' => ['nullable', 'string', 'max:50'],
@@ -798,15 +804,17 @@ class EmployeeController extends Controller
 
         $resolvedHomeAddress = $this->resolveHomeAddressForEmployeeCreate($validated);
 
+        $firstName = trim((string) $validated['first_name']);
+        $middleName = isset($validated['middle_name']) && trim((string) $validated['middle_name']) !== '' ? trim((string) $validated['middle_name']) : null;
+        $lastName = trim((string) $validated['last_name']);
+        $suffix = isset($validated['suffix']) && trim((string) $validated['suffix']) !== '' ? trim((string) $validated['suffix']) : null;
+
         $user = User::create([
-            'name' => $this->composeFullName(
-                $validated['first_name'],
-                $validated['middle_name'] ?? null,
-                $validated['last_name']
-            ),
-            'first_name' => trim($validated['first_name']),
-            'middle_name' => isset($validated['middle_name']) && trim((string) $validated['middle_name']) !== '' ? trim((string) $validated['middle_name']) : null,
-            'last_name' => trim($validated['last_name']),
+            'name' => User::formatEmployeeDisplayName($firstName, $middleName, $lastName, $suffix),
+            'first_name' => $firstName,
+            'middle_name' => $middleName,
+            'last_name' => $lastName,
+            'suffix' => $suffix,
             'date_of_birth' => $validated['date_of_birth'] ?? null,
             'gender' => isset($validated['gender']) && trim((string) $validated['gender']) !== '' ? trim((string) $validated['gender']) : null,
             'civil_status' => isset($validated['civil_status']) && trim((string) $validated['civil_status']) !== '' ? trim((string) $validated['civil_status']) : null,
@@ -935,7 +943,7 @@ class EmployeeController extends Controller
 
         return response()->json([
             'employee_id' => $employee->id,
-            'employee_name' => $employee->name,
+            'employee_name' => $employee->display_name,
             'qr_token' => $employee->qr_token,
             'qr_token_generated_at' => $employee->qr_token_generated_at?->toIso8601String(),
             'company_logo_url' => $companyLogoUrl,
@@ -969,7 +977,7 @@ class EmployeeController extends Controller
         return response()->json([
             'message' => 'QR token regenerated.',
             'employee_id' => $employee->id,
-            'employee_name' => $employee->name,
+            'employee_name' => $employee->display_name,
             'qr_token' => $employee->qr_token,
             'qr_token_generated_at' => $employee->qr_token_generated_at?->toIso8601String(),
             'company_logo_url' => $companyLogoUrl,
@@ -1057,6 +1065,7 @@ class EmployeeController extends Controller
                 'first_name' => ['sometimes', 'required', 'string', 'max:255'],
                 'middle_name' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'last_name' => ['sometimes', 'required', 'string', 'max:255'],
+                'suffix' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'email' => ['sometimes', 'required', 'string', 'email', 'max:255', 'unique:users,email,'.$id],
                 'username' => ['sometimes', 'required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username,'.$id],
                 'department_id' => ['sometimes', 'nullable', 'integer', 'exists:departments,id'],
@@ -1115,6 +1124,10 @@ class EmployeeController extends Controller
             }
             if ($this->requestHasInput($request, 'last_name')) {
                 $employee->last_name = trim((string) $request->input('last_name'));
+            }
+            if ($this->requestHasInput($request, 'suffix')) {
+                $suffixRaw = $request->input('suffix');
+                $employee->suffix = is_string($suffixRaw) && trim($suffixRaw) !== '' ? trim($suffixRaw) : null;
             }
             if ($this->requestHasInput($request, 'email')) {
                 $employee->email = trim((string) $request->input('email'));
@@ -1278,11 +1291,12 @@ class EmployeeController extends Controller
                 $this->applyScheduleDerivedRatesFromMonthlySalary($employee);
             }
 
-            if ($this->requestHasInput($request, 'first_name') || $this->requestHasInput($request, 'middle_name') || $this->requestHasInput($request, 'last_name')) {
-                $employee->name = $this->composeFullName(
+            if ($this->requestHasInput($request, 'first_name') || $this->requestHasInput($request, 'middle_name') || $this->requestHasInput($request, 'last_name') || $this->requestHasInput($request, 'suffix')) {
+                $employee->name = User::formatEmployeeDisplayName(
                     $employee->first_name ?? '',
                     $employee->middle_name,
-                    $employee->last_name ?? ''
+                    $employee->last_name ?? '',
+                    $employee->suffix
                 );
             }
 
@@ -1936,7 +1950,7 @@ class EmployeeController extends Controller
     {
         $employee = $this->loadScopedEmployee($request, $id, true);
 
-        $name = $employee->name;
+        $name = $employee->display_name;
         $employee->delete();
 
         return response()->json([
@@ -2149,7 +2163,7 @@ class EmployeeController extends Controller
                 'departmentRelation:id,name,branch_id,department_head_id',
                 'departmentRelation.branch:id,name,company_id',
                 'departmentRelation.branch.company:id,name',
-                'supervisor:id,name',
+                'supervisor:id,name,first_name,middle_name,last_name,suffix',
                 'team:id,name',
                 'workingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
                 'pendingWorkingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
@@ -2180,17 +2194,21 @@ class EmployeeController extends Controller
             ? $user->branch?->name
             : ($user->branch?->name ?? $user->departmentRelation?->branch?->name);
 
-        [$firstNameFallback, $middleNameFallback, $lastNameFallback] = $this->splitNameParts($user->name);
+        [$firstNameFallback, $middleNameFallback, $lastNameFallback] = $this->splitNameParts($user->getRawOriginal('name'));
 
         $hr = $this->hrRoleResolver->resolve($user);
 
         $row = [
             'id' => $user->id,
             'employee_code' => $user->employee_code,
-            'name' => $user->name,
+            'name' => $user->display_name,
+            'display_name' => $user->display_name,
+            'formatted_name' => $user->formatted_name,
+            'full_name_last_first' => $user->full_name_last_first,
             'first_name' => $user->first_name ?: $firstNameFallback,
             'middle_name' => $user->middle_name ?: $middleNameFallback,
             'last_name' => $user->last_name ?: $lastNameFallback,
+            'suffix' => $user->suffix,
             'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
@@ -2238,7 +2256,7 @@ class EmployeeController extends Controller
             'contract_start_date' => $user->contract_start_date?->toDateString(),
             'contract_end_date' => $user->contract_end_date?->toDateString(),
             'supervisor_id' => $user->supervisor_id,
-            'supervisor_name' => $user->supervisor?->name,
+            'supervisor_name' => $user->supervisor?->display_name,
             'pay_cycle_id' => $user->pay_cycle_id,
             'pay_cycle_preview' => $includePayCyclePreview ? $this->payCycleService->previewForUser($user) : null,
             'pay_cycle_inherited_from_company' => $includePayCyclePreview ? $this->payCycleService->isPayCycleInheritedFromCompany($user) : false,
@@ -2786,10 +2804,14 @@ class EmployeeController extends Controller
         return [
             'id' => $user->id,
             'employee_code' => $user->employee_code,
-            'name' => $user->name,
+            'name' => $user->display_name,
+            'display_name' => $user->display_name,
+            'formatted_name' => $user->formatted_name,
+            'full_name_last_first' => $user->full_name_last_first,
             'first_name' => $user->first_name,
             'middle_name' => $user->middle_name,
             'last_name' => $user->last_name,
+            'suffix' => $user->suffix,
             'username' => $user->username,
             'email' => $user->email,
             'phone_number' => $user->phone_number,
@@ -2871,18 +2893,6 @@ class EmployeeController extends Controller
             'leave_credits_is_regular_employment' => $lc['is_regular_employment'] ?? null,
             'leave_credits_service_anchor_date' => $lc['service_anchor_date'] ?? null,
         ];
-    }
-
-    private function composeFullName(string $firstName, ?string $middleName, string $lastName): string
-    {
-        $parts = [
-            trim($firstName),
-            is_string($middleName) ? trim($middleName) : '',
-            trim($lastName),
-        ];
-        $parts = array_values(array_filter($parts, fn ($part) => $part !== ''));
-
-        return trim(implode(' ', $parts));
     }
 
     private function generateEmployeeCode(int $id): string

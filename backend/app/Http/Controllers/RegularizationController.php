@@ -96,7 +96,8 @@ class RegularizationController extends Controller
 
             return [
                 'id' => $employee->id,
-                'name' => $employee->name,
+                'name' => $employee->display_name,
+                'formatted_name' => $employee->formatted_name,
                 'employee_code' => $employee->employee_code,
                 'profile_image_url' => $employee->profile_image_url,
                 'hire_date' => $employee->hire_date->toDateString(),
@@ -279,11 +280,12 @@ class RegularizationController extends Controller
         }
         $this->dataScopeService->restrictEmployeeQuery($actor, $q);
 
-        $employees = $q->orderByLastName()->get(['id', 'name']);
+        $employees = $q->orderByLastName()->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix']);
         $rows = $employees->map(function (User $employee) {
             return [
                 'user_id' => $employee->id,
-                'name' => $employee->name,
+                'name' => $employee->display_name,
+                'formatted_name' => $employee->formatted_name,
                 'required_actions' => $this->statusService->getRequiredActions($employee),
             ];
         })->values();
@@ -394,13 +396,14 @@ class RegularizationController extends Controller
             'recommendation_type' => $rec->recommendation_type ?? RegularizationRecommendation::TYPE_PROBATION_TO_REGULAR,
             'effective_date' => $rec->effective_date?->toDateString(),
             'expiration_date' => $rec->expiration_date?->toDateString(),
-            'employee_name' => $employee?->name,
+            'employee_name' => $employee?->display_name,
+            'employee_formatted_name' => $employee?->formatted_name,
             'employee_code' => $employee?->employee_code,
             'employee_profile_image' => $employee?->profile_image_url,
             'employee_hire_date' => $employee?->hire_date?->toDateString(),
             'employee_position' => $employee?->position,
             'employee_employment_type' => $employee?->employment_type,
-            'recommended_by_name' => $rec->recommendedBy?->name,
+            'recommended_by_name' => $rec->recommendedBy?->display_name,
             'recommended_by_profile_image' => $rec->recommendedBy?->profile_image_url,
             'recommended_by_hr_role' => $rec->recommendedBy
                 ? $this->hrRoleResolver->resolveForApprovalSubject($rec->recommendedBy)->value
@@ -410,7 +413,7 @@ class RegularizationController extends Controller
                 : null,
             'recommendation_notes' => $rec->recommendation_notes,
             'status' => $rec->status,
-            'hr_reviewed_by_name' => $rec->hrReviewedBy?->name,
+            'hr_reviewed_by_name' => $rec->hrReviewedBy?->display_name,
             'hr_reviewed_by_profile_image' => $rec->hrReviewedBy?->profile_image_url,
             'hr_reviewed_by_hr_role' => $rec->hrReviewedBy
                 ? $this->hrRoleResolver->resolveForApprovalSubject($rec->hrReviewedBy)->value
