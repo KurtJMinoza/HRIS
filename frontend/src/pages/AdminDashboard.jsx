@@ -94,7 +94,6 @@ import {
   holidayScopeBadgeClass,
   holidayTypeBadgeClass,
   holidayTypeLabel,
-  upcomingHolidayUniqueKey,
   parseHolidayMonthKey,
   shiftHolidayMonth,
   UPCOMING_HOLIDAYS_DISPLAY_LIMIT,
@@ -103,6 +102,7 @@ import {
   formatHolidayMultiplierLabel,
   holidayMultiplierBadgeClass,
 } from '@/lib/holidayMultiplierDisplay'
+import { upcomingHolidayUniqueKey } from '@/lib/holidayUniqueKey'
 
 const CARD_ICONS = {
   total: Users,
