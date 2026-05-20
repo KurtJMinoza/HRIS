@@ -2,11 +2,24 @@
 
 namespace App\Models;
 
+use App\Support\TextSanitizer;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Model;
 
 class Holiday extends Model
 {
+    protected static function booted(): void
+    {
+        static::saving(function (Holiday $holiday) {
+            if (is_string($holiday->name)) {
+                $holiday->name = TextSanitizer::clean($holiday->name, $holiday->name) ?? $holiday->name;
+            }
+            if (is_string($holiday->description)) {
+                $holiday->description = TextSanitizer::clean($holiday->description);
+            }
+        });
+    }
+
     protected $fillable = [
         'date',
         'name',

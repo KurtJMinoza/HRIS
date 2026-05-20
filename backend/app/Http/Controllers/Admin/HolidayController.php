@@ -13,6 +13,7 @@ use App\Services\HolidayCalendarService;
 use App\Services\HolidayService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\PhPayrollReference;
+use App\Support\TextSanitizer;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -646,8 +647,13 @@ class HolidayController extends Controller
      */
     private function payloadForWrite(array $valid): array
     {
+        $name = TextSanitizer::clean((string) ($valid['name'] ?? ''), 'Holiday') ?? 'Holiday';
+        $description = isset($valid['description'])
+            ? TextSanitizer::clean((string) $valid['description'])
+            : null;
+
         return [
-            'name' => $valid['name'],
+            'name' => $name,
             'date' => $valid['date'],
             'type' => $valid['type'],
             'scope' => $valid['scope'],
@@ -655,7 +661,7 @@ class HolidayController extends Controller
             'branch_id' => $valid['branch_id'] ?? null,
             'department_id' => $valid['department_id'] ?? null,
             'employee_id' => $valid['employee_id'] ?? null,
-            'description' => $valid['description'] ?? null,
+            'description' => $description,
             'regions' => ($valid['scope'] === 'regional') ? array_values($valid['regions'] ?? []) : null,
             'is_recurring' => (bool) ($valid['is_recurring'] ?? false),
             'status' => $valid['status'],

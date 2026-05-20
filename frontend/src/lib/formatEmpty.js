@@ -1,8 +1,11 @@
 /**
- * Standard empty/null display for HRIS tables and detail views (em dash U+2014).
+ * Standard empty/null display for HRIS tables and detail views.
  */
 
-export const EMPTY_PLACEHOLDER = '\u2014'
+export const EMPTY_PLACEHOLDER = '-'
+
+/** Legacy em dash used before placeholder migration. */
+const LEGACY_EMPTY = '\u2014'
 
 /** UTF-8 mojibake sequences often shown when em dash was mis-encoded. */
 const MOJIBAKE_REPLACEMENTS = [
@@ -24,19 +27,21 @@ export function isEmptyValue(value) {
   if (value == null) return true
   if (typeof value === 'string') {
     const t = repairMojibake(value).trim()
-    return t === '' || t === EMPTY_PLACEHOLDER || t === '-' || t === '--'
+    return t === '' || t === EMPTY_PLACEHOLDER || t === LEGACY_EMPTY || t === '--'
   }
   return false
 }
 
 /**
- * Repair common UTF-8 mojibake in display strings.
+ * Repair common UTF-8 mojibake in display strings (does not strip emoji or currency symbols).
  * @param {unknown} text
  * @returns {string}
  */
 export function repairMojibake(text) {
   if (text == null || text === '') return ''
   let s = String(text)
+  // Remove only the Unicode replacement character (corrupted byte marker).
+  s = s.replace(/\uFFFD/g, '')
   for (const [pattern, replacement] of MOJIBAKE_REPLACEMENTS) {
     s = s.replace(pattern, replacement)
   }

@@ -1782,6 +1782,7 @@ class PayslipService
         if ($text === '') {
             return '';
         }
+        $text = \App\Support\TextSanitizer::clean($text, '') ?? '';
         $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $text) ?? '';
 
         if (function_exists('mb_substr')) {

@@ -41,6 +41,7 @@ import {
   Cake,
   Calendar,
   Search,
+  Flag,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -55,7 +56,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { DashboardSkeleton } from '@/components/skeletons'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Cell, ReferenceLine, ReferenceDot } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Cell } from 'recharts'
 import {
   getDashboardData,
   getAdminDashboardBirthdays,
@@ -77,10 +78,26 @@ import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { cn } from '@/lib/utils'
 import { DIALOG_CONTENT_CLASS } from '@/lib/fieldClasses'
-import { EMPTY_PLACEHOLDER } from '@/lib/formatEmpty'
+import { EMPTY_PLACEHOLDER, formatEmpty } from '@/lib/formatEmpty'
 import { OvertimeRequestsCard } from '@/components/dashboard/OvertimeRequestsCard'
 import { AttendanceCorrectionsCard } from '@/components/dashboard/AttendanceCorrectionsCard'
 import { HR_PENDING_APPROVALS_CHANGED } from '@/lib/hrPendingApprovalsEvents'
+import {
+  buildHolidayMonthOptions,
+  buildHolidayYearOptions,
+  filterUpcomingHolidaysByMonth,
+  formatHolidayDateLine,
+  formatHolidayMonthLabel,
+  formatHolidayScopeLine,
+  getDefaultHolidayMonthKey,
+  holidayMonthKey,
+  holidayScopeBadgeClass,
+  holidayTypeBadgeClass,
+  holidayTypeLabel,
+  parseHolidayMonthKey,
+  shiftHolidayMonth,
+  UPCOMING_HOLIDAYS_DISPLAY_LIMIT,
+} from '@/lib/holidayDisplay'
 
 const CARD_ICONS = {
   total: Users,
@@ -368,32 +385,42 @@ function buildBirthdayMonthSelectOptions(earliest, latest, current) {
   return options.reverse()
 }
 
+const BIRTHDAY_CAKE = '\u{1F382}'
+
 function birthdayBadgeLabel(days, monthView = false, passedInView = false) {
   if (passedInView) return 'Celebrated'
   const n = Number(days)
-  if (!Number.isFinite(n) || n <= 0) return '🎉 Today'
+  if (!Number.isFinite(n) || n <= 0) return `${BIRTHDAY_CAKE} Today`
   if (monthView && n > 31) return 'Birthday passed'
-  if (n === 1) return '🎂 Tomorrow'
+  if (n === 1) return `${BIRTHDAY_CAKE} Tomorrow`
   if (n === 7) return 'In 1 week'
   if (n > 7 && n % 7 === 0) return `In ${n / 7} weeks`
   return `In ${n} days`
 }
 
-function birthdayAgeCountdownLabel(person, { monthView = false, passedInView = false } = {}) {
+function birthdayAgeCountdownParts(person, { monthView = false, passedInView = false } = {}) {
   const nextAge = Number(person?.next_age)
   const days = Number(person?.days_until_birthday ?? 0)
   const status = String(person?.birthday_status || '')
   const hasAge = Number.isFinite(nextAge) && nextAge > 0
 
   if (passedInView || status === 'passed') {
-    return hasAge ? `Turned ${nextAge}` : null
+    return hasAge ? { showCake: true, text: `Turned ${nextAge}` } : null
   }
   if (!hasAge) return null
-  if (status === 'today' || person?.is_today || days === 0) return `🎉 Turns ${nextAge} Today`
-  if (status === 'tomorrow' || person?.is_tomorrow || days === 1) return `🎂 Turns ${nextAge} Tomorrow`
-  if (days > 1 && (!monthView || days <= 366)) return `🎂 Turns ${nextAge} in ${days} days`
-  if (monthView && days > 31) return hasAge ? `🎈 Turning ${nextAge}` : null
-  return `🎈 Turning ${nextAge}`
+  if (status === 'today' || person?.is_today || days === 0) {
+    return { showCake: true, text: `${BIRTHDAY_CAKE} Turns ${nextAge} Today` }
+  }
+  if (status === 'tomorrow' || person?.is_tomorrow || days === 1) {
+    return { showCake: true, text: `${BIRTHDAY_CAKE} Turns ${nextAge} Tomorrow` }
+  }
+  if (days > 1 && (!monthView || days <= 366)) {
+    return { showCake: true, text: `${BIRTHDAY_CAKE} Turns ${nextAge} in ${days} days` }
+  }
+  if (monthView && days > 31) {
+    return hasAge ? { showCake: true, text: `${BIRTHDAY_CAKE} Turning ${nextAge}` } : null
+  }
+  return { showCake: true, text: `${BIRTHDAY_CAKE} Turning ${nextAge}` }
 }
 
 function birthdayMonthShortLabel(monthLabel) {
@@ -421,7 +448,7 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, futur
   const days = Number(person?.days_until_birthday ?? 0)
   const birthdayAlreadyPassed =
     Boolean(person?.birthday_passed_in_view) || (monthView && days > 31 && !futureMonthView)
-  const ageCountdownLabel = birthdayAgeCountdownLabel(person, {
+  const ageCountdownParts = birthdayAgeCountdownParts(person, {
     monthView,
     passedInView: birthdayAlreadyPassed,
   })
@@ -454,7 +481,7 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, futur
               {name}
             </p>
             <p className="mt-1 line-clamp-2 text-[11px] font-medium uppercase leading-relaxed tracking-wide text-muted-foreground @md:text-xs">
-              {person?.department || 'Unassigned'} • {person?.position || 'Unassigned'}
+              {person?.department || 'Unassigned'} · {person?.position || 'Unassigned'}
             </p>
           </div>
           <span className={cn('shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-bold @md:px-3 @md:text-xs', badgeClass)}>
@@ -467,14 +494,14 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, futur
             {person?.day_name ? (
               <>
                 {' '}
-                <span className="text-muted-foreground">•</span>
+                <span className="text-muted-foreground">·</span>
                 {' '}
                 {person.day_name}
               </>
             ) : null}
           </p>
-          {ageCountdownLabel ? (
-            <p className="font-semibold text-brand">{ageCountdownLabel}</p>
+          {ageCountdownParts ? (
+            <p className="font-semibold text-brand">{ageCountdownParts.text}</p>
           ) : null}
         </div>
       </div>
@@ -486,6 +513,7 @@ export default function AdminDashboard() {
   const { user, loading: authLoading } = useAuth()
   const perms = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canViewCompanyDirectory = useMemo(() => perms.has('org.company.view'), [perms])
+  const canViewHolidays = useMemo(() => perms.has('holiday.view'), [perms])
   const canViewOvertime = useMemo(() => perms.has('overtime.view'), [perms])
   const canViewLeave = useMemo(() => perms.has('leave.view'), [perms])
   const canApproveAttendanceCorrections = useMemo(() => perms.has('attendance.corrections.approve'), [perms])
@@ -522,6 +550,18 @@ export default function AdminDashboard() {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
+  const [holidayMonth, setHolidayMonth] = useState(getDefaultHolidayMonthKey)
+  const holidayYearOptions = useMemo(() => buildHolidayYearOptions(), [])
+  const holidayMonthOptions = useMemo(() => buildHolidayMonthOptions(), [])
+  const holidayBrowse = useMemo(() => parseHolidayMonthKey(holidayMonth) ?? parseHolidayMonthKey(getDefaultHolidayMonthKey()), [holidayMonth])
+  const holidayYearMin = holidayYearOptions[0] ?? holidayBrowse.year
+  const holidayYearMax = holidayYearOptions[holidayYearOptions.length - 1] ?? holidayBrowse.year
+  const canHolidayMonthPrev =
+    holidayBrowse.year > holidayYearMin ||
+    (holidayBrowse.year === holidayYearMin && holidayBrowse.month > 1)
+  const canHolidayMonthNext =
+    holidayBrowse.year < holidayYearMax ||
+    (holidayBrowse.year === holidayYearMax && holidayBrowse.month < 12)
   const [selectedCompanyIds, setSelectedCompanyIds] = useState([])
   const [companyAttendanceData, setCompanyAttendanceData] = useState(null)
   const [companiesList, setCompaniesList] = useState([])
@@ -860,6 +900,44 @@ export default function AdminDashboard() {
     setBirthdayBrowseMonth(parsed)
   }, [earliestBirthdayBrowseMonth, latestBirthdayBrowseMonth])
 
+  const upcomingHolidaysFiltered = useMemo(
+    () =>
+      filterUpcomingHolidaysByMonth(
+        Array.isArray(data?.upcoming_holidays) ? data.upcoming_holidays : [],
+        holidayMonth
+      ),
+    [data?.upcoming_holidays, holidayMonth]
+  )
+
+  const upcomingHolidaysDisplay = useMemo(
+    () => upcomingHolidaysFiltered.slice(0, UPCOMING_HOLIDAYS_DISPLAY_LIMIT),
+    [upcomingHolidaysFiltered]
+  )
+
+  const handleHolidayYearSelect = useCallback((yearValue) => {
+    const year = Number(yearValue)
+    const parsed = parseHolidayMonthKey(holidayMonth)
+    if (!Number.isFinite(year) || !parsed) return
+    setHolidayMonth(holidayMonthKey({ year, month: parsed.month }))
+  }, [holidayMonth])
+
+  const handleHolidayCalendarMonthSelect = useCallback((monthValue) => {
+    const month = Number(monthValue)
+    const parsed = parseHolidayMonthKey(holidayMonth)
+    if (!Number.isFinite(month) || month < 1 || month > 12 || !parsed) return
+    setHolidayMonth(holidayMonthKey({ year: parsed.year, month }))
+  }, [holidayMonth])
+
+  const handleHolidayMonthStep = useCallback(
+    (delta) => {
+      const parsed = parseHolidayMonthKey(holidayMonth)
+      if (!parsed) return
+      const next = shiftHolidayMonth(parsed, delta)
+      if (next.year < holidayYearMin || next.year > holidayYearMax) return
+      setHolidayMonth(holidayMonthKey(next))
+    },
+    [holidayMonth, holidayYearMin, holidayYearMax]
+  )
   if (authLoading || (loading && !data)) {
     return <DashboardSkeleton />
   }
@@ -894,42 +972,10 @@ export default function AdminDashboard() {
   const stats = data?.stats ?? {}
   const prevStats = data?.stats_prev ?? {}
   const weeklyData = data?.weekly_overview ?? []
-  const rawMonthlyLate = data?.monthly_late ?? []
-  const monthlyLateData = rawMonthlyLate.map((d) => {
-    const numericLate = typeof d?.late_count === 'number' ? d.late_count : 0
-    const hasData =
-      typeof d?.has_data === 'boolean'
-        ? d.has_data
-        : typeof d?.late_count === 'number'
-    return {
-      ...d,
-      late_count: numericLate,
-      has_data: hasData,
-      clock_in_samples: typeof d?.clock_in_samples === 'number' ? d.clock_in_samples : null,
-    }
-  })
   const weeklyMax = weeklyData.reduce(
     (max, d) => Math.max(max, typeof d?.present_count === 'number' ? d.present_count : 0),
     0
   )
-  const monthlyLateMax = monthlyLateData.reduce(
-    (max, d) => Math.max(max, typeof d?.late_count === 'number' ? d.late_count : 0),
-    0
-  )
-  const monthlyLateBaseline = monthlyLateData.slice(0, -1).filter((d) => typeof d?.late_count === 'number')
-  const monthlyLateBaselineAvg =
-    monthlyLateBaseline.length > 0
-      ? monthlyLateBaseline.reduce((sum, d) => sum + d.late_count, 0) / monthlyLateBaseline.length
-      : 0
-  const latestMonthlyLate = monthlyLateData.length > 0 ? monthlyLateData[monthlyLateData.length - 1] : null
-  const spikeDetected =
-    typeof latestMonthlyLate?.late_count === 'number' &&
-    monthlyLateBaseline.length >= 3 &&
-    ((monthlyLateBaselineAvg > 0 &&
-      latestMonthlyLate.late_count > monthlyLateBaselineAvg * 2 &&
-      latestMonthlyLate.late_count - monthlyLateBaselineAvg >= 3) ||
-      (monthlyLateBaselineAvg === 0 && latestMonthlyLate.late_count >= 5))
-  const showMonthlyAvgLine = monthlyLateBaseline.length >= 3 && monthlyLateBaselineAvg > 0
   const halfDaySummary = data?.half_day_summary ?? { am_today: 0, pm_today: 0, total_today: 0, total_workforce: 0 }
   const todayLeaves = Array.isArray(data?.today_leaves) ? data.today_leaves : []
   const cards = [
@@ -952,7 +998,7 @@ export default function AdminDashboard() {
       label: 'Late Today',
       value: stats.late_today ?? 0,
       icon: 'late',
-      trendType: 'late',
+      trendType: 'weekly',
     },
     {
       key: 'absent_today',
@@ -1180,7 +1226,7 @@ export default function AdminDashboard() {
             {isHrAdmin
               ? 'Real-time insight into employees, attendance, and daily workforce activity.'
               : hrRole === 'department_head'
-                ? 'Department attendance, team metrics, and late statistics for your scope.'
+                ? 'Department attendance, team metrics, and upcoming holidays for your scope.'
                 : 'Workforce metrics and attendance for your organization scope.'}
           </p>
         </div>
@@ -1318,11 +1364,6 @@ export default function AdminDashboard() {
               label: d.label,
               value: typeof d.present_count === 'number' ? d.present_count : 0,
             }))
-          } else if (trendType === 'late') {
-            miniSeries = monthlyLateData.map((d) => ({
-              label: d.label,
-              value: typeof d.late_count === 'number' ? d.late_count : 0,
-            }))
           }
 
           return (
@@ -1367,7 +1408,7 @@ export default function AdminDashboard() {
                           ) : deltaPct < 0 ? (
                             <span>-{formattedDelta}%</span>
                           ) : (
-                            <span>—</span>
+                            <span>·</span>
                           )
                         ) : labelKind === 'count' ? (
                           deltaCount > 0 ? (
@@ -1375,13 +1416,13 @@ export default function AdminDashboard() {
                           ) : deltaCount < 0 ? (
                             <span>{formattedCount}</span>
                           ) : (
-                            <span>—</span>
+                            <span>·</span>
                           )
                         ) : (
-                          <span>—</span>  
+                          <span>·</span>  
                         )
                       ) : (
-                        <span className="text-[11px] font-normal">—</span>
+                        <span className="text-[11px] font-normal">·</span>
                       )}
                     </div>
                   </div>
@@ -1421,7 +1462,7 @@ export default function AdminDashboard() {
         })}
       </Motion.div>
 
-      {/* â”€â”€ Insight row: Today's Leaves Â· Half-Day Summary Â· Quick Actions â”€â”€ */}
+      {/* ── Insight row: Today's Leaves · Half-Day Summary · Quick Actions ── */}
       <Motion.div
         className="mt-4 grid items-stretch gap-3 @sm:grid-cols-2 @xl:grid-cols-3"
         variants={containerVariants}
@@ -1489,10 +1530,10 @@ export default function AdminDashboard() {
                         <div className="flex items-start gap-3">
                           <Avatar className="size-9 shrink-0 rounded-full border border-border/70 ring-2 ring-primary/10 @sm:size-10">
                             <AvatarImage src={profileSrc} alt={leave.employee_name || 'Employee'} />
-                            <AvatarFallback>{(leave.employee_name || '—').slice(0, 2).toUpperCase()}</AvatarFallback>
+                            <AvatarFallback>{(leave.employee_name || EMPTY_PLACEHOLDER).slice(0, 2).toUpperCase()}</AvatarFallback>
                           </Avatar>
                           <div className="min-w-0 flex-1">
-                            <p className="wrap-break-word text-sm font-semibold leading-snug text-foreground">{leave.employee_name || '—'}</p>
+                            <p className="wrap-break-word text-sm font-semibold leading-snug text-foreground">{formatEmpty(leave.employee_name)}</p>
                             <p className="mt-0.5 wrap-break-word text-xs leading-snug text-muted-foreground">{secondary}</p>
                             <div className="mt-2 flex flex-wrap items-center gap-1.5 @sm:gap-2">
                               <span className="inline-flex items-center rounded-full border border-violet-500/35 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300">
@@ -1984,12 +2025,12 @@ export default function AdminDashboard() {
 
                         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5 font-medium text-foreground/80">
-                            {emp.employee_code || '—'}
+                            {formatEmpty(emp.employee_code)}
                           </span>
                           <span className="rounded-full border border-border/70 bg-muted/20 px-2 py-0.5 capitalize">
                             {employmentTypeLabel}
                           </span>
-                          <span className="text-muted-foreground/60">·</span>
+                          <span className="text-muted-foreground/60"></span>
                           <span>
                             Hired <span className="font-medium text-foreground/85">{formatDate(emp.hire_date)}</span>
                           </span>
@@ -1998,12 +2039,12 @@ export default function AdminDashboard() {
                         <div className="mt-2 grid gap-1.5 text-xs @sm:grid-cols-2">
                           <p className="text-muted-foreground">
                             Service length:{' '}
-                            <span className="font-medium text-foreground/85">{emp.service_length_label || '—'}</span>
+                            <span className="font-medium text-foreground/85">{formatEmpty(emp.service_length_label)}</span>
                           </p>
                           <p className="text-muted-foreground">
                             Next milestone:{' '}
                             <span className="font-medium text-foreground/85">
-                              {emp.next_milestone || '—'} ({formatDate(emp.next_milestone_date)})
+                              {formatEmpty(emp.next_milestone)} ({formatDate(emp.next_milestone_date)})
                             </span>
                           </p>
                         </div>
@@ -2013,7 +2054,7 @@ export default function AdminDashboard() {
                             Recommended action
                           </p>
                           <p className="mt-1 text-sm leading-snug text-foreground/90">
-                            {emp.recommended_action || '—'}
+                            {formatEmpty(emp.recommended_action)}
                           </p>
                         </div>
 
@@ -2182,7 +2223,7 @@ export default function AdminDashboard() {
 
       {/* Charts row — redesigned UI */}
       <Motion.div
-        className="mt-4 grid gap-3 @lg:grid-cols-2"
+        className="mt-4 grid gap-3 @lg:grid-cols-2 @lg:items-stretch"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -2190,8 +2231,8 @@ export default function AdminDashboard() {
         transition={scrollRevealTransition}
       >
         {/* Weekly Attendance — vertical bars, stronger contrast */}
-        <Motion.div variants={chartCardVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-          <Card className="admin-dashboard-card overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
+        <Motion.div variants={chartCardVariants} className="h-full" whileHover={{ y: -2, transition: { duration: 0.15 } }}>
+          <Card className="admin-dashboard-card flex h-full flex-col overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
           <CardHeader className="px-5 pb-5 pt-6">
             <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
               <BarChart3 className="size-4 text-brand" aria-hidden />
@@ -2274,117 +2315,232 @@ export default function AdminDashboard() {
         </Card>
         </Motion.div>
 
-        {/* Monthly Late — area + line trend */}
-        <Motion.div variants={chartCardVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-          <Card className="admin-dashboard-card overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
+        {/* Upcoming Holidays — Holiday Module (matched height to Weekly Attendance) */}
+        <Motion.div variants={chartCardVariants} className="h-full" whileHover={{ y: -2, transition: { duration: 0.15 } }}>
+          <Card className="admin-dashboard-card flex h-full flex-col overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
           <CardHeader className="px-5 pb-5 pt-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
                 <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
-                  <FileBarChart2 className="size-4 text-rose-500" aria-hidden />
-                  Monthly Late Statistics
+                  <Calendar className="size-4 text-brand" aria-hidden />
+                  Upcoming Holidays
                 </CardTitle>
                 <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
-                  Late arrivals per month (last 12 months)
+                  Holidays from the Holiday Module
                 </CardDescription>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {showMonthlyAvgLine && (
-                  <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-200">
-                    Avg {monthlyLateBaselineAvg.toFixed(1)}
-                  </span>
-                )}
-                {spikeDetected && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-500/15 px-2.5 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-200">
-                    <span className="relative inline-flex size-2 shrink-0">
-                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-rose-400/70" />
-                      <span className="relative inline-flex size-2 rounded-full bg-rose-500" />
-                    </span>
-                    Spike detected
-                  </span>
-                )}
-              </div>
+              {canViewHolidays ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 gap-1.5 border-brand/40 text-brand hover:bg-brand/8"
+                  onClick={() => navigate(hrPanelPath(hrBase, 'holiday'))}
+                >
+                  View All Holidays
+                  <ArrowRight className="size-3.5" aria-hidden />
+                </Button>
+              ) : null}
             </div>
           </CardHeader>
-          <CardContent className="px-5 pb-5 pt-0">
-            <div className="h-[300px] w-full rounded-lg bg-background/35 px-2 pt-2 dark:bg-background/25">
-              {monthlyLateData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={monthlyLateData}
-                    margin={{ top: 16, right: 16, left: 8, bottom: 8 }}
+          <CardContent className="flex flex-1 flex-col px-5 pb-5 pt-0">
+            <div className="mb-3 flex flex-col gap-2.5 @md:flex-row @md:flex-wrap @md:items-center @md:justify-between">
+              <div className="flex w-full items-center gap-1.5 @md:w-auto">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-10 shrink-0 rounded-lg border-border/70 bg-background/90 shadow-sm hover:border-brand/40 hover:bg-brand/5 disabled:opacity-40"
+                  aria-label="Previous month"
+                  disabled={!canHolidayMonthPrev}
+                  onClick={() => handleHolidayMonthStep(-1)}
+                >
+                  <ChevronLeft className="size-4" aria-hidden />
+                </Button>
+                <Select value={String(holidayBrowse.year)} onValueChange={handleHolidayYearSelect}>
+                  <SelectTrigger
+                    className={cn(
+                      'h-10 w-[5.5rem] shrink-0 gap-1.5 rounded-lg border-brand/30 bg-gradient-to-br from-brand/[0.08] via-background to-background px-2.5',
+                      'text-sm font-semibold text-foreground shadow-sm ring-1 ring-brand/15',
+                      'transition hover:border-brand/45 hover:shadow-md focus:ring-2 focus:ring-brand/25'
+                    )}
+                    aria-label="Select year for holidays"
                   >
-                    <defs>
-                      <linearGradient id="lateAreaGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={CHART.lateLine} stopOpacity={0.55} />
-                        <stop offset="100%" stopColor={CHART.lateLine} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid
-                      strokeDasharray="2 4"
-                      stroke="color-mix(in oklab, var(--border) 76%, transparent)"
-                      vertical
-                    />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fontSize: 12, fill: 'var(--muted-foreground)', fontWeight: 400 }}
-                      axisLine={{ stroke: 'var(--border)' }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 12, fill: 'var(--muted-foreground)', fontWeight: 400 }}
-                      axisLine={false}
-                      tickLine={false}
-                      allowDecimals={false}
-                      domain={[0, Math.max(1, monthlyLateMax + 1)]}
-                      width={28}
-                    />
-                    <Tooltip
-                      content={({ active, payload, label }) => (
-                        <ChartTooltip active={active} payload={payload} label={label} labelPrefix="Month: " />
-                      )}
-                      wrapperStyle={TOOLTIP_STYLES.wrapperStyle}
-                      contentStyle={TOOLTIP_STYLES.contentStyle}
-                      cursor={{ fill: TOOLTIP_STYLES.cursorFill, stroke: TOOLTIP_STYLES.cursorStroke, strokeDasharray: '4 4' }}
-                    />
-                    {showMonthlyAvgLine && (
-                      <ReferenceLine
-                        y={monthlyLateBaselineAvg}
-                        stroke="rgba(245, 158, 11, 0.65)"
-                        strokeDasharray="6 6"
-                        ifOverflow="extendDomain"
-                      />
+                    <SelectValue placeholder="Year" />
+                  </SelectTrigger>
+                  <SelectContent position="popper" className="rounded-xl border-border/80 p-1.5 shadow-xl">
+                    {holidayYearOptions.map((year) => (
+                      <SelectItem
+                        key={year}
+                        value={String(year)}
+                        className="cursor-pointer rounded-lg py-2 pl-8 pr-3 text-sm font-medium focus:bg-brand/10 focus:text-brand"
+                      >
+                        {year}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={String(holidayBrowse.month)} onValueChange={handleHolidayCalendarMonthSelect}>
+                  <SelectTrigger
+                    className={cn(
+                      'h-10 min-w-0 flex-1 gap-2.5 rounded-lg border-brand/30 bg-gradient-to-br from-brand/[0.08] via-background to-background px-3',
+                      'text-sm font-semibold text-foreground shadow-sm ring-1 ring-brand/15',
+                      'transition hover:border-brand/45 hover:shadow-md focus:ring-2 focus:ring-brand/25',
+                      '@md:min-w-[9.5rem]'
                     )}
-                    <Area
-                      type="monotone"
-                      dataKey="late_count"
-                      name="Late count"
-                      stroke={CHART.lateLine}
-                      strokeWidth={2.5}
-                      fill="url(#lateAreaGradient)"
-                      isAnimationActive
-                      animationDuration={600}
-                      animationEasing="ease-out"
-                      dot={{ fill: CHART.lateLine, stroke: CHART.lateLine, strokeWidth: 2, r: 4 }}
-                      activeDot={{ r: 6, strokeWidth: 2, fill: CHART.lateLine, stroke: CHART.lateLine }}
-                    />
-                    {spikeDetected && latestMonthlyLate?.label && typeof latestMonthlyLate?.late_count === 'number' && (
-                      <ReferenceDot
-                        x={latestMonthlyLate.label}
-                        y={latestMonthlyLate.late_count}
-                        r={6}
-                        fill="hsl(0 84% 60%)"
-                        stroke="var(--card)"
-                        strokeWidth={2}
-                        isFront
-                      />
-                    )}
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex h-full items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
-                  No data yet
+                    aria-label="Select month for holidays"
+                  >
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-brand/15 ring-1 ring-brand/20">
+                      <Calendar className="size-4 text-brand" aria-hidden />
+                    </span>
+                    <SelectValue placeholder="Month" />
+                  </SelectTrigger>
+                  <SelectContent
+                    position="popper"
+                    className="max-h-72 min-w-[var(--radix-select-trigger-width)] rounded-xl border-border/80 p-1.5 shadow-xl"
+                  >
+                    {holidayMonthOptions.map((option) => (
+                      <SelectItem
+                        key={option.value}
+                        value={String(option.value)}
+                        className="cursor-pointer rounded-lg py-2.5 pl-9 pr-3 text-sm font-medium focus:bg-brand/10 focus:text-brand data-[state=checked]:bg-brand/12 data-[state=checked]:text-brand"
+                      >
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-10 shrink-0 rounded-lg border-border/70 bg-background/90 shadow-sm hover:border-brand/40 hover:bg-brand/5 disabled:opacity-40"
+                  aria-label="Next month"
+                  disabled={!canHolidayMonthNext}
+                  onClick={() => handleHolidayMonthStep(1)}
+                >
+                  <ChevronRight className="size-4" aria-hidden />
+                </Button>
+              </div>
+              {!loading && data && !error ? (
+                <span className="text-[11px] font-medium text-muted-foreground @md:text-right">
+                  {upcomingHolidaysFiltered.length === 0
+                    ? `No holidays in ${formatHolidayMonthLabel(holidayMonth)}`
+                    : `${upcomingHolidaysFiltered.length} holiday${upcomingHolidaysFiltered.length === 1 ? '' : 's'} in ${formatHolidayMonthLabel(holidayMonth)}`}
+                </span>
+              ) : null}
+            </div>
+            <div className="h-[300px] w-full overflow-hidden rounded-lg bg-background/35 dark:bg-background/25">
+              {loading && !data ? (
+                <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
+                  Loading upcoming holidays…
                 </div>
+              ) : error ? (
+                <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+                  <AlertCircle className="mb-2 size-8 text-rose-500/80" aria-hidden />
+                  <p className="text-sm text-rose-700 dark:text-rose-200">Could not load holidays.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Refresh the dashboard to try again.</p>
+                </div>
+              ) : upcomingHolidaysDisplay.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+                  <Calendar className="mb-3 size-9 text-muted-foreground/50" aria-hidden />
+                  <p className="text-sm font-medium text-foreground">No upcoming holidays found.</p>
+                  <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+                    {upcomingHolidaysFiltered.length > UPCOMING_HOLIDAYS_DISPLAY_LIMIT
+                      ? `More than ${UPCOMING_HOLIDAYS_DISPLAY_LIMIT} holidays match this month; use View All Holidays.`
+                      : `No active holidays in ${formatHolidayMonthLabel(holidayMonth)} for your scope.`}
+                  </p>
+                  {canViewHolidays ? (
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="mt-2 text-brand"
+                      onClick={() => navigate(hrPanelPath(hrBase, 'holiday'))}
+                    >
+                      Open Holiday Module
+                    </Button>
+                  ) : null}
+                </div>
+              ) : (
+                <ul className="h-full space-y-2.5 overflow-y-auto p-2 pr-1">
+                {upcomingHolidaysDisplay.map((holiday) => {
+                  const rowKey = `${holiday.id ?? holiday.name}-${holiday.date ?? holiday.holiday_date}`
+                  const typeLabel = holiday.type_label || holidayTypeLabel(holiday.type || holiday.holiday_type)
+                  const scopeType = holiday.scope_type || 'Nationwide'
+                  const scopeLine = formatHolidayScopeLine(holiday)
+                  const daysLabel =
+                    holiday.days_remaining_label ||
+                    (holiday.is_today ? 'Today' : `In ${holiday.days_remaining ?? 0} days`)
+                  const countdownClass = holiday.is_today
+                    ? 'border-emerald-500/40 bg-emerald-500/12 text-emerald-800 dark:text-emerald-200'
+                    : 'border-brand/35 bg-brand/12 text-orange-800 dark:text-orange-200'
+
+                  return (
+                    <li
+                      key={rowKey}
+                      className={cn(
+                        'relative flex overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm transition-shadow hover:shadow-md',
+                        holiday.is_today && 'ring-1 ring-emerald-500/25'
+                      )}
+                    >
+                      <span
+                        className={cn('w-1 shrink-0', holiday.is_today ? 'bg-emerald-500' : 'bg-brand')}
+                        aria-hidden
+                      />
+                      <div className="flex min-w-0 flex-1 items-stretch gap-3 py-3 pl-3 pr-2">
+                        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand/12 ring-1 ring-brand/15">
+                          <Flag className="size-5 text-brand" aria-hidden />
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-bold leading-tight text-foreground">{holiday.name}</p>
+                            {holiday.is_today ? (
+                              <span className="inline-flex rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-200">
+                                Today
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-xs text-muted-foreground">{formatHolidayDateLine(holiday)}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            <span
+                              className={cn(
+                                'inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                                holidayTypeBadgeClass(holiday.type)
+                              )}
+                            >
+                              {typeLabel}
+                            </span>
+                            <span
+                              className={cn(
+                                'inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                                holidayScopeBadgeClass(scopeType)
+                              )}
+                            >
+                              {scopeType}
+                            </span>
+                          </div>
+                          <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                            <Building2 className="size-3.5 shrink-0 opacity-70" aria-hidden />
+                            <span className="truncate">{scopeLine}</span>
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center pr-1">
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap',
+                              countdownClass
+                            )}
+                          >
+                            <Calendar className="size-3 opacity-80" aria-hidden />
+                            {daysLabel}
+                          </span>
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+                </ul>
               )}
             </div>
           </CardContent>
@@ -2412,7 +2568,7 @@ export default function AdminDashboard() {
               <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
                 {isSingleCompany
                   ? `Attendance summary for ${companyData[0]?.company ?? 'company'}`
-                  : 'Present employees by company Â· Attendance metrics per company'}
+                  : 'Present employees by company · Attendance metrics per company'}
               </CardDescription>
             </div>
             {topCompany && topCompany.present > 0 && !isSingleCompany && (
@@ -2422,7 +2578,7 @@ export default function AdminDashboard() {
                   Top company
                 </span>
                 <span className="text-[11px] font-semibold text-foreground">
-                  {topCompany.company} Â· {topCompany.present} present
+                  {topCompany.company} · {topCompany.present} present
                 </span>
               </div>
             )}
@@ -2437,7 +2593,7 @@ export default function AdminDashboard() {
                 onChange={(e) => setCompanyDateFrom(e.target.value)}
                 className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm @md:w-auto @md:flex-none"
               />
-              <span className="text-xs text-muted-foreground">â†’</span>
+              <span className="text-xs text-muted-foreground">→</span>
               <input
                 type="date"
                 value={companyDateTo}
@@ -2512,10 +2668,10 @@ export default function AdminDashboard() {
           {isSingleCompany && companyData[0] && (
             <p className="mt-1.5 text-[11px] text-muted-foreground">
               {companyData[0].company}: {companyData[0].present ?? 0} present ({companyData[0].attendance_pct ?? 0}%)
-              {(companyData[0].headcount ?? 0) > 0 && ` Â· ${companyData[0].headcount} total staff`}
+              {(companyData[0].headcount ?? 0) > 0 && ` · ${companyData[0].headcount} total staff`}
             </p>
           )}
-          {/* Company legend — plain text, scrollable when many */}
+          {/* Company legend · plain text, scrollable when many */}
           {companyData.length > 0 && !isSingleCompany && (
             <div className="mt-3 overflow-x-auto overflow-y-hidden scrollbar-thin">
               <div className="flex flex-nowrap gap-3 pb-1 min-w-0">
@@ -2529,7 +2685,7 @@ export default function AdminDashboard() {
                       <span
                         className={`text-[11px] font-medium whitespace-nowrap ${isUnassigned ? 'text-muted-foreground italic' : ''}`}
                       >
-                        {cd.company} Â· {cd.headcount ?? 0} staff
+                        {cd.company} · {cd.headcount ?? 0} staff
                       </span>
                     </div>
                   )
@@ -2573,7 +2729,7 @@ export default function AdminDashboard() {
                     tickFormatter={(value, index) => {
                       const item = companyData[index]
                       if (item?.headcount) {
-                        return `${value} Â· ${item.headcount} staff`
+                        return `${value} · ${item.headcount} staff`
                       }
                       return value
                     }}
@@ -2610,7 +2766,7 @@ export default function AdminDashboard() {
                           {headcount !== null && headcount > 0 && (
                             <>
                               <p className="mt-0.5 tabular-nums text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                                Late: {row.late} Â· Absent: {row.absent} Â· On leave: {row.on_leave}
+                                Late: {row.late} · Absent: {row.absent} · On leave: {row.on_leave}
                               </p>
                               <p className="mt-0.5 tabular-nums" style={{ color: 'var(--muted-foreground)' }}>
                                 Share: <span className="font-semibold">{shareOfToday}%</span>
@@ -2680,7 +2836,7 @@ export default function AdminDashboard() {
                   Today&apos;s Attendance
                 </CardTitle>
                 <CardDescription className="mt-0 text-sm font-normal leading-[1.55] text-muted-foreground">
-                  Live clock in / out activity Â· Auto-refresh 15s
+                  Live clock in / out activity · Auto-refresh 15s
                 </CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -2690,7 +2846,7 @@ export default function AdminDashboard() {
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
                   </span>
                   <span className="font-extrabold tracking-wide text-emerald-700 dark:text-emerald-400">Live</span>
-                  <span className="text-[11px] font-medium text-muted-foreground">Â· {updatedAgoLabel}</span>
+                  <span className="text-[11px] font-medium text-muted-foreground">· {updatedAgoLabel}</span>
                 </div>
                 <Button
                   variant="outline"
@@ -2810,7 +2966,7 @@ export default function AdminDashboard() {
                                 {log.employee_name}
                               </p>
                               <p className="truncate text-xs text-muted-foreground">
-                                {log.company_name ?? '—'}
+                                {formatEmpty(log.company_name)}
                               </p>
                             </div>
                           </div>
@@ -2826,7 +2982,7 @@ export default function AdminDashboard() {
                               Time in
                             </p>
                             <p className="mt-1 font-mono text-[12px] tabular-nums text-foreground">
-                              {log.time_in ? formatTime(log.time_in) : '—'}
+                              {log.time_in ? formatTime(log.time_in) : ''}
                             </p>
                           </div>
                           <div className="rounded-lg border border-border/50 bg-muted/20 p-2">
@@ -2834,7 +2990,7 @@ export default function AdminDashboard() {
                               Time out
                             </p>
                             <p className="mt-1 font-mono text-[12px] tabular-nums text-foreground">
-                              {log.time_out ? formatTime(log.time_out) : '—'}
+                              {log.time_out ? formatTime(log.time_out) : ''}
                             </p>
                           </div>
                         </div>
@@ -2859,7 +3015,7 @@ export default function AdminDashboard() {
                               </span>
                             )
                           ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
+                            <span className="text-xs text-muted-foreground"></span>
                           )}
                         </div>
                       </li>
@@ -2970,7 +3126,7 @@ export default function AdminDashboard() {
                                   </button>
                                   {!compact && (
                                     <span className="text-[11px] text-muted-foreground">
-                                      {log.company_name ?? '—'}
+                                      {formatEmpty(log.company_name)}
                                     </span>
                                   )}
                                 </div>
@@ -2989,13 +3145,13 @@ export default function AdminDashboard() {
                                     <Building2 className="size-4" />
                                   </div>
                                 )}
-                                <span className="text-xs text-foreground truncate max-w-[140px]" title={log.company_name ?? '—'}>
-                                  {log.company_name ?? '—'}
+                                <span className="text-xs text-foreground truncate max-w-[140px]" title={formatEmpty(log.company_name)}>
+                                  {formatEmpty(log.company_name)}
                                 </span>
                               </div>
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle font-mono text-xs text-muted-foreground tabular-nums`}>
-                              {log.time_in ? formatTime(log.time_in) : '—'}
+                              {log.time_in ? formatTime(log.time_in) : ''}
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle`}>
                               {log.is_absent ? (
@@ -3017,7 +3173,7 @@ export default function AdminDashboard() {
                                   </span>
                                 )
                               ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
+                                <span className="text-xs text-muted-foreground"></span>
                               )}
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle`}>
@@ -3046,7 +3202,7 @@ export default function AdminDashboard() {
                               </span>
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle font-mono text-xs text-muted-foreground tabular-nums`}>
-                              {log.time_out ? formatTime(log.time_out) : '—'}
+                              {log.time_out ? formatTime(log.time_out) : ''}
                             </td>
                           </tr>
                         ),
@@ -3061,19 +3217,19 @@ export default function AdminDashboard() {
                                   <p className="font-semibold text-foreground">
                                     {log.employee_name}{' '}
                                     {log.company_name && (
-                                      <span className="text-xs text-muted-foreground">Â· {log.company_name}</span>
+                                      <span className="text-xs text-muted-foreground">· {log.company_name}</span>
                                     )}
                                   </p>
                                   <p>
                                     First clock-in:{' '}
                                     <span className="font-mono text-[11px] text-foreground">
-                                      {log.time_in ? formatTime(log.time_in) : '—'}
+                                      {log.time_in ? formatTime(log.time_in) : ''}
                                     </span>
                                   </p>
                                   <p>
                                     Last clock-out:{' '}
                                     <span className="font-mono text-[11px] text-foreground">
-                                      {log.time_out ? formatTime(log.time_out) : '—'}
+                                      {log.time_out ? formatTime(log.time_out) : ''}
                                     </span>
                                   </p>
                                   {log.late_label && (
@@ -3123,7 +3279,7 @@ export default function AdminDashboard() {
                 <p className="text-xs text-muted-foreground @sm:text-sm">
                   Showing{' '}
                   <span className="font-medium text-foreground">
-                    {logsStart}—{logsEnd}
+                    {logsStart}{logsEnd}
                   </span>{' '}
                   of{' '}
                   <span className="font-medium text-foreground">
@@ -3244,7 +3400,7 @@ export default function AdminDashboard() {
         .dark .admin-birthday-search {
           color-scheme: dark;
         }
-        /* â”€â”€ Recharts tooltip: transparent wrapper, themed inner â”€â”€ */
+        /* ── Recharts tooltip: transparent wrapper, themed inner ── */
         .recharts-tooltip-wrapper,
         .recharts-tooltip-wrapper *,
         [class*="recharts-tooltip"] {
@@ -3353,9 +3509,9 @@ export default function AdminDashboard() {
                     {halfDayList.employees.map((emp) => (
                       <tr key={emp.user_id} className="border-b border-border/60 hover:bg-muted/30">
                         <td className="py-2.5 px-2 font-medium">{emp.employee_name}</td>
-                        <td className="py-2.5 px-2 text-muted-foreground">{emp.branch ?? '—'}</td>
+                        <td className="py-2.5 px-2 text-muted-foreground">{emp.branch ?? ''}</td>
                         <td className="py-2.5 px-2 tabular-nums text-muted-foreground">
-                          {emp.time_in ? formatTime(`2000-01-01T${emp.time_in}`) : '—'}
+                          {emp.time_in ? formatTime(`2000-01-01T${emp.time_in}`) : ''}
                         </td>
                         <td className="py-2.5 px-2">
                           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -3366,14 +3522,14 @@ export default function AdminDashboard() {
                           </span>
                         </td>
                         <td className="py-2.5 px-2 text-muted-foreground max-w-[180px] truncate" title={emp.notes ?? undefined}>
-                          {emp.notes ?? '—'}
+                          {emp.notes ?? ''}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <p className="text-xs text-muted-foreground mt-3">
-                  {halfDayList.am_count ?? 0} AM Â· {halfDayList.pm_count ?? 0} PM Â· {halfDayList.total ?? 0} total
+                  {halfDayList.am_count ?? 0} AM · {halfDayList.pm_count ?? 0} PM · {halfDayList.total ?? 0} total
                 </p>
               </div>
             ) : (

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Holiday;
+use App\Support\TextSanitizer;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -273,7 +274,7 @@ class HolidayCalendarService
         return [
             'id' => $h->id,
             'date' => $d,
-            'name' => $h->name,
+            'name' => TextSanitizer::clean($h->name, $h->name) ?? $h->name,
             'type' => $h->type,
             'scope' => $h->scope,
             'company_id' => $h->company_id,
@@ -365,7 +366,7 @@ class HolidayCalendarService
         );
     }
 
-    private function rowAppliesToTarget(
+    public function rowAppliesToTarget(
         array $row,
         ?int $companyId,
         ?int $branchId,

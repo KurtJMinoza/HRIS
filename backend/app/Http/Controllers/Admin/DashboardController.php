@@ -6,7 +6,9 @@ use App\Enums\EmploymentStatus;
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
+use App\Models\Branch;
 use App\Models\Company;
+use App\Models\Department;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\RegularizationRecommendation;
@@ -16,9 +18,11 @@ use App\Services\AttendanceCorrectionApprovalService;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
 use App\Services\EmployeeStatusService;
+use App\Services\HolidayCalendarService;
 use App\Services\HrRoleResolver;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PresenceFilingService;
+use App\Support\TextSanitizer;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -34,6 +38,7 @@ class DashboardController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly AttendanceCorrectionApprovalService $attendanceCorrectionApprovalService,
         private readonly EmployeeStatusService $employeeStatusService,
+        private readonly HolidayCalendarService $holidayCalendar,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PresenceFilingCorrectionFormatter $correctionFormatter,
         private readonly PresenceFilingService $presenceFilingService,
@@ -153,7 +158,7 @@ class DashboardController extends Controller
         $statsYesterday['total_employees'] = $totalEmployees;
 
         $weeklyOverview = $this->weeklyAttendanceOverview($today, $activeScopeIds);
-        $monthlyLateStats = $this->monthlyLateStatistics($now, $allScopeIds);
+        $upcomingHolidays = $this->upcomingHolidays($actor, $now);
         $departmentDistribution = $this->departmentAttendanceDistribution($today, $actor);
         $companyDistribution = $this->companyAttendanceDistribution($today, null, $actor);
         $todayLogs = $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds);
@@ -206,7 +211,7 @@ class DashboardController extends Controller
             'stats' => $statsToday,
             'stats_prev' => $statsYesterday,
             'weekly_overview' => $weeklyOverview,
-            'monthly_late' => $monthlyLateStats,
+            'upcoming_holidays' => $upcomingHolidays,
             'department_distribution' => $departmentDistribution,
             'company_distribution' => $companyDistribution,
             'today_logs' => $todayLogs,
@@ -1147,91 +1152,559 @@ class DashboardController extends Controller
         return $days;
     }
 
+    /** Years before/after the current year loaded for the dashboard holiday widget. */
+    private const UPCOMING_HOLIDAYS_YEAR_SPAN = 1;
+
+    /** Max rows returned in the dashboard payload (UI filters by month/year and shows fewer). */
+    private const UPCOMING_HOLIDAYS_LIMIT = 500;
+
     /**
-     * Monthly late statistics: last 12 months, total late count per month (grace + deduction rules).
+     * Active holidays from the Holiday Module for the dashboard widget.
+     * Returns all active holidays in a multi-year window (past and future dates).
+     * The UI filters by selected month/year; do not exclude past dates here.
+     *
+     * @return array<int, array<string, mixed>>
      */
-    /**
-     * @param  array<int, int>  $scopedUserIds
-     */
-    private function monthlyLateStatistics(Carbon $now, array $scopedUserIds): array
+    private function upcomingHolidays(User $actor, Carbon $now, int $limit = self::UPCOMING_HOLIDAYS_LIMIT): array
     {
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
-        $usersCache = [];
-        $months = [];
-        for ($i = 11; $i >= 0; $i--) {
-            $monthStartLocal = $now->copy()->subMonths($i)->startOfMonth()->startOfDay();
-            $monthEndLocal = $monthStartLocal->copy()->endOfMonth()->endOfDay();
-            $rangeStartUtc = $monthStartLocal->copy()->utc();
-            $rangeEndUtc = $monthEndLocal->copy()->utc();
+        $today = $now->copy()->timezone($tz)->startOfDay();
+        $currentYear = (int) $today->format('Y');
+        $context = $this->resolveHolidayScopeContext($actor);
 
-            $firstClockInsQuery = AttendanceLog::query()
-                ->where('type', AttendanceLog::TYPE_CLOCK_IN);
-            $firstClockInsQuery = $this->attendanceLogEffectivePunchWhereBetween($firstClockInsQuery, $rangeStartUtc, $rangeEndUtc);
-            if ($scopedUserIds !== []) {
-                $firstClockInsQuery->whereIn('user_id', $scopedUserIds);
-            } else {
-                $firstClockInsQuery->whereRaw('1 = 0');
-            }
-            /** @var \Illuminate\Support\Collection<int, AttendanceLog> $punches */
-            $punches = $firstClockInsQuery->get(['id', 'user_id', 'verified_at', 'created_at']);
+        $years = [];
+        for ($y = $currentYear - self::UPCOMING_HOLIDAYS_YEAR_SPAN; $y <= $currentYear + self::UPCOMING_HOLIDAYS_YEAR_SPAN; $y++) {
+            $years[] = $y;
+        }
 
-            $firstPerUserDay = [];
-            foreach ($punches as $log) {
-                $punch = $this->attendanceLogPunchInstant($log);
-                if ($punch === null) {
+        $candidates = [];
+        $seenKeys = [];
+        foreach ($years as $year) {
+            foreach ($this->holidayCalendar->holidaysForYear($year) as $row) {
+                $dedupe = implode('|', [
+                    (string) ($row['id'] ?? ''),
+                    (string) ($row['date'] ?? ''),
+                    (string) ($row['name'] ?? ''),
+                    strtolower((string) ($row['scope'] ?? '')),
+                    (string) ((int) ($row['company_id'] ?? 0)),
+                    (string) ((int) ($row['branch_id'] ?? 0)),
+                    (string) ((int) ($row['department_id'] ?? 0)),
+                    (string) ((int) ($row['employee_id'] ?? 0)),
+                    (string) ($row['coverage_type'] ?? ''),
+                    json_encode($row['coverage_ids'] ?? []),
+                ]);
+                if (isset($seenKeys[$dedupe])) {
                     continue;
                 }
-                $dateKey = $punch->copy()->timezone($tz)->toDateString();
-                $k = ((int) $log->user_id).'|'.$dateKey;
-                if (! isset($firstPerUserDay[$k]) || $punch->lessThan($firstPerUserDay[$k])) {
-                    $firstPerUserDay[$k] = $punch;
-                }
+                $seenKeys[$dedupe] = true;
+                $candidates[] = $row;
+            }
+        }
+
+        $candidateIds = array_values(array_filter(array_map(fn (array $r) => $r['id'] ?? null, $candidates)));
+        $debugExcluded = [];
+        $scopeExcludedIds = [];
+        $rows = [];
+        foreach ($candidates as $row) {
+            $dateStr = (string) ($row['date'] ?? '');
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateStr) !== 1) {
+                $debugExcluded[] = $this->holidayDebugExclude($row, 'invalid_date');
+
+                continue;
+            }
+            $date = Carbon::parse($dateStr, $tz)->startOfDay();
+            $status = strtolower((string) ($row['status'] ?? 'active'));
+            if ($status !== 'active') {
+                $debugExcluded[] = $this->holidayDebugExclude($row, 'status_'.$status);
+
+                continue;
+            }
+            if (! $this->holidayAppliesToActorScope($row, $context)) {
+                $scopeExcludedIds[] = $row['id'] ?? null;
+                $debugExcluded[] = $this->holidayDebugExclude($row, 'scope_not_applicable');
+
+                continue;
             }
 
-            $monthUserIds = collect(array_keys($firstPerUserDay))
-                ->map(fn (string $key) => (int) explode('|', $key, 2)[0])
-                ->unique()
-                ->values()
-                ->all();
-            $idsToLoad = array_values(array_diff($monthUserIds, array_keys($usersCache)));
-            if ($idsToLoad !== []) {
-                $loaded = User::query()
-                    ->whereIn('id', $idsToLoad)
-                    ->with('workingSchedule')
-                    ->get();
-                foreach ($loaded as $loadedUser) {
-                    $usersCache[(int) $loadedUser->id] = $loadedUser;
-                }
+            $daysRemaining = (int) $today->diffInDays($date, false);
+            $isToday = $date->isSameDay($today);
+            $rows[] = $this->formatUpcomingHolidayRow($row, $date, $daysRemaining, $isToday);
+        }
+
+        usort($rows, function (array $a, array $b) {
+            $dateCompare = strcmp((string) ($a['holiday_date'] ?? $a['date'] ?? ''), (string) ($b['holiday_date'] ?? $b['date'] ?? ''));
+            if ($dateCompare !== 0) {
+                return $dateCompare;
             }
-            $clockInSamples = count($firstPerUserDay);
-            $lateCount = 0;
-            foreach ($firstPerUserDay as $key => $firstAtCarbon) {
-                [$uidPart, $dateKey] = explode('|', $key, 2);
-                $date = Carbon::parse($dateKey, $tz)->startOfDay();
-                $dayKey = self::DAY_KEYS[(int) $date->format('w')];
-                $user = $usersCache[(int) $uidPart] ?? null;
-                $effectiveSched = $user ? $this->resolveEffectiveSchedule($user) : null;
-                if (! $effectiveSched || ! isset($effectiveSched[$dayKey]['in'])) {
-                    continue;
-                }
-                $todaySchedule = $effectiveSched[$dayKey];
-                $result = AttendanceStatusService::getClockInStatus($todaySchedule, $dateKey, $firstAtCarbon);
-                if ($result['status'] === 'late') {
-                    $lateCount++;
-                }
-            }
-            $months[] = [
-                'month' => $monthStartLocal->format('Y-m'),
-                'label' => $monthStartLocal->format('M Y'),
-                // Distinguish "no records" from a true zero-late month so charts don't look bugged.
-                // If there were no clock-ins recorded, return null and mark has_data=false.
-                'late_count' => $clockInSamples === 0 ? null : $lateCount,
-                'has_data' => $clockInSamples > 0,
-                'clock_in_samples' => $clockInSamples,
+
+            return ((int) ($a['id'] ?? 0)) <=> ((int) ($b['id'] ?? 0));
+        });
+
+        $result = array_slice($rows, 0, max(1, $limit));
+
+        Log::info('Admin dashboard upcoming holidays', [
+            'logged_in_user_id' => (int) $actor->id,
+            'user_role' => (string) ($actor->role ?? ''),
+            'user_company_id' => $actor->getEffectiveCompanyId() ?? $actor->company_id,
+            'user_branch_id' => $actor->branch_id,
+            'user_department_id' => $actor->department_id,
+            'actor_is_admin' => $actor->isAdmin(),
+            'actor_hr_scoped' => $actor->hasScopedHrAdminAssignment(),
+            'today' => $today->toDateString(),
+            'years_loaded' => $years,
+            'date_range_note' => 'full calendar years; UI filters by selected month',
+            'scope_context' => $context,
+            'candidate_count' => count($candidates),
+            'holiday_ids_before_scope_filter' => $candidateIds,
+            'holiday_ids_removed_by_scope' => array_values(array_filter($scopeExcludedIds)),
+            'included_count' => count($rows),
+            'returned_count' => count($result),
+            'included_holiday_ids' => array_values(array_filter(array_map(fn (array $r) => $r['id'] ?? null, $rows))),
+            'returned_holiday_ids' => array_values(array_filter(array_map(fn (array $r) => $r['id'] ?? null, $result))),
+            'excluded_sample' => array_slice($debugExcluded, 0, 50),
+        ]);
+
+        return $result;
+    }
+
+    /**
+     * Org scope for holiday visibility. Null = unrestricted (global HR admin).
+     *
+     * @return array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}|null
+     */
+    private function resolveHolidayScopeContext(User $actor): ?array
+    {
+        if ($actor->isAdmin() && ! $actor->hasScopedHrAdminAssignment()) {
+            return null;
+        }
+
+        if ($actor->isAdmin() && $actor->hasScopedHrAdminAssignment()) {
+            return $this->holidayScopeContextFromUserAssignment($actor);
+        }
+
+        $meta = $this->dataScopeService->getAttendanceScopeMeta($actor);
+        if ($meta === null) {
+            return null;
+        }
+
+        return match ($meta['kind'] ?? null) {
+            'company' => $this->holidayScopeContextForCompanyIds(
+                array_map('intval', $meta['company_ids'] ?? [])
+            ),
+            'branch' => $this->holidayScopeContextForBranchId(
+                isset($meta['branch_id']) ? (int) $meta['branch_id'] : null
+            ),
+            'department' => $this->holidayScopeContextForDepartmentIds(
+                array_map('intval', $meta['department_ids'] ?? [])
+            ),
+            default => [
+                'company_ids' => [],
+                'branch_ids' => [],
+                'department_ids' => [],
+            ],
+        };
+    }
+
+    /**
+     * @return array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}
+     */
+    private function holidayScopeContextFromUserAssignment(User $actor): array
+    {
+        if ($actor->department_id !== null) {
+            return $this->holidayScopeContextForDepartmentIds([(int) $actor->department_id]);
+        }
+        if ($actor->branch_id !== null) {
+            return $this->holidayScopeContextForBranchId((int) $actor->branch_id);
+        }
+        $effectiveCompanyId = $actor->getEffectiveCompanyId();
+        if ($effectiveCompanyId !== null) {
+            return $this->holidayScopeContextForCompanyIds([(int) $effectiveCompanyId]);
+        }
+        if ($actor->company_id !== null) {
+            return $this->holidayScopeContextForCompanyIds([(int) $actor->company_id]);
+        }
+
+        return [
+            'company_ids' => [],
+            'branch_ids' => [],
+            'department_ids' => [],
+        ];
+    }
+
+    /**
+     * @param  array<int, int>  $companyIds
+     * @return array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}
+     */
+    private function holidayScopeContextForCompanyIds(array $companyIds): array
+    {
+        $companyIds = array_values(array_unique(array_filter($companyIds, fn ($id) => $id > 0)));
+        if ($companyIds === []) {
+            return [
+                'company_ids' => [],
+                'branch_ids' => [],
+                'department_ids' => [],
             ];
         }
 
-        return $months;
+        $branchIds = Branch::query()->whereIn('company_id', $companyIds)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $departmentIds = Department::query()
+            ->whereHas('branch', fn ($q) => $q->whereIn('company_id', $companyIds))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return [
+            'company_ids' => $companyIds,
+            'branch_ids' => $branchIds,
+            'department_ids' => $departmentIds,
+        ];
+    }
+
+    /**
+     * @return array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}
+     */
+    private function holidayScopeContextForBranchId(?int $branchId): array
+    {
+        if ($branchId === null || $branchId <= 0) {
+            return [
+                'company_ids' => [],
+                'branch_ids' => [],
+                'department_ids' => [],
+            ];
+        }
+
+        $branch = Branch::query()->where('id', $branchId)->first(['id', 'company_id']);
+        $companyIds = $branch && $branch->company_id ? [(int) $branch->company_id] : [];
+        $departmentIds = Department::query()
+            ->where('branch_id', $branchId)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return [
+            'company_ids' => $companyIds,
+            'branch_ids' => [$branchId],
+            'department_ids' => $departmentIds,
+        ];
+    }
+
+    /**
+     * @param  array<int, int>  $departmentIds
+     * @return array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}
+     */
+    private function holidayScopeContextForDepartmentIds(array $departmentIds): array
+    {
+        $departmentIds = array_values(array_unique(array_filter($departmentIds, fn ($id) => $id > 0)));
+        if ($departmentIds === []) {
+            return [
+                'company_ids' => [],
+                'branch_ids' => [],
+                'department_ids' => [],
+            ];
+        }
+
+        $departments = Department::query()
+            ->whereIn('id', $departmentIds)
+            ->get(['id', 'branch_id']);
+
+        $branchIds = $departments->pluck('branch_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $companyIds = $branchIds === []
+            ? []
+            : Branch::query()->whereIn('id', $branchIds)->pluck('company_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+
+        return [
+            'company_ids' => $companyIds,
+            'branch_ids' => $branchIds,
+            'department_ids' => $departmentIds,
+        ];
+    }
+
+    /**
+     * Whether a holiday row from the Holiday Module applies to the dashboard actor's org scope.
+     * Uses the same targeting rules as payroll ({@see HolidayCalendarService::rowAppliesToTarget}).
+     *
+     * @param  array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}|null  $context
+     */
+    private function holidayAppliesToActorScope(array $row, ?array $context): bool
+    {
+        if ($context === null) {
+            return true;
+        }
+
+        $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
+        if (in_array($scope, ['nationwide', 'regional'], true)) {
+            return true;
+        }
+
+        $companyIds = array_values(array_unique(array_map('intval', $context['company_ids'] ?? [])));
+        $branchIds = array_values(array_unique(array_map('intval', $context['branch_ids'] ?? [])));
+        $departmentIds = array_values(array_unique(array_map('intval', $context['department_ids'] ?? [])));
+
+        foreach ($companyIds as $companyId) {
+            if ($companyId > 0 && $this->holidayCalendar->rowAppliesToTarget($row, $companyId, null, null, null)) {
+                return true;
+            }
+        }
+
+        foreach ($branchIds as $branchId) {
+            if ($branchId > 0 && $this->holidayCalendar->rowAppliesToTarget($row, null, $branchId, null, null)) {
+                return true;
+            }
+        }
+
+        foreach ($departmentIds as $departmentId) {
+            if ($departmentId > 0 && $this->holidayCalendar->rowAppliesToTarget($row, null, null, $departmentId, null)) {
+                return true;
+            }
+        }
+
+        $rowCompanyId = isset($row['company_id']) ? (int) $row['company_id'] : 0;
+        $rowBranchId = isset($row['branch_id']) ? (int) $row['branch_id'] : 0;
+        $rowDepartmentId = isset($row['department_id']) ? (int) $row['department_id'] : 0;
+        if ($rowCompanyId > 0 && in_array($rowCompanyId, $companyIds, true)) {
+            return true;
+        }
+        if ($rowBranchId > 0 && in_array($rowBranchId, $branchIds, true)) {
+            return true;
+        }
+        if ($rowDepartmentId > 0 && in_array($rowDepartmentId, $departmentIds, true)) {
+            return true;
+        }
+
+        $coverageType = $row['coverage_type'] ?? null;
+        $coverageIds = is_array($row['coverage_ids'] ?? null) ? $row['coverage_ids'] : [];
+        if (is_string($coverageType) && $coverageType !== '' && $coverageIds !== []) {
+            $coverageIds = array_map('intval', $coverageIds);
+
+            return match ($coverageType) {
+                'company' => (bool) array_intersect($coverageIds, $companyIds),
+                'branches' => (bool) array_intersect($coverageIds, $branchIds),
+                'departments' => (bool) array_intersect($coverageIds, $departmentIds),
+                'employees' => $this->holidayCoverageIncludesScopedEmployee($coverageIds, $context),
+                default => false,
+            };
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<int, int>  $employeeIds
+     * @param  array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}  $context
+     */
+    private function holidayCoverageIncludesScopedEmployee(array $employeeIds, array $context): bool
+    {
+        if ($employeeIds === []) {
+            return false;
+        }
+
+        $query = User::query()->activeRoster()->whereIn('id', $employeeIds);
+        $this->restrictUserQueryToHolidayContext($query, $context);
+
+        return $query->exists();
+    }
+
+    /**
+     * @param  Builder<User>  $query
+     * @param  array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}  $context
+     */
+    private function restrictUserQueryToHolidayContext(Builder $query, array $context): void
+    {
+        $companyIds = $context['company_ids'] ?? [];
+        $branchIds = $context['branch_ids'] ?? [];
+        $departmentIds = $context['department_ids'] ?? [];
+
+        $query->where(function (Builder $q) use ($companyIds, $branchIds, $departmentIds) {
+            $applied = false;
+            if ($departmentIds !== []) {
+                $q->whereIn('department_id', $departmentIds);
+                $applied = true;
+            }
+            if ($branchIds !== []) {
+                $method = $applied ? 'orWhere' : 'where';
+                $q->{$method}(function (Builder $sub) use ($branchIds) {
+                    $sub->whereIn('branch_id', $branchIds)
+                        ->orWhereHas('departmentRelation', fn (Builder $d) => $d->whereIn('branch_id', $branchIds));
+                });
+                $applied = true;
+            }
+            if ($companyIds !== []) {
+                $method = $applied ? 'orWhere' : 'where';
+                $q->{$method}(function (Builder $sub) use ($companyIds) {
+                    $sub->whereIn('company_id', $companyIds)
+                        ->orWhereHas('branch', fn (Builder $b) => $b->whereIn('company_id', $companyIds))
+                        ->orWhereHas('departmentRelation.branch', fn (Builder $b) => $b->whereIn('company_id', $companyIds));
+                });
+            }
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    private function holidayDebugExclude(array $row, string $reason): array
+    {
+        return [
+            'id' => $row['id'] ?? null,
+            'name' => $row['name'] ?? null,
+            'date' => $row['date'] ?? null,
+            'status' => $row['status'] ?? null,
+            'scope' => $row['scope'] ?? null,
+            'scope_type' => $row['coverage_type'] ?? null,
+            'company_id' => $row['company_id'] ?? null,
+            'branch_id' => $row['branch_id'] ?? null,
+            'department_id' => $row['department_id'] ?? null,
+            'reason' => $reason,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatUpcomingHolidayRow(array $row, Carbon $date, int $daysRemaining, bool $isToday): array
+    {
+        $type = strtolower((string) ($row['type'] ?? 'special'));
+        $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
+        $coverageType = $row['coverage_type'] ?? null;
+        $name = TextSanitizer::clean((string) ($row['name'] ?? ''), 'Holiday') ?? 'Holiday';
+        $companyName = TextSanitizer::clean($row['company_name'] ?? null);
+        $branchName = TextSanitizer::clean($row['branch_name'] ?? null);
+        $departmentName = TextSanitizer::clean($row['department_name'] ?? null);
+        $scopeLabel = TextSanitizer::clean($this->holidayScopeTargetLabel($row), 'All employees') ?? 'All employees';
+        $scopeTypeLabel = $this->holidayScopeTypeLabel($row);
+        $dateKey = $date->format('Y-m-d');
+
+        return [
+            'id' => $row['id'] ?? null,
+            'name' => $name,
+            'holiday_name' => $name,
+            'date' => $dateKey,
+            'holiday_date' => $dateKey,
+            'day_name' => $date->format('l'),
+            'type' => $type,
+            'holiday_type' => $type,
+            'type_label' => $this->holidayTypeLabel($type),
+            'scope' => $scope,
+            'scope_type' => $scopeTypeLabel,
+            'scope_label' => $scopeLabel,
+            'company_id' => isset($row['company_id']) ? (int) $row['company_id'] : null,
+            'company_name' => $companyName,
+            'branch_id' => isset($row['branch_id']) ? (int) $row['branch_id'] : null,
+            'branch_name' => $branchName,
+            'branch' => $branchName,
+            'location_id' => isset($row['branch_id']) ? (int) $row['branch_id'] : null,
+            'location_name' => $branchName,
+            'location' => $branchName,
+            'department_id' => isset($row['department_id']) ? (int) $row['department_id'] : null,
+            'department_name' => $departmentName,
+            'department' => $departmentName,
+            'company' => $companyName,
+            'days_remaining' => $daysRemaining,
+            'days_remaining_label' => $this->holidayDaysRemainingLabel($daysRemaining, $isToday),
+            'is_today' => $isToday,
+            'status' => strtolower((string) ($row['status'] ?? 'active')),
+            'description' => TextSanitizer::clean($row['description'] ?? null),
+            'is_recurring' => (bool) ($row['is_recurring'] ?? false),
+            'is_swap' => (bool) ($row['is_swap'] ?? false),
+            'source' => (string) ($row['source'] ?? 'custom'),
+            'coverage_type' => $coverageType,
+        ];
+    }
+
+    private function holidayDaysRemainingLabel(int $daysRemaining, bool $isToday): string
+    {
+        if ($isToday) {
+            return 'Today';
+        }
+        if ($daysRemaining < 0) {
+            $ago = abs($daysRemaining);
+
+            return $ago === 1 ? '1 day ago' : $ago.' days ago';
+        }
+        if ($daysRemaining === 1) {
+            return 'In 1 day';
+        }
+
+        return 'In '.$daysRemaining.' days';
+    }
+
+    private function holidayTypeLabel(string $type): string
+    {
+        return match ($type) {
+            'regular' => 'Regular Holiday',
+            'special', 'special_non_working' => 'Special Non-Working Holiday',
+            'special_working' => 'Special Working Day',
+            'company' => 'Company Event',
+            default => ucwords(str_replace('_', ' ', $type)),
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    private function holidayScopeTypeLabel(array $row): string
+    {
+        $coverageType = $row['coverage_type'] ?? null;
+        if (is_string($coverageType) && $coverageType !== '') {
+            return match ($coverageType) {
+                'company' => 'Company',
+                'branches' => 'Branch',
+                'departments' => 'Department',
+                'employees' => 'Employee',
+                default => 'Scoped',
+            };
+        }
+
+        return match (strtolower((string) ($row['scope'] ?? 'nationwide'))) {
+            'company' => 'Company',
+            'branch' => 'Branch-specific',
+            'department' => 'Department-specific',
+            'employee' => 'Employee-specific',
+            'regional' => 'Regional',
+            'nationwide' => 'Nationwide',
+            default => 'Nationwide',
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    private function holidayScopeTargetLabel(array $row): string
+    {
+        $coverageType = $row['coverage_type'] ?? null;
+        if (is_string($coverageType) && $coverageType !== '' && ! empty($row['coverage_ids'])) {
+            return match ($coverageType) {
+                'company' => $row['company_name'] ?? 'Selected companies',
+                'branches' => $row['branch_name'] ?? 'Selected branches',
+                'departments' => $row['department_name'] ?? 'Selected departments',
+                'employees' => $row['employee_name'] ?? $row['employee_code'] ?? 'Selected employees',
+                default => $this->holidayScopeTypeLabel($row),
+            };
+        }
+
+        $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
+        if ($scope === 'company') {
+            $name = TextSanitizer::clean($row['company_name'] ?? null);
+
+            return $name !== null && $name !== ''
+                ? $name
+                : 'Company';
+        }
+        if ($scope === 'branch') {
+            return (string) ($row['branch_name'] ?? 'Branch');
+        }
+        if ($scope === 'department') {
+            return (string) ($row['department_name'] ?? 'Department');
+        }
+        if ($scope === 'employee') {
+            return (string) ($row['employee_name'] ?? $row['employee_code'] ?? 'Employee');
+        }
+        if ($scope === 'regional') {
+            return 'Selected regions';
+        }
+
+        return 'All employees';
     }
 
     private function lateFrequencyChart(): array

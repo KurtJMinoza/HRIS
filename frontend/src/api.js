@@ -1266,7 +1266,7 @@ export async function replaceMyEmergencyContacts(contacts) {
 
 /**
  * Fetches admin dashboard data. Returns normalized shape so Overview cards always have stats/today_logs etc.
- * @returns {Promise<{ stats: object, stats_prev: object, weekly_overview: array, monthly_late: array, department_distribution: array, today_logs: array }>}
+ * @returns {Promise<{ stats: object, stats_prev: object, weekly_overview: array, upcoming_holidays: array, department_distribution: array, today_logs: array }>}
  */
 export async function getDashboardData() {
   const res = await authenticatedFetch('/admin/dashboard')
@@ -1283,7 +1283,7 @@ export async function getDashboardData() {
     stats: raw.stats ?? {},
     stats_prev: raw.stats_prev ?? {},
     weekly_overview: Array.isArray(raw.weekly_overview) ? raw.weekly_overview : [],
-    monthly_late: Array.isArray(raw.monthly_late) ? raw.monthly_late : [],
+    upcoming_holidays: Array.isArray(raw.upcoming_holidays) ? raw.upcoming_holidays : [],
     department_distribution: Array.isArray(raw.department_distribution) ? raw.department_distribution : [],
     company_distribution: Array.isArray(raw.company_distribution) ? raw.company_distribution : [],
     today_logs: Array.isArray(raw.today_logs) ? raw.today_logs : [],
