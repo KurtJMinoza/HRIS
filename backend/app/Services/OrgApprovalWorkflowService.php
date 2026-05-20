@@ -20,6 +20,7 @@ class OrgApprovalWorkflowService
 
     public function __construct(
         private readonly HrApprovalChainResolver $chainResolver,
+        private readonly HrRoleResolver $roleResolver,
     ) {}
 
     /**
@@ -100,20 +101,29 @@ class OrgApprovalWorkflowService
 
         $pending = $this->currentPendingRecord($request, $moduleType, $employee, $requestor);
 
-        return $pending !== null && (int) $pending->approver_id === (int) $actor->id;
+        if ($pending === null) {
+            return false;
+        }
+
+        if ($pending->approver_role === HrRole::AdminHr->value) {
+            return $this->roleResolver->resolve($actor) === HrRole::AdminHr;
+        }
+
+        return (int) $pending->approver_id === (int) $actor->id;
     }
 
     public function approveCurrent(Model $request, string $moduleType, User $employee, User $actor, ?string $remarks = null, ?User $requestor = null): ?OrgApprovalRecord
     {
         return DB::transaction(function () use ($request, $moduleType, $employee, $actor, $remarks, $requestor): ?OrgApprovalRecord {
             $pending = $this->currentPendingRecord($request, $moduleType, $employee, $requestor);
-            if (! $pending || (int) $pending->approver_id !== (int) $actor->id) {
+            if (! $pending || ! $this->canActorActOnRecord($actor, $pending)) {
                 return null;
             }
 
             $pending->approval_status = OrgApprovalRecord::STATUS_APPROVED;
             $pending->remarks = $remarks;
             $pending->approved_at = now();
+            $pending->approver_id = $actor->id;
             $pending->approver_name = $actor->display_name;
             $pending->save();
 
@@ -125,13 +135,14 @@ class OrgApprovalWorkflowService
     {
         return DB::transaction(function () use ($request, $moduleType, $employee, $actor, $remarks, $requestor): ?OrgApprovalRecord {
             $pending = $this->currentPendingRecord($request, $moduleType, $employee, $requestor);
-            if (! $pending || (int) $pending->approver_id !== (int) $actor->id) {
+            if (! $pending || ! $this->canActorActOnRecord($actor, $pending)) {
                 return null;
             }
 
             $pending->approval_status = OrgApprovalRecord::STATUS_REJECTED;
             $pending->remarks = $remarks;
             $pending->approved_at = now();
+            $pending->approver_id = $actor->id;
             $pending->approver_name = $actor->display_name;
             $pending->save();
 
@@ -238,6 +249,15 @@ class OrgApprovalWorkflowService
         }
 
         return OrgApprovalRecord::STATUS_PENDING;
+    }
+
+    private function canActorActOnRecord(User $actor, OrgApprovalRecord $record): bool
+    {
+        if ($record->approver_role === HrRole::AdminHr->value) {
+            return $this->roleResolver->resolve($actor) === HrRole::AdminHr;
+        }
+
+        return (int) $record->approver_id === (int) $actor->id;
     }
 
     /**
