@@ -3852,8 +3852,17 @@ export async function deleteAdminHoliday(id) {
   return data
 }
 
-export async function getLeaveRequests(status) {
-  const url = status ? `/admin/leave?status=${encodeURIComponent(status)}` : '/admin/leave'
+export async function getLeaveRequests(filters) {
+  const params = new URLSearchParams()
+  if (typeof filters === 'string') {
+    if (filters) params.set('status', filters)
+  } else if (filters && typeof filters === 'object') {
+    if (filters.status) params.set('status', String(filters.status))
+    if (filters.from_date) params.set('from_date', String(filters.from_date))
+    if (filters.to_date) params.set('to_date', String(filters.to_date))
+  }
+  const qs = params.toString()
+  const url = qs ? `/admin/leave?${qs}` : '/admin/leave'
   const res = await authenticatedFetch(url)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load leave requests')
@@ -3933,13 +3942,31 @@ export async function approveLeaveRequest(id, notes, opts = {}) {
   return data
 }
 
-export async function bulkApproveLeaveRequests(requestIds, remarks = '') {
+export async function bulkApproveLeavePreview(filters = {}) {
+  const res = await authenticatedFetch('/admin/leave/bulk-approve-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to count approvable leave requests')
+  return data
+}
+
+/** @param {object|number[]} payloadOrIds - bulk payload or legacy id array */
+export async function bulkApproveLeaveRequests(payloadOrIds, remarks = '') {
+  const body =
+    Array.isArray(payloadOrIds) || typeof payloadOrIds === 'number'
+      ? {
+          mode: 'selected_ids',
+          ids: Array.isArray(payloadOrIds) ? payloadOrIds.map(Number) : [Number(payloadOrIds)],
+          remarks: String(remarks || '').trim() || undefined,
+        }
+      : payloadOrIds
   const res = await authenticatedFetch('/admin/leave/bulk-approve', {
     method: 'POST',
-    body: JSON.stringify({
-      request_ids: Array.isArray(requestIds) ? requestIds.map(Number) : [],
-      remarks: String(remarks || '').trim() || undefined,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to approve selected leave requests')
@@ -5027,14 +5054,31 @@ export async function approvePresenceFiling(id, payload = {}) {
   return data
 }
 
-export async function bulkApprovePresenceFilings(requestIds, remarks = '') {
+export async function bulkApprovePresenceFilingsPreview(filters = {}) {
+  const res = await authenticatedFetch('/admin/presence-filings/bulk-approve-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to count approvable attendance corrections')
+  return data
+}
+
+/** @param {object|number[]} payloadOrIds - bulk payload or legacy id array */
+export async function bulkApprovePresenceFilings(payloadOrIds, remarks = '') {
+  const body =
+    Array.isArray(payloadOrIds) || typeof payloadOrIds === 'number'
+      ? {
+          mode: 'selected_ids',
+          ids: Array.isArray(payloadOrIds) ? payloadOrIds.map(Number) : [Number(payloadOrIds)],
+          remarks: String(remarks || '').trim() || undefined,
+        }
+      : payloadOrIds
   const res = await authenticatedFetch('/admin/presence-filings/bulk-approve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      request_ids: Array.isArray(requestIds) ? requestIds.map(Number) : [],
-      remarks: String(remarks || '').trim() || undefined,
-    }),
+    body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to approve selected attendance corrections')
@@ -5313,13 +5357,31 @@ export async function updateAdminOvertimeStatus(id, status, remarks) {
   return data
 }
 
-export async function bulkApproveAdminOvertime(requestIds, remarks = '') {
+export async function bulkApproveAdminOvertimePreview(filters = {}) {
+  const res = await authenticatedFetch('/admin/overtime/bulk-approve-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to count approvable overtime requests')
+  return data
+}
+
+/** @param {object|number[]} payloadOrIds - bulk payload or legacy id array */
+export async function bulkApproveAdminOvertime(payloadOrIds, remarks = '') {
+  const body =
+    Array.isArray(payloadOrIds) || typeof payloadOrIds === 'number'
+      ? {
+          mode: 'selected_ids',
+          ids: Array.isArray(payloadOrIds) ? payloadOrIds.map(Number) : [Number(payloadOrIds)],
+          remarks: String(remarks || '').trim() || undefined,
+        }
+      : payloadOrIds
   const res = await authenticatedFetch('/admin/overtime/bulk-approve', {
     method: 'POST',
-    body: JSON.stringify({
-      request_ids: Array.isArray(requestIds) ? requestIds.map(Number) : [],
-      remarks: String(remarks || '').trim() || undefined,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to approve selected overtime requests')

@@ -198,6 +198,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/presence-filings', [PresenceFilingController::class, 'adminIndex']);
             Route::get('/admin/presence-filings/attendance-detail', [PresenceFilingController::class, 'adminAttendanceDetail']);
             Route::post('/admin/presence-filings', [PresenceFilingController::class, 'adminStore']);
+            Route::post('/admin/presence-filings/bulk-approve-preview', [PresenceFilingController::class, 'bulkApprovePreview']);
             Route::post('/admin/presence-filings/bulk-approve', [PresenceFilingController::class, 'bulkApprove']);
             Route::post('/admin/presence-filings/{id}/approve', [PresenceFilingController::class, 'approve']);
             Route::post('/admin/presence-filings/{id}/reject', [PresenceFilingController::class, 'reject']);
@@ -325,6 +326,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:leave.approve')->get('/admin/leave/validate-range', [LeaveController::class, 'validateLeaveDateRange']);
         Route::middleware('permission:leave.approve')->post('/admin/leave', [LeaveController::class, 'store']);
         Route::middleware('permission:leave.approve')->group(function () {
+            Route::post('/admin/leave/bulk-approve-preview', [LeaveController::class, 'bulkApprovePreview']);
             Route::post('/admin/leave/bulk-approve', [LeaveController::class, 'bulkApprove']);
             Route::post('/admin/leave/{id}/approve', [LeaveController::class, 'approve']);
             Route::post('/admin/leave/{id}/reject', [LeaveController::class, 'reject']);
@@ -338,6 +340,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/overtime/{id}', [OvertimeController::class, 'show']);
         });
         Route::middleware('permission:overtime.export')->get('/admin/overtime/export', [OvertimeController::class, 'export']);
+        Route::middleware('permission:overtime.approve')->post('/admin/overtime/bulk-approve-preview', [OvertimeController::class, 'bulkApprovePreview']);
         Route::middleware('permission:overtime.approve')->post('/admin/overtime/bulk-approve', [OvertimeController::class, 'bulkApprove']);
         Route::middleware('permission:overtime.approve')->patch('/admin/overtime/{id}/status', [OvertimeController::class, 'updateStatus']);
         Route::middleware('permission:overtime.edit_hours')->patch('/admin/overtime/{id}/hours', [OvertimeController::class, 'updateHours']);

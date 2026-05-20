@@ -46,6 +46,7 @@ import {
   createLeaveRequest,
   approveLeaveRequest,
   bulkApproveLeaveRequests,
+  bulkApproveLeavePreview,
   rejectLeaveRequest,
   getEmployees,
   updateLeaveNotes,
@@ -75,6 +76,9 @@ import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailMo
 import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
+import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
+import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
+import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
 
 const STATUS_OPTIONS = [
@@ -174,6 +178,10 @@ export default function AdminLeave() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [statusFilter, setStatusFilter] = useState('')
+  const [filterFrom, setFilterFrom] = useState('')
+  const [filterTo, setFilterTo] = useState('')
+  const [appliedFrom, setAppliedFrom] = useState('')
+  const [appliedTo, setAppliedTo] = useState('')
 
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectLeave, setRejectLeave] = useState(null)
@@ -209,9 +217,10 @@ export default function AdminLeave() {
   const [approveLeave, setApproveLeave] = useState(null)
   const [approveNotes, setApproveNotes] = useState('')
   const [approveSubmitting, setApproveSubmitting] = useState(false)
-  const [selectedBulkIds, setSelectedBulkIds] = useState(() => new Set())
   const [bulkApproveRemarks, setBulkApproveRemarks] = useState('')
+  const [totalMatchingApprovable, setTotalMatchingApprovable] = useState(0)
   const [bulkApproving, setBulkApproving] = useState(false)
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
   const [bulkSummaryOpen, setBulkSummaryOpen] = useState(false)
   const [bulkSummary, setBulkSummary] = useState(null)
   const [approveForceInsufficientCredits, setApproveForceInsufficientCredits] = useState(false)
@@ -233,7 +242,11 @@ export default function AdminLeave() {
   const fetchLeaves = useCallback(async () => {
     setError(null)
     try {
-      const data = await getLeaveRequests(statusFilter || undefined)
+      const data = await getLeaveRequests({
+        status: statusFilter || undefined,
+        from_date: appliedFrom || undefined,
+        to_date: appliedTo || undefined,
+      })
       setLeaveRequests(data.leave_requests || [])
     } catch (e) {
       setError(e.message)
@@ -241,7 +254,7 @@ export default function AdminLeave() {
     } finally {
       setLoading(false)
     }
-  }, [statusFilter])
+  }, [statusFilter, appliedFrom, appliedTo])
 
   useEffect(() => {
     setLoading(true)
@@ -609,33 +622,45 @@ export default function AdminLeave() {
     }
   }
 
-  function toggleBulkRow(leave) {
-    const id = Number(leave?.id)
-    if (!id || leave?.status !== 'pending' || !leave?.actor_can_approve) return
-    setSelectedBulkIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  function toggleBulkSelectAll() {
-    setSelectedBulkIds((prev) => {
-      if (allBulkSelected) return new Set()
-      const next = new Set(prev)
-      for (const leave of bulkSelectableRows) next.add(Number(leave.id))
-      return next
-    })
+  function exportLeaveCsv() {
+    const headers = [
+      'Employee',
+      'Leave type',
+      'Start date',
+      'End date',
+      'Duration',
+      'Status',
+      'Reason / remarks',
+    ]
+    const rows = leaveRequests.map((leave) => [
+      leave.employee_name || '',
+      formatType(leave.type),
+      leave.start_date || '',
+      leave.end_date || '',
+      formatDuration(leave),
+      leave.status || '',
+      [leave.notes, leave.rejection_note].filter(Boolean).join(' | ') || '',
+    ])
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `leave-requests-${appliedFrom || 'all'}-${appliedTo || 'all'}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   async function handleBulkApprove() {
-    const ids = [...selectedBulkIds]
-    if (ids.length === 0) return
+    if (bulkSelection.effectiveSelectedCount === 0) return
+    setBulkConfirmOpen(false)
     setBulkApproving(true)
     setError(null)
     try {
-      const res = await bulkApproveLeaveRequests(ids, bulkApproveRemarks)
+      const payload = bulkSelection.buildBulkApprovePayload(bulkApproveRemarks)
+      const res = await bulkApproveLeaveRequests(payload)
       const approved = Number(res?.approved_count || 0)
       const skipped = Number(res?.skipped_count || 0)
       const failed = Number(res?.failed_count || 0)
@@ -653,7 +678,7 @@ export default function AdminLeave() {
       })
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
-      setSelectedBulkIds(new Set())
+      bulkSelection.clearSelection()
       await fetchLeaves()
     } catch (e) {
       setError(e.message)
@@ -739,20 +764,48 @@ export default function AdminLeave() {
     approved: approvedCount,
     rejected: rejectedCount,
   }
-  const bulkSelectableRows = useMemo(
-    () => (canApproveLeave ? leaveRequests.filter((leave) => leave?.status === 'pending' && leave?.actor_can_approve) : []),
-    [canApproveLeave, leaveRequests]
+  const bulkApprovalFilters = useMemo(
+    () => ({
+      date_from: appliedFrom || undefined,
+      date_to: appliedTo || undefined,
+      status: statusFilter || undefined,
+    }),
+    [appliedFrom, appliedTo, statusFilter],
   )
-  const selectedBulkCount = selectedBulkIds.size
-  const allBulkSelected = bulkSelectableRows.length > 0 && bulkSelectableRows.every((leave) => selectedBulkIds.has(Number(leave.id)))
+  const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    setSelectedBulkIds((prev) => {
-      const allowed = new Set(bulkSelectableRows.map((leave) => Number(leave.id)))
-      const next = new Set([...prev].filter((id) => allowed.has(id)))
-      return next.size === prev.size ? prev : next
-    })
-  }, [bulkSelectableRows])
+    if (!canApproveLeave) {
+      setTotalMatchingApprovable(0)
+      return undefined
+    }
+    let cancelled = false
+    bulkApproveLeavePreview(bulkApprovalFilters)
+      .then((res) => {
+        if (!cancelled) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
+      })
+      .catch(() => {
+        if (!cancelled) setTotalMatchingApprovable(0)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [bulkApprovalFilters, bulkFiltersKey, canApproveLeave])
+
+  const pageBulkRows = useMemo(
+    () =>
+      canApproveLeave
+        ? leaveRequests.filter((leave) => leave?.status === 'pending' && leave?.actor_can_approve)
+        : [],
+    [canApproveLeave, leaveRequests],
+  )
+
+  const bulkSelection = useBulkApprovalSelection({
+    pageRows: pageBulkRows,
+    totalMatchingCount: totalMatchingApprovable,
+    bulkFilters: bulkApprovalFilters,
+    filtersKey: bulkFiltersKey,
+  })
 
   const today = new Date()
   const currentMonth = today.getMonth()
@@ -817,37 +870,6 @@ export default function AdminLeave() {
             {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Refresh
           </Button>
-          {canApproveLeave ? (
-            <div className="flex min-w-[12rem] max-w-full flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2 @xl:max-w-md">
-              <div className="space-y-1">
-                <Label htmlFor="leave-bulk-remarks" className="text-xs font-medium text-muted-foreground">
-                  Admin remarks (optional)
-                </Label>
-                <textarea
-                  id="leave-bulk-remarks"
-                  value={bulkApproveRemarks}
-                  onChange={(e) => setBulkApproveRemarks(e.target.value)}
-                  rows={2}
-                  placeholder="Applied to each approved request"
-                  disabled={bulkApproving}
-                  className={cn(FIELD_TEXTAREA_CLASS_SM, 'min-h-[2.75rem] resize-y text-sm')}
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-sm font-semibold text-muted-foreground">{selectedBulkCount} selected</span>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-9 gap-2 rounded-lg"
-                  disabled={bulkApproving || selectedBulkCount === 0}
-                  onClick={handleBulkApprove}
-                >
-                  {bulkApproving ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
-                  Approve Selected
-                </Button>
-              </div>
-            </div>
-          ) : null}
           {canApproveLeave && (
           <Button
             className={cn(adminLeavePrimaryButtonClass, 'flex-1 @lg:flex-initial')}
@@ -1015,6 +1037,35 @@ export default function AdminLeave() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
+          <div className="border-b border-border/40 px-4 py-4 @sm:px-6">
+            <BulkApproveToolbar
+              idPrefix="leave-bulk"
+              dateFrom={filterFrom}
+              dateTo={filterTo}
+              onDateFromChange={setFilterFrom}
+              onDateToChange={setFilterTo}
+              onApplyFilters={() => {
+                setAppliedFrom(filterFrom)
+                setAppliedTo(filterTo)
+              }}
+              applyingFilters={loading}
+              onExportCsv={exportLeaveCsv}
+              exportDisabled={leaveRequests.length === 0}
+              showBulkActions={canApproveLeave}
+              remarks={bulkApproveRemarks}
+              onRemarksChange={setBulkApproveRemarks}
+              selectedCount={bulkSelection.effectiveSelectedCount}
+              selectAllMatching={bulkSelection.selectAllMatching}
+              pageSelectableCount={bulkSelection.pageCount}
+              totalMatchingCount={bulkSelection.totalCount}
+              showPageSelectAllBanner={bulkSelection.showPageSelectAllBanner}
+              onSelectAllMatching={bulkSelection.selectAllMatchingRecords}
+              onClearSelection={bulkSelection.clearSelection}
+              entityLabel="requests"
+              onApproveClick={() => setBulkConfirmOpen(true)}
+              approving={bulkApproving}
+            />
+          </div>
           {loading ? (
             <div className="min-h-[min(42vh,400px)] overflow-x-auto px-2 @sm:px-0">
               <table className="w-full min-w-[min(100%,720px)] text-sm">
@@ -1071,10 +1122,14 @@ export default function AdminLeave() {
                     {canApproveLeave && (
                     <th className="w-10 px-5 py-3.5 text-left">
                       <Checkbox
-                        checked={allBulkSelected}
-                        disabled={bulkSelectableRows.length === 0 || bulkApproving}
-                        onCheckedChange={toggleBulkSelectAll}
-                        aria-label="Select all pending leave requests"
+                        checked={
+                          bulkSelection.headerCheckboxIndeterminate
+                            ? 'indeterminate'
+                            : bulkSelection.headerCheckboxChecked
+                        }
+                        disabled={pageBulkRows.length === 0 || bulkApproving}
+                        onCheckedChange={bulkSelection.togglePageSelectAll}
+                        aria-label="Select all pending leave requests on this page"
                       />
                     </th>
                     )}
@@ -1148,9 +1203,9 @@ export default function AdminLeave() {
                       {canApproveLeave && (
                       <td className="px-4 py-4 align-middle">
                         <Checkbox
-                          checked={selectedBulkIds.has(Number(leave.id))}
+                          checked={bulkSelection.isRowSelected(leave)}
                           disabled={leave.status !== 'pending' || !leave.actor_can_approve || bulkApproving}
-                          onCheckedChange={() => toggleBulkRow(leave)}
+                          onCheckedChange={() => bulkSelection.toggleRow(leave)}
                           aria-label={`Select leave request #${leave.id}`}
                         />
                       </td>
@@ -1340,6 +1395,17 @@ export default function AdminLeave() {
           )}
         </CardContent>
       </Card>
+
+      <BulkApproveConfirmDialog
+        open={bulkConfirmOpen}
+        onOpenChange={setBulkConfirmOpen}
+        selectedCount={bulkSelection.effectiveSelectedCount}
+        selectAllMatching={bulkSelection.selectAllMatching}
+        remarks={bulkApproveRemarks}
+        onConfirm={handleBulkApprove}
+        loading={bulkApproving}
+        entityLabel="leave requests"
+      />
 
       <BulkApprovalSummaryDialog
         open={bulkSummaryOpen}

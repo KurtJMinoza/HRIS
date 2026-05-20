@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Enums\HrRole;
 use App\Jobs\ProcessDailyPayrollJob;
 use App\Models\AttendanceCorrection;
@@ -16,6 +17,7 @@ use App\Services\HrRoleResolver;
 use App\Services\PresenceFilingAttendanceLogSyncService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PayrollPeriodMutationGuard;
+use App\Services\BulkApproval\PresenceFilingBulkApprovalQuery;
 use App\Services\PresenceFilingService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -27,6 +29,8 @@ use Illuminate\Validation\ValidationException;
 
 class PresenceFilingController extends Controller
 {
+    use ProcessesBulkApproval;
+
     public function __construct(
         private readonly PresenceFilingService $presenceFilingService,
         private readonly DataScopeService $dataScopeService,
@@ -36,6 +40,7 @@ class PresenceFilingController extends Controller
         private readonly PresenceFilingCorrectionFormatter $correctionFormatter,
         private readonly PresenceFilingAttendanceLogSyncService $attendanceLogSyncService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
+        private readonly PresenceFilingBulkApprovalQuery $bulkApprovalQuery,
     ) {}
 
     private function normalizeTimeToHi(?string $value): ?string
@@ -710,21 +715,53 @@ class PresenceFilingController extends Controller
         return response()->json(['presence_filings' => $items]);
     }
 
+    public function bulkApprovePreview(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'filters' => ['required', 'array'],
+        ]);
+
+        $filters = $this->normalizeBulkApproveFilters($validated['filters']);
+        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+
+        return response()->json([
+            'approvable_count' => count($ids),
+        ]);
+    }
+
     public function bulkApprove(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'request_ids' => ['required', 'array', 'min:1', 'max:200'],
-            'request_ids.*' => ['integer', 'distinct'],
-            'remarks' => ['nullable', 'string', 'max:2000'],
-        ]);
+        $parsed = $this->parseBulkApproveRequest($request);
 
         $actor = $request->user();
         if (! $actor) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $ids = array_values(array_unique(array_map('intval', $validated['request_ids'])));
-        $remarks = $validated['remarks'] ?? null;
+        if ($parsed['mode'] === 'all_matching') {
+            $filters = $this->normalizeBulkApproveFilters($parsed['filters']);
+            $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+        } else {
+            $ids = $parsed['ids'];
+            $this->assertBulkApproveIdsPresent($ids);
+            if (count($ids) > 500) {
+                throw ValidationException::withMessages([
+                    'ids' => ['Too many requests selected. Use “select all matching” or approve in smaller batches.'],
+                ]);
+            }
+        }
+
+        if (count($ids) === 0) {
+            return $this->bulkApproveJsonResponse(0, 0, 0, [], 'attendance correction');
+
+        }
+
+        $remarks = $parsed['remarks'];
         $approved = 0;
         $skipped = 0;
         $failed = 0;
@@ -765,13 +802,7 @@ class PresenceFilingController extends Controller
             }
         }
 
-        return response()->json([
-            'message' => $approved > 0 ? 'Bulk attendance correction approval completed.' : 'No attendance corrections were approved.',
-            'approved_count' => $approved,
-            'skipped_count' => $skipped,
-            'failed_count' => $failed,
-            'failed_items' => $failedItems,
-        ]);
+        return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'attendance correction');
     }
 
     public function approve(Request $request, int $id): JsonResponse

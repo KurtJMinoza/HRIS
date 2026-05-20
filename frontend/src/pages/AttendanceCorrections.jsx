@@ -81,6 +81,7 @@ import {
   getEmployees,
   approvePresenceFiling,
   bulkApprovePresenceFilings,
+  bulkApprovePresenceFilingsPreview,
   rejectPresenceFiling,
   submitAdminPresenceFiling,
   submitPresenceFiling,
@@ -107,6 +108,9 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
+import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
+import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
+import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
 
 const APPROVAL_INFO_SHORT =
@@ -575,9 +579,10 @@ export default function AttendanceCorrections() {
   const [rejectionNote, setRejectionNote] = useState('')
   const [hrNoteText, setHrNoteText] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [selectedBulkIds, setSelectedBulkIds] = useState(() => new Set())
   const [bulkApproveRemarks, setBulkApproveRemarks] = useState('')
+  const [totalMatchingApprovable, setTotalMatchingApprovable] = useState(0)
   const [bulkApproving, setBulkApproving] = useState(false)
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
   const [bulkSummaryOpen, setBulkSummaryOpen] = useState(false)
   const [bulkSummary, setBulkSummary] = useState(null)
   const [hrNoteSubmitting, setHrNoteSubmitting] = useState(false)
@@ -866,20 +871,50 @@ export default function AttendanceCorrections() {
     currentPage * itemsPerPage
   )
   const totalPages = Math.max(1, Math.ceil(filteredSorted.length / itemsPerPage))
-  const bulkSelectableRows = useMemo(
-    () => (tab === 'all' && canSeeAll ? paginatedItems.filter((item) => item?.status === 'pending' && item?.actor_can_approve) : []),
-    [canSeeAll, paginatedItems, tab]
+  const bulkApprovalFilters = useMemo(
+    () => ({
+      date_from: allFrom || undefined,
+      date_to: allTo || undefined,
+      status: allStatus || undefined,
+      issue_type: allIssue !== 'all' ? allIssue : undefined,
+      search: debouncedAllQ || undefined,
+    }),
+    [allFrom, allTo, allStatus, allIssue, debouncedAllQ],
   )
-  const selectedBulkCount = selectedBulkIds.size
-  const allBulkSelected = bulkSelectableRows.length > 0 && bulkSelectableRows.every((item) => selectedBulkIds.has(Number(item.id)))
+  const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    setSelectedBulkIds((prev) => {
-      const allowed = new Set(bulkSelectableRows.map((item) => Number(item.id)))
-      const next = new Set([...prev].filter((id) => allowed.has(id)))
-      return next.size === prev.size ? prev : next
-    })
-  }, [bulkSelectableRows])
+    if (tab !== 'all' || !canSeeAll) {
+      setTotalMatchingApprovable(0)
+      return undefined
+    }
+    let cancelled = false
+    bulkApprovePresenceFilingsPreview(bulkApprovalFilters)
+      .then((res) => {
+        if (!cancelled) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
+      })
+      .catch(() => {
+        if (!cancelled) setTotalMatchingApprovable(0)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [bulkApprovalFilters, bulkFiltersKey, tab, canSeeAll])
+
+  const pageBulkRows = useMemo(
+    () =>
+      tab === 'all' && canSeeAll
+        ? paginatedItems.filter((item) => item?.status === 'pending' && item?.actor_can_approve)
+        : [],
+    [canSeeAll, paginatedItems, tab],
+  )
+
+  const bulkSelection = useBulkApprovalSelection({
+    pageRows: pageBulkRows,
+    totalMatchingCount: totalMatchingApprovable,
+    bulkFilters: bulkApprovalFilters,
+    filtersKey: bulkFiltersKey,
+  })
 
   function toggleSort(key) {
     if (sortKey === key) {
@@ -973,32 +1008,13 @@ export default function AttendanceCorrections() {
     }
   }
 
-  function toggleBulkRow(item) {
-    const id = Number(item?.id)
-    if (!id || item?.status !== 'pending' || !item?.actor_can_approve) return
-    setSelectedBulkIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  function toggleBulkSelectAll() {
-    setSelectedBulkIds((prev) => {
-      if (allBulkSelected) return new Set()
-      const next = new Set(prev)
-      for (const item of bulkSelectableRows) next.add(Number(item.id))
-      return next
-    })
-  }
-
   async function submitBulkApprove() {
-    const ids = [...selectedBulkIds]
-    if (ids.length === 0) return
+    if (bulkSelection.effectiveSelectedCount === 0) return
+    setBulkConfirmOpen(false)
     try {
       setBulkApproving(true)
-      const res = await bulkApprovePresenceFilings(ids, bulkApproveRemarks)
+      const payload = bulkSelection.buildBulkApprovePayload(bulkApproveRemarks)
+      const res = await bulkApprovePresenceFilings(payload)
       const approved = Number(res?.approved_count || 0)
       const skipped = Number(res?.skipped_count || 0)
       const failed = Number(res?.failed_count || 0)
@@ -1016,7 +1032,7 @@ export default function AttendanceCorrections() {
       })
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
-      setSelectedBulkIds(new Set())
+      bulkSelection.clearSelection()
       await loadAll()
       await loadMine()
     } catch (e) {
@@ -1395,6 +1411,7 @@ export default function AttendanceCorrections() {
                   </p>
 
                   {tab === 'all' && (
+                    <div className="flex flex-col gap-5">
                     <div className="flex flex-col gap-5 @xl:flex-row @xl:flex-wrap @xl:items-end @xl:justify-between">
                       <div
                         className="inline-flex min-w-0 flex-wrap gap-2 rounded-2xl border border-slate-200/80 bg-white p-1 shadow-inner dark:border-slate-700 dark:bg-slate-900/40"
@@ -1418,32 +1435,6 @@ export default function AttendanceCorrections() {
                         ))}
                       </div>
                       <div className="flex w-full min-w-0 flex-col gap-4 @md:flex-row @md:flex-wrap @md:items-end @xl:w-auto @xl:justify-end">
-                        <div className="flex min-w-0 flex-1 flex-col gap-1.5 @md:max-w-xl">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Date range
-                          </span>
-                          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950/45">
-                            <CalendarDays className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                            <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
-                              {formatDateRangeLabel(allFrom, allTo)}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Input
-                              type="date"
-                              value={allFrom}
-                              onChange={(e) => setAllFrom(e.target.value)}
-                              className="h-10 min-w-0 flex-1 rounded-lg text-[15px] @md:max-w-[11rem]"
-                            />
-                            <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                            <Input
-                              type="date"
-                              value={allTo}
-                              onChange={(e) => setAllTo(e.target.value)}
-                              className="h-10 min-w-0 flex-1 rounded-lg text-[15px] @md:max-w-[11rem]"
-                            />
-                          </div>
-                        </div>
                         <div className="w-full min-w-[10rem] @md:w-48">
                           <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Issue type</Label>
                           <Select value={allIssue} onValueChange={setAllIssue}>
@@ -1460,6 +1451,33 @@ export default function AttendanceCorrections() {
                         </div>
                       </div>
                     </div>
+                    {canSeeAll ? (
+                      <BulkApproveToolbar
+                        idPrefix="pf-bulk"
+                        dateFrom={allFrom}
+                        dateTo={allTo}
+                        onDateFromChange={setAllFrom}
+                        onDateToChange={setAllTo}
+                        onApplyFilters={() => loadAll()}
+                        applyingFilters={loadingAll}
+                        onExportCsv={() => exportToCSV(filteredSorted)}
+                        exportDisabled={filteredSorted.length === 0}
+                        showBulkActions
+                        remarks={bulkApproveRemarks}
+                        onRemarksChange={setBulkApproveRemarks}
+                        selectedCount={bulkSelection.effectiveSelectedCount}
+                        selectAllMatching={bulkSelection.selectAllMatching}
+                        pageSelectableCount={bulkSelection.pageCount}
+                        totalMatchingCount={bulkSelection.totalCount}
+                        showPageSelectAllBanner={bulkSelection.showPageSelectAllBanner}
+                        onSelectAllMatching={bulkSelection.selectAllMatchingRecords}
+                        onClearSelection={bulkSelection.clearSelection}
+                        entityLabel="requests"
+                        onApproveClick={() => setBulkConfirmOpen(true)}
+                        approving={bulkApproving}
+                      />
+                    ) : null}
+                    </div>
                   )}
 
                   <div className="flex w-full min-w-0 flex-col gap-3 border-t border-border/40 pt-4 @sm:flex-row @sm:flex-wrap @sm:items-center @sm:justify-between">
@@ -1471,37 +1489,6 @@ export default function AttendanceCorrections() {
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {tab === 'all' && canSeeAll ? (
-                        <div className="flex min-w-[12rem] max-w-full flex-col gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2 @xl:max-w-md">
-                          <div className="space-y-1">
-                            <Label htmlFor="pf-bulk-remarks" className="text-xs font-medium text-muted-foreground">
-                              Approval remarks (optional)
-                            </Label>
-                            <Textarea
-                              id="pf-bulk-remarks"
-                              value={bulkApproveRemarks}
-                              onChange={(e) => setBulkApproveRemarks(e.target.value)}
-                              rows={2}
-                              placeholder="Notes applied to each approved request"
-                              disabled={bulkApproving}
-                              className="min-h-[2.75rem] resize-y text-sm"
-                            />
-                          </div>
-                          <div className="flex flex-wrap items-center gap-3">
-                            <span className="text-sm font-semibold text-muted-foreground">{selectedBulkCount} selected</span>
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-9 gap-2 rounded-lg"
-                              disabled={bulkApproving || selectedBulkCount === 0}
-                              onClick={submitBulkApprove}
-                            >
-                              {bulkApproving ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
-                              Approve Selected
-                            </Button>
-                          </div>
-                        </div>
-                      ) : null}
                       <div className="flex w-fit rounded-lg border border-border/70 bg-muted/30 p-0.5 dark:bg-muted/20">
                         <Button
                           type="button"
@@ -1612,9 +1599,9 @@ export default function AttendanceCorrections() {
                           <div className="flex items-start justify-between gap-3">
                             {tab === 'all' && canSeeAll ? (
                               <Checkbox
-                                checked={selectedBulkIds.has(Number(item.id))}
+                                checked={bulkSelection.isRowSelected(item)}
                                 disabled={item.status !== 'pending' || !item.actor_can_approve || bulkApproving}
-                                onCheckedChange={() => toggleBulkRow(item)}
+                                onCheckedChange={() => bulkSelection.toggleRow(item)}
                                 aria-label={`Select attendance correction #${item.id}`}
                                 className="mt-1"
                               />
@@ -1687,10 +1674,14 @@ export default function AttendanceCorrections() {
                           {tab === 'all' && canSeeAll ? (
                             <TableHead className="w-10 py-3.5 pl-2 sm:pl-3">
                               <Checkbox
-                                checked={allBulkSelected}
-                                disabled={bulkSelectableRows.length === 0 || bulkApproving}
-                                onCheckedChange={toggleBulkSelectAll}
-                                aria-label="Select all pending attendance corrections"
+                                checked={
+                                  bulkSelection.headerCheckboxIndeterminate
+                                    ? 'indeterminate'
+                                    : bulkSelection.headerCheckboxChecked
+                                }
+                                disabled={pageBulkRows.length === 0 || bulkApproving}
+                                onCheckedChange={bulkSelection.togglePageSelectAll}
+                                aria-label="Select all pending attendance corrections on this page"
                               />
                             </TableHead>
                           ) : null}
@@ -1752,9 +1743,9 @@ export default function AttendanceCorrections() {
                               {tab === 'all' && canSeeAll ? (
                                 <TableCell className={cn('align-middle', cellPad)}>
                                   <Checkbox
-                                    checked={selectedBulkIds.has(Number(item.id))}
+                                    checked={bulkSelection.isRowSelected(item)}
                                     disabled={item.status !== 'pending' || !item.actor_can_approve || bulkApproving}
-                                    onCheckedChange={() => toggleBulkRow(item)}
+                                    onCheckedChange={() => bulkSelection.toggleRow(item)}
                                     aria-label={`Select attendance correction #${item.id}`}
                                   />
                                 </TableCell>
@@ -2088,6 +2079,17 @@ export default function AttendanceCorrections() {
           )}
         </DialogContent>
       </Dialog>
+
+      <BulkApproveConfirmDialog
+        open={bulkConfirmOpen}
+        onOpenChange={setBulkConfirmOpen}
+        selectedCount={bulkSelection.effectiveSelectedCount}
+        selectAllMatching={bulkSelection.selectAllMatching}
+        remarks={bulkApproveRemarks}
+        onConfirm={submitBulkApprove}
+        loading={bulkApproving}
+        entityLabel="attendance corrections"
+      />
 
       <BulkApprovalSummaryDialog
         open={bulkSummaryOpen}
