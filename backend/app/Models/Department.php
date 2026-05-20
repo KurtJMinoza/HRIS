@@ -35,6 +35,16 @@ class Department extends Model
         return $this->hasMany(User::class, 'department_id');
     }
 
+    public function divisions(): HasMany
+    {
+        return $this->hasMany(Division::class, 'department_id');
+    }
+
+    public function sectionsOrUnits(): HasMany
+    {
+        return $this->hasMany(SectionUnit::class, 'department_id');
+    }
+
     public function benefitCatalogs(): HasMany
     {
         return $this->hasMany(BenefitCatalog::class, 'department_id');

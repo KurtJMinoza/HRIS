@@ -5,12 +5,14 @@ import { buildAdminNav, buildManagerNav } from '@/config/rbacNav'
 import { resolvePostLoginPath, isAdminHrUser } from '@/lib/hrRoutes'
 import { DashboardLayout } from '@/layouts/DashboardLayout'
 
-const PANEL_SCOPES = new Set(['admin', 'company', 'branch', 'department'])
+const PANEL_SCOPES = new Set(['admin', 'company', 'branch', 'department', 'division', 'section-unit'])
 
 const SCOPE_TO_ROLE = {
   company: 'company_head',
   branch: 'branch_head',
   department: 'department_head',
+  division: 'division_head',
+  'section-unit': 'section_unit_head',
 }
 
 /**
@@ -43,9 +45,9 @@ export function HrPanelLayout() {
     return <Navigate to="/" replace />
   }
 
-  // Admin (HR) must use /admin/* (full modules + nav), not the scoped company/branch/department shell.
+  // Admin (HR) must use /admin/* (full modules + nav), not a scoped organization shell.
   if (scope !== 'admin' && isAdminHrUser(user)) {
-    const stripped = location.pathname.replace(/^\/(company|branch|department)/, '')
+    const stripped = location.pathname.replace(/^\/(company|branch|department|division|section-unit)/, '')
     const suffix = stripped === '' || stripped === '/' ? '/dashboard' : (stripped.startsWith('/') ? stripped : `/${stripped}`)
     return <Navigate to={`/admin${suffix}`} replace />
   }

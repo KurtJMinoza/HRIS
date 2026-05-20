@@ -1848,6 +1848,12 @@ export default function App() {
               <Route path="/department" element={<HrPanelLayout />}>
                 {HR_PANEL_CHILD_ROUTES}
               </Route>
+              <Route path="/division" element={<HrPanelLayout />}>
+                {HR_PANEL_CHILD_ROUTES}
+              </Route>
+              <Route path="/section-unit" element={<HrPanelLayout />}>
+                {HR_PANEL_CHILD_ROUTES}
+              </Route>
               <Route
                 path="/employee"
                 element={

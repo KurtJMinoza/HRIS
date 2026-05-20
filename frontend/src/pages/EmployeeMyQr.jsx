@@ -49,14 +49,14 @@ export default function EmployeeMyQr() {
       const data = await getMyQr()
       setQrToken(data.qr_token || '')
       setGeneratedAt(data.qr_token_generated_at || null)
-      setCompanyLogoUrl(data.company_logo_url || null)
+      setCompanyLogoUrl(data.company_logo_url || user?.company_logo_url || null)
     } catch (e) {
       setError(e.message)
       setQrToken('')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [user?.company_logo_url])
 
   useEffect(() => {
     fetchQr()
@@ -69,7 +69,7 @@ export default function EmployeeMyQr() {
       const data = await regenerateMyQr()
       setQrToken(data.qr_token || '')
       setGeneratedAt(data.qr_token_generated_at || null)
-      setCompanyLogoUrl(data.company_logo_url || null)
+      setCompanyLogoUrl(data.company_logo_url || user?.company_logo_url || null)
     } catch (e) {
       setError(e.message)
     } finally {

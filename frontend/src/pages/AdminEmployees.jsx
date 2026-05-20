@@ -713,7 +713,11 @@ export default function AdminEmployees() {
       const data = await getEmployeeQr(emp.id)
       const token = data.qr_token || ''
       if (!token) return
-      setPendingQrDownload({ token, fileName: (emp.name || 'employee').replace(/[^a-z0-9-_]/gi, '-') })
+      setPendingQrDownload({
+        token,
+        fileName: (emp.name || 'employee').replace(/[^a-z0-9-_]/gi, '-'),
+        companyLogoUrl: data.company_logo_url || null,
+      })
     } catch (e) {
       setError(e.message)
     }
@@ -2627,7 +2631,22 @@ export default function AdminEmployees() {
           className="pointer-events-none fixed -left-[9999px] top-0 opacity-0"
           aria-hidden
         >
-          <QRCodeCanvas value={pendingQrDownload.token} size={256} level="H" includeMargin />
+          <QRCodeCanvas
+            value={pendingQrDownload.token}
+            size={256}
+            level="H"
+            includeMargin
+            imageSettings={
+              pendingQrDownload.companyLogoUrl
+                ? {
+                    src: pendingQrDownload.companyLogoUrl,
+                    height: 48,
+                    width: 48,
+                    excavate: true,
+                  }
+                : undefined
+            }
+          />
         </div>
       )}
 

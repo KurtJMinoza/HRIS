@@ -2589,6 +2589,8 @@ export async function getEmployees(params = {}) {
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
   if (params.department_id != null && params.department_id !== '') query.set('department_id', String(params.department_id))
+  if (params.division_id != null && params.division_id !== '') query.set('division_id', String(params.division_id))
+  if (params.section_unit_id != null && params.section_unit_id !== '') query.set('section_unit_id', String(params.section_unit_id))
   if (params.assignable_to_company_id != null && params.assignable_to_company_id !== '') query.set('assignable_to_company_id', String(params.assignable_to_company_id))
   if (params.for_department_assignment) query.set('for_department_assignment', '1')
   if (params.assignment_branch_id != null && params.assignment_branch_id !== '') query.set('assignment_branch_id', String(params.assignment_branch_id))
@@ -4492,6 +4494,125 @@ export async function assignEmployeesToDepartment(departmentId, employeeIds) {
 }
 
 // —— Admin: Companies ——
+
+// Admin: Divisions / Sections or Units
+
+function orgQuery(params = {}, keys = ['company_id', 'branch_id', 'department_id', 'division_id', 'status', 'search']) {
+  const query = new URLSearchParams()
+  for (const key of keys) {
+    if (params[key] != null && params[key] !== '') query.set(key, String(params[key]))
+  }
+  if (params.fresh) query.set('_ts', String(Date.now()))
+  return query.toString()
+}
+
+async function jsonMutation(path, method, payload, fallbackMessage) {
+  const res = await authenticatedFetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = data.errors ? Object.values(data.errors).flat().join(' ') : data.message || fallbackMessage
+    throw new Error(msg)
+  }
+  return data
+}
+
+export async function getDivisions(params = {}) {
+  const suffix = orgQuery(params, ['company_id', 'branch_id', 'department_id', 'status', 'search'])
+  const path = `/admin/divisions${suffix ? `?${suffix}` : ''}`
+  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
+}
+
+export async function createDivision(payload) {
+  const data = await jsonMutation('/admin/divisions', 'POST', payload, 'Failed to create division')
+  clearGetCacheByPrefix('/admin/divisions')
+  return data
+}
+
+export async function updateDivision(id, payload) {
+  const data = await jsonMutation(`/admin/divisions/${id}`, 'PATCH', payload, 'Failed to update division')
+  clearGetCacheByPrefix('/admin/divisions')
+  return data
+}
+
+export async function deleteDivision(id) {
+  const res = await authenticatedFetch(`/admin/divisions/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to delete division')
+  clearGetCacheByPrefix('/admin/divisions')
+  return data
+}
+
+export async function getDivisionEmployees(divisionId) {
+  const res = await authenticatedFetch(`/admin/divisions/${divisionId}/employees`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load division employees')
+  return data
+}
+
+export async function assignEmployeesToDivision(divisionId, employeeIds) {
+  const data = await jsonMutation(`/admin/divisions/${divisionId}/assign-employees`, 'POST', { employee_ids: employeeIds }, 'Failed to assign employees')
+  clearGetCacheByPrefix('/admin/divisions')
+  clearGetCacheByPrefix('/admin/employees')
+  return data
+}
+
+export async function unassignEmployeesFromDivision(divisionId, employeeIds) {
+  const data = await jsonMutation(`/admin/divisions/${divisionId}/unassign-employees`, 'POST', { employee_ids: employeeIds }, 'Failed to unassign employees')
+  clearGetCacheByPrefix('/admin/divisions')
+  clearGetCacheByPrefix('/admin/employees')
+  return data
+}
+
+export async function getSectionsOrUnits(params = {}) {
+  const suffix = orgQuery(params, ['company_id', 'branch_id', 'department_id', 'division_id', 'status', 'search'])
+  const path = `/admin/sections-or-units${suffix ? `?${suffix}` : ''}`
+  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
+}
+
+export async function createSectionOrUnit(payload) {
+  const data = await jsonMutation('/admin/sections-or-units', 'POST', payload, 'Failed to create section/unit')
+  clearGetCacheByPrefix('/admin/sections-or-units')
+  return data
+}
+
+export async function updateSectionOrUnit(id, payload) {
+  const data = await jsonMutation(`/admin/sections-or-units/${id}`, 'PATCH', payload, 'Failed to update section/unit')
+  clearGetCacheByPrefix('/admin/sections-or-units')
+  return data
+}
+
+export async function deleteSectionOrUnit(id) {
+  const res = await authenticatedFetch(`/admin/sections-or-units/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to delete section/unit')
+  clearGetCacheByPrefix('/admin/sections-or-units')
+  return data
+}
+
+export async function getSectionOrUnitEmployees(sectionUnitId) {
+  const res = await authenticatedFetch(`/admin/sections-or-units/${sectionUnitId}/employees`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load section/unit employees')
+  return data
+}
+
+export async function assignEmployeesToSectionOrUnit(sectionUnitId, employeeIds) {
+  const data = await jsonMutation(`/admin/sections-or-units/${sectionUnitId}/assign-employees`, 'POST', { employee_ids: employeeIds }, 'Failed to assign employees')
+  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearGetCacheByPrefix('/admin/employees')
+  return data
+}
+
+export async function unassignEmployeesFromSectionOrUnit(sectionUnitId, employeeIds) {
+  const data = await jsonMutation(`/admin/sections-or-units/${sectionUnitId}/unassign-employees`, 'POST', { employee_ids: employeeIds }, 'Failed to unassign employees')
+  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearGetCacheByPrefix('/admin/employees')
+  return data
+}
 
 export function companyLogoUrl(company) {
   if (!company) return undefined

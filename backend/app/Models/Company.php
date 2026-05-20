@@ -49,6 +49,16 @@ class Company extends Model
         return $this->hasMany(Branch::class);
     }
 
+    public function divisions(): HasMany
+    {
+        return $this->hasMany(Division::class);
+    }
+
+    public function sectionsOrUnits(): HasMany
+    {
+        return $this->hasMany(SectionUnit::class);
+    }
+
     public function employees(): HasMany
     {
         return $this->hasMany(User::class, 'company_id');

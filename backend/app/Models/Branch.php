@@ -40,6 +40,16 @@ class Branch extends Model
         return $this->hasMany(Department::class, 'branch_id');
     }
 
+    public function divisions(): HasMany
+    {
+        return $this->hasMany(Division::class, 'branch_id');
+    }
+
+    public function sectionsOrUnits(): HasMany
+    {
+        return $this->hasMany(SectionUnit::class, 'branch_id');
+    }
+
     public function employees(): HasMany
     {
         return $this->hasMany(User::class, 'branch_id');

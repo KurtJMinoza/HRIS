@@ -435,11 +435,16 @@ function birthdayMonthShortLabel(monthLabel) {
   return first || 'Month'
 }
 
+function resolveCompanyLogoSrc(logoUrl, company = null) {
+  if (typeof logoUrl === 'string' && logoUrl.trim() !== '') return logoUrl.trim()
+  return companyLogoUrl(company) || undefined
+}
+
 const BIRTHDAY_TAB_LIST_CLASS =
-  'admin-birthday-tabs grid h-auto w-full grid-cols-3 gap-1.5 rounded-xl border border-border/35 bg-muted/45 p-1.5 shadow-inner dark:border-border/40 dark:bg-muted/20'
+  'admin-birthday-tabs flex h-auto w-full gap-1.5 overflow-x-auto rounded-xl border border-border/35 bg-muted/45 p-1.5 shadow-inner [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden @md:grid @md:grid-cols-3 @md:overflow-visible'
 
 const BIRTHDAY_TAB_TRIGGER_CLASS = cn(
-  'group relative flex h-auto min-h-11 w-full min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border-0 px-2 py-2.5 transition-all @md:min-h-12 @md:gap-2.5 @md:px-4',
+  'group relative flex h-auto min-h-[3.25rem] min-w-[5.75rem] flex-1 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border-0 px-2 py-2 transition-all @md:min-h-12 @md:min-w-0 @md:flex-row @md:gap-2.5 @md:px-4',
   'shadow-none outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25',
   'after:hidden',
   'data-[state=active]:border-transparent data-[state=active]:bg-background data-[state=active]:text-brand data-[state=active]:shadow-sm',
@@ -532,6 +537,7 @@ export default function AdminDashboard() {
         : hrRole === 'department_head'
           ? 'Department'
           : null
+  const dashboardCompanyLogo = resolveCompanyLogoSrc(user?.company_logo_url)
 
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -861,12 +867,14 @@ export default function AdminDashboard() {
       {
         value: 'upcoming30',
         label: '30 days',
+        shortLabel: '30d',
         ariaLabel: 'Upcoming 30 days',
         count: upcomingBirthdays.length,
       },
       {
         value: 'upcoming90',
         label: '90 days',
+        shortLabel: '90d',
         ariaLabel: 'Upcoming 90 days',
         count: upcomingBirthdays90.length,
       },
@@ -1212,6 +1220,16 @@ export default function AdminDashboard() {
             {isHrAdmin ? ', Admin' : dashboardScopeLabel ? `, ${dashboardScopeLabel} lead` : ''}
           </p>
           <div className="flex flex-wrap items-center gap-2.5">
+            {dashboardCompanyLogo ? (
+              <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/70 bg-background p-1.5 shadow-sm @md:size-12">
+                <img
+                  src={dashboardCompanyLogo}
+                  alt={user?.company_name ? `${user.company_name} logo` : 'Company logo'}
+                  className="max-h-full max-w-full object-contain"
+                  loading="lazy"
+                />
+              </div>
+            ) : null}
             <h2 className="text-[30px] font-extrabold leading-none tracking-tight @md:text-[34px]">
               {isHrAdmin
                 ? 'Admin Dashboard'
@@ -1805,17 +1823,20 @@ export default function AdminDashboard() {
                   <div className="flex flex-col gap-4 @xl:flex-row @xl:items-center @xl:justify-between">
                     <div className="flex min-w-0 flex-col gap-3 @md:flex-row @md:items-stretch @md:gap-3">
                     <TabsList className={cn(BIRTHDAY_TAB_LIST_CLASS, '@md:max-w-xl')}>
-                      {birthdayTabOptions.map(({ value, label, ariaLabel, count }) => (
+                      {birthdayTabOptions.map(({ value, label, shortLabel, ariaLabel, count }) => (
                         <TabsTrigger
                           key={value}
                           value={value}
                           className={BIRTHDAY_TAB_TRIGGER_CLASS}
                           aria-label={`${ariaLabel}, ${count} ${count === 1 ? 'employee' : 'employees'}`}
                         >
-                          <span className="text-sm font-semibold leading-none @md:text-base">{label}</span>
+                          <span className="text-center text-[11px] font-semibold leading-tight @md:text-sm">
+                            <span className="@md:hidden">{shortLabel || label}</span>
+                            <span className="hidden @md:inline">{label}</span>
+                          </span>
                           <span
                             className={cn(
-                              'inline-flex min-w-7 items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums leading-none',
+                              'inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums leading-none @md:min-w-7 @md:px-2 @md:text-[11px]',
                               'bg-background/90 text-muted-foreground ring-1 ring-border/50',
                               'group-data-[state=active]:bg-brand/12 group-data-[state=active]:text-brand group-data-[state=active]:ring-brand/25'
                             )}
@@ -2475,6 +2496,10 @@ export default function AdminDashboard() {
                   const multiplierLabel = formatHolidayMultiplierLabel(holiday)
                   const scopeType = holiday.scope_type || 'Nationwide'
                   const scopeLine = formatHolidayScopeLine(holiday)
+                  const holidayLogo = resolveCompanyLogoSrc(holiday.company_logo_url, {
+                    logo_url: holiday.company_logo_url,
+                    company_id: holiday.company_id,
+                  })
                   const daysLabel =
                     holiday.days_remaining_label ||
                     (holiday.is_today ? 'Today' : `In ${holiday.days_remaining ?? 0} days`)
@@ -2495,8 +2520,17 @@ export default function AdminDashboard() {
                         aria-hidden
                       />
                       <div className="flex min-w-0 flex-1 items-stretch gap-3 py-3 pl-3 pr-2">
-                        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand/12 ring-1 ring-brand/15">
-                          <Flag className="size-5 text-brand" aria-hidden />
+                        <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-brand/12 ring-1 ring-brand/15">
+                          {holidayLogo ? (
+                            <img
+                              src={holidayLogo}
+                              alt=""
+                              className="max-h-8 max-w-8 object-contain"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <Flag className="size-5 text-brand" aria-hidden />
+                          )}
                         </div>
                         <div className="min-w-0 flex-1 space-y-1.5">
                           <div className="flex flex-wrap items-center gap-2">
@@ -2577,7 +2611,16 @@ export default function AdminDashboard() {
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <CardTitle className="mb-3 flex items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
-                <Building2 className="size-4 text-brand" aria-hidden />
+                {isSingleCompany && companyData[0]?.logo_url ? (
+                  <img
+                    src={resolveCompanyLogoSrc(companyData[0].logo_url, { logo_url: companyData[0].logo_url, id: companyData[0].company_id })}
+                    alt=""
+                    className="size-8 shrink-0 rounded-md border border-border/60 bg-background object-contain p-0.5"
+                    loading="lazy"
+                  />
+                ) : (
+                  <Building2 className="size-4 text-brand" aria-hidden />
+                )}
                 {isSingleCompany ? 'Company Attendance Overview' : 'Company Attendance Comparison'}
               </CardTitle>
               <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
@@ -2644,6 +2687,7 @@ export default function AdminDashboard() {
                 </button>
                 {companiesList.map((c) => {
                   const isSelected = selectedCompanyIds.includes(c.id)
+                  const companyFilterLogo = companyLogoUrl(c)
                   return (
                     <button
                       key={c.id}
@@ -2655,12 +2699,20 @@ export default function AdminDashboard() {
                           setSelectedCompanyIds([...selectedCompanyIds, c.id])
                         }
                       }}
-                      className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors ${
                         isSelected
                           ? 'border border-brand bg-brand font-bold text-brand-foreground shadow-sm'
                           : 'border border-border bg-muted/50 font-normal text-muted-foreground hover:bg-muted'
                       }`}
                     >
+                      {companyFilterLogo ? (
+                        <img
+                          src={companyFilterLogo}
+                          alt=""
+                          className="size-4 shrink-0 rounded-sm object-contain"
+                          loading="lazy"
+                        />
+                      ) : null}
                       {c.name}
                     </button>
                   )
@@ -2692,11 +2744,22 @@ export default function AdminDashboard() {
               <div className="flex flex-nowrap gap-3 pb-1 min-w-0">
                 {companyData.map((cd) => {
                   const isUnassigned = (cd.company || '').toLowerCase() === 'unassigned'
+                  const legendLogo = resolveCompanyLogoSrc(cd.logo_url, { logo_url: cd.logo_url, id: cd.company_id })
                   return (
                     <div
                       key={cd.company_id ?? cd.company}
-                      className={`inline-flex shrink-0 items-center rounded-lg border border-border/50 px-2 py-1.5 ${isUnassigned ? 'bg-muted/10' : 'bg-muted/20'}`}
+                      className={`inline-flex shrink-0 items-center gap-2 rounded-lg border border-border/50 px-2 py-1.5 ${isUnassigned ? 'bg-muted/10' : 'bg-muted/20'}`}
                     >
+                      {legendLogo ? (
+                        <img
+                          src={legendLogo}
+                          alt=""
+                          className="size-5 shrink-0 rounded-sm object-contain"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      )}
                       <span
                         className={`text-[11px] font-medium whitespace-nowrap ${isUnassigned ? 'text-muted-foreground italic' : ''}`}
                       >
@@ -2755,6 +2818,7 @@ export default function AdminDashboard() {
                       const row = payload[0]?.payload ?? {}
                       const present = row.present ?? 0
                       const headcount = row.headcount ?? null
+                      const tooltipLogo = resolveCompanyLogoSrc(row.logo_url, { logo_url: row.logo_url, id: row.company_id })
                       const shareOfToday =
                         totalCompanyPresent > 0 ? Math.round((present / totalCompanyPresent) * 100) : 0
                       return (
@@ -2769,9 +2833,19 @@ export default function AdminDashboard() {
                           }}
                           data-chart-tooltip
                         >
-                          <p className="font-medium" style={{ color: 'var(--foreground)' }}>
-                            {row.company}
-                          </p>
+                          <div className="flex items-center gap-2">
+                            {tooltipLogo ? (
+                              <img
+                                src={tooltipLogo}
+                                alt=""
+                                className="size-6 shrink-0 rounded-sm object-contain"
+                                loading="lazy"
+                              />
+                            ) : null}
+                            <p className="font-medium" style={{ color: 'var(--foreground)' }}>
+                              {row.company}
+                            </p>
+                          </div>
                           <p className="mt-0.5 tabular-nums" style={{ color: 'var(--muted-foreground)' }}>
                             Present: <span className="font-semibold" style={{ color: 'var(--foreground)' }}>{present}</span>
                             {headcount > 0 && (

@@ -10,6 +10,7 @@ use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\DeductionScheduleController;
 use App\Http\Controllers\Admin\DeductionTypeController;
 use App\Http\Controllers\Admin\DepartmentController;
+use App\Http\Controllers\Admin\DivisionController;
 use App\Http\Controllers\Admin\EmployeeBenefitController;
 use App\Http\Controllers\Admin\EmployeeCompensationController;
 use App\Http\Controllers\Admin\EmployeeController;
@@ -32,6 +33,7 @@ use App\Http\Controllers\Admin\PayslipController as AdminPayslipController;
 use App\Http\Controllers\Admin\RbacController;
 use App\Http\Controllers\Admin\RegularizationApprovalController;
 use App\Http\Controllers\Admin\ReportsController;
+use App\Http\Controllers\Admin\SectionUnitController;
 use App\Http\Controllers\Admin\ScheduleController;
 use App\Http\Controllers\Admin\ScheduleRequestController;
 use App\Http\Controllers\AttendanceController;
@@ -295,6 +297,22 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:org.department.manage')->delete('/admin/departments/{id}', [DepartmentController::class, 'destroy']);
         Route::middleware('permission:org.department.manage')->post('/admin/departments/{id}/assign-employees', [DepartmentController::class, 'assignEmployees']);
         Route::middleware('permission:org.department.manage')->post('/admin/departments/{id}/unassign-employees', [DepartmentController::class, 'unassignEmployees']);
+
+        Route::middleware('permission:org.division.view')->get('/admin/divisions', [DivisionController::class, 'index']);
+        Route::middleware('permission:org.division.manage')->post('/admin/divisions', [DivisionController::class, 'store']);
+        Route::middleware('permission:org.division.view')->get('/admin/divisions/{id}/employees', [DivisionController::class, 'employees']);
+        Route::middleware('permission:org.division.manage')->patch('/admin/divisions/{id}', [DivisionController::class, 'update']);
+        Route::middleware('permission:org.division.manage')->delete('/admin/divisions/{id}', [DivisionController::class, 'destroy']);
+        Route::middleware('permission:org.division.manage')->post('/admin/divisions/{id}/assign-employees', [DivisionController::class, 'assignEmployees']);
+        Route::middleware('permission:org.division.manage')->post('/admin/divisions/{id}/unassign-employees', [DivisionController::class, 'unassignEmployees']);
+
+        Route::middleware('permission:org.section_unit.view')->get('/admin/sections-or-units', [SectionUnitController::class, 'index']);
+        Route::middleware('permission:org.section_unit.manage')->post('/admin/sections-or-units', [SectionUnitController::class, 'store']);
+        Route::middleware('permission:org.section_unit.view')->get('/admin/sections-or-units/{id}/employees', [SectionUnitController::class, 'employees']);
+        Route::middleware('permission:org.section_unit.manage')->patch('/admin/sections-or-units/{id}', [SectionUnitController::class, 'update']);
+        Route::middleware('permission:org.section_unit.manage')->delete('/admin/sections-or-units/{id}', [SectionUnitController::class, 'destroy']);
+        Route::middleware('permission:org.section_unit.manage')->post('/admin/sections-or-units/{id}/assign-employees', [SectionUnitController::class, 'assignEmployees']);
+        Route::middleware('permission:org.section_unit.manage')->post('/admin/sections-or-units/{id}/unassign-employees', [SectionUnitController::class, 'unassignEmployees']);
 
         Route::middleware('permission:org.company.view')->get('/admin/companies', [CompanyController::class, 'index']);
         Route::middleware('permission:org.company.manage')->post('/admin/companies', [CompanyController::class, 'store']);

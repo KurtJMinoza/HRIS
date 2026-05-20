@@ -27,11 +27,11 @@ export function isManagerialHrRole(userLike) {
     return userLike.is_assigned_organization_head
   }
   const mgmt = String(userLike.management_role || '').trim().toLowerCase()
-  if (mgmt === 'company_head' || mgmt === 'branch_head' || mgmt === 'department_head') {
+  if (mgmt === 'company_head' || mgmt === 'branch_head' || mgmt === 'department_head' || mgmt === 'division_head' || mgmt === 'section_unit_head') {
     return true
   }
   const hr = String(userLike?.hr_role || '').trim().toLowerCase()
-  return hr === 'company_head' || hr === 'branch_head' || hr === 'department_head'
+  return hr === 'company_head' || hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head'
 }
 
 /** Base path for in-app navigation (not API). */
@@ -42,6 +42,8 @@ export function getHrPanelBasePath(userLike) {
   if (hr === 'company_head') return '/company'
   if (hr === 'branch_head') return '/branch'
   if (hr === 'department_head') return '/department'
+  if (hr === 'division_head') return '/division'
+  if (hr === 'section_unit_head') return '/section-unit'
   return '/employee'
 }
 
@@ -55,6 +57,8 @@ export function resolvePostLoginPath(userLike) {
   if (hr === 'company_head') return '/company/dashboard'
   if (hr === 'branch_head') return '/branch/dashboard'
   if (hr === 'department_head') return '/department/dashboard'
+  if (hr === 'division_head') return '/division/dashboard'
+  if (hr === 'section_unit_head') return '/section-unit/dashboard'
   if (String(userLike.role || '').trim().toLowerCase() === 'employee') return '/employee/dashboard'
   return '/login'
 }

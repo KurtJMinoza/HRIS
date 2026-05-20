@@ -6,6 +6,8 @@ use App\Enums\HrRole;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
+use App\Models\Division;
+use App\Models\SectionUnit;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
@@ -34,6 +36,28 @@ class DataScopeService
             ->where('department_head_id', $actor->id)
             ->orderBy('name')
             ->get(['id', 'name', 'branch_id']);
+    }
+
+    /**
+     * @return EloquentCollection<int, Division>
+     */
+    private function divisionsForDivisionHead(User $actor): EloquentCollection
+    {
+        return Division::query()
+            ->where('division_head_id', $actor->id)
+            ->orderBy('name')
+            ->get(['id', 'name', 'company_id', 'branch_id', 'department_id']);
+    }
+
+    /**
+     * @return EloquentCollection<int, SectionUnit>
+     */
+    private function sectionUnitsForSectionUnitHead(User $actor): EloquentCollection
+    {
+        return SectionUnit::query()
+            ->where('section_unit_head_id', $actor->id)
+            ->orderBy('name')
+            ->get(['id', 'name', 'company_id', 'branch_id', 'department_id', 'division_id']);
     }
 
     /**
@@ -106,6 +130,33 @@ class DataScopeService
             ];
         }
 
+        if ($role === HrRole::DivisionHead) {
+            $divisions = $this->divisionsForDivisionHead($user);
+            $divisionIds = $divisions->pluck('id');
+            $sections = $divisionIds->isNotEmpty()
+                ? SectionUnit::query()->whereIn('division_id', $divisionIds)->orderBy('name')->get(['id', 'name', 'division_id'])
+                : new EloquentCollection;
+
+            return [
+                'kind' => 'division',
+                'division_ids' => $divisionIds->all(),
+                'division_names' => $divisions->pluck('name')->filter()->values()->all(),
+                'section_unit_ids' => $sections->pluck('id')->all(),
+                'section_unit_names' => $sections->pluck('name')->filter()->values()->all(),
+            ];
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $sections = $this->sectionUnitsForSectionUnitHead($user);
+
+            return [
+                'kind' => 'section_unit',
+                'section_unit_ids' => $sections->pluck('id')->all(),
+                'section_unit_names' => $sections->pluck('name')->filter()->values()->all(),
+                'division_ids' => $sections->pluck('division_id')->filter()->unique()->values()->all(),
+            ];
+        }
+
         if ($role === HrRole::BranchHead) {
             $branch = Branch::query()->where('branch_manager_id', $user->id)->first();
             if ($branch === null) {
@@ -169,6 +220,22 @@ class DataScopeService
     private function departmentIdsForDepartmentScope(User $actor): \Illuminate\Support\Collection
     {
         return $this->departmentsForDepartmentHead($actor)->pluck('id');
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    private function divisionIdsForDivisionScope(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->divisionsForDivisionHead($actor)->pluck('id');
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    private function sectionUnitIdsForSectionScope(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->sectionUnitsForSectionUnitHead($actor)->pluck('id');
     }
 
     /**
@@ -310,6 +377,49 @@ class DataScopeService
 
             return;
         }
+
+        if ($role === HrRole::DivisionHead) {
+            $divisionIds = $this->divisionIdsForDivisionScope($actor);
+            if ($divisionIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+
+            $sectionIds = SectionUnit::query()
+                ->whereIn('division_id', $divisionIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id);
+
+            $query->where(function ($q) use ($divisionIds, $sectionIds) {
+                $q->whereIn('division_id', $divisionIds);
+                if ($sectionIds->isNotEmpty()) {
+                    $q->orWhereIn('section_unit_id', $sectionIds);
+                }
+            });
+            $this->excludeUsersWhoAreCompanyHeads($query);
+            $this->excludeUsersWhoAreBranchManagers($query);
+            $this->excludeUsersWhoAreDepartmentHeads($query);
+
+            return;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $sectionIds = $this->sectionUnitIdsForSectionScope($actor);
+            if ($sectionIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+
+            $query->whereIn('section_unit_id', $sectionIds);
+            $this->excludeUsersWhoAreCompanyHeads($query);
+            $this->excludeUsersWhoAreBranchManagers($query);
+            $this->excludeUsersWhoAreDepartmentHeads($query);
+            $this->excludeUsersWhoAreDivisionHeads($query);
+
+            return;
+        }
     }
 
     /**
@@ -336,10 +446,35 @@ class DataScopeService
         });
     }
 
+    private function excludeUsersWhoAreDepartmentHeads(Builder $query): void
+    {
+        $query->whereNotExists(function ($q) {
+            $q->select(DB::raw(1))
+                ->from('departments')
+                ->whereColumn('departments.department_head_id', 'users.id');
+        });
+    }
+
+    private function excludeUsersWhoAreDivisionHeads(Builder $query): void
+    {
+        $query->whereNotExists(function ($q) {
+            $q->select(DB::raw(1))
+                ->from('divisions')
+                ->whereColumn('divisions.division_head_id', 'users.id');
+        });
+    }
+
     /**
      * Ensure a new employee record may be created under the given org fields (managers only).
      */
-    public function assertCanCreateEmployeeInOrg(User $actor, ?int $companyId, ?int $branchId, ?int $departmentId): void
+    public function assertCanCreateEmployeeInOrg(
+        User $actor,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $divisionId = null,
+        ?int $sectionUnitId = null
+    ): void
     {
         if ($actor->isAdmin()) {
             return;
@@ -370,6 +505,18 @@ class DataScopeService
                     abort(403, 'Forbidden.');
                 }
             }
+            if ($divisionId !== null) {
+                $division = Division::query()->find($divisionId);
+                if (! $division || ($division->company_id !== null && ! $companyIds->contains((int) $division->company_id))) {
+                    abort(403, 'Forbidden.');
+                }
+            }
+            if ($sectionUnitId !== null) {
+                $section = SectionUnit::query()->find($sectionUnitId);
+                if (! $section || ($section->company_id !== null && ! $companyIds->contains((int) $section->company_id))) {
+                    abort(403, 'Forbidden.');
+                }
+            }
 
             return;
         }
@@ -391,6 +538,18 @@ class DataScopeService
                     abort(403, 'Forbidden.');
                 }
             }
+            if ($divisionId !== null) {
+                $division = Division::query()->find($divisionId);
+                if (! $division || (int) $division->branch_id !== (int) $branch->id) {
+                    abort(403, 'Forbidden.');
+                }
+            }
+            if ($sectionUnitId !== null) {
+                $section = SectionUnit::query()->find($sectionUnitId);
+                if (! $section || (int) $section->branch_id !== (int) $branch->id) {
+                    abort(403, 'Forbidden.');
+                }
+            }
 
             return;
         }
@@ -398,6 +557,42 @@ class DataScopeService
         if ($role === HrRole::DepartmentHead) {
             $deptIds = $this->departmentIdsForDepartmentScope($actor);
             if ($departmentId === null || ! $deptIds->contains($departmentId)) {
+                abort(403, 'Forbidden.');
+            }
+            if ($divisionId !== null) {
+                $division = Division::query()->find($divisionId);
+                if (! $division || ! $deptIds->contains((int) $division->department_id)) {
+                    abort(403, 'Forbidden.');
+                }
+            }
+            if ($sectionUnitId !== null) {
+                $section = SectionUnit::query()->find($sectionUnitId);
+                if (! $section || ! $deptIds->contains((int) $section->department_id)) {
+                    abort(403, 'Forbidden.');
+                }
+            }
+
+            return;
+        }
+
+        if ($role === HrRole::DivisionHead) {
+            $divisionIds = $this->divisionIdsForDivisionScope($actor);
+            if ($divisionId === null || ! $divisionIds->contains($divisionId)) {
+                abort(403, 'Forbidden.');
+            }
+            if ($sectionUnitId !== null) {
+                $section = SectionUnit::query()->find($sectionUnitId);
+                if (! $section || ! $divisionIds->contains((int) $section->division_id)) {
+                    abort(403, 'Forbidden.');
+                }
+            }
+
+            return;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $sectionIds = $this->sectionUnitIdsForSectionScope($actor);
+            if ($sectionUnitId === null || ! $sectionIds->contains($sectionUnitId)) {
                 abort(403, 'Forbidden.');
             }
         }
@@ -528,6 +723,36 @@ class DataScopeService
                 return;
             }
             $query->whereIn('id', $companyIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::DivisionHead) {
+            $divisionIds = $this->divisionIdsForDivisionScope($actor);
+            $companyIds = $divisionIds->isNotEmpty()
+                ? Division::query()->whereIn('id', $divisionIds)->pluck('company_id')->filter()->unique()->values()
+                : collect();
+            if ($companyIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $companyIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $sectionIds = $this->sectionUnitIdsForSectionScope($actor);
+            $companyIds = $sectionIds->isNotEmpty()
+                ? SectionUnit::query()->whereIn('id', $sectionIds)->pluck('company_id')->filter()->unique()->values()
+                : collect();
+            if ($companyIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $companyIds->all());
         }
     }
 
@@ -580,6 +805,36 @@ class DataScopeService
             }
             $branchIds = Department::query()->whereIn('id', $deptIds)->pluck('branch_id')->unique();
             $query->whereIn('id', $branchIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::DivisionHead) {
+            $divisionIds = $this->divisionIdsForDivisionScope($actor);
+            $branchIds = $divisionIds->isNotEmpty()
+                ? Division::query()->whereIn('id', $divisionIds)->pluck('branch_id')->filter()->unique()->values()
+                : collect();
+            if ($branchIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $branchIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $sectionIds = $this->sectionUnitIdsForSectionScope($actor);
+            $branchIds = $sectionIds->isNotEmpty()
+                ? SectionUnit::query()->whereIn('id', $sectionIds)->pluck('branch_id')->filter()->unique()->values()
+                : collect();
+            if ($branchIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $branchIds->all());
         }
     }
 
@@ -631,6 +886,125 @@ class DataScopeService
                 return;
             }
             $query->whereIn('id', $deptIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::DivisionHead) {
+            $divisionIds = $this->divisionIdsForDivisionScope($actor);
+            $departmentIds = $divisionIds->isNotEmpty()
+                ? Division::query()->whereIn('id', $divisionIds)->pluck('department_id')->filter()->unique()->values()
+                : collect();
+            if ($departmentIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $departmentIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $sectionIds = $this->sectionUnitIdsForSectionScope($actor);
+            $departmentIds = $sectionIds->isNotEmpty()
+                ? SectionUnit::query()->whereIn('id', $sectionIds)->pluck('department_id')->filter()->unique()->values()
+                : collect();
+            if ($departmentIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $departmentIds->all());
+        }
+    }
+
+    public function restrictDivisionQuery(User $actor, Builder $query): void
+    {
+        $role = $this->effectiveOrgScopeRole($actor);
+        if ($role === null) {
+            return;
+        }
+
+        if ($role === HrRole::Employee) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        if ($role === HrRole::CompanyHead) {
+            $companyIds = $this->companyIdsForCompanyHead($actor);
+            $query->whereIn('company_id', $companyIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::BranchHead) {
+            $branch = $this->branchForBranchScope($actor);
+            $query->where('branch_id', $branch?->id ?? 0);
+
+            return;
+        }
+
+        if ($role === HrRole::DepartmentHead) {
+            $query->whereIn('department_id', $this->departmentIdsForDepartmentScope($actor)->all());
+
+            return;
+        }
+
+        if ($role === HrRole::DivisionHead) {
+            $query->whereIn('id', $this->divisionIdsForDivisionScope($actor)->all());
+
+            return;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $divisionIds = $this->sectionUnitsForSectionUnitHead($actor)->pluck('division_id')->filter()->unique()->values();
+            $query->whereIn('id', $divisionIds->all());
+        }
+    }
+
+    public function restrictSectionUnitQuery(User $actor, Builder $query): void
+    {
+        $role = $this->effectiveOrgScopeRole($actor);
+        if ($role === null) {
+            return;
+        }
+
+        if ($role === HrRole::Employee) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        if ($role === HrRole::CompanyHead) {
+            $companyIds = $this->companyIdsForCompanyHead($actor);
+            $query->whereIn('company_id', $companyIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::BranchHead) {
+            $branch = $this->branchForBranchScope($actor);
+            $query->where('branch_id', $branch?->id ?? 0);
+
+            return;
+        }
+
+        if ($role === HrRole::DepartmentHead) {
+            $query->whereIn('department_id', $this->departmentIdsForDepartmentScope($actor)->all());
+
+            return;
+        }
+
+        if ($role === HrRole::DivisionHead) {
+            $query->whereIn('division_id', $this->divisionIdsForDivisionScope($actor)->all());
+
+            return;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $query->whereIn('id', $this->sectionUnitIdsForSectionScope($actor)->all());
         }
     }
 }

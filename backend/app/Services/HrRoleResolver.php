@@ -6,6 +6,8 @@ use App\Enums\HrRole;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
+use App\Models\Division;
+use App\Models\SectionUnit;
 use App\Models\User;
 
 class HrRoleResolver
@@ -44,7 +46,7 @@ class HrRoleResolver
             $roles[] = HrRole::AdminHr;
         }
 
-        // Org hat (company / branch / department head) or line employee. Admins who are also
+        // Org hat (company / branch / department / division / section-unit head) or line employee. Admins who are also
         // roster staff (no head assignment) must still show EMPLOYEE alongside ADMIN (HR).
         $org = $this->resolveOrgHierarchyFromAssignments($user);
         if ($org !== HrRole::Employee) {
@@ -70,7 +72,7 @@ class HrRoleResolver
     }
 
     /**
-     * Company head > branch head > department head > employee.
+     * Company head > branch head > department head > division head > section/unit head > employee.
      * Non-employee users without an org hat resolve as Employee (legacy).
      */
     private function resolveOrgHierarchyRole(User $user): HrRole
@@ -87,7 +89,7 @@ class HrRoleResolver
     }
 
     /**
-     * Company head > branch head > department head > employee.
+     * Company head > branch head > department head > division head > section/unit head > employee.
      */
     private function resolveOrgHierarchyFromAssignments(User $user): HrRole
     {
@@ -117,18 +119,44 @@ class HrRoleResolver
             return HrRole::DepartmentHead;
         }
 
+        if ($user->relationLoaded('managedDivision') && $user->managedDivision !== null) {
+            return HrRole::DivisionHead;
+        }
+        if ($user->relationLoaded('division')
+            && $user->division
+            && (int) $user->division->division_head_id === (int) $user->id) {
+            return HrRole::DivisionHead;
+        }
+        if (Division::where('division_head_id', $user->id)->exists()) {
+            return HrRole::DivisionHead;
+        }
+
+        if ($user->relationLoaded('managedSectionUnit') && $user->managedSectionUnit !== null) {
+            return HrRole::SectionUnitHead;
+        }
+        if ($user->relationLoaded('sectionUnit')
+            && $user->sectionUnit
+            && (int) $user->sectionUnit->section_unit_head_id === (int) $user->id) {
+            return HrRole::SectionUnitHead;
+        }
+        if (SectionUnit::where('section_unit_head_id', $user->id)->exists()) {
+            return HrRole::SectionUnitHead;
+        }
+
         return HrRole::Employee;
     }
 
     /**
-     * Whether this user is assigned as company head, branch manager, or department head in org data.
+     * Whether this user is assigned as an organization head in org data.
      * Used so admin accounts that are also line managers file leave for themselves only.
      */
     public function isAssignedOrganizationHead(User $user): bool
     {
         return Company::where('company_head_id', $user->id)->exists()
             || Branch::where('branch_manager_id', $user->id)->exists()
-            || Department::where('department_head_id', $user->id)->exists();
+            || Department::where('department_head_id', $user->id)->exists()
+            || Division::where('division_head_id', $user->id)->exists()
+            || SectionUnit::where('section_unit_head_id', $user->id)->exists();
     }
 
     /**
@@ -141,7 +169,7 @@ class HrRoleResolver
     }
 
     /**
-     * Regularization: Department / Branch / Company heads and HR may submit; line employees may not.
+     * Regularization: org heads and HR may submit; line employees may not.
      */
     public function maySubmitRegularization(User $user): bool
     {

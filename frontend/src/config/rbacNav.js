@@ -20,6 +20,8 @@ const pathToPermissions = {
   '/admin/companies': ['org.company.view'],
   '/admin/branches': ['org.branch.view'],
   '/admin/departments': ['org.department.view'],
+  '/admin/divisions': ['org.division.view'],
+  '/admin/sections-units': ['org.section_unit.view'],
   '/admin/holiday': ['holiday.view'],
   '/admin/leave': ['leave.view'],
   '/admin/attendance': ['attendance.view'],
@@ -63,7 +65,7 @@ function canSee(user, permissionLists) {
 /** Map manager panel URLs to the same permission keys as `/admin/...`. */
 function normalizePathForPermission(path) {
   if (!path) return path
-  return path.replace(/^\/(company|branch|department)(?=\/|$)/, '/admin')
+  return path.replace(/^\/(company|branch|department|division|section-unit)(?=\/|$)/, '/admin')
 }
 
 function permissionsForPath(path) {
@@ -91,6 +93,8 @@ function hrPanelBasePathForUser(user) {
   if (hr === 'company_head') return '/company'
   if (hr === 'branch_head') return '/branch'
   if (hr === 'department_head') return '/department'
+  if (hr === 'division_head') return '/division'
+  if (hr === 'section_unit_head') return '/section-unit'
   return null
 }
 
@@ -117,7 +121,7 @@ export function buildEmployeeNav(user = null) {
 }
 
 /**
- * Sidebar for company / branch / department heads: same modules as admin where permitted, scoped URL prefix.
+ * Sidebar for organization heads: same modules as admin where permitted, scoped URL prefix.
  */
 export function buildManagerNav(user, basePath) {
   const prefix = (basePath || '/company').replace(/\/$/, '') || '/company'
@@ -136,7 +140,7 @@ export function buildManagerNav(user, basePath) {
       if (!to) continue
       const mappedTo = to.replace(/^\/admin/, prefix)
       const hr = String(user?.hr_role || '').trim()
-      if (mappedTo === `${prefix}/companies` && (hr === 'branch_head' || hr === 'department_head')) {
+      if (mappedTo === `${prefix}/companies` && (hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
         continue
       }
       if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrUser(user)) continue
@@ -149,6 +153,8 @@ export function buildManagerNav(user, basePath) {
       if (mappedTo === `${prefix}/employees`) {
         if (hr === 'branch_head') navItem.label = 'Branch employees'
         else if (hr === 'department_head') navItem.label = 'Department employees'
+        else if (hr === 'division_head') navItem.label = 'Division employees'
+        else if (hr === 'section_unit_head') navItem.label = 'Section/Unit employees'
         else if (hr === 'company_head') navItem.label = 'Company employees'
       }
       out.push(navItem)

@@ -119,7 +119,9 @@ class PresenceFilingCorrectionFormatter
                 }
                 $remarks = $a?->reason;
             }
-            $steps[$i]['remarks'] = $remarks;
+            if ($remarks !== null) {
+                $steps[$i]['remarks'] = $remarks;
+            }
         }
 
         return $steps;
@@ -380,21 +382,13 @@ class PresenceFilingCorrectionFormatter
             return 'Draft';
         }
 
-        $stage = $c->approval_stage ?? AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
-        $empRole = $c->user ? $this->hrRoleResolver->resolveForApprovalSubject($c->user) : HrRole::Employee;
-
-        if ($stage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST) {
-            return match ($empRole) {
-                HrRole::Employee => 'Pending Department Head Approval',
-                HrRole::DepartmentHead => 'Pending Branch Head Approval',
-                HrRole::BranchHead => 'Pending Company Head Approval',
-                HrRole::CompanyHead => 'Pending HR Approval',
-                HrRole::AdminHr => 'Pending HR Approval',
-            };
-        }
-
-        if ($stage === AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND) {
-            return 'Pending HR Approval';
+        if ($c->user) {
+            $steps = $this->approvalService->buildApprovalProgress($c);
+            $current = collect($steps)->firstWhere('status', 'current');
+            $label = $current['approver_role_label'] ?? null;
+            if (is_string($label) && $label !== '') {
+                return 'Pending '.$label.' Approval';
+            }
         }
 
         return 'Pending';

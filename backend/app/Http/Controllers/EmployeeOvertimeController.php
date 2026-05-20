@@ -148,7 +148,9 @@ class EmployeeOvertimeController extends Controller
                 $a = $audits->firstWhere('action', 'approve_final') ?? $audits->firstWhere('action', 'reject');
                 $remarks = $a?->details;
             }
-            $steps[$i]['remarks'] = $remarks;
+            if ($remarks !== null) {
+                $steps[$i]['remarks'] = $remarks;
+            }
         }
 
         return $steps;

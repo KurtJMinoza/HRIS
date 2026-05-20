@@ -14,6 +14,7 @@ use App\Services\AttendanceCorrectionApprovalService;
 use App\Services\AttendanceCorrectionDetailService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\PresenceFilingAttendanceLogSyncService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PayrollPeriodMutationGuard;
@@ -41,6 +42,7 @@ class PresenceFilingController extends Controller
         private readonly PresenceFilingAttendanceLogSyncService $attendanceLogSyncService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly PresenceFilingBulkApprovalQuery $bulkApprovalQuery,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
     ) {}
 
     private function normalizeTimeToHi(?string $value): ?string
@@ -589,7 +591,7 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $correction = AttendanceCorrection::query()->findOrFail($id);
+        $correction = AttendanceCorrection::query()->with('filedBy')->findOrFail($id);
         if (! $correction->pending_approval || $correction->approved || $correction->rejected_at) {
             return response()->json(['message' => 'Only pending attendance correction requests can be deleted.'], 422);
         }
@@ -816,7 +818,7 @@ class PresenceFilingController extends Controller
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $correction = AttendanceCorrection::query()->with('user.workingSchedule')->findOrFail($id);
+        $correction = AttendanceCorrection::query()->with(['user.workingSchedule', 'filedBy'])->findOrFail($id);
         if (! $correction->pending_approval || $correction->approved || $correction->rejected_at) {
             return response()->json(['message' => 'This filing cannot be approved.'], 422);
         }
@@ -835,11 +837,17 @@ class PresenceFilingController extends Controller
         $tz = $this->presenceFilingService->attendanceTimezone();
         $dateKey = $correction->date->toDateString();
 
-        $stage = $correction->approval_stage ?? AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
         $actorRole = $this->hrRoleResolver->resolve($actor);
         $roleLabel = $actorRole->badgeLabel();
+        $currentApproval = $this->approvalWorkflowService->currentPendingRecord(
+            $correction,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            $employee,
+            $correction->filedBy,
+        );
+        $isHrFinalStep = $currentApproval?->approver_role === HrRole::AdminHr->value;
 
-        if ($stage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST) {
+        if (! $isHrFinalStep) {
             try {
                 $d = Carbon::parse($dateKey)->startOfDay();
                 $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $employee->id, $d, $d);
@@ -847,10 +855,23 @@ class PresenceFilingController extends Controller
                 return response()->json(['message' => $e->getMessage()], 422);
             }
 
-            DB::transaction(function () use ($correction, $actor, $validated, $employee, $dateKey, $roleLabel) {
-                $correction->first_approver_id = $actor->id;
+            $nextPending = DB::transaction(function () use ($correction, $actor, $validated, $employee, $dateKey, $roleLabel) {
+                $nextPending = $this->approvalWorkflowService->approveCurrent(
+                    $correction,
+                    OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+                    $employee,
+                    $actor,
+                    $validated['notes'] ?? null,
+                    $correction->filedBy,
+                );
+
+                if ($correction->first_approver_id === null) {
+                    $correction->first_approver_id = $actor->id;
+                }
                 $correction->first_approved_at = now();
-                $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND;
+                $correction->approval_stage = $nextPending?->approver_role === HrRole::AdminHr->value
+                    ? AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND
+                    : AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
                 $correction->save();
 
                 AttendanceCorrectionAudit::create([
@@ -870,22 +891,26 @@ class PresenceFilingController extends Controller
                 AttendanceCorrectionApproval::create([
                     'attendance_correction_id' => $correction->id,
                     'approver_id' => $actor->id,
-                    'level' => 1,
+                    'level' => $this->approvalWorkflowService
+                        ->records(OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, (int) $correction->id)
+                        ->where('approval_status', 'approved')
+                        ->max('sequence_order') ?? 1,
                     'status' => 'approved',
                     'notes' => $validated['notes'] ?? null,
                     'acted_at' => now(),
                 ]);
+
+                return $nextPending;
             });
 
+            $nextLabel = $nextPending?->approver_role
+                ? (HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
+                : 'next approver';
+
             return response()->json([
-                'message' => 'First approval recorded. Pending Admin (HR) final approval.',
+                'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
                 'presence_filing' => $this->correctionFormatter->format($this->correctionFormatter->freshWithDisplayRelations($correction), $tz, includeEmployee: true, actor: $actor, includeDisplayFields: true),
             ]);
-        }
-
-        $chain = $this->approvalService->getApprovalChain($employee);
-        if ($chain !== null && count($chain) >= 2 && $correction->first_approver_id === null) {
-            return response()->json(['message' => 'First-level approval is required before HR can finalize.'], 422);
         }
 
         $timeIn = $correction->time_in ? $correction->time_in->copy()->timezone($tz) : null;
@@ -920,7 +945,7 @@ class PresenceFilingController extends Controller
         $previousOut = $correction->time_out;
         $isRequesterFinalApprover = (int) $actor->id === (int) ($correction->filed_by ?? $correction->user_id)
             && $actorRole === HrRole::AdminHr
-            && $stage === AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND;
+            && $isHrFinalStep;
         $finalApprovalNote = $validated['notes']
             ?? ($isRequesterFinalApprover
                 ? 'Approved by requester as Admin/HR final approver.'
@@ -934,6 +959,15 @@ class PresenceFilingController extends Controller
         }
 
         DB::transaction(function () use ($correction, $actor, $employee, $dateKey, $timeIn, $timeOut, $previousIn, $previousOut, $roleLabel, $issueKind, $finalApprovalNote) {
+            $this->approvalWorkflowService->approveCurrent(
+                $correction,
+                OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+                $employee,
+                $actor,
+                $finalApprovalNote,
+                $correction->filedBy,
+            );
+
             // Update correction record with approved times (convert to UTC for storage)
             $correction->time_in = $timeIn?->copy()->setTimezone('UTC');
             $correction->time_out = $timeOut?->copy()->setTimezone('UTC');
@@ -1026,6 +1060,15 @@ class PresenceFilingController extends Controller
         $actorRole = $this->hrRoleResolver->resolve($actor);
 
         DB::transaction(function () use ($correction, $actor, $validated, $employee, $actorRole) {
+            $rejectedStep = $this->approvalWorkflowService->rejectCurrent(
+                $correction,
+                OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+                $employee,
+                $actor,
+                $validated['rejection_note'],
+                $correction->filedBy,
+            );
+
             $correction->pending_approval = false;
             $correction->approved = false;
             $correction->rejected_at = now();
@@ -1048,14 +1091,10 @@ class PresenceFilingController extends Controller
                 'approver_role' => $actorRole->badgeLabel(),
             ]);
 
-            // Determine rejection level based on current approval stage.
-            $level = ($correction->approval_stage ?? AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST) === AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND
-                ? 2
-                : 1;
             AttendanceCorrectionApproval::create([
                 'attendance_correction_id' => $correction->id,
                 'approver_id' => $actor->id,
-                'level' => $level,
+                'level' => $rejectedStep?->sequence_order ?? 1,
                 'status' => 'rejected',
                 'notes' => $validated['rejection_note'],
                 'acted_at' => now(),

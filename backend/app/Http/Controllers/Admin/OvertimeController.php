@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\BulkApproval\OvertimeBulkApprovalQuery;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeApprovalService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
@@ -32,6 +33,7 @@ class OvertimeController extends Controller
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly OvertimeBulkApprovalQuery $bulkApprovalQuery,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
     ) {}
 
     /**
@@ -510,6 +512,15 @@ class OvertimeController extends Controller
             }
 
             DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {
+                $this->approvalWorkflowService->rejectCurrent(
+                    $overtime,
+                    OrgApprovalWorkflowService::MODULE_OVERTIME,
+                    $overtime->user,
+                    $actor,
+                    $remarks ?? 'Rejected.',
+                    $overtime->filedBy,
+                );
+
                 $overtime->status = Overtime::STATUS_REJECTED;
                 $overtime->pending_approval = false;
                 $overtime->approval_stage = HrApprovalStages::REJECTED;
@@ -546,13 +557,32 @@ class OvertimeController extends Controller
             return response()->json(['message' => 'You are not authorized to approve at this stage.'], 403);
         }
 
-        $stage = $overtime->approval_stage ?? HrApprovalStages::PENDING_FIRST;
+        $currentApproval = $this->approvalWorkflowService->currentPendingRecord(
+            $overtime,
+            OrgApprovalWorkflowService::MODULE_OVERTIME,
+            $overtime->user,
+            $overtime->filedBy,
+        );
+        $isHrFinalStep = $currentApproval?->approver_role === \App\Enums\HrRole::AdminHr->value;
 
-        if ($stage === HrApprovalStages::PENDING_FIRST) {
-            DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {
-                $overtime->first_approver_id = $actor->id;
+        if (! $isHrFinalStep) {
+            $nextPending = DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {
+                $nextPending = $this->approvalWorkflowService->approveCurrent(
+                    $overtime,
+                    OrgApprovalWorkflowService::MODULE_OVERTIME,
+                    $overtime->user,
+                    $actor,
+                    $remarks,
+                    $overtime->filedBy,
+                );
+
+                if ($overtime->first_approver_id === null) {
+                    $overtime->first_approver_id = $actor->id;
+                }
                 $overtime->first_approved_at = now();
-                $overtime->approval_stage = HrApprovalStages::PENDING_SECOND;
+                $overtime->approval_stage = $nextPending?->approver_role === \App\Enums\HrRole::AdminHr->value
+                    ? HrApprovalStages::PENDING_SECOND
+                    : HrApprovalStages::PENDING_FIRST;
                 if ($remarks !== null && $remarks !== '') {
                     $overtime->remarks = $remarks;
                 }
@@ -567,10 +597,16 @@ class OvertimeController extends Controller
                     'details' => $remarks,
                     'approver_role' => $roleLabel,
                 ]);
+
+                return $nextPending;
             });
 
+            $nextLabel = $nextPending?->approver_role
+                ? (\App\Enums\HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
+                : 'next approver';
+
             return response()->json([
-                'message' => 'First approval recorded. Pending Admin (HR) final approval.',
+                'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
                 'overtime' => $this->mapOvertime($overtime->fresh([
                     'user', 'filedBy', 'firstApprover', 'secondApprover',
                     'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
@@ -578,11 +614,20 @@ class OvertimeController extends Controller
             ]);
         }
 
-        if ($stage !== HrApprovalStages::PENDING_SECOND) {
+        if (! $isHrFinalStep) {
             return response()->json(['message' => 'This overtime request cannot be approved.'], 422);
         }
 
         DB::transaction(function () use ($overtime, $actor, $remarks, $roleLabel) {
+            $this->approvalWorkflowService->approveCurrent(
+                $overtime,
+                OrgApprovalWorkflowService::MODULE_OVERTIME,
+                $overtime->user,
+                $actor,
+                $remarks,
+                $overtime->filedBy,
+            );
+
             $overtime->status = Overtime::STATUS_APPROVED;
             $overtime->pending_approval = false;
             $overtime->approval_stage = HrApprovalStages::APPROVED;
@@ -889,7 +934,9 @@ class OvertimeController extends Controller
                 }
                 $remarks = $a?->details;
             }
-            $steps[$i]['remarks'] = $remarks;
+            if ($remarks !== null) {
+                $steps[$i]['remarks'] = $remarks;
+            }
         }
 
         return $steps;

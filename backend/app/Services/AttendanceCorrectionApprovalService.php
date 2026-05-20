@@ -21,6 +21,7 @@ class AttendanceCorrectionApprovalService
     public function __construct(
         private readonly HrRoleResolver $roleResolver,
         private readonly HrApprovalChainResolver $chainResolver,
+        private readonly OrgApprovalWorkflowService $workflowService,
     ) {}
 
     /**
@@ -83,22 +84,15 @@ class AttendanceCorrectionApprovalService
             return false;
         }
 
-        $actorRole = $this->roleResolver->resolve($actor);
-        $stage = $correction->approval_stage ?? HrApprovalStages::PENDING_FIRST;
+        $requestor = $correction->relationLoaded('filedBy') ? $correction->filedBy : null;
 
-        if ($stage === HrApprovalStages::PENDING_FIRST) {
-            return $this->chainResolver->isFirstLevelApprover($actor, $employee);
-        }
-
-        if ($stage === HrApprovalStages::PENDING_SECOND) {
-            if ($actorRole !== HrRole::AdminHr) {
-                return false;
-            }
-
-            return true;
-        }
-
-        return false;
+        return $this->workflowService->canAct(
+            $actor,
+            $correction,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            $employee,
+            $requestor,
+        );
     }
 
     /**
@@ -126,96 +120,18 @@ class AttendanceCorrectionApprovalService
             return [];
         }
 
-        $chain = $this->getApprovalChain($employee);
-        if ($chain === null) {
-            return [];
-        }
+        $requestor = $correction->relationLoaded('filedBy') ? $correction->filedBy : null;
 
-        $stage = $correction->approval_stage ?? HrApprovalStages::PENDING_FIRST;
-        $rejected = $correction->rejected_at !== null;
-        $finalOk = (bool) $correction->approved;
-
-        $submitterName = $correction->filedBy?->display_name ?? $employee->display_name;
-
-        $photoForSubmitted = $correction->filedBy ?? $employee;
-
-        $steps = [];
-        $steps[] = [
-            'key' => 'submitted',
-            'label' => 'Request submitted',
-            'status' => 'completed',
-            'approver_role_label' => null,
-            'submitter_name' => $submitterName,
-            'approver_name' => null,
-            'profile_image_url' => $photoForSubmitted instanceof User ? $photoForSubmitted->profile_image_url : null,
-            'acted_at' => $this->toIso8601String($correction->filed_at),
-            'remarks' => null,
-        ];
-
-        $hasIntermediate = count($chain) >= 2;
-        if ($hasIntermediate) {
-            $interRole = $chain[0];
-            $label = match ($interRole) {
-                HrRole::DepartmentHead => 'Department Head',
-                HrRole::BranchHead => 'Branch Head',
-                HrRole::CompanyHead => 'Company Head',
-                default => $interRole->badgeLabel(),
-            };
-            $roleLabel = $label;
-            if ($rejected && ! $correction->first_approved_at) {
-                $interStatus = 'rejected';
-            } elseif ($correction->first_approved_at) {
-                $interStatus = 'completed';
-            } elseif ($stage === HrApprovalStages::PENDING_FIRST) {
-                $interStatus = 'current';
-            } else {
-                $interStatus = 'pending';
-            }
-            $firstApprover = $correction->first_approver_id
-                ? $correction->firstApprover
-                : $this->chainResolver->resolveFirstLevelApprover($employee);
-            $steps[] = [
-                'key' => 'line_approval',
-                'label' => $label.' approval',
-                'status' => $interStatus,
-                'approver_role_label' => $roleLabel,
-                'submitter_name' => null,
-                'approver_name' => $firstApprover?->display_name,
-                'profile_image_url' => $firstApprover?->profile_image_url,
-                'acted_at' => $this->toIso8601String($correction->first_approved_at),
-                'remarks' => null,
-            ];
-        }
-
-        if ($finalOk) {
-            $hrStatus = 'completed';
-        } elseif ($rejected && $correction->first_approved_at) {
-            $hrStatus = 'rejected';
-        } elseif ($rejected && ! $correction->first_approved_at) {
-            $hrStatus = 'skipped';
-        } elseif ($stage === HrApprovalStages::PENDING_SECOND && ! $rejected) {
-            $hrStatus = 'current';
-        } else {
-            $hrStatus = 'pending';
-        }
-
-        $secondApprover = $correction->second_approver_id
-            ? $correction->secondApprover
-            : $this->chainResolver->resolveHrApprover();
-
-        $steps[] = [
-            'key' => 'hr_final',
-            'label' => 'Admin (HR) final approval',
-            'status' => $hrStatus,
-            'approver_role_label' => 'Admin (HR)',
-            'submitter_name' => null,
-            'approver_name' => $secondApprover?->display_name,
-            'profile_image_url' => $secondApprover?->profile_image_url,
-            'acted_at' => $this->toIso8601String($correction->second_approved_at),
-            'remarks' => null,
-        ];
-
-        return $steps;
+        return $this->workflowService->buildApprovalProgress(
+            $correction,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            $employee,
+            $requestor,
+            $correction->filed_at,
+            (bool) $correction->approved,
+            $correction->rejected_at !== null,
+            $requestor,
+        );
     }
 
     /**
@@ -223,10 +139,10 @@ class AttendanceCorrectionApprovalService
      */
     public function getPendingForApprover(User $actor): \Illuminate\Database\Eloquent\Collection
     {
-        $actorRole = $this->roleResolver->resolve($actor);
-
         $displayWith = [
             'user.departmentRelation.branch',
+            'user.division',
+            'user.sectionUnit',
             'user.branch',
             'user.company',
             'filedBy',
@@ -238,23 +154,11 @@ class AttendanceCorrectionApprovalService
             'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
         ];
 
-        if ($actorRole === HrRole::AdminHr) {
-            return AttendanceCorrection::query()
-                ->with($displayWith)
-                ->where('pending_approval', true)
-                ->where('approved', false)
-                ->whereNull('rejected_at')
-                ->where('approval_stage', HrApprovalStages::PENDING_SECOND)
-                ->orderByDesc('filed_at')
-                ->get();
-        }
-
         $query = AttendanceCorrection::query()
             ->with($displayWith)
             ->where('pending_approval', true)
             ->where('approved', false)
             ->whereNull('rejected_at')
-            ->where('approval_stage', HrApprovalStages::PENDING_FIRST)
             ->orderByDesc('filed_at');
 
         return $query->get()->filter(fn ($c) => $this->canApprove($actor, $c));

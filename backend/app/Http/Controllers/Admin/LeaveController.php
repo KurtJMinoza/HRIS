@@ -15,6 +15,7 @@ use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\LeaveCreditService;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
 use App\Support\LeaveFilingRules;
@@ -40,6 +41,7 @@ class LeaveController extends Controller
         private readonly LeaveCreditService $leaveCreditService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly LeaveBulkApprovalQuery $bulkApprovalQuery,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
     ) {}
 
     /**
@@ -448,11 +450,17 @@ class LeaveController extends Controller
             ]);
         }
 
-        $stage = $leave->approval_stage ?? HrApprovalStages::PENDING_FIRST;
         $notes = $validated['notes'] ?? null;
         $roleLabel = $this->hrRoleResolver->resolve($actor)->badgeLabel();
+        $currentApproval = $this->approvalWorkflowService->currentPendingRecord(
+            $leave,
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+            $leave->user,
+            $leave->filedBy,
+        );
+        $isHrFinalStep = $currentApproval?->approver_role === \App\Enums\HrRole::AdminHr->value;
 
-        if ($stage === HrApprovalStages::PENDING_FIRST) {
+        if (! $isHrFinalStep) {
             try {
                 $this->payrollPeriodMutationGuard->assertMutableForUserWindow(
                     (int) $leave->user_id,
@@ -463,17 +471,30 @@ class LeaveController extends Controller
                 return response()->json(['message' => $e->getMessage()], 422);
             }
 
-            DB::transaction(function () use ($leave, $actor, $notes, $roleLabel, $applyBypass, $request) {
+            $nextPending = DB::transaction(function () use ($leave, $actor, $notes, $roleLabel, $applyBypass, $request) {
                 $leave->refresh();
+                $nextPending = $this->approvalWorkflowService->approveCurrent(
+                    $leave,
+                    OrgApprovalWorkflowService::MODULE_LEAVE,
+                    $leave->user,
+                    $actor,
+                    $notes,
+                    $leave->filedBy,
+                );
+
                 if ($applyBypass) {
                     $leave->rest_day_bypass = true;
                     $leave->rest_day_bypass_reason = trim((string) $request->input('rest_day_bypass_reason'));
                     $leave->rest_day_bypass_by = $actor->id;
                     $leave->rest_day_bypass_at = now();
                 }
-                $leave->first_approver_id = $actor->id;
+                if ($leave->first_approver_id === null) {
+                    $leave->first_approver_id = $actor->id;
+                }
                 $leave->first_approved_at = now();
-                $leave->approval_stage = HrApprovalStages::PENDING_SECOND;
+                $leave->approval_stage = $nextPending?->approver_role === \App\Enums\HrRole::AdminHr->value
+                    ? HrApprovalStages::PENDING_SECOND
+                    : HrApprovalStages::PENDING_FIRST;
                 $leave->save();
 
                 $details = $notes;
@@ -489,10 +510,16 @@ class LeaveController extends Controller
                     'details' => $details,
                     'approver_role' => $roleLabel,
                 ]);
+
+                return $nextPending;
             });
 
+            $nextLabel = $nextPending?->approver_role
+                ? (\App\Enums\HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
+                : 'next approver';
+
             return response()->json([
-                'message' => 'First approval recorded. Pending Admin (HR) final approval.',
+                'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
                 'leave_request' => $this->leaveResponse($leave->fresh([
                     'user', 'filedBy', 'firstApprover', 'secondApprover',
                     'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
@@ -500,7 +527,7 @@ class LeaveController extends Controller
             ]);
         }
 
-        if ($stage !== HrApprovalStages::PENDING_SECOND) {
+        if (! $isHrFinalStep) {
             return response()->json(['message' => 'This leave request cannot be approved.'], 422);
         }
 
@@ -519,6 +546,15 @@ class LeaveController extends Controller
         try {
             DB::transaction(function () use ($leave, $actor, $validated, $roleLabel, $forceCredits, $applyBypass, $request) {
                 $leave->refresh();
+                $this->approvalWorkflowService->approveCurrent(
+                    $leave,
+                    OrgApprovalWorkflowService::MODULE_LEAVE,
+                    $leave->user,
+                    $actor,
+                    $validated['notes'] ?? null,
+                    $leave->filedBy,
+                );
+
                 if ($applyBypass) {
                     $leave->rest_day_bypass = true;
                     $leave->rest_day_bypass_reason = trim((string) $request->input('rest_day_bypass_reason'));
@@ -592,6 +628,15 @@ class LeaveController extends Controller
         $roleLabel = $this->hrRoleResolver->resolve($actor)->badgeLabel();
 
         DB::transaction(function () use ($leave, $actor, $validated, $roleLabel) {
+            $this->approvalWorkflowService->rejectCurrent(
+                $leave,
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+                $leave->user,
+                $actor,
+                $validated['reason'],
+                $leave->filedBy,
+            );
+
             $leave->status = LeaveRequest::STATUS_REJECTED;
             $leave->pending_approval = false;
             $leave->approval_stage = HrApprovalStages::REJECTED;
@@ -797,7 +842,9 @@ class LeaveController extends Controller
                 $a = $audits->firstWhere('action', 'approve_final') ?? $audits->firstWhere('action', 'reject');
                 $remarks = $a?->details;
             }
-            $steps[$i]['remarks'] = $remarks;
+            if ($remarks !== null) {
+                $steps[$i]['remarks'] = $remarks;
+            }
         }
 
         return $steps;

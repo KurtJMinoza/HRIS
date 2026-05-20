@@ -193,7 +193,8 @@ class User extends Authenticatable
     }
 
     /**
-     * Admin (HR) with an explicit org scope on {@see $company_id} / {@see $branch_id} / {@see $department_id}.
+     * Admin (HR) with an explicit org scope on {@see $company_id} / {@see $branch_id} / {@see $department_id}
+     * / {@see $division_id} / {@see $section_unit_id}.
      * When false and {@see isAdmin()}, HR data access is global (within RBAC).
      */
     public function hasScopedHrAdminAssignment(): bool
@@ -204,7 +205,9 @@ class User extends Authenticatable
 
         return $this->company_id !== null
             || $this->branch_id !== null
-            || $this->department_id !== null;
+            || $this->department_id !== null
+            || $this->division_id !== null
+            || $this->section_unit_id !== null;
     }
 
     protected $fillable = [
@@ -250,6 +253,8 @@ class User extends Authenticatable
         'deactivation_reason',
         'department',
         'department_id',
+        'division_id',
+        'section_unit_id',
         'company_id',
         'branch_id',
         'team_id',
@@ -349,6 +354,10 @@ class User extends Authenticatable
                 'is_active',
                 'employment_status',
                 'company_id',
+                'branch_id',
+                'department_id',
+                'division_id',
+                'section_unit_id',
                 'face_descriptor',
                 'face_embedding',
                 'face_descriptor_samples',
@@ -749,6 +758,16 @@ class User extends Authenticatable
         return $this->belongsTo(Department::class, 'department_id');
     }
 
+    public function division(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Division::class, 'division_id');
+    }
+
+    public function sectionUnit(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(SectionUnit::class, 'section_unit_id');
+    }
+
     public function company(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(Company::class);
@@ -785,6 +804,35 @@ class User extends Authenticatable
                 return $d->branch->company_id;
             }
         }
+        if ($this->division_id) {
+            $division = $this->division;
+            if ($division?->company_id) {
+                return $division->company_id;
+            }
+            if ($division?->branch) {
+                return $division->branch->company_id;
+            }
+            if ($division?->department?->branch) {
+                return $division->department->branch->company_id;
+            }
+        }
+        if ($this->section_unit_id) {
+            $section = $this->sectionUnit;
+            if ($section?->company_id) {
+                return $section->company_id;
+            }
+            if ($section?->branch) {
+                return $section->branch->company_id;
+            }
+            if ($section?->department?->branch) {
+                return $section->department->branch->company_id;
+            }
+            if ($section?->division) {
+                return $section->division->company_id
+                    ?? $section->division->branch?->company_id
+                    ?? $section->division->department?->branch?->company_id;
+            }
+        }
 
         return null;
     }
@@ -804,6 +852,18 @@ class User extends Authenticatable
     public function managedDepartment(): \Illuminate\Database\Eloquent\Relations\HasOne
     {
         return $this->hasOne(Department::class, 'department_head_id');
+    }
+
+    /** Division this user heads (division_head_id = this user). */
+    public function managedDivision(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(Division::class, 'division_head_id');
+    }
+
+    /** Section/Unit this user heads (section_unit_head_id = this user). */
+    public function managedSectionUnit(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(SectionUnit::class, 'section_unit_head_id');
     }
 
     public function team(): \Illuminate\Database\Eloquent\Relations\BelongsTo

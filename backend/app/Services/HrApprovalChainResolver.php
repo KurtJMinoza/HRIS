@@ -6,12 +6,16 @@ use App\Enums\HrRole;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
+use App\Models\Division;
+use App\Models\SectionUnit;
 use App\Models\User;
 use App\Support\HrApprovalStages;
 
 /**
- * Shared hierarchy chain for multi-step HR approvals (corrections, overtime, leave).
- * Mirrors {@see AttendanceCorrectionApprovalService} routing rules.
+ * Centralized hierarchy chain for organization approvals.
+ *
+ * Builds concrete approval steps from the subject's organization assignment:
+ * Section/Unit Head -> Division Head -> Department Head -> Branch Head -> Company Head -> Admin HR.
  */
 class HrApprovalChainResolver
 {
@@ -24,7 +28,78 @@ class HrApprovalChainResolver
      */
     public function getApprovalChain(User $employee, bool $employeeSubmitted = true): ?array
     {
-        return $this->resolveRoutingDecision($employee, $employeeSubmitted)['chain'];
+        $steps = $this->resolveApprovalChain($employee, null, $employeeSubmitted ? $employee : null);
+
+        return $steps === [] ? null : array_map(fn (array $step): HrRole => $step['approver_role'], $steps);
+    }
+
+    /**
+     * Resolve ordered concrete approver steps for a request subject.
+     *
+     * @return array<int, array{
+     *   approval_level: string,
+     *   approver_role: HrRole,
+     *   approver_id: int,
+     *   approver_name: string,
+     *   approver: User,
+     *   sequence_order: int
+     * }>
+     */
+    public function resolveApprovalChain(User|int $employee, ?string $moduleType = null, ?User $requestor = null): array
+    {
+        $subject = $employee instanceof User
+            ? $employee
+            : User::query()->findOrFail($employee);
+
+        $subject = $subject->loadMissing([
+            'company',
+            'branch.company',
+            'departmentRelation.branch.company',
+            'division.department.branch.company',
+            'division.branch.company',
+            'division.company',
+            'sectionUnit.division.department.branch.company',
+            'sectionUnit.division.branch.company',
+            'sectionUnit.division.company',
+            'sectionUnit.department.branch.company',
+            'sectionUnit.branch.company',
+            'sectionUnit.company',
+        ]);
+
+        $subjectRole = $this->roleResolver->resolveForApprovalSubject($subject);
+        $candidateRoles = $this->candidateRolesForSubject($subjectRole);
+        $requestorId = $requestor ? (int) $requestor->id : (int) $subject->id;
+        $subjectId = (int) $subject->id;
+        $usedApproverIds = [];
+        $steps = [];
+
+        foreach ($candidateRoles as $role) {
+            $approver = $this->resolveApproverForRole($subject, $role);
+            if (! $approver) {
+                continue;
+            }
+
+            $approverId = (int) $approver->id;
+            if ($role !== HrRole::AdminHr && ($approverId === $subjectId || $approverId === $requestorId)) {
+                continue;
+            }
+
+            if (in_array($approverId, $usedApproverIds, true)) {
+                continue;
+            }
+
+            $usedApproverIds[] = $approverId;
+            $steps[] = [
+                'approval_level' => $role->value,
+                'approver_role' => $role,
+                'approver_id' => $approverId,
+                'approver_name' => $approver->display_name,
+                'approver' => $approver,
+                'sequence_order' => count($steps) + 1,
+            ];
+        }
+
+        return $steps;
     }
 
     /**
@@ -40,66 +115,16 @@ class HrApprovalChainResolver
      */
     public function resolveRoutingDecision(User $employee, bool $employeeSubmitted = true): array
     {
-        $role = $this->roleResolver->resolveForApprovalSubject($employee);
-        $hrApprover = $this->resolveHrApprover();
-
-        if (! $hrApprover) {
-            return [
-                'chain' => null,
-                'fallback_to_admin' => false,
-                'fallback_reasons' => ['no_active_admin_hr'],
-                'first_level_approver' => null,
-                'hr_approver' => null,
-            ];
-        }
-
-        if (! $employeeSubmitted) {
-            $chain = match ($role) {
-                HrRole::Employee => [HrRole::DepartmentHead, HrRole::AdminHr],
-                HrRole::DepartmentHead => [HrRole::BranchHead, HrRole::AdminHr],
-                HrRole::BranchHead => [HrRole::CompanyHead, HrRole::AdminHr],
-                HrRole::CompanyHead, HrRole::AdminHr => [HrRole::AdminHr],
-                default => null,
-            };
-
-            return [
-                'chain' => $chain,
-                'fallback_to_admin' => false,
-                'fallback_reasons' => [],
-                'first_level_approver' => $chain && count($chain) >= 2 ? $this->resolveFirstLevelApproverByRole($employee, $chain[0]) : null,
-                'hr_approver' => $hrApprover,
-            ];
-        }
-
-        $validation = $this->validateFirstLevelApproverForRole($employee, $role);
-        if (! $validation['valid']) {
-            return [
-                'chain' => [HrRole::AdminHr],
-                'fallback_to_admin' => true,
-                'fallback_reasons' => $validation['reasons'],
-                'first_level_approver' => null,
-                'hr_approver' => $hrApprover,
-            ];
-        }
-
-        // Role-based multi-level flow:
-        // Employee -> Department Head -> Admin (HR)
-        // Department Head -> Branch Head -> Admin (HR)
-        // Branch Head -> Company Head -> Admin (HR)
-        // Company Head/Admin (HR) -> Admin (HR)
-        $chain = match ($role) {
-            HrRole::Employee => [HrRole::DepartmentHead, HrRole::AdminHr],
-            HrRole::DepartmentHead => [HrRole::BranchHead, HrRole::AdminHr],
-            HrRole::BranchHead => [HrRole::CompanyHead, HrRole::AdminHr],
-            HrRole::CompanyHead, HrRole::AdminHr => [HrRole::AdminHr],
-        };
+        $steps = $this->resolveApprovalChain($employee, null, $employeeSubmitted ? $employee : null);
+        $chain = $steps === [] ? null : array_map(fn (array $step): HrRole => $step['approver_role'], $steps);
+        $firstLine = collect($steps)->first(fn (array $step): bool => $step['approver_role'] !== HrRole::AdminHr);
 
         return [
             'chain' => $chain,
             'fallback_to_admin' => false,
-            'fallback_reasons' => [],
-            'first_level_approver' => $validation['first_level_approver'],
-            'hr_approver' => $hrApprover,
+            'fallback_reasons' => $chain === null ? ['no_active_admin_hr'] : [],
+            'first_level_approver' => $firstLine['approver'] ?? null,
+            'hr_approver' => $this->resolveHrApprover(),
         ];
     }
 
@@ -119,35 +144,18 @@ class HrApprovalChainResolver
 
     public function isFirstLevelApprover(User $actor, User $subjectEmployee): bool
     {
-        $employeeRole = $this->roleResolver->resolveForApprovalSubject($subjectEmployee);
+        $steps = $this->resolveApprovalChain($subjectEmployee, null, $subjectEmployee);
+        $firstLine = collect($steps)->first(fn (array $step): bool => $step['approver_role'] !== HrRole::AdminHr);
 
-        // Use org assignments only (department_head_id, branch_manager_id, company_head_id).
-        // Do not require resolve($actor) to be DepartmentHead/BranchHead/CompanyHead: panel users
-        // with role=admin resolve as AdminHr but may still be the assigned line approver.
-        if ($employeeRole === HrRole::Employee) {
-            return $this->isDepartmentHeadOf($actor, $subjectEmployee);
-        }
-
-        if ($employeeRole === HrRole::DepartmentHead) {
-            return $this->isBranchHeadOf($actor, $subjectEmployee);
-        }
-
-        if ($employeeRole === HrRole::BranchHead) {
-            return $this->isCompanyHeadOf($actor, $subjectEmployee);
-        }
-
-        return false;
+        return $firstLine !== null && (int) $firstLine['approver_id'] === (int) $actor->id;
     }
 
     public function resolveFirstLevelApprover(User $employee): ?User
     {
-        $routing = $this->resolveRoutingDecision($employee);
-        $chain = $routing['chain'];
-        if ($chain === null || count($chain) < 2) {
-            return null;
-        }
+        $steps = $this->resolveApprovalChain($employee, null, $employee);
+        $firstLine = collect($steps)->first(fn (array $step): bool => $step['approver_role'] !== HrRole::AdminHr);
 
-        return $routing['first_level_approver'] ?? $this->resolveFirstLevelApproverByRole($employee, $chain[0]);
+        return $firstLine['approver'] ?? null;
     }
 
     public function resolveHrApprover(): ?User
@@ -160,246 +168,220 @@ class HrApprovalChainResolver
             ->first();
     }
 
-    private function isDepartmentHeadOf(User $actor, User $employee): bool
+    /**
+     * @return list<HrRole>
+     */
+    private function candidateRolesForSubject(HrRole $subjectRole): array
     {
-        $headedDeptIds = Department::query()
-            ->where('department_head_id', $actor->id)
-            ->pluck('id');
-
-        if ($headedDeptIds->isEmpty()) {
-            return false;
-        }
-
-        if ($employee->department_id) {
-            return $headedDeptIds->contains((int) $employee->department_id);
-        }
-
-        // Legacy rows: department_id unset but users.department matches a headed department name
-        // (same rule as DataScopeService::restrictEmployeeQuery for department heads).
-        $deptNames = Department::query()
-            ->whereIn('id', $headedDeptIds)
-            ->pluck('name')
-            ->filter()
-            ->values()
-            ->all();
-
-        if ($deptNames === []) {
-            return false;
-        }
-
-        $empDept = trim((string) ($employee->department ?? ''));
-        if ($empDept === '') {
-            return false;
-        }
-
-        return in_array($empDept, $deptNames, true);
+        return match ($subjectRole) {
+            HrRole::Employee => [
+                HrRole::SectionUnitHead,
+                HrRole::DivisionHead,
+                HrRole::DepartmentHead,
+                HrRole::BranchHead,
+                HrRole::CompanyHead,
+                HrRole::AdminHr,
+            ],
+            HrRole::SectionUnitHead => [
+                HrRole::DivisionHead,
+                HrRole::DepartmentHead,
+                HrRole::BranchHead,
+                HrRole::CompanyHead,
+                HrRole::AdminHr,
+            ],
+            HrRole::DivisionHead => [
+                HrRole::DepartmentHead,
+                HrRole::BranchHead,
+                HrRole::CompanyHead,
+                HrRole::AdminHr,
+            ],
+            HrRole::DepartmentHead => [
+                HrRole::BranchHead,
+                HrRole::CompanyHead,
+                HrRole::AdminHr,
+            ],
+            HrRole::BranchHead => [
+                HrRole::CompanyHead,
+                HrRole::AdminHr,
+            ],
+            HrRole::CompanyHead, HrRole::AdminHr => [
+                HrRole::AdminHr,
+            ],
+        };
     }
 
-    private function resolveFirstLevelApproverByRole(User $employee, HrRole $role): ?User
+    private function resolveApproverForRole(User $employee, HrRole $role): ?User
     {
         return match ($role) {
+            HrRole::SectionUnitHead => $this->resolveSectionUnitHeadFor($employee),
+            HrRole::DivisionHead => $this->resolveDivisionHeadFor($employee),
             HrRole::DepartmentHead => $this->resolveDepartmentHeadFor($employee),
             HrRole::BranchHead => $this->resolveBranchHeadFor($employee),
             HrRole::CompanyHead => $this->resolveCompanyHeadFor($employee),
-            default => null,
+            HrRole::AdminHr => $this->resolveHrApprover(),
+            HrRole::Employee => null,
         };
+    }
+
+    private function resolveSectionUnitHeadFor(User $employee): ?User
+    {
+        $section = $this->sectionUnitFor($employee);
+        if (! $section?->section_unit_head_id) {
+            return null;
+        }
+
+        return User::query()->activeRoster()->find($section->section_unit_head_id);
+    }
+
+    private function resolveDivisionHeadFor(User $employee): ?User
+    {
+        $division = $this->divisionFor($employee);
+        if (! $division?->division_head_id) {
+            return null;
+        }
+
+        return User::query()->activeRoster()->find($division->division_head_id);
     }
 
     private function resolveDepartmentHeadFor(User $employee): ?User
     {
-        $department = null;
-        if ($employee->department_id) {
-            $department = Department::find($employee->department_id);
-        }
-
-        if (! $department) {
-            $deptName = trim((string) ($employee->department ?? ''));
-            if ($deptName !== '') {
-                $department = Department::query()->where('name', $deptName)->first();
-            }
-        }
-
-        if (! $department || ! $department->department_head_id) {
+        $department = $this->departmentFor($employee);
+        if (! $department?->department_head_id) {
             return null;
         }
 
         return User::query()->activeRoster()->find($department->department_head_id);
     }
 
-    private function isBranchHeadOf(User $actor, User $employee): bool
-    {
-        $employeeBranchId = $employee->branch_id;
-        if (! $employeeBranchId && $employee->department_id) {
-            $dept = Department::find($employee->department_id);
-            $employeeBranchId = $dept?->branch_id;
-        }
-
-        if (! $employeeBranchId) {
-            return false;
-        }
-
-        $branch = Branch::find($employeeBranchId);
-
-        return $branch && $branch->branch_manager_id === $actor->id;
-    }
-
     private function resolveBranchHeadFor(User $employee): ?User
     {
-        $employeeBranchId = $employee->branch_id;
-        if (! $employeeBranchId && $employee->department_id) {
-            $dept = Department::find($employee->department_id);
-            $employeeBranchId = $dept?->branch_id;
-        }
-
-        if (! $employeeBranchId) {
-            return null;
-        }
-
-        $branch = Branch::find($employeeBranchId);
-        if (! $branch || ! $branch->branch_manager_id) {
+        $branch = $this->branchFor($employee);
+        if (! $branch?->branch_manager_id) {
             return null;
         }
 
         return User::query()->activeRoster()->find($branch->branch_manager_id);
     }
 
-    private function isCompanyHeadOf(User $actor, User $employee): bool
-    {
-        $employeeCompanyId = $employee->company_id;
-        if (! $employeeCompanyId && $employee->branch_id) {
-            $branch = Branch::find($employee->branch_id);
-            $employeeCompanyId = $branch?->company_id;
-        }
-        if (! $employeeCompanyId && $employee->department_id) {
-            $dept = Department::find($employee->department_id);
-            if ($dept && $dept->branch_id) {
-                $branch = Branch::find($dept->branch_id);
-                $employeeCompanyId = $branch?->company_id;
-            }
-        }
-
-        if (! $employeeCompanyId) {
-            return false;
-        }
-
-        $company = Company::find($employeeCompanyId);
-
-        return $company
-            && $company->company_head_id !== null
-            && (int) $company->company_head_id === (int) $actor->id;
-    }
-
     private function resolveCompanyHeadFor(User $employee): ?User
     {
-        $employeeCompanyId = $employee->company_id;
-        if (! $employeeCompanyId && $employee->branch_id) {
-            $branch = Branch::find($employee->branch_id);
-            $employeeCompanyId = $branch?->company_id;
-        }
-        if (! $employeeCompanyId && $employee->department_id) {
-            $dept = Department::find($employee->department_id);
-            if ($dept && $dept->branch_id) {
-                $branch = Branch::find($dept->branch_id);
-                $employeeCompanyId = $branch?->company_id;
-            }
-        }
-
-        if (! $employeeCompanyId) {
-            return null;
-        }
-
-        $company = Company::find($employeeCompanyId);
-        if (! $company || ! $company->company_head_id) {
+        $company = $this->companyFor($employee);
+        if (! $company?->company_head_id) {
             return null;
         }
 
         return User::query()->activeRoster()->find($company->company_head_id);
     }
 
-    /**
-     * @return array{
-     *   valid: bool,
-     *   reasons: array<int, string>,
-     *   department_head: ?User,
-     *   branch_head: ?User,
-     *   company_head: ?User
-     * }
-     */
-    private function validateFirstLevelApproverForRole(User $employee, HrRole $role): array
+    private function sectionUnitFor(User $employee): ?SectionUnit
     {
-        $reasons = [];
-        $firstLevelApprover = null;
-
-        if ($role === HrRole::Employee) {
-            $firstLevelApprover = $this->resolveDepartmentHeadFor($employee);
-            $this->appendApproverValidationErrors(
-                $reasons,
-                'department_head',
-                $firstLevelApprover,
-                $employee,
-                fn (User $approver): bool => $this->isDepartmentHeadOf($approver, $employee)
-            );
-        } elseif ($role === HrRole::DepartmentHead) {
-            $firstLevelApprover = $this->resolveBranchHeadFor($employee);
-            $this->appendApproverValidationErrors(
-                $reasons,
-                'branch_head',
-                $firstLevelApprover,
-                $employee,
-                fn (User $approver): bool => $this->isBranchHeadOf($approver, $employee)
-            );
-        } elseif ($role === HrRole::BranchHead) {
-            $firstLevelApprover = $this->resolveCompanyHeadFor($employee);
-            $this->appendApproverValidationErrors(
-                $reasons,
-                'company_head',
-                $firstLevelApprover,
-                $employee,
-                fn (User $approver): bool => $this->isCompanyHeadOf($approver, $employee)
-            );
+        if ($employee->relationLoaded('sectionUnit') && $employee->sectionUnit) {
+            return $employee->sectionUnit;
         }
 
-        return [
-            'valid' => $reasons === [],
-            'reasons' => $reasons,
-            'first_level_approver' => $firstLevelApprover,
-        ];
+        return $employee->section_unit_id ? SectionUnit::query()->find($employee->section_unit_id) : null;
     }
 
-    /**
-     * @param  array<int, string>  $reasons
-     */
-    private function appendApproverValidationErrors(
-        array &$reasons,
-        string $headKey,
-        ?User $approver,
-        User $employee,
-        callable $mappingValidator
-    ): void {
-        if (! $approver) {
-            $reasons[] = $headKey.'_missing';
-
-            return;
+    private function divisionFor(User $employee): ?Division
+    {
+        if ($employee->relationLoaded('division') && $employee->division) {
+            return $employee->division;
+        }
+        if ($employee->division_id) {
+            return Division::query()->find($employee->division_id);
         }
 
-        if ((int) $approver->id === (int) $employee->id) {
-            $reasons[] = $headKey.'_self_approval_conflict';
+        $section = $this->sectionUnitFor($employee);
+        if ($section?->division_id) {
+            return Division::query()->find($section->division_id);
         }
 
-        if ($approver->isAccountDeactivated()) {
-            $reasons[] = $headKey.'_inactive';
+        return null;
+    }
+
+    private function departmentFor(User $employee): ?Department
+    {
+        if ($employee->relationLoaded('departmentRelation') && $employee->departmentRelation) {
+            return $employee->departmentRelation;
+        }
+        if ($employee->department_id) {
+            return Department::query()->find($employee->department_id);
         }
 
-        if (! in_array((string) $approver->role, User::ROSTER_ELIGIBLE_ROLES, true)) {
-            $reasons[] = $headKey.'_wrong_role';
+        $section = $this->sectionUnitFor($employee);
+        if ($section?->department_id) {
+            return Department::query()->find($section->department_id);
         }
 
-        if (isset($approver->deleted_at) && $approver->deleted_at !== null) {
-            $reasons[] = $headKey.'_soft_deleted';
+        $division = $this->divisionFor($employee);
+        if ($division?->department_id) {
+            return Department::query()->find($division->department_id);
         }
 
-        if (! (bool) $mappingValidator($approver)) {
-            $reasons[] = $headKey.'_invalid_organization_mapping';
+        $deptName = trim((string) ($employee->department ?? ''));
+
+        return $deptName !== '' ? Department::query()->where('name', $deptName)->first() : null;
+    }
+
+    private function branchFor(User $employee): ?Branch
+    {
+        if ($employee->relationLoaded('branch') && $employee->branch) {
+            return $employee->branch;
         }
+        if ($employee->branch_id) {
+            return Branch::query()->find($employee->branch_id);
+        }
+
+        $section = $this->sectionUnitFor($employee);
+        if ($section?->branch_id) {
+            return Branch::query()->find($section->branch_id);
+        }
+
+        $division = $this->divisionFor($employee);
+        if ($division?->branch_id) {
+            return Branch::query()->find($division->branch_id);
+        }
+
+        $department = $this->departmentFor($employee);
+        if ($department?->branch_id) {
+            return Branch::query()->find($department->branch_id);
+        }
+
+        return null;
+    }
+
+    private function companyFor(User $employee): ?Company
+    {
+        if ($employee->relationLoaded('company') && $employee->company) {
+            return $employee->company;
+        }
+        if ($employee->company_id) {
+            return Company::query()->find($employee->company_id);
+        }
+
+        $section = $this->sectionUnitFor($employee);
+        if ($section?->company_id) {
+            return Company::query()->find($section->company_id);
+        }
+
+        $division = $this->divisionFor($employee);
+        if ($division?->company_id) {
+            return Company::query()->find($division->company_id);
+        }
+
+        $branch = $this->branchFor($employee);
+        if ($branch?->company_id) {
+            return Company::query()->find($branch->company_id);
+        }
+
+        $department = $this->departmentFor($employee);
+        if ($department?->branch_id) {
+            $deptBranch = Branch::query()->find($department->branch_id);
+            if ($deptBranch?->company_id) {
+                return Company::query()->find($deptBranch->company_id);
+            }
+        }
+
+        return null;
     }
 }

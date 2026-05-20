@@ -1596,6 +1596,9 @@ class DashboardController extends Controller
             'scope_label' => $scopeLabel,
             'company_id' => isset($row['company_id']) ? (int) $row['company_id'] : null,
             'company_name' => $companyName,
+            'company_logo_url' => isset($row['company_logo_url']) && is_string($row['company_logo_url']) && trim($row['company_logo_url']) !== ''
+                ? trim($row['company_logo_url'])
+                : null,
             'branch_id' => isset($row['branch_id']) ? (int) $row['branch_id'] : null,
             'branch_name' => $branchName,
             'branch' => $branchName,
@@ -2318,7 +2321,7 @@ class DashboardController extends Controller
             $companyIds = array_values(array_filter(array_map('intval', $arr)));
         }
 
-        $companies = Company::orderBy('name')->get(['id', 'name']);
+        $companies = Company::orderBy('name')->get(['id', 'name', 'logo']);
         $actor = $request->user();
         $rows = $fromDate->equalTo($toDate)
             ? $this->companyAttendanceDistribution($fromDate, $companyIds, $actor)

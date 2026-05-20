@@ -11,10 +11,12 @@ use App\Jobs\UpdateEmployeeProfileJob;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
+use App\Models\Division;
 use App\Models\DuplicateFaceRegistrationAttempt;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeTransferLog;
 use App\Models\PayComponent;
+use App\Models\SectionUnit;
 use App\Models\User;
 use App\Models\UserAdminActivityLog;
 use App\Models\UserPhoneChangeLog;
@@ -86,6 +88,8 @@ class EmployeeController extends Controller
         $companyId = $request->filled('company_id') ? (int) $request->query('company_id') : null;
         $branchId = $request->filled('branch_id') ? (int) $request->query('branch_id') : null;
         $departmentId = $request->filled('department_id') ? (int) $request->query('department_id') : null;
+        $divisionId = $request->filled('division_id') ? (int) $request->query('division_id') : null;
+        $sectionUnitId = $request->filled('section_unit_id') ? (int) $request->query('section_unit_id') : null;
         $assignableToCompanyId = $request->filled('assignable_to_company_id') ? (int) $request->query('assignable_to_company_id') : null;
         $forDepartmentAssignment = $request->boolean('for_department_assignment', false);
         $activeFilter = strtolower(trim((string) $request->query('active_filter', $request->query('status_filter', 'active'))));
@@ -117,12 +121,14 @@ class EmployeeController extends Controller
             });
         };
 
-        $applyOrgFilters = function ($query) use ($companyId, $branchId, $departmentId, $assignableToCompanyId) {
+        $applyOrgFilters = function ($query) use ($companyId, $branchId, $departmentId, $divisionId, $sectionUnitId, $assignableToCompanyId) {
             if ($companyId !== null) {
                 $query->where(function ($q) use ($companyId) {
                     $q->where('company_id', $companyId)
                         ->orWhereHas('branch', fn ($b) => $b->where('company_id', $companyId))
-                        ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->where('company_id', $companyId)));
+                        ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->where('company_id', $companyId)))
+                        ->orWhereHas('division', fn ($d) => $d->where('company_id', $companyId))
+                        ->orWhereHas('sectionUnit', fn ($s) => $s->where('company_id', $companyId));
                 });
                 // Exclude employees who are Company Head of another company — they belong to that company only
                 $query->where(function ($q) use ($companyId) {
@@ -133,11 +139,26 @@ class EmployeeController extends Controller
             if ($branchId !== null) {
                 $query->where(function ($q) use ($branchId) {
                     $q->where('branch_id', $branchId)
-                        ->orWhereHas('departmentRelation', fn ($d) => $d->where('branch_id', $branchId));
+                        ->orWhereHas('departmentRelation', fn ($d) => $d->where('branch_id', $branchId))
+                        ->orWhereHas('division', fn ($d) => $d->where('branch_id', $branchId))
+                        ->orWhereHas('sectionUnit', fn ($s) => $s->where('branch_id', $branchId));
                 });
             }
             if ($departmentId !== null) {
-                $query->where('department_id', $departmentId);
+                $query->where(function ($q) use ($departmentId) {
+                    $q->where('department_id', $departmentId)
+                        ->orWhereHas('division', fn ($d) => $d->where('department_id', $departmentId))
+                        ->orWhereHas('sectionUnit', fn ($s) => $s->where('department_id', $departmentId));
+                });
+            }
+            if ($divisionId !== null) {
+                $query->where(function ($q) use ($divisionId) {
+                    $q->where('division_id', $divisionId)
+                        ->orWhereHas('sectionUnit', fn ($s) => $s->where('division_id', $divisionId));
+                });
+            }
+            if ($sectionUnitId !== null) {
+                $query->where('section_unit_id', $sectionUnitId);
             }
             if ($assignableToCompanyId !== null) {
                 // Include: (1) employees in this company (and not head of another), or (2) unassigned employees
@@ -154,6 +175,8 @@ class EmployeeController extends Controller
                     $q->whereNull('company_id')
                         ->whereNull('branch_id')
                         ->whereNull('department_id')
+                        ->whereNull('division_id')
+                        ->whereNull('section_unit_id')
                         ->whereDoesntHave('companyHeadships');
                 });
             }
@@ -171,6 +194,15 @@ class EmployeeController extends Controller
             'departmentRelation:id,name,branch_id,department_head_id',
             'departmentRelation.branch:id,name,company_id',
             'departmentRelation.branch.company:id,name',
+            'division:id,name,company_id,branch_id,department_id,division_head_id',
+            'division.company:id,name',
+            'division.branch:id,name,company_id',
+            'managedDivision:id,name,company_id,branch_id,department_id,division_head_id',
+            'sectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
+            'sectionUnit.company:id,name',
+            'sectionUnit.branch:id,name,company_id',
+            'sectionUnit.division:id,name,company_id,branch_id,department_id',
+            'managedSectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
         ];
         $fullEagerLoads = array_merge($companyEagerLoads, [
             'workingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
@@ -190,6 +222,8 @@ class EmployeeController extends Controller
             'role',
             'department',
             'department_id',
+            'division_id',
+            'section_unit_id',
             'company_id',
             'branch_id',
             'position',
@@ -238,6 +272,8 @@ class EmployeeController extends Controller
             'role',
             'department',
             'department_id',
+            'division_id',
+            'section_unit_id',
             'company_id',
             'branch_id',
             'team_id',
@@ -286,6 +322,8 @@ class EmployeeController extends Controller
             'company_id' => $companyId,
             'branch_id' => $branchId,
             'department_id' => $departmentId,
+            'division_id' => $divisionId,
+            'section_unit_id' => $sectionUnitId,
         ]);
 
         if ($forScheduleAssignment || $perPageParam === 'all' || (int) $perPageParam === 0) {
@@ -738,6 +776,8 @@ class EmployeeController extends Controller
             'schedule' => ['nullable', 'array'],
             'department' => ['nullable', 'string', 'max:255'],
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
+            'division_id' => ['nullable', 'integer', 'exists:divisions,id'],
+            'section_unit_id' => ['nullable', 'integer', 'exists:sections_or_units,id'],
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'position' => ['nullable', 'string', 'max:255'],
@@ -758,6 +798,8 @@ class EmployeeController extends Controller
 
         $departmentName = $validated['department'] ?? null;
         $departmentId = $validated['department_id'] ?? null;
+        $divisionId = $validated['division_id'] ?? null;
+        $sectionUnitId = $validated['section_unit_id'] ?? null;
 
         // If the provided department matches an existing Department record by name,
         // link the employee via department_id so that department employee counts
@@ -788,6 +830,31 @@ class EmployeeController extends Controller
 
         $resolvedCompanyId = $validated['company_id'] ?? null;
         $resolvedBranchId = $validated['branch_id'] ?? null;
+        if ($sectionUnitId !== null) {
+            $section = SectionUnit::query()->find((int) $sectionUnitId);
+            if ($section) {
+                $divisionId = $section->division_id ?? $divisionId;
+                $departmentId = $section->department_id ?? $departmentId;
+                $resolvedBranchId = $section->branch_id ?? $resolvedBranchId;
+                $resolvedCompanyId = $section->company_id ?? $resolvedCompanyId;
+            }
+        }
+        if ($divisionId !== null) {
+            $division = Division::query()->find((int) $divisionId);
+            if ($division) {
+                $departmentId = $division->department_id ?? $departmentId;
+                $resolvedBranchId = $division->branch_id ?? $resolvedBranchId;
+                $resolvedCompanyId = $division->company_id ?? $resolvedCompanyId;
+            }
+        }
+        if ($departmentId !== null) {
+            $department = Department::query()->with('branch')->find((int) $departmentId);
+            if ($department) {
+                $departmentName = $department->name;
+                $resolvedBranchId = $department->branch_id ?? $resolvedBranchId;
+                $resolvedCompanyId = $department->branch?->company_id ?? $resolvedCompanyId;
+            }
+        }
         if ($resolvedCompanyId === null && $resolvedBranchId !== null) {
             $branch = Branch::query()->find((int) $resolvedBranchId);
             $resolvedCompanyId = $branch?->company_id;
@@ -797,7 +864,9 @@ class EmployeeController extends Controller
             $request->user(),
             $resolvedCompanyId !== null ? (int) $resolvedCompanyId : null,
             $resolvedBranchId !== null ? (int) $resolvedBranchId : null,
-            $departmentId
+            $departmentId !== null ? (int) $departmentId : null,
+            $divisionId !== null ? (int) $divisionId : null,
+            $sectionUnitId !== null ? (int) $sectionUnitId : null
         );
 
         $rawPhone = $validated['phone_number'] ?? null;
@@ -838,6 +907,8 @@ class EmployeeController extends Controller
             'is_active' => true,
             'department' => $departmentName,
             'department_id' => $departmentId,
+            'division_id' => $divisionId,
+            'section_unit_id' => $sectionUnitId,
             'company_id' => $resolvedCompanyId !== null ? (int) $resolvedCompanyId : null,
             'branch_id' => $resolvedBranchId !== null ? (int) $resolvedBranchId : null,
             'position' => isset($validated['position']) && trim((string) $validated['position']) !== '' ? trim($validated['position']) : null,
@@ -1071,6 +1142,8 @@ class EmployeeController extends Controller
                 'username' => ['sometimes', 'required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username,'.$id],
                 'department_id' => ['sometimes', 'nullable', 'integer', 'exists:departments,id'],
                 'department' => ['sometimes', 'nullable', 'string', 'max:255'],
+                'division_id' => ['sometimes', 'nullable', 'integer', 'exists:divisions,id'],
+                'section_unit_id' => ['sometimes', 'nullable', 'integer', 'exists:sections_or_units,id'],
                 'company_id' => ['sometimes', 'nullable', 'integer', 'exists:companies,id'],
                 'branch_id' => ['sometimes', 'nullable', 'integer', 'exists:branches,id'],
                 'phone_number' => [
@@ -1168,10 +1241,16 @@ class EmployeeController extends Controller
                 if ($deptId === null || $deptId === '') {
                     $employee->department_id = null;
                     $employee->department = null;
+                    $employee->division_id = null;
+                    $employee->section_unit_id = null;
                 } else {
-                    $department = Department::find((int) $deptId);
+                    $department = Department::query()->with('branch')->find((int) $deptId);
                     $employee->department_id = $department?->id;
                     $employee->department = $department?->name;
+                    $employee->branch_id = $department?->branch_id ?? $employee->branch_id;
+                    $employee->company_id = $department?->branch?->company_id ?? $employee->company_id;
+                    $employee->division_id = null;
+                    $employee->section_unit_id = null;
                 }
             } elseif ($this->requestHasInput($request, 'department')) {
                 $depRaw = trim((string) $request->input('department'));
@@ -1182,6 +1261,39 @@ class EmployeeController extends Controller
                     $department = Department::where('name', $depRaw)->first();
                     $employee->department_id = $department?->id;
                     $employee->department = $department?->name ?? $depRaw;
+                    $employee->division_id = null;
+                    $employee->section_unit_id = null;
+                }
+            }
+
+            if ($this->requestHasInput($request, 'division_id')) {
+                $divisionIdRaw = $request->input('division_id');
+                if ($divisionIdRaw === null || $divisionIdRaw === '') {
+                    $employee->division_id = null;
+                    $employee->section_unit_id = null;
+                } else {
+                    $division = Division::query()->with('department.branch')->find((int) $divisionIdRaw);
+                    $employee->division_id = $division?->id;
+                    $employee->department_id = $division?->department_id ?? $employee->department_id;
+                    $employee->department = $division?->department?->name ?? $employee->department;
+                    $employee->branch_id = $division?->branch_id ?? $division?->department?->branch_id ?? $employee->branch_id;
+                    $employee->company_id = $division?->company_id ?? $division?->department?->branch?->company_id ?? $employee->company_id;
+                    $employee->section_unit_id = null;
+                }
+            }
+
+            if ($this->requestHasInput($request, 'section_unit_id')) {
+                $sectionIdRaw = $request->input('section_unit_id');
+                if ($sectionIdRaw === null || $sectionIdRaw === '') {
+                    $employee->section_unit_id = null;
+                } else {
+                    $section = SectionUnit::query()->with(['division', 'department.branch'])->find((int) $sectionIdRaw);
+                    $employee->section_unit_id = $section?->id;
+                    $employee->division_id = $section?->division_id ?? $employee->division_id;
+                    $employee->department_id = $section?->department_id ?? $section?->division?->department_id ?? $employee->department_id;
+                    $employee->department = $section?->department?->name ?? $employee->department;
+                    $employee->branch_id = $section?->branch_id ?? $section?->division?->branch_id ?? $section?->department?->branch_id ?? $employee->branch_id;
+                    $employee->company_id = $section?->company_id ?? $section?->division?->company_id ?? $section?->department?->branch?->company_id ?? $employee->company_id;
                 }
             }
 
@@ -2157,9 +2269,20 @@ class EmployeeController extends Controller
                 'branch.company:id,name,logo',
                 'managedBranch:id,name,company_id,branch_manager_id',
                 'managedDepartment:id,name,branch_id,department_head_id',
+                'managedDivision:id,name,company_id,branch_id,department_id,division_head_id',
+                'managedSectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
                 'departmentRelation:id,name,branch_id,department_head_id',
                 'departmentRelation.branch:id,name,company_id',
                 'departmentRelation.branch.company:id,name,logo',
+                'division:id,name,company_id,branch_id,department_id,division_head_id',
+                'division.company:id,name,logo',
+                'division.branch:id,name,company_id',
+                'division.department:id,name,branch_id',
+                'sectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
+                'sectionUnit.company:id,name,logo',
+                'sectionUnit.branch:id,name,company_id',
+                'sectionUnit.department:id,name,branch_id',
+                'sectionUnit.division:id,name,company_id,branch_id,department_id',
                 'workingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
                 'pendingWorkingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
             ]);
@@ -2171,9 +2294,20 @@ class EmployeeController extends Controller
                 'branch.company:id,name',
                 'managedBranch:id,name,company_id,branch_manager_id',
                 'managedDepartment:id,name,branch_id,department_head_id',
+                'managedDivision:id,name,company_id,branch_id,department_id,division_head_id',
+                'managedSectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
                 'departmentRelation:id,name,branch_id,department_head_id',
                 'departmentRelation.branch:id,name,company_id',
                 'departmentRelation.branch.company:id,name',
+                'division:id,name,company_id,branch_id,department_id,division_head_id',
+                'division.company:id,name',
+                'division.branch:id,name,company_id',
+                'division.department:id,name,branch_id',
+                'sectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
+                'sectionUnit.company:id,name',
+                'sectionUnit.branch:id,name,company_id',
+                'sectionUnit.department:id,name,branch_id',
+                'sectionUnit.division:id,name,company_id,branch_id,department_id',
                 'supervisor:id,name,first_name,middle_name,last_name,suffix',
                 'team:id,name',
                 'workingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
@@ -2203,7 +2337,11 @@ class EmployeeController extends Controller
         // Company heads are not scoped to a single branch; avoid inferring branch from department row.
         $branchNameForProfile = $managementRole === 'company_head'
             ? $user->branch?->name
-            : ($user->branch?->name ?? $user->departmentRelation?->branch?->name);
+            : ($user->branch?->name
+                ?? $user->departmentRelation?->branch?->name
+                ?? $user->division?->branch?->name
+                ?? $user->sectionUnit?->branch?->name
+                ?? $user->sectionUnit?->division?->branch?->name);
 
         [$firstNameFallback, $middleNameFallback, $lastNameFallback] = $this->splitNameParts($user->getRawOriginal('name'));
 
@@ -2245,12 +2383,27 @@ class EmployeeController extends Controller
             'qr_token_generated_at' => $user->qr_token_generated_at?->toIso8601String(),
             'department' => $user->departmentRelation?->name ?? $user->department,
             'department_id' => $user->department_id,
+            'department_name' => $user->departmentRelation?->name ?? $user->department,
+            'division_id' => $user->division_id,
+            'division_name' => $user->division?->name,
+            'section_unit_id' => $user->section_unit_id,
+            'section_unit_name' => $user->sectionUnit?->name,
             'company_id' => $user->company_id,
-            'company_name' => ($user->companyHeadships->first() ?? $user->company ?? $user->branch?->company ?? $user->departmentRelation?->branch?->company)?->name,
+            'company_name' => ($user->companyHeadships->first()
+                ?? $user->company
+                ?? $user->branch?->company
+                ?? $user->departmentRelation?->branch?->company
+                ?? $user->division?->company
+                ?? $user->sectionUnit?->company
+                ?? $user->sectionUnit?->division?->company)?->name,
             'branch_id' => $user->branch_id,
             'branch_name' => $branchNameForProfile,
             'managed_branch_id' => $user->managedBranch?->id,
             'managed_branch_name' => $user->managedBranch?->name,
+            'managed_division_id' => $user->managedDivision?->id,
+            'managed_division_name' => $user->managedDivision?->name,
+            'managed_section_unit_id' => $user->managedSectionUnit?->id,
+            'managed_section_unit_name' => $user->managedSectionUnit?->name,
             'management_role' => $managementRole,
             'team_id' => $user->team_id,
             'team_name' => $user->team?->name,
@@ -2665,15 +2818,27 @@ class EmployeeController extends Controller
     private function buildLiteOrgMaps(Collection $users): array
     {
         $departmentIds = $users->pluck('department_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
+        $divisionIds = $users->pluck('division_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
+        $sectionUnitIds = $users->pluck('section_unit_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
 
         $departmentsById = $departmentIds->isEmpty()
             ? collect()
             : Department::query()->whereIn('id', $departmentIds)->get(['id', 'name', 'branch_id'])->keyBy('id');
 
+        $divisionsById = $divisionIds->isEmpty()
+            ? collect()
+            : Division::query()->whereIn('id', $divisionIds)->get(['id', 'name', 'company_id', 'branch_id', 'department_id'])->keyBy('id');
+
+        $sectionsById = $sectionUnitIds->isEmpty()
+            ? collect()
+            : SectionUnit::query()->whereIn('id', $sectionUnitIds)->get(['id', 'name', 'company_id', 'branch_id', 'department_id', 'division_id'])->keyBy('id');
+
         // Branches: include IDs from the user row and from the assigned department (often employees only
         // have department_id set; branch/company name columns were blank in lite mode when branch_id was null).
         $branchIds = $users->pluck('branch_id')
             ->merge($departmentsById->pluck('branch_id'))
+            ->merge($divisionsById->pluck('branch_id'))
+            ->merge($sectionsById->pluck('branch_id'))
             ->filter()
             ->map(fn ($id) => (int) $id)
             ->unique()
@@ -2685,6 +2850,8 @@ class EmployeeController extends Controller
         // Companies: from user.company_id and from every branch row we resolved (so company + branch columns match import).
         $companyIds = $users->pluck('company_id')
             ->merge($branchesById->pluck('company_id'))
+            ->merge($divisionsById->pluck('company_id'))
+            ->merge($sectionsById->pluck('company_id'))
             ->filter()
             ->map(fn ($id) => (int) $id)
             ->unique()
@@ -2694,8 +2861,10 @@ class EmployeeController extends Controller
             : Company::query()->whereIn('id', $companyIds)->pluck('name', 'id');
 
         $userIds = $users->pluck('id')->map(fn ($id) => (int) $id)->unique()->values()->all();
-        $headRoles = ['company' => [], 'branch' => [], 'dept' => []];
+        $headRoles = ['company' => [], 'branch' => [], 'dept' => [], 'division' => [], 'section_unit' => []];
         $managedBranchByUser = [];
+        $managedDivisionByUser = [];
+        $managedSectionUnitByUser = [];
         if ($userIds !== []) {
             foreach (Company::query()->whereIn('company_head_id', $userIds)->get(['company_head_id']) as $c) {
                 if ($c->company_head_id) {
@@ -2714,14 +2883,32 @@ class EmployeeController extends Controller
                     $headRoles['dept'][(int) $hid] = true;
                 }
             }
+            foreach (Division::query()->whereIn('division_head_id', $userIds)->get(['id', 'name', 'division_head_id']) as $division) {
+                if ($division->division_head_id) {
+                    $uid = (int) $division->division_head_id;
+                    $headRoles['division'][$uid] = true;
+                    $managedDivisionByUser[$uid] = ['id' => (int) $division->id, 'name' => (string) $division->name];
+                }
+            }
+            foreach (SectionUnit::query()->whereIn('section_unit_head_id', $userIds)->get(['id', 'name', 'section_unit_head_id']) as $section) {
+                if ($section->section_unit_head_id) {
+                    $uid = (int) $section->section_unit_head_id;
+                    $headRoles['section_unit'][$uid] = true;
+                    $managedSectionUnitByUser[$uid] = ['id' => (int) $section->id, 'name' => (string) $section->name];
+                }
+            }
         }
 
         return [
             'companies' => $companiesById,
             'branches' => $branchesById,
             'departments' => $departmentsById,
+            'divisions' => $divisionsById,
+            'sections_or_units' => $sectionsById,
             'head_roles' => $headRoles,
             'managed_branch_by_user' => $managedBranchByUser,
+            'managed_division_by_user' => $managedDivisionByUser,
+            'managed_section_unit_by_user' => $managedSectionUnitByUser,
         ];
     }
 
@@ -2743,7 +2930,7 @@ class EmployeeController extends Controller
     /**
      * Match {@see HrRoleResolver::resolveOrgHierarchyFromAssignments()} priority without N+1 queries per row.
      *
-     * @param  array{company: array<int, bool>, branch: array<int, bool>, dept: array<int, bool>}  $headRoles
+     * @param  array{company: array<int, bool>, branch: array<int, bool>, dept: array<int, bool>, division?: array<int, bool>, section_unit?: array<int, bool>}  $headRoles
      */
     private function resolveHrRoleFromLiteHeadMaps(int $userId, array $headRoles): HrRole
     {
@@ -2756,6 +2943,12 @@ class EmployeeController extends Controller
         if (! empty($headRoles['dept'][$userId])) {
             return HrRole::DepartmentHead;
         }
+        if (! empty($headRoles['division'][$userId])) {
+            return HrRole::DivisionHead;
+        }
+        if (! empty($headRoles['section_unit'][$userId])) {
+            return HrRole::SectionUnitHead;
+        }
 
         return HrRole::Employee;
     }
@@ -2766,6 +2959,8 @@ class EmployeeController extends Controller
             HrRole::CompanyHead => 'company_head',
             HrRole::BranchHead => 'branch_head',
             HrRole::DepartmentHead => 'department_head',
+            HrRole::DivisionHead => 'division_head',
+            HrRole::SectionUnitHead => 'section_unit_head',
             default => null,
         };
     }
@@ -2774,6 +2969,8 @@ class EmployeeController extends Controller
     {
         $branchesById = $orgMaps['branches'] ?? collect();
         $departmentsById = $orgMaps['departments'] ?? collect();
+        $divisionsById = $orgMaps['divisions'] ?? collect();
+        $sectionsById = $orgMaps['sections_or_units'] ?? collect();
         $companiesById = $orgMaps['companies'] ?? collect();
 
         $department = $user->department;
@@ -2786,8 +2983,29 @@ class EmployeeController extends Controller
             }
         }
 
-        $branchName = null;
         $companyIdResolved = $user->company_id ? (int) $user->company_id : null;
+        $divisionName = null;
+        if ($user->division_id) {
+            $division = $divisionsById->get((int) $user->division_id);
+            if ($division) {
+                $divisionName = $division->name;
+                $companyIdResolved = $companyIdResolved ?: ($division->company_id ? (int) $division->company_id : null);
+            }
+        }
+
+        $sectionUnitName = null;
+        if ($user->section_unit_id) {
+            $section = $sectionsById->get((int) $user->section_unit_id);
+            if ($section) {
+                $sectionUnitName = $section->name;
+                $companyIdResolved = $companyIdResolved ?: ($section->company_id ? (int) $section->company_id : null);
+                if (! $divisionName && $section->division_id) {
+                    $divisionName = $divisionsById->get((int) $section->division_id)?->name;
+                }
+            }
+        }
+
+        $branchName = null;
         if ($user->branch_id) {
             $branch = $branchesById->get((int) $user->branch_id);
             if ($branch) {
@@ -2807,10 +3025,15 @@ class EmployeeController extends Controller
         $hasFace = ($user->face_status === 'registered') || ($user->face_registered_at !== null);
 
         $uid = (int) $user->id;
-        $headRoles = $orgMaps['head_roles'] ?? ['company' => [], 'branch' => [], 'dept' => []];
-        $hr = $this->resolveHrRoleFromLiteHeadMaps($uid, is_array($headRoles) ? $headRoles : ['company' => [], 'branch' => [], 'dept' => []]);
+        $emptyHeadRoles = ['company' => [], 'branch' => [], 'dept' => [], 'division' => [], 'section_unit' => []];
+        $headRoles = $orgMaps['head_roles'] ?? $emptyHeadRoles;
+        $hr = $this->resolveHrRoleFromLiteHeadMaps($uid, is_array($headRoles) ? $headRoles : $emptyHeadRoles);
         $managedBy = $orgMaps['managed_branch_by_user'] ?? [];
         $managedBranch = is_array($managedBy) ? ($managedBy[$uid] ?? null) : null;
+        $managedDivisions = $orgMaps['managed_division_by_user'] ?? [];
+        $managedDivision = is_array($managedDivisions) ? ($managedDivisions[$uid] ?? null) : null;
+        $managedSections = $orgMaps['managed_section_unit_by_user'] ?? [];
+        $managedSection = is_array($managedSections) ? ($managedSections[$uid] ?? null) : null;
 
         return [
             'id' => $user->id,
@@ -2832,8 +3055,17 @@ class EmployeeController extends Controller
             'management_role' => $this->managementRoleFromHrRole($hr),
             'managed_branch_id' => $managedBranch['id'] ?? null,
             'managed_branch_name' => $managedBranch['name'] ?? null,
+            'managed_division_id' => $managedDivision['id'] ?? null,
+            'managed_division_name' => $managedDivision['name'] ?? null,
+            'managed_section_unit_id' => $managedSection['id'] ?? null,
+            'managed_section_unit_name' => $managedSection['name'] ?? null,
             'department' => $department,
             'department_id' => $user->department_id,
+            'department_name' => $department,
+            'division_id' => $user->division_id,
+            'division_name' => $divisionName,
+            'section_unit_id' => $user->section_unit_id,
+            'section_unit_name' => $sectionUnitName,
             'company_id' => $companyIdResolved,
             'company_name' => $companyName,
             'branch_id' => $user->branch_id,

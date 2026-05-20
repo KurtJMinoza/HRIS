@@ -91,6 +91,8 @@ export const adminNavItems = [
       { to: '/admin/companies', end: false, label: 'Companies', icon: Building },
       { to: '/admin/branches', end: false, label: 'Branches', icon: Network },
       { to: '/admin/departments', end: false, label: 'Departments', icon: Layers },
+      { to: '/admin/divisions', end: false, label: 'Divisions', icon: Layers },
+      { to: '/admin/sections-units', end: false, label: 'Sections / Units', icon: Users },
     ],
   },
 

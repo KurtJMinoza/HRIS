@@ -597,9 +597,20 @@ class AuthController extends Controller
             'branch.company:id,name,logo',
             'managedBranch:id,name,company_id,branch_manager_id',
             'managedDepartment:id,name,branch_id,department_head_id',
+            'managedDivision:id,name,company_id,branch_id,department_id,division_head_id',
+            'managedSectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
             'departmentRelation:id,name,branch_id,department_head_id',
             'departmentRelation.branch:id,name,company_id',
             'departmentRelation.branch.company:id,name,logo',
+            'division:id,name,company_id,branch_id,department_id,division_head_id',
+            'division.company:id,name,logo',
+            'division.branch:id,name,company_id',
+            'division.department:id,name,branch_id',
+            'sectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
+            'sectionUnit.company:id,name,logo',
+            'sectionUnit.branch:id,name,company_id',
+            'sectionUnit.department:id,name,branch_id',
+            'sectionUnit.division:id,name,company_id,branch_id,department_id',
             'workingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
             'pendingWorkingSchedule:id,name,time_in,time_out,break_start,break_end,grace_period_minutes,rest_days',
         ]);
@@ -644,12 +655,21 @@ class AuthController extends Controller
         $effectiveCompany = $user->companyHeadships->first()
             ?? $user->company
             ?? $user->branch?->company
-            ?? $user->departmentRelation?->branch?->company;
+            ?? $user->departmentRelation?->branch?->company
+            ?? $user->division?->company
+            ?? $user->division?->branch?->company
+            ?? $user->sectionUnit?->company
+            ?? $user->sectionUnit?->branch?->company
+            ?? $user->sectionUnit?->division?->company;
 
         $managementRole = ManagementRole::resolve($user);
         $branchNameForSelf = $managementRole === 'company_head'
             ? $user->branch?->name
-            : ($user->branch?->name ?? $user->departmentRelation?->branch?->name);
+            : ($user->branch?->name
+                ?? $user->departmentRelation?->branch?->name
+                ?? $user->division?->branch?->name
+                ?? $user->sectionUnit?->branch?->name
+                ?? $user->sectionUnit?->division?->branch?->name);
 
         $payload = [
             'id' => $user->id,
@@ -691,6 +711,11 @@ class AuthController extends Controller
             'attendance_scope' => app(DataScopeService::class)->getAttendanceScopeMeta($user),
             'department' => $user->department,
             'department_id' => $user->department_id,
+            'department_name' => $user->departmentRelation?->name ?? $user->department,
+            'division_id' => $user->division_id,
+            'division_name' => $user->division?->name,
+            'section_unit_id' => $user->section_unit_id,
+            'section_unit_name' => $user->sectionUnit?->name,
             'company_id' => $user->company_id ?? $effectiveCompany?->id,
             'company_name' => $effectiveCompany?->name,
             'company_logo_url' => $this->publicMediaUrl($effectiveCompany?->logo),
@@ -698,6 +723,10 @@ class AuthController extends Controller
             'branch_name' => $branchNameForSelf,
             'managed_branch_id' => $user->managedBranch?->id,
             'managed_branch_name' => $user->managedBranch?->name,
+            'managed_division_id' => $user->managedDivision?->id,
+            'managed_division_name' => $user->managedDivision?->name,
+            'managed_section_unit_id' => $user->managedSectionUnit?->id,
+            'managed_section_unit_name' => $user->managedSectionUnit?->name,
             'management_role' => $managementRole,
             'position' => $user->position,
             'branch_office_location' => $user->branch_office_location,

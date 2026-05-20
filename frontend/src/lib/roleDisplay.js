@@ -12,6 +12,10 @@ export const HR_ROLE_BADGE_CLASS = {
     'border-indigo-600/45 bg-indigo-600/12 text-indigo-950 dark:border-indigo-400/40 dark:bg-indigo-600/18 dark:text-indigo-50',
   department_head:
     'border-teal-600/45 bg-teal-600/12 text-teal-950 dark:border-teal-400/40 dark:bg-teal-600/18 dark:text-teal-50',
+  division_head:
+    'border-emerald-600/45 bg-emerald-600/12 text-emerald-950 dark:border-emerald-400/40 dark:bg-emerald-600/18 dark:text-emerald-50',
+  section_unit_head:
+    'border-amber-600/45 bg-amber-600/12 text-amber-950 dark:border-amber-400/40 dark:bg-amber-600/18 dark:text-amber-50',
   employee:
     'border-border bg-muted/90 text-muted-foreground dark:border-border/70 dark:bg-muted/50 dark:text-muted-foreground',
 }
@@ -21,6 +25,8 @@ const FALLBACK_LABELS = {
   company_head: 'Company Head',
   branch_head: 'Branch Head',
   department_head: 'Department Head',
+  division_head: 'Division Head',
+  section_unit_head: 'Section/Unit Head',
   employee: 'Employee',
 }
 
@@ -40,11 +46,11 @@ export function normalizeHrRoleKey(userLike) {
 /**
  * Map legacy `management_role` from employee payloads when `hr_role` was not yet loaded.
  * @param {string | null | undefined} m
- * @returns {'company_head'|'branch_head'|'department_head'|null}
+ * @returns {'company_head'|'branch_head'|'department_head'|'division_head'|'section_unit_head'|null}
  */
 function managementRoleToHrKey(m) {
   if (!m || typeof m !== 'string') return null
-  if (m === 'company_head' || m === 'branch_head' || m === 'department_head') return m
+  if (m === 'company_head' || m === 'branch_head' || m === 'department_head' || m === 'division_head' || m === 'section_unit_head') return m
   return null
 }
 
