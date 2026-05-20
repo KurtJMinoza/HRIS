@@ -91,9 +91,12 @@ import {
   formatHolidayScopeLine,
   getDefaultHolidayMonthKey,
   holidayMonthKey,
+  formatHolidayMultiplierLabel,
+  holidayMultiplierBadgeClass,
   holidayScopeBadgeClass,
   holidayTypeBadgeClass,
   holidayTypeLabel,
+  upcomingHolidayUniqueKey,
   parseHolidayMonthKey,
   shiftHolidayMonth,
   UPCOMING_HOLIDAYS_DISPLAY_LIMIT,
@@ -2465,8 +2468,9 @@ export default function AdminDashboard() {
               ) : (
                 <ul className="h-full space-y-2.5 overflow-y-auto p-2 pr-1">
                 {upcomingHolidaysDisplay.map((holiday) => {
-                  const rowKey = `${holiday.id ?? holiday.name}-${holiday.date ?? holiday.holiday_date}`
+                  const rowKey = upcomingHolidayUniqueKey(holiday)
                   const typeLabel = holiday.type_label || holidayTypeLabel(holiday.type || holiday.holiday_type)
+                  const multiplierLabel = formatHolidayMultiplierLabel(holiday)
                   const scopeType = holiday.scope_type || 'Nationwide'
                   const scopeLine = formatHolidayScopeLine(holiday)
                   const daysLabel =
@@ -2510,6 +2514,15 @@ export default function AdminDashboard() {
                               )}
                             >
                               {typeLabel}
+                            </span>
+                            <span
+                              className={cn(
+                                'inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                                holidayMultiplierBadgeClass()
+                              )}
+                              title="Holiday pay multiplier"
+                            >
+                              {multiplierLabel}
                             </span>
                             <span
                               className={cn(

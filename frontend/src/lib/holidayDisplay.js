@@ -146,9 +146,71 @@ export function getHolidayMonthBounds(monthKey) {
   return { from: monthStart, to: monthEnd, year, month }
 }
 
+function normalizeHolidayName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+function upcomingHolidaySourceRank(holiday) {
+  const source = String(holiday?.source || 'custom').toLowerCase()
+  if (source === 'custom') return 30
+  if (source === 'recurring') return 20
+  if (source === 'seeded') return 10
+  return 0
+}
+
+/** Build stable dedupe key aligned with backend upcomingHolidayUniqueKey. */
+export function upcomingHolidayUniqueKey(holiday) {
+  if (holiday?.unique_key) return String(holiday.unique_key)
+  const coverageIds = Array.isArray(holiday?.coverage_ids) ? holiday.coverage_ids : []
+  return [
+    holidayRowDate(holiday),
+    normalizeHolidayName(holiday?.holiday_name || holiday?.name),
+    String(holiday?.type || holiday?.holiday_type || '').toLowerCase(),
+    String(holiday?.scope || '').toLowerCase(),
+    String(holiday?.scope_type || '').toLowerCase(),
+    JSON.stringify(coverageIds),
+    String(holiday?.company_id ?? 0),
+    String(holiday?.branch_id ?? 0),
+    String(holiday?.department_id ?? 0),
+    String(holiday?.employee_id ?? 0),
+  ].join('|')
+}
+
+/** Collapse seeded + module duplicates; prefer Holiday Module (custom) over seeded. */
+export function dedupeUpcomingHolidays(holidays) {
+  const list = Array.isArray(holidays) ? holidays : []
+  const byKey = new Map()
+  for (const holiday of list) {
+    const key = upcomingHolidayUniqueKey(holiday)
+    const existing = byKey.get(key)
+    if (!existing || upcomingHolidaySourceRank(holiday) > upcomingHolidaySourceRank(existing)) {
+      byKey.set(key, holiday)
+    }
+  }
+  return Array.from(byKey.values())
+}
+
+export function formatHolidayMultiplierLabel(holiday) {
+  const label = String(holiday?.multiplier_label ?? '').trim()
+  if (label && label !== 'null' && label !== 'undefined') return label
+  const raw = holiday?.multiplier ?? holiday?.pay_rate_multiplier
+  if (raw == null || raw === '') return '-'
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return '-'
+  const pct = n <= 3 ? Math.round(n * 100) : Math.round(n)
+  return `${pct}%`
+}
+
+export function holidayMultiplierBadgeClass() {
+  return 'border-sky-500/35 bg-sky-500/12 text-sky-900 dark:text-sky-100'
+}
+
 /** Filter holidays to a selected calendar month (includes past dates in that month). */
 export function filterUpcomingHolidaysByMonth(holidays, monthKey) {
-  const list = Array.isArray(holidays) ? holidays : []
+  const list = dedupeUpcomingHolidays(holidays)
   if (list.length === 0) return []
 
   const { from, to } = getHolidayMonthBounds(monthKey)

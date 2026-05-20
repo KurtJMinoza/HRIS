@@ -1177,29 +1177,17 @@ class DashboardController extends Controller
             $years[] = $y;
         }
 
-        $candidates = [];
-        $seenKeys = [];
+        $rawRows = [];
         foreach ($years as $year) {
             foreach ($this->holidayCalendar->holidaysForYear($year) as $row) {
-                $dedupe = implode('|', [
-                    (string) ($row['id'] ?? ''),
-                    (string) ($row['date'] ?? ''),
-                    (string) ($row['name'] ?? ''),
-                    strtolower((string) ($row['scope'] ?? '')),
-                    (string) ((int) ($row['company_id'] ?? 0)),
-                    (string) ((int) ($row['branch_id'] ?? 0)),
-                    (string) ((int) ($row['department_id'] ?? 0)),
-                    (string) ((int) ($row['employee_id'] ?? 0)),
-                    (string) ($row['coverage_type'] ?? ''),
-                    json_encode($row['coverage_ids'] ?? []),
-                ]);
-                if (isset($seenKeys[$dedupe])) {
-                    continue;
-                }
-                $seenKeys[$dedupe] = true;
-                $candidates[] = $row;
+                $rawRows[] = $row;
             }
         }
+
+        $dedupeResult = $this->dedupeUpcomingHolidayCandidates($rawRows);
+        $candidates = $dedupeResult['rows'];
+        $duplicateKeysDetected = $dedupeResult['duplicate_keys'];
+        $duplicateIdsRemoved = $dedupeResult['removed_ids'];
 
         $candidateIds = array_values(array_filter(array_map(fn (array $r) => $r['id'] ?? null, $candidates)));
         $debugExcluded = [];
@@ -1254,6 +1242,10 @@ class DashboardController extends Controller
             'years_loaded' => $years,
             'date_range_note' => 'full calendar years; UI filters by selected month',
             'scope_context' => $context,
+            'raw_holiday_count' => count($rawRows),
+            'raw_holiday_ids' => array_values(array_filter(array_map(fn (array $r) => $r['id'] ?? null, $rawRows))),
+            'duplicate_keys_detected' => $duplicateKeysDetected,
+            'duplicate_holiday_ids_removed' => $duplicateIdsRemoved,
             'candidate_count' => count($candidates),
             'holiday_ids_before_scope_filter' => $candidateIds,
             'holiday_ids_removed_by_scope' => array_values(array_filter($scopeExcludedIds)),
@@ -1261,6 +1253,14 @@ class DashboardController extends Controller
             'returned_count' => count($result),
             'included_holiday_ids' => array_values(array_filter(array_map(fn (array $r) => $r['id'] ?? null, $rows))),
             'returned_holiday_ids' => array_values(array_filter(array_map(fn (array $r) => $r['id'] ?? null, $result))),
+            'final_holiday_list' => array_map(fn (array $r) => [
+                'id' => $r['id'] ?? null,
+                'unique_key' => $r['unique_key'] ?? null,
+                'holiday_name' => $r['holiday_name'] ?? $r['name'] ?? null,
+                'holiday_date' => $r['holiday_date'] ?? $r['date'] ?? null,
+                'multiplier_label' => $r['multiplier_label'] ?? null,
+                'multiplier_source' => $r['multiplier_source'] ?? null,
+            ], $result),
             'excluded_sample' => array_slice($debugExcluded, 0, 50),
         ]);
 
@@ -1574,9 +1574,11 @@ class DashboardController extends Controller
         $scopeLabel = TextSanitizer::clean($this->holidayScopeTargetLabel($row), 'All employees') ?? 'All employees';
         $scopeTypeLabel = $this->holidayScopeTypeLabel($row);
         $dateKey = $date->format('Y-m-d');
+        $multiplier = $this->resolveUpcomingHolidayMultiplier($row);
 
         return [
             'id' => $row['id'] ?? null,
+            'unique_key' => $this->upcomingHolidayUniqueKey($row),
             'name' => $name,
             'holiday_name' => $name,
             'date' => $dateKey,
@@ -1585,6 +1587,10 @@ class DashboardController extends Controller
             'type' => $type,
             'holiday_type' => $type,
             'type_label' => $this->holidayTypeLabel($type),
+            'multiplier' => $multiplier['multiplier'],
+            'pay_rate_multiplier' => $multiplier['pay_rate_multiplier'],
+            'multiplier_label' => $multiplier['multiplier_label'],
+            'multiplier_source' => $multiplier['multiplier_source'],
             'scope' => $scope,
             'scope_type' => $scopeTypeLabel,
             'scope_label' => $scopeLabel,
@@ -1610,6 +1616,141 @@ class DashboardController extends Controller
             'source' => (string) ($row['source'] ?? 'custom'),
             'coverage_type' => $coverageType,
         ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return array{rows: list<array<string, mixed>>, duplicate_keys: list<string>, removed_ids: list<int|string|null>}
+     */
+    private function dedupeUpcomingHolidayCandidates(array $rows): array
+    {
+        $byKey = [];
+        $duplicateKeys = [];
+        $removedIds = [];
+
+        foreach ($rows as $row) {
+            $key = $this->upcomingHolidayUniqueKey($row);
+            if (! isset($byKey[$key])) {
+                $byKey[$key] = $row;
+
+                continue;
+            }
+
+            $duplicateKeys[] = $key;
+            $existing = $byKey[$key];
+            if ($this->upcomingHolidaySourceRank($row) > $this->upcomingHolidaySourceRank($existing)) {
+                if (isset($existing['id'])) {
+                    $removedIds[] = $existing['id'];
+                }
+                $byKey[$key] = $row;
+            } elseif (isset($row['id'])) {
+                $removedIds[] = $row['id'];
+            }
+        }
+
+        $deduped = array_values($byKey);
+        usort($deduped, function (array $a, array $b) {
+            $dateCompare = strcmp((string) ($a['date'] ?? ''), (string) ($b['date'] ?? ''));
+            if ($dateCompare !== 0) {
+                return $dateCompare;
+            }
+
+            return strcmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+        });
+
+        return [
+            'rows' => $deduped,
+            'duplicate_keys' => array_values(array_unique($duplicateKeys)),
+            'removed_ids' => $removedIds,
+        ];
+    }
+
+    /**
+     * Stable identity for dashboard holiday rows (ignores DB id so seeded + module rows collapse).
+     */
+    private function upcomingHolidayUniqueKey(array $row): string
+    {
+        $name = mb_strtolower(trim((string) ($row['name'] ?? '')));
+        $name = preg_replace('/\s+/', ' ', $name) ?? $name;
+
+        return implode('|', [
+            (string) ($row['date'] ?? ''),
+            $name,
+            strtolower((string) ($row['type'] ?? '')),
+            strtolower((string) ($row['scope'] ?? 'nationwide')),
+            (string) ($row['coverage_type'] ?? ''),
+            json_encode($row['coverage_ids'] ?? [], JSON_UNESCAPED_UNICODE),
+            (string) ((int) ($row['company_id'] ?? 0)),
+            (string) ((int) ($row['branch_id'] ?? 0)),
+            (string) ((int) ($row['department_id'] ?? 0)),
+            (string) ((int) ($row['employee_id'] ?? 0)),
+        ]);
+    }
+
+    private function upcomingHolidaySourceRank(array $row): int
+    {
+        return match (strtolower((string) ($row['source'] ?? 'custom'))) {
+            'custom' => 30,
+            'recurring' => 20,
+            'seeded' => 10,
+            default => 0,
+        };
+    }
+
+    /**
+     * @return array{multiplier: ?float, pay_rate_multiplier: ?float, multiplier_label: string, multiplier_source: string}
+     */
+    private function resolveUpcomingHolidayMultiplier(array $row): array
+    {
+        foreach (['pay_rate_multiplier', 'multiplier', 'premium_multiplier'] as $field) {
+            if (isset($row[$field]) && is_numeric($row[$field])) {
+                $value = (float) $row[$field];
+                if ($value > 0) {
+                    return [
+                        'multiplier' => $value,
+                        'pay_rate_multiplier' => $value,
+                        'multiplier_label' => $this->formatHolidayMultiplierLabel($value),
+                        'multiplier_source' => 'holiday_module',
+                    ];
+                }
+            }
+        }
+
+        $type = strtolower((string) ($row['type'] ?? ''));
+        $fallback = match ($type) {
+            'regular' => 2.0,
+            'special', 'special_non_working' => 1.3,
+            default => null,
+        };
+
+        if ($fallback !== null) {
+            return [
+                'multiplier' => $fallback,
+                'pay_rate_multiplier' => $fallback,
+                'multiplier_label' => $this->formatHolidayMultiplierLabel($fallback),
+                'multiplier_source' => 'fallback',
+            ];
+        }
+
+        return [
+            'multiplier' => null,
+            'pay_rate_multiplier' => null,
+            'multiplier_label' => '-',
+            'multiplier_source' => 'none',
+        ];
+    }
+
+    private function formatHolidayMultiplierLabel(float $multiplier): string
+    {
+        if ($multiplier <= 0) {
+            return '-';
+        }
+
+        $pct = $multiplier <= 3
+            ? (int) round($multiplier * 100)
+            : (int) round($multiplier);
+
+        return $pct.'%';
     }
 
     private function holidayDaysRemainingLabel(int $daysRemaining, bool $isToday): string
