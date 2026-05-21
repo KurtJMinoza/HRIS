@@ -579,10 +579,12 @@ class OvertimeController extends Controller
                 if ($overtime->first_approver_id === null) {
                     $overtime->first_approver_id = $actor->id;
                 }
-                $overtime->first_approved_at = now();
-                $overtime->approval_stage = $nextPending?->approver_role === \App\Enums\HrRole::AdminHr->value
-                    ? HrApprovalStages::PENDING_SECOND
-                    : HrApprovalStages::PENDING_FIRST;
+                if ($nextPending?->approver_role === \App\Enums\HrRole::AdminHr->value) {
+                    $overtime->first_approved_at = now();
+                    $overtime->approval_stage = HrApprovalStages::PENDING_SECOND;
+                } else {
+                    $overtime->approval_stage = HrApprovalStages::PENDING_FIRST;
+                }
                 if ($remarks !== null && $remarks !== '') {
                     $overtime->remarks = $remarks;
                 }

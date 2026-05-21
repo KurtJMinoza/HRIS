@@ -391,7 +391,7 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                           )}
                           {conflict && (
                             <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
-                              🔴 {conflict}
+                              {conflict}
                             </span>
                           )}
                         </div>
@@ -416,7 +416,7 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                 </Button>
               </div>
             )}
-            <p className="mt-1 text-xs text-muted-foreground">Type to search. Employees already assigned elsewhere are shown but cannot be selected.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Type to search. Employees already Company Head of another company cannot be selected.</p>
           </div>
           </div>
           <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>

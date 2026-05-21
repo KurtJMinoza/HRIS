@@ -812,9 +812,6 @@ class User extends Authenticatable
             if ($division?->branch) {
                 return $division->branch->company_id;
             }
-            if ($division?->department?->branch) {
-                return $division->department->branch->company_id;
-            }
         }
         if ($this->section_unit_id) {
             $section = $this->sectionUnit;
@@ -829,8 +826,7 @@ class User extends Authenticatable
             }
             if ($section?->division) {
                 return $section->division->company_id
-                    ?? $section->division->branch?->company_id
-                    ?? $section->division->department?->branch?->company_id;
+                    ?? $section->division->branch?->company_id;
             }
         }
 
@@ -869,6 +865,18 @@ class User extends Authenticatable
     public function team(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(Team::class);
+    }
+
+    public function teamLeaderDepartments(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Department::class, 'department_team_leaders', 'employee_id', 'department_id')
+            ->withTimestamps();
+    }
+
+    public function teamLeaderSections(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(SectionUnit::class, 'section_unit_team_leaders', 'employee_id', 'section_unit_id')
+            ->withTimestamps();
     }
 
     public function workingSchedule(): \Illuminate\Database\Eloquent\Relations\BelongsTo

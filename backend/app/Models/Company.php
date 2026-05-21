@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 class Company extends Model
 {
@@ -64,9 +63,9 @@ class Company extends Model
         return $this->hasMany(User::class, 'company_id');
     }
 
-    public function departments(): HasManyThrough
+    public function departments(): HasMany
     {
-        return $this->hasManyThrough(Department::class, Branch::class);
+        return $this->hasMany(Department::class, 'company_id');
     }
 
     public function payCycles(): HasMany

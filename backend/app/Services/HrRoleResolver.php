@@ -72,7 +72,7 @@ class HrRoleResolver
     }
 
     /**
-     * Company head > branch head > department head > division head > section/unit head > employee.
+     * Company head > branch head > division head > department head > section/unit head > employee.
      * Non-employee users without an org hat resolve as Employee (legacy).
      */
     private function resolveOrgHierarchyRole(User $user): HrRole
@@ -89,7 +89,7 @@ class HrRoleResolver
     }
 
     /**
-     * Company head > branch head > department head > division head > section/unit head > employee.
+     * Company head > branch head > division head > department head > section/unit head > employee.
      */
     private function resolveOrgHierarchyFromAssignments(User $user): HrRole
     {
@@ -107,18 +107,6 @@ class HrRoleResolver
             return HrRole::BranchHead;
         }
 
-        if ($user->relationLoaded('managedDepartment') && $user->managedDepartment !== null) {
-            return HrRole::DepartmentHead;
-        }
-        if ($user->relationLoaded('departmentRelation')
-            && $user->departmentRelation
-            && (int) $user->departmentRelation->department_head_id === (int) $user->id) {
-            return HrRole::DepartmentHead;
-        }
-        if (Department::where('department_head_id', $user->id)->exists()) {
-            return HrRole::DepartmentHead;
-        }
-
         if ($user->relationLoaded('managedDivision') && $user->managedDivision !== null) {
             return HrRole::DivisionHead;
         }
@@ -131,6 +119,18 @@ class HrRoleResolver
             return HrRole::DivisionHead;
         }
 
+        if ($user->relationLoaded('managedDepartment') && $user->managedDepartment !== null) {
+            return HrRole::DepartmentHead;
+        }
+        if ($user->relationLoaded('departmentRelation')
+            && $user->departmentRelation
+            && (int) $user->departmentRelation->department_head_id === (int) $user->id) {
+            return HrRole::DepartmentHead;
+        }
+        if (Department::where('department_head_id', $user->id)->exists()) {
+            return HrRole::DepartmentHead;
+        }
+
         if ($user->relationLoaded('managedSectionUnit') && $user->managedSectionUnit !== null) {
             return HrRole::SectionUnitHead;
         }
@@ -140,6 +140,9 @@ class HrRoleResolver
             return HrRole::SectionUnitHead;
         }
         if (SectionUnit::where('section_unit_head_id', $user->id)->exists()) {
+            return HrRole::SectionUnitHead;
+        }
+        if ($user->teamLeaderSections()->exists() || $user->teamLeaderDepartments()->exists()) {
             return HrRole::SectionUnitHead;
         }
 
@@ -156,7 +159,9 @@ class HrRoleResolver
             || Branch::where('branch_manager_id', $user->id)->exists()
             || Department::where('department_head_id', $user->id)->exists()
             || Division::where('division_head_id', $user->id)->exists()
-            || SectionUnit::where('section_unit_head_id', $user->id)->exists();
+            || SectionUnit::where('section_unit_head_id', $user->id)->exists()
+            || $user->teamLeaderSections()->exists()
+            || $user->teamLeaderDepartments()->exists();
     }
 
     /**

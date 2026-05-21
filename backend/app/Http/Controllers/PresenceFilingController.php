@@ -868,10 +868,12 @@ class PresenceFilingController extends Controller
                 if ($correction->first_approver_id === null) {
                     $correction->first_approver_id = $actor->id;
                 }
-                $correction->first_approved_at = now();
-                $correction->approval_stage = $nextPending?->approver_role === HrRole::AdminHr->value
-                    ? AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND
-                    : AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
+                if ($nextPending?->approver_role === HrRole::AdminHr->value) {
+                    $correction->first_approved_at = now();
+                    $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND;
+                } else {
+                    $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
+                }
                 $correction->save();
 
                 AttendanceCorrectionAudit::create([

@@ -269,18 +269,13 @@ class BranchController extends Controller
     }
 
     /**
-     * Ensure the employee is not already Company Head or Branch Manager elsewhere.
+     * Prevent the same employee from managing more than one branch at a time.
      * excludeBranchId: when editing, the current branch is excluded so the existing manager can stay.
      */
     private function validateBranchManagerExclusive(?int $userId, ?int $excludeBranchId): void
     {
         if ($userId === null) {
             return;
-        }
-        if (\App\Models\Company::where('company_head_id', $userId)->exists()) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
-                'branch_manager_id' => ['This employee is already assigned as Company Head and cannot also serve as Branch Manager.'],
-            ]);
         }
         $query = Branch::where('branch_manager_id', $userId);
         if ($excludeBranchId !== null) {

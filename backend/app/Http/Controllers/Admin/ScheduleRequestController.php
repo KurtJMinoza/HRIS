@@ -8,6 +8,7 @@ use App\Models\ScheduleRequestApprovalAudit;
 use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\ScheduleApprovalService;
 use App\Services\ScheduleRequestPayloadService;
 use App\Services\UserScheduleAssignmentService;
@@ -23,6 +24,7 @@ class ScheduleRequestController extends MyScheduleController
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly ScheduleApprovalService $approvalService,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly HrRoleResolver $roleResolver,
         private readonly UserScheduleAssignmentService $assignmentService,
         \App\Services\HrApprovalChainResolver $approvalChainResolver,
@@ -88,23 +90,80 @@ class ScheduleRequestController extends MyScheduleController
         }
 
         $remarks = isset($validated['remarks']) ? trim((string) $validated['remarks']) : null;
-        $stage = $scheduleRequest->approval_stage ?? HrApprovalStages::PENDING_FIRST;
-        $action = 'approve_first';
+        $employee = $scheduleRequest->user;
+        if (! $employee) {
+            throw ValidationException::withMessages(['request' => ['Employee not found for this schedule request.']]);
+        }
 
-        DB::transaction(function () use (&$scheduleRequest, $actor, $stage, &$action) {
+        $currentApproval = $this->approvalWorkflowService->currentPendingRecord(
+            $scheduleRequest,
+            OrgApprovalWorkflowService::MODULE_SCHEDULE,
+            $employee,
+            $scheduleRequest->filedBy,
+        );
+        $isHrFinalStep = $currentApproval?->approver_role === \App\Enums\HrRole::AdminHr->value;
+        $action = $isHrFinalStep ? 'approve_final' : 'approve_first';
+
+        if (! $isHrFinalStep) {
+            $nextPending = DB::transaction(function () use ($scheduleRequest, $actor, $remarks, $employee) {
+                $nextPending = $this->approvalWorkflowService->approveCurrent(
+                    $scheduleRequest,
+                    OrgApprovalWorkflowService::MODULE_SCHEDULE,
+                    $employee,
+                    $actor,
+                    $remarks,
+                    $scheduleRequest->filedBy,
+                );
+
+                $locked = ScheduleRequest::query()->lockForUpdate()->findOrFail($scheduleRequest->id);
+                if ($locked->first_approver_id === null) {
+                    $locked->first_approver_id = $actor->id;
+                }
+                if ($nextPending?->approver_role === \App\Enums\HrRole::AdminHr->value) {
+                    $locked->first_approved_at = now();
+                    $locked->approval_stage = HrApprovalStages::PENDING_SECOND;
+                } else {
+                    $locked->approval_stage = HrApprovalStages::PENDING_FIRST;
+                }
+                $locked->save();
+                $scheduleRequest->setRawAttributes($locked->getAttributes());
+
+                return $nextPending;
+            });
+
+            ScheduleRequestApprovalAudit::create([
+                'schedule_request_id' => $scheduleRequest->id,
+                'actor_id' => $actor->id,
+                'employee_id' => $scheduleRequest->user_id,
+                'action' => $action,
+                'details' => $remarks,
+                'approver_role' => $this->roleResolver->resolve($actor)->value,
+            ]);
+
+            $nextLabel = $nextPending?->approver_role
+                ? (\App\Enums\HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
+                : 'next approver';
+
+            $scheduleRequest->load($this->requestRelations());
+
+            return response()->json([
+                'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
+                'request' => $this->mapScheduleRequestRow($scheduleRequest, $actor),
+            ]);
+        }
+
+        DB::transaction(function () use (&$scheduleRequest, $actor, $remarks, $employee) {
+            $this->approvalWorkflowService->approveCurrent(
+                $scheduleRequest,
+                OrgApprovalWorkflowService::MODULE_SCHEDULE,
+                $employee,
+                $actor,
+                $remarks,
+                $scheduleRequest->filedBy,
+            );
+
             /** @var ScheduleRequest $locked */
             $locked = ScheduleRequest::query()->with($this->requestRelations())->lockForUpdate()->findOrFail($scheduleRequest->id);
-
-            if ($stage === HrApprovalStages::PENDING_FIRST) {
-                $locked->first_approver_id = $actor->id;
-                $locked->first_approved_at = now();
-                $locked->approval_stage = HrApprovalStages::PENDING_SECOND;
-                $locked->save();
-                $scheduleRequest = $locked;
-
-                return;
-            }
-
             $locked->second_approver_id = $actor->id;
             $locked->second_approved_at = now();
             $locked->approval_stage = HrApprovalStages::APPROVED;
@@ -114,7 +173,6 @@ class ScheduleRequestController extends MyScheduleController
             $this->finalizeCustomScheduleIfNeeded($locked);
             $locked->save();
 
-            // Force fresh relation reload (loadMissing would keep the stale pre-approval null relation).
             $locked->unsetRelation('workingSchedule');
             $locked->load('workingSchedule');
             if (! $locked->workingSchedule) {
@@ -123,24 +181,24 @@ class ScheduleRequestController extends MyScheduleController
                 ]);
             }
 
-            $employee = $locked->user()->firstOrFail();
+            $employeeModel = $locked->user()->firstOrFail();
             $tz = config('attendance.timezone', 'Asia/Manila');
             $effectiveSource = $locked->effective_from ?? $locked->created_at;
             $effective = Carbon::parse($effectiveSource)->timezone($tz)->startOfDay();
             $today = Carbon::now($tz)->startOfDay();
             if ($effective->lte($today)) {
-                $this->assignmentService->assign($employee, $locked->workingSchedule);
-                $employee->forceFill([
+                $this->assignmentService->assign($employeeModel, $locked->workingSchedule);
+                $employeeModel->forceFill([
                     'pending_working_schedule_id' => null,
                     'pending_schedule_effective_from' => null,
                 ])->save();
             } else {
-                $employee->forceFill([
+                $employeeModel->forceFill([
                     'pending_working_schedule_id' => $locked->working_schedule_id,
                     'pending_schedule_effective_from' => $locked->effective_from,
                 ])->save();
             }
-            $action = 'approve_final';
+
             $scheduleRequest = $locked;
         });
 
@@ -156,7 +214,7 @@ class ScheduleRequestController extends MyScheduleController
         $scheduleRequest->load($this->requestRelations());
 
         return response()->json([
-            'message' => $action === 'approve_final' ? 'Schedule request approved and assigned.' : 'Schedule request advanced to HR approval.',
+            'message' => 'Schedule request approved and assigned.',
             'request' => $this->mapScheduleRequestRow($scheduleRequest, $actor),
         ]);
     }
@@ -180,6 +238,18 @@ class ScheduleRequestController extends MyScheduleController
         }
 
         $remarks = trim((string) $validated['remarks']);
+        $employee = $scheduleRequest->user;
+        if ($employee) {
+            $this->approvalWorkflowService->rejectCurrent(
+                $scheduleRequest,
+                OrgApprovalWorkflowService::MODULE_SCHEDULE,
+                $employee,
+                $actor,
+                $remarks,
+                $scheduleRequest->filedBy,
+            );
+        }
+
         $scheduleRequest->status = ScheduleRequest::STATUS_REJECTED;
         $scheduleRequest->approval_stage = HrApprovalStages::REJECTED;
         $scheduleRequest->pending_approval = false;

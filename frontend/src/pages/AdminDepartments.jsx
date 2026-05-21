@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from '@/components/ui/sheet'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { getDepartments, createDepartment, updateDepartment, deleteDepartment, assignEmployeesToDepartment, unassignEmployeesFromDepartment, getEmployees, getDepartmentEmployees, getBranches, getCompanies, departmentLogoUrl, profileImageUrl } from '@/api'
+import { getDepartments, createDepartment, updateDepartment, deleteDepartment, assignEmployeesToDepartment, unassignEmployeesFromDepartment, getEmployees, getDepartmentEmployees, getBranches, getCompanies, getDivisions, departmentLogoUrl, profileImageUrl } from '@/api'
 import { RoleBadge } from '@/components/RoleBadge'
 import { useToast } from '@/components/ui/use-toast'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
@@ -97,6 +97,7 @@ export default function AdminDepartments() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [departments, setDepartments] = useState([])
+  const [divisions, setDivisions] = useState([])
   const [branches, setBranches] = useState([])
   const [companies, setCompanies] = useState([])
   const [employees, setEmployees] = useState([])
@@ -110,6 +111,7 @@ export default function AdminDepartments() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createBranchId, setCreateBranchId] = useState('')
+  const [createDivisionId, setCreateDivisionId] = useState('')
   const [createOfficeLocation, setCreateOfficeLocation] = useState('')
   const [createSubmitting, setCreateSubmitting] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
@@ -137,6 +139,15 @@ export default function AdminDepartments() {
   const [headModalLoading, setHeadModalLoading] = useState(false)
   const [headModalLoadError, setHeadModalLoadError] = useState(null)
   const headLoadSeqRef = useRef(0)
+
+  const [teamLeadersOpen, setTeamLeadersOpen] = useState(false)
+  const [teamLeadersDepartment, setTeamLeadersDepartment] = useState(null)
+  const [teamLeaderIds, setTeamLeaderIds] = useState([])
+  const [teamLeadersSubmitting, setTeamLeadersSubmitting] = useState(false)
+  const [teamLeadersModalEmployees, setTeamLeadersModalEmployees] = useState([])
+  const [teamLeadersModalLoading, setTeamLeadersModalLoading] = useState(false)
+  const [teamLeadersModalLoadError, setTeamLeadersModalLoadError] = useState(null)
+  const teamLeadersLoadSeqRef = useRef(0)
 
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignDepartment, setAssignDepartment] = useState(null)
@@ -202,6 +213,18 @@ export default function AdminDepartments() {
     }
   }, [])
 
+  const fetchDivisions = useCallback(async () => {
+    try {
+      const params = {}
+      if (branchFilter) params.branch_id = branchFilter
+      if (companyFilter) params.company_id = companyFilter
+      const data = await getDivisions(params)
+      setDivisions(data.divisions || [])
+    } catch {
+      setDivisions([])
+    }
+  }, [branchFilter, companyFilter])
+
   const fetchDepartments = useCallback(async () => {
     setError(null)
     try {
@@ -245,7 +268,7 @@ export default function AdminDepartments() {
   // Run branches + departments + companies in parallel on mount; employees deferred until modal
   useEffect(() => {
     setLoading(true)
-    Promise.all([fetchDepartments(), fetchBranches(), fetchCompanies()])
+    Promise.all([fetchDepartments(), fetchDivisions(), fetchBranches(), fetchCompanies()])
   }, []) // eslint-disable-line react-hooks/exhaustive-deps -- intentional one-time mount fetch
 
   // Re-fetch departments when filters change (after initial mount)
@@ -280,8 +303,8 @@ export default function AdminDepartments() {
       toast({ title: 'Invalid department name', description: nameError, variant: 'error' })
       return
     }
-    if (!createBranchId) {
-      toast({ title: 'Please select a branch', variant: 'error' })
+    if (!createDivisionId) {
+      toast({ title: 'Please select a division', variant: 'error' })
       return
     }
     setCreateSubmitting(true)
@@ -289,7 +312,8 @@ export default function AdminDepartments() {
     try {
       const data = await createDepartment({
         name: createName.trim(),
-        branch_id: parseInt(createBranchId, 10),
+        division_id: parseInt(createDivisionId, 10),
+        branch_id: createBranchId ? parseInt(createBranchId, 10) : undefined,
         office_location: createOfficeLocation.trim() || undefined,
         description: createDescription.trim() || undefined,
       })
@@ -307,6 +331,7 @@ export default function AdminDepartments() {
       }
       setCreateName('')
       setCreateBranchId('')
+      setCreateDivisionId('')
       setCreateOfficeLocation('')
       setCreateDescription('')
       setCreateOpen(false)
@@ -518,6 +543,112 @@ export default function AdminDepartments() {
       }
     }
   }, [])
+
+  const loadTeamLeaderCandidates = useCallback(async (dept) => {
+    if (dept?.id == null) return
+    teamLeadersLoadSeqRef.current += 1
+    const seq = teamLeadersLoadSeqRef.current
+    const resolvedDeptId = dept.id
+    setTeamLeadersModalEmployees([])
+    setTeamLeadersModalLoadError(null)
+    setTeamLeadersModalLoading(true)
+    try {
+      const data = await getEmployees({
+        department_id: resolvedDeptId,
+        for_schedule_assignment: true,
+        fresh: true,
+      })
+      if (seq !== teamLeadersLoadSeqRef.current) return
+      let list = (data.employees || []).filter((e) => {
+        if (!isRosterStaffMember(e)) return false
+        if (!sameUserId(e.department_id, resolvedDeptId)) return false
+        const isSelected =
+          (dept.team_leader_ids || []).some((id) => sameUserId(id, e.id))
+          || (dept.department_head_id != null && sameUserId(e.id, dept.department_head_id))
+        if (!isSelected && e.is_active === false) return false
+        if (
+          dept.branch_id != null &&
+          dept.branch_id !== '' &&
+          e.branch_id != null &&
+          String(e.branch_id) !== String(dept.branch_id)
+        ) {
+          return false
+        }
+        if (
+          dept.company_id != null &&
+          dept.company_id !== '' &&
+          e.company_id != null &&
+          Number(e.company_id) !== Number(dept.company_id)
+        ) {
+          return false
+        }
+        return true
+      })
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+
+      if (dept.department_head_id && !list.some((e) => sameUserId(e.id, dept.department_head_id))) {
+        const headEmp = (data.employees || []).find((e) => sameUserId(e.id, dept.department_head_id) && isRosterStaffMember(e))
+        if (headEmp) {
+          list.unshift(headEmp)
+        } else if (dept.department_head_name) {
+          list.unshift({
+            id: dept.department_head_id,
+            name: dept.department_head_name,
+            profile_image_url: dept.department_head_profile_image,
+            is_active: true,
+          })
+        }
+      }
+
+      setTeamLeadersModalEmployees(list)
+    } catch (err) {
+      if (seq !== teamLeadersLoadSeqRef.current) return
+      setTeamLeadersModalEmployees([])
+      setTeamLeadersModalLoadError(err?.message || 'Could not load employees for this department.')
+    } finally {
+      if (seq === teamLeadersLoadSeqRef.current) {
+        setTeamLeadersModalLoading(false)
+      }
+    }
+  }, [])
+
+  const openTeamLeadersDialog = (dept) => {
+    if (dept?.id == null) return
+    setTeamLeadersDepartment(dept)
+    setTeamLeaderIds((dept.team_leader_ids || []).map((id) => String(id)))
+    setTeamLeadersModalEmployees([])
+    setTeamLeadersModalLoadError(null)
+    setTeamLeadersOpen(true)
+    void loadTeamLeaderCandidates(dept)
+  }
+
+  const toggleTeamLeaderId = (id) => {
+    setTeamLeaderIds((prev) =>
+      prev.some((x) => sameUserId(x, id)) ? prev.filter((x) => !sameUserId(x, id)) : [...prev, String(id)]
+    )
+  }
+
+  const handleAssignTeamLeaders = async (e) => {
+    e.preventDefault()
+    if (!teamLeadersDepartment) return
+    setTeamLeadersSubmitting(true)
+    try {
+      const data = await updateDepartment(teamLeadersDepartment.id, {
+        team_leader_ids: teamLeaderIds.map((id) => parseInt(id, 10)),
+      })
+      const updated = data.department || data
+      setDepartments((prev) => prev.map((d) => (d.id === teamLeadersDepartment.id ? { ...d, ...updated } : d)))
+      setTeamLeadersOpen(false)
+      setTeamLeadersDepartment(null)
+      setTeamLeadersModalEmployees([])
+      setTeamLeadersModalLoadError(null)
+      toast({ title: 'Team leaders updated', variant: 'success' })
+    } catch (err) {
+      toast({ title: 'Cannot assign team leaders', description: err.message, variant: 'error' })
+    } finally {
+      setTeamLeadersSubmitting(false)
+    }
+  }
 
   const openHeadDialog = (dept) => {
     if (dept?.id == null) return
@@ -989,7 +1120,10 @@ export default function AdminDepartments() {
                       Company
                     </th>
                     <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
-                      Head
+                      Immediate Head
+                    </th>
+                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
+                      Team Leaders
                     </th>
                     <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       <button
@@ -1112,6 +1246,17 @@ export default function AdminDepartments() {
                           )}
                         </td>
 
+                        {/* Team Leaders */}
+                        <td className="px-5 py-4 align-middle">
+                          {dept.team_leader_display ? (
+                            <span className="max-w-[220px] text-sm font-medium text-foreground" title={dept.team_leader_names || dept.team_leader_display}>
+                              {dept.team_leader_display}
+                            </span>
+                          ) : (
+                            <span className="text-sm italic text-muted-foreground">Not assigned</span>
+                          )}
+                        </td>
+
                         {/* Employee stats + QR bar */}
                         <td className="px-5 py-4 align-middle">
                           <div className="space-y-1.5">
@@ -1200,7 +1345,10 @@ export default function AdminDepartments() {
                                   <Pencil className="size-4" /><span>Edit department</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openHeadDialog(dept)}>
-                                  <UserPlus className="size-4" /><span>Assign head</span>
+                                  <UserPlus className="size-4" /><span>Assign immediate head</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openTeamLeadersDialog(dept)}>
+                                  <Users className="size-4" /><span>Assign team leaders</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openAssignDialog(dept)}>
                                   <Users className="size-4" /><span>Assign employees</span>
@@ -1594,6 +1742,7 @@ export default function AdminDepartments() {
                                 type="button"
                                 onClick={() => {
                                   setCreateBranchId(String(b.id))
+                                  setCreateDivisionId('')
                                   setCreateBranchPickerOpen(false)
                                 }}
                                 className={cn(
@@ -1619,6 +1768,27 @@ export default function AdminDepartments() {
                       )}
                     </PopoverContent>
                   </Popover>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="dept-division" className="flex items-center gap-2 text-base font-semibold text-foreground">
+                    <span className="size-2.5 rounded-full bg-brand" />
+                    Division <span className="text-brand">*</span>
+                  </Label>
+                  <select
+                    id="dept-division"
+                    value={createDivisionId}
+                    onChange={(e) => setCreateDivisionId(e.target.value)}
+                    disabled={!createBranchId}
+                    required
+                    className="h-12 w-full rounded-xl border border-border/80 bg-background px-4 text-base shadow-sm dark:bg-input/35"
+                  >
+                    <option value="">{createBranchId ? 'Select division' : 'Select branch first'}</option>
+                    {divisions
+                      .filter((d) => createBranchId && String(d.branch_id ?? '') === String(createBranchId))
+                      .map((d) => (
+                        <option key={d.id} value={String(d.id)}>{d.name}</option>
+                      ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="dept-office-location" className="text-base font-semibold text-foreground">
@@ -2075,14 +2245,10 @@ export default function AdminDepartments() {
               ) : (() => {
                 const listEmps = headModalEmployees
                 const currentHeadId = headDepartment?.department_head_id
+                const multiHeadInfo = 'This employee is already assigned to another head role, but multiple leadership assignments are allowed.'
 
                 const ineligibleReason = new Map()
-                for (const c of companies) {
-                  if (c.company_head_id) ineligibleReason.set(String(c.company_head_id), `Company Head — ${c.name || 'Company'}`)
-                }
-                for (const b of branches) {
-                  if (b.branch_manager_id) ineligibleReason.set(String(b.branch_manager_id), `Branch Manager — ${b.name || 'Branch'}`)
-                }
+                const headRoleNote = new Map()
                 for (const d of departments) {
                   if (d.department_head_id && d.id !== headDepartment?.id) {
                     ineligibleReason.set(String(d.department_head_id), `Dept Head — ${d.name || 'Department'}`)
@@ -2096,6 +2262,16 @@ export default function AdminDepartments() {
                       const parts = [emp.company_name, emp.branch_name, emp.department].filter(Boolean)
                       ineligibleReason.set(empId, `Assigned: ${parts.join(' → ') || 'another company'}`)
                     }
+                  }
+                }
+                for (const c of companies) {
+                  if (c.company_head_id && !ineligibleReason.has(String(c.company_head_id))) {
+                    headRoleNote.set(String(c.company_head_id), `Company Head — ${c.name || 'Company'}`)
+                  }
+                }
+                for (const b of branches) {
+                  if (b.branch_manager_id && !ineligibleReason.has(String(b.branch_manager_id))) {
+                    headRoleNote.set(String(b.branch_manager_id), `Branch Manager — ${b.name || 'Branch'}`)
                   }
                 }
 
@@ -2128,6 +2304,7 @@ export default function AdminDepartments() {
                     {listEmps.map((emp) => {
                       const isCurrentHead = String(emp.id) === String(currentHeadId)
                       const reason = ineligibleReason.get(String(emp.id))
+                      const roleNote = headRoleNote.get(String(emp.id))
                       const isDisabled = !!reason && !isCurrentHead
                       return (
                       <label
@@ -2159,6 +2336,9 @@ export default function AdminDepartments() {
                           <p className="truncate text-xs text-muted-foreground">{emp.position || emp.employee_code || ''}</p>
                           {isDisabled && reason && (
                             <p className="mt-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400" title={reason}>{reason}</p>
+                          )}
+                          {!isDisabled && roleNote && (
+                            <p className="mt-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400" title={multiHeadInfo}>{roleNote}</p>
                           )}
                         </div>
                         {String(headId) === String(emp.id) && !isDisabled && (
@@ -2216,6 +2396,97 @@ export default function AdminDepartments() {
         footerStats={assignFooterStats}
         onGoEmployees={() => navigate('/admin/employees')}
       />
+
+
+      {/* Assign Team Leaders */}
+      <Dialog
+        open={teamLeadersOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            teamLeadersLoadSeqRef.current += 1
+            setTeamLeadersOpen(false)
+            setTeamLeadersDepartment(null)
+            setTeamLeaderIds([])
+            setTeamLeadersModalEmployees([])
+            setTeamLeadersModalLoadError(null)
+          }
+        }}
+      >
+        <DialogContent
+          showCloseButton
+          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
+          aria-describedby="dept-team-leaders-desc"
+        >
+          <form onSubmit={handleAssignTeamLeaders} className="flex min-h-0 flex-1 flex-col">
+            <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
+              <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
+                <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Assign Team Leaders</DialogTitle>
+                <p id="dept-team-leaders-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
+                  {teamLeadersDepartment && (
+                    <>Select one or more team leaders for <strong className="font-extrabold uppercase text-brand">{teamLeadersDepartment.name}</strong>. The immediate head may also be a team leader.</>
+                  )}
+                </p>
+              </DialogHeader>
+            </div>
+            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'min-h-0 flex-1 space-y-4')}>
+              {teamLeadersModalLoading ? (
+                <div className="flex items-center justify-center gap-2 rounded-xl border border-border/70 py-10 text-sm text-muted-foreground dark:bg-input/20">
+                  <Loader2 className="size-5 animate-spin shrink-0 text-brand" />
+                  Loading department members…
+                </div>
+              ) : teamLeadersModalLoadError ? (
+                <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  <p>{teamLeadersModalLoadError}</p>
+                  <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => teamLeadersDepartment && loadTeamLeaderCandidates(teamLeadersDepartment)}>
+                    Try again
+                  </Button>
+                </div>
+              ) : (
+                <div className="max-h-[min(48vh,24rem)] overflow-y-auto rounded-xl border border-border/80 dark:border-border/70">
+                  {teamLeadersModalEmployees.length === 0 ? (
+                    <p className="px-3 py-4 text-center text-sm text-muted-foreground">No employees assigned to this department yet.</p>
+                  ) : (
+                    teamLeadersModalEmployees.map((emp) => {
+                      const checked = teamLeaderIds.some((id) => sameUserId(id, emp.id))
+                      return (
+                        <label
+                          key={emp.id}
+                          className={cn(
+                            'flex cursor-pointer items-center gap-4 border-t border-border/70 bg-background px-4 py-3 transition-colors hover:bg-muted/40 dark:border-border/60 dark:bg-input/20 dark:hover:bg-white/5',
+                            checked && 'bg-brand/5 dark:bg-brand/10',
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleTeamLeaderId(emp.id)}
+                            className="size-5 accent-orange-600"
+                          />
+                          <Avatar className="size-12 shrink-0">
+                            <AvatarImage src={profileImageUrl(emp.profile_image_url || emp.profile_image)} alt={emp.name} />
+                            <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">{initials(emp.name)}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-base font-extrabold text-foreground">{emp.name}</p>
+                            <p className="truncate text-xs text-muted-foreground">{emp.position || emp.employee_code || ''}</p>
+                          </div>
+                        </label>
+                      )
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
+              <Button type="button" variant="outline" className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted" onClick={() => setTeamLeadersOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={teamLeadersSubmitting || teamLeadersModalLoading} className="h-11 min-w-[130px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
+                {teamLeadersSubmitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
 
       {/* Delete confirmation */}

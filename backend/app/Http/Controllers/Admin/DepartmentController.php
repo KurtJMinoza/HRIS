@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\OrgHierarchyNormalizer;
+use App\Services\OrgTeamLeaderService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,6 +18,8 @@ class DepartmentController extends Controller
 {
     public function __construct(
         private readonly DataScopeService $dataScopeService,
+        private readonly OrgHierarchyNormalizer $orgHierarchyNormalizer,
+        private readonly OrgTeamLeaderService $orgTeamLeaderService,
     ) {}
 
     private const LOGO_DISK = 'public';
@@ -33,16 +37,25 @@ class DepartmentController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = Department::with('departmentHead:id,name,first_name,middle_name,last_name,suffix,profile_image')
+            ->with(['teamLeaders:id,name,first_name,middle_name,last_name,suffix,profile_image'])
             ->with('branch:id,name,company_id')
             ->with('branch.company:id,name,logo')
+            ->with('division:id,name,company_id,branch_id')
             ->withCount('employees');
 
         if ($request->filled('branch_id')) {
             $query->where('branch_id', $request->input('branch_id'));
         }
 
+        if ($request->filled('division_id')) {
+            $query->where('division_id', $request->input('division_id'));
+        }
+
         if ($request->filled('company_id')) {
-            $query->whereHas('branch', fn ($q) => $q->where('company_id', $request->input('company_id')));
+            $query->where(function ($q) use ($request): void {
+                $q->where('company_id', $request->input('company_id'))
+                    ->orWhereHas('branch', fn ($b) => $b->where('company_id', $request->input('company_id')));
+            });
         }
 
         $this->dataScopeService->restrictDepartmentQuery($request->user(), $query);
@@ -68,14 +81,17 @@ class DepartmentController extends Controller
                 'unique:departments,name',
                 "regex:/^[A-Za-z0-9\s\-']+$/",
             ],
-            'branch_id' => ['required', 'integer', 'exists:branches,id'],
+            'division_id' => ['required', 'integer', 'exists:divisions,id'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'office_location' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:500'],
         ], [
             'name.regex' => 'Department name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
         ]);
 
-        $branch = \App\Models\Branch::with('company')->findOrFail($validated['branch_id']);
+        [$companyId, $branchId, $divisionId] = $this->orgHierarchyNormalizer->normalizeDepartmentScope($validated);
+        $branch = \App\Models\Branch::with('company')->findOrFail($branchId);
         if (! $branch->company?->logo || trim((string) $branch->company->logo) === '') {
             throw ValidationException::withMessages([
                 'branch_id' => ['Please upload a Company logo before creating Branches and Departments.'],
@@ -84,7 +100,9 @@ class DepartmentController extends Controller
 
         $department = Department::create([
             'name' => $validated['name'],
-            'branch_id' => $validated['branch_id'],
+            'branch_id' => $branchId,
+            'company_id' => $companyId,
+            'division_id' => $divisionId,
             'office_location' => isset($validated['office_location']) && trim((string) $validated['office_location']) !== '' ? trim((string) $validated['office_location']) : null,
             'description' => isset($validated['description']) && trim((string) $validated['description']) !== '' ? trim((string) $validated['description']) : null,
             'logo' => null,
@@ -93,6 +111,7 @@ class DepartmentController extends Controller
         $department->load([
             'branch:id,name,company_id',
             'branch.company:id,name,logo',
+            'division:id,name,company_id,branch_id',
         ]);
         $department->loadCount('employees');
 
@@ -147,7 +166,11 @@ class DepartmentController extends Controller
                 "regex:/^[A-Za-z0-9\s\-']+$/",
             ],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'division_id' => ['nullable', 'integer', 'exists:divisions,id'],
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'department_head_id' => ['nullable', 'integer', 'exists:users,id'],
+            'team_leader_ids' => ['sometimes', 'array'],
+            'team_leader_ids.*' => ['integer', 'exists:users,id'],
             'office_location' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:500'],
         ], [
@@ -191,7 +214,14 @@ class DepartmentController extends Controller
             User::where('department_id', $department->id)->update(['department' => $department->name]);
         }
 
-        if (array_key_exists('branch_id', $validated)) {
+        if (array_key_exists('division_id', $validated) || array_key_exists('branch_id', $validated) || array_key_exists('company_id', $validated)) {
+            $merged = array_merge($department->only(['company_id', 'branch_id', 'division_id']), $validated);
+            [$companyId, $branchId, $divisionId] = $this->orgHierarchyNormalizer->normalizeDepartmentScope($merged);
+            $department->company_id = $companyId;
+            $department->branch_id = $branchId;
+            $department->division_id = $divisionId;
+            $department->save();
+        } elseif (array_key_exists('branch_id', $validated)) {
             $branch = \App\Models\Branch::with('company')->findOrFail($validated['branch_id']);
             if (! $branch->company?->logo || trim((string) $branch->company->logo) === '') {
                 throw ValidationException::withMessages([
@@ -199,6 +229,7 @@ class DepartmentController extends Controller
                 ]);
             }
             $department->branch_id = $validated['branch_id'];
+            $department->company_id = $branch->company_id;
             $department->save();
         }
 
@@ -228,8 +259,16 @@ class DepartmentController extends Controller
             $department->save();
         }
 
+        if (array_key_exists('team_leader_ids', $validated)) {
+            $this->orgTeamLeaderService->syncDepartmentTeamLeaders(
+                $department,
+                array_map('intval', $validated['team_leader_ids'] ?? []),
+            );
+        }
+
         $departmentFresh = $department->fresh([
             'departmentHead:id,name,profile_image',
+            'teamLeaders:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'branch:id,name,company_id',
             'branch.company:id,name,logo',
         ]);
@@ -307,9 +346,10 @@ class DepartmentController extends Controller
             ]);
         }
 
-        // Sync company_id + branch_id so Employee Profile → Employment Tab shows correct hierarchy
+        // Sync company_id + branch_id + division_id so Employee Profile → Employment Tab shows correct hierarchy
         $branchId = $department->branch_id;
-        $companyId = $department->branch?->company_id;
+        $companyId = $department->company_id ?? $department->branch?->company_id;
+        $divisionId = $department->division_id;
 
         User::whereIn('id', $validated['employee_ids'])
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
@@ -318,6 +358,7 @@ class DepartmentController extends Controller
                 'department' => $department->name,
                 'branch_id' => $branchId,
                 'company_id' => $companyId,
+                'division_id' => $divisionId,
             ]);
 
         return response()->json([
@@ -345,7 +386,7 @@ class DepartmentController extends Controller
         // Clear employment hierarchy so Employee Profile stays in sync (single source of truth)
         User::whereIn('id', $validated['employee_ids'])
             ->where('department_id', $id)
-            ->update(['department_id' => null, 'department' => null, 'branch_id' => null, 'company_id' => null]);
+            ->update(['department_id' => null, 'department' => null, 'division_id' => null, 'section_unit_id' => null, 'branch_id' => null, 'company_id' => null]);
 
         return response()->json([
             'message' => 'Employees unassigned successfully.',
@@ -390,8 +431,11 @@ class DepartmentController extends Controller
             'name' => $d->name,
             'branch_id' => $d->branch_id,
             'branch_name' => $d->branch?->name,
-            'company_id' => $d->branch?->company?->id,
+            'company_id' => $d->company_id ?? $d->branch?->company?->id,
             'company_name' => $d->branch?->company?->name,
+            'division_id' => $d->division_id,
+            'division_name' => $d->division?->name,
+            'hierarchy_mismatch' => (bool) ($d->hierarchy_mismatch ?? false),
             'office_location' => $d->office_location,
             'description' => $d->description,
             'logo' => $companyLogo,
@@ -400,6 +444,7 @@ class DepartmentController extends Controller
             'department_head_id' => $d->department_head_id,
             'department_head_name' => $d->departmentHead?->display_name,
             'department_head_profile_image' => $d->departmentHead?->profile_image_url ?? null,
+            ...$this->orgTeamLeaderService->departmentTeamLeaderPayload($d),
             'created_at' => $d->created_at?->toIso8601String(),
         ];
     }
@@ -457,21 +502,11 @@ class DepartmentController extends Controller
     }
 
     /**
-     * Ensure the employee is not Company Head, Branch Manager, or Department Head elsewhere.
+     * Prevent the same employee from leading more than one department at a time.
      * excludeDepartmentId: when editing, the current department is excluded so the existing head can stay.
      */
     private function validateDepartmentHeadExclusive(int $userId, ?int $excludeDepartmentId): void
     {
-        if (\App\Models\Company::where('company_head_id', $userId)->exists()) {
-            throw ValidationException::withMessages([
-                'department_head_id' => ['This employee is already Company Head and cannot also serve as Department Head.'],
-            ]);
-        }
-        if (\App\Models\Branch::where('branch_manager_id', $userId)->exists()) {
-            throw ValidationException::withMessages([
-                'department_head_id' => ['This employee is already Branch Manager and cannot also serve as Department Head.'],
-            ]);
-        }
         $query = Department::where('department_head_id', $userId);
         if ($excludeDepartmentId !== null) {
             $query->where('id', '!=', $excludeDepartmentId);

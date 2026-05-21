@@ -158,10 +158,9 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
               {filtered.map((emp, idx) => {
                 const branchAssignment = branchManagerMap.get(String(emp.id))
                 const companyHeadOf = companyHeadMap.get(String(emp.id))
-                // Cross-company: employee has a company_id that doesn't match the target branch's company
-                const inDifferentCompany = !companyHeadOf && !branchAssignment
+                const inDifferentCompany = !branchAssignment
                   && emp.company_id && companyId && Number(emp.company_id) !== Number(companyId)
-                const isDisabled = !!branchAssignment || !!companyHeadOf || !!inDifferentCompany
+                const isDisabled = !!branchAssignment || !!inDifferentCompany
                 const crossCompanyLabel = inDifferentCompany
                   ? [emp.company_name, emp.branch_name, emp.department].filter(Boolean).join(' -> ') || 'Another company'
                   : null
@@ -172,12 +171,12 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
                     disabled={isDisabled}
                     onClick={() => { if (!isDisabled) { onChange(String(emp.id)); setOpen(false) } }}
                     title={
-                      companyHeadOf
-                        ? `Company Head of ${companyHeadOf}`
-                        : branchAssignment
+                      branchAssignment
                         ? `Assigned to ${branchAssignment.companyName} -> ${branchAssignment.branchName}`
                         : crossCompanyLabel
                         ? `Assigned to ${crossCompanyLabel}`
+                        : companyHeadOf
+                        ? `Also Company Head of ${companyHeadOf}. Multiple leadership assignments are allowed.`
                         : undefined
                     }
                     className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${!isDisabled ? 'hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer' : 'opacity-60 cursor-not-allowed'} ${value === String(emp.id) ? 'bg-slate-100 dark:bg-slate-800/60 dark:border-l-2 dark:border-l-teal-500' : ''} ${idx % 2 === 1 ? 'dark:bg-slate-900/30' : ''}`}
@@ -194,8 +193,8 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
                         {emp.position || emp.department || '-'}
                       </p>
                       {companyHeadOf && (
-                        <Badge variant="secondary" className="mt-1 h-5 text-[10px] bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300 border-0">
-                          Company Head - {companyHeadOf}
+                        <Badge variant="secondary" className="mt-1 h-5 text-[10px] bg-amber-500/20 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 border-0">
+                          Company Head — {companyHeadOf}
                         </Badge>
                       )}
                       {!companyHeadOf && branchAssignment && (

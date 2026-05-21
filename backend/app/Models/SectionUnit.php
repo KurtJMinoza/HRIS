@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class SectionUnit extends Model
@@ -48,6 +49,14 @@ class SectionUnit extends Model
     public function sectionUnitHead(): BelongsTo
     {
         return $this->belongsTo(User::class, 'section_unit_head_id');
+    }
+
+    public function teamLeaders(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'section_unit_team_leaders', 'section_unit_id', 'employee_id')
+            ->withTimestamps()
+            ->orderBy('users.last_name')
+            ->orderBy('users.first_name');
     }
 
     public function employees(): HasMany

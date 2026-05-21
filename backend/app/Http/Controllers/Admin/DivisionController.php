@@ -10,6 +10,8 @@ use App\Models\Division;
 use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\OrgHierarchyNormalizer;
+use App\Services\OrgUnitEmployeeCountService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,6 +22,8 @@ class DivisionController extends Controller
 {
     public function __construct(
         private readonly DataScopeService $dataScopeService,
+        private readonly OrgUnitEmployeeCountService $orgUnitEmployeeCountService,
+        private readonly OrgHierarchyNormalizer $orgHierarchyNormalizer,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -28,19 +32,15 @@ class DivisionController extends Controller
             ->with([
                 'company:id,name,logo',
                 'branch:id,name,company_id',
-                'department:id,name,branch_id',
                 'divisionHead:id,name,first_name,middle_name,last_name,suffix,profile_image',
             ])
-            ->withCount(['employees', 'sectionsOrUnits']);
+            ->withCount(['employees', 'sectionsOrUnits', 'departments']);
 
         if ($request->filled('company_id')) {
             $query->where('company_id', (int) $request->input('company_id'));
         }
         if ($request->filled('branch_id')) {
             $query->where('branch_id', (int) $request->input('branch_id'));
-        }
-        if ($request->filled('department_id')) {
-            $query->where('department_id', (int) $request->input('department_id'));
         }
         if ($request->filled('status')) {
             $query->where('status', $request->input('status'));
@@ -55,24 +55,31 @@ class DivisionController extends Controller
 
         $this->dataScopeService->restrictDivisionQuery($request->user(), $query);
 
+        $divisions = $query->orderBy('name')->get();
+        $countsById = $this->orgUnitEmployeeCountService->forDivisions($divisions);
+
         return response()->json([
-            'divisions' => $query->orderBy('name')->get()->map(fn (Division $division) => $this->divisionResponse($division)),
+            'divisions' => $divisions->map(
+                fn (Division $division) => $this->divisionResponse(
+                    $division,
+                    $countsById[(int) $division->id] ?? null,
+                ),
+            ),
         ]);
     }
 
     public function store(Request $request): JsonResponse
     {
         $validated = $this->validatedPayload($request);
-        [$companyId, $branchId, $departmentId] = $this->normalizeOrgIds($validated);
+        [$companyId, $branchId] = $this->orgHierarchyNormalizer->normalizeDivisionScope($validated);
 
-        $this->dataScopeService->assertCanCreateEmployeeInOrg($request->user(), $companyId, $branchId, $departmentId);
+        $this->dataScopeService->assertCanCreateEmployeeInOrg($request->user(), $companyId, $branchId, null);
 
         $division = Division::query()->create([
             'name' => trim((string) $validated['name']),
             'code' => $this->nullableTrim($validated['code'] ?? null),
             'company_id' => $companyId,
             'branch_id' => $branchId,
-            'department_id' => $departmentId,
             'division_head_id' => null,
             'status' => $validated['status'] ?? 'active',
             'description' => $this->nullableTrim($validated['description'] ?? null),
@@ -98,15 +105,13 @@ class DivisionController extends Controller
         $validated = $this->validatedPayload($request, $id, partial: true);
 
         $orgChanged = array_key_exists('company_id', $validated)
-            || array_key_exists('branch_id', $validated)
-            || array_key_exists('department_id', $validated);
+            || array_key_exists('branch_id', $validated);
 
         if ($orgChanged) {
-            $merged = array_merge($division->only(['company_id', 'branch_id', 'department_id']), $validated);
-            [$companyId, $branchId, $departmentId] = $this->normalizeOrgIds($merged);
+            $merged = array_merge($division->only(['company_id', 'branch_id']), $validated);
+            [$companyId, $branchId] = $this->orgHierarchyNormalizer->normalizeDivisionScope($merged);
             $division->company_id = $companyId;
             $division->branch_id = $branchId;
-            $division->department_id = $departmentId;
         }
 
         if (array_key_exists('name', $validated)) {
@@ -181,8 +186,8 @@ class DivisionController extends Controller
             ->update([
                 'company_id' => $division->company_id,
                 'branch_id' => $division->branch_id,
-                'department_id' => $division->department_id,
                 'division_id' => $division->id,
+                'department_id' => null,
                 'section_unit_id' => null,
             ]);
 
@@ -214,11 +219,11 @@ class DivisionController extends Controller
     public function destroy(int $id): JsonResponse
     {
         $division = Division::query()->findOrFail($id);
-        if ($division->sectionsOrUnits()->exists()) {
-            return response()->json(['message' => 'Cannot delete division because it has sections/units.'], 422);
+        if ($division->sectionsOrUnits()->exists() || $division->departments()->exists()) {
+            return response()->json(['message' => 'Cannot delete division because it has departments or sections/units.'], 422);
         }
 
-        User::query()->where('division_id', $division->id)->update(['division_id' => null, 'section_unit_id' => null]);
+        User::query()->where('division_id', $division->id)->update(['division_id' => null, 'department_id' => null, 'section_unit_id' => null]);
         $division->delete();
 
         return response()->json(['message' => 'Division deleted successfully.']);
@@ -233,7 +238,6 @@ class DivisionController extends Controller
             'code' => ['nullable', 'string', 'max:50', Rule::unique('divisions', 'code')->ignore($ignoreId)],
             'company_id' => [$required, 'integer', 'exists:companies,id'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
-            'department_id' => ['nullable', 'integer', 'exists:departments,id'],
             'division_head_id' => ['nullable', 'integer', 'exists:users,id'],
             'status' => ['nullable', Rule::in(['active', 'inactive'])],
             'description' => ['nullable', 'string', 'max:1000'],
@@ -241,39 +245,55 @@ class DivisionController extends Controller
     }
 
     /**
-     * @param  array<string, mixed>  $data
-     * @return array{0:int|null,1:int|null,2:int|null}
+     * @return list<string>
      */
-    private function normalizeOrgIds(array $data): array
+    private function responseRelations(): array
     {
-        $companyId = isset($data['company_id']) ? (int) $data['company_id'] : null;
-        $branchId = isset($data['branch_id']) ? (int) $data['branch_id'] : null;
-        $departmentId = isset($data['department_id']) ? (int) $data['department_id'] : null;
+        return [
+            'company:id,name,logo',
+            'branch:id,name,company_id',
+            'divisionHead:id,name,first_name,middle_name,last_name,suffix,profile_image',
+        ];
+    }
 
-        if ($departmentId !== null) {
-            $department = Department::query()->with('branch')->findOrFail($departmentId);
-            $branchId = (int) $department->branch_id;
-            $companyId = $department->branch ? (int) $department->branch->company_id : $companyId;
-        } elseif ($branchId !== null) {
-            $branch = Branch::query()->findOrFail($branchId);
-            $companyId = (int) $branch->company_id;
-        } elseif ($companyId !== null) {
-            Company::query()->findOrFail($companyId);
-        }
+    private function divisionResponse(Division $division, ?array $counts = null): array
+    {
+        // Logo always comes from Company (single source of truth). Division does not store its own logo.
+        $companyLogo = $division->company?->logo ?? null;
+        $logoUrl = $companyLogo ? $this->publicMediaUrl($companyLogo) : null;
+        $counts ??= $this->orgUnitEmployeeCountService->forDivision($division);
 
-        if ($companyId === null) {
-            throw ValidationException::withMessages(['company_id' => ['Company is required.']]);
-        }
-
-        return [$companyId, $branchId, $departmentId];
+        return [
+            'id' => $division->id,
+            'name' => $division->name,
+            'code' => $division->code,
+            'company_id' => $division->company_id,
+            'company_name' => $division->company?->name,
+            'logo' => $companyLogo,
+            'logo_url' => $logoUrl,
+            'branch_id' => $division->branch_id,
+            'branch_name' => $division->branch?->name,
+            'division_head_id' => $division->division_head_id,
+            'division_head_name' => $division->divisionHead?->display_name,
+            'division_head_profile_image' => $division->divisionHead?->profile_image_url,
+            'status' => $division->status,
+            'description' => $division->description,
+            'assigned_employee_count' => $counts['assigned_employee_count'],
+            'branch_employee_count' => $counts['branch_employee_count'] ?? $counts['department_employee_count'] ?? 0,
+            'unassigned_employee_count' => $counts['unassigned_employee_count'],
+            'total_employees' => $counts['assigned_employee_count'],
+            'total_departments' => $division->departments_count ?? $division->departments()->count(),
+            'total_sections_or_units' => $division->sections_or_units_count ?? $division->sectionsOrUnits()->count(),
+            'created_at' => $division->created_at?->toIso8601String(),
+        ];
     }
 
     private function assertHeadBelongsToDivision(int $userId, Division $division): void
     {
         $user = User::query()->whereKey($userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->first();
-        if (! $user || (int) $user->division_id !== (int) $division->id) {
+        if (! $user) {
             throw ValidationException::withMessages([
-                'division_head_id' => ['The selected employee must belong to this division to be assigned as head.'],
+                'division_head_id' => ['The selected employee is not eligible to be assigned as division head.'],
             ]);
         }
         if (! $user->is_active) {
@@ -281,19 +301,46 @@ class DivisionController extends Controller
                 'division_head_id' => ['The selected employee must be active to be assigned as division head.'],
             ]);
         }
-    }
 
-    private function validateDivisionHeadExclusive(int $userId, ?int $excludeDivisionId): void
-    {
-        if (Company::query()->where('company_head_id', $userId)->exists()
-            || Branch::query()->where('branch_manager_id', $userId)->exists()
-            || Department::query()->where('department_head_id', $userId)->exists()
-            || SectionUnit::query()->where('section_unit_head_id', $userId)->exists()) {
+        $belongsToDivision = (int) $user->division_id === (int) $division->id;
+        $inDivisionViaDepartment = Department::query()
+            ->where('division_id', $division->id)
+            ->where(function ($query) use ($user, $userId): void {
+                $query->where('department_head_id', $userId);
+                if ($user->department_id !== null) {
+                    $query->orWhere('id', $user->department_id);
+                }
+            })
+            ->exists();
+        $inDivisionViaSection = SectionUnit::query()
+            ->where('division_id', $division->id)
+            ->where(function ($query) use ($user, $userId): void {
+                $query->where('section_unit_head_id', $userId);
+                if ($user->section_unit_id !== null) {
+                    $query->orWhere('id', $user->section_unit_id);
+                }
+            })
+            ->exists();
+
+        if (! $belongsToDivision && ! $inDivisionViaDepartment && ! $inDivisionViaSection) {
             throw ValidationException::withMessages([
-                'division_head_id' => ['This employee is already assigned to another organization head role.'],
+                'division_head_id' => ['The selected employee must belong to this division or hold a leadership role within it.'],
             ]);
         }
 
+        $headCompanyId = $user->getEffectiveCompanyId();
+        if ($headCompanyId !== null && $division->company_id !== null && (int) $headCompanyId !== (int) $division->company_id) {
+            throw ValidationException::withMessages([
+                'division_head_id' => ['The selected employee is assigned to another company and cannot be division head here.'],
+            ]);
+        }
+    }
+
+    /**
+     * Prevent the same employee from leading more than one division at a time.
+     */
+    private function validateDivisionHeadExclusive(int $userId, ?int $excludeDivisionId): void
+    {
         $query = Division::query()->where('division_head_id', $userId);
         if ($excludeDivisionId !== null) {
             $query->where('id', '!=', $excludeDivisionId);
@@ -305,42 +352,6 @@ class DivisionController extends Controller
         }
     }
 
-    /**
-     * @return list<string>
-     */
-    private function responseRelations(): array
-    {
-        return [
-            'company:id,name,logo',
-            'branch:id,name,company_id',
-            'department:id,name,branch_id',
-            'divisionHead:id,name,first_name,middle_name,last_name,suffix,profile_image',
-        ];
-    }
-
-    private function divisionResponse(Division $division): array
-    {
-        return [
-            'id' => $division->id,
-            'name' => $division->name,
-            'code' => $division->code,
-            'company_id' => $division->company_id,
-            'company_name' => $division->company?->name,
-            'branch_id' => $division->branch_id,
-            'branch_name' => $division->branch?->name,
-            'department_id' => $division->department_id,
-            'department_name' => $division->department?->name,
-            'division_head_id' => $division->division_head_id,
-            'division_head_name' => $division->divisionHead?->display_name,
-            'division_head_profile_image' => $division->divisionHead?->profile_image_url,
-            'status' => $division->status,
-            'description' => $division->description,
-            'total_employees' => $division->employees_count ?? $division->employees()->count(),
-            'total_sections_or_units' => $division->sections_or_units_count ?? $division->sectionsOrUnits()->count(),
-            'created_at' => $division->created_at?->toIso8601String(),
-        ];
-    }
-
     private function nullableTrim(mixed $value): ?string
     {
         if (! is_string($value)) {
@@ -350,5 +361,32 @@ class DivisionController extends Controller
         $value = trim($value);
 
         return $value === '' ? null : $value;
+    }
+
+    private function encodeStoragePath(string $path): string
+    {
+        $segments = explode('/', trim($path, '/'));
+        $encoded = array_map(static fn (string $segment) => rawurlencode($segment), $segments);
+
+        return implode('/', $encoded);
+    }
+
+    private function publicMediaUrl(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+
+        $normalized = trim($path);
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            return $normalized;
+        }
+
+        $normalized = ltrim($normalized, '/');
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+
+        return '/api/media/public/'.$this->encodeStoragePath($normalized);
     }
 }

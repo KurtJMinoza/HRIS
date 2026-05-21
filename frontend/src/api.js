@@ -2878,7 +2878,7 @@ export async function getDepartments(params = {}) {
 }
 
 /**
- * Create department. Pass { name, logo } where logo is a File (JPG/PNG/WebP, max 2MB).
+ * Create department. Pass { name, division_id, branch_id?, logo? } where logo is a File (JPG/PNG/WebP, max 2MB).
  * Sends multipart/form-data when logo is present.
  */
 export async function createDepartment(payload) {
@@ -2889,8 +2889,14 @@ export async function createDepartment(payload) {
   if (hasFile) {
     const form = new FormData()
     form.append('name', payload.name)
+    if (payload.division_id != null && payload.division_id !== '') {
+      form.append('division_id', String(payload.division_id))
+    }
     if (payload.branch_id != null && payload.branch_id !== '') {
       form.append('branch_id', String(payload.branch_id))
+    }
+    if (payload.company_id != null && payload.company_id !== '') {
+      form.append('company_id', String(payload.company_id))
     }
     if (payload.office_location != null && String(payload.office_location).trim() !== '') {
       form.append('office_location', String(payload.office_location).trim())
@@ -2905,7 +2911,9 @@ export async function createDepartment(payload) {
     headers['Content-Type'] = 'application/json'
     body = JSON.stringify({
       name: payload.name,
+      division_id: Number(payload.division_id),
       ...(payload.branch_id != null && payload.branch_id !== '' ? { branch_id: Number(payload.branch_id) } : {}),
+      ...(payload.company_id != null && payload.company_id !== '' ? { company_id: Number(payload.company_id) } : {}),
       ...(payload.office_location != null && String(payload.office_location).trim() !== ''
         ? { office_location: String(payload.office_location).trim() }
         : {}),
@@ -2918,7 +2926,7 @@ export async function createDepartment(payload) {
   const res = await authenticatedFetch('/admin/departments', { method: 'POST', headers, body })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const msg = data.message || data.errors?.logo?.[0] || data.errors?.name?.[0] || 'Failed to create department'
+    const msg = data.message || data.errors?.division_id?.[0] || data.errors?.logo?.[0] || data.errors?.name?.[0] || 'Failed to create department'
     throw new Error(msg)
   }
   clearGetCacheByPrefix('/admin/departments')
@@ -4449,6 +4457,8 @@ export async function updateDepartment(id, payload) {
     if (payload.office_location != null) form.append('office_location', String(payload.office_location))
     if (payload.description != null) form.append('description', String(payload.description))
     if (payload.branch_id != null && payload.branch_id !== '') form.append('branch_id', String(payload.branch_id))
+    if (payload.division_id != null && payload.division_id !== '') form.append('division_id', String(payload.division_id))
+    if (payload.company_id != null && payload.company_id !== '') form.append('company_id', String(payload.company_id))
     if (payload.department_head_id != null) form.append('department_head_id', payload.department_head_id === '' || payload.department_head_id === null ? '' : String(payload.department_head_id))
     form.append('logo', payload.logo)
     body = form
@@ -4464,6 +4474,7 @@ export async function updateDepartment(id, payload) {
   if (!res.ok) {
     const msg =
       data.errors?.department_head_id?.[0] ||
+      data.errors?.team_leader_ids?.[0] ||
       data.errors?.logo?.[0] ||
       data.errors?.name?.[0] ||
       data.message ||

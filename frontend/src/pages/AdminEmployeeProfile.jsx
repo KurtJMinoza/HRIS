@@ -1880,6 +1880,9 @@ export default function AdminEmployeeProfile() {
     } else if (isDepartmentHead) {
       suggestedId = branch?.branch_manager_id != null ? String(branch.branch_manager_id) : ''
       label = suggestedId ? 'Auto-suggested based on organization hierarchy (Department Head -> Branch Head).' : ''
+    } else if (Array.isArray(department?.team_leader_ids) && department.team_leader_ids.length > 0) {
+      suggestedId = String(department.team_leader_ids[0])
+      label = 'Auto-suggested based on assigned department team leader.'
     } else if (department?.department_head_id != null) {
       suggestedId = String(department.department_head_id)
       label = 'Auto-suggested based on organization hierarchy (Department -> Department Head).'
@@ -4907,8 +4910,8 @@ export default function AdminEmployeeProfile() {
                           setForm((f) => ({
                             ...f,
                             branch_id: branchId,
-                            department_id: '',
                             division_id: '',
+                            department_id: '',
                             section_unit_id: '',
                             branch_office_location: branch ? (branch.name || branch.address || '') : f.branch_office_location,
                           }))
@@ -4917,26 +4920,11 @@ export default function AdminEmployeeProfile() {
                         <SelectTrigger className="h-11 w-full text-base"><SelectValue placeholder="Select branch" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">None</SelectItem>
-                          {branches.map((b) => (
+                          {(form.company_id
+                            ? branches.filter((b) => b.company_id != null && String(b.company_id) === String(form.company_id))
+                            : branches
+                          ).map((b) => (
                             <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-3">
-                      <Label className="flex items-center gap-2 text-base text-muted-foreground">
-                        <Building2 className="size-4 shrink-0" />
-                        Department
-                      </Label>
-                      <Select
-                        value={form.department_id || 'none'}
-                        onValueChange={(v) => setForm((f) => ({ ...f, department_id: v === 'none' ? '' : v, division_id: '', section_unit_id: '' }))}
-                      >
-                        <SelectTrigger className="h-11 w-full text-base"><SelectValue placeholder="Select department" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          {(form.branch_id ? departments.filter((d) => d.branch_id != null && String(d.branch_id) === String(form.branch_id)) : departments).map((d) => (
-                            <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -4948,12 +4936,42 @@ export default function AdminEmployeeProfile() {
                       </Label>
                       <Select
                         value={form.division_id || 'none'}
-                        onValueChange={(v) => setForm((f) => ({ ...f, division_id: v === 'none' ? '' : v, section_unit_id: '' }))}
+                        onValueChange={(v) => setForm((f) => ({ ...f, division_id: v === 'none' ? '' : v, department_id: '', section_unit_id: '' }))}
                       >
                         <SelectTrigger className="h-11 w-full text-base"><SelectValue placeholder="Select division" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">None</SelectItem>
-                          {(form.department_id ? divisions.filter((d) => d.department_id != null && String(d.department_id) === String(form.department_id)) : divisions).map((d) => (
+                          {(form.branch_id
+                            ? divisions.filter((d) => {
+                                if (String(d.branch_id ?? '') !== String(form.branch_id)) return false
+                                if (form.company_id && String(d.company_id ?? '') !== String(form.company_id)) return false
+                                return true
+                              })
+                            : []
+                          ).map((d) => (
+                            <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-3">
+                      <Label className="flex items-center gap-2 text-base text-muted-foreground">
+                        <Building2 className="size-4 shrink-0" />
+                        Department
+                      </Label>
+                      <Select
+                        value={form.department_id || 'none'}
+                        onValueChange={(v) => setForm((f) => ({ ...f, department_id: v === 'none' ? '' : v, section_unit_id: '' }))}
+                      >
+                        <SelectTrigger className="h-11 w-full text-base"><SelectValue placeholder="Select department" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None</SelectItem>
+                          {(form.division_id
+                            ? departments.filter((d) => String(d.division_id ?? '') === String(form.division_id))
+                            : form.branch_id
+                              ? departments.filter((d) => d.branch_id != null && String(d.branch_id) === String(form.branch_id))
+                              : departments
+                          ).map((d) => (
                             <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
                           ))}
                         </SelectContent>
@@ -4972,10 +4990,21 @@ export default function AdminEmployeeProfile() {
                         <SelectContent>
                           <SelectItem value="none">None</SelectItem>
                           {(form.division_id
-                            ? sectionsOrUnits.filter((s) => s.division_id != null && String(s.division_id) === String(form.division_id))
+                            ? sectionsOrUnits.filter((s) => {
+                                if (String(s.division_id ?? '') !== String(form.division_id)) return false
+                                if (form.department_id && String(s.department_id ?? '') !== String(form.department_id)) return false
+                                if (form.company_id && String(s.company_id ?? '') !== String(form.company_id)) return false
+                                if (form.branch_id && String(s.branch_id ?? '') !== String(form.branch_id)) return false
+                                return true
+                              })
                             : form.department_id
-                              ? sectionsOrUnits.filter((s) => s.department_id != null && String(s.department_id) === String(form.department_id))
-                              : sectionsOrUnits
+                              ? sectionsOrUnits.filter((s) => {
+                                  if (String(s.department_id ?? '') !== String(form.department_id)) return false
+                                  if (form.company_id && String(s.company_id ?? '') !== String(form.company_id)) return false
+                                  if (form.branch_id && String(s.branch_id ?? '') !== String(form.branch_id)) return false
+                                  return true
+                                })
+                              : []
                           ).map((s) => (
                             <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
                           ))}

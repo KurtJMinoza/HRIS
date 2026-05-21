@@ -19,10 +19,40 @@ import { RoleBadge } from '@/components/RoleBadge'
 import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
 import { formatEmployeeName } from '@/lib/employeeSort'
-export function FilterTabs({ value, onChange, counts }) {
+
+function orgUnitCopy(orgUnitLabel = 'department') {
+  if (orgUnitLabel === 'division') {
+    return {
+      assignedLabel: 'In division',
+      unitName: 'division',
+      unitNameTitle: 'Division',
+      excludedRoleNote:
+        'Company Heads and Branch Managers are not assignable to divisions.',
+    }
+  }
+  if (orgUnitLabel === 'section' || orgUnitLabel === 'section_unit') {
+    return {
+      assignedLabel: 'In section',
+      unitName: 'section/unit',
+      unitNameTitle: 'Section/Unit',
+      excludedRoleNote:
+        'Company Heads, Branch Managers, Department Heads, Division Heads, and other Section/Unit Heads are not assignable to sections/units.',
+    }
+  }
+  return {
+    assignedLabel: 'In dept',
+    unitName: 'department',
+    unitNameTitle: 'Department',
+    excludedRoleNote:
+      'Company Heads and Branch Managers are not listed — they sit above department level.',
+  }
+}
+
+export function FilterTabs({ value, onChange, counts, orgUnitLabel = 'department' }) {
+  const { assignedLabel } = orgUnitCopy(orgUnitLabel)
   const tabs = [
     { key: 'available', label: 'Available', count: counts.available },
-    { key: 'assigned', label: 'In dept', count: counts.assigned },
+    { key: 'assigned', label: assignedLabel, count: counts.assigned },
     { key: 'all', label: 'All', count: counts.total },
   ]
   return (
@@ -59,7 +89,8 @@ export function FilterTabs({ value, onChange, counts }) {
   )
 }
 
-export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn }) {
+export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn, orgUnitLabel = 'department' }) {
+  const { assignedLabel: assignedBadgeLabel } = orgUnitCopy(orgUnitLabel)
   const { emp, status, checked, checkboxDisabled, isInactive, assignedElsewhere } = row
   const employeeName = formatEmployeeName(emp, 'employee')
   return (
@@ -130,7 +161,7 @@ export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn }) {
         {status === 'assigned' && (
           <span className="inline-flex items-center gap-1 rounded-full border border-brand/50 bg-brand/5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-brand dark:bg-brand/10">
             <Check className="size-3" aria-hidden />
-            In dept
+            {assignedBadgeLabel}
           </span>
         )}
         {status === 'unavailable' && assignedElsewhere && (
@@ -157,7 +188,9 @@ export function EmptyState({
   assignCounts,
   onResetFilters,
   onGoEmployees,
+  orgUnitLabel = 'department',
 }) {
+  const { unitName } = orgUnitCopy(orgUnitLabel)
   return (
     <div className="flex flex-col items-center justify-center gap-4 px-6 py-16 text-center">
       <div className="flex size-16 items-center justify-center rounded-2xl border border-dashed border-border/60 bg-card shadow-inner">
@@ -178,7 +211,7 @@ export function EmptyState({
                   ? 'No one else available'
                   : 'Nothing in this tab'
               : assignFilter === 'assigned'
-                ? 'No members in this department'
+                ? `No members in this ${unitName}`
                 : 'No employees in this view'}
         </p>
         <p className="text-sm leading-relaxed text-muted-foreground">
@@ -187,7 +220,7 @@ export function EmptyState({
             : assignCounts.total === 0
               ? 'Create employees under this company first.'
               : assignFilter === 'available' && assignCounts.available === 0 && assignCounts.assigned > 0
-                ? 'Try “In this dept” or “All”, or clear search.'
+                ? `Try “In this ${unitName}” or “All”, or clear search.`
                 : 'Switch tabs or clear search.'}
         </p>
       </div>
@@ -243,7 +276,8 @@ export function SelectedPanelHeader({ department, branchName, companyName, selec
   )
 }
 
-export function SelectedEmptyState({ assignIdsLength, assignCounts, loading }) {
+export function SelectedEmptyState({ assignIdsLength, assignCounts, loading, orgUnitLabel = 'department' }) {
+  const { unitName } = orgUnitCopy(orgUnitLabel)
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-muted/20 px-5 py-14 text-center">
       <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-muted">
@@ -252,7 +286,7 @@ export function SelectedEmptyState({ assignIdsLength, assignCounts, loading }) {
       {loading ? (
         <>
           <p className="text-sm font-semibold text-foreground">Loading roster…</p>
-          <p className="mt-2 max-w-xs text-sm text-muted-foreground">Fetching employees for this department.</p>
+          <p className="mt-2 max-w-xs text-sm text-muted-foreground">Fetching employees for this {unitName}.</p>
         </>
       ) : assignIdsLength > 0 ? (
         <>
@@ -268,14 +302,14 @@ export function SelectedEmptyState({ assignIdsLength, assignCounts, loading }) {
         <>
           <p className="text-sm font-semibold text-foreground">Select employees on the left</p>
           <p className="mt-2 max-w-xs text-sm leading-relaxed text-muted-foreground">
-            Use checkboxes to add people to this department, then tap <strong className="text-foreground">Assign selected</strong>.
+            Use checkboxes to add people to this {unitName}, then tap <strong className="text-foreground">Assign selected</strong>.
           </p>
         </>
       ) : assignCounts.assigned > 0 && assignCounts.available === 0 ? (
         <>
           <p className="text-sm font-semibold text-foreground">Everyone is placed</p>
           <p className="mt-2 max-w-xs text-sm text-muted-foreground">
-            No additional eligible employees. Check <strong className="text-foreground">In this dept</strong> on the left.
+            No additional eligible employees. Check <strong className="text-foreground">In this {unitName}</strong> on the left.
           </p>
         </>
       ) : (
@@ -288,7 +322,7 @@ export function SelectedEmptyState({ assignIdsLength, assignCounts, loading }) {
   )
 }
 
-export function SelectedEmployeeCard({ emp, isAlreadyInDept, onOpenProfile, onRemove, initialsFn }) {
+export function SelectedEmployeeCard({ emp, isAlreadyInMember, onOpenProfile, onRemove, initialsFn }) {
   const employeeName = formatEmployeeName(emp, 'Employee')
   return (
     <li className="flex items-center gap-4 rounded-xl border border-border/80 bg-card p-4 shadow-sm transition duration-200 dark:bg-input/20">
@@ -306,7 +340,7 @@ export function SelectedEmployeeCard({ emp, isAlreadyInDept, onOpenProfile, onRe
         <p className="truncate text-base font-extrabold text-foreground">{employeeName}</p>
         <p className="truncate text-xs text-muted-foreground">{emp.employee_code || emp.position || '—'}</p>
         <div className="mt-1.5">
-          {isAlreadyInDept ? (
+          {isAlreadyInMember ? (
             <Badge variant="secondary" className="rounded-lg px-2 py-0 text-[10px] font-medium">
               Current member
             </Badge>
@@ -317,7 +351,7 @@ export function SelectedEmployeeCard({ emp, isAlreadyInDept, onOpenProfile, onRe
           )}
         </div>
       </div>
-      {!isAlreadyInDept && (
+      {!isAlreadyInMember && (
         <button
           type="button"
           onClick={() => onRemove(emp.id)}
@@ -356,7 +390,10 @@ export default function AssignEmployeesModal({
   initialsFn,
   footerStats,
   onGoEmployees,
+  memberIdField = 'department_id',
+  orgUnitLabel = 'department',
 }) {
+  const { unitName, unitNameTitle, excludedRoleNote } = orgUnitCopy(orgUnitLabel)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -379,8 +416,7 @@ export default function AssignEmployeesModal({
             <div className="min-w-0">
           <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">Assign employees</DialogTitle>
           <DialogDescription id="dept-assign-employees-desc" className="mt-3 max-w-3xl text-base leading-7 text-muted-foreground">
-            Select people to add to this department. Company Heads and Branch Managers are not listed — they sit above
-            department level.
+            Select people to add to this {unitName}. {excludedRoleNote}
           </DialogDescription>
             </div>
           </div>
@@ -430,11 +466,11 @@ export default function AssignEmployeesModal({
                   )}
                 </div>
 
-                <FilterTabs value={assignFilter} onChange={onFilterChange} counts={assignCounts} />
+                <FilterTabs value={assignFilter} onChange={onFilterChange} counts={assignCounts} orgUnitLabel={orgUnitLabel} />
 
                 {assignExcludedCount > 0 && (
                   <div className="rounded-xl border border-amber-200/80 bg-amber-50/90 px-3 py-2.5 text-xs leading-snug text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
-                    <span className="font-semibold">{assignExcludedCount}</span> excluded — Company Heads and Branch Managers are not assignable to departments.
+                    <span className="font-semibold">{assignExcludedCount}</span> excluded — {excludedRoleNote}
                   </div>
                 )}
               </div>
@@ -478,6 +514,7 @@ export default function AssignEmployeesModal({
                       onFilterChange('available')
                     }}
                     onGoEmployees={onGoEmployees}
+                    orgUnitLabel={orgUnitLabel}
                   />
                 ) : (
                   <ul>
@@ -488,6 +525,7 @@ export default function AssignEmployeesModal({
                         onToggle={onToggleAssignId}
                         onOpenProfile={(id) => navigate(`/admin/employees/${id}`)}
                         initialsFn={initialsFn}
+                        orgUnitLabel={orgUnitLabel}
                       />
                     ))}
                   </ul>
@@ -506,20 +544,21 @@ export default function AssignEmployeesModal({
 
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 @md:px-6 @xl:px-8">
                 {selectedEmployeesPreview.length === 0 ? (
-                  <SelectedEmptyState assignIdsLength={assignIds.length} assignCounts={assignCounts} loading={loading} />
+                  <SelectedEmptyState assignIdsLength={assignIds.length} assignCounts={assignCounts} loading={loading} orgUnitLabel={orgUnitLabel} />
                 ) : (
                   <ul className="space-y-3">
                     {selectedEmployeesPreview.map((emp) => {
-                      const isAlreadyInDept =
-                        String(emp.department_id ?? '') === String(department?.id ?? '') ||
-                        String(emp.department || '')
-                          .trim()
-                          .toLowerCase() === String(department?.name || '').trim().toLowerCase()
+                      const isAlreadyInMember =
+                        String(emp[memberIdField] ?? '') === String(department?.id ?? '') ||
+                        (memberIdField === 'department_id' &&
+                          String(emp.department || '')
+                            .trim()
+                            .toLowerCase() === String(department?.name || '').trim().toLowerCase())
                       return (
                         <SelectedEmployeeCard
                           key={emp.id}
                           emp={emp}
-                          isAlreadyInDept={isAlreadyInDept}
+                          isAlreadyInMember={isAlreadyInMember}
                           onOpenProfile={(id) => navigate(`/admin/employees/${id}`)}
                           onRemove={onToggleAssignId}
                           initialsFn={initialsFn}
@@ -542,14 +581,14 @@ export default function AssignEmployeesModal({
                   <>
                     <ChevronRight className="mx-1 inline size-4 align-middle text-border" aria-hidden />
                     <span className="text-foreground/90">
-                      {footerStats.afterSave} in department after save
+                      {footerStats.afterSave} in {unitName} after save
                     </span>
                     <span className="ml-1 text-brand">(+{footerStats.newlyAdded} new)</span>
                   </>
                 )}
               </p>
               {footerStats.newlyAdded > 0 && department && (
-                <p className="text-xs text-muted-foreground">Updates reporting under {department.name}.</p>
+                <p className="text-xs text-muted-foreground">Updates reporting under {department.name} ({unitNameTitle}).</p>
               )}
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3">

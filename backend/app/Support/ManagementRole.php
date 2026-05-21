@@ -27,8 +27,8 @@ final class ManagementRole
             'managedBranch:id,name,company_id,branch_manager_id',
             'managedDepartment:id,name,branch_id,department_head_id',
             'departmentRelation:id,name,branch_id,department_head_id',
-            'managedDivision:id,name,company_id,branch_id,department_id,division_head_id',
-            'division:id,name,company_id,branch_id,department_id,division_head_id',
+            'managedDivision:id,name,company_id,branch_id,division_head_id',
+            'division:id,name,company_id,branch_id,division_head_id',
             'managedSectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
             'sectionUnit:id,name,company_id,branch_id,department_id,division_id,section_unit_head_id',
         ]);

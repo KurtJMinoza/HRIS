@@ -491,10 +491,12 @@ class LeaveController extends Controller
                 if ($leave->first_approver_id === null) {
                     $leave->first_approver_id = $actor->id;
                 }
-                $leave->first_approved_at = now();
-                $leave->approval_stage = $nextPending?->approver_role === \App\Enums\HrRole::AdminHr->value
-                    ? HrApprovalStages::PENDING_SECOND
-                    : HrApprovalStages::PENDING_FIRST;
+                if ($nextPending?->approver_role === \App\Enums\HrRole::AdminHr->value) {
+                    $leave->first_approved_at = now();
+                    $leave->approval_stage = HrApprovalStages::PENDING_SECOND;
+                } else {
+                    $leave->approval_stage = HrApprovalStages::PENDING_FIRST;
+                }
                 $leave->save();
 
                 $details = $notes;

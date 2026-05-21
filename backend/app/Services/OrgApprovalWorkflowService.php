@@ -9,6 +9,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class OrgApprovalWorkflowService
 {
@@ -17,6 +18,8 @@ class OrgApprovalWorkflowService
     public const MODULE_OVERTIME = 'overtime';
 
     public const MODULE_LEAVE = 'leave';
+
+    public const MODULE_SCHEDULE = 'schedule';
 
     public function __construct(
         private readonly HrApprovalChainResolver $chainResolver,
@@ -33,14 +36,24 @@ class OrgApprovalWorkflowService
         ?User $requestor = null
     ): EloquentCollection {
         $requestId = (int) $request->getKey();
-        $existing = $this->records($moduleType, $requestId);
-        if ($existing->isNotEmpty()) {
-            return $existing;
-        }
-
         $steps = $this->chainResolver->resolveApprovalChain($employee, $moduleType, $requestor ?? $employee);
         if ($steps === []) {
             return new EloquentCollection;
+        }
+
+        $existing = $this->records($moduleType, $requestId);
+        if ($existing->isNotEmpty()) {
+            if ($this->chainNeedsSync($existing, $steps) && $this->requestIsPending($request, $moduleType)) {
+                Log::info('approval_chain: syncing org approval records for pending request', [
+                    'module_type' => $moduleType,
+                    'request_id' => $requestId,
+                    'existing_count' => $existing->count(),
+                    'resolved_count' => count($steps),
+                ]);
+                $this->syncRecordsToChain($request, $moduleType, $requestId, $steps, $existing);
+            }
+
+            return $this->records($moduleType, $requestId);
         }
 
         DB::transaction(function () use ($steps, $request, $moduleType, $requestId): void {
@@ -66,6 +79,88 @@ class OrgApprovalWorkflowService
         });
 
         return $this->records($moduleType, $requestId);
+    }
+
+    /**
+     * @param  EloquentCollection<int, OrgApprovalRecord>  $existing
+     * @param  array<int, array<string, mixed>>  $steps
+     */
+    private function chainNeedsSync(EloquentCollection $existing, array $steps): bool
+    {
+        if ($existing->count() !== count($steps)) {
+            return true;
+        }
+
+        $sorted = $existing->sortBy('sequence_order')->values();
+        foreach ($steps as $index => $step) {
+            $record = $sorted->get($index);
+            if (! $record || $record->approver_role !== $step['approver_role']->value) {
+                return true;
+            }
+        }
+
+        return $sorted->last()?->approver_role !== HrRole::AdminHr->value;
+    }
+
+    private function requestIsPending(Model $request, string $moduleType): bool
+    {
+        if (isset($request->rejected_at) && $request->rejected_at !== null) {
+            return false;
+        }
+
+        if (isset($request->status) && in_array((string) $request->status, ['approved', 'rejected', 'cancelled'], true)) {
+            return false;
+        }
+
+        if (isset($request->approved) && $request->approved === true) {
+            return false;
+        }
+
+        if (isset($request->pending_approval)) {
+            return (bool) $request->pending_approval;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $steps
+     * @param  EloquentCollection<int, OrgApprovalRecord>  $existing
+     */
+    private function syncRecordsToChain(
+        Model $request,
+        string $moduleType,
+        int $requestId,
+        array $steps,
+        EloquentCollection $existing,
+    ): void {
+        DB::transaction(function () use ($request, $moduleType, $requestId, $steps, $existing): void {
+            OrgApprovalRecord::query()
+                ->where('module_type', $moduleType)
+                ->where('request_id', $requestId)
+                ->delete();
+
+            foreach ($steps as $step) {
+                $prior = $existing->firstWhere('approver_role', $step['approver_role']->value);
+                $status = $prior?->approval_status ?? $this->legacyStatusForStep($request, $step);
+                $approvedAt = $status === OrgApprovalRecord::STATUS_APPROVED
+                    ? ($prior?->approved_at ?? $this->legacyApprovedAtForStep($request, $step))
+                    : null;
+
+                OrgApprovalRecord::query()->create([
+                    'request_id' => $requestId,
+                    'module_type' => $moduleType,
+                    'approval_level' => $step['approval_level'],
+                    'approver_role' => $step['approver_role']->value,
+                    'approver_id' => $step['approver_id'],
+                    'approver_name' => $step['approver_name'],
+                    'approval_status' => $status,
+                    'remarks' => $prior?->remarks,
+                    'approved_at' => $approvedAt,
+                    'sequence_order' => $step['sequence_order'],
+                ]);
+            }
+        });
     }
 
     /**
@@ -211,7 +306,7 @@ class OrgApprovalWorkflowService
             $roleLabel = $role?->badgeLabel() ?? (string) $record->approver_role;
             $steps[] = [
                 'key' => $isHr ? 'hr_final' : 'approval_'.$record->sequence_order,
-                'label' => $isHr ? 'Admin (HR) final approval' : $roleLabel.' approval',
+                'label' => $isHr ? 'Admin HR final approval' : $roleLabel.' approval',
                 'status' => $status,
                 'approver_role_label' => $roleLabel,
                 'submitter_name' => null,
@@ -241,10 +336,6 @@ class OrgApprovalWorkflowService
         }
 
         if ($isHr && $request->second_approved_at) {
-            return OrgApprovalRecord::STATUS_APPROVED;
-        }
-
-        if (! $isHr && $request->first_approved_at) {
             return OrgApprovalRecord::STATUS_APPROVED;
         }
 

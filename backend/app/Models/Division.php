@@ -16,7 +16,6 @@ class Division extends Model
         'code',
         'company_id',
         'branch_id',
-        'department_id',
         'division_head_id',
         'status',
         'description',
@@ -32,14 +31,14 @@ class Division extends Model
         return $this->belongsTo(Branch::class);
     }
 
-    public function department(): BelongsTo
-    {
-        return $this->belongsTo(Department::class);
-    }
-
     public function divisionHead(): BelongsTo
     {
         return $this->belongsTo(User::class, 'division_head_id');
+    }
+
+    public function departments(): HasMany
+    {
+        return $this->hasMany(Department::class, 'division_id');
     }
 
     public function sectionsOrUnits(): HasMany

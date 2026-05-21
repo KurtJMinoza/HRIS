@@ -400,21 +400,5 @@ class CompanyController extends Controller
                 'company_head_id' => ['This employee is already assigned as Company Head of another company. One employee cannot lead multiple companies.'],
             ]);
         }
-
-        if (\App\Models\Branch::where('branch_manager_id', $userId)->exists()) {
-            $branch = \App\Models\Branch::where('branch_manager_id', $userId)->with('company:id,name')->first();
-            $label = $branch ? "{$branch->name}".($branch->company ? " ({$branch->company->name})" : '') : 'a branch';
-            throw ValidationException::withMessages([
-                'company_head_id' => ["This employee is already a Branch Manager of {$label} and cannot also serve as Company Head."],
-            ]);
-        }
-
-        if (\App\Models\Department::where('department_head_id', $userId)->exists()) {
-            $dept = \App\Models\Department::where('department_head_id', $userId)->first();
-            $label = $dept ? $dept->name : 'a department';
-            throw ValidationException::withMessages([
-                'company_head_id' => ["This employee is already a Department Head of {$label} and cannot also serve as Company Head."],
-            ]);
-        }
     }
 }
