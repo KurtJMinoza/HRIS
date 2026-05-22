@@ -542,7 +542,7 @@ export default function AttendanceCorrections() {
   const canSeeAll = perms.has('attendance.corrections.approve')
   const canViewEmployeeProfile = perms.has('employees.view')
 
-  const deepLinkedRequestId = searchParams.get('request_id')
+  const deepLinkedRequestId = searchParams.get('reviewRequestId') || searchParams.get('request_id')
   const deepLinkedStatus = searchParams.get('status')
   const handledDeepLinkRef = useRef(null)
 
@@ -1887,6 +1887,7 @@ export default function AttendanceCorrections() {
           </DialogHeader>
           {selectedLoading && !selectedItem ? (
             <div className="min-h-[28rem] px-7 py-8">
+              <p className="text-sm font-medium text-muted-foreground">Loading request details…</p>
               <div className="h-4 w-44 animate-pulse rounded bg-muted" />
               <div className="mt-5 h-10 w-28 animate-pulse rounded bg-muted" />
               <div className="mt-8 space-y-3">

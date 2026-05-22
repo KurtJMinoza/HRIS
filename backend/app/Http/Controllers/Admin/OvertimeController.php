@@ -16,10 +16,12 @@ use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
 use App\Support\PhPayrollReference;
 use App\Support\RequestPerformanceLogger;
+use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
@@ -262,6 +264,79 @@ class OvertimeController extends Controller
     /**
      * Detailed overtime view including adjustment history.
      */
+    public function review(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.overtime.review');
+        $started = microtime(true);
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        Log::info('admin.overtime.review_start', [
+            'overtime_request_id' => $id,
+            'actor_id' => $actor->id,
+            'actor_role' => $actor->role,
+            'hr_role' => $this->hrRoleResolver->resolve($actor)->value,
+        ]);
+
+        $overtime = Overtime::query()
+            ->select([
+                'id', 'user_id', 'assignment_id', 'assignment_type', 'company_id', 'branch_id',
+                'division_id', 'department_id', 'section_unit_id', 'date', 'schedule_end',
+                'time_out', 'expected_end_time', 'computed_minutes', 'computed_hours',
+                'ph_ot_rule', 'ot_type', 'reason', 'attachment_path', 'status', 'approved_by',
+                'approved_at', 'remarks', 'locked_at', 'approval_stage', 'pending_approval',
+                'filed_at', 'filed_by', 'first_approver_id', 'first_approved_at',
+                'second_approver_id', 'second_approved_at', 'rejected_at', 'rejected_by',
+                'rejection_note', 'created_at', 'updated_at',
+            ])
+            ->with([
+                'user:id,name,first_name,middle_name,last_name,suffix,role,department,department_id,branch_id,company_id,profile_image,position',
+                'approvedBy:id,name,first_name,middle_name,last_name,suffix',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'rejectedBy:id,name,first_name,middle_name,last_name,suffix',
+                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
+            ])
+            ->find($id);
+
+        if ($overtime === null) {
+            Log::warning('admin.overtime.review_not_found', [
+                'overtime_request_id' => $id,
+                'actor_id' => $actor->id,
+            ]);
+
+            return response()->json(['message' => 'Overtime request not found.'], 404);
+        }
+
+        if ($overtime->user) {
+            $this->dataScopeService->ensureEmployeeAccessible($actor, $overtime->user);
+        }
+
+        $cached = ReviewRequestCache::remember('overtime', $id, fn () => $this->mapOvertime($overtime, $actor));
+
+        RequestPerformanceLogger::finish($perf, $request, 1, [
+            'scope' => 'admin',
+            'mode' => 'review',
+            'cache_hit' => $cached['cache_hit'],
+            'query_count' => $cached['query_count'],
+            'cache_error' => $cached['cache_error'],
+            'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+        ]);
+
+        Log::info('admin.overtime.review_ok', [
+            'overtime_request_id' => $id,
+            'actor_id' => $actor->id,
+            'cache_hit' => $cached['cache_hit'],
+            'query_count' => $cached['query_count'],
+            'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+        ]);
+
+        return response()->json(['overtime' => $cached['payload']]);
+    }
+
     public function show(Request $request, int $id): JsonResponse
     {
         $perf = RequestPerformanceLogger::start('admin.overtime.show');
@@ -521,6 +596,8 @@ class OvertimeController extends Controller
                 ]);
             });
 
+            ReviewRequestCache::forget('overtime', (int) $overtime->id);
+
             return response()->json([
                 'message' => 'Overtime request rejected.',
                 'overtime' => $this->mapOvertime($overtime->fresh([
@@ -584,6 +661,8 @@ class OvertimeController extends Controller
                 ? (\App\Enums\HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
                 : 'next approver';
 
+            ReviewRequestCache::forget('overtime', (int) $overtime->id);
+
             return response()->json([
                 'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
                 'overtime' => $this->mapOvertime($overtime->fresh([
@@ -630,6 +709,8 @@ class OvertimeController extends Controller
                 'approver_role' => $roleLabel,
             ]);
         });
+
+        ReviewRequestCache::forget('overtime', (int) $overtime->id);
 
         return response()->json([
             'message' => 'Overtime approved.',
@@ -694,6 +775,7 @@ class OvertimeController extends Controller
         $overtime->computed_hours = $newHours;
         $overtime->updated_by = $admin->id;
         $overtime->save();
+        ReviewRequestCache::forget('overtime', (int) $overtime->id);
 
         return response()->json([
             'message' => 'Overtime hours updated.',
@@ -731,6 +813,7 @@ class OvertimeController extends Controller
         }
 
         $overtime->delete();
+        ReviewRequestCache::forget('overtime', (int) $overtime->id);
 
         return response()->json([
             'message' => 'Overtime request deleted.',

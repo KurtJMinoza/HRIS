@@ -592,7 +592,7 @@ export default function AdminDashboard() {
     const q = new URLSearchParams({ tab: 'corrections' })
     if (opts.status) q.set('status', String(opts.status))
     const rid = opts.request_id ?? opts.requestId
-    if (rid != null && rid !== '') q.set('request_id', String(rid))
+    if (rid != null && rid !== '') q.set('reviewRequestId', String(rid))
     return `${hrPanelPath(hrBase, 'attendance')}?${q}`
   }, [hrBase])
 
@@ -1757,12 +1757,12 @@ export default function AdminDashboard() {
             request={pendingOvertimeRequest}
             onViewAll={() => navigate(hrPanelPath(hrBase, 'overtime'))}
             onReviewRequest={(req) => {
-              const rid = req?.request_id ?? req?.id
+              const rid = req?.overtime_request_id ?? req?.request_id ?? req?.id
               if (rid == null || rid === '') {
                 navigate(hrPanelPath(hrBase, 'overtime'))
                 return
               }
-              navigate(`${hrPanelPath(hrBase, 'overtime')}?request_id=${encodeURIComponent(String(rid))}`)
+              navigate(`${hrPanelPath(hrBase, 'overtime')}?tab=all&reviewRequestId=${encodeURIComponent(String(rid))}`)
             }}
           />
         </Motion.div>

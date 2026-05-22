@@ -21,11 +21,13 @@ use App\Services\PayrollPeriodMutationGuard;
 use App\Services\BulkApproval\PresenceFilingBulkApprovalQuery;
 use App\Services\PresenceFilingService;
 use App\Support\RequestPerformanceLogger;
+use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -658,6 +660,7 @@ class PresenceFilingController extends Controller
             $correction->audits()->delete();
             $correction->delete();
         });
+        ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
 
         return response()->json([
             'message' => 'Attendance correction request deleted.',
@@ -817,6 +820,85 @@ class PresenceFilingController extends Controller
         return response()->json([
             'presence_filing' => $this->correctionFormatter->format($correction, $tz, includeEmployee: true, actor: $actor, includeDisplayFields: true),
         ]);
+    }
+
+    public function adminReview(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.presence_filings.review');
+        $started = microtime(true);
+        $actor = $request->user();
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        Log::info('admin.presence_filings.review_start', [
+            'attendance_correction_id' => $id,
+            'actor_id' => $actor->id,
+            'actor_role' => $actor->role,
+            'hr_role' => $this->hrRoleResolver->resolve($actor)->value,
+        ]);
+
+        $correction = AttendanceCorrection::query()
+            ->select([
+                'id', 'user_id', 'date', 'time_in', 'time_out', 'remarks', 'issue_kind',
+                'approved', 'approved_by', 'approved_at', 'pending_approval', 'reason_code',
+                'filed_at', 'filed_by', 'rejected_at', 'rejected_by', 'rejection_note',
+                'approval_stage', 'first_approver_id', 'first_approved_at',
+                'second_approver_id', 'second_approved_at', 'is_incomplete_record',
+                'attendance_logs_synced_at', 'attendance_logs_synced_by', 'created_at', 'updated_at',
+            ])
+            ->with([
+                'user:id,name,first_name,middle_name,last_name,suffix,role,employee_code,department,department_id,branch_id,company_id,profile_image,position',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'attendanceLogsSyncedBy:id,name,first_name,middle_name,last_name,suffix',
+                'rejectedBy:id,name,first_name,middle_name,last_name,suffix',
+                'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver:id,name,first_name,middle_name,last_name,suffix'),
+                'audits' => fn ($r) => $r->orderBy('created_at')->with('admin:id,name,first_name,middle_name,last_name,suffix'),
+            ])
+            ->find($id);
+
+        if ($correction === null) {
+            Log::warning('admin.presence_filings.review_not_found', [
+                'attendance_correction_id' => $id,
+                'actor_id' => $actor->id,
+            ]);
+
+            return response()->json(['message' => 'Attendance correction not found.'], 404);
+        }
+
+        if ($correction->user) {
+            $this->dataScopeService->ensureCorrectionSubjectAccessible($actor, $correction->user);
+        }
+
+        $tz = $this->presenceFilingService->attendanceTimezone();
+        $cached = ReviewRequestCache::remember('attendance_correction', $id, fn () => $this->correctionFormatter->format(
+            $correction,
+            $tz,
+            includeEmployee: true,
+            actor: $actor,
+            includeDisplayFields: true
+        ));
+
+        RequestPerformanceLogger::finish($perf, $request, 1, [
+            'scope' => 'admin',
+            'mode' => 'review',
+            'cache_hit' => $cached['cache_hit'],
+            'query_count' => $cached['query_count'],
+            'cache_error' => $cached['cache_error'],
+            'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+        ]);
+
+        Log::info('admin.presence_filings.review_ok', [
+            'attendance_correction_id' => $id,
+            'actor_id' => $actor->id,
+            'cache_hit' => $cached['cache_hit'],
+            'query_count' => $cached['query_count'],
+            'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+        ]);
+
+        return response()->json(['presence_filing' => $cached['payload']]);
     }
 
     public function bulkApprovePreview(Request $request): JsonResponse
@@ -1011,6 +1093,8 @@ class PresenceFilingController extends Controller
                 ? (HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
                 : 'next approver';
 
+            ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
+
             return response()->json([
                 'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
                 'presence_filing' => $this->correctionFormatter->format($this->correctionFormatter->freshWithDisplayRelations($correction), $tz, includeEmployee: true, actor: $actor, includeDisplayFields: true),
@@ -1128,6 +1212,7 @@ class PresenceFilingController extends Controller
         });
 
         ProcessDailyPayrollJob::dispatchSync($dateKey);
+        ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
 
         return response()->json([
             'message' => 'Attendance correction approved and applied.',
@@ -1206,6 +1291,7 @@ class PresenceFilingController extends Controller
         });
 
         $tz = $this->presenceFilingService->attendanceTimezone();
+        ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
 
         return response()->json([
             'message' => 'Attendance correction rejected.',
@@ -1271,6 +1357,7 @@ class PresenceFilingController extends Controller
                 'acted_at' => now(),
             ]);
         });
+        ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
 
         return response()->json([
             'message' => 'Remark recorded.',

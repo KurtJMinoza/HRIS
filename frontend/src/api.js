@@ -5276,7 +5276,7 @@ export async function getAdminPresenceFilings(params = {}) {
 }
 
 export async function getAdminPresenceFilingDetail(id) {
-  const res = await authenticatedFetch(`/admin/presence-filings/${encodeURIComponent(String(id))}`)
+  const res = await authenticatedFetch(`/attendance-corrections/${encodeURIComponent(String(id))}/review`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load correction request')
   return data
@@ -5590,7 +5590,7 @@ export async function getAdminOvertime(params = {}) {
  * @param {number} id
  */
 export async function getAdminOvertimeDetail(id) {
-  const res = await authenticatedFetch(`/admin/overtime/${id}`)
+  const res = await authenticatedFetch(`/overtime-requests/${encodeURIComponent(String(id))}/review`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load overtime details')
   return data

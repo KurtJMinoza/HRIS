@@ -206,7 +206,9 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/presence-filings', [PresenceFilingController::class, 'adminIndex']);
             Route::get('/attendance-corrections', [PresenceFilingController::class, 'adminIndex']);
             Route::get('/admin/presence-filings/attendance-detail', [PresenceFilingController::class, 'adminAttendanceDetail']);
+            Route::get('/admin/presence-filings/{id}/review', [PresenceFilingController::class, 'adminReview'])->whereNumber('id');
             Route::get('/admin/presence-filings/{id}', [PresenceFilingController::class, 'adminShow'])->whereNumber('id');
+            Route::get('/attendance-corrections/{id}/review', [PresenceFilingController::class, 'adminReview'])->whereNumber('id');
             Route::get('/attendance-corrections/{id}', [PresenceFilingController::class, 'adminShow'])->whereNumber('id');
             Route::post('/admin/presence-filings', [PresenceFilingController::class, 'adminStore']);
             Route::post('/admin/presence-filings/bulk-approve-preview', [PresenceFilingController::class, 'bulkApprovePreview']);
@@ -380,8 +382,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:overtime.view')->group(function () {
             Route::get('/admin/overtime', [OvertimeController::class, 'index']);
+            Route::get('/admin/overtime/{id}/review', [OvertimeController::class, 'review'])->whereNumber('id');
             Route::get('/admin/overtime/{id}', [OvertimeController::class, 'show']);
             Route::get('/overtime-requests', [OvertimeController::class, 'index']);
+            Route::get('/overtime-requests/{id}/review', [OvertimeController::class, 'review'])->whereNumber('id');
             Route::get('/overtime-requests/{id}', [OvertimeController::class, 'show'])->whereNumber('id');
         });
         Route::middleware('permission:overtime.export')->get('/admin/overtime/export', [OvertimeController::class, 'export']);

@@ -19,6 +19,7 @@ use App\Support\HrApprovalStages;
 use App\Support\LeaveFilingRules;
 use App\Support\LeaveScheduleSupport;
 use App\Support\RequestPerformanceLogger;
+use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
@@ -357,7 +358,8 @@ class LeaveController extends Controller
         }
 
         try {
-            $payload = $this->leaveReviewResponse($leave, $actor);
+            $cached = ReviewRequestCache::remember('leave', $id, fn () => $this->leaveReviewResponse($leave, $actor));
+            $payload = $cached['payload'];
         } catch (\Throwable $e) {
             Log::error('admin.leave.review_failed', [
                 'leave_request_id' => $id,
@@ -372,12 +374,17 @@ class LeaveController extends Controller
             'scope' => 'admin',
             'mode' => 'review',
             'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+            'cache_hit' => $cached['cache_hit'] ?? false,
+            'query_count' => $cached['query_count'] ?? null,
+            'cache_error' => $cached['cache_error'] ?? null,
         ]);
 
         Log::info('admin.leave.review_ok', [
             'leave_request_id' => $id,
             'actor_id' => $actor?->id,
             'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+            'cache_hit' => $cached['cache_hit'] ?? false,
+            'query_count' => $cached['query_count'] ?? null,
         ]);
 
         return response()->json(['leave_request' => $payload]);
@@ -612,6 +619,8 @@ class LeaveController extends Controller
                 ? (\App\Enums\HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
                 : 'next approver';
 
+            ReviewRequestCache::forget('leave', (int) $leave->id);
+
             return response()->json([
                 'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
                 'leave_request' => $this->leaveResponse($leave->fresh([
@@ -688,6 +697,8 @@ class LeaveController extends Controller
             ], 422);
         }
 
+        ReviewRequestCache::forget('leave', (int) $leave->id);
+
         return response()->json([
             'message' => 'Leave request approved.',
             'leave_request' => $this->leaveResponse($leave->fresh([
@@ -751,6 +762,8 @@ class LeaveController extends Controller
             ]);
         });
 
+        ReviewRequestCache::forget('leave', (int) $leave->id);
+
         return response()->json([
             'message' => 'Leave request rejected.',
             'leave_request' => $this->leaveResponse($leave->fresh([
@@ -774,6 +787,7 @@ class LeaveController extends Controller
             $this->dataScopeService->ensureEmployeeAccessible($request->user(), $leave->user);
         }
         $leave->update(['notes' => $validated['notes'] ?? null]);
+        ReviewRequestCache::forget('leave', (int) $leave->id);
 
         return response()->json([
             'message' => 'Notes updated.',
@@ -811,6 +825,7 @@ class LeaveController extends Controller
         }
 
         $leave->delete();
+        ReviewRequestCache::forget('leave', (int) $leave->id);
 
         return response()->json([
             'message' => 'Leave request deleted.',
@@ -1158,6 +1173,7 @@ class LeaveController extends Controller
         $leave->document_paths = $paths;
         $leave->save();
         $leave->refresh();
+        ReviewRequestCache::forget('leave', (int) $leave->id);
 
         return response()->json([
             'message' => 'Document uploaded.',

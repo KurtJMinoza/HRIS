@@ -798,7 +798,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setSearchParams(next, { replace: true })
   }, [isHr, dateFromUrl, segmentsFromUrl, searchParams, setSearchParams])
 
-  const deepLinkedOtRequestId = isHr && canSeeAllTab ? searchParams.get('request_id') : null
+  const deepLinkedOtRequestId = isHr && canSeeAllTab
+    ? (searchParams.get('reviewRequestId') || searchParams.get('request_id'))
+    : null
   const handledOtDeepLinkRef = useRef(null)
 
   const [startTime, setStartTime] = useState('')
@@ -1031,6 +1033,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
+        next.delete('reviewRequestId')
         next.delete('request_id')
         return next
       },
@@ -2250,8 +2253,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
           aria-describedby="ot-detail-desc"
         >
           {detailLoading && !detail ? (
-            <div className="flex min-h-80 items-center justify-center">
+            <div className="flex min-h-80 flex-col items-center justify-center gap-3 text-center">
               <Loader2 className="size-8 animate-spin text-muted-foreground" />
+              <p className="text-sm font-medium text-muted-foreground">Loading request details…</p>
             </div>
           ) : null}
 
