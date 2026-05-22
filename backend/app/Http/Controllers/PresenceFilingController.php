@@ -20,6 +20,7 @@ use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\BulkApproval\PresenceFilingBulkApprovalQuery;
 use App\Services\PresenceFilingService;
+use App\Support\RequestPerformanceLogger;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -543,6 +544,7 @@ class PresenceFilingController extends Controller
      */
     public function listMine(Request $request): JsonResponse
     {
+        $perf = RequestPerformanceLogger::start('employee.presence_filings.index');
         $user = $request->user();
         if (! $user || (! $user->isEmployee() && ! $user->isAdmin())) {
             return response()->json(['message' => 'Forbidden.'], 403);
@@ -551,7 +553,9 @@ class PresenceFilingController extends Controller
         $validated = $request->validate([
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
+            'per_page' => ['nullable', 'integer', 'in:10,25,50'],
         ]);
+        $perPage = (int) ($validated['per_page'] ?? 10);
 
         $tz = $this->presenceFilingService->attendanceTimezone();
         $q = AttendanceCorrection::query()
@@ -566,8 +570,6 @@ class PresenceFilingController extends Controller
                 'secondApprover',
                 'attendanceLogsSyncedBy',
                 'rejectedBy',
-                'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
-                'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
             ])
             ->orderByDesc('date')
             ->orderByDesc('id');
@@ -579,9 +581,55 @@ class PresenceFilingController extends Controller
             $q->whereDate('date', '<=', $validated['to_date']);
         }
 
-        $items = $q->limit(200)->get()->map(fn (AttendanceCorrection $c) => $this->correctionFormatter->format($c, $tz, includeEmployee: true, actor: $user, includeDisplayFields: true));
+        $paginator = $q->paginate($perPage)->withQueryString();
+        $items = $paginator->getCollection()->map(fn (AttendanceCorrection $c) => $this->correctionFormatter->format($c, $tz, includeEmployee: true, actor: $user, includeDisplayFields: true));
 
-        return response()->json(['presence_filings' => $items]);
+        RequestPerformanceLogger::finish($perf, $request, $items->count(), [
+            'scope' => 'employee',
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+        ]);
+
+        return response()->json([
+            'presence_filings' => $items->values(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
+        ]);
+    }
+
+    public function showMine(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('employee.presence_filings.show');
+        $user = $request->user();
+        if (! $user || (! $user->isEmployee() && ! $user->isAdmin())) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        $tz = $this->presenceFilingService->attendanceTimezone();
+        $correction = AttendanceCorrection::query()
+            ->where('user_id', $user->id)
+            ->whereKey($id)
+            ->with([
+                'user',
+                'filedBy',
+                'firstApprover',
+                'secondApprover',
+                'attendanceLogsSyncedBy',
+                'rejectedBy',
+                'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
+                'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
+            ])
+            ->firstOrFail();
+
+        RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'employee']);
+
+        return response()->json([
+            'presence_filing' => $this->correctionFormatter->format($correction, $tz, includeEmployee: true, actor: $user, includeDisplayFields: true),
+        ]);
     }
 
     public function destroy(Request $request, int $id): JsonResponse
@@ -621,12 +669,15 @@ class PresenceFilingController extends Controller
      */
     public function adminIndex(Request $request): JsonResponse
     {
+        $perf = RequestPerformanceLogger::start('admin.presence_filings.index');
         $actor = $request->user();
         if (! $actor) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
         $statusFilter = $request->query('status', 'all');
+        $perPage = (int) $request->query('per_page', 10);
+        $perPage = in_array($perPage, [10, 25, 50], true) ? $perPage : 10;
 
         $query = AttendanceCorrection::query()
             ->with([
@@ -636,10 +687,13 @@ class PresenceFilingController extends Controller
                 'secondApprover',
                 'attendanceLogsSyncedBy',
                 'rejectedBy',
-                'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
-                'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
             ])
             ->orderByDesc('filed_at');
+
+        $requestId = $request->query('request_id');
+        if ($requestId !== null && $requestId !== '' && ctype_digit((string) $requestId)) {
+            $query->whereKey((int) $requestId);
+        }
 
         if ($statusFilter === 'pending') {
             $query->where('pending_approval', true)
@@ -705,7 +759,8 @@ class PresenceFilingController extends Controller
 
         $tz = $this->presenceFilingService->attendanceTimezone();
 
-        $items = $query->get()
+        $paginator = $query->paginate($perPage)->withQueryString();
+        $items = $paginator->getCollection()
             ->map(fn (AttendanceCorrection $c) => $this->correctionFormatter->format(
                 $c,
                 $tz,
@@ -714,7 +769,54 @@ class PresenceFilingController extends Controller
                 includeDisplayFields: true
             ));
 
-        return response()->json(['presence_filings' => $items]);
+        RequestPerformanceLogger::finish($perf, $request, $items->count(), [
+            'scope' => 'admin',
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+        ]);
+
+        return response()->json([
+            'presence_filings' => $items->values(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
+        ]);
+    }
+
+    public function adminShow(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.presence_filings.show');
+        $actor = $request->user();
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $correction = AttendanceCorrection::query()
+            ->with([
+                'user',
+                'filedBy',
+                'firstApprover',
+                'secondApprover',
+                'attendanceLogsSyncedBy',
+                'rejectedBy',
+                'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
+                'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
+            ])
+            ->findOrFail($id);
+
+        if ($correction->user) {
+            $this->dataScopeService->ensureCorrectionSubjectAccessible($actor, $correction->user);
+        }
+
+        $tz = $this->presenceFilingService->attendanceTimezone();
+        RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'admin']);
+
+        return response()->json([
+            'presence_filing' => $this->correctionFormatter->format($correction, $tz, includeEmployee: true, actor: $actor, includeDisplayFields: true),
+        ]);
     }
 
     public function bulkApprovePreview(Request $request): JsonResponse

@@ -15,6 +15,7 @@ use App\Services\OvertimeApprovalService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
 use App\Support\PhPayrollReference;
+use App\Support\RequestPerformanceLogger;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -77,6 +78,7 @@ class OvertimeController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $perf = RequestPerformanceLogger::start('admin.overtime.index');
         $validated = $request->validate([
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date'],
@@ -104,7 +106,6 @@ class OvertimeController extends Controller
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ])
             ->orderByDesc('date')
             ->orderByDesc('id');
@@ -135,8 +136,8 @@ class OvertimeController extends Controller
         $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
         $query->whereIn('user_id', $scope->select('users.id'));
 
-        $perPage = (int) ($validated['per_page'] ?? 50);
-        $perPage = $perPage > 0 ? $perPage : 50;
+        $perPage = (int) ($validated['per_page'] ?? 10);
+        $perPage = in_array($perPage, [10, 25, 50], true) ? $perPage : 10;
 
         $paginator = $query->paginate($perPage)->withQueryString();
 
@@ -176,95 +177,67 @@ class OvertimeController extends Controller
                 'filed_at' => $o->filed_at?->toIso8601String(),
                 'display_status' => $this->overtimeApprovalService->deriveDisplayStatusLabel($o),
                 'approval_stage' => $o->approval_stage,
-                'approval_progress' => $this->mergeOvertimeRemarksIntoProgress(
-                    $o,
-                    $this->overtimeApprovalService->buildApprovalProgress($o)
-                ),
-                'approval_history' => $o->approvalAudits->map(function (OvertimeApprovalAudit $a) {
-                    return [
-                        'action' => $a->action,
-                        'approver_role' => $a->approver_role,
-                        'details' => $a->details,
-                        'at' => $a->created_at?->toIso8601String(),
-                        'actor_name' => $a->actor?->display_name,
-                    ];
-                })->values()->all(),
+                'current_approver' => ($o->approval_stage === HrApprovalStages::PENDING_SECOND ? $o->secondApprover : $o->firstApprover)?->display_name,
             ], $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule), $this->overtimeActorFlags($o, $actor));
         })->values();
 
-        // Summary aggregates across the filtered set (ignores pagination).
-        $allForSummary = (clone $query)->get();
         $today = today()->toDateString();
         $startOfMonth = today()->startOfMonth()->toDateString();
 
-        $totalOtTodayHours = $allForSummary
-            ->where('date', $today)
-            ->sum('computed_hours');
-
-        $pendingCount = $allForSummary
-            ->where('status', Overtime::STATUS_PENDING)
-            ->count();
-
-        $approvedThisMonthHours = $allForSummary
-            ->filter(function (Overtime $o) use ($startOfMonth) {
-                return $o->status === Overtime::STATUS_APPROVED
-                    && $o->date
-                    && $o->date->toDateString() >= $startOfMonth;
-            })
-            ->sum('computed_hours');
-
-        $topEmployees = $allForSummary
-            ->groupBy('user_id')
-            ->map(function ($rows, $userId) {
-                /** @var \Illuminate\Support\Collection<int, Overtime> $rows */
-                $first = $rows->first();
-                $totalHours = $rows->sum('computed_hours');
-                $user = $first->user;
-
-                return [
-                    'employee_id' => (int) $userId,
-                    'employee_name' => $user?->display_name,
-                    'department' => $user?->department,
-                    'total_hours' => round((float) $totalHours, 2),
-                ];
-            })
-            ->sortByDesc('total_hours')
-            ->values()
-            ->take(5)
-            ->all();
-
-        $approvedTotal = $allForSummary
+        $summaryBase = clone $query;
+        $totalOtTodayHours = (clone $summaryBase)->whereDate('date', $today)->sum('computed_hours');
+        $pendingCount = (clone $summaryBase)->where('status', Overtime::STATUS_PENDING)->count();
+        $approvedThisMonthHours = (clone $summaryBase)
             ->where('status', Overtime::STATUS_APPROVED)
+            ->whereDate('date', '>=', $startOfMonth)
             ->sum('computed_hours');
-        $pendingTotal = $allForSummary
-            ->where('status', Overtime::STATUS_PENDING)
-            ->sum('computed_hours');
-
-        $monthlySummary = $allForSummary
-            ->groupBy(function (Overtime $o) {
-                return $o->date ? $o->date->format('Y-m') : null;
-            })
-            ->filter(fn ($_, $monthKey) => $monthKey !== null)
-            ->map(function ($rows, $monthKey) {
-                /** @var \Illuminate\Support\Collection<int, Overtime> $rows */
-                $month = Carbon::createFromFormat('Y-m', (string) $monthKey);
-                $approvedHours = $rows
-                    ->where('status', Overtime::STATUS_APPROVED)
-                    ->sum('computed_hours');
-                $pendingHours = $rows
-                    ->where('status', Overtime::STATUS_PENDING)
-                    ->sum('computed_hours');
+        $approvedTotal = (clone $summaryBase)->where('status', Overtime::STATUS_APPROVED)->sum('computed_hours');
+        $pendingTotal = (clone $summaryBase)->where('status', Overtime::STATUS_PENDING)->sum('computed_hours');
+        $topEmployees = (clone $summaryBase)
+            ->reorder()
+            ->select('user_id', DB::raw('SUM(computed_hours) as total_hours'))
+            ->with('user:id,name,first_name,middle_name,last_name,suffix,department')
+            ->groupBy('user_id')
+            ->orderByDesc('total_hours')
+            ->limit(5)
+            ->get()
+            ->map(fn (Overtime $row) => [
+                'employee_id' => (int) $row->user_id,
+                'employee_name' => $row->user?->display_name,
+                'department' => $row->user?->department,
+                'total_hours' => round((float) $row->total_hours, 2),
+            ])
+            ->values()
+            ->all();
+        $monthlySummary = (clone $summaryBase)
+            ->reorder()
+            ->selectRaw("DATE_FORMAT(date, '%Y-%m') as month")
+            ->selectRaw("SUM(CASE WHEN status = 'approved' THEN computed_hours ELSE 0 END) as approved_hours")
+            ->selectRaw("SUM(CASE WHEN status = 'pending' THEN computed_hours ELSE 0 END) as pending_hours")
+            ->selectRaw('COUNT(*) as record_count')
+            ->groupBy('month')
+            ->orderBy('month')
+            ->limit(24)
+            ->get()
+            ->map(function ($row) {
+                $month = Carbon::createFromFormat('Y-m', (string) $row->month);
 
                 return [
                     'month' => $month->format('Y-m'),
                     'label' => $month->format('M Y'),
-                    'approved_hours' => round((float) $approvedHours, 2),
-                    'pending_hours' => round((float) $pendingHours, 2),
-                    'record_count' => $rows->count(),
+                    'approved_hours' => round((float) $row->approved_hours, 2),
+                    'pending_hours' => round((float) $row->pending_hours, 2),
+                    'record_count' => (int) $row->record_count,
                 ];
             })
             ->values()
             ->all();
+
+        RequestPerformanceLogger::finish($perf, $request, $items->count(), [
+            'scope' => 'admin',
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+        ]);
 
         return response()->json([
             'overtimes' => $items,
@@ -291,6 +264,7 @@ class OvertimeController extends Controller
      */
     public function show(Request $request, int $id): JsonResponse
     {
+        $perf = RequestPerformanceLogger::start('admin.overtime.show');
         $overtime = Overtime::query()
             ->with([
                 // `role` required: ensureEmployeeAccessible() rejects subjects whose role is not employee.
@@ -331,7 +305,7 @@ class OvertimeController extends Controller
         $attPath = $overtime->attachment_path;
         $disp = $this->overtimeDisplayFields($overtime);
 
-        return response()->json([
+        $payload = [
             'overtime' => array_merge([
                 'id' => $overtime->id,
                 'employee_id' => $overtime->user_id,
@@ -383,7 +357,10 @@ class OvertimeController extends Controller
                     })->values()->all()
                     : [],
             ], $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($overtime->ph_ot_rule), $this->overtimeActorFlags($overtime, $request->user())),
-        ]);
+        ];
+        RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'admin']);
+
+        return response()->json($payload);
     }
 
     /**

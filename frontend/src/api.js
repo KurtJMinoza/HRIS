@@ -3891,6 +3891,8 @@ export async function getLeaveRequests(filters) {
     if (filters.status) params.set('status', String(filters.status))
     if (filters.from_date) params.set('from_date', String(filters.from_date))
     if (filters.to_date) params.set('to_date', String(filters.to_date))
+    if (filters.page) params.set('page', String(filters.page))
+    if (filters.per_page) params.set('per_page', String(filters.per_page))
   }
   const qs = params.toString()
   const url = qs ? `/admin/leave?${qs}` : '/admin/leave'
@@ -3902,8 +3904,7 @@ export async function getLeaveRequests(filters) {
 
 /** Admin: fetch a single leave request by primary id (for dashboard deep-links). */
 export async function getAdminLeaveByRequestId(requestId) {
-  const q = new URLSearchParams({ request_id: String(requestId) })
-  const res = await authenticatedFetch(`/admin/leave?${q}`)
+  const res = await authenticatedFetch(`/admin/leave/${encodeURIComponent(String(requestId))}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load leave request')
   return data
@@ -5164,10 +5165,19 @@ export async function getMyPresenceFilings(params = {}) {
   const q = new URLSearchParams()
   if (params.from_date) q.set('from_date', params.from_date)
   if (params.to_date) q.set('to_date', params.to_date)
+  if (params.page) q.set('page', String(params.page))
+  if (params.per_page) q.set('per_page', String(params.per_page))
   const path = `/employee/presence-filings${q.toString() ? `?${q}` : ''}`
   const res = await authenticatedFetch(path)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load correction requests')
+  return data
+}
+
+export async function getMyPresenceFilingDetail(id) {
+  const res = await authenticatedFetch(`/employee/presence-filings/${encodeURIComponent(String(id))}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load correction request')
   return data
 }
 
@@ -5199,10 +5209,20 @@ export async function getAdminPresenceFilings(params = {}) {
   if (params.to_date) q.set('to_date', params.to_date)
   if (params.issue_type && params.issue_type !== 'all') q.set('issue_type', params.issue_type)
   if (params.q && String(params.q).trim()) q.set('q', String(params.q).trim())
+  if (params.request_id != null && params.request_id !== '') q.set('request_id', String(params.request_id))
+  if (params.page) q.set('page', String(params.page))
+  if (params.per_page) q.set('per_page', String(params.per_page))
   const path = `/admin/presence-filings${q.toString() ? `?${q}` : ''}`
   const res = await authenticatedFetch(path)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load presence filings')
+  return data
+}
+
+export async function getAdminPresenceFilingDetail(id) {
+  const res = await authenticatedFetch(`/admin/presence-filings/${encodeURIComponent(String(id))}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load correction request')
   return data
 }
 
@@ -5312,6 +5332,8 @@ export async function getMyLeaveSummary(params = {}) {
   if (params.to_date) query.set('to_date', params.to_date)
   if (params.status) query.set('status', params.status)
   if (params.dashboard_lite) query.set('dashboard_lite', '1')
+  if (params.page) query.set('page', String(params.page))
+  if (params.per_page) query.set('per_page', String(params.per_page))
   const path = `/leave/my${query.toString() ? `?${query.toString()}` : ''}`
   const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : {})
   const data = await res.json().catch(() => ({}))

@@ -331,6 +331,7 @@ export function LeaveRequestDetailModal({
   leave,
   showEmployeeName = false,
   resolveDocUrl = (url) => url,
+  loading = false,
 }) {
   const badgeLabel = leave?.display_status || leave?.status || '—'
   const docs = supportingDocUrls(leave)
@@ -347,6 +348,17 @@ export function LeaveRequestDetailModal({
           <DialogTitle>Leave request details</DialogTitle>
           <DialogDescription>Approval chain, dates, and approval history.</DialogDescription>
         </DialogHeader>
+        {loading && !leave ? (
+          <div className="min-h-[26rem] px-7 py-8">
+            <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+            <div className="mt-5 h-10 w-28 animate-pulse rounded bg-muted" />
+            <div className="mt-8 space-y-3">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="h-5 animate-pulse rounded bg-muted" />
+              ))}
+            </div>
+          </div>
+        ) : null}
         {leave && (
           <>
             <div className="shrink-0 border-b border-border/70 bg-card px-7 pb-7 pt-8 text-left dark:border-white/10">

@@ -16,6 +16,7 @@ use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\LeaveFilingRules;
 use App\Support\LeaveScheduleSupport;
+use App\Support\RequestPerformanceLogger;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -326,6 +327,7 @@ class EmployeeLeaveController extends Controller
      */
     public function my(Request $request): JsonResponse
     {
+        $perf = RequestPerformanceLogger::start('employee.leave.my');
         $user = $request->user();
         $tz = $this->attendanceTimezone();
         $userForSchedule = $this->refreshUserForScheduleCheck($user);
@@ -335,8 +337,10 @@ class EmployeeLeaveController extends Controller
             'to_date' => ['nullable', 'date'],
             'status' => ['nullable', 'string', 'in:pending,approved,rejected'],
             'dashboard_lite' => ['nullable', 'boolean'],
+            'per_page' => ['nullable', 'integer', 'in:10,25,50'],
         ]);
         $dashboardLite = $request->boolean('dashboard_lite');
+        $perPage = (int) ($validated['per_page'] ?? ($dashboardLite ? 10 : 10));
 
         $query = LeaveRequest::query()
             ->where('user_id', $user->id);
@@ -369,24 +373,24 @@ class EmployeeLeaveController extends Controller
                 ->whereDate('end_date', '>=', $from->toDateString());
         }
 
-        $leaves = $query
-            ->orderByDesc('start_date')
-            ->get();
-
-        $total = $leaves->count();
-        $pending = $leaves->where('status', LeaveRequest::STATUS_PENDING)->count();
-        $approved = $leaves->where('status', LeaveRequest::STATUS_APPROVED)->count();
-        $rejected = $leaves->where('status', LeaveRequest::STATUS_REJECTED)->count();
-
+        $summaryBase = clone $query;
+        $total = (clone $summaryBase)->count();
+        $pending = (clone $summaryBase)->where('status', LeaveRequest::STATUS_PENDING)->count();
+        $approved = (clone $summaryBase)->where('status', LeaveRequest::STATUS_APPROVED)->count();
+        $rejected = (clone $summaryBase)->where('status', LeaveRequest::STATUS_REJECTED)->count();
         $today = now()->toDateString();
-        $upcoming = $leaves
+        $upcoming = (clone $summaryBase)
             ->where('status', LeaveRequest::STATUS_APPROVED)
-            ->filter(function (LeaveRequest $leave) use ($today) {
-                return $leave->end_date->toDateString() >= $today;
-            })
+            ->whereDate('end_date', '>=', $today)
             ->count();
 
-        $payloadLeaves = $leaves->map(function (LeaveRequest $l) use ($tz, $userForSchedule, $dashboardLite) {
+        $paginator = $query
+            ->orderByDesc('start_date')
+            ->orderByDesc('id')
+            ->paginate($perPage)
+            ->withQueryString();
+
+        $payloadLeaves = $paginator->getCollection()->map(function (LeaveRequest $l) use ($tz, $userForSchedule, $dashboardLite) {
             if ($dashboardLite) {
                 return [
                     'id' => $l->id,
@@ -424,6 +428,12 @@ class EmployeeLeaveController extends Controller
             $leaveCreditsPayload = $this->leaveCreditService->buildLeaveCreditsApiPayload($user);
         }
 
+        RequestPerformanceLogger::finish($perf, $request, $payloadLeaves->count(), [
+            'scope' => 'employee',
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+        ]);
+
         return response()->json([
             'summary' => [
                 'total' => $total,
@@ -433,7 +443,13 @@ class EmployeeLeaveController extends Controller
                 'upcoming' => $upcoming,
             ],
             'leave_credits' => $leaveCreditsPayload,
-            'leave_requests' => $payloadLeaves,
+            'leave_requests' => $payloadLeaves->values(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
         ]);
     }
 

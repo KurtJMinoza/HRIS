@@ -75,8 +75,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {
   getAdminPresenceFilings,
+  getAdminPresenceFilingDetail,
   getAdminPresenceFilingAttendanceDetail,
   getMyPresenceFilings,
+  getMyPresenceFilingDetail,
   getMyPresenceFilingAttendanceDetail,
   getEmployees,
   approvePresenceFiling,
@@ -550,6 +552,8 @@ export default function AttendanceCorrections() {
   const [allItems, setAllItems] = useState([])
   const [loadingMine, setLoadingMine] = useState(true)
   const [loadingAll, setLoadingAll] = useState(false)
+  const [minePagination, setMinePagination] = useState(null)
+  const [allPagination, setAllPagination] = useState(null)
 
   const [mineSearch, setMineSearch] = useState('')
   const [allStatus, setAllStatus] = useState(() => (deepLinkedStatus === 'pending' ? 'pending' : 'all'))
@@ -575,6 +579,7 @@ export default function AttendanceCorrections() {
   const [rejectOpen, setRejectOpen] = useState(false)
   const [fileOpen, setFileOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState(null)
+  const [selectedLoading, setSelectedLoading] = useState(false)
   const [approveNotes, setApproveNotes] = useState('')
   const [rejectionNote, setRejectionNote] = useState('')
   const [hrNoteText, setHrNoteText] = useState('')
@@ -624,15 +629,16 @@ export default function AttendanceCorrections() {
   const loadMine = useCallback(async () => {
     setLoadingMine(true)
     try {
-      const res = await getMyPresenceFilings()
+      const res = await getMyPresenceFilings({ page: currentPage, per_page: itemsPerPage })
       setMineItems(res?.presence_filings ?? [])
+      setMinePagination(res?.pagination ?? null)
     } catch (e) {
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
       setMineItems([])
     } finally {
       setLoadingMine(false)
     }
-  }, [toast])
+  }, [toast, currentPage])
 
   const loadAll = useCallback(async () => {
     setLoadingAll(true)
@@ -643,15 +649,18 @@ export default function AttendanceCorrections() {
         to_date: allTo || undefined,
         issue_type: allIssue,
         q: debouncedAllQ || undefined,
+        page: currentPage,
+        per_page: itemsPerPage,
       })
       setAllItems(res?.presence_filings ?? [])
+      setAllPagination(res?.pagination ?? null)
     } catch (e) {
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
       setAllItems([])
     } finally {
       setLoadingAll(false)
     }
-  }, [toast, allStatus, allFrom, allTo, allIssue, debouncedAllQ])
+  }, [toast, allStatus, allFrom, allTo, allIssue, debouncedAllQ, currentPage])
 
   useEffect(() => {
     loadMine()
@@ -675,10 +684,9 @@ export default function AttendanceCorrections() {
     if (!canSeeAll || !deepLinkedRequestId) return
     setTab('all')
     const target = allItems.find((item) => String(item.id) === String(deepLinkedRequestId))
-    if (!target) return
     if (handledDeepLinkRef.current === String(deepLinkedRequestId)) return
     handledDeepLinkRef.current = String(deepLinkedRequestId)
-    openView(target)
+    openView(target || { id: deepLinkedRequestId })
   }, [allItems, canSeeAll, deepLinkedRequestId])
 
   useEffect(() => {
@@ -741,6 +749,7 @@ export default function AttendanceCorrections() {
 
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine' ? loadingMine : loadingAll
+  const activePagination = tab === 'mine' ? minePagination : allPagination
 
   const requestStats = useMemo(() => {
     const out = { total: activeItems.length, pending: 0, approved: 0, rejected: 0 }
@@ -866,11 +875,8 @@ export default function AttendanceCorrections() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  const paginatedItems = filteredSorted.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  )
-  const totalPages = Math.max(1, Math.ceil(filteredSorted.length / itemsPerPage))
+  const paginatedItems = filteredSorted
+  const totalPages = Math.max(1, activePagination?.last_page || Math.ceil(filteredSorted.length / itemsPerPage))
   const bulkApprovalFilters = useMemo(
     () => ({
       date_from: allFrom || undefined,
@@ -943,9 +949,23 @@ export default function AttendanceCorrections() {
   }
 
   function openView(item) {
-    setSelectedItem(item)
+    const hasSeed = item && Object.keys(item).some((key) => key !== 'id')
+    setSelectedItem(hasSeed ? item : null)
     setHrNoteText('')
     setViewOpen(true)
+    const id = item?.id
+    if (!id) return
+    setSelectedLoading(true)
+    const loader = tab === 'all' && canSeeAll ? getAdminPresenceFilingDetail : getMyPresenceFilingDetail
+    loader(id)
+      .then((data) => {
+        const next = data?.presence_filing
+        if (next) setSelectedItem(next)
+      })
+      .catch((e) => {
+        toast({ title: 'Failed to load request details', description: e.message, variant: 'error' })
+      })
+      .finally(() => setSelectedLoading(false))
   }
 
   function openApprove(item) {
@@ -1845,7 +1865,16 @@ export default function AttendanceCorrections() {
         </CardContent>
       </Card>
 
-      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+      <Dialog
+        open={viewOpen}
+        onOpenChange={(open) => {
+          setViewOpen(open)
+          if (!open) {
+            setSelectedItem(null)
+            setSelectedLoading(false)
+          }
+        }}
+      >
         <DialogContent
           showCloseButton
           closeButtonClassName="right-4 top-4 size-10 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted dark:border-white/10 dark:bg-card"
@@ -1856,6 +1885,17 @@ export default function AttendanceCorrections() {
             <DialogTitle>Correction request details</DialogTitle>
             <DialogDescription>Approval chain, attendance, and approval history.</DialogDescription>
           </DialogHeader>
+          {selectedLoading && !selectedItem ? (
+            <div className="min-h-[28rem] px-7 py-8">
+              <div className="h-4 w-44 animate-pulse rounded bg-muted" />
+              <div className="mt-5 h-10 w-28 animate-pulse rounded bg-muted" />
+              <div className="mt-8 space-y-3">
+                {Array.from({ length: 9 }).map((_, i) => (
+                  <div key={i} className="h-5 animate-pulse rounded bg-muted" />
+                ))}
+              </div>
+            </div>
+          ) : null}
           {selectedItem && (
             <>
               <div className="shrink-0 border-b border-border/70 bg-card px-7 pb-7 pt-8 text-left dark:border-white/10">
@@ -1864,9 +1904,10 @@ export default function AttendanceCorrections() {
                     Correction request
                   </p>
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
-                      #{selectedItem.id}
-                    </span>
+                  <span className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
+                    #{selectedItem.id}
+                  </span>
+                  {selectedLoading ? <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden /> : null}
                     <Badge
                       className={cn(
                         'rounded-full px-3.5 py-1.5 text-sm font-bold',

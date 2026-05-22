@@ -4,11 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
-use App\Models\AttendanceLog;
 use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
 use App\Models\User;
-use App\Services\AttendanceStatusService;
 use App\Services\BulkApproval\LeaveBulkApprovalQuery;
 use App\Services\DataScopeService;
 use App\Services\HrApprovalChainResolver;
@@ -20,6 +18,7 @@ use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
 use App\Support\LeaveFilingRules;
 use App\Support\LeaveScheduleSupport;
+use App\Support\RequestPerformanceLogger;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -49,17 +48,16 @@ class LeaveController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $perf = RequestPerformanceLogger::start('admin.leave.index');
         $status = $request->query('status');
         $actor = $request->user();
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        // Include org + role columns so approval checks (department head, etc.) match the approve() endpoint.
+        $perPage = $this->requestPerPage($request);
+
         $query = LeaveRequest::with([
-            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,schedule,working_schedule_id,role,department_id,branch_id,company_id',
-            'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
-            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,division_id,section_unit_id',
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id,division_id,section_unit_id',
             'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-            'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
         ]);
 
         $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
@@ -82,80 +80,57 @@ class LeaveController extends Controller
             $query->whereDate('start_date', '<=', $toDate);
         }
 
-        $leaves = $query->orderByDesc('created_at')->get()->map(function (LeaveRequest $l) use ($tz, $actor) {
-            $undertimeMinutes = null;
-            $shiftEndTime = null;
-            $actualClockOutTime = null;
-            if ($l->type === 'undertime' && $l->undertime_time && $l->user && $l->user->working_schedule_id !== null) {
-                $dateKey = $l->start_date->toDateString();
-                $date = \Carbon\Carbon::parse($dateKey, $tz);
+        $paginator = $query->orderByDesc('created_at')->paginate($perPage)->withQueryString();
 
-                $schedule = $l->user->schedule;
-                if (is_array($schedule) && $schedule !== []) {
-                    $dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-                    $dayKey = $dayKeys[(int) $date->format('w')];
-                    $daySchedule = $schedule[$dayKey] ?? null;
-
-                    if (is_array($daySchedule) && $daySchedule !== []) {
-                        $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
-                        if ($scheduledEnd) {
-                            $shiftEndTime = $scheduledEnd->copy()->timezone($tz)->format('H:i');
-
-                            $earlyOut = \Carbon\Carbon::parse($dateKey.' '.substr((string) $l->undertime_time, 0, 5), $tz);
-                            $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $earlyOut, null);
-                        }
-                    }
-                }
-
-                // Actual clock-out time (last clock-out log for the date, if any).
-                $dayStart = \Carbon\Carbon::parse($dateKey, $tz)->startOfDay();
-                $dayEnd = $dayStart->copy()->endOfDay();
-                $lastClockOut = AttendanceLog::query()
-                    ->where('user_id', $l->user_id)
-                    ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
-                    ->whereBetween('created_at', [$dayStart->copy()->utc(), $dayEnd->copy()->utc()])
-                    ->orderByDesc('created_at')
-                    ->first();
-
-                if ($lastClockOut) {
-                    $actualClockOutTime = $lastClockOut->created_at->copy()->timezone($tz)->format('H:i');
-                }
-            }
+        $leaves = $paginator->getCollection()->map(function (LeaveRequest $l) use ($actor) {
+            $currentApprover = $l->approval_stage === HrApprovalStages::PENDING_SECOND
+                ? $l->secondApprover
+                : $l->firstApprover;
 
             return array_merge([
                 'id' => $l->id,
+                'request_no' => 'LV-'.$l->id,
                 'employee_id' => $l->user_id,
                 'employee_name' => $l->user?->display_name,
                 'employee_profile_image' => $l->user?->profile_image_url,
+                'request_type' => 'leave',
                 'type' => $l->type,
                 'start_date' => $l->start_date->toDateString(),
                 'end_date' => $l->end_date->toDateString(),
                 'undertime_time' => $l->undertime_time ? substr((string) $l->undertime_time, 0, 5) : null,
-                'undertime_minutes' => $undertimeMinutes,
-                'undertime_hours' => $undertimeMinutes !== null ? round($undertimeMinutes / 60, 2) : null,
-                'shift_end_time' => $shiftEndTime,
-                'actual_clock_out_time' => $actualClockOutTime,
+                'undertime_minutes' => $l->undertime_minutes,
+                'undertime_hours' => $l->undertime_minutes !== null ? round(((int) $l->undertime_minutes) / 60, 2) : null,
+                'shift_end_time' => $l->shift_end_time,
+                'actual_clock_out_time' => $l->actual_clock_out_time,
                 'undertime_filing_status' => $l->type === 'undertime' ? 'filed' : null,
                 'half_type' => $l->half_type,
                 'leave_credits_charged' => $l->leave_credits_charged,
                 'leave_unpaid_credit_days' => $l->leave_unpaid_credit_days,
                 'status' => $l->status,
                 'notes' => $l->notes,
-                'filed_on_time' => null,
-                'filed_after_leave_date' => false,
-                'reviewed_at' => $l->reviewed_at?->toIso8601String(),
-                'reviewed_by_name' => $l->reviewedByUser?->display_name,
+                'current_approver' => $currentApprover?->display_name,
                 'created_at' => $l->created_at->toIso8601String(),
+                'filed_at' => $l->filed_at?->toIso8601String(),
                 'display_status' => $this->leaveApprovalService->deriveDisplayStatusLabel($l),
                 'approval_stage' => $l->approval_stage,
-                'approval_progress' => $this->mergeLeaveRemarksIntoProgress(
-                    $l,
-                    $this->leaveApprovalService->buildApprovalProgress($l)
-                ),
             ], $this->documentPayload($l), $this->leaveRequesterMeta($l), $this->leaveActorFlags($l, $actor));
         });
 
-        return response()->json(['leave_requests' => $leaves]);
+        RequestPerformanceLogger::finish($perf, $request, $leaves->count(), [
+            'scope' => 'admin',
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+        ]);
+
+        return response()->json([
+            'leave_requests' => $leaves->values(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
+        ]);
     }
 
     /**
@@ -327,6 +302,32 @@ class LeaveController extends Controller
                 'user', 'filedBy', 'firstApprover', 'secondApprover', 'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $request->user()),
         ], 201);
+    }
+
+    public function show(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.leave.show');
+        $actor = $request->user();
+        $leave = LeaveRequest::query()
+            ->with([
+                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,schedule,working_schedule_id,role,department_id,department,branch_id,company_id,division_id,section_unit_id',
+                'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id,division_id,section_unit_id',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'rejectedBy:id,name,first_name,middle_name,last_name,suffix',
+                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
+            ])
+            ->findOrFail($id);
+
+        if ($leave->user) {
+            $this->dataScopeService->ensureEmployeeAccessible($actor, $leave->user);
+        }
+
+        $payload = $this->leaveResponse($leave, $actor);
+        RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'admin']);
+
+        return response()->json(['leave_request' => $payload]);
     }
 
     /**
@@ -909,6 +910,13 @@ class LeaveController extends Controller
 
         return $actorId === (int) $leave->filed_by
             || $actorId === (int) $leave->user_id;
+    }
+
+    private function requestPerPage(Request $request): int
+    {
+        $perPage = (int) $request->query('per_page', 10);
+
+        return in_array($perPage, [10, 25, 50], true) ? $perPage : 10;
     }
 
     /**

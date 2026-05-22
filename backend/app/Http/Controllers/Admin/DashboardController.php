@@ -23,6 +23,7 @@ use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PresenceFilingService;
+use App\Support\RequestPerformanceLogger;
 use App\Support\TextSanitizer;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -247,6 +248,112 @@ class DashboardController extends Controller
         ]);
 
         return response()->json($response);
+    }
+
+    public function requestSummary(Request $request): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.dashboard.request_summary');
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
+        $scopedIds = $scope->select('users.id');
+
+        $leavePending = LeaveRequest::query()->whereIn('user_id', clone $scopedIds)->where('status', LeaveRequest::STATUS_PENDING)->count();
+        $overtimePending = Overtime::query()->whereIn('user_id', clone $scopedIds)->where('status', Overtime::STATUS_PENDING)->count();
+        $correctionPending = AttendanceCorrection::query()
+            ->whereIn('user_id', clone $scopedIds)
+            ->where('pending_approval', true)
+            ->where('approved', false)
+            ->whereNull('rejected_at')
+            ->count();
+
+        RequestPerformanceLogger::finish($perf, $request, 3, ['scope' => 'admin']);
+
+        return response()->json([
+            'counts' => [
+                'leave' => $leavePending,
+                'overtime' => $overtimePending,
+                'attendance_correction' => $correctionPending,
+                'total' => $leavePending + $overtimePending + $correctionPending,
+            ],
+        ]);
+    }
+
+    public function pendingRequests(Request $request): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.dashboard.pending_requests');
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        $module = (string) $request->query('module', 'attendance_correction');
+        $limit = min(10, max(1, (int) $request->query('limit', 5)));
+        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
+        $scopedIds = $scope->select('users.id');
+
+        if ($module === 'leave') {
+            $items = LeaveRequest::query()
+                ->with('user:id,name,first_name,middle_name,last_name,suffix')
+                ->whereIn('user_id', $scopedIds)
+                ->where('status', LeaveRequest::STATUS_PENDING)
+                ->latest()
+                ->limit($limit)
+                ->get()
+                ->map(fn (LeaveRequest $item) => [
+                    'id' => $item->id,
+                    'request_id' => $item->id,
+                    'request_type' => 'leave',
+                    'employee_name' => $item->user?->display_name,
+                    'date_from' => $item->start_date?->toDateString(),
+                    'date_to' => $item->end_date?->toDateString(),
+                    'status' => $item->status,
+                    'created_at' => $item->created_at?->toIso8601String(),
+                ]);
+        } elseif ($module === 'overtime') {
+            $items = Overtime::query()
+                ->with('user:id,name,first_name,middle_name,last_name,suffix')
+                ->whereIn('user_id', $scopedIds)
+                ->where('status', Overtime::STATUS_PENDING)
+                ->latest()
+                ->limit($limit)
+                ->get()
+                ->map(fn (Overtime $item) => [
+                    'id' => $item->id,
+                    'request_id' => $item->id,
+                    'request_type' => 'overtime',
+                    'employee_name' => $item->user?->display_name,
+                    'date_from' => $item->date?->toDateString(),
+                    'date_to' => $item->date?->toDateString(),
+                    'status' => $item->status,
+                    'created_at' => $item->created_at?->toIso8601String(),
+                ]);
+        } else {
+            $items = AttendanceCorrection::query()
+                ->with('user:id,name,first_name,middle_name,last_name,suffix')
+                ->whereIn('user_id', $scopedIds)
+                ->where('pending_approval', true)
+                ->where('approved', false)
+                ->whereNull('rejected_at')
+                ->latest('filed_at')
+                ->limit($limit)
+                ->get()
+                ->map(fn (AttendanceCorrection $item) => [
+                    'id' => $item->id,
+                    'request_id' => $item->id,
+                    'request_type' => 'attendance_correction',
+                    'employee_name' => $item->user?->display_name,
+                    'date_from' => $item->date?->toDateString(),
+                    'date_to' => $item->date?->toDateString(),
+                    'status' => 'pending',
+                    'created_at' => $item->filed_at?->toIso8601String() ?? $item->created_at?->toIso8601String(),
+                ]);
+        }
+
+        RequestPerformanceLogger::finish($perf, $request, $items->count(), ['scope' => 'admin', 'module' => $module]);
+
+        return response()->json(['pending_requests' => $items->values()]);
     }
 
     /** How many calendar months back admins may browse birthday history. */

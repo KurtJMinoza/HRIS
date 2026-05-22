@@ -254,11 +254,17 @@ export default function AdminLeave() {
 
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLeave, setDetailLeave] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const tabInitialized = useRef(false)
   const [tab, setTab] = useState('all')
   const [myLeaveRequests, setMyLeaveRequests] = useState([])
   const [loadingMine, setLoadingMine] = useState(false)
   const [mineError, setMineError] = useState(null)
+  const [allPage, setAllPage] = useState(1)
+  const [minePage, setMinePage] = useState(1)
+  const [allPagination, setAllPagination] = useState(null)
+  const [minePagination, setMinePagination] = useState(null)
+  const leavePerPage = 10
 
   const fetchLeaves = useCallback(async () => {
     setError(null)
@@ -267,15 +273,18 @@ export default function AdminLeave() {
         status: statusFilter || undefined,
         from_date: appliedFrom || undefined,
         to_date: appliedTo || undefined,
+        page: allPage,
+        per_page: leavePerPage,
       })
       setLeaveRequests(data.leave_requests || [])
+      setAllPagination(data.pagination || null)
     } catch (e) {
       setError(e.message)
       setLeaveRequests([])
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, appliedFrom, appliedTo])
+  }, [statusFilter, appliedFrom, appliedTo, allPage])
 
   const fetchMineLeaves = useCallback(async () => {
     setMineError(null)
@@ -284,14 +293,22 @@ export default function AdminLeave() {
         status: statusFilter || undefined,
         from_date: appliedFrom || undefined,
         to_date: appliedTo || undefined,
+        page: minePage,
+        per_page: leavePerPage,
       })
       setMyLeaveRequests(Array.isArray(data.leave_requests) ? data.leave_requests : [])
+      setMinePagination(data.pagination || null)
     } catch (e) {
       setMineError(e.message)
       setMyLeaveRequests([])
     } finally {
       setLoadingMine(false)
     }
+  }, [statusFilter, appliedFrom, appliedTo, minePage])
+
+  useEffect(() => {
+    setAllPage(1)
+    setMinePage(1)
   }, [statusFilter, appliedFrom, appliedTo])
 
   useEffect(() => {
@@ -581,8 +598,20 @@ export default function AdminLeave() {
   }
 
   function openDetailDialog(leave) {
-    setDetailLeave(leave)
+    setDetailLeave(leave || null)
     setDetailOpen(true)
+    const id = leave?.id
+    if (!id) return
+    setDetailLoading(true)
+    getAdminLeaveByRequestId(id)
+      .then((data) => {
+        const next = data.leave_request || data.leave_requests?.[0]
+        if (next) setDetailLeave(next)
+      })
+      .catch((e) => {
+        toast({ title: 'Failed to load leave details', description: e.message, variant: 'error' })
+      })
+      .finally(() => setDetailLoading(false))
   }
 
   const leaveRequestIdFromUrl = searchParams.get('request_id')
@@ -592,9 +621,11 @@ export default function AdminLeave() {
     let cancelled = false
     ;(async () => {
       try {
+        setDetailOpen(true)
+        setDetailLeave(null)
+        setDetailLoading(true)
         const data = await getAdminLeaveByRequestId(leaveRequestIdFromUrl)
-        const list = data.leave_requests || []
-        const leave = list[0]
+        const leave = data.leave_request || data.leave_requests?.[0]
         if (cancelled) return
         if (!leave) {
           toast({
@@ -604,7 +635,7 @@ export default function AdminLeave() {
           })
           return
         }
-        openDetailDialog(leave)
+        setDetailLeave(leave)
         setSearchParams(
           (prev) => {
             const next = new URLSearchParams(prev)
@@ -617,6 +648,8 @@ export default function AdminLeave() {
         if (!cancelled) {
           toast({ title: 'Failed to load leave request', description: e.message, variant: 'error' })
         }
+      } finally {
+        if (!cancelled) setDetailLoading(false)
       }
     })()
 
@@ -814,6 +847,7 @@ export default function AdminLeave() {
   const activeLeaveRequests = isMineTab ? myLeaveRequests : leaveRequests
   const activeLoading = isMineTab ? loadingMine : loading
   const activeError = isMineTab ? mineError : error
+  const activePagination = isMineTab ? minePagination : allPagination
   const totalCount = activeLeaveRequests.length
   const pendingCount = activeLeaveRequests.filter((l) => l.status === 'pending').length
   const approvedCount = activeLeaveRequests.filter((l) => l.status === 'approved').length
@@ -1597,6 +1631,33 @@ export default function AdminLeave() {
               </table>
             </div>
           )}
+          {activePagination && activePagination.last_page > 1 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 px-4 py-3 text-sm text-muted-foreground @sm:px-6">
+              <span>
+                Page {activePagination.current_page} of {activePagination.last_page} · {activePagination.total} total
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={activeLoading || activePagination.current_page <= 1}
+                  onClick={() => (isMineTab ? setMinePage((p) => Math.max(1, p - 1)) : setAllPage((p) => Math.max(1, p - 1)))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={activeLoading || activePagination.current_page >= activePagination.last_page}
+                  onClick={() => (isMineTab ? setMinePage((p) => p + 1) : setAllPage((p) => p + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -2200,11 +2261,15 @@ export default function AdminLeave() {
         open={detailOpen}
         onOpenChange={(open) => {
           setDetailOpen(open)
-          if (!open) setDetailLeave(null)
+          if (!open) {
+            setDetailLeave(null)
+            setDetailLoading(false)
+          }
         }}
         leave={detailLeave}
         showEmployeeName
         resolveDocUrl={profileImageUrl}
+        loading={detailLoading}
       />
 
       <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, leave: null })}>
