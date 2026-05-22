@@ -190,6 +190,70 @@ class FlexibleImmediateApproverResolverTest extends TestCase
         $this->assertSame('admin_hr', $chain[1]['approval_level']);
     }
 
+    public function test_section_unit_team_lead_leave_routes_to_department_head_when_leader_is_not_section_member(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', false);
+
+        $teamLead = $this->user();
+        $departmentHead = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+
+        $department = Department::query()->create([
+            'name' => 'Leave Parent Department '.Str::random(6),
+            'department_head_id' => (int) $departmentHead->id,
+        ]);
+        $section = SectionUnit::query()->create([
+            'name' => 'Leave Led Section '.Str::random(6),
+            'department_id' => (int) $department->id,
+            'status' => 'active',
+        ]);
+        DB::table('section_unit_team_leaders')->insert([
+            'section_unit_id' => (int) $section->id,
+            'employee_id' => (int) $teamLead->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($teamLead, 'leave', $teamLead);
+
+        $this->assertCount(2, $chain);
+        $this->assertSame((int) $departmentHead->id, (int) $chain[0]['approver_id']);
+        $this->assertSame('Department Head approval', $chain[0]['approval_label']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
+    public function test_section_unit_team_lead_overtime_routes_to_department_head_when_leader_is_not_section_member(): void
+    {
+        $this->setWorkflowFallbackToParent('overtime', false);
+
+        $teamLead = $this->user();
+        $departmentHead = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+
+        $department = Department::query()->create([
+            'name' => 'Overtime Parent Department '.Str::random(6),
+            'department_head_id' => (int) $departmentHead->id,
+        ]);
+        $section = SectionUnit::query()->create([
+            'name' => 'Overtime Led Section '.Str::random(6),
+            'department_id' => (int) $department->id,
+            'status' => 'active',
+        ]);
+        DB::table('section_unit_team_leaders')->insert([
+            'section_unit_id' => (int) $section->id,
+            'employee_id' => (int) $teamLead->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($teamLead, 'overtime', $teamLead);
+
+        $this->assertCount(2, $chain);
+        $this->assertSame((int) $departmentHead->id, (int) $chain[0]['approver_id']);
+        $this->assertSame('Department Head approval', $chain[0]['approval_label']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
     public function test_section_unit_team_lead_leave_routes_to_hr_when_parent_department_head_missing(): void
     {
         $this->setWorkflowFallbackToParent('leave', false);
@@ -627,6 +691,8 @@ class FlexibleImmediateApproverResolverTest extends TestCase
 
     public function test_department_head_routes_to_scoped_division_head_before_hr(): void
     {
+        $this->setWorkflowFallbackToParent('leave', false);
+
         $deptHead = $this->user();
         $divHead = $this->user();
         $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
@@ -931,6 +997,7 @@ class FlexibleImmediateApproverResolverTest extends TestCase
     {
         $this->leader($departmentUnit, $deptHead, 'Department Head');
         $this->assign($deptHead, $departmentUnit);
+        Department::query()->whereKey($departmentLegacyId)->update(['department_head_id' => (int) $deptHead->id]);
         $deptHead->forceFill(['department_id' => $departmentLegacyId])->save();
     }
 

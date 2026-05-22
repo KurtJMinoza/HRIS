@@ -14,6 +14,7 @@ use App\Models\OrganizationUnitLeader;
 use App\Models\SectionUnit;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -150,10 +151,8 @@ class FlexibleImmediateApproverResolver
             ? $this->buildOrganizationUnitChain($subject, $hierarchy, $context)
             : collect();
 
-        if (
-            $this->usesDepartmentScopedDivisionHead($requestType)
-            && $this->requestorLeadsSectionUnitContext($requestorUser, $hierarchy)
-        ) {
+        $sectionLeaderContext = $this->sectionLeaderRequestContext($requestorUser, $hierarchy, $context);
+        if ($this->usesDepartmentScopedDivisionHead($requestType) && (bool) $sectionLeaderContext['is_team_leader']) {
             $departmentResolved = $this->resolveParentDepartmentHeadForSectionLeaderRequest(
                 $subject,
                 $requestorUser,
@@ -161,6 +160,7 @@ class FlexibleImmediateApproverResolver
                 $requestType,
                 $skipIds,
                 $context,
+                $sectionLeaderContext,
             );
 
             if ($departmentResolved !== null) {
@@ -675,10 +675,11 @@ class FlexibleImmediateApproverResolver
         ?string $requestType,
         array $skipIds,
         array $context,
+        array $sectionLeaderContext = [],
     ): ?array {
-        $sectionUnitId = (int) ($hierarchy['section_unit'] ?? 0);
-        $departmentId = (int) ($hierarchy['department'] ?? 0);
-        $sectionLeaderIds = $this->sectionLeaderIdsForContext($sectionUnitId);
+        $sectionUnitId = (int) ($sectionLeaderContext['section_unit_id'] ?? $hierarchy['section_unit'] ?? 0);
+        $departmentId = (int) ($sectionLeaderContext['department_id'] ?? $hierarchy['department'] ?? 0);
+        $sectionLeaderIds = $sectionLeaderContext['section_unit_leader_ids'] ?? $this->sectionLeaderIdsForContext($sectionUnitId);
 
         $baseLog = [
             'request_type' => $requestType,
@@ -690,19 +691,27 @@ class FlexibleImmediateApproverResolver
             'parent_department_id' => $departmentId > 0 ? $departmentId : null,
         ];
 
+        if ($departmentId <= 0 && $sectionUnitId > 0) {
+            $departmentId = (int) (SectionUnit::query()->whereKey($sectionUnitId)->value('department_id') ?? 0);
+            $baseLog['parent_department_id'] = $departmentId > 0 ? $departmentId : null;
+        }
+
         if ($departmentId <= 0) {
             $this->log($context, 'section/unit leader request skipped department head lookup — no parent department', $baseLog + [
                 'department_head_found' => false,
+                'is_team_leader' => true,
+                'request_section_unit_id' => $sectionUnitId > 0 ? $sectionUnitId : null,
                 'skip_reason' => 'missing_parent_department_context',
             ]);
 
             return null;
         }
 
-        $department = Department::query()->find($departmentId);
-        $legacyHeadId = $department?->department_head_id ? (int) $department->department_head_id : null;
+        $legacyHeadId = $this->legacyHeadEmployeeIdFor('department', $departmentId);
 
         $this->log($context, 'section/unit leader request evaluating parent department head', $baseLog + [
+            'is_team_leader' => true,
+            'request_section_unit_id' => $sectionUnitId > 0 ? $sectionUnitId : null,
             'department_head_id' => $legacyHeadId,
             'department_head_found' => $legacyHeadId !== null,
         ]);
@@ -719,6 +728,8 @@ class FlexibleImmediateApproverResolver
         if ($resolved === null) {
             $head = $legacyHeadId ? User::query()->find($legacyHeadId) : null;
             $this->log($context, 'section/unit leader request has no eligible department head — routing to HR/Admin only', $baseLog + [
+                'is_team_leader' => true,
+                'request_section_unit_id' => $sectionUnitId > 0 ? $sectionUnitId : null,
                 'department_head_found' => $head !== null,
                 'department_head_active' => $head?->is_active,
                 'department_head_operationally_active' => $head?->isOperationallyActive(),
@@ -730,6 +741,8 @@ class FlexibleImmediateApproverResolver
 
         $resolved['selected_approver_source'] = 'parent_department_head_for_section_leader';
         $this->log($context, 'selected parent department head for section/unit leader request', $baseLog + [
+            'is_team_leader' => true,
+            'request_section_unit_id' => $sectionUnitId > 0 ? $sectionUnitId : null,
             'department_head_found' => true,
             'department_head_active' => true,
             'selected_first_approver' => $resolved['approver_name'],
@@ -1317,6 +1330,139 @@ class FlexibleImmediateApproverResolver
      */
     private function requestorLeadsSectionUnitContext(User $requestor, array $hierarchy): bool
     {
+        return (bool) $this->sectionLeaderRequestContext($requestor, $hierarchy)['is_team_leader'];
+    }
+
+    /**
+     * @param  array<string, int|null>  $hierarchy
+     * @param  array<string, mixed>  $context
+     * @return array{is_team_leader: bool, section_unit_id: ?int, department_id: ?int, section_unit_leader_ids: list<int>}
+     */
+    private function sectionLeaderRequestContext(User $requestor, array $hierarchy, array $context = []): array
+    {
+        $candidateSectionIds = array_values(array_unique(array_filter(array_map('intval', [
+            $context['section_unit_id'] ?? null,
+            $hierarchy['section_unit'] ?? null,
+        ]), fn (int $id): bool => $id > 0)));
+
+        $ledSectionIds = $this->sectionUnitIdsLedByRequestor($requestor);
+        foreach ($ledSectionIds as $sectionId) {
+            if (! in_array($sectionId, $candidateSectionIds, true)) {
+                $candidateSectionIds[] = $sectionId;
+            }
+        }
+
+        foreach ($candidateSectionIds as $sectionUnitId) {
+            $leaderIds = $this->sectionLeaderIdsForContext($sectionUnitId);
+            if (! in_array((int) $requestor->id, $leaderIds, true)) {
+                continue;
+            }
+
+            $departmentId = (int) ($hierarchy['department'] ?? $context['department_id'] ?? 0);
+            if ($departmentId <= 0) {
+                $departmentId = (int) (SectionUnit::query()->whereKey($sectionUnitId)->value('department_id') ?? 0);
+            }
+
+            return [
+                'is_team_leader' => true,
+                'section_unit_id' => $sectionUnitId,
+                'department_id' => $departmentId > 0 ? $departmentId : null,
+                'section_unit_leader_ids' => $leaderIds,
+            ];
+        }
+
+        return [
+            'is_team_leader' => false,
+            'section_unit_id' => $candidateSectionIds[0] ?? null,
+            'department_id' => (int) ($hierarchy['department'] ?? $context['department_id'] ?? 0) ?: null,
+            'section_unit_leader_ids' => [],
+        ];
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function sectionUnitIdsLedByRequestor(User $requestor): array
+    {
+        $userId = (int) $requestor->id;
+        $ids = [];
+
+        $sectionQuery = SectionUnit::query()->where('section_unit_head_id', $userId);
+        if (Schema::hasColumn('sections_or_units', 'head_employee_id')) {
+            $sectionQuery->orWhere('head_employee_id', $userId);
+        }
+        if (Schema::hasColumn('sections_or_units', 'team_leader_id')) {
+            $sectionQuery->orWhere('team_leader_id', $userId);
+        }
+        $ids = [
+            ...$ids,
+            ...$sectionQuery->pluck('id')->map(fn ($id) => (int) $id)->all(),
+        ];
+
+        if (Schema::hasTable('section_unit_team_leaders')) {
+            $ids = [
+                ...$ids,
+                ...DB::table('section_unit_team_leaders')
+                    ->where('employee_id', $userId)
+                    ->pluck('section_unit_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all(),
+            ];
+        }
+
+        if (Schema::hasTable('organization_units')) {
+            $unitQuery = OrganizationUnit::query()
+                ->where('legacy_source_type', 'section_unit')
+                ->where(function ($query) use ($userId): void {
+                    $query->whereHas('activeLeaders', fn ($leaderQuery) => $leaderQuery->where('employee_id', $userId));
+
+                    if (Schema::hasTable('organization_position_assignments')) {
+                        $query->orWhereHas('activePositionAssignments', function ($assignmentQuery) use ($userId): void {
+                            $assignmentQuery
+                                ->where('employee_id', $userId)
+                                ->whereHas('positionType', fn ($typeQuery) => $typeQuery->where('can_approve', true));
+                        });
+                    }
+                });
+
+            $ids = [
+                ...$ids,
+                ...$unitQuery->pluck('legacy_source_id')->map(fn ($id) => (int) $id)->all(),
+            ];
+        }
+
+        if (Schema::hasTable('organization_leadership_assignments')) {
+            $leadership = DB::table('organization_leadership_assignments')->where('employee_id', $userId);
+            if (Schema::hasColumn('organization_leadership_assignments', 'organization_type')) {
+                $leadership->where('organization_type', 'section_unit');
+            }
+            if (Schema::hasColumn('organization_leadership_assignments', 'can_approve')) {
+                $leadership->where('can_approve', true);
+            }
+            if (Schema::hasColumn('organization_leadership_assignments', 'is_active')) {
+                $leadership->where('is_active', true);
+            }
+
+            $sectionColumn = Schema::hasColumn('organization_leadership_assignments', 'section_unit_id')
+                ? 'section_unit_id'
+                : (Schema::hasColumn('organization_leadership_assignments', 'organization_id') ? 'organization_id' : null);
+
+            if ($sectionColumn !== null) {
+                $ids = [
+                    ...$ids,
+                    ...$leadership->pluck($sectionColumn)->map(fn ($id) => (int) $id)->all(),
+                ];
+            }
+        }
+
+        return array_values(array_unique(array_filter($ids, fn (int $id): bool => $id > 0)));
+    }
+
+    /**
+     * @param  array<string, int|null>  $hierarchy
+     */
+    private function requestorLeadsSectionUnitContextLegacy(User $requestor, array $hierarchy): bool
+    {
         $sectionUnitId = (int) ($hierarchy['section_unit'] ?? 0);
         if ($sectionUnitId <= 0) {
             return false;
@@ -1339,6 +1485,15 @@ class FlexibleImmediateApproverResolver
         $legacyHeadId = $this->legacyHeadEmployeeIdFor('section_unit', $sectionUnitId);
         if ($legacyHeadId !== null) {
             $ids[] = $legacyHeadId;
+        }
+
+        $section = SectionUnit::query()->find($sectionUnitId);
+        if ($section) {
+            foreach (['head_employee_id', 'team_leader_id'] as $column) {
+                if (Schema::hasColumn('sections_or_units', $column) && (int) ($section->{$column} ?? 0) > 0) {
+                    $ids[] = (int) $section->{$column};
+                }
+            }
         }
 
         $unit = OrganizationUnit::query()
@@ -1364,14 +1519,11 @@ class FlexibleImmediateApproverResolver
             }
         }
 
-        if (Schema::hasTable('section_unit_team_leaders')) {
-            $section = SectionUnit::query()->find($sectionUnitId);
-            if ($section) {
-                $ids = [
-                    ...$ids,
-                    ...$section->teamLeaders()->pluck('users.id')->map(fn ($id) => (int) $id)->all(),
-                ];
-            }
+        if (Schema::hasTable('section_unit_team_leaders') && $section) {
+            $ids = [
+                ...$ids,
+                ...$section->teamLeaders()->pluck('users.id')->map(fn ($id) => (int) $id)->all(),
+            ];
         }
 
         return array_values(array_unique(array_filter($ids, fn (int $id): bool => $id > 0)));
@@ -1923,8 +2075,8 @@ class FlexibleImmediateApproverResolver
             'company' => Company::query()->whereKey($legacyId)->value('company_head_id'),
             'branch' => Branch::query()->whereKey($legacyId)->value('branch_manager_id'),
             'division' => Division::query()->whereKey($legacyId)->value('division_head_id'),
-            'department' => Department::query()->whereKey($legacyId)->value('department_head_id'),
-            'section_unit' => SectionUnit::query()->whereKey($legacyId)->value('section_unit_head_id'),
+            'department' => $this->legacyDepartmentHeadId($legacyId),
+            'section_unit' => $this->legacySectionUnitHeadId($legacyId),
             default => null,
         };
 
@@ -1933,6 +2085,38 @@ class FlexibleImmediateApproverResolver
         }
 
         return (int) $headId;
+    }
+
+    private function legacyDepartmentHeadId(int $departmentId): ?int
+    {
+        $department = Department::query()->find($departmentId);
+        if (! $department) {
+            return null;
+        }
+
+        foreach (['department_head_id', 'head_employee_id'] as $column) {
+            if (Schema::hasColumn('departments', $column) && (int) ($department->{$column} ?? 0) > 0) {
+                return (int) $department->{$column};
+            }
+        }
+
+        return null;
+    }
+
+    private function legacySectionUnitHeadId(int $sectionUnitId): ?int
+    {
+        $section = SectionUnit::query()->find($sectionUnitId);
+        if (! $section) {
+            return null;
+        }
+
+        foreach (['section_unit_head_id', 'head_employee_id', 'team_leader_id'] as $column) {
+            if (Schema::hasColumn('sections_or_units', $column) && (int) ($section->{$column} ?? 0) > 0) {
+                return (int) $section->{$column};
+            }
+        }
+
+        return null;
     }
 
     private function defaultLeaderRoleForLegacyType(string $legacyType): string
