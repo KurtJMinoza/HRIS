@@ -43,6 +43,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import {
   getLeaveRequests,
   getMyLeaveSummary,
+  fetchLeaveRequestReview,
   getAdminLeaveByRequestId,
   createLeaveRequest,
   approveLeaveRequest,
@@ -88,6 +89,12 @@ import {
   adminFormDialogContentClass,
 } from '@/lib/adminFormDialogStyles'
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
+import {
+  extractLeaveRequestFromReviewPayload,
+  leaveReviewErrorMessage,
+  logLeaveReviewFetchFailure,
+  parseLeaveReviewRequestId,
+} from '@/lib/leaveReviewDeepLink'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
@@ -252,9 +259,20 @@ export default function AdminLeave() {
   const [deleteDialog, setDeleteDialog] = useState({ open: false, leave: null })
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
-  const [detailOpen, setDetailOpen] = useState(false)
+  const reviewRequestIdFromUrl = parseLeaveReviewRequestId(
+    searchParams.get('reviewRequestId') || searchParams.get('request_id'),
+  )
+  const leaveTabFromUrl = searchParams.get('tab')
+  const openAllRequestsTab =
+    leaveTabFromUrl === 'all' || Boolean(reviewRequestIdFromUrl)
+  const [detailOpen, setDetailOpen] = useState(() => Boolean(reviewRequestIdFromUrl))
   const [detailLeave, setDetailLeave] = useState(null)
-  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(() => Boolean(reviewRequestIdFromUrl))
+  const [detailError, setDetailError] = useState(null)
+  const [detailRetrying, setDetailRetrying] = useState(false)
+  const detailAbortRef = useRef(null)
+  const detailFetchIdRef = useRef(0)
+  const detailRequestIdRef = useRef(null)
   const tabInitialized = useRef(false)
   const [tab, setTab] = useState('all')
   const [myLeaveRequests, setMyLeaveRequests] = useState([])
@@ -314,8 +332,12 @@ export default function AdminLeave() {
   useEffect(() => {
     if (tabInitialized.current || !user?.id) return
     tabInitialized.current = true
+    if (openAllRequestsTab) {
+      setTab('all')
+      return
+    }
     if (!showEmployeePicker) setTab('mine')
-  }, [user?.id, showEmployeePicker])
+  }, [user?.id, showEmployeePicker, openAllRequestsTab])
 
   useEffect(() => {
     setLoading(true)
@@ -597,66 +619,103 @@ export default function AdminLeave() {
     }
   }
 
-  function openDetailDialog(leave) {
-    setDetailLeave(leave || null)
-    setDetailOpen(true)
-    const id = leave?.id
-    if (!id) return
-    setDetailLoading(true)
-    getAdminLeaveByRequestId(id)
-      .then((data) => {
-        const next = data.leave_request || data.leave_requests?.[0]
-        if (next) setDetailLeave(next)
-      })
-      .catch((e) => {
-        toast({ title: 'Failed to load leave details', description: e.message, variant: 'error' })
-      })
-      .finally(() => setDetailLoading(false))
-  }
+  const mapReviewFetchError = useCallback((e) => {
+    if (e?.code === 'invalid_id') return 'invalid_id'
+    if (e?.code === 'forbidden' || e?.status === 403) return 'forbidden'
+    if (e?.code === 'not_found' || e?.status === 404) return 'not_found'
+    if (e?.code === 'server_error' || (e?.status != null && e.status >= 500)) return 'server_error'
+    return 'generic'
+  }, [])
 
-  const leaveRequestIdFromUrl = searchParams.get('request_id')
-  useEffect(() => {
-    if (!leaveRequestIdFromUrl) return
-
-    let cancelled = false
-    ;(async () => {
-      try {
+  const loadReviewDetail = useCallback(
+    async (requestId, { isRetry = false, signal: externalSignal } = {}) => {
+      const id = parseLeaveReviewRequestId(requestId)
+      if (!id) {
         setDetailOpen(true)
+        setDetailLoading(false)
+        setDetailError('missing_id')
         setDetailLeave(null)
-        setDetailLoading(true)
-        const data = await getAdminLeaveByRequestId(leaveRequestIdFromUrl)
-        const leave = data.leave_request || data.leave_requests?.[0]
-        if (cancelled) return
-        if (!leave) {
-          toast({
-            title: 'Leave request not found',
-            description: 'It may be outside your scope or was removed.',
-            variant: 'error',
-          })
+        return
+      }
+      detailRequestIdRef.current = id
+
+      let signal = externalSignal
+      let ownedController = null
+      if (!signal) {
+        detailAbortRef.current?.abort()
+        ownedController = new AbortController()
+        detailAbortRef.current = ownedController
+        signal = ownedController.signal
+      }
+
+      const fetchId = ++detailFetchIdRef.current
+
+      setDetailOpen(true)
+      setDetailLeave(null)
+      setDetailLoading(true)
+      setDetailError(null)
+      if (isRetry) setDetailRetrying(true)
+
+      try {
+        const data = await fetchLeaveRequestReview(id, { signal })
+        if (signal.aborted || fetchId !== detailFetchIdRef.current) return
+        const next = extractLeaveRequestFromReviewPayload(data)
+        if (!next) {
+          setDetailError('not_found')
+          setDetailLeave(null)
           return
         }
-        setDetailLeave(leave)
-        setSearchParams(
-          (prev) => {
-            const next = new URLSearchParams(prev)
-            next.delete('request_id')
-            return next
-          },
-          { replace: true },
-        )
+        setDetailLeave(next)
+        setDetailError(null)
       } catch (e) {
-        if (!cancelled) {
-          toast({ title: 'Failed to load leave request', description: e.message, variant: 'error' })
-        }
+        if (signal.aborted || fetchId !== detailFetchIdRef.current) return
+        if (e?.name === 'AbortError') return
+        const code = mapReviewFetchError(e)
+        logLeaveReviewFetchFailure('loadReviewDetail', {
+          reviewRequestId: id,
+          url: e?.url,
+          status: e?.status,
+          body: e?.body,
+          error: e,
+          user,
+          search: searchParams.toString(),
+        })
+        setDetailError(code)
+        setDetailLeave(null)
       } finally {
-        if (!cancelled) setDetailLoading(false)
+        if (signal.aborted || fetchId !== detailFetchIdRef.current) return
+        setDetailLoading(false)
+        setDetailRetrying(false)
       }
-    })()
+    },
+    [mapReviewFetchError, searchParams, user],
+  )
 
+  function openDetailDialog(leave) {
+    setDetailOpen(true)
+    const id = leave?.id
+    if (!id) {
+      setDetailLeave(leave || null)
+      setDetailLoading(false)
+      setDetailError(null)
+      return
+    }
+    loadReviewDetail(id)
+  }
+
+  useEffect(() => {
+    if (!reviewRequestIdFromUrl) return
+    setTab('all')
+    setDetailOpen(true)
+    let cancelled = false
+    ;(async () => {
+      await loadReviewDetail(reviewRequestIdFromUrl)
+      if (cancelled) return
+    })()
     return () => {
       cancelled = true
     }
-  }, [leaveRequestIdFromUrl, setSearchParams, toast])
+  }, [reviewRequestIdFromUrl, loadReviewDetail])
 
   const openApproveDialog = (leave) => {
     setApproveLeave(leave)
@@ -2262,14 +2321,23 @@ export default function AdminLeave() {
         onOpenChange={(open) => {
           setDetailOpen(open)
           if (!open) {
+            detailAbortRef.current?.abort()
             setDetailLeave(null)
             setDetailLoading(false)
+            setDetailError(null)
+            setDetailRetrying(false)
           }
         }}
         leave={detailLeave}
         showEmployeeName
         resolveDocUrl={profileImageUrl}
         loading={detailLoading}
+        error={detailError}
+        retrying={detailRetrying}
+        onRetry={() => {
+          const id = reviewRequestIdFromUrl || detailRequestIdRef.current
+          if (id) loadReviewDetail(id, { isRetry: true })
+        }}
       />
 
       <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, leave: null })}>

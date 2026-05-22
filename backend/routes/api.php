@@ -360,8 +360,10 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
         Route::middleware('permission:leave.view')->get('/admin/leave', [LeaveController::class, 'index']);
+        Route::middleware('permission:leave.view')->get('/admin/leave/{id}/review', [LeaveController::class, 'review'])->whereNumber('id');
         Route::middleware('permission:leave.view')->get('/admin/leave/{id}', [LeaveController::class, 'show'])->whereNumber('id');
         Route::middleware('permission:leave.view')->get('/leave-requests', [LeaveController::class, 'index']);
+        Route::middleware('permission:leave.view')->get('/leave-requests/{id}/review', [LeaveController::class, 'review'])->whereNumber('id');
         Route::middleware('permission:leave.view')->get('/leave-requests/{id}', [LeaveController::class, 'show'])->whereNumber('id');
         Route::middleware('permission:leave.approve')->get('/admin/leave/validate-range', [LeaveController::class, 'validateLeaveDateRange']);
         Route::middleware('permission:leave.approve')->post('/admin/leave', [LeaveController::class, 'store']);

@@ -1592,9 +1592,13 @@ export default function AdminDashboard() {
                               type="button"
                               className="h-9 w-full rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"
                               onClick={() => {
-                                const rid = leave.request_id ?? leave.leave_request_id
+                                const rid = leave.leave_request_id ?? leave.request_id
+                                if (rid == null || rid === '') {
+                                  navigate(`${hrPanelPath(hrBase, 'leave')}?tab=all`)
+                                  return
+                                }
                                 navigate(
-                                  `${hrPanelPath(hrBase, 'leave')}?request_id=${encodeURIComponent(String(rid))}`,
+                                  `${hrPanelPath(hrBase, 'leave')}?tab=all&reviewRequestId=${encodeURIComponent(String(rid))}`,
                                 )
                               }}
                             >

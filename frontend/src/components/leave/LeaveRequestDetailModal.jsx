@@ -1,4 +1,4 @@
-import { CalendarDays, Calendar, Clock, FileText, MessageSquareText, UsersRound } from 'lucide-react'
+import { CalendarDays, Calendar, Clock, FileText, MessageSquareText, RefreshCw, UsersRound } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
+import { leaveReviewErrorMessage } from '@/lib/leaveReviewDeepLink'
 
 function formatDateTime(iso) {
   if (!iso) return '—'
@@ -280,6 +281,61 @@ function LeaveApprovalChain({ steps }) {
   )
 }
 
+function LeaveReviewDetailSkeleton() {
+  return (
+    <div className="min-h-[26rem] px-7 py-8" role="status" aria-live="polite" aria-busy="true">
+      <p className="text-sm font-medium text-muted-foreground">Loading leave request details…</p>
+      <div className="mt-5 h-10 w-40 animate-pulse rounded-lg bg-muted" />
+      <div className="mt-3 h-6 w-28 animate-pulse rounded-full bg-muted" />
+      <div className="mt-8 space-y-6">
+        <div className="rounded-xl border border-border/70 p-5 dark:border-white/10">
+          <div className="mb-4 h-4 w-36 animate-pulse rounded bg-muted" />
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={`summary-${i}`} className="h-5 animate-pulse rounded bg-muted" />
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl border border-border/70 p-5 dark:border-white/10">
+          <div className="mb-4 h-4 w-32 animate-pulse rounded bg-muted" />
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={`details-${i}`} className="h-5 animate-pulse rounded bg-muted" />
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl border border-border/70 p-5 dark:border-white/10">
+          <div className="mb-4 h-4 w-44 animate-pulse rounded bg-muted" />
+          <div className="space-y-3">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={`timeline-${i}`} className="h-16 animate-pulse rounded-xl bg-muted" />
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="mt-8 flex justify-end gap-3 border-t border-border/70 pt-6 dark:border-white/10">
+        <div className="h-10 w-24 animate-pulse rounded-lg bg-muted" />
+      </div>
+    </div>
+  )
+}
+
+function LeaveReviewDetailError({ message, onRetry, retrying }) {
+  return (
+    <div className="flex min-h-[20rem] flex-col items-center justify-center gap-4 px-7 py-12 text-center">
+      <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
+        {message || 'Unable to load request details. Please try again.'}
+      </p>
+      {onRetry ? (
+        <Button type="button" variant="outline" className="gap-2" onClick={onRetry} disabled={retrying}>
+          {retrying ? <RefreshCw className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
+          Retry
+        </Button>
+      ) : null}
+    </div>
+  )
+}
+
 function LeaveApprovalHistory({ history }) {
   if (!Array.isArray(history) || history.length === 0) return null
 
@@ -323,6 +379,9 @@ function LeaveApprovalHistory({ history }) {
  *   leave: object | null
  *   showEmployeeName?: boolean
  *   resolveDocUrl?: (path: string) => string
+ *   error?: string | null
+ *   onRetry?: () => void
+ *   retrying?: boolean
  * }} props
  */
 export function LeaveRequestDetailModal({
@@ -332,9 +391,16 @@ export function LeaveRequestDetailModal({
   showEmployeeName = false,
   resolveDocUrl = (url) => url,
   loading = false,
+  error = null,
+  onRetry,
+  retrying = false,
 }) {
   const badgeLabel = leave?.display_status || leave?.status || '—'
   const docs = supportingDocUrls(leave)
+  const viewState = error ? 'error' : loading ? 'loading' : leave ? 'content' : 'loading'
+  const showSkeleton = viewState === 'loading'
+  const showError = viewState === 'error'
+  const showContent = viewState === 'content'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -348,18 +414,15 @@ export function LeaveRequestDetailModal({
           <DialogTitle>Leave request details</DialogTitle>
           <DialogDescription>Approval chain, dates, and approval history.</DialogDescription>
         </DialogHeader>
-        {loading && !leave ? (
-          <div className="min-h-[26rem] px-7 py-8">
-            <div className="h-4 w-32 animate-pulse rounded bg-muted" />
-            <div className="mt-5 h-10 w-28 animate-pulse rounded bg-muted" />
-            <div className="mt-8 space-y-3">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="h-5 animate-pulse rounded bg-muted" />
-              ))}
-            </div>
-          </div>
+        {showSkeleton ? <LeaveReviewDetailSkeleton /> : null}
+        {showError ? (
+          <LeaveReviewDetailError
+            message={leaveReviewErrorMessage(error)}
+            onRetry={onRetry}
+            retrying={retrying}
+          />
         ) : null}
-        {leave && (
+        {showContent && leave && (
           <>
             <div className="shrink-0 border-b border-border/70 bg-card px-7 pb-7 pt-8 text-left dark:border-white/10">
               <div className="space-y-5">

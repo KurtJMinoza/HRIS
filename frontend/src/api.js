@@ -3910,6 +3910,62 @@ export async function getAdminLeaveByRequestId(requestId) {
   return data
 }
 
+/** Admin: fast review payload for modal (approval chain, history, attachments only). */
+export async function fetchLeaveRequestReview(requestId, options = {}) {
+  const raw = String(requestId ?? '').trim()
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+    const err = new Error('Invalid leave request ID')
+    err.code = 'invalid_id'
+    throw err
+  }
+  const fetchOpts = options.signal ? { signal: options.signal } : {}
+  const id = encodeURIComponent(raw)
+  const paths = [
+    `/leave-requests/${id}/review`,
+    `/admin/leave/${id}/review`,
+    `/admin/leave/${id}`,
+    `/leave-requests/${id}`,
+  ]
+  let lastErr = null
+  let lastStatus = 0
+  let lastBody = null
+  let lastUrl = null
+  for (const path of paths) {
+    lastUrl = path
+    const res = await authenticatedFetch(path, fetchOpts)
+    const data = await res.json().catch(() => ({}))
+    lastBody = data
+    if (res.ok) {
+      return data
+    }
+    lastStatus = res.status
+    lastErr = new Error(data.message || 'Failed to load leave request details')
+    lastErr.status = res.status
+    lastErr.url = path
+    lastErr.body = data
+    if (res.status === 403) {
+      lastErr.code = 'forbidden'
+      break
+    }
+    if (res.status >= 500) {
+      lastErr.code = 'server_error'
+      break
+    }
+    if (res.status !== 404) {
+      break
+    }
+  }
+  if (lastErr) {
+    if (!lastErr.code && lastStatus === 404) lastErr.code = 'not_found'
+    throw lastErr
+  }
+  const fallback = new Error('Failed to load leave request details')
+  fallback.status = lastStatus
+  fallback.url = lastUrl
+  fallback.body = lastBody
+  throw fallback
+}
+
 /**
  * @param {object} payload
  * @param {boolean} [payload.bypass_leave_credit_check] Super-admin only: file leave despite insufficient credits.

@@ -20,6 +20,7 @@ use App\Support\LeaveFilingRules;
 use App\Support\LeaveScheduleSupport;
 use App\Support\RequestPerformanceLogger;
 use Carbon\Carbon;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -302,6 +303,84 @@ class LeaveController extends Controller
                 'user', 'filedBy', 'firstApprover', 'secondApprover', 'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $request->user()),
         ], 201);
+    }
+
+    /**
+     * Lightweight review payload for dashboard deep-links and modal detail views.
+     */
+    public function review(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.leave.review');
+        $actor = $request->user();
+        $started = microtime(true);
+
+        Log::info('admin.leave.review_start', [
+            'leave_request_id' => $id,
+            'actor_id' => $actor?->id,
+            'actor_role' => $actor?->role,
+            'hr_role' => $actor ? $this->hrRoleResolver->resolve($actor)->value : null,
+        ]);
+
+        $leave = LeaveRequest::query()
+            ->with([
+                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,employee_code,department_id,section_unit_id,department,role',
+                'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,role',
+                'firstApprover:id,name,first_name,middle_name,last_name,suffix',
+                'secondApprover:id,name,first_name,middle_name,last_name,suffix',
+                'rejectedBy:id,name,first_name,middle_name,last_name,suffix',
+                'approvalAudits' => fn ($q) => $q
+                    ->orderBy('created_at')
+                    ->with('actor:id,name,first_name,middle_name,last_name,suffix'),
+            ])
+            ->find($id);
+
+        if ($leave === null) {
+            Log::warning('admin.leave.review_not_found', [
+                'leave_request_id' => $id,
+                'actor_id' => $actor?->id,
+            ]);
+
+            return response()->json(['message' => 'Leave request not found.'], 404);
+        }
+
+        try {
+            $this->ensureLeaveRequestReviewAccessible($actor, $leave);
+        } catch (HttpResponseException $e) {
+            Log::warning('admin.leave.review_forbidden', [
+                'leave_request_id' => $id,
+                'actor_id' => $actor?->id,
+                'employee_id' => $leave->user_id,
+            ]);
+
+            throw $e;
+        }
+
+        try {
+            $payload = $this->leaveReviewResponse($leave, $actor);
+        } catch (\Throwable $e) {
+            Log::error('admin.leave.review_failed', [
+                'leave_request_id' => $id,
+                'actor_id' => $actor?->id,
+                'message' => $e->getMessage(),
+                'exception' => $e::class,
+            ]);
+            throw $e;
+        }
+
+        RequestPerformanceLogger::finish($perf, $request, 1, [
+            'scope' => 'admin',
+            'mode' => 'review',
+            'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+        ]);
+
+        Log::info('admin.leave.review_ok', [
+            'leave_request_id' => $id,
+            'actor_id' => $actor?->id,
+            'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+        ]);
+
+        return response()->json(['leave_request' => $payload]);
     }
 
     public function show(Request $request, int $id): JsonResponse
@@ -948,6 +1027,31 @@ class LeaveController extends Controller
             'requested_by_hr_role' => $hr->value,
             'requested_by_role_label' => $hr->badgeLabel(),
         ];
+    }
+
+    private function ensureLeaveRequestReviewAccessible(?User $actor, LeaveRequest $leave): void
+    {
+        if ($actor === null) {
+            throw new HttpResponseException(response()->json(['message' => 'Unauthenticated.'], 401));
+        }
+
+        if ($actor->isAdmin() || $this->hrRoleResolver->isAdminHrAccount($actor)) {
+            return;
+        }
+
+        if ($leave->user) {
+            $this->dataScopeService->ensureEmployeeAccessible($actor, $leave->user);
+        }
+    }
+
+    /**
+     * Modal/dashboard review payload — avoids reloading relations already eager-loaded in {@see review()}.
+     *
+     * @return array<string, mixed>
+     */
+    private function leaveReviewResponse(LeaveRequest $l, ?User $actor = null): array
+    {
+        return $this->leaveResponse($l, $actor);
     }
 
     private function leaveResponse(LeaveRequest $l, ?User $actor = null): array
