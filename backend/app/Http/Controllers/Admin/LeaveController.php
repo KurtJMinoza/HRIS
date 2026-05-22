@@ -6,6 +6,7 @@ use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
 use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
+use App\Models\OrgApprovalRecord;
 use App\Models\User;
 use App\Services\BulkApproval\LeaveBulkApprovalQuery;
 use App\Services\DataScopeService;
@@ -62,10 +63,7 @@ class LeaveController extends Controller
             'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
         ]);
 
-        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'general');
-        if ($scopedEmployeeIds !== null) {
-            $query->whereIn('user_id', $scopedEmployeeIds);
-        }
+        $this->applyFilingApprovalVisibility($actor, $query, $request);
 
         $requestId = $request->query('request_id');
         if ($requestId !== null && $requestId !== '' && ctype_digit((string) $requestId)) {
@@ -407,8 +405,8 @@ class LeaveController extends Controller
             ])
             ->findOrFail($id);
 
-        if ($leave->user) {
-            $this->dataScopeService->ensureEmployeeAccessible($actor, $leave->user);
+        if (! $this->canAccessLeaveThroughFilingScope($actor, $leave)) {
+            return response()->json(['message' => 'Forbidden.'], Response::HTTP_FORBIDDEN);
         }
 
         $payload = $this->leaveResponse($leave, $actor);
@@ -526,8 +524,8 @@ class LeaveController extends Controller
         }
 
         $leave = LeaveRequest::query()->with(['user', 'filedBy', 'firstApprover', 'secondApprover'])->findOrFail($id);
-        if ($leave->user) {
-            $this->dataScopeService->ensureEmployeeAccessible($actor, $leave->user);
+        if (! $this->canAccessLeaveThroughFilingScope($actor, $leave)) {
+            return response()->json(['message' => 'Forbidden.'], Response::HTTP_FORBIDDEN);
         }
         if ($leave->status !== LeaveRequest::STATUS_PENDING) {
             return response()->json(['message' => 'Leave request is not pending.'], 422);
@@ -720,8 +718,8 @@ class LeaveController extends Controller
 
         $actor = $request->user();
         $leave = LeaveRequest::query()->with(['user', 'filedBy', 'firstApprover', 'secondApprover'])->findOrFail($id);
-        if ($leave->user) {
-            $this->dataScopeService->ensureEmployeeAccessible($actor, $leave->user);
+        if (! $this->canAccessLeaveThroughFilingScope($actor, $leave)) {
+            return response()->json(['message' => 'Forbidden.'], Response::HTTP_FORBIDDEN);
         }
         if ($leave->status !== LeaveRequest::STATUS_PENDING) {
             return response()->json(['message' => 'Leave request is not pending.'], 422);
@@ -1055,9 +1053,103 @@ class LeaveController extends Controller
             return;
         }
 
-        if ($leave->user) {
-            $this->dataScopeService->ensureEmployeeAccessible($actor, $leave->user);
+        if ($this->canAccessLeaveThroughFilingScope($actor, $leave)) {
+            return;
         }
+
+        throw new HttpResponseException(response()->json(['message' => 'Forbidden.'], Response::HTTP_FORBIDDEN));
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<LeaveRequest>  $query
+     */
+    private function applyFilingApprovalVisibility(User $actor, $query, Request $request): void
+    {
+        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
+        if ($scopedEmployeeIds === null) {
+            Log::info('filing_visibility: leave admin list unrestricted for Admin HR', [
+                'current_user_id' => (int) $actor->id,
+                'current_employee_id' => (int) $actor->id,
+                'role' => $actor->role,
+            ]);
+
+            return;
+        }
+
+        $assignedRequestIds = $this->assignedLeaveRequestIdsForActor($actor);
+        $actorId = (int) $actor->id;
+        $query->where(function ($scope) use ($scopedEmployeeIds, $assignedRequestIds, $actorId): void {
+            $scope->whereIn('user_id', $scopedEmployeeIds)
+                ->orWhere('first_approver_id', $actorId)
+                ->orWhere('second_approver_id', $actorId);
+
+            if ($assignedRequestIds !== []) {
+                $scope->orWhereIn('id', $assignedRequestIds);
+            }
+        });
+
+        Log::info('filing_visibility: leave admin list scoped for approvals', [
+            'current_user_id' => $actorId,
+            'current_employee_id' => $actorId,
+            'role' => $this->hrRoleResolver->resolve($actor)->value,
+            'permissions' => $actor->permissions ?? null,
+            'can_view_my_filings' => true,
+            'can_view_assigned_approvals' => true,
+            'can_view_team_filings' => true,
+            'approval_scoped_employee_ids' => $scopedEmployeeIds,
+            'assigned_approval_request_ids' => $assignedRequestIds,
+            'returned_all_filings_count' => null,
+            'request_status_filter' => $request->query('status'),
+        ]);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function assignedLeaveRequestIdsForActor(User $actor): array
+    {
+        $actorId = (int) $actor->id;
+        $ids = LeaveRequest::query()
+            ->where(function ($query) use ($actorId): void {
+                $query->where('first_approver_id', $actorId)
+                    ->orWhere('second_approver_id', $actorId);
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $recordIds = OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+            ->where('approver_id', $actorId)
+            ->pluck('request_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return array_values(array_unique([...$ids, ...$recordIds]));
+    }
+
+    private function canAccessLeaveThroughFilingScope(User $actor, LeaveRequest $leave): bool
+    {
+        $actorId = (int) $actor->id;
+        if ((int) $leave->user_id === $actorId
+            || (int) $leave->filed_by === $actorId
+            || (int) $leave->first_approver_id === $actorId
+            || (int) $leave->second_approver_id === $actorId
+        ) {
+            return true;
+        }
+
+        if (OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+            ->where('request_id', (int) $leave->id)
+            ->where('approver_id', $actorId)
+            ->exists()) {
+            return true;
+        }
+
+        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
+
+        return is_array($scopedEmployeeIds) && in_array((int) $leave->user_id, $scopedEmployeeIds, true);
     }
 
     /**

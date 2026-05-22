@@ -17,6 +17,7 @@ use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\RbacService;
 use App\Services\LeaveCreditService;
 use App\Services\PayrollComputationService;
 use App\Services\PremiumReportService;
@@ -37,6 +38,7 @@ class ReportsController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly AttendancePresenceDisplayService $presenceDisplay,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly RbacService $rbacService,
         private readonly PayrollComputationService $payrollComputation,
         private readonly PremiumReportService $premiumReport,
     ) {}
@@ -317,11 +319,14 @@ class ReportsController extends Controller
         $startedAt = microtime(true);
         $routeName = $request->route()?->getName();
         $isEmployeeSelfRoute = $routeName === 'employee.reports.detailed';
+        $actor = $request->user();
         if ($isEmployeeSelfRoute) {
-            if ($this->hrRoleResolver->resolve($request->user()) !== HrRole::Employee) {
+            if (! $this->rbacService->canAccessReportsModule($actor)) {
+                $this->logReportsAccessDenied($actor, 'no_reports_module_access');
+
                 return response()->json(['message' => 'Forbidden.'], 403);
             }
-            $request->merge(['employee_id' => $request->user()->id]);
+            $request->merge(['employee_id' => $actor->id]);
         }
 
         $validated = $request->validate([
@@ -482,11 +487,15 @@ class ReportsController extends Controller
 
         $employeesLoadStartedAt = microtime(true);
 
-        $actor = $request->user();
         $scopedEmployeeIds = null;
 
         if ($isEmployeeSelfRoute) {
-            $scopedEmployeeIds = [(int) $actor->id];
+            $scopedEmployeeIds = $this->dataScopeService->getReportScopedEmployeeIds($actor);
+            if ($scopedEmployeeIds === []) {
+                $this->logReportsAccessDenied($actor, 'own_reports_not_visible');
+
+                return response()->json(['message' => 'Forbidden.'], 403);
+            }
             /** @var \Illuminate\Support\Collection<int, User> $employees */
             $employees = User::query()
                 ->whereKey($actor->id)
@@ -495,7 +504,12 @@ class ReportsController extends Controller
                 ->with($employeeWithRelations)
                 ->get();
         } else {
-            $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'reports');
+            $scopedEmployeeIds = $this->dataScopeService->getReportScopedEmployeeIds($actor);
+            if ($scopedEmployeeIds === []) {
+                $this->logReportsAccessDenied($actor, 'no_reports_module_access');
+
+                return response()->json(['message' => 'Forbidden.'], 403);
+            }
             $employeesQuery = User::query()
                 ->reportableEmployees();
             if ($scopedEmployeeIds !== null) {
@@ -1458,7 +1472,18 @@ class ReportsController extends Controller
     public function leaveCredits(Request $request): JsonResponse
     {
         $actor = $request->user();
-        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'reports');
+        if (! $this->rbacService->canViewAllReports($actor) && ! $this->rbacService->canViewSubordinateReports($actor)) {
+            $this->logReportsAccessDenied($actor, 'leave_credits_requires_all_or_subordinate_reports');
+
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        $scopedEmployeeIds = $this->dataScopeService->getReportScopedEmployeeIds($actor);
+        if ($scopedEmployeeIds === []) {
+            $this->logReportsAccessDenied($actor, 'no_reports_module_access');
+
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
         $query = User::query()
             ->reportableEmployees()
             ->active()
@@ -1515,6 +1540,20 @@ class ReportsController extends Controller
 
     public function queueDetailedExport(Request $request): JsonResponse
     {
+        $actor = $request->user();
+        if (! $this->rbacService->canViewAllReports($actor) && ! $this->rbacService->canViewSubordinateReports($actor)) {
+            $this->logReportsAccessDenied($actor, 'export_requires_all_or_subordinate_reports');
+
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        $scopedEmployeeIds = $this->dataScopeService->getReportScopedEmployeeIds($actor);
+        if ($scopedEmployeeIds === []) {
+            $this->logReportsAccessDenied($actor, 'no_reports_module_access');
+
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
         $validated = $request->validate([
             'from_date' => ['required', 'date'],
             'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
@@ -1554,6 +1593,24 @@ class ReportsController extends Controller
             'queued_at' => optional($run->queued_at)?->toIso8601String(),
             'started_at' => optional($run->started_at)?->toIso8601String(),
             'completed_at' => optional($run->completed_at)?->toIso8601String(),
+        ]);
+    }
+
+    private function logReportsAccessDenied(User $actor, string $reason): void
+    {
+        $flags = $this->rbacService->accessFlagsForUser($actor);
+
+        Log::warning('reports_access: denied', [
+            'current_user_id' => (int) $actor->id,
+            'current_employee_id' => (int) $actor->id,
+            'role' => $this->hrRoleResolver->resolve($actor)->value,
+            'permissions' => $this->rbacService->getPermissionsForUser($actor)->values()->all(),
+            'can_access_reports_module' => (bool) ($flags['can_access_reports_module'] ?? false),
+            'can_view_own_reports' => (bool) ($flags['can_view_own_reports'] ?? false),
+            'can_view_subordinate_reports' => (bool) ($flags['can_view_subordinate_reports'] ?? false),
+            'can_view_all_reports' => (bool) ($flags['can_view_all_reports'] ?? false),
+            'scoped_employee_ids' => null,
+            'forbidden_reason' => $reason,
         ]);
     }
 }

@@ -14,8 +14,13 @@ class RbacService
         'dashboard.view' => 'can_view_admin_dashboard',
         'employees.view' => 'can_view_employee_module',
         'attendance.view' => 'can_view_subordinate_attendance',
-        'reports.view' => 'can_view_subordinate_reports',
-        'reports.export' => 'can_view_subordinate_reports',
+    ];
+
+    /** Legacy report slugs resolved via {@see self::canAccessReportsModule()}. */
+    private const REPORTS_PERMISSION_SLUGS = [
+        'reports.view',
+        'reports.export',
+        'reports.payroll',
     ];
 
     public function __construct(
@@ -34,11 +39,89 @@ class RbacService
             return true;
         }
 
+        if (in_array($permissionSlug, self::REPORTS_PERMISSION_SLUGS, true)) {
+            return match ($permissionSlug) {
+                'reports.payroll' => $this->canAccessReportsModule($user)
+                    && ($this->canViewAllReports($user) || $this->canViewSubordinateReports($user)),
+                default => $this->canAccessReportsModule($user),
+            };
+        }
+
+        if ($permissionSlug === 'can_access_reports_module') {
+            return $this->canAccessReportsModule($user);
+        }
+
+        if ($permissionSlug === 'can_view_all_reports') {
+            return $this->canViewAllReports($user);
+        }
+
+        if ($permissionSlug === 'can_view_own_reports') {
+            return $this->canViewOwnReports($user);
+        }
+
+        if ($permissionSlug === 'can_view_subordinate_reports') {
+            return $this->canViewSubordinateReports($user);
+        }
+
         if (array_key_exists($permissionSlug, self::MANAGEMENT_PERMISSION_FLAGS)) {
             return $this->rawPermissionsForUser($user)->contains(self::MANAGEMENT_PERMISSION_FLAGS[$permissionSlug]);
         }
 
         return $this->getPermissionsForUser($user)->contains($permissionSlug);
+    }
+
+    public function canAccessReportsModule(User $user): bool
+    {
+        if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
+            return true;
+        }
+
+        if ($user->isExcludedFromReports()) {
+            return false;
+        }
+
+        $raw = $this->rawPermissionsForUser($user);
+
+        return $raw->contains('can_access_reports_module')
+            || $raw->contains('can_view_all_reports')
+            || $raw->contains('can_view_subordinate_reports')
+            || $raw->contains('can_view_own_reports');
+    }
+
+    public function canViewOwnReports(User $user): bool
+    {
+        if ($user->isExcludedFromReports()) {
+            return false;
+        }
+
+        if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
+            return true;
+        }
+
+        $raw = $this->rawPermissionsForUser($user);
+
+        return $raw->contains('can_view_own_reports')
+            || $raw->contains('can_access_reports_module')
+            || $raw->contains('can_view_all_reports')
+            || $raw->contains('can_view_subordinate_reports');
+    }
+
+    public function canViewSubordinateReports(User $user): bool
+    {
+        if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
+            return true;
+        }
+
+        return $this->rawPermissionsForUser($user)->contains('can_view_subordinate_reports');
+    }
+
+    public function canViewAllReports(User $user): bool
+    {
+        if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
+            return true;
+        }
+
+        return $this->rawPermissionsForUser($user)->contains('can_view_all_reports');
     }
 
     /**
@@ -94,8 +177,13 @@ class RbacService
                 'can_view_subordinate_reports' => true,
                 'can_view_admin_dashboard' => true,
                 'can_approve_requests' => true,
+                'can_view_my_filings' => true,
+                'can_view_assigned_approvals' => true,
+                'can_view_team_filings' => true,
                 'can_view_own_attendance' => ! $user->isExcludedFromAttendance(),
+                'can_access_reports_module' => ! $user->isExcludedFromReports(),
                 'can_view_own_reports' => ! $user->isExcludedFromReports(),
+                'can_view_all_reports' => true,
             ];
         }
 
@@ -112,8 +200,13 @@ class RbacService
                 'attendance.corrections.approve',
                 'approve-schedule',
             ])->isNotEmpty(),
+            'can_view_my_filings' => $raw->contains('can_view_my_filings'),
+            'can_view_assigned_approvals' => $raw->contains('can_view_assigned_approvals'),
+            'can_view_team_filings' => $raw->contains('can_view_team_filings'),
             'can_view_own_attendance' => ! $user->isExcludedFromAttendance(),
-            'can_view_own_reports' => ! $user->isExcludedFromReports(),
+            'can_access_reports_module' => $this->canAccessReportsModule($user),
+            'can_view_own_reports' => $this->canViewOwnReports($user),
+            'can_view_all_reports' => $this->canViewAllReports($user),
         ];
     }
 

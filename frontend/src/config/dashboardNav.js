@@ -144,6 +144,12 @@ export const employeeNavItems = [
   { to: '/employee/loans-deductions', end: false, label: 'My Loans & Deductions', icon: HandCoins },
   { to: '/employee/requests', end: false, label: 'Leave', icon: CalendarOff },
   { to: '/employee/overtime', end: false, label: 'Overtime', icon: Timer },
-  { to: '/employee/reports', end: false, label: 'Reports', icon: FileText },
+  {
+    to: '/employee/reports',
+    end: false,
+    label: 'Reports',
+    icon: FileText,
+    requiredFlags: ['can_access_reports_module', 'can_view_own_reports'],
+  },
   { to: '/employee/profile', end: false, label: 'Profile', icon: User },
 ]

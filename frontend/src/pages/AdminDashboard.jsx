@@ -1710,7 +1710,17 @@ export default function AdminDashboard() {
             <CardContent className="space-y-2 pb-4">
               {[
                 { label: 'Assign Schedule', icon: CalendarDays, path: hrPanelPath(hrBase, 'schedules'), show: perms.has('schedule.view') || perms.has('schedule.assign') },
-                { label: 'Attendance Report', icon: FileBarChart2, path: hrPanelPath(hrBase, 'reports'), show: perms.has('reports.view') },
+                {
+                  label: 'Attendance Report',
+                  icon: FileBarChart2,
+                  path: hrPanelPath(hrBase, 'reports'),
+                  show:
+                    user?.can_access_reports_module
+                    || user?.can_view_own_reports
+                    || user?.can_view_subordinate_reports
+                    || user?.can_view_all_reports
+                    || perms.has('reports.view'),
+                },
                 { label: 'Approve Leave', icon: ClipboardCheck, path: hrPanelPath(hrBase, 'leave'), show: perms.has('leave.view') },
                 { label: 'Manage Employees', icon: UserPlus, path: hrPanelPath(hrBase, 'employees'), show: perms.has('employees.view') },
               ]

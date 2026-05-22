@@ -91,6 +91,48 @@ class DataScopeServiceTest extends TestCase
         $this->assertNotContains((int) $member->id, $visibleIds);
     }
 
+    public function test_department_head_approval_scope_includes_department_member_without_data_visibility(): void
+    {
+        [$head, $member] = $this->seedDepartmentHeadWithMember();
+
+        $reportIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($head->fresh(), 'reports');
+        $approvalIds = app(DataScopeService::class)->getApprovalScopedEmployeeIdsForUser($head->fresh());
+
+        $this->assertContains((int) $head->id, $reportIds);
+        $this->assertNotContains((int) $member->id, $reportIds);
+        $this->assertContains((int) $head->id, $approvalIds);
+        $this->assertContains((int) $member->id, $approvalIds);
+    }
+
+    public function test_section_head_approval_scope_includes_shared_employee_without_report_visibility(): void
+    {
+        [$leader, $member, $sectionId] = $this->seedSectionTeamLeaderWithMember();
+        [$otherCompany, $otherDepartment] = $this->seedOtherCompanyDepartment();
+        $sharedEmployee = User::factory()->create([
+            'role' => User::ROLE_EMPLOYEE,
+            'company_id' => (int) $otherCompany->id,
+            'department_id' => (int) $otherDepartment->id,
+            'section_unit_id' => null,
+            'is_active' => true,
+        ]);
+
+        app(EmployeeOrganizationAssignmentService::class)->assignToLegacyUnit(
+            'section_unit',
+            (int) $sectionId,
+            [(int) $sharedEmployee->id],
+            EmployeeOrganizationAssignmentService::MODE_SHARED,
+        );
+
+        $reportIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($leader->fresh(), 'reports');
+        $approvalIds = app(DataScopeService::class)->getApprovalScopedEmployeeIdsForUser($leader->fresh());
+
+        $this->assertContains((int) $leader->id, $reportIds);
+        $this->assertNotContains((int) $member->id, $reportIds);
+        $this->assertNotContains((int) $sharedEmployee->id, $reportIds);
+        $this->assertContains((int) $member->id, $approvalIds);
+        $this->assertContains((int) $sharedEmployee->id, $approvalIds);
+    }
+
     public function test_department_head_from_another_company_still_sees_own_records(): void
     {
         [$head, $member, $department] = $this->seedDepartmentHeadWithMember();
@@ -116,6 +158,41 @@ class DataScopeServiceTest extends TestCase
 
         $this->assertContains((int) $head->id, $scopedIds);
         $this->assertNotContains((int) $member->id, $scopedIds);
+    }
+
+    public function test_department_head_report_scope_defaults_to_own_only_with_module_access(): void
+    {
+        [$head, $member] = $this->seedDepartmentHeadWithMember();
+        $this->grantRolePermission('department_head', 'can_access_reports_module');
+        $this->grantRolePermission('department_head', 'can_view_own_reports');
+
+        $scopedIds = app(DataScopeService::class)->getReportScopedEmployeeIds($head->fresh());
+
+        $this->assertContains((int) $head->id, $scopedIds);
+        $this->assertNotContains((int) $member->id, $scopedIds);
+    }
+
+    public function test_employee_report_scope_includes_self_with_module_access(): void
+    {
+        $employee = User::factory()->create([
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+        ]);
+        $this->grantRolePermission('employee', 'can_access_reports_module');
+        $this->grantRolePermission('employee', 'can_view_own_reports');
+
+        $scopedIds = app(DataScopeService::class)->getReportScopedEmployeeIds($employee->fresh());
+
+        $this->assertSame([(int) $employee->id], $scopedIds);
+    }
+
+    public function test_report_scope_empty_without_module_access(): void
+    {
+        [$head] = $this->seedDepartmentHeadWithMember();
+
+        $scopedIds = app(DataScopeService::class)->getReportScopedEmployeeIds($head->fresh());
+
+        $this->assertSame([], $scopedIds);
     }
 
     public function test_department_head_with_explicit_subordinate_reports_permission_sees_department_scope(): void

@@ -357,6 +357,212 @@ class DataScopeService
     }
 
     /**
+     * Employee IDs visible in the Reports module (detailed report, leave credits, exports).
+     *
+     * @return list<int>|null null = unrestricted Admin HR scope; [] = no report access
+     */
+    public function getReportScopedEmployeeIds(User $actor): ?array
+    {
+        $flags = $this->rbacService->accessFlagsForUser($actor);
+        $permissions = $this->rbacService->getPermissionsForUser($actor)->values()->all();
+
+        if (! ($flags['can_access_reports_module'] ?? false)) {
+            $this->logReportScopedEmployeeIds($actor, $flags, $permissions, [], 'no_reports_module_access');
+
+            return [];
+        }
+
+        if (($flags['can_view_all_reports'] ?? false) || $this->effectiveOrgScopeRole($actor) === null) {
+            $scoped = $this->getScopedEmployeeIdsForUser($actor, 'reports');
+            $this->logReportScopedEmployeeIds($actor, $flags, $permissions, $scoped, null);
+
+            return $scoped;
+        }
+
+        if (($flags['can_view_subordinate_reports'] ?? false)) {
+            $scoped = $this->getScopedEmployeeIdsForUser($actor, 'reports') ?? [];
+            $this->logReportScopedEmployeeIds($actor, $flags, $permissions, $scoped, null);
+
+            return $scoped;
+        }
+
+        $actorId = $this->actorOperationalEmployeeId($actor, 'reports');
+        $scoped = $actorId !== null
+            ? $this->finalizeScopedEmployeeIds($actor, [$actorId], 'reports')
+            : [];
+        $this->logReportScopedEmployeeIds($actor, $flags, $permissions, $scoped, 'own_reports_only');
+
+        return $scoped;
+    }
+
+    /**
+     * @param  list<int>|null  $scopedEmployeeIds
+     * @param  list<string>  $permissions
+     * @param  array<string, bool>  $flags
+     */
+    private function logReportScopedEmployeeIds(
+        User $actor,
+        array $flags,
+        array $permissions,
+        ?array $scopedEmployeeIds,
+        ?string $forbiddenReason,
+    ): void {
+        Log::info('reports_scope: scoped employee ids resolved', [
+            'current_user_id' => (int) $actor->id,
+            'current_employee_id' => (int) $actor->id,
+            'role' => $this->hrRoleResolver->resolve($actor)->value,
+            'permissions' => $permissions,
+            'can_access_reports_module' => (bool) ($flags['can_access_reports_module'] ?? false),
+            'can_view_own_reports' => (bool) ($flags['can_view_own_reports'] ?? false),
+            'can_view_subordinate_reports' => (bool) ($flags['can_view_subordinate_reports'] ?? false),
+            'can_view_all_reports' => (bool) ($flags['can_view_all_reports'] ?? false),
+            'scoped_employee_ids' => $scopedEmployeeIds,
+            'forbidden_reason' => $forbiddenReason,
+        ]);
+    }
+
+    /**
+     * Employee IDs visible for approval-related filing lists. This is intentionally separate from
+     * employee/attendance/report visibility: heads may approve scoped requests without getting
+     * subordinate masterlist, attendance, or report access.
+     *
+     * @return list<int>|null Null means unrestricted Admin HR scope.
+     */
+    public function getApprovalScopedEmployeeIdsForUser(User $actor): ?array
+    {
+        $role = $this->effectiveOrgScopeRole($actor);
+        if ($role === null) {
+            return null;
+        }
+
+        $ids = [];
+        $actorId = $this->actorOperationalEmployeeId($actor);
+        if ($actorId !== null) {
+            $ids[] = $actorId;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $scope = $this->resolveSectionUnitHeadScope($actor, 'general');
+            $ids = [
+                ...$ids,
+                ...$scope['scoped_before_hidden_filter'],
+            ];
+        } elseif ($role === HrRole::DepartmentHead) {
+            $departmentIds = $this->departmentIdsForDepartmentScope($actor)->all();
+            $ids = [
+                ...$ids,
+                ...$this->employeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('department_id', $departmentIds),
+            ];
+        } elseif ($role === HrRole::DivisionHead) {
+            $divisionIds = $this->divisionIdsForDivisionScope($actor)->all();
+            $departmentIds = Department::query()
+                ->whereIn('division_id', $divisionIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $sectionIds = SectionUnit::query()
+                ->whereIn('division_id', $divisionIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $ids = [
+                ...$ids,
+                ...$this->employeeIdsForOrgColumn('division_id', $divisionIds),
+                ...$this->employeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->employeeIdsForOrgColumn('section_unit_id', $sectionIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('division_id', $divisionIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('section_unit_id', $sectionIds),
+            ];
+        } elseif ($role === HrRole::BranchHead) {
+            $branchIds = $this->branchIdsForBranchScope($actor)->all();
+            $departmentIds = Department::query()
+                ->whereIn('branch_id', $branchIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $divisionIds = Division::query()
+                ->whereIn('branch_id', $branchIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $sectionIds = SectionUnit::query()
+                ->whereIn('branch_id', $branchIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $ids = [
+                ...$ids,
+                ...$this->employeeIdsForOrgColumn('branch_id', $branchIds),
+                ...$this->employeeIdsForOrgColumn('division_id', $divisionIds),
+                ...$this->employeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->employeeIdsForOrgColumn('section_unit_id', $sectionIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('branch_id', $branchIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('division_id', $divisionIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('section_unit_id', $sectionIds),
+            ];
+        } elseif ($role === HrRole::CompanyHead) {
+            $companyIds = $this->companyIdsForCompanyHead($actor)->all();
+            $branchIds = Branch::query()
+                ->whereIn('company_id', $companyIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $departmentIds = Department::query()
+                ->whereIn('company_id', $companyIds)
+                ->orWhereIn('branch_id', $branchIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $divisionIds = Division::query()
+                ->whereIn('company_id', $companyIds)
+                ->orWhereIn('branch_id', $branchIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $sectionIds = SectionUnit::query()
+                ->whereIn('company_id', $companyIds)
+                ->orWhereIn('branch_id', $branchIds)
+                ->orWhereIn('department_id', $departmentIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $ids = [
+                ...$ids,
+                ...$this->employeeIdsForOrgColumn('company_id', $companyIds),
+                ...$this->employeeIdsForOrgColumn('branch_id', $branchIds),
+                ...$this->employeeIdsForOrgColumn('division_id', $divisionIds),
+                ...$this->employeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->employeeIdsForOrgColumn('section_unit_id', $sectionIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('company_id', $companyIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('branch_id', $branchIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('division_id', $divisionIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('section_unit_id', $sectionIds),
+            ];
+        }
+
+        $final = $this->finalizeScopedEmployeeIds($actor, $ids, 'general');
+
+        Log::info('filing_visibility: approval scoped employee ids resolved', [
+            'current_user_id' => (int) $actor->id,
+            'current_employee_id' => (int) $actor->id,
+            'role' => $role->value,
+            'permissions' => $this->rbacService->getPermissionsForUser($actor)->values()->all(),
+            'can_view_my_filings' => true,
+            'can_view_assigned_approvals' => $this->rbacService->accessFlagsForUser($actor)['can_view_assigned_approvals'] ?? false,
+            'can_view_team_filings' => $this->rbacService->accessFlagsForUser($actor)['can_view_team_filings'] ?? false,
+            'can_approve_requests' => $this->rbacService->accessFlagsForUser($actor)['can_approve_requests'] ?? false,
+            'leadership_context' => $this->leadershipContextForActor($actor),
+            'approval_scoped_employee_ids' => $final,
+        ]);
+
+        return $final;
+    }
+
+    /**
      * Restrict a query of employee users to those visible to the actor.
      *
      * @param  array{branch_id_for_department_assignment?: int}  $options
@@ -810,6 +1016,51 @@ class DataScopeService
                 EmployeeOrganizationAssignment::TYPE_TEMPORARY,
                 EmployeeOrganizationAssignment::TYPE_ACTING,
             ])
+            ->pluck('employee_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  list<int>  $ids
+     * @return list<int>
+     */
+    private function employeeIdsForOrgColumn(string $column, array $ids): array
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids), fn (int $id): bool => $id > 0));
+        if ($ids === [] || ! Schema::hasColumn('users', $column)) {
+            return [];
+        }
+
+        return User::query()
+            ->visibleEmployees()
+            ->active()
+            ->whereIn($column, $ids)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  list<int>  $ids
+     * @return list<int>
+     */
+    private function assignmentEmployeeIdsForOrgColumn(string $column, array $ids): array
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids), fn (int $id): bool => $id > 0));
+        if ($ids === []
+            || ! Schema::hasTable('employee_organization_assignments')
+            || ! Schema::hasColumn('employee_organization_assignments', $column)
+        ) {
+            return [];
+        }
+
+        return EmployeeOrganizationAssignment::query()
+            ->active()
+            ->whereIn($column, $ids)
             ->pluck('employee_id')
             ->map(fn ($id) => (int) $id)
             ->unique()

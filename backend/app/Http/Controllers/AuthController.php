@@ -178,7 +178,7 @@ class AuthController extends Controller
         $userPayload = EmployeeProfileCache::remember(
             (int) $user->id,
             'auth_user_payload',
-            ['version' => 8, 'include_leave_credits' => false],
+            ['version' => 9, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($user, ['include_leave_credits' => false])
         );
@@ -239,7 +239,7 @@ class AuthController extends Controller
         $payload = EmployeeProfileCache::remember(
             (int) $authUser->id,
             'auth_user_payload',
-            ['version' => 8, 'include_leave_credits' => false],
+            ['version' => 9, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($authUser, ['include_leave_credits' => false])
         );
@@ -728,8 +728,13 @@ class AuthController extends Controller
             'can_view_subordinate_reports' => (bool) ($accessFlags['can_view_subordinate_reports'] ?? false),
             'can_view_admin_dashboard' => (bool) ($accessFlags['can_view_admin_dashboard'] ?? false),
             'can_approve_requests' => (bool) ($accessFlags['can_approve_requests'] ?? false),
+            'can_view_my_filings' => (bool) ($accessFlags['can_view_my_filings'] ?? false),
+            'can_view_assigned_approvals' => (bool) ($accessFlags['can_view_assigned_approvals'] ?? false),
+            'can_view_team_filings' => (bool) ($accessFlags['can_view_team_filings'] ?? false),
             'can_view_own_attendance' => (bool) ($accessFlags['can_view_own_attendance'] ?? false),
+            'can_access_reports_module' => (bool) ($accessFlags['can_access_reports_module'] ?? false),
             'can_view_own_reports' => (bool) ($accessFlags['can_view_own_reports'] ?? false),
+            'can_view_all_reports' => (bool) ($accessFlags['can_view_all_reports'] ?? false),
             'can_access_hr_panel' => $canAccessManagementPanel,
             /** Org hints for attendance filters (department / branch / company heads). */
             'attendance_scope' => app(DataScopeService::class)->getAttendanceScopeMeta($user),

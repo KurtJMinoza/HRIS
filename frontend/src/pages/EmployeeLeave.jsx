@@ -112,6 +112,8 @@ import {
 } from '@/lib/adminFormDialogStyles'
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
+import { useAuth } from '@/contexts/AuthContext'
+import AdminLeave from '@/pages/AdminLeave'
 
 function formatDateShort(iso) {
   if (!iso) return '—'
@@ -447,7 +449,7 @@ function LeaveModalCreditsCard({
   )
 }
 
-export default function EmployeeLeave() {
+function EmployeeLeaveSelfService() {
   const { toast } = useToast()
   const [fromDate, setFromDate] = useState(() => {
     const d = new Date()
@@ -2110,4 +2112,20 @@ export default function EmployeeLeave() {
       </Dialog>
     </Motion.div>
   )
+}
+
+export default function EmployeeLeave() {
+  const { user } = useAuth()
+  const perms = new Set(user?.permissions ?? [])
+  const shouldUseApprovalAwareLeave =
+    perms.has('leave.view')
+    || perms.has('leave.approve')
+    || Boolean(user?.can_view_assigned_approvals)
+    || Boolean(user?.can_view_team_filings)
+
+  if (shouldUseApprovalAwareLeave) {
+    return <AdminLeave />
+  }
+
+  return <EmployeeLeaveSelfService />
 }

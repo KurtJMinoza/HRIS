@@ -541,6 +541,8 @@ export default function AttendanceCorrections() {
   const perms = new Set(user?.permissions ?? [])
   const canSeeAll = perms.has('attendance.corrections.approve')
   const canViewEmployeeProfile = perms.has('employees.view')
+  const isAdminHr = user?.hr_role === 'admin_hr'
+  const allFilingsLabel = isAdminHr ? 'All Filings' : 'For My Approval'
 
   const deepLinkedRequestId = searchParams.get('reviewRequestId') || searchParams.get('request_id')
   const deepLinkedStatus = searchParams.get('status')
@@ -1335,7 +1337,7 @@ export default function AttendanceCorrections() {
       <Card className={cn(brandCardClass, 'mt-3 w-full min-w-0 overflow-hidden @md:mt-4')}>
         <CardHeader className="border-b border-border bg-card px-6 py-6">
           <CardTitle className="text-xl font-semibold tracking-tight text-foreground">
-            {tab === 'mine' ? 'Your filings' : 'Request list'}
+            {tab === 'mine' ? 'Your filings' : allFilingsLabel}
           </CardTitle>
           <CardDescription className="text-base text-muted-foreground">
             {tab === 'mine' ? 'Each row is one request. Open a row to see the full approval timeline and remarks.' : 'Requests in your approval scope.'}
@@ -1369,7 +1371,7 @@ export default function AttendanceCorrections() {
                               : 'text-muted-foreground hover:text-foreground'
                           )}
                         >
-                          All Requests
+                          {allFilingsLabel}
                         </button>
                         <button
                           type="button"

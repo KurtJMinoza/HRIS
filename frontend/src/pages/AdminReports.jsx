@@ -164,14 +164,18 @@ export default function AdminReports() {
 
   const { user } = useAuth()
   const location = useLocation()
-  const isEmployeeSelfReport = location.pathname.startsWith('/employee/reports')
+  const viewerIsAdminHr = isAdminHrUser(user)
+  const canViewAllReports = Boolean(user?.can_view_all_reports) || viewerIsAdminHr
+  const canViewSubordinateReports = Boolean(user?.can_view_subordinate_reports)
+  const isEmployeeSelfReport =
+    location.pathname.startsWith('/employee/reports')
+    || (!canViewAllReports && !canViewSubordinateReports && Boolean(user?.can_access_reports_module))
   const reportsPerPageStorageKey = isEmployeeSelfReport
     ? EMPLOYEE_REPORTS_PER_PAGE_KEY
     : ADMIN_REPORTS_PER_PAGE_KEY
   const [reportsPerPage, setReportsPerPage] = useState(() =>
     readStoredReportsPerPage(reportsPerPageStorageKey),
   )
-  const viewerIsAdminHr = isAdminHrUser(user)
   const showPayrollReports = viewerIsAdminHr || isEmployeeSelfReport
 
   function effectiveDateRange() {
@@ -619,8 +623,10 @@ export default function AdminReports() {
           <h1 className="hr-page-title">Reports</h1>
           <p className="text-sm text-muted-foreground">
             {isEmployeeSelfReport
-              ? 'Detailed per-day attendance, overtime, leave, and payroll columns for your account.'
-              : 'Detailed per-day attendance report with filters by company and employee.'}{' '}
+              ? 'My Reports — detailed per-day attendance, overtime, leave, and payroll columns for your account.'
+              : canViewAllReports
+                ? 'All Reports — detailed per-day attendance report with filters by company and employee.'
+                : 'Detailed per-day attendance report with filters by company and employee.'}{' '}
             <span className="text-muted-foreground/80">
               (Default period is the last 14 days for quicker loads—widen the range when you need a full month.)
             </span>

@@ -46,7 +46,12 @@ const pathToPermissions = {
   /** Any of these — org heads may lack `payroll.view` but have `employees.view` / org scope. */
   '/admin/compensation/payslips': ['payslip.view'],
   '/admin/government-contributions': ['government_deductions.view', 'government_deductions.rates.view'],
-  '/admin/reports': ['can_view_subordinate_reports'],
+  '/admin/reports': [
+    'can_access_reports_module',
+    'can_view_own_reports',
+    'can_view_subordinate_reports',
+    'can_view_all_reports',
+  ],
   '/admin/loans-deductions': ['loans.view_own', 'loans.request', 'request-loan'],
   '/admin/schedules': ['manage-schedules', 'schedule.view'],
   /** Self-service: same visibility rule as Profile (no extra permission slug). */
@@ -105,8 +110,21 @@ function hrPanelBasePathForUser(user) {
  * Employee app sidebar (`/employee/*`).
  * When the user has an HR panel path + permissions, adds **Payslips** (own delivered payslips only; same API as My Payslips).
  */
+function navItemVisibleForUser(user, item) {
+  const flags = item.requiredFlags
+  if (!flags?.length || !user) {
+    return true
+  }
+  if (user.is_super_admin || isAdminHrUser(user)) {
+    return true
+  }
+  return flags.some((flag) => Boolean(user[flag]))
+}
+
 export function buildEmployeeNav(user = null) {
-  const base = employeeNavItems.map((item) => ({ ...item }))
+  const base = employeeNavItems
+    .filter((item) => navItemVisibleForUser(user, item))
+    .map((item) => ({ ...item }))
   if (String(user?.role || '').trim().toLowerCase() === 'admin') {
     return base
   }

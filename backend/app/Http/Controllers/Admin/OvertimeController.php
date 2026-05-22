@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
+use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
 use App\Models\OvertimeApprovalAudit;
 use App\Models\User;
@@ -134,10 +135,7 @@ class OvertimeController extends Controller
             $query->where('ot_type', $validated['ot_type']);
         }
 
-        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($request->user(), 'general');
-        if ($scopedEmployeeIds !== null) {
-            $query->whereIn('user_id', $scopedEmployeeIds);
-        }
+        $this->applyFilingApprovalVisibility($request->user(), $query, $request);
 
         $perPage = (int) ($validated['per_page'] ?? 10);
         $perPage = in_array($perPage, [10, 25, 50], true) ? $perPage : 10;
@@ -312,8 +310,8 @@ class OvertimeController extends Controller
             return response()->json(['message' => 'Overtime request not found.'], 404);
         }
 
-        if ($overtime->user) {
-            $this->dataScopeService->ensureEmployeeAccessible($actor, $overtime->user);
+        if (! $this->canAccessOvertimeThroughFilingScope($actor, $overtime)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
 
         $cached = ReviewRequestCache::remember('overtime', $id, fn () => $this->mapOvertime($overtime, $actor));
@@ -355,10 +353,12 @@ class OvertimeController extends Controller
             ])
             ->findOrFail($id);
 
-        $user = $overtime->user;
-        if ($user) {
-            $this->dataScopeService->ensureEmployeeAccessible($request->user(), $user);
+        $actor = $request->user();
+        if ($actor instanceof User && ! $this->canAccessOvertimeThroughFilingScope($actor, $overtime)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
+
+        $user = $overtime->user;
 
         $adjustments = $overtime->adjustments
             ->sortByDesc('created_at')
@@ -547,8 +547,8 @@ class OvertimeController extends Controller
         }
 
         $overtime = Overtime::query()->with(['user', 'filedBy', 'firstApprover', 'secondApprover'])->findOrFail($id);
-        if ($overtime->user) {
-            $this->dataScopeService->ensureEmployeeAccessible($actor, $overtime->user);
+        if (! $this->canAccessOvertimeThroughFilingScope($actor, $overtime)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
         if ($overtime->status !== Overtime::STATUS_PENDING) {
             return response()->json([
@@ -831,6 +831,101 @@ class OvertimeController extends Controller
 
         return $actorId === (int) $overtime->filed_by
             || $actorId === (int) $overtime->user_id;
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<Overtime>  $query
+     */
+    private function applyFilingApprovalVisibility(User $actor, $query, Request $request): void
+    {
+        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
+        if ($scopedEmployeeIds === null) {
+            Log::info('filing_visibility: overtime admin list unrestricted for Admin HR', [
+                'current_user_id' => (int) $actor->id,
+                'current_employee_id' => (int) $actor->id,
+                'role' => $actor->role,
+            ]);
+
+            return;
+        }
+
+        $assignedRequestIds = $this->assignedOvertimeRequestIdsForActor($actor);
+        $actorId = (int) $actor->id;
+        $query->where(function ($scope) use ($scopedEmployeeIds, $assignedRequestIds, $actorId): void {
+            $scope->whereIn('user_id', $scopedEmployeeIds)
+                ->orWhere('first_approver_id', $actorId)
+                ->orWhere('second_approver_id', $actorId);
+
+            if ($assignedRequestIds !== []) {
+                $scope->orWhereIn('id', $assignedRequestIds);
+            }
+        });
+
+        Log::info('filing_visibility: overtime admin list scoped for approvals', [
+            'current_user_id' => $actorId,
+            'current_employee_id' => $actorId,
+            'role' => $this->hrRoleResolver->resolve($actor)->value,
+            'can_view_my_filings' => true,
+            'can_view_assigned_approvals' => true,
+            'can_view_team_filings' => true,
+            'approval_scoped_employee_ids' => $scopedEmployeeIds,
+            'assigned_approval_request_ids' => $assignedRequestIds,
+            'returned_all_filings_count' => null,
+            'request_status_filter' => $request->query('status'),
+        ]);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function assignedOvertimeRequestIdsForActor(User $actor): array
+    {
+        $actorId = (int) $actor->id;
+        $ids = Overtime::query()
+            ->where(function ($query) use ($actorId): void {
+                $query->where('first_approver_id', $actorId)
+                    ->orWhere('second_approver_id', $actorId);
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $recordIds = OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+            ->where('approver_id', $actorId)
+            ->pluck('request_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return array_values(array_unique([...$ids, ...$recordIds]));
+    }
+
+    private function canAccessOvertimeThroughFilingScope(User $actor, Overtime $overtime): bool
+    {
+        if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
+            return true;
+        }
+
+        $actorId = (int) $actor->id;
+        if ((int) $overtime->user_id === $actorId
+            || (int) $overtime->filed_by === $actorId
+            || (int) $overtime->first_approver_id === $actorId
+            || (int) $overtime->second_approver_id === $actorId
+        ) {
+            return true;
+        }
+
+        if (OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+            ->where('request_id', (int) $overtime->id)
+            ->where('approver_id', $actorId)
+            ->exists()) {
+            return true;
+        }
+
+        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
+
+        return is_array($scopedEmployeeIds) && in_array((int) $overtime->user_id, $scopedEmployeeIds, true);
     }
 
     /**

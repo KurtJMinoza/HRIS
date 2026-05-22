@@ -172,7 +172,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/employee/loan-requests', [EmployeeLoanRequestController::class, 'store']);
     Route::get('/employee/loan-requests/{id}', [EmployeeLoanRequestController::class, 'show']);
 
-    /** Plain employees only (not org heads): self-service detailed report without HR panel / reports.view. */
+    /** Self-service detailed report (employees and any account with own-report access). */
     Route::get('/employee/reports/detailed', [ReportsController::class, 'detailed'])->name('employee.reports.detailed');
 
     /** Subject employee: read-only list of recommendations about self (no HR panel required). */
@@ -229,7 +229,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:holiday.manage')->patch('/admin/holidays/{id}', [HolidayController::class, 'update']);
         Route::middleware('permission:holiday.manage')->delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
 
-        Route::middleware('permission:reports.view')->group(function () {
+        Route::middleware('permission:can_access_reports_module|can_view_own_reports|can_view_subordinate_reports|can_view_all_reports|reports.view')->group(function () {
             Route::get('/admin/reports/detailed', [ReportsController::class, 'detailed']);
             Route::post('/admin/reports/detailed/export', [ReportsController::class, 'queueDetailedExport']);
             Route::get('/admin/reports/detailed/export/{id}/status', [ReportsController::class, 'detailedExportStatus']);

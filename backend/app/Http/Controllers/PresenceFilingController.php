@@ -8,9 +8,11 @@ use App\Jobs\ProcessDailyPayrollJob;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceCorrectionApproval;
 use App\Models\AttendanceCorrectionAudit;
+use App\Models\OrgApprovalRecord;
 use App\Models\AttendanceLog;
 use App\Models\User;
 use App\Services\AttendanceCorrectionApprovalService;
+use App\Services\ApprovalWorkflowSettingService;
 use App\Services\AttendanceCorrectionDetailService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
@@ -758,7 +760,7 @@ class PresenceFilingController extends Controller
             });
         }
 
-        $this->dataScopeService->restrictAttendanceCorrectionsQuery($actor, $query);
+        $this->applyPresenceFilingApprovalVisibility($actor, $query, $request);
 
         $tz = $this->presenceFilingService->attendanceTimezone();
 
@@ -789,6 +791,114 @@ class PresenceFilingController extends Controller
         ]);
     }
 
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<AttendanceCorrection>  $query
+     */
+    private function applyPresenceFilingApprovalVisibility(User $actor, $query, Request $request): void
+    {
+        if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
+            Log::info('filing_visibility: attendance correction list unrestricted for Admin HR', [
+                'current_user_id' => (int) $actor->id,
+                'current_employee_id' => (int) $actor->id,
+                'role' => $actor->role,
+            ]);
+
+            return;
+        }
+
+        $actorId = (int) $actor->id;
+        $assignedRequestIds = $this->assignedPresenceFilingIdsForActor($actor);
+        $hierarchyOn = app(ApprovalWorkflowSettingService::class)
+            ->usesHierarchyApproval(OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION);
+        $scopedEmployeeIds = $hierarchyOn
+            ? $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor)
+            : [];
+
+        $query->where(function ($scope) use ($actorId, $assignedRequestIds, $scopedEmployeeIds): void {
+            $scope->where('first_approver_id', $actorId)
+                ->orWhere('second_approver_id', $actorId);
+
+            if ($assignedRequestIds !== []) {
+                $scope->orWhereIn('id', $assignedRequestIds);
+            }
+
+            if ($scopedEmployeeIds !== []) {
+                $scope->orWhereIn('user_id', $scopedEmployeeIds);
+            }
+        });
+
+        Log::info('filing_visibility: attendance correction list scoped for approvals', [
+            'current_user_id' => $actorId,
+            'current_employee_id' => $actorId,
+            'role' => $this->hrRoleResolver->resolve($actor)->value,
+            'can_view_my_filings' => true,
+            'can_view_assigned_approvals' => true,
+            'can_view_team_filings' => $hierarchyOn,
+            'attendance_correction_hierarchy_approval' => $hierarchyOn,
+            'approval_scoped_employee_ids' => $scopedEmployeeIds,
+            'assigned_approval_request_ids' => $assignedRequestIds,
+            'returned_all_filings_count' => null,
+            'request_status_filter' => $request->query('status', 'all'),
+        ]);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function assignedPresenceFilingIdsForActor(User $actor): array
+    {
+        $actorId = (int) $actor->id;
+        $ids = AttendanceCorrection::query()
+            ->where(function ($query) use ($actorId): void {
+                $query->where('first_approver_id', $actorId)
+                    ->orWhere('second_approver_id', $actorId);
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $recordIds = OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+            ->where('approver_id', $actorId)
+            ->pluck('request_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return array_values(array_unique([...$ids, ...$recordIds]));
+    }
+
+    private function canAccessPresenceFilingThroughApprovalScope(User $actor, AttendanceCorrection $correction): bool
+    {
+        if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
+            return true;
+        }
+
+        $actorId = (int) $actor->id;
+        if ((int) $correction->user_id === $actorId
+            || (int) $correction->filed_by === $actorId
+            || (int) $correction->first_approver_id === $actorId
+            || (int) $correction->second_approver_id === $actorId
+        ) {
+            return true;
+        }
+
+        if (OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+            ->where('request_id', (int) $correction->id)
+            ->where('approver_id', $actorId)
+            ->exists()) {
+            return true;
+        }
+
+        if (! app(ApprovalWorkflowSettingService::class)->usesHierarchyApproval(OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)) {
+            return false;
+        }
+
+        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
+
+        return is_array($scopedEmployeeIds) && in_array((int) $correction->user_id, $scopedEmployeeIds, true);
+    }
+
     public function adminShow(Request $request, int $id): JsonResponse
     {
         $perf = RequestPerformanceLogger::start('admin.presence_filings.show');
@@ -810,8 +920,8 @@ class PresenceFilingController extends Controller
             ])
             ->findOrFail($id);
 
-        if ($correction->user) {
-            $this->dataScopeService->ensureCorrectionSubjectAccessible($actor, $correction->user);
+        if (! $this->canAccessPresenceFilingThroughApprovalScope($actor, $correction)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
 
         $tz = $this->presenceFilingService->attendanceTimezone();
@@ -868,8 +978,8 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => 'Attendance correction not found.'], 404);
         }
 
-        if ($correction->user) {
-            $this->dataScopeService->ensureCorrectionSubjectAccessible($actor, $correction->user);
+        if (! $this->canAccessPresenceFilingThroughApprovalScope($actor, $correction)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
 
         $tz = $this->presenceFilingService->attendanceTimezone();

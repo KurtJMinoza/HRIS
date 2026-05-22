@@ -197,6 +197,7 @@ export default function AdminLeave() {
   const showEmployeePicker =
     user?.can_file_leave_for_others === true && !isOrgHeadHrRole
   const isAdminHr = user?.hr_role === 'admin_hr'
+  const allLeaveTabLabel = isAdminHr ? 'All Filings' : 'For My Approval'
   const [leaveRequests, setLeaveRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -1182,7 +1183,7 @@ export default function AdminLeave() {
                 : 'text-muted-foreground hover:bg-background hover:text-foreground',
             )}
           >
-            All Requests
+            {allLeaveTabLabel}
           </button>
           <button
             type="button"
@@ -1196,7 +1197,7 @@ export default function AdminLeave() {
                 : 'text-muted-foreground hover:bg-background hover:text-foreground',
             )}
           >
-            My Requests
+            My Filings
           </button>
         </div>
       </div>
@@ -1205,12 +1206,12 @@ export default function AdminLeave() {
         <CardHeader className="flex flex-col gap-4 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
           <div className="min-w-0">
             <CardTitle className="text-lg font-semibold @md:text-xl">
-              {isMineTab ? 'My leave requests' : 'Leave requests'}
+              {isMineTab ? 'My leave filings' : allLeaveTabLabel}
             </CardTitle>
             <CardDescription className="text-sm @md:text-[15px]">
               {isMineTab
                 ? 'Leave you submitted and its approval progress.'
-                : 'Filter by status'}
+                : isAdminHr ? 'Filter all leave filings by status.' : 'Leave filings in your approval scope.'}
             </CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">

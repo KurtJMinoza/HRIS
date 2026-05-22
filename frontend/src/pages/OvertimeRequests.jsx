@@ -460,9 +460,33 @@ function OvertimeStatusCell({ row }) {
   )
 }
 
-function OvertimeRowActions({ row, tab, canEdit, onView, onEdit, onDelete }) {
+function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelete, onApprove, onReject }) {
   return (
     <div className={requestModuleActionsWrapRowClass}>
+      {canAct ? (
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(requestModuleCompactButtonClass, 'border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 hover:text-emerald-800 dark:text-emerald-300')}
+            onClick={onApprove}
+          >
+            <CheckCircle2 className="size-3.5 shrink-0" />
+            Approve
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(requestModuleCompactButtonClass, 'border-destructive/50 text-destructive hover:bg-destructive/10')}
+            onClick={onReject}
+          >
+            <XCircle className="size-3.5 shrink-0" />
+            Reject
+          </Button>
+        </>
+      ) : null}
       <Button
         type="button"
         variant="outline"
@@ -733,6 +757,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const canViewEmployeeProfile = perms.has('employees.view')
   const canExport = isHr && perms.has('overtime.export')
   const canApproveOvertime = perms.has('overtime.approve')
+  const isAdminHr = user?.hr_role === 'admin_hr'
+  const allOvertimeTabLabel = isAdminHr ? 'All Filings' : 'For My Approval'
 
   const [monthYear, setMonthYear] = useState(() => new Date().getFullYear())
   const [monthIndex, setMonthIndex] = useState(() => new Date().getMonth()) // 0-based
@@ -1733,7 +1759,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     : 'text-muted-foreground hover:bg-background hover:text-foreground'
                 )}
               >
-                All Requests
+                {allOvertimeTabLabel}
               </button>
               <button
                 type="button"
@@ -1747,7 +1773,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     : 'text-muted-foreground hover:bg-background hover:text-foreground'
                 )}
               >
-                My Requests
+                My Filings
               </button>
             </div>
           </div>
@@ -1764,7 +1790,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 <CardDescription className="text-sm leading-relaxed text-muted-foreground">
                   {tab === 'mine'
                     ? 'Your overtime filings and their current stage in the approval chain.'
-                    : 'All overtime in your organization scope. Approve or reject when you are the current approver.'}
+                    : isAdminHr
+                      ? 'All overtime filings. Approve or reject when you are the current approver.'
+                      : 'Overtime filings in your approval scope. Approve or reject when you are the current approver.'}
                 </CardDescription>
               </div>
             </div>
@@ -1959,9 +1987,12 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                                 row={row}
                                 tab={tab}
                                 canEdit={canEditPendingOvertime(row)}
+                                canAct={showOvertimeActions(row, user, canApproveOvertime)}
                                 onView={() => openView(row)}
                                 onEdit={() => openEdit(row)}
                                 onDelete={() => setDeleteDialog({ open: true, row })}
+                                onApprove={() => openApprove(row)}
+                                onReject={() => openReject(row)}
                               />
                             </TableCell>
                           </TableRow>
