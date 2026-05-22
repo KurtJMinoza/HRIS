@@ -12,6 +12,10 @@ class PayrollDailyLogProjectorService
             ->join('payroll_periods as pp', 'pp.id', '=', 'pb.payroll_period_id')
             ->join('users as u', 'u.id', '=', 'pp.user_id')
             ->whereBetween('pb.date', [$fromDate, $toDate])
+            ->whereIn('u.role', ['employee', 'admin'])
+            ->where('u.is_system_user', false)
+            ->where('u.is_hidden', false)
+            ->where('u.exclude_from_payroll', false)
             ->select([
                 'pp.user_id',
                 'u.company_id',

@@ -2,7 +2,7 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { HrAppPathProvider } from '@/contexts/HrAppPathContext'
 import { buildAdminNav, buildManagerNav } from '@/config/rbacNav'
-import { resolvePostLoginPath, isAdminHrUser } from '@/lib/hrRoutes'
+import { resolvePostLoginPath, isAdminHrUser, hasManagementPanelAccess } from '@/lib/hrRoutes'
 import { DashboardLayout } from '@/layouts/DashboardLayout'
 
 const PANEL_SCOPES = new Set(['admin', 'company', 'branch', 'department', 'division', 'section-unit'])
@@ -62,6 +62,9 @@ export function HrPanelLayout() {
       return <Navigate to={resolvePostLoginPath(user)} replace />
     }
   } else {
+    if (!hasManagementPanelAccess(user)) {
+      return <Navigate to="/employee/dashboard" replace />
+    }
     const expected = SCOPE_TO_ROLE[scope]
     if (String(user.hr_role || '').trim().toLowerCase() !== expected) {
       return <Navigate to={resolvePostLoginPath(user)} replace />

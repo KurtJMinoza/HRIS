@@ -52,7 +52,7 @@ class EmployeeDocumentController extends Controller
 
     public function index(Request $request, int $userId): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $query = EmployeeDocument::where('user_id', $employee->id)->orderByDesc('created_at')->orderByDesc('id');
@@ -68,7 +68,7 @@ class EmployeeDocumentController extends Controller
 
     public function store(Request $request, int $userId): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $validated = $request->validate([
@@ -108,7 +108,7 @@ class EmployeeDocumentController extends Controller
 
     public function update(Request $request, int $userId, int $id): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
         $doc = EmployeeDocument::where('id', $id)->where('user_id', $employee->id)->firstOrFail();
 
@@ -150,7 +150,7 @@ class EmployeeDocumentController extends Controller
 
     public function destroy(Request $request, int $userId, int $id): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
         $doc = EmployeeDocument::where('id', $id)->where('user_id', $employee->id)->firstOrFail();
 
@@ -164,7 +164,7 @@ class EmployeeDocumentController extends Controller
 
     public function review(Request $request, int $userId, int $id): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
         $doc = EmployeeDocument::where('id', $id)->where('user_id', $employee->id)->firstOrFail();
 

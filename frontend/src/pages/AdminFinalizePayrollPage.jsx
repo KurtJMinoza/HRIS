@@ -216,7 +216,7 @@ export default function AdminFinalizePayrollPage() {
   const hrBase = useHrBasePath()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const isAdmin = user?.role === 'admin'
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin'
   const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canFinalizePayroll = permissionSet.has('payslip.finalize')
   const canBulkDownloadPayslipZip = permissionSet.has('payslip.download')

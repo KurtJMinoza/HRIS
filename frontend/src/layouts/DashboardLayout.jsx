@@ -458,7 +458,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   const profilePath =
     role === 'employee' ? '/employee/profile' : hrPanelPath(hrBasePath, 'profile')
 
-  const treatAsHrPanel = role === 'admin' || role === 'manager'
+  const treatAsHrPanel = role === 'admin' || role === 'super_admin' || role === 'manager'
 
   const panelPrefixes = ['/admin', '/company', '/branch', '/department']
 

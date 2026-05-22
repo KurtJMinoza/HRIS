@@ -369,7 +369,8 @@ class PayslipController extends Controller
         }
 
         $q = User::query()
-            ->activeRoster();
+            ->payrollEmployees()
+            ->active();
         $this->dataScopeService->restrictEmployeeQuery($request->user(), $q);
 
         if (! empty($v['company_id'])) {
@@ -460,7 +461,7 @@ class PayslipController extends Controller
         }
 
         if (! empty($v['employee_id'])) {
-            $user = User::query()->activeRoster()->findOrFail((int) $v['employee_id']);
+            $user = User::query()->payrollEmployees()->active()->findOrFail((int) $v['employee_id']);
             $this->dataScopeService->ensureEmployeeAccessible($request->user(), $user);
             // Single-employee generation should be quick and usable for preview immediately.
             // PDFs are not generated here to keep the endpoint responsive.
@@ -486,7 +487,8 @@ class PayslipController extends Controller
 
         // Probe the scope to resolve pay period dates (pay cycle + cut-off integration).
         $probeQ = User::query()
-            ->activeRoster();
+            ->payrollEmployees()
+            ->active();
         $this->dataScopeService->restrictEmployeeQuery($actor, $probeQ);
         if (is_array($v['employee_ids'] ?? null) && count($v['employee_ids']) > 0) {
             $probeQ->whereIn('id', $v['employee_ids']);
@@ -760,7 +762,7 @@ class PayslipController extends Controller
         ];
 
         $actor = $request->user();
-        $q = User::query()->activeRoster();
+        $q = User::query()->payrollEmployees()->active();
         if ($actor instanceof User) {
             $this->dataScopeService->restrictEmployeeQuery($actor, $q);
         }

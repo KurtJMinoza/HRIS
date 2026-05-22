@@ -49,6 +49,11 @@ class CompanyController extends Controller
         // Exclude users who are Company Head of another company — they belong to that company only.
         $totalEmployeesSub = DB::table('users')
             ->whereIn('users.role', User::ROSTER_ELIGIBLE_ROLES)
+            ->where('users.is_system_user', false)
+            ->where('users.is_hidden', false)
+            ->where('users.exclude_from_reports', false)
+            ->where('users.exclude_from_payroll', false)
+            ->where('users.exclude_from_attendance', false)
             ->where(function ($q) {
                 $q->whereColumn('users.company_id', 'companies.id')
                     ->orWhereExists(function ($sub) {

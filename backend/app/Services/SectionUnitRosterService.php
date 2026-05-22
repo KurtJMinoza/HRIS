@@ -30,7 +30,7 @@ class SectionUnitRosterService
         $supplementalIds = $this->supplementalAssignmentEmployeeIds($sectionUnitId);
 
         return User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->where(function (Builder $query) use ($sectionUnitId, $supplementalIds): void {
                 $query->where('section_unit_id', $sectionUnitId);
                 if ($supplementalIds !== []) {
@@ -59,7 +59,7 @@ class SectionUnitRosterService
         $bySource = collect($roster)->countBy(fn (array $row) => $row['source']);
 
         $departmentPool = $departmentPool ?? ($section->department_id
-            ? (int) User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->where('department_id', (int) $section->department_id)->count()
+            ? (int) User::query()->visibleEmployees()->where('department_id', (int) $section->department_id)->count()
             : 0);
 
         $unassigned = $unassigned ?? $this->unassignedToSectionCount($section);
@@ -261,7 +261,7 @@ class SectionUnitRosterService
         $sectionId = (int) $section->id;
         $assignedIds = $this->sectionMembersQuery($sectionId)->pluck('id')->map(fn ($id) => (int) $id)->all();
 
-        $poolQuery = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $poolQuery = User::query()->visibleEmployees();
         if ($section->department_id) {
             $poolQuery->where('department_id', (int) $section->department_id);
         } elseif ($section->division_id) {

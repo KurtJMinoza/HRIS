@@ -10,8 +10,10 @@ return [
     'permissions' => [
         // 1. Dashboard & overview
         ['slug' => 'dashboard.view', 'module' => 'dashboard', 'label' => 'View dashboard', 'description' => 'KPIs, attendance snapshot, company-wide widgets'],
+        ['slug' => 'can_view_admin_dashboard', 'module' => 'dashboard', 'label' => 'View admin dashboard', 'description' => 'Explicitly allow admin-style dashboard widgets for non-admin roles'],
 
         // 2. Employee management
+        ['slug' => 'can_view_employee_module', 'module' => 'employees', 'label' => 'View employee module', 'description' => 'Explicitly allow non-admin roles to open employee management lists'],
         ['slug' => 'employees.view', 'module' => 'employees', 'label' => 'View employees', 'description' => 'List and open employee records in scope'],
         ['slug' => 'employees.create', 'module' => 'employees', 'label' => 'Create employees', 'description' => 'Add new employee accounts'],
         ['slug' => 'employees.edit', 'module' => 'employees', 'label' => 'Edit employees', 'description' => 'Update profiles, schedules, QR/face, activation'],
@@ -23,6 +25,8 @@ return [
         ['slug' => 'employees.password_reset', 'module' => 'employees', 'label' => 'Reset passwords', 'description' => 'Trigger password reset for employees'],
 
         // 3. Attendance & daily computation (monitoring + corrections)
+        ['slug' => 'can_view_own_attendance', 'module' => 'attendance', 'label' => 'View own attendance', 'description' => 'View own attendance records'],
+        ['slug' => 'can_view_subordinate_attendance', 'module' => 'attendance', 'label' => 'View subordinate attendance', 'description' => 'Explicitly allow non-admin roles to view attendance for employees in scope'],
         ['slug' => 'attendance.view', 'module' => 'attendance', 'label' => 'View attendance', 'description' => 'Monitor logs and daily status in scope'],
         ['slug' => 'attendance.corrections.create', 'module' => 'attendance', 'label' => 'Create corrections', 'description' => 'Submit DTR corrections'],
         ['slug' => 'attendance.corrections.approve', 'module' => 'attendance', 'label' => 'Approve attendance corrections', 'description' => 'Multi-level approval of manual attendance filings (remarks at each step)'],
@@ -53,6 +57,8 @@ return [
         ['slug' => 'manage-schedules', 'module' => 'schedule', 'label' => 'Manage schedules (admin)', 'description' => 'Full administrative control over schedule templates and assignments'],
 
         // 8. Reports
+        ['slug' => 'can_view_own_reports', 'module' => 'reports', 'label' => 'View own reports', 'description' => 'View own report data'],
+        ['slug' => 'can_view_subordinate_reports', 'module' => 'reports', 'label' => 'View subordinate reports', 'description' => 'Explicitly allow non-admin roles to view report data for employees in scope'],
         ['slug' => 'reports.view', 'module' => 'reports', 'label' => 'View reports', 'description' => 'Attendance, detailed, premium summaries'],
         ['slug' => 'reports.export', 'module' => 'reports', 'label' => 'Export reports', 'description' => 'Download report extracts'],
         ['slug' => 'reports.payroll', 'module' => 'reports', 'label' => 'Payroll-related reports', 'description' => 'Reports tied to compensation'],
@@ -144,16 +150,11 @@ return [
          */
         /** Scoped manager tools via `/employee/manager/*` (same shell as employees). No global admin modules. */
         'company_head' => [
-            'dashboard.view',
             'profile.view',
             'profile.picture.edit',
             'view-my-schedule',
             'request-schedule',
             'approve-schedule',
-            'employees.view',
-            'attendance.view',
-            'reports.view',
-            'reports.export',
             'attendance.corrections.create',
             'attendance.corrections.approve',
             'leave.view',
@@ -176,16 +177,11 @@ return [
             'payslip.download',
         ],
         'branch_head' => [
-            'dashboard.view',
             'profile.view',
             'profile.picture.edit',
             'view-my-schedule',
             'request-schedule',
             'approve-schedule',
-            'employees.view',
-            'attendance.view',
-            'reports.view',
-            'reports.export',
             'attendance.corrections.create',
             'attendance.corrections.approve',
             'leave.view',
@@ -205,16 +201,11 @@ return [
             'payslip.download',
         ],
         'department_head' => [
-            'dashboard.view',
             'profile.view',
             'profile.picture.edit',
             'view-my-schedule',
             'request-schedule',
             'approve-schedule',
-            'employees.view',
-            'attendance.view',
-            'reports.view',
-            'reports.export',
             'attendance.corrections.create',
             'attendance.corrections.approve',
             'leave.view',
@@ -233,16 +224,11 @@ return [
             'payslip.download',
         ],
         'division_head' => [
-            'dashboard.view',
             'profile.view',
             'profile.picture.edit',
             'view-my-schedule',
             'request-schedule',
             'approve-schedule',
-            'employees.view',
-            'attendance.view',
-            'reports.view',
-            'reports.export',
             'attendance.corrections.create',
             'attendance.corrections.approve',
             'leave.view',
@@ -261,16 +247,11 @@ return [
             'payslip.download',
         ],
         'section_unit_head' => [
-            'dashboard.view',
             'profile.view',
             'profile.picture.edit',
             'view-my-schedule',
             'request-schedule',
             'approve-schedule',
-            'employees.view',
-            'attendance.view',
-            'reports.view',
-            'reports.export',
             'attendance.corrections.create',
             'attendance.corrections.approve',
             'leave.view',

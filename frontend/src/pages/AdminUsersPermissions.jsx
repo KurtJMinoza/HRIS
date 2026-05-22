@@ -63,7 +63,7 @@ const HR_ROLE_OPTIONS = [
 
 /** Map API user row to form fields for combined Admin (HR) + org head roles. */
 function deriveUserFormRoles(u) {
-  const isHrAdmin = u.role === 'admin' || u.is_hr_admin === true
+  const isHrAdmin = u.role === 'admin' || u.role === 'super_admin' || u.is_hr_admin === true
   if (Array.isArray(u.hr_roles) && u.hr_roles.length > 0) {
     const orgOnly = u.hr_roles.filter((r) => r !== 'admin_hr')
     const base = orgOnly[0] ?? (isHrAdmin ? 'admin_hr' : 'employee')
@@ -263,7 +263,7 @@ export default function AdminUsersPermissions() {
   const [tab, setTab] = useState('users')
 
   const perms = new Set(user?.permissions ?? [])
-  const canRbacMatrix = user?.role === 'admin' || perms.has('rbac.manage')
+  const canRbacMatrix = user?.role === 'admin' || user?.role === 'super_admin' || perms.has('rbac.manage')
 
   return (
     <div className="w-full max-w-none space-y-8 bg-white p-4 md:p-6 dark:bg-background">
@@ -319,7 +319,7 @@ export default function AdminUsersPermissions() {
 
 function UsersTab({ toast }) {
   const { user } = useAuth()
-  const canManageUsers = user?.role === 'admin' || (user?.permissions ?? []).includes('users.manage')
+  const canManageUsers = user?.role === 'admin' || user?.role === 'super_admin' || (user?.permissions ?? []).includes('users.manage')
   const [loading, setLoading] = useState(true)
   const [rows, setRows] = useState([])
   const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 })

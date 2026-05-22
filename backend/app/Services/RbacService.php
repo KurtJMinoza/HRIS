@@ -10,6 +10,14 @@ use Illuminate\Support\Facades\DB;
 
 class RbacService
 {
+    private const MANAGEMENT_PERMISSION_FLAGS = [
+        'dashboard.view' => 'can_view_admin_dashboard',
+        'employees.view' => 'can_view_employee_module',
+        'attendance.view' => 'can_view_subordinate_attendance',
+        'reports.view' => 'can_view_subordinate_reports',
+        'reports.export' => 'can_view_subordinate_reports',
+    ];
+
     public function __construct(
         private readonly HrRoleResolver $hrRoleResolver,
     ) {}
@@ -24,6 +32,10 @@ class RbacService
         // Admin (HR) super-role: full module access (highest priority over org-head roles).
         if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
             return true;
+        }
+
+        if (array_key_exists($permissionSlug, self::MANAGEMENT_PERMISSION_FLAGS)) {
+            return $this->rawPermissionsForUser($user)->contains(self::MANAGEMENT_PERMISSION_FLAGS[$permissionSlug]);
         }
 
         return $this->getPermissionsForUser($user)->contains($permissionSlug);
@@ -61,6 +73,52 @@ class RbacService
             return Permission::query()->orderBy('slug')->pluck('slug');
         }
 
+        $raw = $this->rawPermissionsForUser($user);
+        $managementSlugs = array_keys(self::MANAGEMENT_PERMISSION_FLAGS);
+
+        return $raw->reject(function (string $slug) use ($raw, $managementSlugs): bool {
+            if (! in_array($slug, $managementSlugs, true)) {
+                return false;
+            }
+
+            return ! $raw->contains(self::MANAGEMENT_PERMISSION_FLAGS[$slug]);
+        })->values();
+    }
+
+    public function accessFlagsForUser(User $user): array
+    {
+        if ($this->hrRoleResolver->resolve($user) === HrRole::AdminHr) {
+            return [
+                'can_view_employee_module' => true,
+                'can_view_subordinate_attendance' => true,
+                'can_view_subordinate_reports' => true,
+                'can_view_admin_dashboard' => true,
+                'can_approve_requests' => true,
+                'can_view_own_attendance' => ! $user->isExcludedFromAttendance(),
+                'can_view_own_reports' => ! $user->isExcludedFromReports(),
+            ];
+        }
+
+        $raw = $this->rawPermissionsForUser($user);
+
+        return [
+            'can_view_employee_module' => $raw->contains('can_view_employee_module'),
+            'can_view_subordinate_attendance' => $raw->contains('can_view_subordinate_attendance'),
+            'can_view_subordinate_reports' => $raw->contains('can_view_subordinate_reports'),
+            'can_view_admin_dashboard' => $raw->contains('can_view_admin_dashboard'),
+            'can_approve_requests' => $raw->intersect([
+                'leave.approve',
+                'overtime.approve',
+                'attendance.corrections.approve',
+                'approve-schedule',
+            ])->isNotEmpty(),
+            'can_view_own_attendance' => ! $user->isExcludedFromAttendance(),
+            'can_view_own_reports' => ! $user->isExcludedFromReports(),
+        ];
+    }
+
+    public function rawPermissionsForUser(User $user): \Illuminate\Support\Collection
+    {
         $roleKey = $this->roleKeyForUser($user);
 
         return Cache::remember(

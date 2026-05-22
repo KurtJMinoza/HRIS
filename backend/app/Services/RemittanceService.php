@@ -34,7 +34,7 @@ class RemittanceService
             return $this->emptyDashboard();
         }
 
-        $query = User::query()->activeRoster();
+        $query = User::query()->payrollEmployees()->active();
 
         $this->dataScopeService->restrictEmployeeQuery($user, $query);
 
@@ -173,7 +173,7 @@ class RemittanceService
             'Official filing may require the agency e-portal (SSS e-SRS, PhilHealth ERF, Pag-IBIG Employer Online, BIR eFPS).',
         ];
 
-        $query = User::query()->activeRoster();
+        $query = User::query()->payrollEmployees()->active();
         $this->dataScopeService->restrictEmployeeQuery($actor, $query);
 
         if ($companyId !== null) {

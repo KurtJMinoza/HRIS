@@ -19,7 +19,8 @@ class PayComponentAssignmentService
         $processed = 0;
 
         $query = User::query()
-            ->activeRoster()
+            ->payrollEmployees()
+            ->active()
             ->orderBy('id');
 
         $query->chunkById(200, function ($employees) use ($component, &$processed) {

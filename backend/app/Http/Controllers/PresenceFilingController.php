@@ -361,7 +361,7 @@ class PresenceFilingController extends Controller
 
         $employee = User::query()
             ->whereKey((int) $validated['employee_id'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->attendanceEmployees()
             ->with('workingSchedule')
             ->firstOrFail();
 
@@ -527,7 +527,7 @@ class PresenceFilingController extends Controller
 
         $employee = User::query()
             ->whereKey((int) $validated['employee_id'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->attendanceEmployees()
             ->with('workingSchedule')
             ->firstOrFail();
 

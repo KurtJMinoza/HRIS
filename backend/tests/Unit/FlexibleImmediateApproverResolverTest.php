@@ -434,6 +434,132 @@ class FlexibleImmediateApproverResolverTest extends TestCase
         $this->assertNotSame($departmentLeader->id, $chain[0]['approver_id']);
     }
 
+    public function test_ineligible_section_head_falls_back_to_department_head_when_parent_fallback_enabled(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', true);
+
+        $employee = $this->user();
+        $inactiveSectionHead = $this->user(['is_active' => false]);
+        $departmentLeader = $this->user();
+        $divisionLegacyId = 93099;
+        $branch = $this->unit('Branch', null, [], 'branch');
+        $division = $this->unit('Division', $branch, [
+            'legacy_source_type' => 'division',
+            'legacy_source_id' => $divisionLegacyId,
+        ], 'division');
+        $department = $this->createLegacyDepartment($divisionLegacyId, $division, 'Fallback Dept');
+        $section = SectionUnit::query()->create([
+            'name' => 'Inactive Head Section '.Str::random(4),
+            'code' => 'IH'.random_int(1000, 9999),
+            'department_id' => $department['id'],
+            'division_id' => $divisionLegacyId,
+            'section_unit_head_id' => $inactiveSectionHead->id,
+            'status' => 'active',
+        ]);
+        $this->leader($department['unit'], $departmentLeader, 'Department Head');
+        Department::query()->whereKey($department['id'])->update(['department_head_id' => (int) $departmentLeader->id]);
+        $employee->forceFill([
+            'section_unit_id' => $section->id,
+            'department_id' => $department['id'],
+        ])->save();
+
+        $resolved = app(FlexibleImmediateApproverResolver::class)->resolveImmediateApprover($employee, 'leave');
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($employee, 'leave', $employee);
+
+        $this->assertNotNull($resolved);
+        $this->assertSame($departmentLeader->id, $resolved['approver_id']);
+        $this->assertSame('Department Head approval', $resolved['approval_label']);
+        $this->assertCount(2, $chain);
+        $this->assertSame($departmentLeader->id, $chain[0]['approver_id']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
+    public function test_employee_without_section_unit_routes_to_department_head_when_parent_fallback_enabled(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', true);
+
+        $employee = $this->user();
+        $departmentLeader = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+        $divisionLegacyId = 93100;
+        $branch = $this->unit('Branch', null, [], 'branch');
+        $division = $this->unit('Division', $branch, [
+            'legacy_source_type' => 'division',
+            'legacy_source_id' => $divisionLegacyId,
+        ], 'division');
+        $department = $this->createLegacyDepartment($divisionLegacyId, $division, 'No Section Dept');
+        Department::query()->whereKey($department['id'])->update(['department_head_id' => (int) $departmentLeader->id]);
+        $employee->forceFill([
+            'section_unit_id' => null,
+            'department_id' => $department['id'],
+        ])->save();
+
+        $resolved = app(FlexibleImmediateApproverResolver::class)->resolveImmediateApprover($employee, 'leave');
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($employee, 'leave', $employee);
+
+        $this->assertNotNull($resolved);
+        $this->assertSame($departmentLeader->id, $resolved['approver_id']);
+        $this->assertCount(2, $chain);
+        $this->assertSame($departmentLeader->id, $chain[0]['approver_id']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
+    public function test_direct_department_employee_leave_uses_department_head_when_parent_fallback_disabled(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', false);
+
+        $employee = $this->user();
+        $departmentLeader = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+        $divisionLegacyId = 93101;
+        $branch = $this->unit('Branch', null, [], 'branch');
+        $division = $this->unit('Division', $branch, [
+            'legacy_source_type' => 'division',
+            'legacy_source_id' => $divisionLegacyId,
+        ], 'division');
+        $department = $this->createLegacyDepartment($divisionLegacyId, $division, 'Direct Leave Dept');
+        Department::query()->whereKey($department['id'])->update(['department_head_id' => (int) $departmentLeader->id]);
+        $employee->forceFill([
+            'section_unit_id' => null,
+            'department_id' => $department['id'],
+        ])->save();
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($employee, 'leave', $employee);
+
+        $this->assertCount(2, $chain);
+        $this->assertSame($departmentLeader->id, $chain[0]['approver_id']);
+        $this->assertSame('Department Head approval', $chain[0]['approval_label']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
+    public function test_direct_department_employee_overtime_uses_department_head_when_parent_fallback_disabled(): void
+    {
+        $this->setWorkflowFallbackToParent('overtime', false);
+
+        $employee = $this->user();
+        $departmentLeader = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+        $divisionLegacyId = 93102;
+        $branch = $this->unit('Branch', null, [], 'branch');
+        $division = $this->unit('Division', $branch, [
+            'legacy_source_type' => 'division',
+            'legacy_source_id' => $divisionLegacyId,
+        ], 'division');
+        $department = $this->createLegacyDepartment($divisionLegacyId, $division, 'Direct Overtime Dept');
+        Department::query()->whereKey($department['id'])->update(['department_head_id' => (int) $departmentLeader->id]);
+        $employee->forceFill([
+            'section_unit_id' => null,
+            'department_id' => $department['id'],
+        ])->save();
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($employee, 'overtime', $employee);
+
+        $this->assertCount(2, $chain);
+        $this->assertSame($departmentLeader->id, $chain[0]['approver_id']);
+        $this->assertSame('Department Head approval', $chain[0]['approval_label']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
     public function test_legacy_section_directory_blocks_department_head_when_parent_fallback_enabled(): void
     {
         $this->setWorkflowFallbackToParent('leave', true);

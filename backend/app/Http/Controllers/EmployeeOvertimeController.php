@@ -101,6 +101,12 @@ class EmployeeOvertimeController extends Controller
 
     private function ensureSelfOvertimeAccess(User $user): void
     {
+        if ($user->isSystemAccessOnly()) {
+            throw ValidationException::withMessages([
+                'user' => ['System access accounts cannot file employee overtime requests.'],
+            ]);
+        }
+
         if ($user->isEmployee()) {
             return;
         }

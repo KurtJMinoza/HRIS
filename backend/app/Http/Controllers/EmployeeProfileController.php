@@ -461,6 +461,12 @@ class EmployeeProfileController extends Controller
     private function minimalProfileUserPayload(User $user): array
     {
         $hr = $this->hrRoleResolver->resolve($user);
+        $accessFlags = $this->rbacService->accessFlagsForUser($user);
+        $canAccessManagementPanel = $user->isAdmin()
+            || (bool) ($accessFlags['can_view_admin_dashboard'] ?? false)
+            || (bool) ($accessFlags['can_view_employee_module'] ?? false)
+            || (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false)
+            || (bool) ($accessFlags['can_view_subordinate_reports'] ?? false);
         $ws = $user->workingSchedule;
         $monthlyBase = (float) ($user->monthly_salary ?? $user->monthly_rate ?? 0);
         $scheduleRates = $this->scheduleRateService->describeForUser(
@@ -495,7 +501,14 @@ class EmployeeProfileController extends Controller
             'postal_code' => $user->postal_code,
             'role' => $user->role,
             'hr_role' => $hr->value,
-            'can_access_hr_panel' => $hr->canAccessHrPanel(),
+            'can_view_employee_module' => (bool) ($accessFlags['can_view_employee_module'] ?? false),
+            'can_view_subordinate_attendance' => (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false),
+            'can_view_subordinate_reports' => (bool) ($accessFlags['can_view_subordinate_reports'] ?? false),
+            'can_view_admin_dashboard' => (bool) ($accessFlags['can_view_admin_dashboard'] ?? false),
+            'can_approve_requests' => (bool) ($accessFlags['can_approve_requests'] ?? false),
+            'can_view_own_attendance' => (bool) ($accessFlags['can_view_own_attendance'] ?? false),
+            'can_view_own_reports' => (bool) ($accessFlags['can_view_own_reports'] ?? false),
+            'can_access_hr_panel' => $canAccessManagementPanel,
             'department' => $user->departmentRelation?->name ?? $user->department,
             'department_id' => $user->department_id,
             'department_name' => $user->departmentRelation?->name ?? $user->department,
@@ -557,6 +570,12 @@ class EmployeeProfileController extends Controller
     private function liteProfileUserPayload(User $user): array
     {
         $hr = $this->hrRoleResolver->resolve($user);
+        $accessFlags = $this->rbacService->accessFlagsForUser($user);
+        $canAccessManagementPanel = $user->isAdmin()
+            || (bool) ($accessFlags['can_view_admin_dashboard'] ?? false)
+            || (bool) ($accessFlags['can_view_employee_module'] ?? false)
+            || (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false)
+            || (bool) ($accessFlags['can_view_subordinate_reports'] ?? false);
 
         return [
             'id' => $user->id,
@@ -585,7 +604,14 @@ class EmployeeProfileController extends Controller
             'postal_code' => $user->postal_code,
             'role' => $user->role,
             'hr_role' => $hr->value,
-            'can_access_hr_panel' => $hr->canAccessHrPanel(),
+            'can_view_employee_module' => (bool) ($accessFlags['can_view_employee_module'] ?? false),
+            'can_view_subordinate_attendance' => (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false),
+            'can_view_subordinate_reports' => (bool) ($accessFlags['can_view_subordinate_reports'] ?? false),
+            'can_view_admin_dashboard' => (bool) ($accessFlags['can_view_admin_dashboard'] ?? false),
+            'can_approve_requests' => (bool) ($accessFlags['can_approve_requests'] ?? false),
+            'can_view_own_attendance' => (bool) ($accessFlags['can_view_own_attendance'] ?? false),
+            'can_view_own_reports' => (bool) ($accessFlags['can_view_own_reports'] ?? false),
+            'can_access_hr_panel' => $canAccessManagementPanel,
             'department' => $user->department,
             'department_id' => $user->department_id,
             'department_name' => $user->departmentRelation?->name ?? $user->department,

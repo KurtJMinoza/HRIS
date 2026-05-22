@@ -752,7 +752,7 @@ export default function AdminEmployeeProfile() {
   const isOwnProfile = Number(effectiveEmployeeId) === Number(user?.id)
   const roleValue = String(user?.role || '').trim().toLowerCase()
   const hrRoleValue = String(user?.hr_role || '').trim().toLowerCase()
-  const isAdminOrHr = roleValue === 'admin' || hrRoleValue === 'admin_hr' || hrRoleValue === 'admin'
+  const isAdminOrHr = roleValue === 'admin' || roleValue === 'super_admin' || hrRoleValue === 'admin_hr' || hrRoleValue === 'admin'
   const permissions = user?.permissions ?? []
   const hasSelfEditPermission = permissions.includes('profile.edit')
     || permissions.includes('edit-own-profile')

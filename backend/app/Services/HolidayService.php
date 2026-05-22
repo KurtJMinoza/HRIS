@@ -183,7 +183,7 @@ class HolidayService
 
         $query = User::query()
             ->where('is_active', true)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+            ->visibleEmployees();
 
         return match ($coverageType) {
             'company' => $query->where(function ($q) use ($coverageIds) {
@@ -216,7 +216,7 @@ class HolidayService
 
         $query = User::query()
             ->where('is_active', true)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+            ->visibleEmployees();
 
         return match ($coverageType) {
             'company' => (clone $query)->where(function ($q) use ($coverageIds) {

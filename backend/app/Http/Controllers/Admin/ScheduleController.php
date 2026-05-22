@@ -156,7 +156,7 @@ class ScheduleController extends Controller
 
         $affectedIds = User::query()
             ->where('working_schedule_id', $schedule->id)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->all();
@@ -179,14 +179,14 @@ class ScheduleController extends Controller
 
         $affectedIds = User::query()
             ->where('working_schedule_id', $schedule->id)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->all();
 
         // Unassign all employees before deleting so they show as "Available".
         User::where('working_schedule_id', $schedule->id)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->update([
                 'schedule' => null,
                 'working_schedule_id' => null,
@@ -220,7 +220,7 @@ class ScheduleController extends Controller
         $scheduleId = (int) $schedule->id;
 
         $currentlyOnShift = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->where('working_schedule_id', $scheduleId)
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
@@ -234,7 +234,7 @@ class ScheduleController extends Controller
 
         $newAssignees = User::query()
             ->whereIn('id', $toAssignCandidates)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->with('workingSchedule')
             ->get();
 
@@ -272,7 +272,7 @@ class ScheduleController extends Controller
 
         if (! empty($toAssign)) {
             $assignedCount = User::whereIn('id', $toAssign)
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->visibleEmployees()
                 ->update([
                     'schedule' => null,
                     'working_schedule_id' => $schedule->id,
@@ -283,7 +283,7 @@ class ScheduleController extends Controller
 
         if (! empty($toUnassign)) {
             $unassignedCount = User::whereIn('id', $toUnassign)
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->visibleEmployees()
                 ->update([
                     'schedule' => null,
                     'working_schedule_id' => null,

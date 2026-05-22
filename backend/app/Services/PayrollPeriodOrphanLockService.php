@@ -279,7 +279,7 @@ final class PayrollPeriodOrphanLockService
 
         $userQuery = User::query()
             ->where('company_id', $companyId)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+            ->payrollEmployees();
 
         if ($employeeUserIds !== null && $employeeUserIds !== []) {
             $userQuery->whereIn('id', $employeeUserIds);

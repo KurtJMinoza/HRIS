@@ -322,7 +322,7 @@ class RegularizationController extends Controller
             'manager_recommendation_received' => ['sometimes', 'boolean'],
         ]);
 
-        $employee = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->findOrFail($userId);
+        $employee = User::query()->visibleEmployees()->findOrFail($userId);
         $this->dataScopeService->ensureEmployeeAccessible($actor, $employee);
 
         $row = RegularizationRequirement::query()->firstOrCreate(['user_id' => $employee->id]);

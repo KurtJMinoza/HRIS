@@ -652,6 +652,11 @@ class EmployeeLeaveController extends Controller
     public function apply(Request $request): JsonResponse
     {
         $user = $request->user();
+        if (! $user instanceof User || ! $user->canAccessSelfServiceEmployeeProfile()) {
+            throw ValidationException::withMessages([
+                'user' => ['System access accounts cannot file employee leave requests.'],
+            ]);
+        }
         if ($user->isAccountDeactivated()) {
             throw ValidationException::withMessages([
                 'user' => [User::DEACTIVATED_LOGIN_MESSAGE],

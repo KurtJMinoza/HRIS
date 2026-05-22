@@ -30,6 +30,8 @@ class User extends Authenticatable
 
     public const ROLE_ADMIN = 'admin';
 
+    public const ROLE_SUPER_ADMIN = 'super_admin';
+
     /**
      * Staff included in HR rosters (Employee module lists, payroll runs, attendance/reports scopes, etc.).
      * Admin (HR) accounts are part of this set so they appear and behave as staff while retaining admin capabilities.
@@ -40,7 +42,36 @@ class User extends Authenticatable
 
     public function isRosterEligible(): bool
     {
-        return in_array($this->role, self::ROSTER_ELIGIBLE_ROLES, true);
+        return in_array($this->role, self::ROSTER_ELIGIBLE_ROLES, true)
+            && ! (bool) ($this->is_system_user ?? false)
+            && ! (bool) ($this->is_hidden ?? false);
+    }
+
+    public function isSystemAccessOnly(): bool
+    {
+        return $this->role === self::ROLE_SUPER_ADMIN
+            || (bool) ($this->is_system_user ?? false)
+            || (bool) ($this->is_hidden ?? false);
+    }
+
+    public function isExcludedFromReports(): bool
+    {
+        return $this->isSystemAccessOnly() || (bool) ($this->exclude_from_reports ?? false);
+    }
+
+    public function isExcludedFromPayroll(): bool
+    {
+        return $this->isSystemAccessOnly() || (bool) ($this->exclude_from_payroll ?? false);
+    }
+
+    public function isExcludedFromAttendance(): bool
+    {
+        return $this->isSystemAccessOnly() || (bool) ($this->exclude_from_attendance ?? false);
+    }
+
+    public function isExcludedFromApprovals(): bool
+    {
+        return $this->isSystemAccessOnly() || (bool) ($this->exclude_from_approvals ?? false);
     }
 
     public const DEACTIVATED_LOGIN_MESSAGE = 'Your account has been deactivated. Please contact HR/Admin.';
@@ -92,12 +123,47 @@ class User extends Authenticatable
 
     public function scopeRoster(Builder $query): Builder
     {
-        return $query->whereIn('role', self::ROSTER_ELIGIBLE_ROLES);
+        return $query->visibleEmployees();
     }
 
     public function scopeActiveRoster(Builder $query): Builder
     {
         return $query->roster()->active();
+    }
+
+    /**
+     * Operational staff roster (not system/hidden). Module-specific exclusions use
+     * {@see scopeAttendanceEmployees()}, {@see scopeReportableEmployees()}, etc.
+     */
+    public function scopeVisibleEmployees(Builder $query): Builder
+    {
+        return $query->whereIn('role', self::ROSTER_ELIGIBLE_ROLES)
+            ->where('is_system_user', false)
+            ->where('is_hidden', false);
+    }
+
+    public function scopeApprovableEmployees(Builder $query): Builder
+    {
+        return $query->visibleEmployees()
+            ->where('exclude_from_approvals', false);
+    }
+
+    public function scopeReportableEmployees(Builder $query): Builder
+    {
+        return $query->visibleEmployees()
+            ->where('exclude_from_reports', false);
+    }
+
+    public function scopePayrollEmployees(Builder $query): Builder
+    {
+        return $query->visibleEmployees()
+            ->where('exclude_from_payroll', false);
+    }
+
+    public function scopeAttendanceEmployees(Builder $query): Builder
+    {
+        return $query->visibleEmployees()
+            ->where('exclude_from_attendance', false);
     }
 
     /**
@@ -234,6 +300,12 @@ class User extends Authenticatable
         'password',
         'role',
         'is_super_admin',
+        'is_system_user',
+        'is_hidden',
+        'exclude_from_reports',
+        'exclude_from_payroll',
+        'exclude_from_attendance',
+        'exclude_from_approvals',
         'qr_token',
         'qr_token_generated_at',
         'face_descriptor',
@@ -313,6 +385,12 @@ class User extends Authenticatable
             'face_registered_at' => 'datetime',
             'last_login_at' => 'datetime',
             'is_super_admin' => 'boolean',
+            'is_system_user' => 'boolean',
+            'is_hidden' => 'boolean',
+            'exclude_from_reports' => 'boolean',
+            'exclude_from_payroll' => 'boolean',
+            'exclude_from_attendance' => 'boolean',
+            'exclude_from_approvals' => 'boolean',
             'schedule' => 'array',
             'face_descriptor' => 'encrypted',
             'face_embedding' => 'encrypted',
@@ -657,12 +735,13 @@ class User extends Authenticatable
 
     public function isAdmin(): bool
     {
-        return $this->role === self::ROLE_ADMIN;
+        return in_array($this->role, [self::ROLE_ADMIN, self::ROLE_SUPER_ADMIN], true);
     }
 
     public function isSuperAdmin(): bool
     {
-        return $this->isAdmin() && (bool) $this->is_super_admin;
+        return $this->role === self::ROLE_SUPER_ADMIN
+            || ($this->isAdmin() && (bool) $this->is_super_admin);
     }
 
     public function isEmployee(): bool
@@ -676,6 +755,10 @@ class User extends Authenticatable
      */
     public function canAccessSelfServiceEmployeeProfile(): bool
     {
+        if ($this->isSystemAccessOnly()) {
+            return false;
+        }
+
         if ($this->isEmployee()) {
             return true;
         }
@@ -691,7 +774,8 @@ class User extends Authenticatable
      */
     public function canRecordOwnAttendanceViaQrOrFace(): bool
     {
-        return $this->canAccessSelfServiceEmployeeProfile();
+        return ! $this->isExcludedFromAttendance()
+            && $this->canAccessSelfServiceEmployeeProfile();
     }
 
     /**

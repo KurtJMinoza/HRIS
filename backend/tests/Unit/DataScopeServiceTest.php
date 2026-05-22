@@ -5,11 +5,13 @@ namespace Tests\Unit;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
+use App\Models\Division;
 use App\Models\EmployeeOrganizationAssignment;
 use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\LegacyOrganizationMirrorService;
+use App\Services\RbacService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -40,14 +42,14 @@ class DataScopeServiceTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_section_team_leader_scope_always_includes_self(): void
+    public function test_section_team_leader_scope_defaults_to_self_only(): void
     {
         [$leader, $member, $sectionId] = $this->seedSectionTeamLeaderWithMember();
 
         $scopedIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($leader->fresh());
 
         $this->assertContains((int) $leader->id, $scopedIds);
-        $this->assertContains((int) $member->id, $scopedIds);
+        $this->assertNotContains((int) $member->id, $scopedIds);
     }
 
     public function test_section_team_leader_can_query_own_record_via_restrict_employee_query(): void
@@ -64,9 +66,89 @@ class DataScopeServiceTest extends TestCase
         $this->assertContains((int) $leader->id, $visibleIds);
     }
 
+    public function test_department_head_scope_always_includes_self_even_when_listed_as_branch_manager(): void
+    {
+        [$head, $member, $department] = $this->seedDepartmentHeadWithMember();
+
+        Branch::query()->whereKey((int) $department->branch_id)->update([
+            'branch_manager_id' => (int) $head->id,
+        ]);
+
+        $scopedIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($head->fresh(), 'attendance');
+
+        $this->assertContains((int) $head->id, $scopedIds);
+        $this->assertNotContains((int) $member->id, $scopedIds);
+
+        $visibleIds = User::query()
+            ->attendanceEmployees()
+            ->active()
+            ->tap(fn ($query) => app(DataScopeService::class)->restrictEmployeeQuery($head->fresh(), $query))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $this->assertContains((int) $head->id, $visibleIds);
+        $this->assertNotContains((int) $member->id, $visibleIds);
+    }
+
+    public function test_department_head_from_another_company_still_sees_own_records(): void
+    {
+        [$head, $member, $department] = $this->seedDepartmentHeadWithMember();
+        [$otherCompany] = $this->seedOtherCompanyDepartment();
+        $head->forceFill([
+            'company_id' => (int) $otherCompany->id,
+            'branch_id' => null,
+            'department_id' => null,
+        ])->save();
+
+        $scopedIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($head->fresh(), 'reports');
+
+        $this->assertContains((int) $head->id, $scopedIds);
+        $this->assertNotContains((int) $member->id, $scopedIds);
+        $this->assertSame((int) $head->id, (int) $department->fresh()->department_head_id);
+    }
+
+    public function test_division_head_scope_defaults_to_self_only(): void
+    {
+        [$head, $member] = $this->seedDivisionHeadWithMember();
+
+        $scopedIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($head->fresh(), 'reports');
+
+        $this->assertContains((int) $head->id, $scopedIds);
+        $this->assertNotContains((int) $member->id, $scopedIds);
+    }
+
+    public function test_department_head_with_explicit_subordinate_reports_permission_sees_department_scope(): void
+    {
+        [$head, $member] = $this->seedDepartmentHeadWithMember();
+        $this->grantRolePermission('department_head', 'can_view_subordinate_reports');
+
+        $scopedIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($head->fresh(), 'reports');
+
+        $this->assertContains((int) $head->id, $scopedIds);
+        $this->assertContains((int) $member->id, $scopedIds);
+    }
+
+    public function test_super_admin_system_user_is_not_attendance_or_report_visible(): void
+    {
+        $superAdmin = User::factory()->create([
+            'role' => User::ROLE_SUPER_ADMIN,
+            'is_super_admin' => true,
+            'is_system_user' => true,
+            'is_hidden' => true,
+            'exclude_from_attendance' => true,
+            'exclude_from_reports' => true,
+            'is_active' => true,
+        ]);
+
+        $this->assertFalse(User::query()->attendanceEmployees()->whereKey((int) $superAdmin->id)->exists());
+        $this->assertFalse(User::query()->reportableEmployees()->whereKey((int) $superAdmin->id)->exists());
+    }
+
     public function test_section_team_leader_sees_shared_employee_from_another_company(): void
     {
         [$leader, $member, $sectionId] = $this->seedSectionTeamLeaderWithMember();
+        $this->grantRolePermission('section_unit_head', 'can_view_subordinate_reports');
         [$otherCompany, $otherDepartment] = $this->seedOtherCompanyDepartment();
         $sharedEmployee = User::factory()->create([
             'role' => User::ROLE_EMPLOYEE,
@@ -83,7 +165,7 @@ class DataScopeServiceTest extends TestCase
             EmployeeOrganizationAssignmentService::MODE_SHARED,
         );
 
-        $scopedIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($leader->fresh());
+        $scopedIds = app(DataScopeService::class)->getScopedEmployeeIdsForUser($leader->fresh(), 'reports');
 
         $this->assertContains((int) $leader->id, $scopedIds);
         $this->assertContains((int) $sharedEmployee->id, $scopedIds);
@@ -95,6 +177,27 @@ class DataScopeServiceTest extends TestCase
                 ->where('section_unit_id', (int) $sectionId)
                 ->value('assignment_type'),
         );
+    }
+
+    private function grantRolePermission(string $roleKey, string $slug): void
+    {
+        $permissionId = DB::table('permissions')->updateOrInsert(
+            ['slug' => $slug],
+            [
+                'module' => 'test',
+                'label' => $slug,
+                'description' => $slug,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ],
+        );
+
+        $permissionId = DB::table('permissions')->where('slug', $slug)->value('id');
+        DB::table('role_permissions')->updateOrInsert(
+            ['role_key' => $roleKey, 'permission_id' => $permissionId],
+            ['created_at' => now(), 'updated_at' => now()],
+        );
+        RbacService::forgetRoleCache($roleKey);
     }
 
     /**
@@ -149,6 +252,82 @@ class DataScopeServiceTest extends TestCase
         ]);
 
         return [$leader, $member, $sectionId];
+    }
+
+    /**
+     * @return array{0: User, 1: User, 2: Department}
+     */
+    private function seedDepartmentHeadWithMember(): array
+    {
+        $company = Company::query()->create(['name' => 'Dept Head Co '.uniqid()]);
+        $branch = Branch::query()->create([
+            'name' => 'Dept Branch '.uniqid(),
+            'company_id' => (int) $company->id,
+        ]);
+        $department = Department::query()->create([
+            'name' => 'Finance '.uniqid(),
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+        ]);
+
+        $head = User::factory()->create([
+            'role' => User::ROLE_EMPLOYEE,
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+            'department_id' => null,
+            'is_active' => true,
+        ]);
+        $member = User::factory()->create([
+            'role' => User::ROLE_EMPLOYEE,
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+            'department_id' => (int) $department->id,
+            'is_active' => true,
+        ]);
+
+        Department::query()->whereKey((int) $department->id)->update([
+            'department_head_id' => (int) $head->id,
+        ]);
+
+        return [$head, $member, $department];
+    }
+
+    /**
+     * @return array{0: User, 1: User}
+     */
+    private function seedDivisionHeadWithMember(): array
+    {
+        $company = Company::query()->create(['name' => 'Division Co '.uniqid()]);
+        $branch = Branch::query()->create([
+            'name' => 'Division Branch '.uniqid(),
+            'company_id' => (int) $company->id,
+        ]);
+        $division = Division::query()->create([
+            'name' => 'Operations Division '.uniqid(),
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+        ]);
+
+        $head = User::factory()->create([
+            'role' => User::ROLE_EMPLOYEE,
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+            'division_id' => null,
+            'is_active' => true,
+        ]);
+        $member = User::factory()->create([
+            'role' => User::ROLE_EMPLOYEE,
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+            'division_id' => (int) $division->id,
+            'is_active' => true,
+        ]);
+
+        Division::query()->whereKey((int) $division->id)->update([
+            'division_head_id' => (int) $head->id,
+        ]);
+
+        return [$head, $member];
     }
 
     /**

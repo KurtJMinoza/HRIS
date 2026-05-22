@@ -528,7 +528,8 @@ export default function AdminDashboard() {
   const canViewLeave = useMemo(() => perms.has('leave.view'), [perms])
   const canApproveAttendanceCorrections = useMemo(() => perms.has('attendance.corrections.approve'), [perms])
   const hrRole = String(user?.hr_role || '').trim()
-  const isHrAdmin = hrRole === 'admin_hr' || String(user?.role || '').toLowerCase() === 'admin'
+  const roleValue = String(user?.role || '').toLowerCase()
+  const isHrAdmin = hrRole === 'admin_hr' || roleValue === 'admin' || roleValue === 'super_admin'
   const dashboardScopeLabel =
     hrRole === 'company_head'
       ? 'Company'

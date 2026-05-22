@@ -100,7 +100,7 @@ class FaceEmbeddingCacheService
      */
     public static function refreshCompanyFaceIndex(?int $companyId): array
     {
-        $query = self::faceUserQuery()->activeRoster();
+        $query = self::faceUserQuery()->attendanceEmployees()->active();
         if ($companyId !== null) {
             $query->where('company_id', $companyId);
         }

@@ -45,6 +45,10 @@ class HrRoleResolver
             $roles[] = HrRole::AdminHr;
         }
 
+        if ($user->isSystemAccessOnly()) {
+            return $roles !== [] ? $roles : [HrRole::AdminHr];
+        }
+
         // Org hat (company / branch / department / division / section-unit head) or line employee. Admins who are also
         // roster staff (no head assignment) must still show EMPLOYEE alongside ADMIN (HR).
         $org = $this->resolveOrgHierarchyFromAssignments($user);
@@ -140,6 +144,10 @@ class HrRoleResolver
      */
     public function maySubmitRegularization(User $user): bool
     {
+        if ($user->isSystemAccessOnly()) {
+            return false;
+        }
+
         return $this->resolveForApprovalSubject($user) !== HrRole::Employee;
     }
 

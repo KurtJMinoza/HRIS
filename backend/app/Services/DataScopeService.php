@@ -27,6 +27,7 @@ class DataScopeService
     public function __construct(
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly OrganizationLeadershipAssignmentService $leadershipAssignments,
+        private readonly RbacService $rbacService,
     ) {}
 
     /**
@@ -297,7 +298,7 @@ class DataScopeService
     public function restrictRegularizationRecommendationQuery(User $actor, Builder $query): void
     {
         $query->whereHas('user', function (Builder $q) use ($actor) {
-            $q->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+            $q->visibleEmployees();
             $this->restrictEmployeeQuery($actor, $q);
         });
     }
@@ -305,27 +306,54 @@ class DataScopeService
     /**
      * Employee IDs the actor may view in attendance, reports, employee lists, and dashboards.
      *
+     * @param  'attendance'|'reports'|'general'  $module
      * @return list<int>|null null = unrestricted (Admin HR)
      */
-    public function getScopedEmployeeIdsForUser(User $actor): ?array
+    public function getScopedEmployeeIdsForUser(User $actor, string $module = 'general'): ?array
     {
         $role = $this->effectiveOrgScopeRole($actor);
         if ($role === null) {
             return null;
         }
 
-        if ($role === HrRole::Employee) {
-            return [];
+        if ($role === HrRole::Employee || ! $this->canViewScopedEmployeeData($actor, $module)) {
+            $final = $this->actorOperationalEmployeeId($actor, $module) !== null
+                ? [(int) $actor->id]
+                : [];
+
+            $this->logScopedEmployeeIds($actor, $module, $role, [], [
+                'leadership_assignments' => $this->leadershipContextForActor($actor),
+                'subordinate_visibility_granted' => false,
+            ], $final);
+
+            return $final;
         }
 
         if ($role === HrRole::SectionUnitHead) {
-            return $this->resolveSectionUnitHeadScope($actor)['final_scoped_employee_ids'];
+            $scope = $this->resolveSectionUnitHeadScope($actor, $module);
+            $final = $this->finalizeScopedEmployeeIds($actor, $scope['scoped_before_hidden_filter'], $module);
+            $this->logScopedEmployeeIds(
+                $actor,
+                $module,
+                $role,
+                $scope['scoped_before_hidden_filter'],
+                $scope['leadership_context'],
+                $final
+            );
+
+            return $final;
         }
 
-        $scopedQuery = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $scopedQuery = $this->operationalEmployeesQuery($module);
         $this->restrictEmployeeQuery($actor, $scopedQuery);
+        $beforeHidden = $scopedQuery->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+        $final = $this->finalizeScopedEmployeeIds($actor, $beforeHidden, $module);
 
-        return $scopedQuery->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+        $this->logScopedEmployeeIds($actor, $module, $role, $beforeHidden, [
+            'leadership_assignments' => $this->leadershipContextForActor($actor),
+        ], $final);
+
+        return $final;
     }
 
     /**
@@ -348,8 +376,8 @@ class DataScopeService
             return;
         }
 
-        if ($role === HrRole::Employee) {
-            $query->whereRaw('1 = 0');
+        if ($role === HrRole::Employee || ! $this->canViewScopedEmployeeData($actor, 'general')) {
+            $this->restrictEmployeeQueryToSelf($actor, $query);
 
             return;
         }
@@ -357,22 +385,17 @@ class DataScopeService
         if ($role === HrRole::CompanyHead) {
             $ids = $this->companyIdsForCompanyHead($actor);
             if ($ids->isEmpty()) {
-                $query->whereRaw('1 = 0');
+                $this->restrictEmployeeQueryToSelf($actor, $query);
 
                 return;
             }
-            $idList = $ids->all();
-            $query->where(function ($q) use ($ids) {
-                $q->whereIn('company_id', $ids)
-                    ->orWhereHas('branch', fn ($b) => $b->whereIn('company_id', $ids))
-                    ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->whereIn('company_id', $ids)));
-            });
-            // Multi-company: do not show employees who are the head of another company.
-            $query->whereNotExists(function ($q) use ($idList) {
-                $q->select(DB::raw(1))
-                    ->from('companies')
-                    ->whereColumn('companies.company_head_id', 'users.id')
-                    ->whereNotIn('companies.id', $idList);
+            $query->where(function ($outer) use ($actor, $ids) {
+                $outer->where(function ($q) use ($ids) {
+                    $q->whereIn('company_id', $ids)
+                        ->orWhereHas('branch', fn ($b) => $b->whereIn('company_id', $ids))
+                        ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->whereIn('company_id', $ids)));
+                });
+                $this->orIncludeOperationalActor($actor, $outer);
             });
 
             return;
@@ -381,15 +404,17 @@ class DataScopeService
         if ($role === HrRole::BranchHead) {
             $branchIds = $this->branchIdsForBranchScope($actor);
             if ($branchIds->isEmpty()) {
-                $query->whereRaw('1 = 0');
+                $this->restrictEmployeeQueryToSelf($actor, $query);
 
                 return;
             }
-            $query->where(function ($q) use ($branchIds) {
-                $q->whereIn('branch_id', $branchIds->all())
-                    ->orWhereHas('departmentRelation', fn ($d) => $d->whereIn('branch_id', $branchIds->all()));
+            $query->where(function ($outer) use ($actor, $branchIds) {
+                $outer->where(function ($q) use ($branchIds) {
+                    $q->whereIn('branch_id', $branchIds->all())
+                        ->orWhereHas('departmentRelation', fn ($d) => $d->whereIn('branch_id', $branchIds->all()));
+                });
+                $this->orIncludeOperationalActor($actor, $outer);
             });
-            $this->excludeUsersWhoAreCompanyHeads($query);
 
             return;
         }
@@ -400,58 +425,71 @@ class DataScopeService
                 ? Department::query()->whereIn('id', $deptIds)->orderBy('name')->get(['id', 'name', 'branch_id'])
                 : new EloquentCollection;
             if ($departments->isEmpty()) {
-                $query->whereRaw('1 = 0');
+                $this->restrictEmployeeQueryToSelf($actor, $query);
 
                 return;
             }
 
+            $departmentIdList = $departments->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $sharedEmployeeIds = $this->sharedEmployeeIdsForDepartmentScope($departmentIdList);
+
             if ($branchIdForDepartmentAssignment !== null) {
                 $allowedBranchIds = $departments->pluck('branch_id')->unique()->filter()->values();
                 if (! $allowedBranchIds->contains($branchIdForDepartmentAssignment)) {
-                    $query->whereRaw('1 = 0');
+                    $this->restrictEmployeeQueryToSelf($actor, $query);
 
                     return;
                 }
                 $bid = $branchIdForDepartmentAssignment;
-                $query->where(function ($q) use ($bid) {
-                    $q->where('branch_id', $bid)
-                        ->orWhereHas('departmentRelation', fn ($d) => $d->where('branch_id', $bid))
-                        ->orWhere(function ($q2) {
-                            $q2->whereNull('company_id')
-                                ->whereDoesntHave('companyHeadships');
+                $query->where(function ($outer) use ($actor, $bid, $sharedEmployeeIds) {
+                    $outer->where(function ($q) use ($bid, $sharedEmployeeIds) {
+                        $q->where(function ($inner) use ($bid) {
+                            $inner->where('branch_id', $bid)
+                                ->orWhereHas('departmentRelation', fn ($d) => $d->where('branch_id', $bid))
+                                ->orWhere(function ($q2) {
+                                    $q2->whereNull('company_id')
+                                        ->whereDoesntHave('companyHeadships');
+                                });
                         });
+                        if ($sharedEmployeeIds !== []) {
+                            $q->orWhereIn('users.id', $sharedEmployeeIds);
+                        }
+                    });
+                    $this->orIncludeOperationalActor($actor, $outer);
                 });
-                $this->excludeUsersWhoAreCompanyHeads($query);
-                $this->excludeUsersWhoAreBranchManagers($query);
 
                 return;
             }
 
             // Primary: FK on users.department_id. Legacy: same label + same branch as the headed
             // department row only (name-only matching leaked users from other branches/companies).
-            $query->where(function ($q) use ($departments) {
-                $q->whereIn('department_id', $departments->pluck('id'));
-                foreach ($departments as $dept) {
-                    $name = $dept->name;
-                    if (! is_string($name) || trim($name) === '') {
-                        continue;
+            $query->where(function ($outer) use ($actor, $departments, $sharedEmployeeIds) {
+                $outer->where(function ($q) use ($departments, $sharedEmployeeIds) {
+                    $q->whereIn('department_id', $departments->pluck('id'));
+                    foreach ($departments as $dept) {
+                        $name = $dept->name;
+                        if (! is_string($name) || trim($name) === '') {
+                            continue;
+                        }
+                        if ($dept->branch_id === null) {
+                            continue;
+                        }
+                        $branchId = (int) $dept->branch_id;
+                        $q->orWhere(function ($q2) use ($name, $branchId) {
+                            $q2->whereNull('department_id')
+                                ->where('department', $name)
+                                ->where(function ($q3) use ($branchId) {
+                                    $q3->where('branch_id', $branchId)
+                                        ->orWhereHas('departmentRelation', fn ($d) => $d->where('branch_id', $branchId));
+                                });
+                        });
                     }
-                    if ($dept->branch_id === null) {
-                        continue;
+                    if ($sharedEmployeeIds !== []) {
+                        $q->orWhereIn('users.id', $sharedEmployeeIds);
                     }
-                    $branchId = (int) $dept->branch_id;
-                    $q->orWhere(function ($q2) use ($name, $branchId) {
-                        $q2->whereNull('department_id')
-                            ->where('department', $name)
-                            ->where(function ($q3) use ($branchId) {
-                                $q3->where('branch_id', $branchId)
-                                    ->orWhereHas('departmentRelation', fn ($d) => $d->where('branch_id', $branchId));
-                            });
-                    });
-                }
+                });
+                $this->orIncludeOperationalActor($actor, $outer);
             });
-            $this->excludeUsersWhoAreCompanyHeads($query);
-            $this->excludeUsersWhoAreBranchManagers($query);
 
             return;
         }
@@ -459,7 +497,7 @@ class DataScopeService
         if ($role === HrRole::DivisionHead) {
             $divisionIds = $this->divisionIdsForDivisionScope($actor);
             if ($divisionIds->isEmpty()) {
-                $query->whereRaw('1 = 0');
+                $this->restrictEmployeeQueryToSelf($actor, $query);
 
                 return;
             }
@@ -469,73 +507,90 @@ class DataScopeService
                 ->pluck('id')
                 ->map(fn ($id) => (int) $id);
 
-            $query->where(function ($q) use ($divisionIds, $sectionIds) {
-                $q->whereIn('division_id', $divisionIds);
-                if ($sectionIds->isNotEmpty()) {
-                    $q->orWhereIn('section_unit_id', $sectionIds);
-                }
+            $query->where(function ($outer) use ($actor, $divisionIds, $sectionIds) {
+                $outer->where(function ($q) use ($divisionIds, $sectionIds) {
+                    $q->whereIn('division_id', $divisionIds);
+                    if ($sectionIds->isNotEmpty()) {
+                        $q->orWhereIn('section_unit_id', $sectionIds);
+                    }
+                });
+                $this->orIncludeOperationalActor($actor, $outer);
             });
-            $this->excludeUsersWhoAreCompanyHeads($query);
-            $this->excludeUsersWhoAreBranchManagers($query);
-            $this->excludeUsersWhoAreDepartmentHeads($query);
 
             return;
         }
 
         if ($role === HrRole::SectionUnitHead) {
-            $scope = $this->resolveSectionUnitHeadScope($actor);
+            $scope = $this->resolveSectionUnitHeadScope($actor, 'general');
             $teamMemberIds = $scope['team_member_employee_ids'];
 
             $query->where(function (Builder $outer) use ($actor, $teamMemberIds): void {
-                $outer->where('users.id', $actor->id);
-
                 if ($teamMemberIds !== []) {
-                    $outer->orWhere(function (Builder $team) use ($teamMemberIds): void {
-                        $team->whereIn('users.id', $teamMemberIds);
-                        $this->excludeUsersWhoAreCompanyHeads($team);
-                        $this->excludeUsersWhoAreBranchManagers($team);
-                        $this->excludeUsersWhoAreDepartmentHeads($team);
-                        $this->excludeUsersWhoAreDivisionHeads($team);
-                    });
+                    $outer->whereIn('users.id', $teamMemberIds);
                 }
+                $this->orIncludeOperationalActor($actor, $outer);
             });
 
             return;
         }
     }
 
+    private function restrictEmployeeQueryToSelf(User $actor, Builder $query): void
+    {
+        $actorId = $this->actorOperationalEmployeeId($actor);
+        if ($actorId === null) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $query->where('users.id', $actorId);
+    }
+
     /**
+     * Leadership/approval roles do not grant subordinate data access. Only Admin HR
+     * (handled as unrestricted before this point) or explicit visibility flags do.
+     *
+     * @param  'attendance'|'reports'|'general'  $module
+     */
+    private function canViewScopedEmployeeData(User $actor, string $module = 'general'): bool
+    {
+        $flags = $this->rbacService->accessFlagsForUser($actor);
+
+        return match ($module) {
+            'attendance' => (bool) ($flags['can_view_subordinate_attendance'] ?? false),
+            'reports' => (bool) ($flags['can_view_subordinate_reports'] ?? false),
+            default => (bool) ($flags['can_view_employee_module'] ?? false)
+                || (bool) ($flags['can_view_subordinate_attendance'] ?? false)
+                || (bool) ($flags['can_view_subordinate_reports'] ?? false),
+        };
+    }
+
+    /**
+     * @param  'attendance'|'reports'|'general'  $module
      * @return array{
      *   leader_section_unit_ids: list<int>,
      *   primary_employee_ids: list<int>,
      *   shared_employee_ids: list<int>,
      *   department_team_leader_employee_ids: list<int>,
      *   team_member_employee_ids: list<int>,
-     *   final_scoped_employee_ids: list<int>,
-     *   own_employee_id_added: bool
+     *   scoped_before_hidden_filter: list<int>,
+     *   leadership_context: array<string, mixed>
      * }
      */
-    private function resolveSectionUnitHeadScope(User $actor): array
+    private function resolveSectionUnitHeadScope(User $actor, string $module = 'general'): array
     {
         $actorId = (int) $actor->id;
         $sectionIds = $this->sectionUnitIdsForSectionScope($actor)->all();
         $departmentTeamLeaderIds = $this->departmentIdsForTeamLeaderScope($actor);
+        $leadershipContext = [
+            'leader_section_unit_ids' => $sectionIds,
+            'department_team_leader_department_ids' => $departmentTeamLeaderIds->all(),
+            'leadership_assignments' => $this->leadershipContextForActor($actor),
+        ];
 
         if ($sectionIds === [] && $departmentTeamLeaderIds->isEmpty()) {
-            Log::info('employee_scope: section/team leader scoped employee ids', [
-                'current_user_id' => $actorId,
-                'current_employee_id' => $actorId,
-                'role' => $this->hrRoleResolver->resolveForApprovalSubject($actor)->value,
-                'leader_section_unit_ids' => [],
-                'own_employee_id_added' => true,
-                'primary_scoped_employees' => [],
-                'shared_scoped_employees' => [],
-                'department_team_leader_employee_ids' => [],
-                'team_member_employee_ids' => [],
-                'final_scoped_employee_ids' => [$actorId],
-                'attendance_query_employee_ids' => [$actorId],
-                'report_query_employee_ids' => [$actorId],
-            ]);
+            $scopedBefore = $this->actorOperationalEmployeeId($actor, $module) !== null ? [$actorId] : [];
 
             return [
                 'leader_section_unit_ids' => [],
@@ -543,23 +598,22 @@ class DataScopeService
                 'shared_employee_ids' => [],
                 'department_team_leader_employee_ids' => [],
                 'team_member_employee_ids' => [],
-                'final_scoped_employee_ids' => [$actorId],
-                'own_employee_id_added' => true,
+                'scoped_before_hidden_filter' => $scopedBefore,
+                'leadership_context' => $leadershipContext,
             ];
         }
 
+        $employeeBase = $this->operationalEmployeesQuery($module);
         $sharedEmployeeIds = $this->sharedEmployeeIdsForSectionScope($sectionIds);
         $primaryEmployeeIds = $sectionIds !== []
-            ? User::query()
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ? (clone $employeeBase)
                 ->whereIn('section_unit_id', $sectionIds)
                 ->pluck('id')
                 ->map(fn ($id) => (int) $id)
                 ->all()
             : [];
         $departmentTeamLeaderEmployeeIds = $departmentTeamLeaderIds->isNotEmpty()
-            ? User::query()
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ? (clone $employeeBase)
                 ->whereIn('department_id', $departmentTeamLeaderIds->all())
                 ->where('supervisor_id', $actor->id)
                 ->pluck('id')
@@ -571,25 +625,10 @@ class DataScopeService
             ...$sharedEmployeeIds,
             ...$departmentTeamLeaderEmployeeIds,
         ]));
-        $finalScopedEmployeeIds = array_values(array_unique([
-            $actorId,
+        $scopedBefore = array_values(array_unique([
+            ...($this->actorOperationalEmployeeId($actor, $module) !== null ? [$actorId] : []),
             ...$teamMemberEmployeeIds,
         ]));
-
-        Log::info('employee_scope: section/team leader scoped employee ids', [
-            'current_user_id' => $actorId,
-            'current_employee_id' => $actorId,
-            'role' => $this->hrRoleResolver->resolveForApprovalSubject($actor)->value,
-            'leader_section_unit_ids' => $sectionIds,
-            'own_employee_id_added' => in_array($actorId, $finalScopedEmployeeIds, true),
-            'primary_scoped_employees' => $primaryEmployeeIds,
-            'shared_scoped_employees' => $sharedEmployeeIds,
-            'department_team_leader_employee_ids' => $departmentTeamLeaderEmployeeIds,
-            'team_member_employee_ids' => $teamMemberEmployeeIds,
-            'final_scoped_employee_ids' => $finalScopedEmployeeIds,
-            'attendance_query_employee_ids' => $finalScopedEmployeeIds,
-            'report_query_employee_ids' => $finalScopedEmployeeIds,
-        ]);
 
         return [
             'leader_section_unit_ids' => $sectionIds,
@@ -597,8 +636,8 @@ class DataScopeService
             'shared_employee_ids' => $sharedEmployeeIds,
             'department_team_leader_employee_ids' => $departmentTeamLeaderEmployeeIds,
             'team_member_employee_ids' => $teamMemberEmployeeIds,
-            'final_scoped_employee_ids' => $finalScopedEmployeeIds,
-            'own_employee_id_added' => true,
+            'scoped_before_hidden_filter' => $scopedBefore,
+            'leadership_context' => $leadershipContext,
         ];
     }
 
@@ -633,45 +672,149 @@ class DataScopeService
     }
 
     /**
-     * Subordinate managers (department / branch heads) must not see company-level heads in rosters.
+     * @param  'attendance'|'reports'|'general'  $module
      */
-    private function excludeUsersWhoAreCompanyHeads(Builder $query): void
+    private function operationalEmployeesQuery(string $module = 'general'): Builder
     {
-        $query->whereNotExists(function ($q) {
-            $q->select(DB::raw(1))
-                ->from('companies')
-                ->whereColumn('companies.company_head_id', 'users.id');
-        });
+        $query = User::query()->visibleEmployees()->active();
+
+        return match ($module) {
+            'attendance' => $query->where('exclude_from_attendance', false),
+            'reports' => $query->where('exclude_from_reports', false),
+            default => $query,
+        };
     }
 
     /**
-     * Department heads must not see branch managers (other branches or their own org hat).
+     * @param  'attendance'|'reports'|'general'  $module
      */
-    private function excludeUsersWhoAreBranchManagers(Builder $query): void
+    private function actorOperationalEmployeeId(User $actor, string $module = 'general'): ?int
     {
-        $query->whereNotExists(function ($q) {
-            $q->select(DB::raw(1))
-                ->from('branches')
-                ->whereColumn('branches.branch_manager_id', 'users.id');
-        });
+        if (! $actor->isRosterEligible() || ! $actor->isOperationallyActive()) {
+            return null;
+        }
+
+        if ($module === 'attendance' && $actor->isExcludedFromAttendance()) {
+            return null;
+        }
+
+        if ($module === 'reports' && $actor->isExcludedFromReports()) {
+            return null;
+        }
+
+        return (int) $actor->id;
     }
 
-    private function excludeUsersWhoAreDepartmentHeads(Builder $query): void
+    private function orIncludeOperationalActor(User $actor, Builder $query): void
     {
-        $query->whereNotExists(function ($q) {
-            $q->select(DB::raw(1))
-                ->from('departments')
-                ->whereColumn('departments.department_head_id', 'users.id');
-        });
+        $actorId = $this->actorOperationalEmployeeId($actor);
+        if ($actorId === null) {
+            return;
+        }
+
+        $query->orWhere('users.id', $actorId);
     }
 
-    private function excludeUsersWhoAreDivisionHeads(Builder $query): void
+    /**
+     * @param  list<int>  $scopedBeforeHiddenFilter
+     * @return list<int>
+     */
+    private function finalizeScopedEmployeeIds(User $actor, array $scopedBeforeHiddenFilter, string $module = 'general'): array
     {
-        $query->whereNotExists(function ($q) {
-            $q->select(DB::raw(1))
-                ->from('divisions')
-                ->whereColumn('divisions.division_head_id', 'users.id');
-        });
+        $ids = array_values(array_unique(array_map('intval', $scopedBeforeHiddenFilter)));
+        $actorId = $this->actorOperationalEmployeeId($actor, $module);
+        if ($actorId !== null && ! in_array($actorId, $ids, true)) {
+            $ids[] = $actorId;
+        }
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $visibleQuery = $this->operationalEmployeesQuery($module)->whereIn('id', $ids);
+
+        return $visibleQuery->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function leadershipContextForActor(User $actor): array
+    {
+        return [
+            'company_ids' => $this->leadershipAssignments->companyIdsLedBy($actor)->all(),
+            'branch_ids' => $this->leadershipAssignments->branchIdsLedBy($actor)->all(),
+            'division_ids' => $this->leadershipAssignments->divisionIdsLedBy($actor)->all(),
+            'department_ids' => $this->leadershipAssignments->departmentIdsLedBy($actor)->all(),
+            'section_unit_ids' => $this->leadershipAssignments->sectionUnitIdsLedBy($actor)->all(),
+        ];
+    }
+
+    /**
+     * @param  list<int>  $scopedBeforeHiddenFilter
+     * @param  array<string, mixed>  $leadershipContext
+     * @param  list<int>  $finalScopedEmployeeIds
+     */
+    private function logScopedEmployeeIds(
+        User $actor,
+        string $module,
+        HrRole $role,
+        array $scopedBeforeHiddenFilter,
+        array $leadershipContext,
+        array $finalScopedEmployeeIds,
+    ): void {
+        $actorId = (int) $actor->id;
+        $hiddenOrSystemRemoved = array_values(array_diff(
+            array_map('intval', $scopedBeforeHiddenFilter),
+            $finalScopedEmployeeIds
+        ));
+
+        Log::info('employee_scope: scoped employee ids resolved', [
+            'module' => $module,
+            'current_user_id' => $actorId,
+            'current_employee_id' => $actorId,
+            'role' => $role->value,
+            'is_system_user' => (bool) $actor->is_system_user,
+            'employee_is_hidden' => (bool) $actor->is_hidden,
+            'exclude_from_attendance' => (bool) $actor->exclude_from_attendance,
+            'exclude_from_reports' => (bool) $actor->exclude_from_reports,
+            'leadership_context' => $leadershipContext,
+            'own_employee_included' => in_array($actorId, $finalScopedEmployeeIds, true),
+            'scoped_employee_ids_before_hidden_filter' => array_values(array_unique(array_map('intval', $scopedBeforeHiddenFilter))),
+            'hidden_or_system_employee_ids_removed' => $hiddenOrSystemRemoved,
+            'final_scoped_employee_ids' => $finalScopedEmployeeIds,
+            'scoped_employee_count' => count($finalScopedEmployeeIds),
+        ]);
+    }
+
+    /**
+     * @param  array<int, int>  $departmentIds
+     * @return list<int>
+     */
+    private function sharedEmployeeIdsForDepartmentScope(array $departmentIds): array
+    {
+        $departmentIds = array_values(array_filter(array_map('intval', $departmentIds), fn (int $id): bool => $id > 0));
+        if ($departmentIds === []) {
+            return [];
+        }
+
+        if (! Schema::hasTable('employee_organization_assignments')) {
+            return [];
+        }
+
+        return EmployeeOrganizationAssignment::query()
+            ->active()
+            ->whereIn('department_id', $departmentIds)
+            ->whereIn('assignment_type', [
+                EmployeeOrganizationAssignment::TYPE_SHARED,
+                EmployeeOrganizationAssignment::TYPE_TEMPORARY,
+                EmployeeOrganizationAssignment::TYPE_ACTING,
+            ])
+            ->pluck('employee_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**

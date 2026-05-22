@@ -178,7 +178,7 @@ class AuthController extends Controller
         $userPayload = EmployeeProfileCache::remember(
             (int) $user->id,
             'auth_user_payload',
-            ['version' => 6, 'include_leave_credits' => false],
+            ['version' => 8, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($user, ['include_leave_credits' => false])
         );
@@ -239,7 +239,7 @@ class AuthController extends Controller
         $payload = EmployeeProfileCache::remember(
             (int) $authUser->id,
             'auth_user_payload',
-            ['version' => 6, 'include_leave_credits' => false],
+            ['version' => 8, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($authUser, ['include_leave_credits' => false])
         );
@@ -267,7 +267,7 @@ class AuthController extends Controller
         ]);
 
         $user = User::where('qr_token', $validated['qr_token'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->attendanceEmployees()
             ->first();
 
         if (! $user) {
@@ -567,7 +567,7 @@ class AuthController extends Controller
         $start = microtime(true);
         $lite = (bool) ($options['lite'] ?? false);
         $includeLeaveCredits = $lite ? false : (bool) ($options['include_leave_credits'] ?? true);
-        if (! $lite && $user->id) {
+        if (! $lite && $user->id && ! $user->isSystemAccessOnly()) {
             $rechargeStart = microtime(true);
             $rechargeCooldownKey = sprintf('auth:user:recharge:cooldown:%d', (int) $user->id);
             $didRecharge = false;
@@ -625,6 +625,10 @@ class AuthController extends Controller
         $hrResolver = app(HrRoleResolver::class);
         $hr = $hrResolver->resolve($user);
         $hrRolesList = $hrResolver->listEffectiveHrRoles($user);
+        $hrRoleLabel = $user->isSuperAdmin() ? 'Super Admin' : $hr->badgeLabel();
+        $hrRoleLabels = $user->isSuperAdmin()
+            ? ['Super Admin']
+            : array_map(fn (HrRole $r) => $r->badgeLabel(), $hrRolesList);
         $rbac = app(RbacService::class);
         $payCycleService = app(PayCycleService::class);
         $monthlyBase = (float) ($user->monthly_salary ?? $user->monthly_rate ?? 0);
@@ -671,6 +675,13 @@ class AuthController extends Controller
                 ?? $user->sectionUnit?->branch?->name
                 ?? $user->sectionUnit?->division?->branch?->name);
 
+        $accessFlags = $rbac->accessFlagsForUser($user);
+        $canAccessManagementPanel = $user->isAdmin()
+            || (bool) ($accessFlags['can_view_admin_dashboard'] ?? false)
+            || (bool) ($accessFlags['can_view_employee_module'] ?? false)
+            || (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false)
+            || (bool) ($accessFlags['can_view_subordinate_reports'] ?? false);
+
         $payload = [
             'id' => $user->id,
             'user_id' => $user->id,
@@ -698,15 +709,28 @@ class AuthController extends Controller
             'is_roster_staff' => $user->isRosterEligible(),
             'is_hr_admin' => $user->isAdmin(),
             'hr_role' => $hr->value,
-            'hr_role_label' => $hr->badgeLabel(),
+            'hr_role_label' => $hrRoleLabel,
             'hr_roles' => array_map(fn (HrRole $r) => $r->value, $hrRolesList),
-            'hr_roles_labels' => array_map(fn (HrRole $r) => $r->badgeLabel(), $hrRolesList),
+            'hr_roles_labels' => $hrRoleLabels,
             'can_file_leave_for_others' => $hrResolver->canFileLeaveForOthers($user),
             /** True when user is company head, branch manager, or department head in org data (SPA routing; not the same as badge-only hr_role). */
             'is_assigned_organization_head' => $hrResolver->isAssignedOrganizationHead($user),
             'is_super_admin' => (bool) $user->is_super_admin,
+            'is_system_user' => (bool) $user->is_system_user,
+            'is_hidden' => (bool) $user->is_hidden,
+            'exclude_from_reports' => (bool) $user->exclude_from_reports,
+            'exclude_from_payroll' => (bool) $user->exclude_from_payroll,
+            'exclude_from_attendance' => (bool) $user->exclude_from_attendance,
+            'exclude_from_approvals' => (bool) $user->exclude_from_approvals,
             'permissions' => $rbac->getPermissionsForUser($user)->values()->all(),
-            'can_access_hr_panel' => $hr->canAccessHrPanel(),
+            'can_view_employee_module' => (bool) ($accessFlags['can_view_employee_module'] ?? false),
+            'can_view_subordinate_attendance' => (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false),
+            'can_view_subordinate_reports' => (bool) ($accessFlags['can_view_subordinate_reports'] ?? false),
+            'can_view_admin_dashboard' => (bool) ($accessFlags['can_view_admin_dashboard'] ?? false),
+            'can_approve_requests' => (bool) ($accessFlags['can_approve_requests'] ?? false),
+            'can_view_own_attendance' => (bool) ($accessFlags['can_view_own_attendance'] ?? false),
+            'can_view_own_reports' => (bool) ($accessFlags['can_view_own_reports'] ?? false),
+            'can_access_hr_panel' => $canAccessManagementPanel,
             /** Org hints for attendance filters (department / branch / company heads). */
             'attendance_scope' => app(DataScopeService::class)->getAttendanceScopeMeta($user),
             'department' => $user->department,

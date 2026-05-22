@@ -189,7 +189,7 @@ class PayCycleService
 
             User::query()
                 ->where('company_id', $companyId)
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->visibleEmployees()
                 ->update(['pay_cycle_id' => $company->default_pay_cycle_id]);
         }
     }

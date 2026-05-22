@@ -62,9 +62,10 @@ class LeaveController extends Controller
             'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
         ]);
 
-        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
-        $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
-        $query->whereIn('user_id', $scope->select('users.id'));
+        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'general');
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('user_id', $scopedEmployeeIds);
+        }
 
         $requestId = $request->query('request_id');
         if ($requestId !== null && $requestId !== '' && ctype_digit((string) $requestId)) {
@@ -161,7 +162,7 @@ class LeaveController extends Controller
         }
 
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $employee = User::query()->activeRoster()->findOrFail($validated['user_id']);
+        $employee = User::query()->approvableEmployees()->active()->findOrFail($validated['user_id']);
         $this->dataScopeService->ensureEmployeeAccessible($actor, $employee);
         try {
             $this->payrollPeriodMutationGuard->assertMutableForUserWindow(

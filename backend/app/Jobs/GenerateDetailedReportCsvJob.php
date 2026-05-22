@@ -48,6 +48,10 @@ class GenerateDetailedReportCsvJob implements ShouldQueue
                 ->join('users as u', 'u.id', '=', 'pp.user_id')
                 ->leftJoin('companies as c', 'c.id', '=', 'u.company_id')
                 ->whereBetween('pb.date', [$fromDate, $toDate])
+                ->whereIn('u.role', ['employee', 'admin'])
+                ->where('u.is_system_user', false)
+                ->where('u.is_hidden', false)
+                ->where('u.exclude_from_reports', false)
                 ->select([
                     'pb.date',
                     'u.employee_code',

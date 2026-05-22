@@ -289,9 +289,9 @@ class HrApprovalChainResolver
     public function resolveHrApprover(): ?User
     {
         return User::query()
+            ->approvableEmployees()
             ->where('role', User::ROLE_ADMIN)
             ->active()
-            ->orderByDesc('is_super_admin')
             ->orderBy('id')
             ->first();
     }
@@ -328,8 +328,9 @@ class HrApprovalChainResolver
     {
         $hrApprover = $this->resolveHrApprover();
         if (! $hrApprover) {
-            Log::warning('approval_chain: Admin HR final step not appended — no active Admin HR account', [
+            Log::error('approval_chain: Admin HR final step not appended — no visible approvable Admin HR account', [
                 'employee_id' => $subjectId,
+                'configuration_error' => 'no_visible_admin_hr_approver',
             ]);
 
             return;

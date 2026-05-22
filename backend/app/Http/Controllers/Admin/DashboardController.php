@@ -56,7 +56,7 @@ class DashboardController extends Controller
      */
     private function scopedEmployeeIds(User $actor, bool $onlyActive): array
     {
-        $q = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $q = User::query()->visibleEmployees();
         if ($onlyActive) {
             $q->active();
         }
@@ -256,7 +256,7 @@ class DashboardController extends Controller
         $actor = $request->user();
         abort_unless($actor instanceof User, 403);
 
-        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $scope = User::query()->visibleEmployees();
         $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
         $scopedIds = $scope->select('users.id');
 
@@ -289,7 +289,7 @@ class DashboardController extends Controller
 
         $module = (string) $request->query('module', 'attendance_correction');
         $limit = min(10, max(1, (int) $request->query('limit', 5)));
-        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $scope = User::query()->visibleEmployees();
         $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
         $scopedIds = $scope->select('users.id');
 

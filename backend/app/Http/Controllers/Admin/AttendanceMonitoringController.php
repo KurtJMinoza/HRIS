@@ -138,6 +138,7 @@ class AttendanceMonitoringController extends Controller
         $toDate = $validated['to_date'] ?? $validated['from_date'] ?? $validated['date'] ?? $fromDate;
 
         $cacheKeyParts = [
+            'visibility_version' => 2,
             'company_id' => $validated['company_id'] ?? null,
             'branch_id' => $validated['branch_id'] ?? null,
             'department_id' => $validated['department_id'] ?? null,
@@ -404,7 +405,13 @@ class AttendanceMonitoringController extends Controller
         $fromUtc = $from->copy()->setTimezone('UTC');
         $toUtc = $to->copy()->setTimezone('UTC');
 
-        $employeesQuery = User::query()->activeRoster();
+        $actor = $request->user();
+        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'attendance');
+
+        $employeesQuery = User::query()->attendanceEmployees()->active();
+        if ($scopedEmployeeIds !== null) {
+            $employeesQuery->whereIn('id', $scopedEmployeeIds);
+        }
 
         if (! empty($validated['company_id'])) {
             $employeesQuery->where('company_id', (int) $validated['company_id']);
@@ -430,8 +437,6 @@ class AttendanceMonitoringController extends Controller
             $employeesQuery->where('id', $validated['employee_id']);
         }
 
-        $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeesQuery);
-
         $employees = $employeesQuery
             ->orderByLastName()
             ->with([
@@ -445,6 +450,19 @@ class AttendanceMonitoringController extends Controller
                 'departmentRelation.branch.company:id,name',
             ])
             ->get();
+
+        Log::info('attendance_monitoring: scoped employee query resolved', [
+            'current_user_id' => (int) $actor->id,
+            'current_employee_id' => (int) $actor->id,
+            'current_employee_found' => User::query()->whereKey($actor->id)->exists(),
+            'is_system_user' => (bool) $actor->is_system_user,
+            'employee_is_hidden' => (bool) $actor->is_hidden,
+            'employee_exclude_from_attendance' => (bool) $actor->exclude_from_attendance,
+            'employee_exclude_from_reports' => (bool) $actor->exclude_from_reports,
+            'own_employee_added' => $scopedEmployeeIds === null || in_array((int) $actor->id, $scopedEmployeeIds, true),
+            'final_scoped_employee_ids' => $scopedEmployeeIds,
+            'final_attendance_query_count' => $employees->count(),
+        ]);
 
         $rows = [];
 

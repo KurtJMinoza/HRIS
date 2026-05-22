@@ -166,7 +166,7 @@ class OrgUnitEmployeeCountService implements OrgUnitEmployeeCounter
 
     private function rosterQuery(): Builder
     {
-        return User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        return User::query()->visibleEmployees();
     }
 
     private function assignedDivisionCount(int $divisionId): int
@@ -235,7 +235,12 @@ class OrgUnitEmployeeCountService implements OrgUnitEmployeeCounter
         $rows = DB::table('divisions as d')
             ->join('users as u', function ($join): void {
                 $join->on('u.branch_id', '=', 'd.branch_id')
-                    ->whereIn('u.role', User::ROSTER_ELIGIBLE_ROLES);
+                    ->whereIn('u.role', User::ROSTER_ELIGIBLE_ROLES)
+                    ->where('u.is_system_user', false)
+                    ->where('u.is_hidden', false)
+                    ->where('u.exclude_from_reports', false)
+                    ->where('u.exclude_from_payroll', false)
+                    ->where('u.exclude_from_attendance', false);
             })
             ->whereIn('d.id', $divisionIds)
             ->where(function ($query): void {

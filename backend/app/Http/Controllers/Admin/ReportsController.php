@@ -407,6 +407,7 @@ class ReportsController extends Controller
 
         if ($isEmployeeSelfRoute) {
             $employeeDetailedCacheKey = ReportsCacheService::employeeListKey([
+                'visibility_version' => 2,
                 'employee_id' => (int) $request->user()->id,
                 'start_date' => $from->toDateString(),
                 'end_date' => $to->toDateString(),
@@ -431,6 +432,7 @@ class ReportsController extends Controller
             }
         } else {
             $adminDetailedCacheKey = ReportsCacheService::adminListKey([
+                'visibility_version' => 2,
                 'scope' => (int) $request->user()->id,
                 'company_id' => $validated['company_id'] ?? null,
                 'branch_id' => $validated['branch_id'] ?? null,
@@ -480,16 +482,25 @@ class ReportsController extends Controller
 
         $employeesLoadStartedAt = microtime(true);
 
+        $actor = $request->user();
+        $scopedEmployeeIds = null;
+
         if ($isEmployeeSelfRoute) {
+            $scopedEmployeeIds = [(int) $actor->id];
             /** @var \Illuminate\Support\Collection<int, User> $employees */
             $employees = User::query()
-                ->whereKey($request->user()->id)
-                ->activeRoster()
+                ->whereKey($actor->id)
+                ->reportableEmployees()
+                ->active()
                 ->with($employeeWithRelations)
                 ->get();
         } else {
+            $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'reports');
             $employeesQuery = User::query()
-                ->roster();
+                ->reportableEmployees();
+            if ($scopedEmployeeIds !== null) {
+                $employeesQuery->whereIn('id', $scopedEmployeeIds);
+            }
 
             if (! (bool) ($validated['include_deactivated'] ?? false)) {
                 $employeesQuery->active();
@@ -525,14 +536,25 @@ class ReportsController extends Controller
                 $employeesQuery->where('id', $requestedEmployeeId);
             }
 
-            $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeesQuery);
-
             /** @var \Illuminate\Support\Collection<int, User> $employees */
             $employees = $employeesQuery
                 ->orderByLastName()
                 ->with($employeeWithRelations)
                 ->get();
         }
+
+        Log::info('admin_reports: scoped employee query resolved', [
+            'current_user_id' => (int) $actor->id,
+            'current_employee_id' => (int) $actor->id,
+            'current_employee_found' => User::query()->whereKey($actor->id)->exists(),
+            'is_system_user' => (bool) $actor->is_system_user,
+            'employee_is_hidden' => (bool) $actor->is_hidden,
+            'employee_exclude_from_attendance' => (bool) $actor->exclude_from_attendance,
+            'employee_exclude_from_reports' => (bool) $actor->exclude_from_reports,
+            'own_employee_added' => $scopedEmployeeIds === null || in_array((int) $actor->id, $scopedEmployeeIds, true),
+            'final_scoped_employee_ids' => $scopedEmployeeIds,
+            'final_reports_query_count' => $employees->count(),
+        ]);
 
         $employeesLoadMs = (int) round((microtime(true) - $employeesLoadStartedAt) * 1000);
 
@@ -1436,13 +1458,30 @@ class ReportsController extends Controller
     public function leaveCredits(Request $request): JsonResponse
     {
         $actor = $request->user();
+        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'reports');
         $query = User::query()
-            ->activeRoster()
+            ->reportableEmployees()
+            ->active()
             ->orderByLastName();
-        $this->dataScopeService->restrictEmployeeQuery($actor, $query);
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('id', $scopedEmployeeIds);
+        }
         $users = $query->get([
             'id', 'name', 'employee_code', 'department_id', 'company_id', 'branch_id',
             'leave_credits', 'employment_status', 'hire_date',
+        ]);
+
+        Log::info('leave_credit_reports: scoped employee query resolved', [
+            'current_user_id' => (int) $actor->id,
+            'current_employee_id' => (int) $actor->id,
+            'current_employee_found' => User::query()->whereKey($actor->id)->exists(),
+            'is_system_user' => (bool) $actor->is_system_user,
+            'employee_is_hidden' => (bool) $actor->is_hidden,
+            'employee_exclude_from_attendance' => (bool) $actor->exclude_from_attendance,
+            'employee_exclude_from_reports' => (bool) $actor->exclude_from_reports,
+            'own_employee_added' => $scopedEmployeeIds === null || in_array((int) $actor->id, $scopedEmployeeIds, true),
+            'final_scoped_employee_ids' => $scopedEmployeeIds,
+            'final_reports_query_count' => $users->count(),
         ]);
 
         $annual = LeaveCreditService::annualAllocation();

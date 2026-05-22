@@ -21,7 +21,7 @@ class EmployeeBenefitController extends Controller
      */
     public function index(Request $request, int $userId): JsonResponse
     {
-        $user = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $user = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $user);
 
         $assignments = $user->employeeBenefits()
@@ -44,7 +44,7 @@ class EmployeeBenefitController extends Controller
      */
     public function store(Request $request, int $userId): JsonResponse
     {
-        $user = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $user = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $user);
 
         $validated = $request->validate([
@@ -89,7 +89,7 @@ class EmployeeBenefitController extends Controller
      */
     public function update(Request $request, int $userId, int $id): JsonResponse
     {
-        $user = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $user = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $user);
         $assignment = EmployeeBenefit::where('user_id', $userId)->where('id', $id)->with('benefitCatalog')->firstOrFail();
 
@@ -123,7 +123,7 @@ class EmployeeBenefitController extends Controller
      */
     public function destroy(Request $request, int $userId, int $id): JsonResponse
     {
-        $user = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $user = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $user);
         $assignment = EmployeeBenefit::where('user_id', $userId)->where('id', $id)->firstOrFail();
         $assignment->delete();

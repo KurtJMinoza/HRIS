@@ -586,7 +586,8 @@ class FaceVerificationService
     public static function faceIdentificationCandidateQuery(): Builder
     {
         return User::query()
-            ->activeRoster()
+            ->attendanceEmployees()
+            ->active()
             ->where(function ($q) {
                 $q->where('face_status', 'registered')
                     ->orWhereNotNull('face_descriptor_samples')

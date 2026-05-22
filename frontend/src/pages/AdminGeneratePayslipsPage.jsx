@@ -271,7 +271,7 @@ export default function AdminGeneratePayslipsPage() {
   const { toast } = useToast()
   const navigate = useNavigate()
   const hrBase = useHrBasePath()
-  const isAdmin = user?.role === 'admin'
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin'
   const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canManagePayslips = permissionSet.has('payslip.generate')
   const canBulkDownloadPayslipZip = permissionSet.has('payslip.download')

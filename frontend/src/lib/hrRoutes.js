@@ -1,8 +1,8 @@
 /**
  * HR panel routing (must stay aligned with `ProtectedRoute` and `HrPanelLayout`):
  * - `/admin/*` — ADMIN (HR)
- * - `/company/*`, `/branch/*`, `/department/*` — org heads (scoped manager UI, not full admin)
- * - `/employee/*` — accounts with `users.role === employee` only (not org heads)
+ * - `/company/*`, `/branch/*`, `/department/*` — explicitly granted scoped management UI
+ * - `/employee/*` — normal employees and org heads by default
  */
 
 /** Full HR admin (legacy `users.role = admin` or resolved `admin_hr`). */
@@ -10,8 +10,18 @@ export function isAdminHrUser(userLike) {
   if (!userLike) return false
   const role = String(userLike.role || '').trim().toLowerCase()
   const hrRole = String(userLike.hr_role || '').trim().toLowerCase()
-  if (role === 'admin') return true
+  if (role === 'admin' || role === 'super_admin') return true
   return hrRole === 'admin_hr' || hrRole === 'admin'
+}
+
+export function hasManagementPanelAccess(userLike) {
+  if (!userLike || isAdminHrUser(userLike)) return false
+  return Boolean(
+    userLike.can_view_admin_dashboard ||
+    userLike.can_view_employee_module ||
+    userLike.can_view_subordinate_attendance ||
+    userLike.can_view_subordinate_reports,
+  )
 }
 
 /**
@@ -23,6 +33,7 @@ export function isAdminHrUser(userLike) {
  */
 export function isManagerialHrRole(userLike) {
   if (!userLike) return false
+  if (!hasManagementPanelAccess(userLike)) return false
   if (typeof userLike.is_assigned_organization_head === 'boolean') {
     return userLike.is_assigned_organization_head
   }
@@ -38,6 +49,7 @@ export function isManagerialHrRole(userLike) {
 export function getHrPanelBasePath(userLike) {
   if (!userLike) return '/employee'
   if (isAdminHrUser(userLike)) return '/admin'
+  if (!hasManagementPanelAccess(userLike)) return '/employee'
   const hr = String(userLike.hr_role || '').trim().toLowerCase()
   if (hr === 'company_head') return '/company'
   if (hr === 'branch_head') return '/branch'
@@ -53,6 +65,7 @@ export function getHrPanelBasePath(userLike) {
 export function resolvePostLoginPath(userLike) {
   if (!userLike) return '/login'
   if (isAdminHrUser(userLike)) return '/admin/dashboard'
+  if (!hasManagementPanelAccess(userLike)) return '/employee/dashboard'
   const hr = String(userLike.hr_role || '').trim().toLowerCase()
   if (hr === 'company_head') return '/company/dashboard'
   if (hr === 'branch_head') return '/branch/dashboard'

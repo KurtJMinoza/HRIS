@@ -134,9 +134,10 @@ class OvertimeController extends Controller
             $query->where('ot_type', $validated['ot_type']);
         }
 
-        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
-        $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
-        $query->whereIn('user_id', $scope->select('users.id'));
+        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($request->user(), 'general');
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('user_id', $scopedEmployeeIds);
+        }
 
         $perPage = (int) ($validated['per_page'] ?? 10);
         $perPage = in_array($perPage, [10, 25, 50], true) ? $perPage : 10;

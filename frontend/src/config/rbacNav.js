@@ -1,6 +1,6 @@
 import { FileText } from 'lucide-react'
 import { adminNavItems, employeeNavItems } from '@/config/dashboardNav'
-import { isAdminHrUser } from '@/lib/hrRoutes'
+import { hasManagementPanelAccess, isAdminHrUser } from '@/lib/hrRoutes'
 
 /**
  * Routes only for ADMIN (HR) — non-admin HR panel roles never see these, even if a permission slug matches.
@@ -14,9 +14,9 @@ const PATHS_ADMIN_HR_ONLY = new Set([
 
 /** Minimum permission (any) required to show a nav entry; super admin sees all. */
 const pathToPermissions = {
-  '/admin': ['dashboard.view'],
-  '/admin/employees': ['employees.view'],
-  '/admin/regularization': ['employees.view'],
+  '/admin': ['can_view_admin_dashboard'],
+  '/admin/employees': ['can_view_employee_module'],
+  '/admin/regularization': ['can_view_employee_module'],
   '/admin/users-permissions': ['users.view'],
   '/admin/companies': ['org.company.view'],
   '/admin/branches': ['org.branch.view'],
@@ -25,7 +25,7 @@ const pathToPermissions = {
   '/admin/sections-units': ['org.section_unit.view'],
   '/admin/holiday': ['holiday.view'],
   '/admin/leave': ['leave.view'],
-  '/admin/attendance': ['attendance.view'],
+  '/admin/attendance': ['can_view_subordinate_attendance'],
   /** Show nav if user can approve corrections OR at least view attendance (API still enforces approve on actions). */
   '/admin/attendance-corrections': ['attendance.corrections.approve', 'attendance.view'],
   '/admin/corrections': ['attendance.corrections.approve', 'attendance.view'],
@@ -46,7 +46,7 @@ const pathToPermissions = {
   /** Any of these — org heads may lack `payroll.view` but have `employees.view` / org scope. */
   '/admin/compensation/payslips': ['payslip.view'],
   '/admin/government-contributions': ['government_deductions.view', 'government_deductions.rates.view'],
-  '/admin/reports': ['reports.view'],
+  '/admin/reports': ['can_view_subordinate_reports'],
   '/admin/loans-deductions': ['loans.view_own', 'loans.request', 'request-loan'],
   '/admin/schedules': ['manage-schedules', 'schedule.view'],
   /** Self-service: same visibility rule as Profile (no extra permission slug). */
@@ -89,7 +89,8 @@ function permissionsForPath(path) {
 function hrPanelBasePathForUser(user) {
   if (!user) return null
   const role = String(user.role || '').trim().toLowerCase()
-  if (role === 'admin') return '/admin'
+  if (role === 'admin' || role === 'super_admin') return '/admin'
+  if (!hasManagementPanelAccess(user)) return null
   const hr = String(user.hr_role || '').trim()
   if (hr === 'admin_hr') return '/admin'
   if (hr === 'company_head') return '/company'

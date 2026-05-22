@@ -208,7 +208,7 @@ export default function AdminEmployees() {
   const perms = new Set(user?.permissions ?? [])
   const roleValue = String(user?.role || '').trim().toLowerCase()
   const hrRoleValue = String(user?.hr_role || '').trim().toLowerCase()
-  const isAdminOrHr = roleValue === 'admin' || hrRoleValue === 'admin_hr' || hrRoleValue === 'admin'
+  const isAdminOrHr = roleValue === 'admin' || roleValue === 'super_admin' || hrRoleValue === 'admin_hr' || hrRoleValue === 'admin'
   const canCreateEmployees = perms.has('employees.create')
   const canExportEmployees = perms.has('employees.export')
   const canEditEmployees = perms.has('employees.edit')

@@ -41,9 +41,10 @@ class ScheduleRequestController extends MyScheduleController
             ->with($this->requestRelations())
             ->orderByDesc('created_at');
 
-        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
-        $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
-        $query->whereIn('user_id', $scope->select('users.id'));
+        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($request->user(), 'general');
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('user_id', $scopedEmployeeIds);
+        }
 
         if ($request->filled('status')) {
             $query->where('status', (string) $request->query('status'));

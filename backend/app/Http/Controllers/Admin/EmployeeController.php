@@ -547,7 +547,7 @@ class EmployeeController extends Controller
             fputcsv($out, $header);
 
             $query = User::query()
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->reportableEmployees()
                 ->select([
                     'id',
                     'employee_code',
@@ -833,7 +833,7 @@ class EmployeeController extends Controller
 
         if (! empty($validated['supervisor_id'])) {
             $supervisor = User::where('id', (int) $validated['supervisor_id'])
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                ->approvableEmployees()
                 ->first();
             if (! $supervisor || ! $this->isManagerialPosition($supervisor->position)) {
                 throw ValidationException::withMessages([
@@ -1358,7 +1358,7 @@ class EmployeeController extends Controller
                     $employee->supervisor_id = null;
                 } else {
                     $supervisor = User::where('id', (int) $supRaw)
-                        ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+                        ->approvableEmployees()
                         ->first();
                     if (! $supervisor || ! $this->isManagerialPosition($supervisor->position)) {
                         throw ValidationException::withMessages([
@@ -2163,8 +2163,20 @@ class EmployeeController extends Controller
 
     private function loadScopedEmployee(Request $request, int $id, bool $forMutation = false): User
     {
-        $employee = User::where('id', $id)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
-        $this->dataScopeService->ensureEmployeeAccessible($request->user(), $employee);
+        $actor = $request->user();
+        $query = User::query()->where('id', $id);
+
+        // System / hidden accounts (e.g. Super Admin) are excluded from rosters by design but must
+        // remain editable on their own profile (and by Super Admin actors).
+        $bypassRosterVisibility = $actor instanceof User
+            && ((int) $actor->id === $id || $actor->isSuperAdmin());
+
+        if (! $bypassRosterVisibility) {
+            $query->visibleEmployees();
+        }
+
+        $employee = $query->firstOrFail();
+        $this->dataScopeService->ensureEmployeeAccessible($actor, $employee);
         if ($forMutation) {
             $this->ensureActorCanMutateEmployee($request, $employee);
         }

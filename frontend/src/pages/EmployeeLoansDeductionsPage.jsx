@@ -374,11 +374,11 @@ export default function EmployeeLoansDeductionsPage() {
 
   const permSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const maySubmitLoanRequest =
-    permSet.has('request-loan') ||
-    permSet.has('loans.request') ||
-    permSet.has('loans.view_own') ||
-    user?.is_super_admin ||
-    String(user?.role || '').toLowerCase() === 'admin'
+    !user?.is_system_user &&
+    (permSet.has('request-loan') ||
+      permSet.has('loans.request') ||
+      permSet.has('loans.view_own') ||
+      String(user?.role || '').toLowerCase() === 'admin')
   const hasLoanProducts = productOptions.length > 0
   const canOpenRequestDialog = maySubmitLoanRequest
 

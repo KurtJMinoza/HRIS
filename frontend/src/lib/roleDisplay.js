@@ -30,6 +30,11 @@ const FALLBACK_LABELS = {
   employee: 'Employee',
 }
 
+function isSuperAdminAccount(userLike) {
+  if (!userLike) return false
+  return String(userLike.role || '').toLowerCase() === 'super_admin' || userLike.is_super_admin === true
+}
+
 /** @param {{ hr_role?: string, role?: string } | null | undefined} userLike */
 export function normalizeHrRoleKey(userLike) {
   if (!userLike) return 'employee'
@@ -37,7 +42,8 @@ export function normalizeHrRoleKey(userLike) {
   if (hr && Object.prototype.hasOwnProperty.call(HR_ROLE_BADGE_CLASS, hr)) {
     return hr
   }
-  if (String(userLike.role || '').toLowerCase() === 'admin') {
+  const role = String(userLike.role || '').toLowerCase()
+  if (role === 'admin' || role === 'super_admin') {
     return 'admin_hr'
   }
   return 'employee'
@@ -74,8 +80,9 @@ export function resolveRoleBadgeProps(input = {}) {
     key = normalizeHrRoleKey({ hr_role, role: accountRole })
   }
 
-  const label =
-    hr_role_label && String(hr_role_label).trim() !== ''
+  const label = isSuperAdminAccount(base)
+    ? 'Super Admin'
+    : hr_role_label && String(hr_role_label).trim() !== ''
       ? String(hr_role_label).trim()
       : FALLBACK_LABELS[key] ?? 'Employee'
 
@@ -83,7 +90,7 @@ export function resolveRoleBadgeProps(input = {}) {
   const staleRolePayload =
     Object.keys(base).length > 0 &&
     typeof base === 'object' &&
-    String(accountRole || '').toLowerCase() === 'admin' &&
+    (String(accountRole || '').toLowerCase() === 'admin' || String(accountRole || '').toLowerCase() === 'super_admin') &&
     hr_role === undefined &&
     management_role == null &&
     (hr_role_label === undefined || hr_role_label === null || String(hr_role_label).trim() === '')

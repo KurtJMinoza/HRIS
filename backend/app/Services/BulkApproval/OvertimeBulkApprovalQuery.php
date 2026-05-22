@@ -73,9 +73,10 @@ class OvertimeBulkApprovalQuery
             $query->where('ot_type', $otType);
         }
 
-        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
-        $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
-        $query->whereIn('user_id', $scope->select('users.id'));
+        $scopedEmployeeIds = $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'general');
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('user_id', $scopedEmployeeIds);
+        }
 
         return $query;
     }

@@ -35,6 +35,9 @@ class EmployeeLoanRequestController extends Controller
         if (! $user) {
             return response()->json(['message' => 'Unauthorized.'], 401);
         }
+        if ($user->isSystemAccessOnly()) {
+            return response()->json(['message' => 'System access accounts cannot use employee loan self-service.'], 403);
+        }
         $rbac = app(RbacService::class);
         if (! $rbac->canAny($user, ['loans.view_own', 'request-loan', 'loans.request'])) {
             return response()->json(['message' => 'Forbidden.'], 403);
@@ -98,6 +101,9 @@ class EmployeeLoanRequestController extends Controller
         $user = $request->user();
         if (! $user) {
             return response()->json(['message' => 'Unauthorized.'], 401);
+        }
+        if ($user->isSystemAccessOnly()) {
+            return response()->json(['message' => 'System access accounts cannot submit employee loan requests.'], 403);
         }
         $rbac = app(RbacService::class);
         if (! $rbac->canRequestLoan($user)) {

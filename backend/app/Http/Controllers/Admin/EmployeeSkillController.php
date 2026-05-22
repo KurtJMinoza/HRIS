@@ -16,7 +16,7 @@ class EmployeeSkillController extends Controller
 
     public function index(Request $request, int $userId): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $skills = EmployeeSkill::where('user_id', $employee->id)
@@ -30,7 +30,7 @@ class EmployeeSkillController extends Controller
 
     public function store(Request $request, int $userId): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
 
         $validated = $request->validate([
@@ -59,7 +59,7 @@ class EmployeeSkillController extends Controller
 
     public function update(Request $request, int $userId, int $id): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
         $skill = EmployeeSkill::where('id', $id)->where('user_id', $employee->id)->firstOrFail();
 
@@ -90,7 +90,7 @@ class EmployeeSkillController extends Controller
 
     public function destroy(Request $request, int $userId, int $id): JsonResponse
     {
-        $employee = User::where('id', $userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->firstOrFail();
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
         $this->assertEmployeeOrgScope($request, $employee);
         $skill = EmployeeSkill::where('id', $id)->where('user_id', $employee->id)->firstOrFail();
         $skill->delete();

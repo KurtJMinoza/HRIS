@@ -43,7 +43,7 @@ class PayrollController extends Controller
             'reference_date' => ['nullable', 'date'],
         ]);
 
-        $user = User::query()->activeRoster()->findOrFail($validated['employee_id']);
+        $user = User::query()->payrollEmployees()->active()->findOrFail($validated['employee_id']);
         $this->dataScopeService->ensureEmployeeAccessible($request->user(), $user);
         [$from, $to, $cyclePreview] = $this->resolvePeriodContext($user, $validated);
 
@@ -67,7 +67,7 @@ class PayrollController extends Controller
             'daily_rate_override' => ['nullable', 'numeric', 'min:0'],
         ]);
 
-        $user = User::query()->activeRoster()->findOrFail($validated['employee_id']);
+        $user = User::query()->payrollEmployees()->active()->findOrFail($validated['employee_id']);
         $this->dataScopeService->ensureEmployeeAccessible($request->user(), $user);
         [$from, $to, $cyclePreview] = $this->resolvePeriodContext($user, $validated);
 
@@ -96,7 +96,7 @@ class PayrollController extends Controller
             'save' => ['nullable', 'boolean'],
         ]);
 
-        $user = User::query()->activeRoster()->findOrFail($validated['employee_id']);
+        $user = User::query()->payrollEmployees()->active()->findOrFail($validated['employee_id']);
         $this->dataScopeService->ensureEmployeeAccessible($request->user(), $user);
         [$from, $to, $cyclePreview, $cycle] = $this->resolvePeriodContext($user, $validated, true);
         $save = (bool) ($validated['save'] ?? false);
@@ -125,7 +125,7 @@ class PayrollController extends Controller
     {
         $perPage = max(1, min(20, (int) $request->integer('per_page', 6)));
         $finalizedOnly = $request->boolean('finalized_only', false);
-        $scope = User::query()->whereIn('role', User::ROSTER_ELIGIBLE_ROLES);
+        $scope = User::query()->payrollEmployees();
         $this->dataScopeService->restrictEmployeeQuery($request->user(), $scope);
 
         if ($finalizedOnly) {

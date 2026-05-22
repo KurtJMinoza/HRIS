@@ -65,7 +65,7 @@ class EmployeeOrganizationAssignmentService
         $context = $this->resolveLegacyContext($legacyType, $legacyId);
         $users = User::query()
             ->whereIn('id', $employeeIds)
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->get()
             ->keyBy('id');
 

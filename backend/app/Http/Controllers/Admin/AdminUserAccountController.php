@@ -512,7 +512,10 @@ class AdminUserAccountController extends Controller
             return;
         }
 
-        $count = User::query()->where('role', User::ROLE_ADMIN)->where('is_active', true)->count();
+        $count = User::query()
+            ->whereIn('role', [User::ROLE_ADMIN, User::ROLE_SUPER_ADMIN])
+            ->where('is_active', true)
+            ->count();
         if ($count <= 1) {
             throw ValidationException::withMessages([
                 'is_active' => ['Cannot deactivate the last active administrator.'],
@@ -523,20 +526,20 @@ class AdminUserAccountController extends Controller
     private function applyHrRoleFilter($query, string $roleFilter): void
     {
         match ($roleFilter) {
-            'admin_hr' => $query->where('role', User::ROLE_ADMIN),
-            'company_head' => $query->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            'admin_hr' => $query->whereIn('role', [User::ROLE_ADMIN, User::ROLE_SUPER_ADMIN]),
+            'company_head' => $query->visibleEmployees()
                 ->whereExists(fn ($q) => $q->select(DB::raw(1))
                     ->from('companies')
                     ->whereColumn('companies.company_head_id', 'users.id')),
-            'branch_head' => $query->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            'branch_head' => $query->visibleEmployees()
                 ->whereExists(fn ($q) => $q->select(DB::raw(1))
                     ->from('branches')
                     ->whereColumn('branches.branch_manager_id', 'users.id')),
-            'department_head' => $query->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            'department_head' => $query->visibleEmployees()
                 ->whereExists(fn ($q) => $q->select(DB::raw(1))
                     ->from('departments')
                     ->whereColumn('departments.department_head_id', 'users.id')),
-            'employee' => $query->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            'employee' => $query->visibleEmployees()
                 ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('companies')->whereColumn('companies.company_head_id', 'users.id'))
                 ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('branches')->whereColumn('branches.branch_manager_id', 'users.id'))
                 ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('departments')->whereColumn('departments.department_head_id', 'users.id')),
@@ -555,6 +558,10 @@ class AdminUserAccountController extends Controller
 
         $hr = $this->hrRoleResolver->resolve($user);
         $hrList = $this->hrRoleResolver->listEffectiveHrRoles($user);
+        $hrRoleLabel = $user->isSuperAdmin() ? 'Super Admin' : $hr->badgeLabel();
+        $hrRoleLabels = $user->isSuperAdmin()
+            ? ['Super Admin']
+            : array_map(fn (HrRole $r) => $r->badgeLabel(), $hrList);
 
         return [
             'id' => $user->id,
@@ -565,11 +572,17 @@ class AdminUserAccountController extends Controller
             'role' => $user->role,
             'is_hr_admin' => $user->isAdmin(),
             'hr_role' => $hr->value,
-            'hr_role_label' => $hr->badgeLabel(),
+            'hr_role_label' => $hrRoleLabel,
             'hr_roles' => array_map(fn (HrRole $r) => $r->value, $hrList),
-            'hr_roles_labels' => array_map(fn (HrRole $r) => $r->badgeLabel(), $hrList),
+            'hr_roles_labels' => $hrRoleLabels,
             'is_active' => (bool) $user->is_active,
             'is_super_admin' => (bool) $user->is_super_admin,
+            'is_system_user' => (bool) $user->is_system_user,
+            'is_hidden' => (bool) $user->is_hidden,
+            'exclude_from_reports' => (bool) $user->exclude_from_reports,
+            'exclude_from_payroll' => (bool) $user->exclude_from_payroll,
+            'exclude_from_attendance' => (bool) $user->exclude_from_attendance,
+            'exclude_from_approvals' => (bool) $user->exclude_from_approvals,
             'company_id' => $user->company_id,
             'branch_id' => $user->branch_id,
             'department_id' => $user->department_id,

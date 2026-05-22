@@ -144,7 +144,7 @@ class DepartmentController extends Controller
             ->all();
 
         $employees = User::query()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->where(function ($query) use ($department, $sharedEmployeeIds): void {
                 $query->where('department_id', (int) $department->id);
                 if ($sharedEmployeeIds !== []) {
@@ -286,7 +286,7 @@ class DepartmentController extends Controller
 
         $users = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
             ->whereIn('id', $validated['employee_ids'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->visibleEmployees()
             ->get();
 
         // Block employees who are Company Heads from being assigned to a department

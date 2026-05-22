@@ -73,6 +73,7 @@ class FlexibleImmediateApproverResolver
         $primaryAssignment = $this->selectedAssignmentFor($subject, $context);
         $employeeImmediateLeaderId = $this->employeeImmediateLeaderId($subject, $primaryAssignment);
         $sectionDirectoryProbe = $this->probeSectionDirectoryLeadership($subject, $hierarchy);
+        $directlyAssignedToDepartment = $this->isDirectDepartmentAssignment($subject, $primaryAssignment, $hierarchy);
 
         $this->log($context, 'resolver start', [
             'request_type' => $requestType,
@@ -91,14 +92,17 @@ class FlexibleImmediateApproverResolver
             'section_unit_head_id' => $sectionDirectoryProbe['section_unit_head_id'],
             'section_unit_team_leader_ids' => $sectionDirectoryProbe['section_unit_team_leader_ids'],
             'organization_ids' => $hierarchy,
+            'assignment_id' => $primaryAssignment?->id ? (int) $primaryAssignment->id : null,
             'selected_assignment_id' => $primaryAssignment?->id ? (int) $primaryAssignment->id : null,
             'selected_assignment_type' => $primaryAssignment?->assignment_type,
             'selected_section_unit_id' => $primaryAssignment?->section_unit_id ? (int) $primaryAssignment->section_unit_id : null,
+            'employee_directly_assigned_to_department' => $directlyAssignedToDepartment,
             'detected_requester_level' => $requesterLevel,
             'fallback_to_parent_approver' => $fallbackToParent,
             'department_head_fallback_allowed' => $fallbackToParent,
             'use_hierarchy_approval' => (bool) ($workflowSetting['use_hierarchy_approval'] ?? false),
             'flexible_organization_units_available' => $hasFlexibleOrg,
+            'visibility_permissions_ignored_for_approval' => true,
         ]);
 
         if ($requesterLevel === 'company_head') {
@@ -196,9 +200,30 @@ class FlexibleImmediateApproverResolver
                 }
             }
 
+            if ($directlyAssignedToDepartment && $this->usesDepartmentFirstApproval($requestType)) {
+                $departmentResolved = $this->resolveDepartmentHeadForRequester(
+                    $subject,
+                    $hierarchy,
+                    $skipIds,
+                    $context,
+                    $requestType,
+                    'direct_department_assignment',
+                    $primaryAssignment,
+                    true,
+                );
+                if ($departmentResolved !== null) {
+                    $this->log($context, 'final selected first approver', $this->finalApproverLogPayload($departmentResolved, $fallbackToParent));
+
+                    return $departmentResolved;
+                }
+            }
+
             if (! $fallbackToParent) {
                 $this->log($context, 'no team leader or section/unit head and parent fallback disabled — routing to HR/Admin only', [
                     'requester_section_unit_id' => $hierarchy['section_unit'] ?? null,
+                    'requester_department_id' => $hierarchy['department'] ?? null,
+                    'assignment_id' => $primaryAssignment?->id ? (int) $primaryAssignment->id : null,
+                    'employee_directly_assigned_to_department' => $directlyAssignedToDepartment,
                     'employee_assigned_team_leader_id' => $subject->assigned_team_leader_id ? (int) $subject->assigned_team_leader_id : null,
                     'team_leader_found' => false,
                     'section_unit_head_found' => false,
@@ -209,6 +234,22 @@ class FlexibleImmediateApproverResolver
                 ]);
 
                 return null;
+            }
+
+            $departmentResolved = $this->resolveDepartmentHeadForRequester(
+                $subject,
+                $hierarchy,
+                $skipIds,
+                $context,
+                $requestType,
+                'department_head_before_parent_walk',
+                $primaryAssignment,
+                false,
+            );
+            if ($departmentResolved !== null) {
+                $this->log($context, 'final selected first approver', $this->finalApproverLogPayload($departmentResolved, true));
+
+                return $departmentResolved;
             }
 
             $this->log($context, 'no section/unit head found — continuing to parent approver fallback', [
@@ -280,6 +321,20 @@ class FlexibleImmediateApproverResolver
         }
 
         if (! $hasFlexibleOrg || $unitChain->isEmpty()) {
+            $departmentResolved = $this->resolveDepartmentHeadForRequester(
+                $subject,
+                $hierarchy,
+                $skipIds,
+                $context,
+                $requestType,
+                'department_head_without_organization_units',
+            );
+            if ($departmentResolved !== null) {
+                $this->log($context, 'final selected first approver', $this->finalApproverLogPayload($departmentResolved, true));
+
+                return $departmentResolved;
+            }
+
             $this->log($context, 'parent approver fallback unavailable — flexible organization units missing', [
                 'fallback_to_parent_approver' => true,
                 'flexible_organization_units_available' => $hasFlexibleOrg,
@@ -319,12 +374,13 @@ class FlexibleImmediateApproverResolver
 
             if (
                 $this->unitHierarchyLevel($unit) === 'department'
-                && $this->shouldSkipDepartmentHeadFallback($requestType, $subject, $hierarchy)
+                && $this->shouldSkipDepartmentHeadFallback($requestType, $subject, $hierarchy, $skipIds, $context)
             ) {
-                $this->log($context, 'skipping department head parent fallback — section/unit leadership configured in directory', [
+                $this->log($context, 'skipping department head parent fallback — eligible section/unit directory approver exists', [
                     'request_type' => $requestType,
                     'requester_section_unit_id' => $hierarchy['section_unit'] ?? null,
-                    'skip_reason' => 'section_directory_leadership_configured',
+                    'skip_reason' => 'eligible_section_directory_approver_exists',
+                    'visibility_permissions_ignored_for_approval' => true,
                 ]);
 
                 continue;
@@ -403,8 +459,25 @@ class FlexibleImmediateApproverResolver
             }
         }
 
+        $departmentResolved = $this->resolveDepartmentHeadForRequester(
+            $subject,
+            $hierarchy,
+            $skipIds,
+            $context,
+            $requestType,
+            'department_head_after_parent_walk',
+        );
+        if ($departmentResolved !== null) {
+            $this->log($context, 'final selected first approver', $this->finalApproverLogPayload($departmentResolved, $fallbackToParent));
+
+            return $departmentResolved;
+        }
+
         $this->log($context, 'no valid leadership assignment found in hierarchy walk', [
             'fallback_to_parent_approver' => $fallbackToParent,
+            'department_head_found' => false,
+            'department_head_selected' => false,
+            'skip_reason' => 'no_eligible_department_head',
         ]);
 
         return null;
@@ -800,13 +873,21 @@ class FlexibleImmediateApproverResolver
     }
 
     /**
-     * Leave/overtime must not fall back to Department Head when the employee's section/unit
-     * already has leadership configured in the legacy Section/Unit Directory.
+     * Leave/overtime must not fall back to Department Head when an eligible section/unit
+     * directory approver already exists. Configured-but-ineligible heads must not block
+     * department head routing.
      *
      * @param  array<string, int|null>  $hierarchy
+     * @param  list<int>  $skipIds
+     * @param  array<string, mixed>  $context
      */
-    private function shouldSkipDepartmentHeadFallback(?string $requestType, User $subject, array $hierarchy): bool
-    {
+    private function shouldSkipDepartmentHeadFallback(
+        ?string $requestType,
+        User $subject,
+        array $hierarchy,
+        array $skipIds,
+        array $context,
+    ): bool {
         $normalized = $this->workflowSettingService->normalizeRequestType($requestType);
         if (! in_array($normalized, [
             \App\Models\ApprovalWorkflowSetting::REQUEST_TYPE_LEAVE,
@@ -815,9 +896,252 @@ class FlexibleImmediateApproverResolver
             return false;
         }
 
-        $probe = $this->probeSectionDirectoryLeadership($subject, $hierarchy);
+        return $this->resolveSectionDirectoryLeadership($subject, $hierarchy, $skipIds, $context) !== null;
+    }
 
-        return $probe['section_unit_head_found'] || $probe['section_unit_team_leader_found'];
+    /**
+     * @param  array<string, int|null>  $hierarchy
+     * @param  list<int>  $skipIds
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>|null
+     */
+    private function resolveDepartmentHeadForRequester(
+        User $subject,
+        array $hierarchy,
+        array $skipIds,
+        array $context,
+        ?string $requestType,
+        string $source,
+        ?EmployeeOrganizationAssignment $assignment = null,
+        bool $directDepartmentAssignment = false,
+    ): ?array {
+        $departmentId = (int) ($hierarchy['department'] ?? $subject->department_id ?? 0);
+        $sectionUnitId = (int) ($hierarchy['section_unit'] ?? $subject->section_unit_id ?? 0);
+
+        if ($departmentId <= 0 && $sectionUnitId > 0) {
+            $departmentId = (int) (SectionUnit::query()->whereKey($sectionUnitId)->value('department_id') ?? 0);
+        }
+
+        $candidates = $this->departmentHeadCandidatesForDepartment($departmentId);
+        $candidateIds = array_map(fn (array $candidate): int => (int) $candidate['employee_id'], $candidates);
+        $levelLog = [
+            'request_type' => $requestType,
+            'requester_employee_id' => (int) $subject->id,
+            'requester_name' => $subject->display_name,
+            'assignment_id' => $assignment?->id ? (int) $assignment->id : null,
+            'department_id' => $departmentId > 0 ? $departmentId : null,
+            'section_unit_id' => $sectionUnitId > 0 ? $sectionUnitId : null,
+            'requester_department_id' => $departmentId > 0 ? $departmentId : null,
+            'requester_section_unit_id' => $sectionUnitId > 0 ? $sectionUnitId : null,
+            'employee_directly_assigned_to_department' => $directDepartmentAssignment,
+            'department_head_candidate_ids' => $candidateIds,
+            'selected_approver_source' => $source,
+            'visibility_permissions_ignored_for_approval' => true,
+        ];
+
+        $this->log($context, 'department head lookup for requester', $levelLog + [
+            'department_head_found' => $candidateIds !== [],
+        ]);
+
+        foreach ($candidates as $candidate) {
+            /** @var array{employee_id: int, source: string} $candidate */
+            $headId = (int) $candidate['employee_id'];
+            $headSource = (string) $candidate['source'];
+            $head = User::query()->find($headId);
+            if (! $head) {
+                $this->log($context, 'department head candidate missing user record', $levelLog + [
+                    'department_head_id' => $headId,
+                    'department_head_source' => $headSource,
+                    'department_head_selected' => false,
+                    'skip_reason' => 'department_head_user_not_found',
+                ]);
+
+                continue;
+            }
+
+            if (! $this->isValidLeaderUser($head, $skipIds)) {
+                $this->logRejectedLeader($context, $levelLog, $head, $skipIds, [
+                    'source' => 'department_head_candidate',
+                    'department_head_source' => $headSource,
+                    'department_head_selected' => false,
+                ]);
+
+                continue;
+            }
+
+            $resolved = $this->formatResult(
+                $head,
+                [$head],
+                'Department Head',
+                OrganizationUnit::ROUTING_FIRST_ASSIGNED,
+                OrganizationUnit::query()
+                    ->where('legacy_source_type', 'department')
+                    ->where('legacy_source_id', $departmentId)
+                    ->first(),
+                $this->approvalLevelFor(null, 'Department Head', 'department'),
+            ) + ['selected_approver_source' => $source];
+
+            $this->log($context, 'selected department head approver', $levelLog + [
+                'department_head_found' => true,
+                'department_head_selected' => true,
+                'department_head_id' => (int) $head->id,
+                'department_head_name' => $head->display_name,
+                'department_head_source' => $headSource,
+                'selected_first_approver' => $head->display_name,
+                'selected_first_approver_id' => (int) $head->id,
+            ]);
+
+            return $resolved;
+        }
+
+        if ($departmentId > 0) {
+            $resolved = $this->resolveLeadersForLegacyUnit(
+                'department',
+                $departmentId,
+                $subject,
+                $requestType,
+                $skipIds,
+                $context,
+            );
+
+            if ($resolved !== null) {
+                $resolved['selected_approver_source'] = $source;
+                $this->log($context, 'selected department head approver from flexible unit leaders', $levelLog + [
+                    'department_head_found' => true,
+                    'department_head_selected' => true,
+                    'department_head_source' => 'organization_unit_leaders',
+                    'selected_first_approver' => $resolved['approver_name'],
+                    'selected_first_approver_id' => $resolved['approver_id'],
+                ]);
+
+                return $resolved;
+            }
+        }
+
+        $this->log($context, 'no eligible department head for requester', $levelLog + [
+            'department_head_found' => false,
+            'department_head_selected' => false,
+            'skip_reason' => 'department_head_missing_inactive_or_self',
+        ]);
+
+        return null;
+    }
+
+    /**
+     * @return list<array{employee_id: int, source: string}>
+     */
+    private function departmentHeadCandidatesForDepartment(int $departmentId): array
+    {
+        if ($departmentId <= 0) {
+            return [];
+        }
+
+        $candidates = [];
+
+        if (Schema::hasTable('organization_leadership_assignments')) {
+            $query = DB::table('organization_leadership_assignments');
+
+            if (Schema::hasColumn('organization_leadership_assignments', 'organization_type')) {
+                $query->where('organization_type', 'department');
+            }
+
+            $departmentColumn = Schema::hasColumn('organization_leadership_assignments', 'department_id')
+                ? 'department_id'
+                : (Schema::hasColumn('organization_leadership_assignments', 'organization_id') ? 'organization_id' : null);
+
+            if ($departmentColumn !== null) {
+                $query->where($departmentColumn, $departmentId);
+            }
+
+            if (Schema::hasColumn('organization_leadership_assignments', 'can_approve')) {
+                $query->where('can_approve', true);
+            }
+
+            if (Schema::hasColumn('organization_leadership_assignments', 'is_active')) {
+                $query->where('is_active', true);
+            }
+
+            if (Schema::hasColumn('organization_leadership_assignments', 'expires_at')) {
+                $query->where(function ($expiryQuery): void {
+                    $expiryQuery->whereNull('expires_at')
+                        ->orWhere('expires_at', '>', now());
+                });
+            }
+
+            if (Schema::hasColumn('organization_leadership_assignments', 'effective_to')) {
+                $query->where(function ($effectiveQuery): void {
+                    $effectiveQuery->whereNull('effective_to')
+                        ->orWhere('effective_to', '>=', now()->toDateString());
+                });
+            }
+
+            $candidates = $query
+                ->orderBy('id')
+                ->pluck('employee_id')
+                ->map(fn ($id): array => [
+                    'employee_id' => (int) $id,
+                    'source' => 'leadership_assignment',
+                ])
+                ->filter(fn (array $candidate): bool => (int) $candidate['employee_id'] > 0)
+                ->all();
+        }
+
+        $legacyHead = $this->legacyDepartmentHeadFor($departmentId);
+        if ($legacyHead !== null) {
+            $candidates[] = $legacyHead;
+        }
+
+        return collect($candidates)
+            ->unique(fn (array $candidate): int => (int) $candidate['employee_id'])
+            ->values()
+            ->all();
+    }
+
+    private function usesDepartmentFirstApproval(?string $requestType): bool
+    {
+        $normalized = $this->workflowSettingService->normalizeRequestType($requestType);
+
+        return in_array($normalized, [
+            \App\Models\ApprovalWorkflowSetting::REQUEST_TYPE_LEAVE,
+            \App\Models\ApprovalWorkflowSetting::REQUEST_TYPE_OVERTIME,
+        ], true);
+    }
+
+    /**
+     * @param  array<string, int|null>  $hierarchy
+     */
+    private function isDirectDepartmentAssignment(
+        User $subject,
+        ?EmployeeOrganizationAssignment $assignment,
+        array $hierarchy,
+    ): bool {
+        $departmentId = (int) ($hierarchy['department'] ?? $subject->department_id ?? 0);
+        $sectionUnitId = (int) ($hierarchy['section_unit'] ?? $subject->section_unit_id ?? 0);
+
+        if ($departmentId <= 0 || $sectionUnitId > 0) {
+            return false;
+        }
+
+        if (! $assignment) {
+            return true;
+        }
+
+        $assignmentSectionId = (int) ($assignment->section_unit_id ?? 0);
+        if ($assignmentSectionId > 0) {
+            return false;
+        }
+
+        $assignmentDepartmentId = (int) ($assignment->department_id ?? 0);
+        if ($assignmentDepartmentId > 0) {
+            return true;
+        }
+
+        $unit = $assignment->organizationUnit;
+        if ($unit && (string) ($unit->legacy_source_type ?? '') === 'department') {
+            return true;
+        }
+
+        return (int) ($subject->department_id ?? 0) > 0 && (int) ($subject->section_unit_id ?? 0) <= 0;
     }
 
     /**
@@ -1949,10 +2273,30 @@ class FlexibleImmediateApproverResolver
      */
     private function isValidLeaderUser(User $leader, array $skipIds): bool
     {
+        return $this->isEligibleApproverUser($leader, $skipIds);
+    }
+
+    /**
+     * Approval routing eligibility is independent of data-visibility permissions
+     * (can_view_subordinate_attendance, can_view_employee_module, etc.).
+     *
+     * @param  list<int>  $skipIds
+     */
+    private function isEligibleApproverUser(User $leader, array $skipIds): bool
+    {
         return (bool) $leader->is_active
-            && $leader->isRosterEligible()
             && $leader->isOperationallyActive()
+            && $this->isApproverAccountEligible($leader)
+            && ! $leader->isExcludedFromApprovals()
             && ! in_array((int) $leader->id, $skipIds, true);
+    }
+
+    private function isApproverAccountEligible(User $leader): bool
+    {
+        return in_array($leader->role, User::ROSTER_ELIGIBLE_ROLES, true)
+            && ! (bool) ($leader->is_super_admin ?? false)
+            && ! (bool) ($leader->is_system_user ?? false)
+            && ! (bool) ($leader->is_hidden ?? false);
     }
 
     /**
@@ -2089,14 +2433,27 @@ class FlexibleImmediateApproverResolver
 
     private function legacyDepartmentHeadId(int $departmentId): ?int
     {
+        $head = $this->legacyDepartmentHeadFor($departmentId);
+
+        return $head ? (int) $head['employee_id'] : null;
+    }
+
+    /**
+     * @return array{employee_id: int, source: string}|null
+     */
+    private function legacyDepartmentHeadFor(int $departmentId): ?array
+    {
         $department = Department::query()->find($departmentId);
         if (! $department) {
             return null;
         }
 
-        foreach (['department_head_id', 'head_employee_id'] as $column) {
+        foreach (['head_employee_id', 'department_head_id'] as $column) {
             if (Schema::hasColumn('departments', $column) && (int) ($department->{$column} ?? 0) > 0) {
-                return (int) $department->{$column};
+                return [
+                    'employee_id' => (int) $department->{$column},
+                    'source' => 'departments.'.$column,
+                ];
             }
         }
 
@@ -2195,14 +2552,17 @@ class FlexibleImmediateApproverResolver
             $reason = 'inactive';
         } elseif (! $leader->isOperationallyActive()) {
             $reason = 'not_operationally_active';
-        } elseif (! $leader->isRosterEligible()) {
-            $reason = 'not_roster_eligible';
+        } elseif (! $this->isApproverAccountEligible($leader)) {
+            $reason = 'not_approver_account_eligible';
+        } elseif ($leader->isExcludedFromApprovals()) {
+            $reason = 'excluded_from_approvals';
         }
 
         $this->log($context, 'rejected leadership candidate', $levelLog + $extra + [
             'candidate_id' => (int) $leader->id,
             'candidate_name' => $leader->display_name,
             'reject_reason' => $reason,
+            'visibility_permissions_ignored_for_approval' => true,
         ]);
     }
 

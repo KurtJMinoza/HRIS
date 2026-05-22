@@ -226,7 +226,7 @@ class PayslipService
             return ['ok' => false, 'reason' => 'no_employee'];
         }
 
-        $allowedUserQuery = User::query()->activeRoster();
+        $allowedUserQuery = User::query()->payrollEmployees()->active();
         $this->dataScopeService->restrictEmployeeQuery($actor, $allowedUserQuery);
         if ($companyId) {
             $allowedUserQuery->where('company_id', $companyId);
@@ -400,7 +400,7 @@ class PayslipService
         array $periodInput,
         ?User $actor = null
     ): array {
-        $q = User::query()->activeRoster();
+        $q = User::query()->payrollEmployees()->active();
 
         if ($actor !== null) {
             $this->dataScopeService->restrictEmployeeQuery($actor, $q);
@@ -849,7 +849,7 @@ class PayslipService
             'generation_loop_ms' => 0.0,
             'bulk_upsert_ms' => 0.0,
         ];
-        $q = User::query()->activeRoster();
+        $q = User::query()->payrollEmployees()->active();
 
         if ($actor !== null) {
             $this->dataScopeService->restrictEmployeeQuery($actor, $q);
@@ -2268,7 +2268,7 @@ class PayslipService
      */
     public function employeeIdsForBatchScope(PayrollBatchRun $run): array
     {
-        $q = User::query()->activeRoster();
+        $q = User::query()->payrollEmployees()->active();
         if ($run->company_id) {
             $q->where('company_id', (int) $run->company_id);
         }
