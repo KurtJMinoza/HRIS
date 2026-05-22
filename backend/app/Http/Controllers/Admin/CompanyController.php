@@ -8,6 +8,8 @@ use App\Models\Company;
 use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\OrganizationLeadershipAssignmentService;
+use App\Services\OrganizationLeadershipService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,6 +22,8 @@ class CompanyController extends Controller
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly OrganizationLeadershipAssignmentService $leadershipAssignments,
+        private readonly OrganizationLeadershipService $organizationLeadershipService,
     ) {}
 
     private const LOGO_DISK = 'public';
@@ -109,7 +113,9 @@ class CompanyController extends Controller
             'logo.max' => 'The logo must not exceed 2MB.',
         ]);
 
-        $this->validateCompanyHeadNotAssignedElsewhere($validated['company_head_id'] ?? null, null);
+        if (($validated['company_head_id'] ?? null) !== null) {
+            $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['company_head_id']);
+        }
 
         $path = $request->hasFile('logo') ? $this->storeLogoOrFail($request) : null;
         $company = Company::create([
@@ -120,9 +126,12 @@ class CompanyController extends Controller
             'address' => isset($validated['address']) && $validated['address'] !== '' ? $validated['address'] : null,
         ]);
 
-        // Data integrity: Company Head must belong to the company (auto-set employee.company_id).
         if ($company->company_head_id) {
-            User::where('id', $company->company_head_id)->update(['company_id' => $company->id]);
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'company',
+                (int) $company->id,
+                (int) $company->company_head_id,
+            );
         }
 
         return response()->json([
@@ -200,14 +209,17 @@ class CompanyController extends Controller
 
         if (array_key_exists('company_head_id', $validated)) {
             $previousHeadId = $company->company_head_id;
-            $this->validateCompanyHeadNotAssignedElsewhere($validated['company_head_id'] ?? null, $id);
+            if (($validated['company_head_id'] ?? null) !== null) {
+                $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['company_head_id']);
+            }
             $company->company_head_id = $validated['company_head_id'];
             $company->save();
-
-            // Data integrity: Company Head must belong to the company (auto-set employee.company_id).
-            if ($company->company_head_id) {
-                User::where('id', $company->company_head_id)->update(['company_id' => $company->id]);
-            }
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'company',
+                (int) $company->id,
+                $company->company_head_id !== null ? (int) $company->company_head_id : null,
+                $previousHeadId !== null ? (int) $previousHeadId : null,
+            );
             foreach (array_unique(array_filter([
                 $previousHeadId ? (int) $previousHeadId : null,
                 $company->company_head_id ? (int) $company->company_head_id : null,
@@ -379,26 +391,5 @@ class CompanyController extends Controller
         }
 
         return $path;
-    }
-
-    /**
-     * Ensure the given user is not already assigned as Company Head of another company.
-     * When assigning to an existing company (excludeCompanyId), that company is excluded from the check.
-     */
-    private function validateCompanyHeadNotAssignedElsewhere(?int $userId, ?int $excludeCompanyId): void
-    {
-        if ($userId === null) {
-            return;
-        }
-
-        $query = Company::where('company_head_id', $userId);
-        if ($excludeCompanyId !== null) {
-            $query->where('id', '!=', $excludeCompanyId);
-        }
-        if ($query->exists()) {
-            throw ValidationException::withMessages([
-                'company_head_id' => ['This employee is already assigned as Company Head of another company. One employee cannot lead multiple companies.'],
-            ]);
-        }
     }
 }

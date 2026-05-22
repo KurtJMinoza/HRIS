@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetClose } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import LeadershipPositionsSection from '@/components/organization/LeadershipPositionsSection'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   getCompanies,
@@ -267,26 +268,17 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
   const [popoverOpen, setPopoverOpen] = useState(false)
   const inputRef = useRef(null)
 
-  // Build a map of empId → conflict reason for employees who cannot be assigned
-  const conflictMap = useMemo(() => {
+  // Build informational notes for employees with other leadership roles.
+  const roleNoteMap = useMemo(() => {
     const map = new Map()
     if (!company) return map
-    const targetId = Number(company.id)
-    for (const emp of employees) {
-      const empId = String(emp.id)
-      // Already Company Head of another company
-      const headOfCompany = (companies || []).find(
-        (c) => Number(c.id) !== targetId && String(c.company_head_id) === empId
-      )
-      if (headOfCompany) { map.set(empId, `Company Head — ${headOfCompany.name}`); continue }
-      // In a different company's structure (company_id is synced from branch/dept assignments)
-      if (emp.company_id && Number(emp.company_id) !== targetId) {
-        const parts = [emp.company_name, emp.branch_name, emp.department].filter(Boolean)
-        map.set(empId, `Assigned: ${parts.join(' → ')}`)
+    for (const c of companies || []) {
+      if (c.company_head_id && Number(c.id) !== Number(company.id)) {
+        map.set(String(c.company_head_id), `Company Head — ${c.name}`)
       }
     }
     return map
-  }, [employees, companies, company])
+  }, [companies, company])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return employees.slice(0, 50)
@@ -317,7 +309,7 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
           <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
             <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Assign Company Head</DialogTitle>
             <p id="assign-head-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-              {company?.name} — select an employee to oversee this company. Company heads can approve org changes across branches.
+              {company?.name} — select any active employee to oversee this company. Cross-company and multiple leadership assignments are allowed.
             </p>
           </DialogHeader>
         </div>
@@ -367,17 +359,16 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                     <span className="text-muted-foreground">Not assigned</span>
                   </button>
                   {filtered.map((emp) => {
-                    const conflict = conflictMap.get(String(emp.id))
-                    const isCurrentHead = String(emp.id) === String(company?.company_head_id)
-                    const disabled = !!conflict && !isCurrentHead
+                    const roleNote = roleNoteMap.get(String(emp.id))
+                    const isInactive = emp.is_active === false && String(emp.id) !== String(company?.company_head_id)
                     return (
                       <button
                         key={emp.id}
                         type="button"
-                        disabled={disabled}
-                        onClick={() => { if (!disabled) { onHeadIdChange(String(emp.id)); setPopoverOpen(false) } }}
+                        disabled={isInactive}
+                        onClick={() => { if (!isInactive) { onHeadIdChange(String(emp.id)); setPopoverOpen(false) } }}
                         className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm transition-colors
-                          ${disabled ? 'cursor-not-allowed opacity-60' : 'hover:bg-muted'}
+                          ${isInactive ? 'cursor-not-allowed opacity-60' : 'hover:bg-muted'}
                           ${headId === String(emp.id) ? 'bg-muted' : ''}`}
                       >
                         <Avatar className="mt-0.5 size-7 shrink-0">
@@ -389,9 +380,9 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                           {(emp.employee_code || emp.position) && (
                             <p className="truncate text-xs text-muted-foreground">{[emp.employee_code, emp.position].filter(Boolean).join(' · ')}</p>
                           )}
-                          {conflict && (
-                            <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
-                              {conflict}
+                          {roleNote && (
+                            <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                              {roleNote}
                             </span>
                           )}
                         </div>
@@ -1279,7 +1270,7 @@ export default function AdminCompanies() {
     try {
       const promises = [
         getCompanies(),
-        getEmployees({ per_page: 100 }).catch(() => ({ employees: [] })),
+        getEmployees({ for_leadership_assignment: true, per_page: 'all' }).catch(() => ({ employees: [] })),
         getBranches().catch(() => ({ branches: [] })),
         getDepartments().catch(() => ({ departments: [] })),
       ]
@@ -2503,6 +2494,17 @@ export default function AdminCompanies() {
                 </span>
               </TabsTrigger>
             </TabsList>
+
+            {detailCompany?.id ? (
+              <div className="border-b border-border/60 px-6 py-4">
+                <LeadershipPositionsSection
+                  legacyType="company"
+                  legacyId={detailCompany.id}
+                  employeeOptions={allEmployees}
+                  canManage
+                />
+              </div>
+            ) : null}
 
             {/* Branches tab */}
             <TabsContent value="branches" className="flex-1 overflow-y-auto px-6 py-4 mt-0">

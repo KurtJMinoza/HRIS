@@ -89,7 +89,7 @@ class OrgHierarchyNormalizer
      *   division_id?: int|null,
      *   department_id?: int|null
      * }  $input
-     * @return array{0: int, 1: int|null, 2: int|null}
+     * @return array{0: int, 1: int|null}
      */
     public function normalizeDivisionScope(array $input): array
     {
@@ -107,7 +107,7 @@ class OrgHierarchyNormalizer
             throw ValidationException::withMessages(['company_id' => ['Company is required.']]);
         }
 
-        return [$companyId, $branchId, null];
+        return [$companyId, $branchId];
     }
 
     /**

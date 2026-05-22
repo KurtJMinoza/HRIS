@@ -7,10 +7,12 @@ use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
 use App\Models\User;
 use App\Services\AttendanceStatusService;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\LeaveCreditService;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\LeaveFilingRules;
 use App\Support\LeaveScheduleSupport;
@@ -30,6 +32,8 @@ class EmployeeLeaveController extends Controller
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly LeaveCreditService $leaveCreditService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
+        private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -105,8 +109,8 @@ class EmployeeLeaveController extends Controller
     private function mapEmployeeLeaveRow(LeaveRequest $l): array
     {
         $l->loadMissing([
-            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id',
-            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id,section_unit_id,division_id',
             'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
@@ -614,6 +618,21 @@ class EmployeeLeaveController extends Controller
     /**
      * Apply for leave as the authenticated employee.
      */
+    public function organizationAssignments(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user instanceof User) {
+            throw ValidationException::withMessages(['user' => ['Unauthenticated.']]);
+        }
+
+        return response()->json([
+            ...$this->organizationAssignments->requestContextOptionsForEmployee(
+                $user,
+                $request->query('date') ?: $request->query('start_date')
+            ),
+        ]);
+    }
+
     public function apply(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -632,6 +651,7 @@ class EmployeeLeaveController extends Controller
             'reason' => ['nullable', 'string', 'max:2000'],
             // For half-day leave we require which half of the day is worked.
             'half_type' => ['nullable', 'string', 'in:am,pm'],
+            'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
         ]);
 
         $type = $validated['type'];
@@ -712,7 +732,26 @@ class EmployeeLeaveController extends Controller
             false
         );
 
-        $routing = $this->hrApprovalChainResolver->resolveRoutingDecision($user);
+        $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
+            $user,
+            isset($validated['assignment_id']) ? (int) $validated['assignment_id'] : null,
+            $validated['start_date'],
+        );
+        $assignmentContext = $this->organizationAssignments->requestContextPayload($selectedAssignment);
+
+        Log::info('leave_request: selected organization context', [
+            'request_employee_id' => (int) $user->id,
+            'selected_assignment_id' => $assignmentContext['assignment_id'],
+            'selected_assignment_type' => $assignmentContext['assignment_type'],
+            'selected_section_unit_id' => $assignmentContext['section_unit_id'],
+        ]);
+
+        $routing = $this->hrApprovalChainResolver->resolveRoutingDecision(
+            $user,
+            true,
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+            $assignmentContext,
+        );
         $chain = $routing['chain'];
         if ($chain === null) {
             throw ValidationException::withMessages([
@@ -720,10 +759,12 @@ class EmployeeLeaveController extends Controller
             ]);
         }
 
-        $stage = $this->hrApprovalChainResolver->initialApprovalStage($user);
-        $firstApproverId = $stage === \App\Support\HrApprovalStages::PENDING_FIRST
-            ? ($routing['first_level_approver']?->id)
-            : null;
+        $stage = $this->hrApprovalChainResolver->initialApprovalStage(
+            $user,
+            true,
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+            $assignmentContext,
+        );
         $hrApproverId = $routing['hr_approver']?->id;
         if (! $hrApproverId) {
             throw ValidationException::withMessages([
@@ -733,9 +774,10 @@ class EmployeeLeaveController extends Controller
         $reasonTrim = trim((string) ($validated['reason'] ?? ''));
         $notes = $reasonTrim !== '' ? $reasonTrim : null;
         $fileDetails = $type === 'undertime' ? $reasonTrim : ($notes ?? 'Leave request submitted.');
-        $leave = DB::transaction(function () use ($user, $type, $validated, $stage, $fileDetails, $notes, $firstApproverId, $hrApproverId) {
+        $leave = DB::transaction(function () use ($user, $type, $validated, $stage, $fileDetails, $notes, $hrApproverId, $assignmentContext) {
             $leave = LeaveRequest::create([
                 'user_id' => $user->id,
+                ...$assignmentContext,
                 'type' => $type,
                 'start_date' => $validated['start_date'],
                 'end_date' => $validated['end_date'],
@@ -745,7 +787,7 @@ class EmployeeLeaveController extends Controller
                 'status' => LeaveRequest::STATUS_PENDING,
                 'approval_stage' => $stage,
                 'pending_approval' => true,
-                'first_approver_id' => $firstApproverId,
+                'first_approver_id' => null,
                 'second_approver_id' => $hrApproverId,
                 'filed_at' => now(),
                 'filed_by' => $user->id,
@@ -763,6 +805,14 @@ class EmployeeLeaveController extends Controller
             return $leave;
         });
 
+        $this->approvalWorkflowService->ensureRecordsForRequest(
+            $leave,
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+            $user,
+            $user,
+        );
+
+        $leave->refresh();
         $leave->load([
             'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id',
             'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',

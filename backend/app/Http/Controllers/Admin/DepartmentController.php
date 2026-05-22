@@ -4,10 +4,13 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Department;
+use App\Models\EmployeeOrganizationAssignment;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\OrgHierarchyNormalizer;
-use App\Services\OrgTeamLeaderService;
+use App\Services\OrganizationLeadershipAssignmentService;
+use App\Services\OrganizationLeadershipService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,7 +22,9 @@ class DepartmentController extends Controller
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly OrgHierarchyNormalizer $orgHierarchyNormalizer,
-        private readonly OrgTeamLeaderService $orgTeamLeaderService,
+        private readonly OrganizationLeadershipAssignmentService $leadershipAssignments,
+        private readonly OrganizationLeadershipService $organizationLeadershipService,
+        private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
     ) {}
 
     private const LOGO_DISK = 'public';
@@ -37,7 +42,6 @@ class DepartmentController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = Department::with('departmentHead:id,name,first_name,middle_name,last_name,suffix,profile_image')
-            ->with(['teamLeaders:id,name,first_name,middle_name,last_name,suffix,profile_image'])
             ->with('branch:id,name,company_id')
             ->with('branch.company:id,name,logo')
             ->with('division:id,name,company_id,branch_id')
@@ -132,8 +136,21 @@ class DepartmentController extends Controller
         // List everyone with users.department_id = this department. Do not apply
         // restrictEmployeeQuery here — org-hat exclusions are for cross-department rosters;
         // membership for this screen must match Assign Employees (department_id FK).
-        $employees = $department->employees()
+        $sharedEmployeeIds = EmployeeOrganizationAssignment::query()
+            ->active()
+            ->where('department_id', (int) $department->id)
+            ->pluck('employee_id')
+            ->map(fn ($employeeId) => (int) $employeeId)
+            ->all();
+
+        $employees = User::query()
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+            ->where(function ($query) use ($department, $sharedEmployeeIds): void {
+                $query->where('department_id', (int) $department->id);
+                if ($sharedEmployeeIds !== []) {
+                    $query->orWhereIn('id', $sharedEmployeeIds);
+                }
+            })
             ->orderByLastName()
             ->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image'])
             ->map(fn (User $u) => [
@@ -145,6 +162,7 @@ class DepartmentController extends Controller
 
         return response()->json([
             'department' => ['id' => $department->id, 'name' => $department->name],
+            'employee_count' => $employees->count(),
             'employees' => $employees,
         ]);
     }
@@ -169,8 +187,6 @@ class DepartmentController extends Controller
             'division_id' => ['nullable', 'integer', 'exists:divisions,id'],
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'department_head_id' => ['nullable', 'integer', 'exists:users,id'],
-            'team_leader_ids' => ['sometimes', 'array'],
-            'team_leader_ids.*' => ['integer', 'exists:users,id'],
             'office_location' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:500'],
         ], [
@@ -178,34 +194,7 @@ class DepartmentController extends Controller
         ]);
 
         if (array_key_exists('department_head_id', $validated) && $validated['department_head_id'] !== null) {
-            $this->validateDepartmentHeadExclusive($validated['department_head_id'], $id);
-
-            $headUser = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
-                ->where('id', $validated['department_head_id'])
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-                ->first();
-            if (! $headUser || (int) $headUser->department_id !== (int) $department->id) {
-                throw ValidationException::withMessages([
-                    'department_head_id' => ['The selected employee must belong to this department to be assigned as head.'],
-                ]);
-            }
-            if (! $headUser->is_active) {
-                throw ValidationException::withMessages([
-                    'department_head_id' => ['The selected employee must be active to be assigned as department head.'],
-                ]);
-            }
-            if ($headUser->branch_id !== null && (int) $headUser->branch_id !== (int) $department->branch_id) {
-                throw ValidationException::withMessages([
-                    'department_head_id' => ['The selected employee must belong to the same branch as this department to be assigned as head.'],
-                ]);
-            }
-            $headCompanyId = $headUser->getEffectiveCompanyId();
-            $deptCompanyId = $department->branch?->company_id;
-            if ($headCompanyId !== null && (int) $headCompanyId !== (int) $deptCompanyId) {
-                throw ValidationException::withMessages([
-                    'department_head_id' => ['The selected employee is assigned to another company and cannot be department head here. An employee can only belong to one company.'],
-                ]);
-            }
+            $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['department_head_id']);
         }
 
         if (isset($validated['name'])) {
@@ -237,6 +226,12 @@ class DepartmentController extends Controller
             $previousHeadId = $department->department_head_id;
             $department->department_head_id = $validated['department_head_id'];
             $department->save();
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'department',
+                (int) $department->id,
+                $validated['department_head_id'] !== null ? (int) $validated['department_head_id'] : null,
+                $previousHeadId !== null ? (int) $previousHeadId : null,
+            );
             foreach (array_unique(array_filter([
                 $previousHeadId ? (int) $previousHeadId : null,
                 $department->department_head_id ? (int) $department->department_head_id : null,
@@ -259,16 +254,8 @@ class DepartmentController extends Controller
             $department->save();
         }
 
-        if (array_key_exists('team_leader_ids', $validated)) {
-            $this->orgTeamLeaderService->syncDepartmentTeamLeaders(
-                $department,
-                array_map('intval', $validated['team_leader_ids'] ?? []),
-            );
-        }
-
         $departmentFresh = $department->fresh([
             'departmentHead:id,name,profile_image',
-            'teamLeaders:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'branch:id,name,company_id',
             'branch.company:id,name,logo',
         ]);
@@ -284,16 +271,17 @@ class DepartmentController extends Controller
 
     /**
      * Assign employees to this department.
-     * Validates: each employee can only belong to one company. Rejects if already assigned elsewhere.
+     * Supports cross-company shared assignments and primary transfers.
      */
     public function assignEmployees(Request $request, int $id): JsonResponse
     {
         $department = Department::findOrFail($id);
-        $targetCompanyId = $department->branch?->company_id;
 
         $validated = $request->validate([
             'employee_ids' => ['required', 'array'],
             'employee_ids.*' => ['integer', 'exists:users,id'],
+            'assignment_mode' => ['nullable', 'string', 'in:shared,transfer_primary'],
+            'remarks' => ['nullable', 'string', 'max:1000'],
         ]);
 
         $users = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
@@ -304,7 +292,7 @@ class DepartmentController extends Controller
         // Block employees who are Company Heads from being assigned to a department
         $companyHeadIds = \App\Models\Company::whereIn('company_head_id', $validated['employee_ids'])
             ->pluck('company_head_id')
-            ->map(fn ($id) => (int) $id)
+            ->map(fn ($headId) => (int) $headId)
             ->toArray();
         if (count($companyHeadIds) > 0) {
             $headNames = $users->whereIn('id', $companyHeadIds)->map(fn (User $user) => $user->display_name)->toArray();
@@ -318,7 +306,7 @@ class DepartmentController extends Controller
         // Block employees who are Branch Managers from being assigned to a department
         $branchManagerIds = \App\Models\Branch::whereIn('branch_manager_id', $validated['employee_ids'])
             ->pluck('branch_manager_id')
-            ->map(fn ($id) => (int) $id)
+            ->map(fn ($managerId) => (int) $managerId)
             ->unique()
             ->values()
             ->toArray();
@@ -331,35 +319,14 @@ class DepartmentController extends Controller
             ]);
         }
 
-        $conflicts = [];
-        foreach ($users as $user) {
-            $effective = $user->getEffectiveCompanyId();
-            if ($effective !== null && (int) $effective !== (int) $targetCompanyId) {
-                $conflicts[] = $user->display_name;
-            }
-        }
-        if (count($conflicts) > 0) {
-            throw ValidationException::withMessages([
-                'employee_ids' => [
-                    'The following employees are already assigned to another company and cannot be assigned here: '.implode(', ', $conflicts).'. An employee can only belong to one company.',
-                ],
-            ]);
-        }
-
-        // Sync company_id + branch_id + division_id so Employee Profile → Employment Tab shows correct hierarchy
-        $branchId = $department->branch_id;
-        $companyId = $department->company_id ?? $department->branch?->company_id;
-        $divisionId = $department->division_id;
-
-        User::whereIn('id', $validated['employee_ids'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->update([
-                'department_id' => $department->id,
-                'department' => $department->name,
-                'branch_id' => $branchId,
-                'company_id' => $companyId,
-                'division_id' => $divisionId,
-            ]);
+        $assignmentMode = $validated['assignment_mode'] ?? EmployeeOrganizationAssignmentService::MODE_TRANSFER_PRIMARY;
+        $this->organizationAssignments->assignToLegacyUnit(
+            'department',
+            (int) $department->id,
+            $validated['employee_ids'],
+            $assignmentMode,
+            $validated['remarks'] ?? null,
+        );
 
         return response()->json([
             'message' => 'Employees assigned successfully.',
@@ -383,10 +350,11 @@ class DepartmentController extends Controller
             'employee_ids.*' => ['integer', 'exists:users,id'],
         ]);
 
-        // Clear employment hierarchy so Employee Profile stays in sync (single source of truth)
-        User::whereIn('id', $validated['employee_ids'])
-            ->where('department_id', $id)
-            ->update(['department_id' => null, 'department' => null, 'division_id' => null, 'section_unit_id' => null, 'branch_id' => null, 'company_id' => null]);
+        $this->organizationAssignments->unassignFromLegacyUnit(
+            'department',
+            (int) $department->id,
+            $validated['employee_ids'],
+        );
 
         return response()->json([
             'message' => 'Employees unassigned successfully.',
@@ -444,7 +412,6 @@ class DepartmentController extends Controller
             'department_head_id' => $d->department_head_id,
             'department_head_name' => $d->departmentHead?->display_name,
             'department_head_profile_image' => $d->departmentHead?->profile_image_url ?? null,
-            ...$this->orgTeamLeaderService->departmentTeamLeaderPayload($d),
             'created_at' => $d->created_at?->toIso8601String(),
         ];
     }
@@ -499,22 +466,5 @@ class DepartmentController extends Controller
         }
 
         return $path;
-    }
-
-    /**
-     * Prevent the same employee from leading more than one department at a time.
-     * excludeDepartmentId: when editing, the current department is excluded so the existing head can stay.
-     */
-    private function validateDepartmentHeadExclusive(int $userId, ?int $excludeDepartmentId): void
-    {
-        $query = Department::where('department_head_id', $userId);
-        if ($excludeDepartmentId !== null) {
-            $query->where('id', '!=', $excludeDepartmentId);
-        }
-        if ($query->exists()) {
-            throw ValidationException::withMessages([
-                'department_head_id' => ['This employee is already Department Head of another department. An employee can only lead one department at a time.'],
-            ]);
-        }
     }
 }

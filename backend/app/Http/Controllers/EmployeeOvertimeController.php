@@ -5,8 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\Overtime;
 use App\Models\OvertimeApprovalAudit;
 use App\Models\User;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
 use App\Support\PhPayrollReference;
@@ -25,6 +27,8 @@ class EmployeeOvertimeController extends Controller
         private readonly OvertimeApprovalService $overtimeApprovalService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly OtDetectionService $otDetectionService,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
+        private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
     ) {}
 
     private function attendanceTimezone(): string
@@ -219,7 +223,7 @@ class EmployeeOvertimeController extends Controller
     {
         $o->loadMissing([
             'approvedBy:id,name,first_name,middle_name,last_name,suffix',
-            'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+            'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
             'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
@@ -297,7 +301,7 @@ class EmployeeOvertimeController extends Controller
         if (! $dashboardLite) {
             $query->with([
                 'approvedBy:id,name,first_name,middle_name,last_name,suffix',
-                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
@@ -363,7 +367,7 @@ class EmployeeOvertimeController extends Controller
             ->where('id', $id)
             ->with([
                 'approvedBy:id,name,first_name,middle_name,last_name,suffix',
-                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
@@ -412,6 +416,7 @@ class EmployeeOvertimeController extends Controller
             'ph_ot_rule' => ['nullable', 'string', Rule::in(PhPayrollReference::OT_RULE_CODES)],
             'reason' => ['required', 'string', 'min:2'],
             'attachment' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
         ]);
 
         $dateYmd = $overtime->date->toDateString();
@@ -443,7 +448,7 @@ class EmployeeOvertimeController extends Controller
             'message' => 'Overtime request updated.',
             'overtime' => $this->mapOvertimeRowForEmployee($overtime->fresh([
                 'approvedBy:id,name,first_name,middle_name,last_name,suffix',
-                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
@@ -647,7 +652,26 @@ class EmployeeOvertimeController extends Controller
             }
         }
 
-        $routing = $this->hrApprovalChainResolver->resolveRoutingDecision($user);
+        $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
+            $user,
+            isset($validated['assignment_id']) ? (int) $validated['assignment_id'] : null,
+            $dateYmd,
+        );
+        $assignmentContext = $this->organizationAssignments->requestContextPayload($selectedAssignment);
+
+        \Illuminate\Support\Facades\Log::info('overtime_request: selected organization context', [
+            'request_employee_id' => (int) $user->id,
+            'selected_assignment_id' => $assignmentContext['assignment_id'],
+            'selected_assignment_type' => $assignmentContext['assignment_type'],
+            'selected_section_unit_id' => $assignmentContext['section_unit_id'],
+        ]);
+
+        $routing = $this->hrApprovalChainResolver->resolveRoutingDecision(
+            $user,
+            true,
+            OrgApprovalWorkflowService::MODULE_OVERTIME,
+            $assignmentContext,
+        );
         $chain = $routing['chain'];
         if ($chain === null) {
             throw ValidationException::withMessages([
@@ -660,17 +684,19 @@ class EmployeeOvertimeController extends Controller
             $attachmentPath = $request->file('attachment')->store('overtime_attachments', 'public');
         }
 
-        $stage = $this->hrApprovalChainResolver->initialApprovalStage($user);
-        $firstApproverId = $stage === \App\Support\HrApprovalStages::PENDING_FIRST
-            ? ($routing['first_level_approver']?->id)
-            : null;
+        $stage = $this->hrApprovalChainResolver->initialApprovalStage(
+            $user,
+            true,
+            OrgApprovalWorkflowService::MODULE_OVERTIME,
+            $assignmentContext,
+        );
         $hrApproverId = $routing['hr_approver']?->id;
         if (! $hrApproverId) {
             throw ValidationException::withMessages([
                 'approval' => ['No active Admin (HR) approver is configured.'],
             ]);
         }
-        $overtimes = DB::transaction(function () use ($user, $dateYmd, $computedTargets, $validated, $attachmentPath, $stage, $firstApproverId, $hrApproverId) {
+        $overtimes = DB::transaction(function () use ($user, $dateYmd, $computedTargets, $validated, $attachmentPath, $stage, $hrApproverId, $assignmentContext) {
             $rows = [];
             foreach ($computedTargets as $target) {
                 $computed = $target['computed'];
@@ -682,6 +708,7 @@ class EmployeeOvertimeController extends Controller
 
                 $overtime = Overtime::create([
                     'user_id' => $user->id,
+                    ...$assignmentContext,
                     'date' => $dateYmd,
                     'schedule_end' => $computed['schedule_end']->format('H:i:s'),
                     'time_out' => null,
@@ -696,7 +723,7 @@ class EmployeeOvertimeController extends Controller
                     'created_by' => $user->id,
                     'approval_stage' => $stage,
                     'pending_approval' => true,
-                    'first_approver_id' => $firstApproverId,
+                    'first_approver_id' => null,
                     'second_approver_id' => $hrApproverId,
                     'filed_at' => now(),
                     'filed_by' => $user->id,
@@ -716,13 +743,22 @@ class EmployeeOvertimeController extends Controller
             return collect($rows);
         });
 
+        foreach ($overtimes as $overtime) {
+            $this->approvalWorkflowService->ensureRecordsForRequest(
+                $overtime,
+                OrgApprovalWorkflowService::MODULE_OVERTIME,
+                $user,
+                $user,
+            );
+        }
+
         return response()->json([
             'message' => $overtimes->count() > 1
                 ? 'Overtime requests submitted successfully.'
                 : 'Overtime request submitted successfully.',
             'overtimes' => $overtimes->map(fn (Overtime $overtime) => $this->mapOvertimeRowForEmployee($overtime->fresh([
                 'approvedBy:id,name,first_name,middle_name,last_name,suffix',
-                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id',
+                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',

@@ -3,15 +3,14 @@
 namespace App\Services;
 
 use App\Enums\HrRole;
-use App\Models\Branch;
-use App\Models\Company;
-use App\Models\Department;
-use App\Models\Division;
-use App\Models\SectionUnit;
 use App\Models\User;
 
 class HrRoleResolver
 {
+    public function __construct(
+        private readonly OrganizationLeadershipAssignmentService $leadershipAssignments,
+    ) {}
+
     /**
      * Resolve HR panel role (primary badge / permission tier).
      * Laravel admins always include ADMIN (HR); organizational hat is separate — see {@see listEffectiveHrRoles()}.
@@ -93,56 +92,25 @@ class HrRoleResolver
      */
     private function resolveOrgHierarchyFromAssignments(User $user): HrRole
     {
-        if ($user->relationLoaded('companyHeadships') && $user->companyHeadships->isNotEmpty()) {
-            return HrRole::CompanyHead;
-        }
-        if (Company::where('company_head_id', $user->id)->exists()) {
+        if ($this->leadershipAssignments->companyIdsLedBy($user)->isNotEmpty()) {
             return HrRole::CompanyHead;
         }
 
-        if ($user->relationLoaded('managedBranch') && $user->managedBranch !== null) {
-            return HrRole::BranchHead;
-        }
-        if (Branch::where('branch_manager_id', $user->id)->exists()) {
+        if ($this->leadershipAssignments->branchIdsLedBy($user)->isNotEmpty()) {
             return HrRole::BranchHead;
         }
 
-        if ($user->relationLoaded('managedDivision') && $user->managedDivision !== null) {
-            return HrRole::DivisionHead;
-        }
-        if ($user->relationLoaded('division')
-            && $user->division
-            && (int) $user->division->division_head_id === (int) $user->id) {
-            return HrRole::DivisionHead;
-        }
-        if (Division::where('division_head_id', $user->id)->exists()) {
+        if ($this->leadershipAssignments->divisionIdsLedBy($user)->isNotEmpty()) {
             return HrRole::DivisionHead;
         }
 
-        if ($user->relationLoaded('managedDepartment') && $user->managedDepartment !== null) {
-            return HrRole::DepartmentHead;
-        }
-        if ($user->relationLoaded('departmentRelation')
-            && $user->departmentRelation
-            && (int) $user->departmentRelation->department_head_id === (int) $user->id) {
-            return HrRole::DepartmentHead;
-        }
-        if (Department::where('department_head_id', $user->id)->exists()) {
+        if ($this->leadershipAssignments->departmentIdsLedBy($user)->isNotEmpty()) {
             return HrRole::DepartmentHead;
         }
 
-        if ($user->relationLoaded('managedSectionUnit') && $user->managedSectionUnit !== null) {
-            return HrRole::SectionUnitHead;
-        }
-        if ($user->relationLoaded('sectionUnit')
-            && $user->sectionUnit
-            && (int) $user->sectionUnit->section_unit_head_id === (int) $user->id) {
-            return HrRole::SectionUnitHead;
-        }
-        if (SectionUnit::where('section_unit_head_id', $user->id)->exists()) {
-            return HrRole::SectionUnitHead;
-        }
-        if ($user->teamLeaderSections()->exists() || $user->teamLeaderDepartments()->exists()) {
+        if ($this->leadershipAssignments->sectionUnitIdsLedBy($user)->isNotEmpty()
+            || $user->teamLeaderSections()->exists()
+            || $user->teamLeaderDepartments()->exists()) {
             return HrRole::SectionUnitHead;
         }
 
@@ -155,13 +123,7 @@ class HrRoleResolver
      */
     public function isAssignedOrganizationHead(User $user): bool
     {
-        return Company::where('company_head_id', $user->id)->exists()
-            || Branch::where('branch_manager_id', $user->id)->exists()
-            || Department::where('department_head_id', $user->id)->exists()
-            || Division::where('division_head_id', $user->id)->exists()
-            || SectionUnit::where('section_unit_head_id', $user->id)->exists()
-            || $user->teamLeaderSections()->exists()
-            || $user->teamLeaderDepartments()->exists();
+        return $this->leadershipAssignments->leadsAnyUnit($user);
     }
 
     /**

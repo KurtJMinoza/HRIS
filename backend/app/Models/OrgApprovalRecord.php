@@ -20,9 +20,12 @@ class OrgApprovalRecord extends Model
         'request_id',
         'module_type',
         'approval_level',
+        'approval_label',
         'approver_role',
         'approver_id',
         'approver_name',
+        'eligible_approver_ids',
+        'routing_rule',
         'approval_status',
         'remarks',
         'approved_at',
@@ -33,6 +36,7 @@ class OrgApprovalRecord extends Model
     {
         return [
             'approved_at' => 'datetime',
+            'eligible_approver_ids' => 'array',
         ];
     }
 

@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import LeadershipPositionsSection from '@/components/organization/LeadershipPositionsSection'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Dialog,
@@ -43,6 +44,16 @@ import {
   ADMIN_FORM_DIALOG_MAX_W_MD,
 } from '@/lib/adminFormDialogStyles'
 import AssignEmployeesModal from '@/components/admin/AssignEmployeesModal'
+import AssignOrgHeadModal from '@/components/admin/AssignOrgHeadModal'
+import { buildOrgCurrentHead, employeeDisplayName } from '@/lib/employeeSearch'
+import {
+  ASSIGNMENT_MODE_TRANSFER_PRIMARY,
+  buildOrgAssignCounts,
+  buildOrgAssignRows,
+  employeeAssignedToUnit,
+  selectedCrossCompanyEmployees,
+} from '@/lib/orgEmployeeAssignment'
+import { patchOrgUnitEmployeeCount, resolveOrgUnitEmployeeCount } from '@/lib/orgUnitEmployeeSync'
 
 function hasWorkingDays(schedule) {
   if (!schedule || typeof schedule !== 'object') return false
@@ -104,7 +115,6 @@ export default function AdminDivisions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const [departmentFilter, setDepartmentFilter] = useState(() => searchParams.get('department_id') || '')
   const [branchFilter, setBranchFilter] = useState(() => searchParams.get('branch_id') || '')
   const [companyFilter, setCompanyFilter] = useState(() => searchParams.get('company_id') || '')
   const [page, setPage] = useState(1)
@@ -114,7 +124,6 @@ export default function AdminDivisions() {
   const [createCode, setCreateCode] = useState('')
   const [createCompanyId, setCreateCompanyId] = useState('')
   const [createBranchId, setCreateBranchId] = useState('')
-  const [createDepartmentId, setCreateDepartmentId] = useState('')
   const [createSubmitting, setCreateSubmitting] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [editDivision, setEditDivision] = useState(null)
@@ -122,7 +131,6 @@ export default function AdminDivisions() {
   const [editCode, setEditCode] = useState('')
   const [editCompanyId, setEditCompanyId] = useState('')
   const [editBranchId, setEditBranchId] = useState('')
-  const [editDepartmentId, setEditDepartmentId] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editSubmitting, setEditSubmitting] = useState(false)
 
@@ -143,6 +151,7 @@ export default function AdminDivisions() {
   const [headModalLoading, setHeadModalLoading] = useState(false)
   const [headModalLoadError, setHeadModalLoadError] = useState(null)
   const headLoadSeqRef = useRef(0)
+  const viewEmployeesLoadSeqRef = useRef(0)
 
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignDivision, setAssignDivision] = useState(null)
@@ -165,6 +174,7 @@ export default function AdminDivisions() {
   const hoverCardLeaveTimerRef = useRef(null)
   const [assignSearchQuery, setAssignSearchQuery] = useState('')
   const [assignModalLoading, setAssignModalLoading] = useState(false)
+  const [assignMode, setAssignMode] = useState(ASSIGNMENT_MODE_TRANSFER_PRIMARY)
 
   const [sortCol, setSortCol] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
@@ -173,7 +183,7 @@ export default function AdminDivisions() {
   const [createDescription, setCreateDescription] = useState('')
   const [createCompanyPickerOpen, setCreateCompanyPickerOpen] = useState(false)
   const [createBranchPickerOpen, setCreateBranchPickerOpen] = useState(false)
-  const [createDepartmentPickerOpen, setCreateDepartmentPickerOpen] = useState(false)
+  const leadershipRef = useRef(null)
 
   const sortedCompaniesForPicker = useMemo(
     () =>
@@ -198,18 +208,6 @@ export default function AdminDivisions() {
     return sortedBranchesForPicker.filter((b) => String(b.company_id) === String(createCompanyId))
   }, [sortedBranchesForPicker, createCompanyId])
 
-  const departmentsForCreateOrg = useMemo(() => {
-    let list = departments
-    if (createCompanyId) {
-      const branchIds = new Set(branchesForCreateCompany.map((b) => String(b.id)))
-      list = list.filter((d) => branchIds.has(String(d.branch_id)))
-    }
-    if (createBranchId) {
-      list = list.filter((d) => String(d.branch_id) === String(createBranchId))
-    }
-    return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
-  }, [departments, createCompanyId, createBranchId, branchesForCreateCompany])
-
   const selectedCreateCompany = useMemo(
     () => companies.find((c) => String(c.id) === String(createCompanyId)),
     [companies, createCompanyId],
@@ -220,27 +218,10 @@ export default function AdminDivisions() {
     [branches, createBranchId]
   )
 
-  const selectedCreateDepartment = useMemo(
-    () => departments.find((d) => String(d.id) === String(createDepartmentId)),
-    [departments, createDepartmentId]
-  )
-
   const editBranchesForCompany = useMemo(() => {
     if (!editCompanyId) return []
     return sortedBranchesForPicker.filter((b) => String(b.company_id) === String(editCompanyId))
   }, [sortedBranchesForPicker, editCompanyId])
-
-  const editDepartmentsForOrg = useMemo(() => {
-    let list = departments
-    if (editCompanyId) {
-      const branchIds = new Set(editBranchesForCompany.map((b) => String(b.id)))
-      list = list.filter((d) => branchIds.has(String(d.branch_id)))
-    }
-    if (editBranchId) {
-      list = list.filter((d) => String(d.branch_id) === String(editBranchId))
-    }
-    return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
-  }, [departments, editCompanyId, editBranchId, editBranchesForCompany])
 
   const fetchBranches = useCallback(async () => {
     try {
@@ -272,10 +253,9 @@ export default function AdminDivisions() {
   const fetchDivisions = useCallback(async () => {
     setError(null)
     try {
-      const params = {}
+      const params = { fresh: true }
       if (companyFilter) params.company_id = companyFilter
       if (branchFilter) params.branch_id = branchFilter
-      if (departmentFilter) params.department_id = departmentFilter
       const data = await getDivisions(params)
       setDivisions(data.divisions || [])
     } catch (e) {
@@ -284,7 +264,11 @@ export default function AdminDivisions() {
     } finally {
       setLoading(false)
     }
-  }, [branchFilter, companyFilter, departmentFilter])
+  }, [branchFilter, companyFilter])
+
+  const syncDivisionEmployeeCount = useCallback((divisionId, count) => {
+    setDivisions((prev) => patchOrgUnitEmployeeCount(prev, divisionId, count))
+  }, [])
 
   const fetchEmployees = useCallback(async () => {
     try {
@@ -302,13 +286,15 @@ export default function AdminDivisions() {
     setPreviewMembersLoading(true)
     try {
       const data = await getDivisionEmployees(division.id)
-      setPreviewMembers(data.employees || [])
+      const list = data.employees || []
+      setPreviewMembers(list)
+      syncDivisionEmployeeCount(division.id, resolveOrgUnitEmployeeCount(data, list))
     } catch {
       setPreviewMembers([])
     } finally {
       setPreviewMembersLoading(false)
     }
-  }, [])
+  }, [syncDivisionEmployeeCount])
 
   // Run branches + divisions + companies + departments in parallel on mount; employees deferred until modal
   useEffect(() => {
@@ -322,19 +308,18 @@ export default function AdminDivisions() {
     if (_divisionsFirstRender[0]) { _divisionsFirstRender[0] = false; return }
     setLoading(true)
     fetchDivisions()
-  }, [branchFilter, companyFilter, departmentFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [branchFilter, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const params = {}
     if (companyFilter) params.company_id = companyFilter
     if (branchFilter) params.branch_id = branchFilter
-    if (departmentFilter) params.department_id = departmentFilter
     setSearchParams(params, { replace: true })
-  }, [branchFilter, companyFilter, departmentFilter, setSearchParams])
+  }, [branchFilter, companyFilter, setSearchParams])
 
   useEffect(() => {
     setPage(1)
-  }, [branchFilter, companyFilter, departmentFilter, searchQuery, filterNoHead, filterHasQr])
+  }, [branchFilter, companyFilter, searchQuery, filterNoHead, filterHasQr])
 
   // Employees are heavy — only fetch when assign/head modal opens, and only once
   useEffect(() => {
@@ -380,7 +365,6 @@ export default function AdminDivisions() {
       setCreateCode('')
       setCreateCompanyId('')
       setCreateBranchId('')
-      setCreateDepartmentId('')
       setCreateDescription('')
       setCreateOpen(false)
       await fetchDivisions()
@@ -399,7 +383,6 @@ export default function AdminDivisions() {
     setEditCode(division?.code || '')
     setEditCompanyId(division?.company_id != null ? String(division.company_id) : '')
     setEditBranchId(division?.branch_id != null ? String(division.branch_id) : '')
-    setEditDepartmentId(division?.department_id != null ? String(division.department_id) : '')
     setEditDescription(division?.description || '')
     setEditOpen(true)
     setError(null)
@@ -421,6 +404,13 @@ export default function AdminDivisions() {
     setEditSubmitting(true)
     setError(null)
     try {
+      if (leadershipRef.current?.isDirty?.()) {
+        const leadershipSaved = await leadershipRef.current.save()
+        if (!leadershipSaved) {
+          return
+        }
+      }
+
       const payload = {
         name: editName.trim(),
         company_id: parseInt(editCompanyId, 10),
@@ -447,6 +437,8 @@ export default function AdminDivisions() {
   }
 
   const openViewEmployees = async (division) => {
+    viewEmployeesLoadSeqRef.current += 1
+    const seq = viewEmployeesLoadSeqRef.current
     setViewEmployeesDivision(division)
     setViewEmployeesOpen(true)
     setViewEmployeesList([])
@@ -454,8 +446,13 @@ export default function AdminDivisions() {
     setUnassigningId(null)
     try {
       const data = await getDivisionEmployees(division.id)
-      setViewEmployeesList(data.employees || [])
+      if (seq !== viewEmployeesLoadSeqRef.current) return
+      const list = data.employees || []
+      const count = resolveOrgUnitEmployeeCount(data, list)
+      setViewEmployeesList(list)
+      syncDivisionEmployeeCount(division.id, count)
     } catch (e) {
+      if (seq !== viewEmployeesLoadSeqRef.current) return
       setViewEmployeesList([])
       toast({
         title: 'Could not load division members',
@@ -463,7 +460,9 @@ export default function AdminDivisions() {
         variant: 'error',
       })
     } finally {
-      setViewEmployeesLoading(false)
+      if (seq === viewEmployeesLoadSeqRef.current) {
+        setViewEmployeesLoading(false)
+      }
     }
   }
 
@@ -471,11 +470,14 @@ export default function AdminDivisions() {
     if (!viewEmployeesDivision) return
     try {
       const data = await getDivisionEmployees(viewEmployeesDivision.id)
-      setViewEmployeesList(data.employees || [])
+      const list = data.employees || []
+      const count = resolveOrgUnitEmployeeCount(data, list)
+      setViewEmployeesList(list)
+      syncDivisionEmployeeCount(viewEmployeesDivision.id, count)
     } catch {
       setViewEmployeesList([])
     }
-  }, [viewEmployeesDivision])
+  }, [syncDivisionEmployeeCount, viewEmployeesDivision])
 
   const handleUnassignFromView = (emp) => {
     if (!viewEmployeesDivision) return
@@ -554,36 +556,21 @@ export default function AdminDivisions() {
     setHeadModalLoading(true)
     try {
       const data = await getEmployees({
-        division_id: resolvedDivisionId,
-        for_schedule_assignment: true,
+        for_leadership_assignment: true,
+        per_page: 'all',
         fresh: true,
       })
       if (seq !== headLoadSeqRef.current) return
       let list = (data.employees || []).filter((e) => {
         if (!isRosterStaffMember(e)) return false
-        if (!sameUserId(e.division_id, resolvedDivisionId)) return false
         const isCurrentHead =
           division.division_head_id != null && division.division_head_id !== '' && sameUserId(e.id, division.division_head_id)
         if (!isCurrentHead && e.is_active === false) return false
-        if (
-          division.branch_id != null &&
-          division.branch_id !== '' &&
-          e.branch_id != null &&
-          String(e.branch_id) !== String(division.branch_id)
-        ) {
-          return false
-        }
-        if (
-          division.company_id != null &&
-          division.company_id !== '' &&
-          e.company_id != null &&
-          Number(e.company_id) !== Number(division.company_id)
-        ) {
-          return false
-        }
         return true
       })
-      list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+      list.sort((a, b) =>
+        employeeDisplayName(a).localeCompare(employeeDisplayName(b), undefined, { sensitivity: 'base' }),
+      )
       setHeadModalEmployees(list)
     } catch (err) {
       if (seq !== headLoadSeqRef.current) return
@@ -605,6 +592,32 @@ export default function AdminDivisions() {
     setHeadOpen(true)
     void loadHeadCandidates(division)
   }
+
+  const divisionHeadRoleNotes = useMemo(() => {
+    if (!headDivision) return new Map()
+    const map = new Map()
+    for (const div of divisions) {
+      if (div.division_head_id && div.id !== headDivision.id) {
+        map.set(String(div.division_head_id), `Division Head — ${div.name || 'Division'}`)
+      }
+    }
+    for (const c of companies) {
+      if (c.company_head_id) {
+        map.set(String(c.company_head_id), `Company Head — ${c.name || 'Company'}`)
+      }
+    }
+    for (const b of branches) {
+      if (b.branch_manager_id) {
+        map.set(String(b.branch_manager_id), `Branch Manager — ${b.name || 'Branch'}`)
+      }
+    }
+    for (const d of departments) {
+      if (d.department_head_id) {
+        map.set(String(d.department_head_id), `Dept Head — ${d.name || 'Department'}`)
+      }
+    }
+    return map
+  }, [headDivision, divisions, companies, branches, departments])
 
   const handleAssignHead = async (e) => {
     e.preventDefault()
@@ -640,18 +653,17 @@ export default function AdminDivisions() {
     setAssignOpen(true)
     setAssignFilter('available')
     setAssignSearchQuery('')
+    setAssignMode(ASSIGNMENT_MODE_TRANSFER_PRIMARY)
     setAssignModalEmployees([])
     setAssignModalLoading(true)
     try {
-      const params = { per_page: 'all', active_filter: 'all', for_department_assignment: true }
-      const companyId = division?.company_id
-      if (companyId) params.assignable_to_company_id = companyId
-      if (division?.branch_id != null && division.branch_id !== '') params.assignment_branch_id = division.branch_id
-      if (division?.department_id != null && division.department_id !== '') params.department_id = division.department_id
+      const params = { per_page: 'all', active_filter: 'active', for_organization_assignment: true, fresh: true }
       const data = await getEmployees(params)
       const list = data.employees || []
       setAssignModalEmployees(list)
-      const inDivision = list.filter((emp) => String(emp.division_id ?? '') === String(division.id)).map((e) => e.id)
+      const inDivision = list
+        .filter((emp) => employeeAssignedToUnit(emp, division, 'division_id'))
+        .map((e) => e.id)
       setAssignIds(inDivision)
     } catch (e) {
       setAssignModalEmployees([])
@@ -672,7 +684,7 @@ export default function AdminDivisions() {
     setAssignSubmitting(true)
     setError(null)
     try {
-      const data = await assignEmployeesToDivision(assignDivision.id, assignIds)
+      const data = await assignEmployeesToDivision(assignDivision.id, assignIds, { assignmentMode: assignMode })
       if (data?.division?.id != null) {
         setDivisions((prev) =>
           prev.map((d) => (sameUserId(d.id, data.division.id) ? { ...d, ...data.division } : d)),
@@ -747,46 +759,25 @@ export default function AdminDivisions() {
     return assignList.filter((e) => isRosterStaffMember(e)).filter((emp) => isExcludedFromAssignPool(emp)).length
   }, [assignList, isExcludedFromAssignPool])
 
+  const assignTargetCompanyId = assignDivision?.company_id ?? null
+
   const assignRows = useMemo(() => {
-    return assignList
-      .filter((e) => isRosterStaffMember(e))
-      .filter((emp) => !isExcludedFromAssignPool(emp))
-      .filter((emp) => {
-        const q = assignSearchQuery.trim().toLowerCase()
-        if (!q) return true
-        const haystack = `${emp.name || ''} ${emp.employee_code || ''} ${emp.email || ''} ${emp.position || ''} ${emp.department || ''} ${emp.management_role || ''}`.toLowerCase()
-        return haystack.includes(q)
-      })
-      .filter((emp) => {
-        const assignedToCurrent =
-          String(emp.division_id ?? '') === String(assignDivision?.id ?? '')
-        const inSameDept =
-          String(emp.department_id ?? '') === String(assignDivision?.department_id ?? '')
-        const assignedElsewhere = (emp.division_id != null && emp.division_id !== '') && !assignedToCurrent
-        const isInactive = !emp.is_active
-        const status = assignedToCurrent ? 'assigned' : (isInactive || assignedElsewhere || !inSameDept ? 'unavailable' : 'available')
-        if (assignFilter === 'available') return status === 'available'
-        if (assignFilter === 'assigned') return status === 'assigned'
-        return true
-      })
-      .map((emp) => {
-        const assignedToCurrent =
-          String(emp.division_id ?? '') === String(assignDivision?.id ?? '')
-        const inSameDept =
-          String(emp.department_id ?? '') === String(assignDivision?.department_id ?? '')
-        const assignedElsewhere = (emp.division_id != null && emp.division_id !== '') && !assignedToCurrent
-        const isInactive = !emp.is_active
-        const status = assignedToCurrent
-          ? 'assigned'
-          : (isInactive || assignedElsewhere || !inSameDept ? 'unavailable' : 'available')
-        const checked = assignedToCurrent || assignIds.some((id) => sameUserId(id, emp.id))
-        const checkboxDisabled = status !== 'available'
-        return { emp, status, checked, checkboxDisabled, isInactive, assignedElsewhere }
-      })
+    return buildOrgAssignRows({
+      assignList,
+      targetUnit: assignDivision,
+      targetCompanyId: assignTargetCompanyId,
+      memberIdField: 'division_id',
+      assignSearchQuery,
+      assignFilter,
+      assignIds,
+      isExcludedFromAssignPool,
+      isRosterStaffMember,
+    })
   }, [
     assignList,
     assignSearchQuery,
     assignDivision,
+    assignTargetCompanyId,
     assignFilter,
     assignIds,
     isExcludedFromAssignPool,
@@ -810,41 +801,37 @@ export default function AdminDivisions() {
     [assignList, assignIds]
   )
 
-  /** Employees in the selection who are not yet in this division (for footer hint). */
   const assignNewToDivisionCount = useMemo(() => {
     if (!assignDivision) return 0
     return assignIds.filter((id) => {
       const emp = assignList.find((e) => sameUserId(e.id, id))
-      return emp && String(emp.division_id ?? '') !== String(assignDivision.id)
+      return emp && !employeeAssignedToUnit(emp, assignDivision, 'division_id')
     }).length
   }, [assignIds, assignList, assignDivision])
 
   const assignFooterStats = useMemo(() => {
     if (!assignDivision) return { current: 0, newlyAdded: 0, afterSave: 0 }
-    const current = assignList.filter((e) => String(e.division_id) === String(assignDivision.id)).length
+    const current = assignList.filter((e) => employeeAssignedToUnit(e, assignDivision, 'division_id')).length
     const newlyAdded = selectedEmployeesPreview.filter(
-      (e) => String(e.division_id ?? '') !== String(assignDivision.id)
+      (e) => !employeeAssignedToUnit(e, assignDivision, 'division_id')
     ).length
     return { current, newlyAdded, afterSave: current + newlyAdded }
   }, [assignDivision, assignList, selectedEmployeesPreview])
 
   const assignCounts = useMemo(() => {
-    let available = 0, assigned = 0, unavailable = 0
-    assignList
-      .filter((e) => isRosterStaffMember(e))
-      .filter((emp) => !isExcludedFromAssignPool(emp))
-      .forEach((emp) => {
-        const assignedToCurrent = String(emp.division_id ?? '') === String(assignDivision?.id ?? '')
-        const inSameDept = String(emp.department_id ?? '') === String(assignDivision?.department_id ?? '')
-        const assignedElsewhere = (emp.division_id != null && emp.division_id !== '') && !assignedToCurrent
-        const isInactive = !emp.is_active
-        const status = assignedToCurrent ? 'assigned' : (isInactive || assignedElsewhere || !inSameDept ? 'unavailable' : 'available')
-        if (status === 'available') available++
-        else if (status === 'assigned') assigned++
-        else unavailable++
-      })
-    return { available, assigned, unavailable, total: available + assigned + unavailable }
+    return buildOrgAssignCounts(
+      assignList,
+      assignDivision,
+      'division_id',
+      isExcludedFromAssignPool,
+      isRosterStaffMember,
+    )
   }, [assignList, assignDivision, isExcludedFromAssignPool])
+
+  const crossCompanySelectedCount = useMemo(
+    () => selectedCrossCompanyEmployees(selectedEmployeesPreview, assignTargetCompanyId).length,
+    [selectedEmployeesPreview, assignTargetCompanyId],
+  )
 
   const toggleSelectAllAssignable = () => {
     setAssignIds((prev) => {
@@ -907,7 +894,7 @@ export default function AdminDivisions() {
         <div className="space-y-1.5">
           <h2 className="text-3xl font-extrabold tracking-normal text-foreground">Divisions</h2>
           <p className="max-w-3xl text-base leading-7 text-muted-foreground">
-            Organize divisions under company, branch, and department. Create divisions, assign heads, and assign employees.
+            Organize divisions under company and branch. Create divisions, assign heads, and assign employees.
           </p>
         </div>
         <Button
@@ -917,7 +904,6 @@ export default function AdminDivisions() {
             setCreateCode('')
             setCreateCompanyId(companyFilter || '')
             setCreateBranchId(branchFilter || '')
-            setCreateDepartmentId(departmentFilter || '')
             setCreateDescription('')
             setError(null)
           }}
@@ -963,7 +949,7 @@ export default function AdminDivisions() {
                 'disabled:cursor-not-allowed disabled:opacity-60'
               )}
               value={companyFilter}
-              onChange={(e) => { setCompanyFilter(e.target.value); setBranchFilter(''); setDepartmentFilter(''); setLoading(true); setPage(1) }}
+              onChange={(e) => { setCompanyFilter(e.target.value); setBranchFilter(''); setLoading(true); setPage(1) }}
             >
               <option value="">All companies</option>
               {companies.map((c) => (
@@ -977,30 +963,13 @@ export default function AdminDivisions() {
                 'disabled:cursor-not-allowed disabled:opacity-60'
               )}
               value={branchFilter}
-              onChange={(e) => { setBranchFilter(e.target.value); setDepartmentFilter(''); setLoading(true); setPage(1) }}
+              onChange={(e) => { setBranchFilter(e.target.value); setLoading(true); setPage(1) }}
             >
               <option value="">All branches</option>
               {branches
                 .filter((b) => !companyFilter || String(b.company_id) === String(companyFilter))
                 .map((b) => (
                 <option key={b.id} value={b.id}>{b.name}{b.company_name ? ` (${b.company_name})` : ''}</option>
-              ))}
-            </select>
-            <span className="text-sm text-muted-foreground">Department:</span>
-            <select
-              className={cn(
-                'h-10 min-w-[210px] rounded-xl border border-border/80 bg-background px-3 text-sm font-semibold text-foreground shadow-none outline-none transition-colors focus:border-brand focus:ring-2 focus:ring-brand/20 dark:bg-input/30',
-                'disabled:cursor-not-allowed disabled:opacity-60'
-              )}
-              value={departmentFilter}
-              onChange={(e) => { setDepartmentFilter(e.target.value); setLoading(true); setPage(1) }}
-            >
-              <option value="">All departments</option>
-              {departments
-                .filter((d) => !branchFilter || String(d.branch_id) === String(branchFilter))
-                .filter((d) => !companyFilter || String(d.company_id) === String(companyFilter))
-                .map((d) => (
-                <option key={d.id} value={d.id}>{d.name}{d.branch_name ? ` (${d.branch_name})` : ''}</option>
               ))}
             </select>
             <button
@@ -1031,10 +1000,10 @@ export default function AdminDivisions() {
               Has QR
               {filterHasQr && <X className="ml-0.5 size-4" />}
             </button>
-            {(filterNoHead || filterHasQr || searchQuery || branchFilter || companyFilter || departmentFilter) && (
+            {(filterNoHead || filterHasQr || searchQuery || branchFilter || companyFilter) && (
               <button
                 type="button"
-                onClick={() => { setFilterNoHead(false); setFilterHasQr(false); setSearchQuery(''); setDepartmentFilter(''); setBranchFilter(''); setCompanyFilter(''); setPage(1) }}
+                onClick={() => { setFilterNoHead(false); setFilterHasQr(false); setSearchQuery(''); setBranchFilter(''); setCompanyFilter(''); setPage(1) }}
                 className="inline-flex h-10 items-center gap-2 rounded-full px-3 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
               >
                 <X className="size-4" />Clear
@@ -1068,7 +1037,6 @@ export default function AdminDivisions() {
                   setCreateCode('')
                   setCreateCompanyId(companyFilter || '')
                   setCreateBranchId(branchFilter || '')
-                  setCreateDepartmentId(departmentFilter || '')
                   setCreateDescription('')
                   setError(null)
                 }}
@@ -1081,7 +1049,7 @@ export default function AdminDivisions() {
             <p className="py-16 text-center text-base text-muted-foreground">No divisions match your filters.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1100px] text-sm">
+              <table className="w-full min-w-[980px] text-sm">
                 <thead>
                   <tr className="border-b border-border/80 bg-muted/30 dark:bg-input/20">
                     <th className="w-20 px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
@@ -1098,9 +1066,6 @@ export default function AdminDivisions() {
                           ? (sortDir === 'asc' ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)
                           : <ChevronUp className="size-3 opacity-30" />}
                       </button>
-                    </th>
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
-                      Department
                     </th>
                     <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       Branch
@@ -1131,8 +1096,8 @@ export default function AdminDivisions() {
                 <tbody className="divide-y divide-border/70 dark:divide-border/60">
                   {pagedDivisions.map((division) => {
                     const assigned = division.assigned_employee_count ?? division.total_employees ?? 0
-                    const departmentTotal = division.department_employee_count ?? 0
-                    const unassigned = division.unassigned_employee_count ?? Math.max(0, departmentTotal - assigned)
+                    const branchTotal = division.branch_employee_count ?? division.department_employee_count ?? 0
+                    const unassigned = division.unassigned_employee_count ?? Math.max(0, branchTotal - assigned)
                     const stats = (() => {
                       let active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0
                       employees.forEach((emp) => {
@@ -1143,7 +1108,7 @@ export default function AdminDivisions() {
                           if (hasWorkingDays(emp.schedule)) schedulesAssigned += 1
                         }
                       })
-                      return { assigned, departmentTotal, unassigned, active, inactive, withQr, schedulesAssigned }
+                      return { assigned, branchTotal, unassigned, active, inactive, withQr, schedulesAssigned }
                     })()
 
                     const divisionInitials = (division.name || '').trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '—'
@@ -1194,15 +1159,6 @@ export default function AdminDivisions() {
                           </div>
                         </td>
 
-                        {/* Department */}
-                        <td className="px-5 py-4 align-middle">
-                          {division.department_name ? (
-                            <span className="text-sm font-medium text-foreground">{division.department_name}</span>
-                          ) : (
-                            <span className="text-xs italic text-muted-foreground/50">—</span>
-                          )}
-                        </td>
-
                         {/* Branch */}
                         <td className="px-5 py-4 align-middle">
                           {division.branch_name ? (
@@ -1250,7 +1206,7 @@ export default function AdminDivisions() {
                               {stats.assigned} assigned
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              {stats.departmentTotal} in dept · {stats.unassigned} unassigned
+                              {stats.branchTotal} in branch · {stats.unassigned} unassigned
                             </p>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
@@ -1404,8 +1360,8 @@ export default function AdminDivisions() {
               {hoveredDivision && hoveredRowRect && (() => {
                 const division = hoveredDivision
                 const assigned = division.assigned_employee_count ?? division.total_employees ?? 0
-                const departmentTotal = division.department_employee_count ?? 0
-                const unassigned = division.unassigned_employee_count ?? Math.max(0, departmentTotal - assigned)
+                const branchTotal = division.branch_employee_count ?? division.department_employee_count ?? 0
+                const unassigned = division.unassigned_employee_count ?? Math.max(0, branchTotal - assigned)
                 let active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0
                 employees.forEach((emp) => {
                   if (sameUserId(emp.division_id, division.id)) {
@@ -1434,7 +1390,7 @@ export default function AdminDivisions() {
                     )}
                     <dl className="space-y-1 text-muted-foreground">
                       <div className="flex justify-between gap-4"><dt>Assigned:</dt><dd className="font-medium text-foreground tabular-nums">{assigned}</dd></div>
-                      <div className="flex justify-between gap-4"><dt>In department:</dt><dd className="font-medium text-foreground tabular-nums">{departmentTotal}</dd></div>
+                      <div className="flex justify-between gap-4"><dt>In branch:</dt><dd className="font-medium text-foreground tabular-nums">{branchTotal}</dd></div>
                       <div className="flex justify-between gap-4"><dt>Unassigned:</dt><dd className="font-medium text-amber-600 dark:text-amber-400 tabular-nums">{unassigned}</dd></div>
                       <div className="flex justify-between gap-4"><dt>Active:</dt><dd className="font-medium text-emerald-600 dark:text-emerald-400 tabular-nums">{active}</dd></div>
                       <div className="flex justify-between gap-4"><dt>Inactive:</dt><dd className="font-medium text-rose-600 dark:text-rose-400 tabular-nums">{inactive}</dd></div>
@@ -1530,8 +1486,8 @@ export default function AdminDivisions() {
                   {(() => {
                     const divisionEmployeesCached = employees.filter((e) => sameUserId(e.division_id, previewDivision.id))
                     const assignedCount = previewDivision.assigned_employee_count ?? previewDivision.total_employees ?? divisionEmployeesCached.length
-                    const departmentCount = previewDivision.department_employee_count ?? 0
-                    const unassignedCount = previewDivision.unassigned_employee_count ?? Math.max(0, departmentCount - assignedCount)
+                    const branchCount = previewDivision.branch_employee_count ?? previewDivision.department_employee_count ?? 0
+                    const unassignedCount = previewDivision.unassigned_employee_count ?? Math.max(0, branchCount - assignedCount)
                     const showDetailStats = divisionEmployeesCached.length > 0
                     const active = showDetailStats ? divisionEmployeesCached.filter((e) => e.is_active).length : null
                     const withQr = showDetailStats ? divisionEmployeesCached.filter((e) => e.has_qr).length : null
@@ -1543,8 +1499,8 @@ export default function AdminDivisions() {
                             <dd className="font-medium text-foreground tabular-nums">{assignedCount}</dd>
                           </div>
                           <div className="flex justify-between gap-4">
-                            <dt className="text-muted-foreground">Department employees</dt>
-                            <dd className="font-medium text-foreground tabular-nums">{departmentCount}</dd>
+                            <dt className="text-muted-foreground">Branch employees</dt>
+                            <dd className="font-medium text-foreground tabular-nums">{branchCount}</dd>
                           </div>
                           <div className="flex justify-between gap-4">
                             <dt className="text-muted-foreground">Unassigned to division</dt>
@@ -1626,7 +1582,6 @@ export default function AdminDivisions() {
           if (!open) {
             setCreateCompanyPickerOpen(false)
             setCreateBranchPickerOpen(false)
-            setCreateDepartmentPickerOpen(false)
           }
         }}
       >
@@ -1648,7 +1603,7 @@ export default function AdminDivisions() {
                 Create Division
               </DialogTitle>
               <p id="div-create-desc" className="mt-3 max-w-xl text-base leading-7 text-muted-foreground">
-                Add a new division. Company and name are required — branch, department, and code are optional.
+                Add a new division. Company and name are required — branch and code are optional.
               </p>
               </div>
             </DialogHeader>
@@ -1723,7 +1678,6 @@ export default function AdminDivisions() {
                                 onClick={() => {
                                   setCreateCompanyId(String(c.id))
                                   setCreateBranchId('')
-                                  setCreateDepartmentId('')
                                   setCreateCompanyPickerOpen(false)
                                 }}
                                 className={cn('flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted', selected && 'bg-muted')}
@@ -1773,42 +1727,11 @@ export default function AdminDivisions() {
                         <p className="px-3 py-6 text-center text-sm text-muted-foreground">No branches for this company.</p>
                       ) : (
                         <div className="max-h-[min(60vh,320px)] overflow-y-auto p-1">
-                          <button type="button" onClick={() => { setCreateBranchId(''); setCreateDepartmentId(''); setCreateBranchPickerOpen(false) }} className="flex w-full rounded-md px-2 py-2 text-sm text-muted-foreground hover:bg-muted">— None —</button>
+                          <button type="button" onClick={() => { setCreateBranchId(''); setCreateBranchPickerOpen(false) }} className="flex w-full rounded-md px-2 py-2 text-sm text-muted-foreground hover:bg-muted">— None —</button>
                           {branchesForCreateCompany.map((b) => (
-                            <button key={b.id} type="button" onClick={() => { setCreateBranchId(String(b.id)); setCreateDepartmentId(''); setCreateBranchPickerOpen(false) }} className={cn('flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted', String(createBranchId) === String(b.id) && 'bg-muted')}>
+                            <button key={b.id} type="button" onClick={() => { setCreateBranchId(String(b.id)); setCreateBranchPickerOpen(false) }} className={cn('flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted', String(createBranchId) === String(b.id) && 'bg-muted')}>
                               <GitBranch className="size-4 text-brand" />
                               <span className="truncate font-medium">{b.name}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-2">
-                  <Label id="create-department-picker-label" className="text-base font-semibold text-foreground">
-                    Department <span className="font-normal text-muted-foreground">(optional)</span>
-                  </Label>
-                  <Popover open={createDepartmentPickerOpen} onOpenChange={setCreateDepartmentPickerOpen}>
-                    <PopoverTrigger asChild>
-                      <Button type="button" variant="outline" disabled={!createCompanyId} className="h-12 w-full justify-between gap-2 rounded-xl border-border/80 bg-background px-4 py-2 text-base font-normal shadow-sm hover:bg-transparent disabled:opacity-60 dark:bg-input/35">
-                        {selectedCreateDepartment ? (
-                          <span className="truncate text-sm font-medium">{selectedCreateDepartment.name}</span>
-                        ) : (
-                          <span className="text-muted-foreground">Select department</span>
-                        )}
-                        <ChevronDown className="size-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] min-w-[min(100vw-2rem,24rem)] p-0" onOpenAutoFocus={(e) => e.preventDefault()}>
-                      {departmentsForCreateOrg.length === 0 ? (
-                        <p className="px-3 py-6 text-center text-sm text-muted-foreground">No departments in scope.</p>
-                      ) : (
-                        <div className="max-h-[min(60vh,320px)] overflow-y-auto p-1">
-                          <button type="button" onClick={() => { setCreateDepartmentId(''); setCreateDepartmentPickerOpen(false) }} className="flex w-full rounded-md px-2 py-2 text-sm text-muted-foreground hover:bg-muted">— None —</button>
-                          {departmentsForCreateOrg.map((d) => (
-                            <button key={d.id} type="button" onClick={() => { setCreateDepartmentId(String(d.id)); setCreateDepartmentPickerOpen(false) }} className={cn('flex w-full rounded-md px-2 py-2 text-left text-sm hover:bg-muted', String(createDepartmentId) === String(d.id) && 'bg-muted')}>
-                              {d.name}{d.branch_name ? ` (${d.branch_name})` : ''}
                             </button>
                           ))}
                         </div>
@@ -1875,14 +1798,19 @@ export default function AdminDivisions() {
       >
         <DialogContent
           showCloseButton
-          className="max-w-[min(100vw-1.5rem,42rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
-          innerClassName="p-0"
+          surfaceStyle={{
+            width: 'min(calc(100vw - 1.5rem), 88rem)',
+            maxWidth: 'none',
+            height: 'min(92vh, 52rem)',
+          }}
+          className="max-h-[min(92vh,52rem)] min-h-0 min-w-0 !max-w-none rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="flex min-h-0 flex-1 flex-col !gap-0 !overflow-hidden !p-0"
           closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
           overlayClassName="bg-black/55 backdrop-blur-sm"
           aria-describedby="div-edit-desc"
         >
-          <form onSubmit={handleEdit} className="flex min-h-0 flex-1 flex-col text-foreground">
-            <div className="px-6 pb-5 pt-7 pr-16 @md:px-8">
+          <form onSubmit={handleEdit} className="flex min-h-0 flex-1 flex-col overflow-hidden text-foreground">
+            <div className="shrink-0 border-b border-border/80 px-6 pb-5 pt-7 pr-16 md:px-8">
               <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
                 <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand">
                   <Building2 className="size-7" />
@@ -1891,132 +1819,125 @@ export default function AdminDivisions() {
                   <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">
                     Edit Division
                   </DialogTitle>
-                  <p id="div-edit-desc" className="mt-3 max-w-xl text-base leading-7 text-muted-foreground">
-                    Update division details and org placement (company, branch, department).
+                  <p id="div-edit-desc" className="mt-3 max-w-3xl text-base leading-7 text-muted-foreground">
+                    Update division details and org placement (company and branch).
                   </p>
                 </div>
               </DialogHeader>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 @md:px-8">
-              <div className="space-y-2">
-                <Label htmlFor="edit-div-name" className="flex items-center gap-2 text-base font-semibold text-foreground">
-                  <span className="size-2.5 rounded-full bg-brand" />
-                  Division name <span className="text-brand">*</span>
-                </Label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                    <Building2 className="size-5" />
-                  </span>
-                  <Input
-                    id="edit-div-name"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    placeholder="e.g. Operations"
-                    className="h-12 rounded-xl border-brand/70 bg-background pl-14 text-base shadow-sm focus-visible:ring-brand/20 dark:bg-input/35"
-                    required
-                  />
+            <div className="grid min-h-0 flex-1 grid-cols-1 divide-y divide-border/80 overflow-hidden lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:divide-x lg:divide-y-0">
+              <div className="min-h-0 overflow-y-auto px-6 py-5 md:px-8">
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-div-name" className="flex items-center gap-2 text-base font-semibold text-foreground">
+                      <span className="size-2.5 rounded-full bg-brand" />
+                      Division name <span className="text-brand">*</span>
+                    </Label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                        <Building2 className="size-5" />
+                      </span>
+                      <Input
+                        id="edit-div-name"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        placeholder="e.g. Operations"
+                        className="h-12 rounded-xl border-brand/70 bg-background pl-14 text-base shadow-sm focus-visible:ring-brand/20 dark:bg-input/35"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-div-code" className="text-base font-semibold text-foreground">
+                      Code <span className="font-normal text-muted-foreground">(optional)</span>
+                    </Label>
+                    <Input
+                      id="edit-div-code"
+                      value={editCode}
+                      onChange={(e) => setEditCode(e.target.value)}
+                      placeholder="e.g. OPS-01"
+                      maxLength={50}
+                      className="h-12 rounded-xl border-border/80 bg-background text-base shadow-sm dark:bg-input/35"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-div-company" className="flex items-center gap-2 text-base font-semibold text-foreground">
+                      <span className="size-2.5 rounded-full bg-brand" />
+                      Company <span className="text-brand">*</span>
+                    </Label>
+                    <select
+                      id="edit-div-company"
+                      value={editCompanyId}
+                      onChange={(e) => {
+                        setEditCompanyId(e.target.value)
+                        setEditBranchId('')
+                      }}
+                      className="h-12 w-full rounded-xl border border-border/80 bg-background px-4 text-base text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35"
+                      required
+                    >
+                      <option value="">Select company</option>
+                      {sortedCompaniesForPicker.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-div-branch" className="text-base font-semibold text-foreground">
+                      Branch <span className="font-normal text-muted-foreground">(optional)</span>
+                    </Label>
+                    <select
+                      id="edit-div-branch"
+                      value={editBranchId}
+                      onChange={(e) => setEditBranchId(e.target.value)}
+                      disabled={!editCompanyId}
+                      className="h-12 w-full rounded-xl border border-border/80 bg-background px-4 text-base text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 disabled:opacity-60 dark:bg-input/35"
+                    >
+                      <option value="">— None —</option>
+                      {editBranchesForCompany.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-div-description" className="text-base font-semibold text-foreground">
+                      Description <span className="font-normal text-muted-foreground">(optional)</span>
+                    </Label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-3 flex size-9 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                        <FileText className="size-5" />
+                      </span>
+                      <textarea
+                        id="edit-div-description"
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        placeholder="Brief description of this division's role or scope..."
+                        rows={4}
+                        maxLength={1000}
+                        className="min-h-[96px] w-full rounded-xl border border-border/80 bg-background py-3 pl-14 pr-4 text-base text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="edit-div-company" className="flex items-center gap-2 text-base font-semibold text-foreground">
-                  <span className="size-2.5 rounded-full bg-brand" />
-                  Company <span className="text-brand">*</span>
-                </Label>
-                <select
-                  id="edit-div-company"
-                  value={editCompanyId}
-                  onChange={(e) => {
-                    setEditCompanyId(e.target.value)
-                    setEditBranchId('')
-                    setEditDepartmentId('')
-                  }}
-                  className="h-12 w-full rounded-xl border border-border/80 bg-background px-4 text-base text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35"
-                  required
-                >
-                  <option value="">Select company</option>
-                  {sortedCompaniesForPicker.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-div-branch" className="text-base font-semibold text-foreground">
-                  Branch <span className="font-normal text-muted-foreground">(optional)</span>
-                </Label>
-                <select
-                  id="edit-div-branch"
-                  value={editBranchId}
-                  onChange={(e) => {
-                    setEditBranchId(e.target.value)
-                    setEditDepartmentId('')
-                  }}
-                  disabled={!editCompanyId}
-                  className="h-12 w-full rounded-xl border border-border/80 bg-background px-4 text-base text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 disabled:opacity-60 dark:bg-input/35"
-                >
-                  <option value="">— None —</option>
-                  {editBranchesForCompany.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-div-department" className="text-base font-semibold text-foreground">
-                  Department <span className="font-normal text-muted-foreground">(optional)</span>
-                </Label>
-                <select
-                  id="edit-div-department"
-                  value={editDepartmentId}
-                  onChange={(e) => setEditDepartmentId(e.target.value)}
-                  disabled={!editCompanyId}
-                  className="h-12 w-full rounded-xl border border-border/80 bg-background px-4 text-base text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 disabled:opacity-60 dark:bg-input/35"
-                >
-                  <option value="">— None —</option>
-                  {editDepartmentsForOrg.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name}{d.branch_name ? ` (${d.branch_name})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-div-code" className="text-base font-semibold text-foreground">
-                  Code <span className="font-normal text-muted-foreground">(optional)</span>
-                </Label>
-                <Input
-                  id="edit-div-code"
-                  value={editCode}
-                  onChange={(e) => setEditCode(e.target.value)}
-                  placeholder="e.g. OPS-01"
-                  maxLength={50}
-                  className="h-12 rounded-xl border-border/80 bg-background text-base shadow-sm dark:bg-input/35"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-div-description" className="text-base font-semibold text-foreground">
-                  Description <span className="font-normal text-muted-foreground">(optional)</span>
-                </Label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-3 flex size-9 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                    <FileText className="size-5" />
-                  </span>
-                  <textarea
-                    id="edit-div-description"
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder="Brief description of this division's role or scope..."
-                    rows={3}
-                    maxLength={1000}
-                    className="min-h-[86px] w-full rounded-xl border border-border/80 bg-background py-3 pl-14 pr-4 text-base text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35"
+              {editDivision?.id ? (
+                <div className="min-h-0 overflow-y-auto bg-muted/10 px-4 py-5 md:px-6">
+                  <LeadershipPositionsSection
+                    ref={leadershipRef}
+                    legacyType="division"
+                    legacyId={editDivision.id}
+                    canManage
                   />
                 </div>
-              </div>
+              ) : null}
             </div>
 
-            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
+            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 md:px-8">
               <Button
                 type="button"
                 variant="outline"
@@ -2059,7 +1980,13 @@ export default function AdminDivisions() {
               <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">View Employees</DialogTitle>
               <p id="dept-view-employees-desc" className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
                 {viewEmployeesDivision && (
-                  <>Employees in <strong className="font-extrabold uppercase text-brand">{viewEmployeesDivision.name}</strong>. Unassign or assign more below.</>
+                  <>
+                    <strong className="font-extrabold tabular-nums text-foreground">{viewEmployeesList.length}</strong>
+                    {' '}
+                    {viewEmployeesList.length === 1 ? 'employee' : 'employees'} in{' '}
+                    <strong className="font-extrabold uppercase text-brand">{viewEmployeesDivision.name}</strong>.
+                    {' '}Unassign or assign more below.
+                  </>
                 )}
               </p>
               </div>
@@ -2215,8 +2142,7 @@ export default function AdminDivisions() {
         </DialogContent>
       </Dialog>
 
-      {/* Assign Division Head */}
-      <Dialog
+      <AssignOrgHeadModal
         open={headOpen}
         onOpenChange={(open) => {
           setHeadOpen(open)
@@ -2229,191 +2155,27 @@ export default function AdminDivisions() {
             setHeadModalLoadError(null)
           }
         }}
-      >
-        <DialogContent
-          showCloseButton
-          className="max-w-[min(100vw-1.5rem,48rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
-          innerClassName="p-0"
-          closeButtonClassName="right-5 top-5 size-10 rounded-xl border-border/80 bg-background text-foreground hover:bg-muted"
-          overlayClassName="bg-black/55 backdrop-blur-sm"
-          aria-describedby="dept-head-desc"
-        >
-          <div className="border-b border-border/80 px-6 pb-5 pt-7 pr-16 @md:px-8">
-            <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
-              <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
-                <UserPlus className="size-7" />
-              </div>
-              <div className="min-w-0 pt-1">
-              <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">Assign Division Head</DialogTitle>
-              <p id="dept-head-desc" className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
-                {headDivision && (
-                  <>Select the head for <strong className="font-extrabold uppercase text-brand">{headDivision.name}</strong>.</>
-                )}
-              </p>
-              </div>
-            </DialogHeader>
-          </div>
-          <form onSubmit={handleAssignHead} className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 px-6 py-5 @md:px-8">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-              <Label className="text-base font-semibold text-foreground">Division Head</Label>
-              {headId !== '' && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-9 rounded-xl border-destructive/40 px-3 text-xs font-semibold text-destructive hover:bg-destructive/10"
-                  onClick={() => setHeadId('')}
-                >
-                  <UserMinus className="mr-1.5 size-3.5" />
-                  Remove employee
-                </Button>
-              )}
-              </div>
-              {headModalLoading ? (
-                <div className="flex items-center justify-center gap-2 rounded-xl border border-border/70 py-10 text-sm text-muted-foreground dark:bg-input/20">
-                  <Loader2 className="size-5 animate-spin shrink-0 text-brand" />
-                  Loading division members…
-                </div>
-              ) : headModalLoadError ? (
-                <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                  <p>{headModalLoadError}</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => headDivision && loadHeadCandidates(headDivision)}
-                  >
-                    Try again
-                  </Button>
-                </div>
-              ) : (() => {
-                const listEmps = headModalEmployees
-                const currentHeadId = headDivision?.division_head_id
-                const multiHeadInfo = 'This employee is already assigned to another head role, but multiple leadership assignments are allowed.'
-
-                const ineligibleReason = new Map()
-                const headRoleNote = new Map()
-                for (const div of divisions) {
-                  if (div.division_head_id && div.id !== headDivision?.id) {
-                    ineligibleReason.set(String(div.division_head_id), `Division Head — ${div.name || 'Division'}`)
-                  }
-                }
-                const targetCompanyId = headDivision?.company_id
-                if (targetCompanyId) {
-                  for (const emp of listEmps) {
-                    const empId = String(emp.id)
-                    if (!ineligibleReason.has(empId) && emp.company_id && Number(emp.company_id) !== Number(targetCompanyId)) {
-                      const parts = [emp.company_name, emp.branch_name, emp.department].filter(Boolean)
-                      ineligibleReason.set(empId, `Assigned: ${parts.join(' → ') || 'another company'}`)
-                    }
-                  }
-                }
-                for (const c of companies) {
-                  if (c.company_head_id && !ineligibleReason.has(String(c.company_head_id))) {
-                    headRoleNote.set(String(c.company_head_id), `Company Head — ${c.name || 'Company'}`)
-                  }
-                }
-                for (const b of branches) {
-                  if (b.branch_manager_id && !ineligibleReason.has(String(b.branch_manager_id))) {
-                    headRoleNote.set(String(b.branch_manager_id), `Branch Manager — ${b.name || 'Branch'}`)
-                  }
-                }
-                for (const d of departments) {
-                  if (d.department_head_id && !ineligibleReason.has(String(d.department_head_id))) {
-                    headRoleNote.set(String(d.department_head_id), `Dept Head — ${d.name || 'Department'}`)
-                  }
-                }
-
-                return (
-                  <div className="max-h-[min(48vh,24rem)] overflow-y-auto rounded-xl border border-border/80 dark:border-border/70">
-                    <label className={[
-                      'flex cursor-pointer items-center gap-4 bg-background px-4 py-3 transition-colors hover:bg-muted/40 dark:bg-input/20 dark:hover:bg-input/35',
-                      headId === '' ? 'bg-brand/5 dark:bg-brand/10' : '',
-                    ].join(' ')}>
-                      <input
-                        type="radio"
-                        name="head-select"
-                        value=""
-                        checked={headId === ''}
-                        onChange={() => setHeadId('')}
-                        className="size-5 accent-orange-600"
-                      />
-                      <span className="flex size-10 items-center justify-center rounded-full border border-dashed border-border/60 dark:border-white/15">
-                        <UserMinus className="size-3.5 text-muted-foreground" />
-                      </span>
-                      <span className="text-sm text-muted-foreground italic">— Remove head —</span>
-                    </label>
-
-                    {listEmps.length === 0 && (
-                      <p className="px-3 py-4 text-center text-sm text-muted-foreground">
-                        No employees assigned to this division yet.
-                      </p>
-                    )}
-
-                    {listEmps.map((emp) => {
-                      const isCurrentHead = String(emp.id) === String(currentHeadId)
-                      const reason = ineligibleReason.get(String(emp.id))
-                      const roleNote = headRoleNote.get(String(emp.id))
-                      const isDisabled = !!reason && !isCurrentHead
-                      return (
-                      <label
-                        key={emp.id}
-                        className={[
-                          'flex items-center gap-4 border-t border-border/70 bg-background px-4 py-3 transition-colors dark:border-border/60 dark:bg-input/20',
-                          !isDisabled && 'cursor-pointer hover:bg-muted/40 dark:hover:bg-white/5',
-                          isDisabled && 'opacity-60 cursor-not-allowed',
-                          String(headId) === String(emp.id) ? 'bg-brand/5 dark:bg-brand/10' : '',
-                        ].join(' ')}
-                      >
-                        <input
-                          type="radio"
-                          name="head-select"
-                          value={emp.id}
-                          checked={String(headId) === String(emp.id)}
-                          onChange={() => { if (!isDisabled) setHeadId(String(emp.id)) }}
-                          disabled={isDisabled}
-                          className="size-5 accent-orange-600 disabled:cursor-not-allowed"
-                        />
-                        <Avatar className="size-12 shrink-0">
-                          <AvatarImage src={profileImageUrl(emp.profile_image_url || emp.profile_image)} alt={emp.name} />
-                          <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">
-                            {initials(emp.name)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-base font-extrabold text-foreground">{emp.name}</p>
-                          <p className="truncate text-xs text-muted-foreground">{emp.position || emp.employee_code || ''}</p>
-                          {isDisabled && reason && (
-                            <p className="mt-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400" title={reason}>{reason}</p>
-                          )}
-                          {!isDisabled && roleNote && (
-                            <p className="mt-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400" title={multiHeadInfo}>{roleNote}</p>
-                          )}
-                        </div>
-                        {String(headId) === String(emp.id) && !isDisabled && (
-                          <span className="shrink-0 rounded-full bg-brand/10 px-2.5 py-1 text-[10px] font-bold text-brand">Selected</span>
-                        )}
-                      </label>
-                      )
-                    })}
-                  </div>
-                )
-              })()}
-            </div>
-            </div>
-            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
-              <Button type="button" variant="outline" className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted" onClick={() => setHeadOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={headSubmitting || headModalLoading} className="h-11 min-w-[130px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
-                {headSubmitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                Save
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+        title="Assign Division Head"
+        unitName={headDivision?.name}
+        fieldLabel="Division Head"
+        loading={headModalLoading}
+        loadingMessage="Loading division members…"
+        loadError={headModalLoadError}
+        onRetry={() => headDivision && loadHeadCandidates(headDivision)}
+        employees={headModalEmployees}
+        currentHeadId={headDivision?.division_head_id}
+        currentHead={buildOrgCurrentHead({
+          id: headDivision?.division_head_id,
+          name: headDivision?.division_head_name,
+          profile_image_url: headDivision?.division_head_profile_image,
+        })}
+        headId={headId}
+        onHeadIdChange={setHeadId}
+        headRoleNotes={divisionHeadRoleNotes}
+        submitting={headSubmitting}
+        onSubmit={handleAssignHead}
+        initialsFn={initials}
+      />
 
       <AssignEmployeesModal
         open={assignOpen}
@@ -2448,6 +2210,9 @@ export default function AdminDivisions() {
         initialsFn={initials}
         footerStats={assignFooterStats}
         onGoEmployees={() => navigate('/admin/employees')}
+        assignmentMode={assignMode}
+        onAssignmentModeChange={setAssignMode}
+        crossCompanySelectedCount={crossCompanySelectedCount}
       />
 
 

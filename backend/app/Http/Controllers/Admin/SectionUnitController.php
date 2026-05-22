@@ -10,12 +10,16 @@ use App\Models\Division;
 use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\OrgHierarchyNormalizer;
-use App\Services\OrgTeamLeaderService;
+use App\Services\OrganizationLeadershipAssignmentService;
+use App\Services\OrganizationLeadershipService;
 use App\Services\OrgUnitEmployeeCountService;
+use App\Services\SectionUnitRosterService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -25,7 +29,10 @@ class SectionUnitController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly OrgUnitEmployeeCountService $orgUnitEmployeeCountService,
         private readonly OrgHierarchyNormalizer $orgHierarchyNormalizer,
-        private readonly OrgTeamLeaderService $orgTeamLeaderService,
+        private readonly OrganizationLeadershipAssignmentService $leadershipAssignments,
+        private readonly OrganizationLeadershipService $organizationLeadershipService,
+        private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
+        private readonly SectionUnitRosterService $sectionUnitRoster,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -37,7 +44,6 @@ class SectionUnitController extends Controller
                 'department:id,name,branch_id',
                 'division:id,name,company_id,branch_id',
                 'sectionUnitHead:id,name,first_name,middle_name,last_name,suffix,profile_image',
-                'teamLeaders:id,name,first_name,middle_name,last_name,suffix,profile_image',
             ])
             ->withCount('employees');
 
@@ -95,10 +101,14 @@ class SectionUnitController extends Controller
         ]);
 
         if (($validated['section_unit_head_id'] ?? null) !== null) {
-            $this->validateSectionHeadExclusive((int) $validated['section_unit_head_id'], $section->id);
-            $this->assertHeadBelongsToSection((int) $validated['section_unit_head_id'], $section);
+            $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['section_unit_head_id']);
             $section->section_unit_head_id = (int) $validated['section_unit_head_id'];
             $section->save();
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'section_unit',
+                (int) $section->id,
+                (int) $validated['section_unit_head_id'],
+            );
             EmployeeProfileCache::invalidate((int) $validated['section_unit_head_id']);
         }
 
@@ -142,23 +152,21 @@ class SectionUnitController extends Controller
         if (array_key_exists('section_unit_head_id', $validated)) {
             $previousHeadId = $section->section_unit_head_id;
             if ($validated['section_unit_head_id'] !== null) {
-                $this->validateSectionHeadExclusive((int) $validated['section_unit_head_id'], $section->id);
-                $this->assertHeadBelongsToSection((int) $validated['section_unit_head_id'], $section);
+                $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['section_unit_head_id']);
             }
             $section->section_unit_head_id = $validated['section_unit_head_id'];
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'section_unit',
+                (int) $section->id,
+                $validated['section_unit_head_id'] !== null ? (int) $validated['section_unit_head_id'] : null,
+                $previousHeadId !== null ? (int) $previousHeadId : null,
+            );
             foreach (array_unique(array_filter([
                 $previousHeadId ? (int) $previousHeadId : null,
                 $section->section_unit_head_id ? (int) $section->section_unit_head_id : null,
             ])) as $uid) {
                 EmployeeProfileCache::invalidate($uid);
             }
-        }
-
-        if (array_key_exists('team_leader_ids', $validated)) {
-            $this->orgTeamLeaderService->syncSectionTeamLeaders(
-                $section,
-                array_map('intval', $validated['team_leader_ids'] ?? []),
-            );
         }
 
         $section->save();
@@ -175,20 +183,29 @@ class SectionUnitController extends Controller
         $this->dataScopeService->restrictSectionUnitQuery($request->user(), $scope);
         $section = $scope->firstOrFail();
 
-        $employees = $section->employees()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->orderByLastName()
-            ->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image'])
-            ->map(fn (User $user) => [
-                'id' => $user->id,
-                'name' => $user->display_name,
-                'formatted_name' => $user->formatted_name,
-                'profile_image' => $user->profile_image_url,
-            ]);
+        $counts = $this->sectionUnitRoster->countsForSection($section);
+        $assignedEmployees = $this->sectionUnitRoster->rosterForSection($section);
+
+        Log::info('SectionUnit.employees', [
+            'section_unit_id' => (int) $section->id,
+            'primary_employee_count' => $counts['primary_employee_count'],
+            'shared_employee_count' => $counts['shared_employee_count'],
+            'temporary_employee_count' => $counts['temporary_employee_count'],
+            'acting_employee_count' => $counts['acting_employee_count'],
+            'assigned_employee_count' => $counts['assigned_employee_count'],
+            'returned_employee_count' => count($assignedEmployees),
+        ]);
 
         return response()->json([
             'section_or_unit' => ['id' => $section->id, 'name' => $section->name],
-            'employees' => $employees,
+            'employee_count' => $counts['assigned_employee_count'],
+            'assigned_employee_count' => $counts['assigned_employee_count'],
+            'primary_employee_count' => $counts['primary_employee_count'],
+            'shared_employee_count' => $counts['shared_employee_count'],
+            'temporary_employee_count' => $counts['temporary_employee_count'],
+            'acting_employee_count' => $counts['acting_employee_count'],
+            'employees' => $assignedEmployees,
+            'assigned_employees' => $assignedEmployees,
         ]);
     }
 
@@ -198,22 +215,48 @@ class SectionUnitController extends Controller
         $validated = $request->validate([
             'employee_ids' => ['required', 'array', 'min:1'],
             'employee_ids.*' => ['integer', 'exists:users,id'],
+            'assignment_mode' => ['nullable', 'string', 'in:shared,transfer_primary'],
+            'remarks' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        User::query()
-            ->whereIn('id', $validated['employee_ids'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->update([
-                'company_id' => $section->company_id,
-                'branch_id' => $section->branch_id,
-                'department_id' => $section->department_id,
-                'division_id' => $section->division_id,
-                'section_unit_id' => $section->id,
-            ]);
+        $assignmentMode = $validated['assignment_mode'] ?? EmployeeOrganizationAssignmentService::MODE_TRANSFER_PRIMARY;
+        $created = $this->organizationAssignments->assignToLegacyUnit(
+            'section_unit',
+            (int) $section->id,
+            $validated['employee_ids'],
+            $assignmentMode,
+            $validated['remarks'] ?? null,
+        );
+
+        $fresh = $section->fresh($this->responseRelations());
+        $counts = $this->sectionUnitRoster->countsForSection($fresh);
+        $assignedEmployees = $this->sectionUnitRoster->rosterForSection($fresh);
+
+        Log::info('SectionUnit.assignEmployees', [
+            'section_unit_id' => (int) $section->id,
+            'selected_employee_ids' => $validated['employee_ids'],
+            'assignment_mode' => $assignmentMode,
+            'assignment_type' => $assignmentMode === EmployeeOrganizationAssignmentService::MODE_SHARED
+                ? EmployeeOrganizationAssignmentService::TYPE_SHARED
+                : EmployeeOrganizationAssignmentService::TYPE_PRIMARY,
+            'rows_created' => collect($created)->map(fn ($row) => [
+                'id' => (int) $row->id,
+                'employee_id' => (int) $row->employee_id,
+                'assignment_type' => $row->assignment_type,
+                'section_unit_id' => $row->section_unit_id,
+            ])->values()->all(),
+            'primary_employee_count' => $counts['primary_employee_count'],
+            'shared_employee_count' => $counts['shared_employee_count'],
+            'assigned_employee_count' => $counts['assigned_employee_count'],
+            'returned_employee_count' => count($assignedEmployees),
+        ]);
 
         return response()->json([
             'message' => 'Employees assigned successfully.',
-            'section_or_unit' => $this->sectionResponse($section->fresh($this->responseRelations())->loadCount('employees')),
+            'section_or_unit' => array_merge(
+                $this->sectionResponse($fresh, $counts),
+                ['assigned_employees' => $assignedEmployees],
+            ),
         ]);
     }
 
@@ -225,10 +268,11 @@ class SectionUnitController extends Controller
             'employee_ids.*' => ['integer', 'exists:users,id'],
         ]);
 
-        User::query()
-            ->whereIn('id', $validated['employee_ids'])
-            ->where('section_unit_id', $section->id)
-            ->update(['section_unit_id' => null]);
+        $this->organizationAssignments->unassignFromLegacyUnit(
+            'section_unit',
+            (int) $section->id,
+            $validated['employee_ids'],
+        );
 
         return response()->json([
             'message' => 'Employees unassigned successfully.',
@@ -257,66 +301,11 @@ class SectionUnitController extends Controller
             'division_id' => [$required, 'integer', 'exists:divisions,id'],
             'department_id' => [$required, 'integer', 'exists:departments,id'],
             'section_unit_head_id' => ['nullable', 'integer', 'exists:users,id'],
-            'team_leader_ids' => ['sometimes', 'array'],
-            'team_leader_ids.*' => ['integer', 'exists:users,id'],
             'status' => ['nullable', Rule::in(['active', 'inactive'])],
             'description' => ['nullable', 'string', 'max:1000'],
         ], [
             'name.regex' => 'Section/Unit name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
         ]);
-    }
-
-    private function assertHeadBelongsToSection(int $userId, SectionUnit $section): void
-    {
-        $user = User::query()->whereKey($userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->first();
-        if (! $user) {
-            throw ValidationException::withMessages([
-                'section_unit_head_id' => ['The selected employee is not eligible to be assigned as section/unit head.'],
-            ]);
-        }
-        if (! $user->is_active) {
-            throw ValidationException::withMessages([
-                'section_unit_head_id' => ['The selected employee must be active to be assigned as section/unit head.'],
-            ]);
-        }
-
-        $belongsToSection = (int) $user->section_unit_id === (int) $section->id;
-        $belongsToDepartment = $section->department_id !== null
-            && (int) $user->department_id === (int) $section->department_id;
-        $isDepartmentHead = $section->department_id !== null
-            && Department::query()
-                ->whereKey($section->department_id)
-                ->where('department_head_id', $userId)
-                ->exists();
-
-        if (! $belongsToSection && ! $belongsToDepartment && ! $isDepartmentHead) {
-            throw ValidationException::withMessages([
-                'section_unit_head_id' => ['The selected employee must belong to this section/unit or its parent department to be assigned as head.'],
-            ]);
-        }
-
-        $headCompanyId = $user->getEffectiveCompanyId();
-        if ($headCompanyId !== null && $section->company_id !== null && (int) $headCompanyId !== (int) $section->company_id) {
-            throw ValidationException::withMessages([
-                'section_unit_head_id' => ['The selected employee is assigned to another company and cannot be section/unit head here.'],
-            ]);
-        }
-    }
-
-    /**
-     * Prevent the same employee from leading more than one section/unit at a time.
-     */
-    private function validateSectionHeadExclusive(int $userId, ?int $excludeSectionId): void
-    {
-        $query = SectionUnit::query()->where('section_unit_head_id', $userId);
-        if ($excludeSectionId !== null) {
-            $query->where('id', '!=', $excludeSectionId);
-        }
-        if ($query->exists()) {
-            throw ValidationException::withMessages([
-                'section_unit_head_id' => ['This employee is already Section/Unit Head of another section/unit.'],
-            ]);
-        }
     }
 
     /**
@@ -356,10 +345,13 @@ class SectionUnitController extends Controller
             'section_unit_head_id' => $section->section_unit_head_id,
             'section_unit_head_name' => $section->sectionUnitHead?->display_name,
             'section_unit_head_profile_image' => $section->sectionUnitHead?->profile_image_url,
-            ...$this->orgTeamLeaderService->sectionTeamLeaderPayload($section),
             'status' => $section->status,
             'description' => $section->description,
             'assigned_employee_count' => $counts['assigned_employee_count'],
+            'primary_employee_count' => $counts['primary_employee_count'] ?? 0,
+            'shared_employee_count' => $counts['shared_employee_count'] ?? 0,
+            'temporary_employee_count' => $counts['temporary_employee_count'] ?? 0,
+            'acting_employee_count' => $counts['acting_employee_count'] ?? 0,
             'division_employee_count' => $counts['division_employee_count'],
             'unassigned_employee_count' => $counts['unassigned_employee_count'],
             'total_employees' => $counts['assigned_employee_count'],

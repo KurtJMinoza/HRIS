@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\ScheduleApprovalService;
 use App\Services\ScheduleRequestPayloadService;
 use App\Support\EmployeeScheduleResolver;
@@ -92,13 +93,21 @@ class MyScheduleController extends Controller
             );
         }
 
-        $routing = $this->approvalChainResolver->resolveRoutingDecision($user);
+        $routing = $this->approvalChainResolver->resolveRoutingDecision(
+            $user,
+            true,
+            OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE,
+        );
         if (($routing['chain'] ?? null) === null) {
             throw ValidationException::withMessages([
                 'approval' => ['Your account cannot file schedule requests right now.'],
             ]);
         }
-        $initialStage = $this->approvalChainResolver->initialApprovalStage($user);
+        $initialStage = $this->approvalChainResolver->initialApprovalStage(
+            $user,
+            true,
+            OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE,
+        );
         $firstApproverId = $initialStage === \App\Support\HrApprovalStages::PENDING_FIRST
             ? ($routing['first_level_approver']?->id)
             : null;
@@ -295,7 +304,8 @@ class MyScheduleController extends Controller
             'approver_role_label' => null,
         ]];
 
-        $firstApprover = $this->approvalChainResolver->resolveFirstLevelApprover($user);
+        $requestType = OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE;
+        $firstApprover = $this->approvalChainResolver->resolveFirstLevelApprover($user, $requestType);
         if ($firstApprover) {
             $preview[] = [
                 'key' => 'line_approval',

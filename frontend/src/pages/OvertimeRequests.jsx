@@ -15,7 +15,7 @@ import {
   FileText,
   Info,
   Loader2,
-  MoreVertical,
+  Pencil,
   Plus,
   RefreshCw,
   Timer,
@@ -34,12 +34,26 @@ import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import {
+  requestModuleActionsTdClass,
+  requestModuleActionsWrapRowClass,
+  requestModuleCompactButtonClass,
+  requestModuleHeadRowClass,
+  requestModuleRowClass,
+  overtimeAdminTableClass,
+  overtimeEmployeeTableClass,
+  requestModuleTdClass,
+  requestModuleTdMutedClass,
+  requestModuleThClass,
+  requestModuleThRightClass,
+} from '@/lib/requestModuleTable'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { Link, useSearchParams } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
+import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
 import { formatHHmmTo12h, toHhMm, toTimeInputValue } from '@/lib/timeFormat'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import {
@@ -62,6 +76,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   createMyOvertimeRequest,
   cancelMyOvertimeRequest,
+  getMyOrganizationAssignments,
   getMyOvertimeRequestContext,
   getMyOvertimeRequests,
   getMyOvertimeDetail,
@@ -312,7 +327,7 @@ function RequesterCell({ item, profileTo, avatarLinkable, compact = false }) {
   )
 
   return (
-    <div className={cn('flex min-w-0 max-w-[min(100%,20rem)] items-start gap-3', compact && 'gap-2.5')}>
+    <div className={cn('flex min-w-0 items-center gap-3', compact && 'items-start gap-2.5')}>
       {avatarLinkable && profileTo ? (
         <Link
           to={profileTo}
@@ -324,10 +339,10 @@ function RequesterCell({ item, profileTo, avatarLinkable, compact = false }) {
       ) : (
         <div className="shrink-0">{avatarInner}</div>
       )}
-      <div className="min-w-0 flex flex-1 flex-col gap-0.5">
+      <div className="min-w-0 flex flex-1 flex-col gap-1">
         <span
           className={cn(
-            'truncate font-bold leading-tight tracking-tight text-foreground',
+            'line-clamp-2 font-bold leading-snug tracking-tight text-foreground',
             compact ? 'text-sm' : 'text-[15px]'
           )}
           title={name}
@@ -391,6 +406,17 @@ function statusBadgeClass(displayStatus) {
   return 'bg-muted text-muted-foreground shadow-sm'
 }
 
+function formatOvertimeTimeRange(row) {
+  const start = row.start_time || row.schedule_end
+  const end = row.end_time || row.expected_end_time
+  const range = formatOtRange12h(start, end)
+  if (range) return range
+  const startHm = formatTimeHm(start)
+  const endHm = formatTimeHm(end)
+  if (startHm !== '—' && endHm !== '—') return `${startHm} - ${endHm}`
+  return startHm !== '—' ? startHm : '—'
+}
+
 /** One line: step progress + current status (matches Correction Requests clarity). */
 function formatOvertimeStatusLine(row) {
   const primary = row.display_status || row.status || '—'
@@ -399,6 +425,81 @@ function formatOvertimeStatusLine(row) {
     return `${summary} — ${primary}`
   }
   return primary
+}
+
+function OvertimeStatusCell({ row }) {
+  const summary = approvalStepsSummary(row.approval_progress)
+  const primary = row.display_status || row.status || '—'
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {summary ? (
+        <p className="text-[11px] font-semibold leading-snug text-muted-foreground" title={summary}>
+          {summary}
+        </p>
+      ) : null}
+      <span
+        className={cn(
+          'inline-flex w-fit max-w-full items-start gap-1.5 rounded-full border border-transparent px-2.5 py-1.5 text-xs font-semibold leading-snug shadow-sm',
+          statusBadgeClass(row.display_status),
+        )}
+        title={formatOvertimeStatusLine(row)}
+      >
+        <Timer className="mt-0.5 size-3.5 shrink-0 opacity-80" aria-hidden />
+        <span className="line-clamp-2 text-left">{primary}</span>
+      </span>
+      {row.hr_wait_message ? (
+        <p
+          className="line-clamp-2 text-[11px] leading-snug text-amber-800 dark:text-amber-200/90"
+          title={row.hr_wait_message}
+        >
+          {row.hr_wait_message}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function OvertimeRowActions({ row, tab, canEdit, onView, onEdit, onDelete }) {
+  return (
+    <div className={requestModuleActionsWrapRowClass}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={cn(requestModuleCompactButtonClass, 'border-border/80 bg-card hover:bg-brand/10 hover:text-brand')}
+        onClick={onView}
+      >
+        <Eye className="size-3.5 shrink-0" />
+        <span className="hidden @sm:inline">View details</span>
+        <span className="@sm:hidden">View</span>
+      </Button>
+      {tab === 'mine' && canEdit ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn(requestModuleCompactButtonClass, 'border-border/80 hover:bg-muted')}
+          onClick={onEdit}
+        >
+          <Pencil className="size-3.5 shrink-0" />
+          Edit
+        </Button>
+      ) : null}
+      {row.actor_can_delete ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={cn(requestModuleCompactButtonClass, 'text-destructive hover:bg-destructive/10 hover:text-destructive')}
+          onClick={onDelete}
+        >
+          <Trash2 className="size-3.5 shrink-0" />
+          Delete
+        </Button>
+      ) : null}
+    </div>
+  )
 }
 
 /** Approve/Reject only when API says the actor is the current approver and the row is still actionable. */
@@ -708,6 +809,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [attachment, setAttachment] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
+  const [assignmentContexts, setAssignmentContexts] = useState([])
+  const [assignmentContextsLoading, setAssignmentContextsLoading] = useState(false)
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState('')
   const [otContext, setOtContext] = useState(null)
   const [contextLoading, setContextLoading] = useState(false)
   const [contextError, setContextError] = useState(null)
@@ -958,6 +1062,34 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     }
   }, [date, fileOpen])
 
+  useEffect(() => {
+    if (!fileOpen) return
+    let alive = true
+    setAssignmentContextsLoading(true)
+    getMyOrganizationAssignments({ fresh: true, date: date || undefined })
+      .then((data) => {
+        if (!alive) return
+        const list = Array.isArray(data?.assignments) ? data.assignments : []
+        const selected = data?.default_assignment && typeof data.default_assignment === 'object'
+          ? data.default_assignment
+          : (list.find((item) => item.is_primary) || list[0])
+        setAssignmentContexts(list)
+        setSelectedAssignmentId(selected?.id ? String(selected.id) : '')
+      })
+      .catch(() => {
+        if (!alive) return
+        setAssignmentContexts([])
+        setSelectedAssignmentId('')
+      })
+      .finally(() => {
+        if (alive) setAssignmentContextsLoading(false)
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [fileOpen, date])
+
   useLayoutEffect(() => {
     if (!fileOpen) return
     const { start, end } = fileModalClockPrefillRef.current
@@ -983,6 +1115,11 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     ]
   }, [otContext])
 
+  const selectedAssignmentContext = useMemo(
+    () => assignmentContexts.find((assignment) => String(assignment.id) === String(selectedAssignmentId)) || null,
+    [assignmentContexts, selectedAssignmentId],
+  )
+
   const canSubmitFile = useMemo(() => {
     const hasSegmentSelection = selectedSegments.length > 0
     return (
@@ -996,6 +1133,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine' ? loadingMine : loadingAll
+  const showRequesterColumn = tab === 'all'
+  const showBulkCheckbox = tab === 'all' && canApproveOvertime
+  const overtimeTableClass = showRequesterColumn ? overtimeAdminTableClass : overtimeEmployeeTableClass
   const bulkApprovalFilters = useMemo(
     () => ({
       date_from: allFrom || undefined,
@@ -1074,6 +1214,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setSelectedSegments(normalizedSegments.length === 1 ? [normalizedSegments[0].key] : [])
     setDate(initialDate || new Date().toISOString().slice(0, 10))
     setCategory('regular')
+    setSelectedAssignmentId('')
     setFileOpen(true)
   }
 
@@ -1092,6 +1233,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         ph_ot_rule: phOtRule,
         reason: reason.trim(),
         attachment: attachment || null,
+        assignment_id: selectedAssignmentId || undefined,
       })
       toast({ title: 'Overtime requested', description: 'Your request was submitted for approval.', variant: 'success' })
       setFileOpen(false)
@@ -1710,11 +1852,24 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             ) : (
               <AnimatedSection delay={0.05}>
                 <div className="overflow-x-auto bg-card px-4 pb-8 pt-2 @sm:px-5 md:px-6">
-                  <Table>
+                  <Table className={overtimeTableClass}>
+                    <colgroup>
+                      {showBulkCheckbox ? <col className="w-10" /> : null}
+                      <col className="w-[4.5rem]" />
+                      {showRequesterColumn ? <col className="w-[15rem]" /> : null}
+                      <col className="w-[9rem]" />
+                      <col className="w-[10rem]" />
+                      <col className="w-[7rem]" />
+                      <col className="w-[8.5rem]" />
+                      <col className="w-[14rem]" />
+                      <col className="w-[13rem]" />
+                      <col className="w-[9rem]" />
+                      <col className="w-[12rem]" />
+                    </colgroup>
                     <TableHeader>
-                      <TableRow className="sticky top-0 z-10 border-b border-border/80 bg-card hover:bg-card">
-                        {tab === 'all' && canApproveOvertime ? (
-                          <TableHead className="w-10 py-3.5">
+                      <TableRow className={cn(requestModuleHeadRowClass, 'sticky top-0 z-10 hover:bg-muted/30 dark:hover:bg-card/80')}>
+                        {showBulkCheckbox ? (
+                          <TableHead className={cn(requestModuleThClass, 'w-10 px-3')}>
                             <Checkbox
                               checked={
                                 bulkSelection.headerCheckboxIndeterminate
@@ -1727,23 +1882,22 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                             />
                           </TableHead>
                         ) : null}
-                        <TableHead className="w-[88px] py-3.5">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">ID</span>
-                        </TableHead>
-                        <TableHead className="min-w-[200px] py-3.5">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Requester</span>
-                        </TableHead>
-                        <TableHead className="min-w-[7.5rem] py-3.5">Date</TableHead>
-                        <TableHead className="min-w-[6rem] py-3.5">OT hours</TableHead>
-                        <TableHead className="min-w-[12rem] py-3.5">Reason / remarks</TableHead>
-                        <TableHead className="min-w-[180px] py-3.5">Status</TableHead>
-                        <TableHead className="min-w-[7rem] py-3.5">Date requested</TableHead>
-                        <TableHead className="w-[140px] py-3.5 text-right">Actions</TableHead>
+                        <TableHead className={requestModuleThClass}>ID</TableHead>
+                        {showRequesterColumn ? (
+                          <TableHead className={requestModuleThClass}>Requester</TableHead>
+                        ) : null}
+                        <TableHead className={requestModuleThClass}>Date</TableHead>
+                        <TableHead className={requestModuleThClass}>Time range</TableHead>
+                        <TableHead className={requestModuleThClass}>OT hours</TableHead>
+                        <TableHead className={requestModuleThClass}>Category</TableHead>
+                        <TableHead className={requestModuleThClass}>Reason / remarks</TableHead>
+                        <TableHead className={requestModuleThClass}>Status</TableHead>
+                        <TableHead className={requestModuleThRightClass}>Date requested</TableHead>
+                        <TableHead className={requestModuleThRightClass}>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {activeItems.map((row, rowIdx) => {
-                        const statusLine = formatOvertimeStatusLine(row)
                         const profileTo =
                           canViewEmployeeProfile && (row.requested_by_id || row.employee_id)
                             ? hrPanelPath(hrBase, `employees/${row.requested_by_id || row.employee_id}`)
@@ -1752,13 +1906,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                         return (
                           <TableRow
                             key={row.id}
-                            className={cn(
-                              'border-b border-border/65 text-[15px] leading-snug transition-colors duration-150 hover:bg-brand/5 dark:hover:bg-white/[0.045]',
-                              rowIdx % 2 === 0 ? 'bg-card' : 'bg-muted/20 dark:bg-white/[0.02]'
-                            )}
+                            className={requestModuleRowClass(rowIdx, 'text-sm leading-relaxed')}
                           >
-                            {tab === 'all' && canApproveOvertime ? (
-                              <TableCell className="align-middle">
+                            {showBulkCheckbox ? (
+                              <TableCell className={cn(requestModuleTdClass, 'w-10 px-3')}>
                                 <Checkbox
                                   checked={bulkSelection.isRowSelected(row)}
                                   disabled={row.status !== 'pending' || !row.actor_can_approve || bulkApproving}
@@ -1767,93 +1918,48 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                                 />
                               </TableCell>
                             ) : null}
-                            <TableCell className="align-middle font-mono text-sm font-semibold text-foreground">
+                            <TableCell className={cn(requestModuleTdClass, 'font-mono font-semibold tabular-nums')}>
                               #{row.id}
                             </TableCell>
-                            <TableCell className="align-top">
-                              <RequesterCell
-                                item={row}
-                                profileTo={profileTo}
-                                avatarLinkable={Boolean(profileTo)}
-                              />
-                            </TableCell>
-                            <TableCell className="align-middle tabular-nums text-foreground">
+                            {showRequesterColumn ? (
+                              <TableCell className={requestModuleTdClass}>
+                                <RequesterCell
+                                  item={row}
+                                  profileTo={profileTo}
+                                  avatarLinkable={Boolean(profileTo)}
+                                />
+                              </TableCell>
+                            ) : null}
+                            <TableCell className={requestModuleTdMutedClass}>
                               {row.date ? formatTableDate(`${row.date}T12:00:00`) : '—'}
                             </TableCell>
-                            <TableCell className="align-middle font-mono text-sm tabular-nums">
+                            <TableCell className={cn(requestModuleTdMutedClass, 'font-mono text-[13px] leading-snug')}>
+                              {formatOvertimeTimeRange(row)}
+                            </TableCell>
+                            <TableCell className={cn(requestModuleTdMutedClass, 'font-mono text-base font-semibold text-foreground')}>
                               {formatOtHoursDisplay(row)}
                             </TableCell>
-                            <TableCell className="align-top max-w-[min(280px,40vw)]">
-                              <p className="line-clamp-2 text-sm text-foreground/95" title={row.reason || ''}>
-                                {row.reason || '—'}
-                              </p>
+                            <TableCell className={cn(requestModuleTdClass, 'text-muted-foreground')}>
+                              {otTypeLabel(row.ot_type)}
                             </TableCell>
-                            <TableCell className="align-top max-w-[min(320px,42vw)]">
-                              <div className="flex flex-col gap-1.5">
-                                <span
-                                  className={cn(
-                                    'inline-flex w-fit max-w-full items-start gap-1.5 rounded-xl border border-transparent px-2.5 py-1.5 text-xs font-semibold leading-snug shadow-sm',
-                                    statusBadgeClass(row.display_status)
-                                  )}
-                                >
-                                  <Timer className="size-3.5 shrink-0 opacity-80 mt-0.5" aria-hidden />
-                                  <span className="line-clamp-4 min-w-0">{statusLine}</span>
-                                </span>
-                                {row.hr_wait_message ? (
-                                  <p
-                                    className="line-clamp-2 text-[11px] text-amber-800 dark:text-amber-200/90"
-                                    title={row.hr_wait_message}
-                                  >
-                                    {row.hr_wait_message}
-                                  </p>
-                                ) : null}
-                              </div>
+                            <TableCell className={requestModuleTdClass}>
+                              <RemarksPreviewCell text={row.reason} />
                             </TableCell>
-                            <TableCell className="align-middle tabular-nums text-foreground">
+                            <TableCell className={requestModuleTdClass}>
+                              <OvertimeStatusCell row={row} />
+                            </TableCell>
+                            <TableCell className={cn(requestModuleTdMutedClass, 'text-right')}>
                               {formatTableDate(filed)}
                             </TableCell>
-                            <TableCell className="text-right align-middle">
-                              <div className="flex flex-wrap justify-end gap-1">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-9 gap-1.5 rounded-lg border-border/80 bg-card px-3 text-xs font-semibold hover:bg-brand/10 hover:text-brand"
-                                  onClick={() => openView(row)}
-                                >
-                                  <Eye className="size-3.5" />
-                                  Details
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-9 rounded-lg text-muted-foreground hover:bg-brand/10 hover:text-brand"
-                                  onClick={() => openView(row)}
-                                  aria-label={`More actions for overtime request #${row.id}`}
-                                >
-                                  <MoreVertical className="size-4" aria-hidden />
-                                </Button>
-                                {tab === 'mine' && canEditPendingOvertime(row) && (
-                                  <>
-                                    <Button type="button" variant="ghost" size="sm" className="h-9 text-xs" onClick={() => openEdit(row)}>
-                                      Edit
-                                    </Button>
-                                  </>
-                                )}
-                                {row.actor_can_delete ? (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-9 gap-1 text-xs text-destructive"
-                                    onClick={() => setDeleteDialog({ open: true, row })}
-                                  >
-                                    <Trash2 className="size-3.5" />
-                                    Delete
-                                  </Button>
-                                ) : null}
-                              </div>
+                            <TableCell className={requestModuleActionsTdClass}>
+                              <OvertimeRowActions
+                                row={row}
+                                tab={tab}
+                                canEdit={canEditPendingOvertime(row)}
+                                onView={() => openView(row)}
+                                onEdit={() => openEdit(row)}
+                                onDelete={() => setDeleteDialog({ open: true, row })}
+                              />
                             </TableCell>
                           </TableRow>
                         )
@@ -1970,6 +2076,24 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     shift.
                   </p>
                 </div>
+
+                {(selectedAssignmentContext || assignmentContextsLoading) && (
+                  <div className="rounded-xl border border-border/80 bg-muted/20 px-4 py-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Organization Context</p>
+                    {assignmentContextsLoading ? (
+                      <p className="mt-1 text-sm text-muted-foreground">Loading context...</p>
+                    ) : (
+                      <>
+                        <p className="mt-1 text-sm font-semibold text-foreground">
+                          {selectedAssignmentContext?.org_path || selectedAssignmentContext?.organization_unit_name || 'Organization'}
+                        </p>
+                        <p className="mt-0.5 text-xs capitalize text-muted-foreground">
+                          Assignment Type: {selectedAssignmentContext?.is_primary ? 'Primary' : (selectedAssignmentContext?.assignment_type || 'Shared')}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <Label htmlFor="otm-date" className={otModalLabelClass}>

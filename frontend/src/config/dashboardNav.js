@@ -18,6 +18,7 @@ import {
   QrCode,
   Receipt,
   Settings,
+  ShieldCheck,
   Timer,
   User,
   UserCheck,
@@ -128,6 +129,7 @@ export const adminNavItems = [
       { to: '/admin/users-permissions', end: false, label: 'Users & Permissions', icon: UserCog },
       { to: '/admin/profile', end: false, label: 'Profile', icon: User },
       { to: '/admin/daily-computation/policy-settings', end: false, label: 'Policy Settings', icon: Settings },
+      { to: '/admin/approval-workflow-settings', end: false, label: 'Approval Workflow', icon: ShieldCheck },
     ],
   },
 ]

@@ -5,7 +5,7 @@ namespace App\Enums;
 /**
  * Resolved HR access role for RBAC (orthogonal to users.role admin|employee).
  * Priority when resolving from org assignments:
- * company_head > branch_head > division_head > department_head > section_unit_head > employee.
+ * company_head > branch_head > department_head > section_unit_head > employee.
  */
 enum HrRole: string
 {

@@ -51,12 +51,20 @@ class AttendanceCorrectionApprovalService
      */
     public function getApprovalChain(User $employee): ?array
     {
-        return $this->chainResolver->getApprovalChain($employee);
+        return $this->chainResolver->getApprovalChain(
+            $employee,
+            true,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+        );
     }
 
     public function initialApprovalStage(User $employee): string
     {
-        return $this->chainResolver->initialApprovalStage($employee);
+        return $this->chainResolver->initialApprovalStage(
+            $employee,
+            true,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+        );
     }
 
     /**
@@ -70,7 +78,11 @@ class AttendanceCorrectionApprovalService
      */
     public function resolveRoutingDecision(User $employee): array
     {
-        return $this->chainResolver->resolveRoutingDecision($employee);
+        return $this->chainResolver->resolveRoutingDecision(
+            $employee,
+            true,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+        );
     }
 
     public function canApprove(User $actor, AttendanceCorrection $correction): bool

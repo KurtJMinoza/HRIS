@@ -19,6 +19,7 @@ import { RoleBadge } from '@/components/RoleBadge'
 import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
 import { formatEmployeeName } from '@/lib/employeeSort'
+import { ASSIGNMENT_MODE_SHARED, ASSIGNMENT_MODE_TRANSFER_PRIMARY } from '@/lib/orgEmployeeAssignment'
 
 function orgUnitCopy(orgUnitLabel = 'department') {
   if (orgUnitLabel === 'division') {
@@ -91,7 +92,7 @@ export function FilterTabs({ value, onChange, counts, orgUnitLabel = 'department
 
 export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn, orgUnitLabel = 'department' }) {
   const { assignedLabel: assignedBadgeLabel } = orgUnitCopy(orgUnitLabel)
-  const { emp, status, checked, checkboxDisabled, isInactive, assignedElsewhere } = row
+  const { emp, status, checked, checkboxDisabled, isInactive, assignedElsewhere, crossCompany, currentOrgPath } = row
   const employeeName = formatEmployeeName(emp, 'employee')
   return (
     <li
@@ -144,13 +145,32 @@ export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn, orgUnitL
         <p className="mt-1 truncate text-sm text-muted-foreground">
           {[emp.employee_code, emp.position].filter(Boolean).join(' · ') || '—'}
         </p>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {emp.department ? (
+        <p className="mt-0.5 truncate text-xs text-muted-foreground" title={currentOrgPath || undefined}>
+          {currentOrgPath ? (
+            <>Current: {currentOrgPath}</>
+          ) : emp.department ? (
             <span title={emp.department}>{emp.department}</span>
           ) : (
-            <span className="italic">No department</span>
+            <span className="italic">No organization assignment</span>
           )}
         </p>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span
+            className={cn(
+              'inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+              emp.is_active
+                ? 'border border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200'
+                : 'border border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400',
+            )}
+          >
+            {emp.is_active ? 'Active' : 'Inactive'}
+          </span>
+          {crossCompany && status === 'available' && (
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              Cross-company assignment
+            </span>
+          )}
+        </div>
       </div>
       <div className="ml-auto shrink-0">
         {status === 'available' && (
@@ -167,9 +187,9 @@ export function EmployeeRow({ row, onToggle, onOpenProfile, initialsFn, orgUnitL
         {status === 'unavailable' && assignedElsewhere && (
           <span
             className="inline-flex max-w-28 truncate rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-            title={[emp.company_name, emp.branch_name, emp.department].filter(Boolean).join(' → ')}
+            title={currentOrgPath || [emp.company_name, emp.branch_name, emp.department].filter(Boolean).join(' → ')}
           >
-            Employed
+            Elsewhere
           </span>
         )}
         {status === 'unavailable' && isInactive && (
@@ -392,6 +412,9 @@ export default function AssignEmployeesModal({
   onGoEmployees,
   memberIdField = 'department_id',
   orgUnitLabel = 'department',
+  assignmentMode = ASSIGNMENT_MODE_TRANSFER_PRIMARY,
+  onAssignmentModeChange,
+  crossCompanySelectedCount = 0,
 }) {
   const { unitName, unitNameTitle, excludedRoleNote } = orgUnitCopy(orgUnitLabel)
   return (
@@ -401,8 +424,9 @@ export default function AssignEmployeesModal({
         surfaceStyle={{
           width: 'min(calc(100vw - 1rem), 88rem)',
           maxWidth: 'none',
+          height: 'min(92vh, 62rem)',
         }}
-        className="max-h-[min(92vh,62rem)] min-w-0 !max-w-none sm:!max-w-none rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+        className="max-h-[min(92vh,62rem)] min-h-0 min-w-0 !max-w-none sm:!max-w-none rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
         innerClassName="flex min-h-0 flex-1 flex-col !gap-0 !overflow-hidden !p-0"
         closeButtonClassName="right-5 top-5 size-10 rounded-xl border-border/80 bg-background text-foreground hover:bg-muted"
         overlayClassName="bg-black/55 backdrop-blur-sm"
@@ -425,8 +449,8 @@ export default function AssignEmployeesModal({
         <form onSubmit={onSubmit} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {/* Two columns from sm (640px); below that stack. minmax(0,fr) avoids clipping the right column. */}
           <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 divide-y divide-border/80 overflow-hidden sm:grid-cols-[minmax(0,1.2fr)_minmax(0,0.85fr)] sm:divide-x sm:divide-y-0">
-            <div className="flex min-h-0 min-w-0 flex-col bg-card sm:min-h-[34rem]">
-              <div className="shrink-0 space-y-4 px-5 py-5 @md:px-6 @xl:px-8">
+            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
+              <div className="shrink-0 space-y-3 px-5 py-4 @md:px-6 @xl:px-8">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-extrabold uppercase tracking-wide text-foreground">Available employees</h3>
@@ -490,7 +514,7 @@ export default function AssignEmployeesModal({
                 </div>
               )}
 
-              <div className="min-h-0 flex-1 overflow-y-auto bg-card">
+              <div className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card">
                 {loading ? (
                   <div className="space-y-0 divide-y divide-border/40">
                     {[...Array(6)].map((_, i) => (
@@ -533,7 +557,7 @@ export default function AssignEmployeesModal({
               </div>
             </div>
 
-            <div className="flex min-h-[min(42vh,26rem)] min-w-0 flex-col bg-card sm:min-h-0">
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-card">
               <SelectedPanelHeader
                 department={department}
                 branchName={department?.branch_name}
@@ -542,11 +566,57 @@ export default function AssignEmployeesModal({
                 newCount={assignNewToDeptCount}
               />
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 @md:px-6 @xl:px-8">
+              <div className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 @md:px-6 @xl:px-8">
                 {selectedEmployeesPreview.length === 0 ? (
                   <SelectedEmptyState assignIdsLength={assignIds.length} assignCounts={assignCounts} loading={loading} orgUnitLabel={orgUnitLabel} />
                 ) : (
-                  <ul className="space-y-3">
+                  <>
+                    <div className="mb-4 space-y-3 rounded-xl border border-border/80 bg-background p-4 dark:bg-input/20">
+                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Assignment mode</p>
+                      <div className="grid gap-2">
+                        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 p-3 hover:bg-muted/20">
+                          <input
+                            type="radio"
+                            name="assignment-mode"
+                            className="mt-1 accent-orange-600"
+                            checked={assignmentMode === ASSIGNMENT_MODE_SHARED}
+                            onChange={() => onAssignmentModeChange?.(ASSIGNMENT_MODE_SHARED)}
+                          />
+                          <span>
+                            <span className="block text-sm font-semibold text-foreground">Add as shared assignment</span>
+                            <span className="mt-0.5 block text-xs text-muted-foreground">
+                              Employee keeps their original company/unit and is also assigned here.
+                            </span>
+                          </span>
+                        </label>
+                        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 p-3 hover:bg-muted/20">
+                          <input
+                            type="radio"
+                            name="assignment-mode"
+                            className="mt-1 accent-orange-600"
+                            checked={assignmentMode === ASSIGNMENT_MODE_TRANSFER_PRIMARY}
+                            onChange={() => onAssignmentModeChange?.(ASSIGNMENT_MODE_TRANSFER_PRIMARY)}
+                          />
+                          <span>
+                            <span className="block text-sm font-semibold text-foreground">Transfer primary assignment</span>
+                            <span className="mt-0.5 block text-xs text-muted-foreground">
+                              Employee&apos;s primary organization changes to this {unitName}.
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                      {crossCompanySelectedCount > 0 && (
+                        <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+                          This employee currently belongs to another company/unit. Assigning here will create a cross-organization assignment.
+                          {' '}
+                          <span className="font-semibold">{crossCompanySelectedCount} selected</span>
+                          {assignmentMode === ASSIGNMENT_MODE_TRANSFER_PRIMARY
+                            ? ' will transfer their primary assignment.'
+                            : ' will be added as shared assignments.'}
+                        </div>
+                      )}
+                    </div>
+                    <ul className="space-y-3">
                     {selectedEmployeesPreview.map((emp) => {
                       const isAlreadyInMember =
                         String(emp[memberIdField] ?? '') === String(department?.id ?? '') ||
@@ -565,7 +635,8 @@ export default function AssignEmployeesModal({
                         />
                       )
                     })}
-                  </ul>
+                    </ul>
+                  </>
                 )}
               </div>
             </div>

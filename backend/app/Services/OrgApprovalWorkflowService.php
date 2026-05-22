@@ -21,10 +21,24 @@ class OrgApprovalWorkflowService
 
     public const MODULE_SCHEDULE = 'schedule';
 
+    public const MODULE_CHANGE_SCHEDULE = 'change_schedule';
+
+    public const MODULE_REPORTS_REQUEST = 'reports_request';
+
     public function __construct(
         private readonly HrApprovalChainResolver $chainResolver,
         private readonly HrRoleResolver $roleResolver,
+        private readonly ApprovalWorkflowSettingService $workflowSettingService,
     ) {}
+
+    public static function normalizeModuleType(?string $moduleType): ?string
+    {
+        if ($moduleType === self::MODULE_SCHEDULE) {
+            return self::MODULE_CHANGE_SCHEDULE;
+        }
+
+        return HrApprovalChainResolver::normalizeRequestType($moduleType) ?? $moduleType;
+    }
 
     /**
      * @return EloquentCollection<int, OrgApprovalRecord>
@@ -35,15 +49,34 @@ class OrgApprovalWorkflowService
         User $employee,
         ?User $requestor = null
     ): EloquentCollection {
+        $employee = $this->employeeForApprovalRouting($employee);
+        $requestor = $requestor ? $this->employeeForApprovalRouting($requestor) : null;
+
         $requestId = (int) $request->getKey();
-        $steps = $this->chainResolver->resolveApprovalChain($employee, $moduleType, $requestor ?? $employee);
+        $resolvedRequestType = self::normalizeModuleType($moduleType);
+        $steps = $this->chainResolver->resolveApprovalChain(
+            $employee,
+            $resolvedRequestType,
+            $requestor ?? $employee,
+            [
+                'request_id' => $requestId,
+                'module_type' => $moduleType,
+                'assignment_id' => $request->getAttribute('assignment_id'),
+                'assignment_type' => $request->getAttribute('assignment_type'),
+                'company_id' => $request->getAttribute('company_id'),
+                'branch_id' => $request->getAttribute('branch_id'),
+                'division_id' => $request->getAttribute('division_id'),
+                'department_id' => $request->getAttribute('department_id'),
+                'section_unit_id' => $request->getAttribute('section_unit_id'),
+            ],
+        );
         if ($steps === []) {
             return new EloquentCollection;
         }
 
         $existing = $this->records($moduleType, $requestId);
         if ($existing->isNotEmpty()) {
-            if ($this->chainNeedsSync($existing, $steps) && $this->requestIsPending($request, $moduleType)) {
+            if ($this->chainNeedsSync($existing, $steps, $moduleType) && $this->requestIsPending($request, $moduleType)) {
                 Log::info('approval_chain: syncing org approval records for pending request', [
                     'module_type' => $moduleType,
                     'request_id' => $requestId,
@@ -67,26 +100,72 @@ class OrgApprovalWorkflowService
                     'request_id' => $requestId,
                     'module_type' => $moduleType,
                     'approval_level' => $step['approval_level'],
+                    'approval_label' => $step['approval_label'] ?? null,
                     'approver_role' => $step['approver_role']->value,
                     'approver_id' => $step['approver_id'],
                     'approver_name' => $step['approver_name'],
+                    'eligible_approver_ids' => $step['eligible_approver_ids'] ?? null,
+                    'routing_rule' => $step['routing_rule'] ?? null,
                     'approval_status' => $legacyStatus,
                     'remarks' => null,
                     'approved_at' => $approvedAt,
                     'sequence_order' => $step['sequence_order'],
                 ]);
             }
+
+            $this->syncLegacyRequestApprovers($request, $moduleType, $steps);
         });
 
         return $this->records($moduleType, $requestId);
     }
 
     /**
+     * Re-resolve approval chains for pending requests after workflow settings change.
+     *
+     * @param  list<string>  $requestTypes
+     */
+    public function resyncPendingRequestChains(array $requestTypes): int
+    {
+        $normalized = array_values(array_unique(array_filter(array_map(
+            fn (string $type): ?string => self::normalizeModuleType($type),
+            $requestTypes,
+        ))));
+
+        $synced = 0;
+
+        if (in_array(self::MODULE_LEAVE, $normalized, true)) {
+            $synced += $this->resyncPendingLeaveRequests();
+        }
+
+        if (in_array(self::MODULE_OVERTIME, $normalized, true)) {
+            $synced += $this->resyncPendingOvertimeRequests();
+        }
+
+        if ($synced > 0) {
+            Log::info('approval_chain: resynced pending request chains after workflow settings change', [
+                'request_types' => $normalized,
+                'requests_updated' => $synced,
+            ]);
+        }
+
+        return $synced;
+    }
+
+    /**
      * @param  EloquentCollection<int, OrgApprovalRecord>  $existing
      * @param  array<int, array<string, mixed>>  $steps
      */
-    private function chainNeedsSync(EloquentCollection $existing, array $steps): bool
+    private function chainNeedsSync(EloquentCollection $existing, array $steps, string $moduleType): bool
     {
+        if ($this->workflowSettingService->isHrOnlyRequestType(self::normalizeModuleType($moduleType))) {
+            $sorted = $existing->sortBy('sequence_order')->values();
+            if ($sorted->count() !== 1) {
+                return true;
+            }
+
+            return $sorted->first()?->approver_role !== HrRole::AdminHr->value;
+        }
+
         if ($existing->count() !== count($steps)) {
             return true;
         }
@@ -94,7 +173,19 @@ class OrgApprovalWorkflowService
         $sorted = $existing->sortBy('sequence_order')->values();
         foreach ($steps as $index => $step) {
             $record = $sorted->get($index);
-            if (! $record || $record->approver_role !== $step['approver_role']->value) {
+            if (! $record) {
+                return true;
+            }
+
+            if ((int) $record->approver_id !== (int) $step['approver_id']) {
+                return true;
+            }
+
+            if ($record->approver_role !== $step['approver_role']->value) {
+                return true;
+            }
+
+            if (($record->approval_label ?? null) !== ($step['approval_label'] ?? null)) {
                 return true;
             }
         }
@@ -151,15 +242,20 @@ class OrgApprovalWorkflowService
                     'request_id' => $requestId,
                     'module_type' => $moduleType,
                     'approval_level' => $step['approval_level'],
+                    'approval_label' => $step['approval_label'] ?? null,
                     'approver_role' => $step['approver_role']->value,
                     'approver_id' => $step['approver_id'],
                     'approver_name' => $step['approver_name'],
+                    'eligible_approver_ids' => $step['eligible_approver_ids'] ?? null,
+                    'routing_rule' => $step['routing_rule'] ?? null,
                     'approval_status' => $status,
                     'remarks' => $prior?->remarks,
                     'approved_at' => $approvedAt,
                     'sequence_order' => $step['sequence_order'],
                 ]);
             }
+
+            $this->syncLegacyRequestApprovers($request, $moduleType, $steps);
         });
     }
 
@@ -204,7 +300,8 @@ class OrgApprovalWorkflowService
             return $this->roleResolver->resolve($actor) === HrRole::AdminHr;
         }
 
-        return (int) $pending->approver_id === (int) $actor->id;
+        return (int) $pending->approver_id === (int) $actor->id
+            || $this->actorIsEligibleApprover($actor, $pending);
     }
 
     public function approveCurrent(Model $request, string $moduleType, User $employee, User $actor, ?string $remarks = null, ?User $requestor = null): ?OrgApprovalRecord
@@ -255,7 +352,16 @@ class OrgApprovalWorkflowService
     public function currentPendingLabel(Model $request, string $moduleType, User $employee, ?User $requestor = null): ?string
     {
         $pending = $this->currentPendingRecord($request, $moduleType, $employee, $requestor);
-        $role = $pending ? HrRole::tryFrom((string) $pending->approver_role) : null;
+        if ($pending === null) {
+            return null;
+        }
+
+        $storedLabel = trim((string) ($pending->approval_label ?? ''));
+        if ($storedLabel !== '') {
+            return rtrim(str_ireplace(' approval', '', $storedLabel));
+        }
+
+        $role = HrRole::tryFrom((string) $pending->approver_role);
 
         return $role?->badgeLabel();
     }
@@ -303,10 +409,10 @@ class OrgApprovalWorkflowService
                 $currentMarked = true;
             }
 
-            $roleLabel = $role?->badgeLabel() ?? (string) $record->approver_role;
+            $roleLabel = $this->formatApprovalStepLabel($record, $role);
             $steps[] = [
                 'key' => $isHr ? 'hr_final' : 'approval_'.$record->sequence_order,
-                'label' => $isHr ? 'Admin HR final approval' : $roleLabel.' approval',
+                'label' => $isHr ? 'Admin HR final approval' : $roleLabel,
                 'status' => $status,
                 'approver_role_label' => $roleLabel,
                 'submitter_name' => null,
@@ -348,7 +454,18 @@ class OrgApprovalWorkflowService
             return $this->roleResolver->resolve($actor) === HrRole::AdminHr;
         }
 
-        return (int) $record->approver_id === (int) $actor->id;
+        return (int) $record->approver_id === (int) $actor->id
+            || $this->actorIsEligibleApprover($actor, $record);
+    }
+
+    private function actorIsEligibleApprover(User $actor, OrgApprovalRecord $record): bool
+    {
+        $eligible = $record->eligible_approver_ids;
+        if (! is_array($eligible) || $eligible === []) {
+            return false;
+        }
+
+        return in_array((int) $actor->id, array_map('intval', $eligible), true);
     }
 
     /**
@@ -394,5 +511,150 @@ class OrgApprovalWorkflowService
         }
 
         return null;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $steps
+     */
+    private function syncLegacyRequestApprovers(Model $request, string $moduleType, array $steps): void
+    {
+        if ($moduleType !== self::MODULE_LEAVE || ! $request instanceof \App\Models\LeaveRequest) {
+            return;
+        }
+
+        if (! $this->requestIsPending($request, $moduleType)) {
+            return;
+        }
+
+        $firstLine = collect($steps)->first(fn (array $step): bool => ($step['approver_role'] ?? null) !== HrRole::AdminHr);
+        $hrLine = collect($steps)->first(fn (array $step): bool => ($step['approver_role'] ?? null) === HrRole::AdminHr);
+
+        $updates = [];
+        if ($firstLine) {
+            $updates['first_approver_id'] = (int) $firstLine['approver_id'];
+        } else {
+            $updates['first_approver_id'] = null;
+        }
+
+        if ($hrLine) {
+            $updates['second_approver_id'] = (int) $hrLine['approver_id'];
+        }
+
+        if ($updates !== []) {
+            $request->forceFill($updates)->save();
+        }
+    }
+
+    private function formatApprovalStepLabel(OrgApprovalRecord $record, ?HrRole $role): string
+    {
+        $label = trim((string) ($record->approval_label ?? ''));
+        if ($label !== '') {
+            return $label;
+        }
+
+        $base = match ($role) {
+            HrRole::DepartmentHead => 'Department Head',
+            HrRole::SectionUnitHead => 'Section/Unit Head',
+            HrRole::DivisionHead => 'Division Head',
+            HrRole::BranchHead => 'Branch Head',
+            HrRole::CompanyHead => 'Company Head',
+            default => $role?->badgeLabel() ?? (string) $record->approver_role,
+        };
+
+        $lower = strtolower($base);
+        if (str_contains($lower, 'team leader') || str_contains($lower, 'team lead')) {
+            return 'Team Lead approval';
+        }
+
+        return str_contains($lower, 'approval') ? $base : $base.' approval';
+    }
+
+    private function resyncPendingLeaveRequests(): int
+    {
+        $synced = 0;
+
+        \App\Models\LeaveRequest::query()
+            ->where('pending_approval', true)
+            ->where('status', \App\Models\LeaveRequest::STATUS_PENDING)
+            ->whereNull('rejected_at')
+            ->with(['user', 'filedBy'])
+            ->orderBy('id')
+            ->chunkById(100, function ($leaves) use (&$synced): void {
+                foreach ($leaves as $leave) {
+                    $employee = $leave->user;
+                    if (! $employee instanceof User) {
+                        continue;
+                    }
+
+                    $requestor = $leave->filedBy instanceof User ? $leave->filedBy : $employee;
+                    if ($this->resyncRequestChain($leave, self::MODULE_LEAVE, $employee, $requestor)) {
+                        $synced++;
+                    }
+                }
+            });
+
+        return $synced;
+    }
+
+    private function resyncPendingOvertimeRequests(): int
+    {
+        $synced = 0;
+
+        \App\Models\Overtime::query()
+            ->where('pending_approval', true)
+            ->where('status', \App\Models\Overtime::STATUS_PENDING)
+            ->whereNull('rejected_at')
+            ->with(['user', 'filedBy'])
+            ->orderBy('id')
+            ->chunkById(100, function ($overtimes) use (&$synced): void {
+                foreach ($overtimes as $overtime) {
+                    $employee = $overtime->user;
+                    if (! $employee instanceof User) {
+                        continue;
+                    }
+
+                    $requestor = $overtime->filedBy instanceof User ? $overtime->filedBy : $employee;
+                    if ($this->resyncRequestChain($overtime, self::MODULE_OVERTIME, $employee, $requestor)) {
+                        $synced++;
+                    }
+                }
+            });
+
+        return $synced;
+    }
+
+    private function resyncRequestChain(Model $request, string $moduleType, User $employee, User $requestor): bool
+    {
+        $requestId = (int) $request->getKey();
+        $before = $this->records($moduleType, $requestId)
+            ->sortBy('sequence_order')
+            ->values()
+            ->map(fn (OrgApprovalRecord $record): array => [
+                'approver_id' => (int) $record->approver_id,
+                'approver_role' => (string) $record->approver_role,
+                'approval_label' => $record->approval_label,
+            ])
+            ->all();
+
+        $this->ensureRecordsForRequest($request, $moduleType, $employee, $requestor);
+
+        $after = $this->records($moduleType, $requestId)
+            ->sortBy('sequence_order')
+            ->values()
+            ->map(fn (OrgApprovalRecord $record): array => [
+                'approver_id' => (int) $record->approver_id,
+                'approver_role' => (string) $record->approver_role,
+                'approval_label' => $record->approval_label,
+            ])
+            ->all();
+
+        return $before !== $after;
+    }
+
+    private function employeeForApprovalRouting(User $employee): User
+    {
+        return User::query()
+            ->with(['departmentRelation', 'sectionUnit', 'division', 'branch', 'company', 'assignedTeamLeader'])
+            ->findOrFail((int) $employee->id);
     }
 }

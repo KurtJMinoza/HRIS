@@ -11,8 +11,9 @@ import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import ApprovalRoutePreviewSection from '@/components/organization/ApprovalRoutePreviewSection'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { addEmployeeSkill, adjustEmployeeLeaveCredits, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getDivisions, getSectionsOrUnits, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
+import { addEmployeeSkill, adjustEmployeeLeaveCredits, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getSectionsOrUnits, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeOrganizationAssignments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
 import { motion as Motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -801,7 +802,6 @@ export default function AdminEmployeeProfile() {
   const [leaveAdjustSaving, setLeaveAdjustSaving] = useState(false)
   const [allEmployees, setAllEmployees] = useState([])
   const [departments, setDepartments] = useState([])
-  const [divisions, setDivisions] = useState([])
   const [sectionsOrUnits, setSectionsOrUnits] = useState([])
   const [companies, setCompanies] = useState([])
   const [branches, setBranches] = useState([])
@@ -923,6 +923,8 @@ export default function AdminEmployeeProfile() {
   const [benefitsData, setBenefitsData] = useState(createEmptyBenefitsState())
   const [benefitsEditMode, setBenefitsEditMode] = useState(false)
   const [benefitsLoading, setBenefitsLoading] = useState(false)
+  const [organizationAssignments, setOrganizationAssignments] = useState([])
+  const [organizationAssignmentsLoading, setOrganizationAssignmentsLoading] = useState(false)
   const [benefitsError, setBenefitsError] = useState('')
   const [reportingManagerAutoHint, setReportingManagerAutoHint] = useState('')
   const [reportingManagerManualOverride, setReportingManagerManualOverride] = useState(false)
@@ -1057,7 +1059,6 @@ export default function AdminEmployeeProfile() {
     province: '',
     postal_code: '',
     department_id: '',
-    division_id: '',
     section_unit_id: '',
     company_id: '',
     branch_id: '',
@@ -1366,7 +1367,6 @@ export default function AdminEmployeeProfile() {
               ? String(found.postal_code).trim()
               : parsedAddress.postal_code,
             department_id: found.department_id != null ? String(found.department_id) : '',
-            division_id: found.division_id != null ? String(found.division_id) : '',
             section_unit_id: found.section_unit_id != null ? String(found.section_unit_id) : '',
             company_id: found.company_id != null ? String(found.company_id) : '',
             branch_id: found.branch_id != null ? String(found.branch_id) : '',
@@ -1636,15 +1636,13 @@ export default function AdminEmployeeProfile() {
     let alive = true
     Promise.all([
       getDepartments().catch(() => ({ departments: [] })),
-      getDivisions().catch(() => ({ divisions: [] })),
       getSectionsOrUnits().catch(() => ({ sections_or_units: [] })),
       getWorkingSchedules().catch(() => ({ schedules: [] })),
       getCompanies().catch(() => ({ companies: [] })),
     ])
-      .then(([deptData, divisionData, sectionData, schedulesData, companiesData]) => {
+      .then(([deptData, sectionData, schedulesData, companiesData]) => {
         if (!alive) return
         setDepartments(Array.isArray(deptData?.departments) ? deptData.departments : [])
-        setDivisions(Array.isArray(divisionData?.divisions) ? divisionData.divisions : [])
         setSectionsOrUnits(Array.isArray(sectionData?.sections_or_units) ? sectionData.sections_or_units : [])
         const list = Array.isArray(schedulesData?.schedules) ? schedulesData.schedules : []
         setWorkingSchedules(list)
@@ -1653,7 +1651,6 @@ export default function AdminEmployeeProfile() {
       .catch(() => {
         if (!alive) return
         setDepartments([])
-        setDivisions([])
         setSectionsOrUnits([])
         setWorkingSchedules([])
         setCompanies([])
@@ -1750,6 +1747,32 @@ export default function AdminEmployeeProfile() {
       })
       .finally(() => {
         if (alive) setBenefitsLoading(false)
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [employee?.id, activeTab])
+
+  useEffect(() => {
+    if (!employee?.id) {
+      setOrganizationAssignments([])
+      return
+    }
+    if (activeTab !== 'employment') return
+    let alive = true
+    setOrganizationAssignmentsLoading(true)
+    getEmployeeOrganizationAssignments(employee.id, { fresh: true })
+      .then((data) => {
+        if (!alive) return
+        setOrganizationAssignments(Array.isArray(data?.assignments) ? data.assignments : [])
+      })
+      .catch(() => {
+        if (!alive) return
+        setOrganizationAssignments([])
+      })
+      .finally(() => {
+        if (alive) setOrganizationAssignmentsLoading(false)
       })
 
     return () => {
@@ -3912,7 +3935,6 @@ export default function AdminEmployeeProfile() {
         province: form.province?.trim() || null,
         postal_code: form.postal_code?.trim() || null,
         department_id: form.department_id ? Number(form.department_id) : null,
-        division_id: form.division_id ? Number(form.division_id) : null,
         section_unit_id: form.section_unit_id ? Number(form.section_unit_id) : null,
         company_id: form.company_id ? Number(form.company_id) : null,
         branch_id: form.branch_id ? Number(form.branch_id) : null,
@@ -4859,6 +4881,41 @@ export default function AdminEmployeeProfile() {
                   <div className="h-10 w-28 rounded bg-muted-foreground/20" />
                 </div>
               ) : null}
+              <div className="mb-8 rounded-xl border border-border/60 bg-muted/10 p-5 dark:border-white/10">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-foreground">Organization assignments</h3>
+                    <p className="text-sm text-muted-foreground">Primary, shared, temporary, and acting placements.</p>
+                  </div>
+                </div>
+                {organizationAssignmentsLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading organization assignments…</p>
+                ) : organizationAssignments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No organization assignments recorded yet.</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {organizationAssignments.map((row) => (
+                      <li
+                        key={row.id}
+                        className="rounded-lg border border-border/60 bg-background px-4 py-3 dark:border-white/10 dark:bg-[#151922]"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={row.is_primary ? 'default' : 'secondary'} className="capitalize">
+                            {row.assignment_type || (row.is_primary ? 'primary' : 'shared')}
+                          </Badge>
+                          <Badge variant="outline">{row.is_active ? 'Active' : 'Inactive'}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm font-medium text-foreground">{row.org_path || row.organization_unit_name || 'Organization unit'}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {row.effective_from ? `From ${row.effective_from}` : 'Open start'}
+                          {row.effective_to ? ` · Until ${row.effective_to}` : ''}
+                          {row.remarks ? ` · ${row.remarks}` : ''}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               <div className="grid gap-6 @sm:grid-cols-2 @lg:grid-cols-3">
                 <div className="space-y-3">
                   <Label className="flex items-center gap-2 text-base text-muted-foreground">
@@ -4867,7 +4924,7 @@ export default function AdminEmployeeProfile() {
                   </Label>
                   <Select
                     value={form.company_id || 'none'}
-                    onValueChange={(v) => setForm((f) => ({ ...f, company_id: v === 'none' ? '' : v, branch_id: '', department_id: '', division_id: '', section_unit_id: '' }))}
+                    onValueChange={(v) => setForm((f) => ({ ...f, company_id: v === 'none' ? '' : v, branch_id: '', department_id: '', section_unit_id: '' }))}
                   >
                     <SelectTrigger className="h-11 w-full text-base"><SelectValue placeholder="Select company" /></SelectTrigger>
                     <SelectContent>
@@ -4910,7 +4967,6 @@ export default function AdminEmployeeProfile() {
                           setForm((f) => ({
                             ...f,
                             branch_id: branchId,
-                            division_id: '',
                             department_id: '',
                             section_unit_id: '',
                             branch_office_location: branch ? (branch.name || branch.address || '') : f.branch_office_location,
@@ -4932,31 +4988,6 @@ export default function AdminEmployeeProfile() {
                     <div className="space-y-3">
                       <Label className="flex items-center gap-2 text-base text-muted-foreground">
                         <Building2 className="size-4 shrink-0" />
-                        Division
-                      </Label>
-                      <Select
-                        value={form.division_id || 'none'}
-                        onValueChange={(v) => setForm((f) => ({ ...f, division_id: v === 'none' ? '' : v, department_id: '', section_unit_id: '' }))}
-                      >
-                        <SelectTrigger className="h-11 w-full text-base"><SelectValue placeholder="Select division" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          {(form.branch_id
-                            ? divisions.filter((d) => {
-                                if (String(d.branch_id ?? '') !== String(form.branch_id)) return false
-                                if (form.company_id && String(d.company_id ?? '') !== String(form.company_id)) return false
-                                return true
-                              })
-                            : []
-                          ).map((d) => (
-                            <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-3">
-                      <Label className="flex items-center gap-2 text-base text-muted-foreground">
-                        <Building2 className="size-4 shrink-0" />
                         Department
                       </Label>
                       <Select
@@ -4966,11 +4997,9 @@ export default function AdminEmployeeProfile() {
                         <SelectTrigger className="h-11 w-full text-base"><SelectValue placeholder="Select department" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">None</SelectItem>
-                          {(form.division_id
-                            ? departments.filter((d) => String(d.division_id ?? '') === String(form.division_id))
-                            : form.branch_id
-                              ? departments.filter((d) => d.branch_id != null && String(d.branch_id) === String(form.branch_id))
-                              : departments
+                          {(form.branch_id
+                            ? departments.filter((d) => d.branch_id != null && String(d.branch_id) === String(form.branch_id))
+                            : departments
                           ).map((d) => (
                             <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
                           ))}
@@ -4989,22 +5018,14 @@ export default function AdminEmployeeProfile() {
                         <SelectTrigger className="h-11 w-full text-base"><SelectValue placeholder="Select section/unit" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">None</SelectItem>
-                          {(form.division_id
+                          {(form.department_id
                             ? sectionsOrUnits.filter((s) => {
-                                if (String(s.division_id ?? '') !== String(form.division_id)) return false
-                                if (form.department_id && String(s.department_id ?? '') !== String(form.department_id)) return false
+                                if (String(s.department_id ?? '') !== String(form.department_id)) return false
                                 if (form.company_id && String(s.company_id ?? '') !== String(form.company_id)) return false
                                 if (form.branch_id && String(s.branch_id ?? '') !== String(form.branch_id)) return false
                                 return true
                               })
-                            : form.department_id
-                              ? sectionsOrUnits.filter((s) => {
-                                  if (String(s.department_id ?? '') !== String(form.department_id)) return false
-                                  if (form.company_id && String(s.company_id ?? '') !== String(form.company_id)) return false
-                                  if (form.branch_id && String(s.branch_id ?? '') !== String(form.branch_id)) return false
-                                  return true
-                                })
-                              : []
+                            : []
                           ).map((s) => (
                             <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
                           ))}
@@ -5188,6 +5209,11 @@ export default function AdminEmployeeProfile() {
                   </div>
                 ) : null}
               </div>
+              {employee?.id ? (
+                <div className="mt-8">
+                  <ApprovalRoutePreviewSection employeeId={employee.id} />
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </TabsContent>

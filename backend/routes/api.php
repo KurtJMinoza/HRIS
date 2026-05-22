@@ -22,9 +22,11 @@ use App\Http\Controllers\Admin\HolidayController;
 use App\Http\Controllers\Admin\ImportEmployeeController;
 use App\Http\Controllers\Admin\LeaveController;
 use App\Http\Controllers\Admin\LoanRequestController;
+use App\Http\Controllers\Admin\OrganizationLeadershipController;
 use App\Http\Controllers\Admin\OvertimeController;
 use App\Http\Controllers\Admin\PayComponentController;
 use App\Http\Controllers\Admin\PayCycleController;
+use App\Http\Controllers\Admin\ApprovalWorkflowSettingsController;
 use App\Http\Controllers\Admin\PayPolicyController;
 use App\Http\Controllers\Admin\PayrollController;
 use App\Http\Controllers\Admin\PayrollFinalizeController;
@@ -133,6 +135,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/leave/undertime-preview', [EmployeeLeaveController::class, 'undertimePreview']);
     Route::get('/leave/paid-leave-preview', [EmployeeLeaveController::class, 'paidLeavePreview']);
     Route::get('/leave/validate-range', [EmployeeLeaveController::class, 'validateLeaveDateRange']);
+    Route::get('/me/organization-assignments', [EmployeeLeaveController::class, 'organizationAssignments']);
     Route::post('/leave', [EmployeeLeaveController::class, 'apply']);
     Route::post('/leave/{id}/document', [EmployeeLeaveController::class, 'uploadDocument']);
     Route::delete('/leave/{id}', [EmployeeLeaveController::class, 'destroy']);
@@ -245,6 +248,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/employees/{userId}/government-id-documents', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'index']);
             Route::get('/admin/employees/{userId}/documents', [\App\Http\Controllers\Admin\EmployeeDocumentController::class, 'index']);
             Route::get('/admin/employees/{id}/profile', [EmployeeProfileController::class, 'showForViewer']);
+            Route::get('/admin/employees/{id}/organization-assignments', [EmployeeController::class, 'organizationAssignments']);
             Route::get('/admin/employees/{id}/schedule-rate-preview', [EmployeeController::class, 'scheduleRatePreview']);
         });
         Route::middleware('permission:employees.create')->group(function () {
@@ -326,6 +330,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:org.branch.view')->get('/admin/branches/{id}/departments', [BranchController::class, 'departments']);
         Route::middleware('permission:org.branch.manage')->patch('/admin/branches/{id}', [BranchController::class, 'update']);
         Route::middleware('permission:org.branch.manage')->delete('/admin/branches/{id}', [BranchController::class, 'destroy']);
+
+        Route::middleware('permission:org.company.view|org.branch.view|org.division.view|org.department.view|org.section_unit.view')->group(function () {
+            Route::get('/admin/organization-leadership/{legacyType}/{legacyId}', [OrganizationLeadershipController::class, 'show']);
+            Route::get('/admin/employees/{id}/approval-route-preview', [OrganizationLeadershipController::class, 'approvalRoutePreview']);
+        });
+        Route::middleware('permission:org.company.manage|org.branch.manage|org.division.manage|org.department.manage|org.section_unit.manage')->group(function () {
+            Route::put('/admin/organization-leadership/{legacyType}/{legacyId}', [OrganizationLeadershipController::class, 'update']);
+        });
 
         Route::middleware('permission:benefits.catalog')->group(function () {
             Route::get('/admin/benefit-catalogs', [BenefitCatalogController::class, 'index']);
@@ -409,6 +421,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/payroll-batches/{batchId}/bulk-download-pdf', [AdminPayslipController::class, 'bulkDownloadBatchPdf'])->whereNumber('batchId');
             Route::get('/admin/payslip-bulk-downloads/{id}/status', [AdminPayslipController::class, 'bulkDownloadStatus'])->whereNumber('id');
             Route::get('/admin/payslip-bulk-downloads/{id}/download', [AdminPayslipController::class, 'downloadBulkZip'])->whereNumber('id');
+        });
+        Route::middleware('permission:approval.workflow.manage')->group(function () {
+            Route::get('/admin/approval-workflow-settings', [ApprovalWorkflowSettingsController::class, 'index']);
+            Route::put('/admin/approval-workflow-settings', [ApprovalWorkflowSettingsController::class, 'update']);
         });
         Route::middleware('permission:payroll.policies')->group(function () {
             Route::get('/admin/payroll/policies', [PayPolicyController::class, 'index']);

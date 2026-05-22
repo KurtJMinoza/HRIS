@@ -44,6 +44,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { cn } from '@/lib/utils'
+import {
+  requestModuleActionsTdClass,
+  requestModuleActionsWrapRowClass,
+  requestModuleCompactButtonClass,
+  requestModuleHeadRowClass,
+  requestModuleRowClass,
+  leaveEmployeeTableClass,
+  requestModuleTdClass,
+  requestModuleTdMutedClass,
+  requestModuleThClass,
+  requestModuleThRightClass,
+} from '@/lib/requestModuleTable'
 import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 
 const MAX_LEAVE_SUPPORTING_FILES = 5
@@ -83,6 +95,7 @@ import {
   uploadMyLeaveDocument,
   getUndertimePreview,
   getPaidLeavePreview,
+  getMyOrganizationAssignments,
   profileImageUrl,
   validateMyLeaveDateRange,
 } from '@/api'
@@ -98,6 +111,7 @@ import {
   adminFormDialogContentClass,
 } from '@/lib/adminFormDialogStyles'
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
+import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 
 function formatDateShort(iso) {
   if (!iso) return '—'
@@ -209,40 +223,6 @@ function LeaveTypeBadge({ type }) {
   )
 }
 
-function LeaveStatusPill({ status, displayStatus }) {
-  const s = normalizeLeaveStatus(status)
-  const label = displayStatus || status || '—'
-  if (s === 'rejected') {
-    return (
-      <span className="inline-flex items-center gap-2 rounded-full border border-red-200/90 bg-gradient-to-br from-red-50 to-rose-50 px-3.5 py-1.5 text-sm font-semibold text-red-900 shadow-sm ring-1 ring-red-100 dark:border-red-900/50 dark:from-red-950/40 dark:to-rose-950/30 dark:text-red-100 dark:ring-red-900/40">
-        <XCircle className="size-4 shrink-0" aria-hidden />
-        Rejected
-      </span>
-    )
-  }
-  if (s === 'approved') {
-    return (
-      <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/90 bg-gradient-to-br from-emerald-50 to-teal-50 px-3.5 py-1.5 text-sm font-semibold text-emerald-950 shadow-sm ring-1 ring-emerald-100 dark:border-emerald-900/40 dark:from-emerald-950/45 dark:to-teal-950/25 dark:text-emerald-50 dark:ring-emerald-900/30">
-        <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
-        Approved
-      </span>
-    )
-  }
-  if (s === 'pending') {
-    return (
-      <span className="inline-flex max-w-[min(100%,14rem)] items-center gap-2 rounded-full border border-amber-200/90 bg-gradient-to-br from-amber-50 to-orange-50/80 px-3.5 py-1.5 text-sm font-semibold text-amber-950 shadow-sm ring-1 ring-amber-100 dark:border-amber-900/50 dark:from-amber-950/40 dark:to-orange-950/20 dark:text-amber-50 dark:ring-amber-900/40">
-        <Clock className="size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
-        <span className="line-clamp-2 leading-tight">{label}</span>
-      </span>
-    )
-  }
-  return (
-    <span className="inline-flex max-w-[min(100%,14rem)] items-center gap-2 rounded-full border border-slate-200/90 bg-slate-50 px-3.5 py-1.5 text-sm font-semibold text-slate-800 shadow-sm dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100">
-      <span className="line-clamp-2 leading-tight">{label}</span>
-    </span>
-  )
-}
-
 function RemarksPreviewCell({ text }) {
   const clean = String(text || '').trim()
   if (!clean) {
@@ -254,9 +234,9 @@ function RemarksPreviewCell({ text }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="group max-w-full text-left text-sm text-slate-800 outline-none transition hover:text-emerald-700 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:text-slate-100 dark:hover:text-emerald-300"
+          className="group w-full min-w-0 max-w-full text-left text-sm text-slate-800 outline-none transition hover:text-emerald-700 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:text-slate-100 dark:hover:text-emerald-300"
         >
-          <span className="line-clamp-2 font-normal leading-snug">{short}</span>
+          <span className="block truncate font-normal leading-snug">{short}</span>
           {clean.length > 120 && (
             <span className="mt-1 block text-xs font-semibold text-emerald-600 underline-offset-2 group-hover:underline dark:text-emerald-400">
               View full remarks
@@ -494,6 +474,9 @@ export default function EmployeeLeave() {
   const [paidLeavePreviewLoading, setPaidLeavePreviewLoading] = useState(false)
 
   const [submitting, setSubmitting] = useState(false)
+  const [assignmentContexts, setAssignmentContexts] = useState([])
+  const [assignmentContextsLoading, setAssignmentContextsLoading] = useState(false)
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState('')
   const leaveSubmitLock = useRef(false)
   const [addError, setAddError] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
@@ -687,8 +670,41 @@ export default function EmployeeLeave() {
     }
   }, [addOpen, addForm.type, addForm.start_date, addForm.end_date, isSingleDate])
 
+  useEffect(() => {
+    if (!addOpen) return
+    let alive = true
+    setAssignmentContextsLoading(true)
+    getMyOrganizationAssignments({ fresh: true, start_date: addForm.start_date || undefined })
+      .then((data) => {
+        if (!alive) return
+        const list = Array.isArray(data?.assignments) ? data.assignments : []
+        const selected = data?.default_assignment && typeof data.default_assignment === 'object'
+          ? data.default_assignment
+          : (list.find((item) => item.is_primary) || list[0])
+        setAssignmentContexts(list)
+        setSelectedAssignmentId(selected?.id ? String(selected.id) : '')
+      })
+      .catch(() => {
+        if (!alive) return
+        setAssignmentContexts([])
+        setSelectedAssignmentId('')
+      })
+      .finally(() => {
+        if (alive) setAssignmentContextsLoading(false)
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [addOpen, addForm.start_date])
+
   const restDayBlocksSubmit =
     restRangeValidating || Boolean(restRangeCheck && !restRangeCheck.valid)
+
+  const selectedAssignmentContext = useMemo(
+    () => assignmentContexts.find((assignment) => String(assignment.id) === String(selectedAssignmentId)) || null,
+    [assignmentContexts, selectedAssignmentId],
+  )
 
   const leaveWillBeFullyPaid =
     addOpen &&
@@ -792,6 +808,7 @@ export default function EmployeeLeave() {
     try {
       const reasonOpt = addForm.reason.trim()
       const payload = (() => {
+        const assignmentPayload = selectedAssignmentId ? { assignment_id: selectedAssignmentId } : {}
         if (ut) {
           return {
             type: addForm.type,
@@ -799,6 +816,7 @@ export default function EmployeeLeave() {
             end_date: addForm.start_date,
             undertime_time: addForm.undertime_time,
             reason: addForm.reason,
+            ...assignmentPayload,
           }
         }
         if (hd) {
@@ -808,6 +826,7 @@ export default function EmployeeLeave() {
             end_date: addForm.start_date,
             half_type: addForm.half_type,
             ...(reasonOpt ? { reason: reasonOpt } : {}),
+            ...assignmentPayload,
           }
         }
         return {
@@ -815,6 +834,7 @@ export default function EmployeeLeave() {
           start_date: addForm.start_date,
           end_date: addForm.end_date,
           ...(reasonOpt ? { reason: reasonOpt } : {}),
+          ...assignmentPayload,
         }
       })()
       const res = await createMyLeaveRequest(payload)
@@ -873,6 +893,7 @@ export default function EmployeeLeave() {
     setAddError(null)
     setRestRangeCheck(null)
     setRestRangeValidating(false)
+    setSelectedAssignmentId('')
     setAddForm({
       type: 'vacation',
       start_date: '',
@@ -903,23 +924,27 @@ export default function EmployeeLeave() {
   function renderLeaveTable() {
     return (
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[980px] border-collapse text-[15px]">
+        <table className={leaveEmployeeTableClass}>
+          <colgroup>
+            <col className="w-[9rem]" />
+            <col className="w-[12rem]" />
+            <col className="w-[7rem]" />
+            <col className="w-[11rem]" />
+            <col className="w-[14rem]" />
+            <col className="w-[14rem]" />
+            <col className="w-[9.5rem]" />
+            <col className="w-[10rem]" />
+          </colgroup>
           <thead>
-            <tr className="border-b border-border/70 bg-card text-left">
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">Leave type</th>
-              <th className="min-w-[200px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">
-                Date / range
-              </th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">Duration</th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">
-                Supporting documents
-              </th>
-              <th className="min-w-[180px] px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">
-                Reason / remarks
-              </th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">Status</th>
-              <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-foreground">Date filed</th>
-              <th className="w-28 px-4 py-4 text-right text-xs font-bold uppercase tracking-wider text-foreground">Actions</th>
+            <tr className={requestModuleHeadRowClass}>
+              <th className={requestModuleThClass}>Leave type</th>
+              <th className={requestModuleThClass}>Date / range</th>
+              <th className={requestModuleThClass}>Duration</th>
+              <th className={requestModuleThClass}>Supporting documents</th>
+              <th className={requestModuleThClass}>Reason / remarks</th>
+              <th className={requestModuleThClass}>Status</th>
+              <th className={requestModuleThRightClass}>Date filed</th>
+              <th className={requestModuleThRightClass}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -958,19 +983,16 @@ export default function EmployeeLeave() {
                 return (
                   <tr
                     key={leave.id}
-                    className={cn(
-                      'border-b border-border/55 transition-colors duration-150 hover:bg-brand/5 dark:hover:bg-white/[0.045]',
-                      rowIdx % 2 === 0 ? 'bg-card' : 'bg-muted/20 dark:bg-white/[0.02]'
-                    )}
+                    className={requestModuleRowClass(rowIdx)}
                   >
-                    <td className="px-5 py-4 align-middle">
+                    <td className={requestModuleTdClass}>
                       <LeaveTypeBadge type={leave.type} />
                     </td>
-                    <td className="px-5 py-4 align-middle text-sm font-medium leading-snug text-foreground">
+                    <td className={cn(requestModuleTdClass, 'font-medium leading-snug')}>
                       {formatDateRangeShort(leave.start_date, leave.end_date)}
                     </td>
-                    <td className="px-5 py-4 align-middle tabular-nums text-muted-foreground">{durLabel}</td>
-                    <td className="px-5 py-4 align-middle text-sm">
+                    <td className={requestModuleTdMutedClass}>{durLabel}</td>
+                    <td className={requestModuleTdClass}>
                       {(() => {
                         const urls = supportingDocUrls(leave)
                         if (!urls.length) {
@@ -994,25 +1016,25 @@ export default function EmployeeLeave() {
                         )
                       })()}
                     </td>
-                    <td className="max-w-[280px] px-5 py-4 align-top">
+                    <td className={cn(requestModuleTdClass, 'max-w-0')}>
                       <RemarksPreviewCell text={remarksPreview} />
                     </td>
-                    <td className="px-5 py-4 align-middle">
+                    <td className={requestModuleTdClass}>
                       <LeaveStatusPill status={leave.status} displayStatus={leave.display_status} />
                     </td>
-                    <td className="px-5 py-4 align-middle text-sm tabular-nums text-muted-foreground">
+                    <td className={cn(requestModuleTdMutedClass, 'text-right')}>
                       {leave.created_at ? formatDateTime(leave.created_at) : '—'}
                     </td>
-                    <td className="px-4 py-4 text-right align-middle">
-                      <div className="flex flex-wrap justify-end gap-2">
+                    <td className={requestModuleActionsTdClass}>
+                      <div className={requestModuleActionsWrapRowClass}>
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          className="gap-1.5 rounded-lg text-foreground hover:bg-brand/10 hover:text-brand dark:hover:bg-brand/12"
+                          className={cn(requestModuleCompactButtonClass, 'text-foreground hover:bg-brand/10 hover:text-brand dark:hover:bg-brand/12')}
                           onClick={() => openLeaveDetail(leave)}
                         >
-                          <Eye className="size-4" />
+                          <Eye className="size-3.5" />
                           View details
                         </Button>
                         {leave.actor_can_delete ? (
@@ -1020,10 +1042,10 @@ export default function EmployeeLeave() {
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="gap-1.5 rounded-lg text-destructive hover:bg-destructive/10"
+                            className={cn(requestModuleCompactButtonClass, 'text-destructive hover:bg-destructive/10')}
                             onClick={() => setDeleteDialog({ open: true, leave })}
                           >
-                            <Trash2 className="size-4" />
+                            <Trash2 className="size-3.5" />
                             Delete
                           </Button>
                         ) : null}
@@ -1476,6 +1498,24 @@ export default function EmployeeLeave() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {(selectedAssignmentContext || assignmentContextsLoading) && (
+                <div className="rounded-xl border border-border/80 bg-muted/20 px-4 py-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Organization Context</p>
+                  {assignmentContextsLoading ? (
+                    <p className="mt-1 text-sm text-muted-foreground">Loading context...</p>
+                  ) : (
+                    <>
+                      <p className="mt-1 text-sm font-semibold text-foreground">
+                        {selectedAssignmentContext?.org_path || selectedAssignmentContext?.organization_unit_name || 'Organization'}
+                      </p>
+                      <p className="mt-0.5 text-xs capitalize text-muted-foreground">
+                        Assignment Type: {selectedAssignmentContext?.is_primary ? 'Primary' : (selectedAssignmentContext?.assignment_type || 'Shared')}
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-3">
                 <Label className={leaveModalLabelClass}>

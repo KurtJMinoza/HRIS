@@ -16,6 +16,13 @@ class LeaveRequest extends Model
 
     protected $fillable = [
         'user_id',
+        'assignment_id',
+        'assignment_type',
+        'company_id',
+        'branch_id',
+        'division_id',
+        'department_id',
+        'section_unit_id',
         'type',
         'start_date',
         'end_date',
@@ -105,6 +112,11 @@ class LeaveRequest extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function organizationAssignment(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeOrganizationAssignment::class, 'assignment_id');
     }
 
     public function reviewedByUser(): BelongsTo

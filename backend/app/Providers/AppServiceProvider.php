@@ -6,6 +6,10 @@ use App\Events\ScheduleUpdated;
 use App\Listeners\RecalculatePayrollDailyRecords;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
+use App\Models\Branch;
+use App\Models\Company;
+use App\Models\Department;
+use App\Models\Division;
 use App\Models\EmployeeBenefit;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
@@ -13,10 +17,13 @@ use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeEmergencyContact;
 use App\Models\EmployeeGovernmentId;
 use App\Models\Holiday;
+use App\Models\SectionUnit;
+use App\Models\Team;
 use App\Models\User;
 use App\Services\AttendanceCacheService;
 use App\Services\HolidayCalendarService;
 use App\Services\HolidayService;
+use App\Services\LegacyOrganizationMirrorService;
 use App\Support\EmployeeProfileCache;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -35,6 +42,10 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(HolidayService::class, fn ($app) => new HolidayService(
             $app->make(HolidayCalendarService::class)
         ));
+        $this->app->bind(
+            \App\Contracts\OrgUnitEmployeeCounter::class,
+            \App\Services\OrgUnitEmployeeCountService::class,
+        );
     }
 
     /**
@@ -175,5 +186,24 @@ class AppServiceProvider extends ServiceProvider
                 AttendanceCacheService::invalidate((int) $userId);
             }
         });
+
+        $mirror = fn () => app(LegacyOrganizationMirrorService::class);
+        Company::saved(fn (Company $model) => $mirror()->sync($model));
+        Branch::saved(fn (Branch $model) => $mirror()->sync($model));
+        Division::saved(fn (Division $model) => $mirror()->sync($model));
+        Department::saved(fn (Department $model) => $mirror()->sync($model));
+        SectionUnit::saved(fn (SectionUnit $model) => $mirror()->sync($model));
+        Team::saved(fn (Team $model) => $mirror()->sync($model));
+        User::saved(function (User $user) use ($mirror): void {
+            if ($user->wasChanged(['company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id', 'team_id', 'supervisor_id'])) {
+                $mirror()->sync($user);
+            }
+        });
+        Company::deleted(fn (Company $model) => $mirror()->deactivate($model));
+        Branch::deleted(fn (Branch $model) => $mirror()->deactivate($model));
+        Division::deleted(fn (Division $model) => $mirror()->deactivate($model));
+        Department::deleted(fn (Department $model) => $mirror()->deactivate($model));
+        SectionUnit::deleted(fn (SectionUnit $model) => $mirror()->deactivate($model));
+        Team::deleted(fn (Team $model) => $mirror()->deactivate($model));
     }
 }

@@ -2,19 +2,24 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Contracts\OrgUnitEmployeeCounter;
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
+use App\Models\EmployeeOrganizationAssignment;
 use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\OrgHierarchyNormalizer;
-use App\Services\OrgUnitEmployeeCountService;
+use App\Services\OrganizationLeadershipAssignmentService;
+use App\Services\OrganizationLeadershipService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -22,8 +27,11 @@ class DivisionController extends Controller
 {
     public function __construct(
         private readonly DataScopeService $dataScopeService,
-        private readonly OrgUnitEmployeeCountService $orgUnitEmployeeCountService,
+        private readonly OrgUnitEmployeeCounter $orgUnitEmployeeCountService,
         private readonly OrgHierarchyNormalizer $orgHierarchyNormalizer,
+        private readonly OrganizationLeadershipAssignmentService $leadershipAssignments,
+        private readonly OrganizationLeadershipService $organizationLeadershipService,
+        private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -56,7 +64,7 @@ class DivisionController extends Controller
         $this->dataScopeService->restrictDivisionQuery($request->user(), $query);
 
         $divisions = $query->orderBy('name')->get();
-        $countsById = $this->orgUnitEmployeeCountService->forDivisions($divisions);
+        $countsById = $this->divisionEmployeeCounts($divisions);
 
         return response()->json([
             'divisions' => $divisions->map(
@@ -86,10 +94,14 @@ class DivisionController extends Controller
         ]);
 
         if (($validated['division_head_id'] ?? null) !== null) {
-            $this->validateDivisionHeadExclusive((int) $validated['division_head_id'], $division->id);
-            $this->assertHeadBelongsToDivision((int) $validated['division_head_id'], $division);
+            $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['division_head_id']);
             $division->division_head_id = (int) $validated['division_head_id'];
             $division->save();
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'division',
+                (int) $division->id,
+                (int) $validated['division_head_id'],
+            );
             EmployeeProfileCache::invalidate((int) $validated['division_head_id']);
         }
 
@@ -129,10 +141,15 @@ class DivisionController extends Controller
         if (array_key_exists('division_head_id', $validated)) {
             $previousHeadId = $division->division_head_id;
             if ($validated['division_head_id'] !== null) {
-                $this->validateDivisionHeadExclusive((int) $validated['division_head_id'], $division->id);
-                $this->assertHeadBelongsToDivision((int) $validated['division_head_id'], $division);
+                $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['division_head_id']);
             }
             $division->division_head_id = $validated['division_head_id'];
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'division',
+                (int) $division->id,
+                $validated['division_head_id'] !== null ? (int) $validated['division_head_id'] : null,
+                $previousHeadId !== null ? (int) $previousHeadId : null,
+            );
             foreach (array_unique(array_filter([
                 $previousHeadId ? (int) $previousHeadId : null,
                 $division->division_head_id ? (int) $division->division_head_id : null,
@@ -155,8 +172,8 @@ class DivisionController extends Controller
         $this->dataScopeService->restrictDivisionQuery($request->user(), $scope);
         $division = $scope->firstOrFail();
 
-        $employees = $division->employees()
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
+        $memberQuery = $this->orgUnitEmployeeCountService->divisionMembersQuery((int) $division->id);
+        $employees = (clone $memberQuery)
             ->orderByLastName()
             ->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image'])
             ->map(fn (User $user) => [
@@ -168,6 +185,7 @@ class DivisionController extends Controller
 
         return response()->json([
             'division' => ['id' => $division->id, 'name' => $division->name],
+            'employee_count' => $employees->count(),
             'employees' => $employees,
         ]);
     }
@@ -178,18 +196,18 @@ class DivisionController extends Controller
         $validated = $request->validate([
             'employee_ids' => ['required', 'array', 'min:1'],
             'employee_ids.*' => ['integer', 'exists:users,id'],
+            'assignment_mode' => ['nullable', 'string', 'in:shared,transfer_primary'],
+            'remarks' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        User::query()
-            ->whereIn('id', $validated['employee_ids'])
-            ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-            ->update([
-                'company_id' => $division->company_id,
-                'branch_id' => $division->branch_id,
-                'division_id' => $division->id,
-                'department_id' => null,
-                'section_unit_id' => null,
-            ]);
+        $assignmentMode = $validated['assignment_mode'] ?? EmployeeOrganizationAssignmentService::MODE_TRANSFER_PRIMARY;
+        $this->organizationAssignments->assignToLegacyUnit(
+            'division',
+            (int) $division->id,
+            $validated['employee_ids'],
+            $assignmentMode,
+            $validated['remarks'] ?? null,
+        );
 
         return response()->json([
             'message' => 'Employees assigned successfully.',
@@ -205,10 +223,11 @@ class DivisionController extends Controller
             'employee_ids.*' => ['integer', 'exists:users,id'],
         ]);
 
-        User::query()
-            ->whereIn('id', $validated['employee_ids'])
-            ->where('division_id', $division->id)
-            ->update(['division_id' => null, 'section_unit_id' => null]);
+        $this->organizationAssignments->unassignFromLegacyUnit(
+            'division',
+            (int) $division->id,
+            $validated['employee_ids'],
+        );
 
         return response()->json([
             'message' => 'Employees unassigned successfully.',
@@ -256,12 +275,47 @@ class DivisionController extends Controller
         ];
     }
 
+    /**
+     * @param  Collection<int, Division>  $divisions
+     * @return array<int, array{
+     *   assigned_employee_count: int,
+     *   branch_employee_count: int,
+     *   unassigned_employee_count: int,
+     *   total_employees: int
+     * }>
+     */
+    private function divisionEmployeeCounts(Collection $divisions): array
+    {
+        return $this->orgUnitEmployeeCountService->forDivisions($divisions);
+    }
+
+    /**
+     * @return array{
+     *   assigned_employee_count: int,
+     *   branch_employee_count: int,
+     *   department_employee_count: int,
+     *   unassigned_employee_count: int,
+     *   total_employees: int
+     * }
+     */
+    private function emptyDivisionEmployeeCounts(): array
+    {
+        return [
+            'assigned_employee_count' => 0,
+            'branch_employee_count' => 0,
+            'department_employee_count' => 0,
+            'unassigned_employee_count' => 0,
+            'total_employees' => 0,
+        ];
+    }
+
     private function divisionResponse(Division $division, ?array $counts = null): array
     {
         // Logo always comes from Company (single source of truth). Division does not store its own logo.
         $companyLogo = $division->company?->logo ?? null;
         $logoUrl = $companyLogo ? $this->publicMediaUrl($companyLogo) : null;
-        $counts ??= $this->orgUnitEmployeeCountService->forDivision($division);
+        $counts ??= $this->divisionEmployeeCounts(collect([$division]))[(int) $division->id]
+            ?? $this->emptyDivisionEmployeeCounts();
 
         return [
             'id' => $division->id,
@@ -286,70 +340,6 @@ class DivisionController extends Controller
             'total_sections_or_units' => $division->sections_or_units_count ?? $division->sectionsOrUnits()->count(),
             'created_at' => $division->created_at?->toIso8601String(),
         ];
-    }
-
-    private function assertHeadBelongsToDivision(int $userId, Division $division): void
-    {
-        $user = User::query()->whereKey($userId)->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)->first();
-        if (! $user) {
-            throw ValidationException::withMessages([
-                'division_head_id' => ['The selected employee is not eligible to be assigned as division head.'],
-            ]);
-        }
-        if (! $user->is_active) {
-            throw ValidationException::withMessages([
-                'division_head_id' => ['The selected employee must be active to be assigned as division head.'],
-            ]);
-        }
-
-        $belongsToDivision = (int) $user->division_id === (int) $division->id;
-        $inDivisionViaDepartment = Department::query()
-            ->where('division_id', $division->id)
-            ->where(function ($query) use ($user, $userId): void {
-                $query->where('department_head_id', $userId);
-                if ($user->department_id !== null) {
-                    $query->orWhere('id', $user->department_id);
-                }
-            })
-            ->exists();
-        $inDivisionViaSection = SectionUnit::query()
-            ->where('division_id', $division->id)
-            ->where(function ($query) use ($user, $userId): void {
-                $query->where('section_unit_head_id', $userId);
-                if ($user->section_unit_id !== null) {
-                    $query->orWhere('id', $user->section_unit_id);
-                }
-            })
-            ->exists();
-
-        if (! $belongsToDivision && ! $inDivisionViaDepartment && ! $inDivisionViaSection) {
-            throw ValidationException::withMessages([
-                'division_head_id' => ['The selected employee must belong to this division or hold a leadership role within it.'],
-            ]);
-        }
-
-        $headCompanyId = $user->getEffectiveCompanyId();
-        if ($headCompanyId !== null && $division->company_id !== null && (int) $headCompanyId !== (int) $division->company_id) {
-            throw ValidationException::withMessages([
-                'division_head_id' => ['The selected employee is assigned to another company and cannot be division head here.'],
-            ]);
-        }
-    }
-
-    /**
-     * Prevent the same employee from leading more than one division at a time.
-     */
-    private function validateDivisionHeadExclusive(int $userId, ?int $excludeDivisionId): void
-    {
-        $query = Division::query()->where('division_head_id', $userId);
-        if ($excludeDivisionId !== null) {
-            $query->where('id', '!=', $excludeDivisionId);
-        }
-        if ($query->exists()) {
-            throw ValidationException::withMessages([
-                'division_head_id' => ['This employee is already Division Head of another division.'],
-            ]);
-        }
     }
 
     private function nullableTrim(mixed $value): ?string

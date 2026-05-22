@@ -4,7 +4,8 @@
     "type": "module",
     "scripts": {
         "build": "vite build",
-        "dev": "vite"
+        "dev": "vite",
+        "browsershot:install-chrome": "puppeteer browsers install chrome-headless-shell"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",

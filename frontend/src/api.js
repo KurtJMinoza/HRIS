@@ -2593,10 +2593,29 @@ export async function getEmployees(params = {}) {
   if (params.section_unit_id != null && params.section_unit_id !== '') query.set('section_unit_id', String(params.section_unit_id))
   if (params.assignable_to_company_id != null && params.assignable_to_company_id !== '') query.set('assignable_to_company_id', String(params.assignable_to_company_id))
   if (params.for_department_assignment) query.set('for_department_assignment', '1')
+  if (params.for_organization_assignment) query.set('for_organization_assignment', '1')
   if (params.assignment_branch_id != null && params.assignment_branch_id !== '') query.set('assignment_branch_id', String(params.assignment_branch_id))
   if (params.fresh) query.set('_ts', String(Date.now()))
   const path = `/admin/employees${query.toString() ? `?${query.toString()}` : ''}`
   return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 6000 })
+}
+
+export async function getEmployeeOrganizationAssignments(employeeId, params = {}) {
+  const query = new URLSearchParams()
+  if (params.fresh) query.set('_ts', String(Date.now()))
+  const suffix = query.toString()
+  const path = `/admin/employees/${employeeId}/organization-assignments${suffix ? `?${suffix}` : ''}`
+  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 15000 })
+}
+
+export async function getMyOrganizationAssignments(params = {}) {
+  const query = new URLSearchParams()
+  if (params.fresh) query.set('_ts', String(Date.now()))
+  if (params.date) query.set('date', params.date)
+  if (params.start_date) query.set('start_date', params.start_date)
+  const suffix = query.toString()
+  const path = `/me/organization-assignments${suffix ? `?${suffix}` : ''}`
+  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 15000 })
 }
 
 /**
@@ -2950,6 +2969,8 @@ export async function unassignEmployeesFromDepartment(departmentId, employeeIds)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.errors?.employee_ids?.[0] || data.message || 'Failed to unassign employees')
   clearGetCacheByPrefix('/admin/departments')
+  clearGetCacheByPrefix('/admin/divisions')
+  clearGetCacheByPrefix('/admin/sections-or-units')
   return data
 }
 
@@ -4304,6 +4325,9 @@ export async function createMyOvertimeRequest(payload) {
   if (payload.ph_ot_rule != null && payload.ph_ot_rule !== '') {
     formData.append('ph_ot_rule', String(payload.ph_ot_rule))
   }
+  if (payload.assignment_id != null && payload.assignment_id !== '') {
+    formData.append('assignment_id', String(payload.assignment_id))
+  }
   formData.append('reason', String(payload.reason || ''))
   if (payload.attachment instanceof File) {
     formData.append('attachment', payload.attachment)
@@ -4493,14 +4517,20 @@ export async function deleteDepartment(id) {
   return data
 }
 
-export async function assignEmployeesToDepartment(departmentId, employeeIds) {
+export async function assignEmployeesToDepartment(departmentId, employeeIds, options = {}) {
   const res = await authenticatedFetch(`/admin/departments/${departmentId}/assign-employees`, {
     method: 'POST',
-    body: JSON.stringify({ employee_ids: employeeIds }),
+    body: JSON.stringify({
+      employee_ids: employeeIds,
+      assignment_mode: options.assignmentMode || 'transfer_primary',
+      remarks: options.remarks || undefined,
+    }),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.errors?.employee_ids?.[0] || data.message || 'Failed to assign employees')
   clearGetCacheByPrefix('/admin/departments')
+  clearGetCacheByPrefix('/admin/divisions')
+  clearGetCacheByPrefix('/admin/sections-or-units')
   return data
 }
 
@@ -4564,8 +4594,17 @@ export async function getDivisionEmployees(divisionId) {
   return data
 }
 
-export async function assignEmployeesToDivision(divisionId, employeeIds) {
-  const data = await jsonMutation(`/admin/divisions/${divisionId}/assign-employees`, 'POST', { employee_ids: employeeIds }, 'Failed to assign employees')
+export async function assignEmployeesToDivision(divisionId, employeeIds, options = {}) {
+  const data = await jsonMutation(
+    `/admin/divisions/${divisionId}/assign-employees`,
+    'POST',
+    {
+      employee_ids: employeeIds,
+      assignment_mode: options.assignmentMode || 'transfer_primary',
+      remarks: options.remarks || undefined,
+    },
+    'Failed to assign employees',
+  )
   clearGetCacheByPrefix('/admin/divisions')
   clearGetCacheByPrefix('/admin/employees')
   return data
@@ -4611,8 +4650,17 @@ export async function getSectionOrUnitEmployees(sectionUnitId) {
   return data
 }
 
-export async function assignEmployeesToSectionOrUnit(sectionUnitId, employeeIds) {
-  const data = await jsonMutation(`/admin/sections-or-units/${sectionUnitId}/assign-employees`, 'POST', { employee_ids: employeeIds }, 'Failed to assign employees')
+export async function assignEmployeesToSectionOrUnit(sectionUnitId, employeeIds, options = {}) {
+  const data = await jsonMutation(
+    `/admin/sections-or-units/${sectionUnitId}/assign-employees`,
+    'POST',
+    {
+      employee_ids: employeeIds,
+      assignment_mode: options.assignmentMode || 'transfer_primary',
+      remarks: options.remarks || undefined,
+    },
+    'Failed to assign employees',
+  )
   clearGetCacheByPrefix('/admin/sections-or-units')
   clearGetCacheByPrefix('/admin/employees')
   return data
@@ -5908,5 +5956,56 @@ export async function getAdminEmployeeDeductionAuditLogs(userId, deductionId) {
   const res = await authenticatedFetch(`/admin/employees/${userId}/pay-deductions/${deductionId}/audit-logs`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load deduction audit logs')
+  return data
+}
+
+export async function getOrganizationLeadership(legacyType, legacyId) {
+  const res = await authenticatedFetch(`/admin/organization-leadership/${legacyType}/${legacyId}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load leadership positions')
+  return data
+}
+
+export async function updateOrganizationLeadership(legacyType, legacyId, payload) {
+  const res = await authenticatedFetch(`/admin/organization-leadership/${legacyType}/${legacyId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const firstFieldError = data?.errors
+      ? Object.values(data.errors).flat().find(Boolean)
+      : null
+    throw new Error(firstFieldError || data.message || 'Failed to update leadership positions')
+  }
+  return data
+}
+
+export async function getEmployeeApprovalRoutePreview(employeeId, params = {}) {
+  const query = new URLSearchParams()
+  if (params.request_type) query.set('request_type', params.request_type)
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/employees/${employeeId}/approval-route-preview${suffix}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load approval route preview')
+  return data
+}
+
+export async function getApprovalWorkflowSettings() {
+  const res = await authenticatedFetch('/admin/approval-workflow-settings')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load approval workflow settings')
+  return data
+}
+
+export async function updateApprovalWorkflowSettings(payload) {
+  const res = await authenticatedFetch('/admin/approval-workflow-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update approval workflow settings')
   return data
 }

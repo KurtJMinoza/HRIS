@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import LeadershipPositionsSection from '@/components/organization/LeadershipPositionsSection'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Dialog,
@@ -43,6 +44,16 @@ import {
   ADMIN_FORM_DIALOG_MAX_W_MD,
 } from '@/lib/adminFormDialogStyles'
 import AssignEmployeesModal from '@/components/admin/AssignEmployeesModal'
+import AssignOrgHeadModal from '@/components/admin/AssignOrgHeadModal'
+import { buildOrgCurrentHead, employeeDisplayName } from '@/lib/employeeSearch'
+import {
+  ASSIGNMENT_MODE_TRANSFER_PRIMARY,
+  buildOrgAssignCounts,
+  buildOrgAssignRows,
+  employeeAssignedToUnit,
+  selectedCrossCompanyEmployees,
+} from '@/lib/orgEmployeeAssignment'
+import { patchOrgUnitEmployeeCount, resolveOrgUnitEmployeeCount } from '@/lib/orgUnitEmployeeSync'
 
 function hasWorkingDays(schedule) {
   if (!schedule || typeof schedule !== 'object') return false
@@ -139,15 +150,7 @@ export default function AdminDepartments() {
   const [headModalLoading, setHeadModalLoading] = useState(false)
   const [headModalLoadError, setHeadModalLoadError] = useState(null)
   const headLoadSeqRef = useRef(0)
-
-  const [teamLeadersOpen, setTeamLeadersOpen] = useState(false)
-  const [teamLeadersDepartment, setTeamLeadersDepartment] = useState(null)
-  const [teamLeaderIds, setTeamLeaderIds] = useState([])
-  const [teamLeadersSubmitting, setTeamLeadersSubmitting] = useState(false)
-  const [teamLeadersModalEmployees, setTeamLeadersModalEmployees] = useState([])
-  const [teamLeadersModalLoading, setTeamLeadersModalLoading] = useState(false)
-  const [teamLeadersModalLoadError, setTeamLeadersModalLoadError] = useState(null)
-  const teamLeadersLoadSeqRef = useRef(0)
+  const viewEmployeesLoadSeqRef = useRef(0)
 
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignDepartment, setAssignDepartment] = useState(null)
@@ -172,6 +175,7 @@ export default function AdminDepartments() {
   const hoverCardLeaveTimerRef = useRef(null)
   const [assignSearchQuery, setAssignSearchQuery] = useState('')
   const [assignModalLoading, setAssignModalLoading] = useState(false)
+  const [assignMode, setAssignMode] = useState(ASSIGNMENT_MODE_TRANSFER_PRIMARY)
 
   const [sortCol, setSortCol] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
@@ -228,7 +232,7 @@ export default function AdminDepartments() {
   const fetchDepartments = useCallback(async () => {
     setError(null)
     try {
-      const params = {}
+      const params = { fresh: true }
       if (branchFilter) params.branch_id = branchFilter
       if (companyFilter) params.company_id = companyFilter
       const data = await getDepartments(params)
@@ -240,6 +244,10 @@ export default function AdminDepartments() {
       setLoading(false)
     }
   }, [branchFilter, companyFilter])
+
+  const syncDepartmentEmployeeCount = useCallback((departmentId, count) => {
+    setDepartments((prev) => patchOrgUnitEmployeeCount(prev, departmentId, count))
+  }, [])
 
   const fetchEmployees = useCallback(async () => {
     try {
@@ -257,13 +265,15 @@ export default function AdminDepartments() {
     setPreviewMembersLoading(true)
     try {
       const data = await getDepartmentEmployees(dept.id)
-      setPreviewMembers(data.employees || [])
+      const list = data.employees || []
+      setPreviewMembers(list)
+      syncDepartmentEmployeeCount(dept.id, resolveOrgUnitEmployeeCount(data, list))
     } catch {
       setPreviewMembers([])
     } finally {
       setPreviewMembersLoading(false)
     }
-  }, [])
+  }, [syncDepartmentEmployeeCount])
 
   // Run branches + departments + companies in parallel on mount; employees deferred until modal
   useEffect(() => {
@@ -395,6 +405,8 @@ export default function AdminDepartments() {
   }
 
   const openViewEmployees = async (dept) => {
+    viewEmployeesLoadSeqRef.current += 1
+    const seq = viewEmployeesLoadSeqRef.current
     setViewEmployeesDept(dept)
     setViewEmployeesOpen(true)
     setViewEmployeesList([])
@@ -402,8 +414,13 @@ export default function AdminDepartments() {
     setUnassigningId(null)
     try {
       const data = await getDepartmentEmployees(dept.id)
-      setViewEmployeesList(data.employees || [])
+      if (seq !== viewEmployeesLoadSeqRef.current) return
+      const list = data.employees || []
+      const count = resolveOrgUnitEmployeeCount(data, list)
+      setViewEmployeesList(list)
+      syncDepartmentEmployeeCount(dept.id, count)
     } catch (e) {
+      if (seq !== viewEmployeesLoadSeqRef.current) return
       setViewEmployeesList([])
       toast({
         title: 'Could not load department members',
@@ -411,7 +428,9 @@ export default function AdminDepartments() {
         variant: 'error',
       })
     } finally {
-      setViewEmployeesLoading(false)
+      if (seq === viewEmployeesLoadSeqRef.current) {
+        setViewEmployeesLoading(false)
+      }
     }
   }
 
@@ -419,11 +438,14 @@ export default function AdminDepartments() {
     if (!viewEmployeesDept) return
     try {
       const data = await getDepartmentEmployees(viewEmployeesDept.id)
-      setViewEmployeesList(data.employees || [])
+      const list = data.employees || []
+      const count = resolveOrgUnitEmployeeCount(data, list)
+      setViewEmployeesList(list)
+      syncDepartmentEmployeeCount(viewEmployeesDept.id, count)
     } catch {
       setViewEmployeesList([])
     }
-  }, [viewEmployeesDept])
+  }, [syncDepartmentEmployeeCount, viewEmployeesDept])
 
   const handleUnassignFromView = (emp) => {
     if (!viewEmployeesDept) return
@@ -502,36 +524,21 @@ export default function AdminDepartments() {
     setHeadModalLoading(true)
     try {
       const data = await getEmployees({
-        department_id: resolvedDeptId,
-        for_schedule_assignment: true,
+        for_leadership_assignment: true,
+        per_page: 'all',
         fresh: true,
       })
       if (seq !== headLoadSeqRef.current) return
       let list = (data.employees || []).filter((e) => {
         if (!isRosterStaffMember(e)) return false
-        if (!sameUserId(e.department_id, resolvedDeptId)) return false
         const isCurrentHead =
           dept.department_head_id != null && dept.department_head_id !== '' && sameUserId(e.id, dept.department_head_id)
         if (!isCurrentHead && e.is_active === false) return false
-        if (
-          dept.branch_id != null &&
-          dept.branch_id !== '' &&
-          e.branch_id != null &&
-          String(e.branch_id) !== String(dept.branch_id)
-        ) {
-          return false
-        }
-        if (
-          dept.company_id != null &&
-          dept.company_id !== '' &&
-          e.company_id != null &&
-          Number(e.company_id) !== Number(dept.company_id)
-        ) {
-          return false
-        }
         return true
       })
-      list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+      list.sort((a, b) =>
+        employeeDisplayName(a).localeCompare(employeeDisplayName(b), undefined, { sensitivity: 'base' }),
+      )
       setHeadModalEmployees(list)
     } catch (err) {
       if (seq !== headLoadSeqRef.current) return
@@ -544,112 +551,6 @@ export default function AdminDepartments() {
     }
   }, [])
 
-  const loadTeamLeaderCandidates = useCallback(async (dept) => {
-    if (dept?.id == null) return
-    teamLeadersLoadSeqRef.current += 1
-    const seq = teamLeadersLoadSeqRef.current
-    const resolvedDeptId = dept.id
-    setTeamLeadersModalEmployees([])
-    setTeamLeadersModalLoadError(null)
-    setTeamLeadersModalLoading(true)
-    try {
-      const data = await getEmployees({
-        department_id: resolvedDeptId,
-        for_schedule_assignment: true,
-        fresh: true,
-      })
-      if (seq !== teamLeadersLoadSeqRef.current) return
-      let list = (data.employees || []).filter((e) => {
-        if (!isRosterStaffMember(e)) return false
-        if (!sameUserId(e.department_id, resolvedDeptId)) return false
-        const isSelected =
-          (dept.team_leader_ids || []).some((id) => sameUserId(id, e.id))
-          || (dept.department_head_id != null && sameUserId(e.id, dept.department_head_id))
-        if (!isSelected && e.is_active === false) return false
-        if (
-          dept.branch_id != null &&
-          dept.branch_id !== '' &&
-          e.branch_id != null &&
-          String(e.branch_id) !== String(dept.branch_id)
-        ) {
-          return false
-        }
-        if (
-          dept.company_id != null &&
-          dept.company_id !== '' &&
-          e.company_id != null &&
-          Number(e.company_id) !== Number(dept.company_id)
-        ) {
-          return false
-        }
-        return true
-      })
-      list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
-
-      if (dept.department_head_id && !list.some((e) => sameUserId(e.id, dept.department_head_id))) {
-        const headEmp = (data.employees || []).find((e) => sameUserId(e.id, dept.department_head_id) && isRosterStaffMember(e))
-        if (headEmp) {
-          list.unshift(headEmp)
-        } else if (dept.department_head_name) {
-          list.unshift({
-            id: dept.department_head_id,
-            name: dept.department_head_name,
-            profile_image_url: dept.department_head_profile_image,
-            is_active: true,
-          })
-        }
-      }
-
-      setTeamLeadersModalEmployees(list)
-    } catch (err) {
-      if (seq !== teamLeadersLoadSeqRef.current) return
-      setTeamLeadersModalEmployees([])
-      setTeamLeadersModalLoadError(err?.message || 'Could not load employees for this department.')
-    } finally {
-      if (seq === teamLeadersLoadSeqRef.current) {
-        setTeamLeadersModalLoading(false)
-      }
-    }
-  }, [])
-
-  const openTeamLeadersDialog = (dept) => {
-    if (dept?.id == null) return
-    setTeamLeadersDepartment(dept)
-    setTeamLeaderIds((dept.team_leader_ids || []).map((id) => String(id)))
-    setTeamLeadersModalEmployees([])
-    setTeamLeadersModalLoadError(null)
-    setTeamLeadersOpen(true)
-    void loadTeamLeaderCandidates(dept)
-  }
-
-  const toggleTeamLeaderId = (id) => {
-    setTeamLeaderIds((prev) =>
-      prev.some((x) => sameUserId(x, id)) ? prev.filter((x) => !sameUserId(x, id)) : [...prev, String(id)]
-    )
-  }
-
-  const handleAssignTeamLeaders = async (e) => {
-    e.preventDefault()
-    if (!teamLeadersDepartment) return
-    setTeamLeadersSubmitting(true)
-    try {
-      const data = await updateDepartment(teamLeadersDepartment.id, {
-        team_leader_ids: teamLeaderIds.map((id) => parseInt(id, 10)),
-      })
-      const updated = data.department || data
-      setDepartments((prev) => prev.map((d) => (d.id === teamLeadersDepartment.id ? { ...d, ...updated } : d)))
-      setTeamLeadersOpen(false)
-      setTeamLeadersDepartment(null)
-      setTeamLeadersModalEmployees([])
-      setTeamLeadersModalLoadError(null)
-      toast({ title: 'Team leaders updated', variant: 'success' })
-    } catch (err) {
-      toast({ title: 'Cannot assign team leaders', description: err.message, variant: 'error' })
-    } finally {
-      setTeamLeadersSubmitting(false)
-    }
-  }
-
   const openHeadDialog = (dept) => {
     if (dept?.id == null) return
     setHeadDepartment(dept)
@@ -659,6 +560,27 @@ export default function AdminDepartments() {
     setHeadOpen(true)
     void loadHeadCandidates(dept)
   }
+
+  const departmentHeadRoleNotes = useMemo(() => {
+    if (!headDepartment) return new Map()
+    const map = new Map()
+    for (const d of departments) {
+      if (d.department_head_id && d.id !== headDepartment.id) {
+        map.set(String(d.department_head_id), `Dept Head — ${d.name || 'Department'}`)
+      }
+    }
+    for (const c of companies) {
+      if (c.company_head_id) {
+        map.set(String(c.company_head_id), `Company Head — ${c.name || 'Company'}`)
+      }
+    }
+    for (const b of branches) {
+      if (b.branch_manager_id) {
+        map.set(String(b.branch_manager_id), `Branch Manager — ${b.name || 'Branch'}`)
+      }
+    }
+    return map
+  }, [headDepartment, departments, companies, branches])
 
   const handleAssignHead = async (e) => {
     e.preventDefault()
@@ -695,17 +617,17 @@ export default function AdminDepartments() {
     setAssignFilter('available')
     setAssignSearchQuery('')
     setAssignDepartmentFilter('all')
+    setAssignMode(ASSIGNMENT_MODE_TRANSFER_PRIMARY)
     setAssignModalEmployees([])
     setAssignModalLoading(true)
     try {
-      const params = { per_page: 100, for_department_assignment: true }
-      const companyId = dept?.company_id ?? dept?.branch?.company_id
-      if (companyId) params.assignable_to_company_id = companyId
-      if (dept?.branch_id != null && dept.branch_id !== '') params.assignment_branch_id = dept.branch_id
+      const params = { per_page: 'all', active_filter: 'active', for_organization_assignment: true, fresh: true }
       const data = await getEmployees(params)
       const list = data.employees || []
       setAssignModalEmployees(list)
-      const inDept = list.filter((emp) => String(emp.department_id ?? '') === String(dept.id)).map((e) => e.id)
+      const inDept = list
+        .filter((emp) => employeeAssignedToUnit(emp, dept, 'department_id'))
+        .map((e) => e.id)
       setAssignIds(inDept)
     } catch (e) {
       setAssignModalEmployees([])
@@ -726,7 +648,7 @@ export default function AdminDepartments() {
     setAssignSubmitting(true)
     setError(null)
     try {
-      const data = await assignEmployeesToDepartment(assignDepartment.id, assignIds)
+      const data = await assignEmployeesToDepartment(assignDepartment.id, assignIds, { assignmentMode: assignMode })
       if (data?.department?.id != null) {
         setDepartments((prev) =>
           prev.map((d) => (sameUserId(d.id, data.department.id) ? { ...d, ...data.department } : d)),
@@ -801,45 +723,27 @@ export default function AdminDepartments() {
     return assignList.filter((e) => isRosterStaffMember(e)).filter((emp) => isExcludedFromAssignPool(emp)).length
   }, [assignList, isExcludedFromAssignPool])
 
+  const assignTargetCompanyId = assignDepartment?.company_id ?? assignDepartment?.branch?.company_id ?? null
+
   const assignRows = useMemo(() => {
-    return assignList
-      .filter((e) => isRosterStaffMember(e))
-      .filter((emp) => !isExcludedFromAssignPool(emp))
-      .filter((emp) => {
-        const q = assignSearchQuery.trim().toLowerCase()
-        if (!q) return true
-        const haystack = `${emp.name || ''} ${emp.employee_code || ''} ${emp.email || ''} ${emp.position || ''} ${emp.department || ''} ${emp.management_role || ''}`.toLowerCase()
-        return haystack.includes(q)
-      })
-      .filter((emp) => {
-        const departmentLabel = emp.department || 'Unassigned'
-        if (assignDepartmentFilter !== 'all' && departmentLabel !== assignDepartmentFilter) return false
-        const assignedToCurrent =
-          String(emp.department_id ?? '') === String(assignDepartment?.id ?? '')
-        const assignedElsewhere = (emp.department_id != null && emp.department_id !== '') && !assignedToCurrent
-        const isInactive = !emp.is_active
-        const status = assignedToCurrent ? 'assigned' : (isInactive || assignedElsewhere ? 'unavailable' : 'available')
-        if (assignFilter === 'available') return status === 'available'
-        if (assignFilter === 'assigned') return status === 'assigned'
-        return true
-      })
-      .map((emp) => {
-        const assignedToCurrent =
-          String(emp.department_id ?? '') === String(assignDepartment?.id ?? '')
-        const assignedElsewhere = (emp.department_id != null && emp.department_id !== '') && !assignedToCurrent
-        const isInactive = !emp.is_active
-        const status = assignedToCurrent
-          ? 'assigned'
-          : (isInactive || assignedElsewhere ? 'unavailable' : 'available')
-        const checked = assignedToCurrent || assignIds.some((id) => sameUserId(id, emp.id))
-        const checkboxDisabled = status !== 'available'
-        return { emp, status, checked, checkboxDisabled, isInactive, assignedElsewhere }
-      })
+    return buildOrgAssignRows({
+      assignList,
+      targetUnit: assignDepartment,
+      targetCompanyId: assignTargetCompanyId,
+      memberIdField: 'department_id',
+      assignSearchQuery,
+      assignFilter,
+      assignIds,
+      isExcludedFromAssignPool,
+      isRosterStaffMember,
+      assignDepartmentFilter,
+    })
   }, [
     assignList,
     assignSearchQuery,
     assignDepartmentFilter,
     assignDepartment,
+    assignTargetCompanyId,
     assignFilter,
     assignIds,
     isExcludedFromAssignPool,
@@ -863,40 +767,37 @@ export default function AdminDepartments() {
     [assignList, assignIds]
   )
 
-  /** Employees in the selection who are not yet in this department (for footer hint). */
   const assignNewToDeptCount = useMemo(() => {
     if (!assignDepartment) return 0
     return assignIds.filter((id) => {
       const emp = assignList.find((e) => sameUserId(e.id, id))
-      return emp && String(emp.department_id ?? '') !== String(assignDepartment.id)
+      return emp && !employeeAssignedToUnit(emp, assignDepartment, 'department_id')
     }).length
   }, [assignIds, assignList, assignDepartment])
 
   const assignFooterStats = useMemo(() => {
     if (!assignDepartment) return { current: 0, newlyAdded: 0, afterSave: 0 }
-    const current = assignList.filter((e) => String(e.department_id) === String(assignDepartment.id)).length
+    const current = assignList.filter((e) => employeeAssignedToUnit(e, assignDepartment, 'department_id')).length
     const newlyAdded = selectedEmployeesPreview.filter(
-      (e) => String(e.department_id ?? '') !== String(assignDepartment.id)
+      (e) => !employeeAssignedToUnit(e, assignDepartment, 'department_id')
     ).length
     return { current, newlyAdded, afterSave: current + newlyAdded }
   }, [assignDepartment, assignList, selectedEmployeesPreview])
 
   const assignCounts = useMemo(() => {
-    let available = 0, assigned = 0, unavailable = 0
-    assignList
-      .filter((e) => isRosterStaffMember(e))
-      .filter((emp) => !isExcludedFromAssignPool(emp))
-      .forEach((emp) => {
-        const assignedToCurrent = String(emp.department_id ?? '') === String(assignDepartment?.id ?? '')
-        const assignedElsewhere = (emp.department_id != null && emp.department_id !== '') && !assignedToCurrent
-        const isInactive = !emp.is_active
-        const status = assignedToCurrent ? 'assigned' : (isInactive || assignedElsewhere ? 'unavailable' : 'available')
-        if (status === 'available') available++
-        else if (status === 'assigned') assigned++
-        else unavailable++
-      })
-    return { available, assigned, unavailable, total: available + assigned + unavailable }
+    return buildOrgAssignCounts(
+      assignList,
+      assignDepartment,
+      'department_id',
+      isExcludedFromAssignPool,
+      isRosterStaffMember,
+    )
   }, [assignList, assignDepartment, isExcludedFromAssignPool])
+
+  const crossCompanySelectedCount = useMemo(
+    () => selectedCrossCompanyEmployees(selectedEmployeesPreview, assignTargetCompanyId).length,
+    [selectedEmployeesPreview, assignTargetCompanyId],
+  )
 
   const toggleSelectAllAssignable = () => {
     setAssignIds((prev) => {
@@ -1123,9 +1024,6 @@ export default function AdminDepartments() {
                       Immediate Head
                     </th>
                     <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
-                      Team Leaders
-                    </th>
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-normal text-muted-foreground">
                       <button
                         type="button"
                         onClick={() => toggleSort('total')}
@@ -1144,18 +1042,18 @@ export default function AdminDepartments() {
                 </thead>
                 <tbody className="divide-y divide-border/70 dark:divide-border/60">
                   {pagedDepts.map((dept) => {
+                    const memberTotal = dept.total_employees ?? 0
                     const stats = (() => {
-                      let total = 0, active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0
+                      let active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0
                       employees.forEach((emp) => {
                         if (sameUserId(emp.department_id, dept.id)) {
-                          total += 1
                           if (emp.is_active) active += 1
                           else inactive += 1
                           if (emp.has_qr) withQr += 1
                           if (hasWorkingDays(emp.schedule)) schedulesAssigned += 1
                         }
                       })
-                      return { total: total || (dept.total_employees ?? 0), active, inactive, withQr, schedulesAssigned }
+                      return { total: memberTotal, active, inactive, withQr, schedulesAssigned }
                     })()
 
                     const deptInitials = (dept.name || '').trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '—'
@@ -1241,17 +1139,6 @@ export default function AdminDepartments() {
                               </Avatar>
                               <span className="max-w-[150px] truncate text-sm font-medium text-foreground">{dept.department_head_name}</span>
                             </div>
-                          ) : (
-                            <span className="text-sm italic text-muted-foreground">Not assigned</span>
-                          )}
-                        </td>
-
-                        {/* Team Leaders */}
-                        <td className="px-5 py-4 align-middle">
-                          {dept.team_leader_display ? (
-                            <span className="max-w-[220px] text-sm font-medium text-foreground" title={dept.team_leader_names || dept.team_leader_display}>
-                              {dept.team_leader_display}
-                            </span>
                           ) : (
                             <span className="text-sm italic text-muted-foreground">Not assigned</span>
                           )}
@@ -1347,9 +1234,6 @@ export default function AdminDepartments() {
                                 <DropdownMenuItem onClick={() => openHeadDialog(dept)}>
                                   <UserPlus className="size-4" /><span>Assign immediate head</span>
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => openTeamLeadersDialog(dept)}>
-                                  <Users className="size-4" /><span>Assign team leaders</span>
-                                </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openAssignDialog(dept)}>
                                   <Users className="size-4" /><span>Assign employees</span>
                                 </DropdownMenuItem>
@@ -1417,10 +1301,10 @@ export default function AdminDepartments() {
 
               {hoveredDept && hoveredRowRect && (() => {
                 const dept = hoveredDept
-                let total = 0, active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0
+                const total = dept.total_employees ?? 0
+                let active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0
                 employees.forEach((emp) => {
                   if (sameUserId(emp.department_id, dept.id)) {
-                    total += 1
                     if (emp.is_active) active += 1
                     else inactive += 1
                     if (emp.has_qr) withQr += 1
@@ -1967,6 +1851,14 @@ export default function AdminDepartments() {
                   />
                 </div>
               </div>
+
+              {editDepartment?.id ? (
+                <LeadershipPositionsSection
+                  legacyType="department"
+                  legacyId={editDepartment.id}
+                  canManage
+                />
+              ) : null}
             </div>
 
             <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
@@ -2168,8 +2060,7 @@ export default function AdminDepartments() {
         </DialogContent>
       </Dialog>
 
-      {/* Assign Department Head */}
-      <Dialog
+      <AssignOrgHeadModal
         open={headOpen}
         onOpenChange={(open) => {
           setHeadOpen(open)
@@ -2182,186 +2073,27 @@ export default function AdminDepartments() {
             setHeadModalLoadError(null)
           }
         }}
-      >
-        <DialogContent
-          showCloseButton
-          className="max-w-[min(100vw-1.5rem,48rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
-          innerClassName="p-0"
-          closeButtonClassName="right-5 top-5 size-10 rounded-xl border-border/80 bg-background text-foreground hover:bg-muted"
-          overlayClassName="bg-black/55 backdrop-blur-sm"
-          aria-describedby="dept-head-desc"
-        >
-          <div className="border-b border-border/80 px-6 pb-5 pt-7 pr-16 @md:px-8">
-            <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
-              <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
-                <UserPlus className="size-7" />
-              </div>
-              <div className="min-w-0 pt-1">
-              <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">Assign Department Head</DialogTitle>
-              <p id="dept-head-desc" className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
-                {headDepartment && (
-                  <>Select the head for <strong className="font-extrabold uppercase text-brand">{headDepartment.name}</strong>.</>
-                )}
-              </p>
-              </div>
-            </DialogHeader>
-          </div>
-          <form onSubmit={handleAssignHead} className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 px-6 py-5 @md:px-8">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-              <Label className="text-base font-semibold text-foreground">Department Head</Label>
-              {headId !== '' && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-9 rounded-xl border-destructive/40 px-3 text-xs font-semibold text-destructive hover:bg-destructive/10"
-                  onClick={() => setHeadId('')}
-                >
-                  <UserMinus className="mr-1.5 size-3.5" />
-                  Remove employee
-                </Button>
-              )}
-              </div>
-              {headModalLoading ? (
-                <div className="flex items-center justify-center gap-2 rounded-xl border border-border/70 py-10 text-sm text-muted-foreground dark:bg-input/20">
-                  <Loader2 className="size-5 animate-spin shrink-0 text-brand" />
-                  Loading department members…
-                </div>
-              ) : headModalLoadError ? (
-                <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                  <p>{headModalLoadError}</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => headDepartment && loadHeadCandidates(headDepartment)}
-                  >
-                    Try again
-                  </Button>
-                </div>
-              ) : (() => {
-                const listEmps = headModalEmployees
-                const currentHeadId = headDepartment?.department_head_id
-                const multiHeadInfo = 'This employee is already assigned to another head role, but multiple leadership assignments are allowed.'
-
-                const ineligibleReason = new Map()
-                const headRoleNote = new Map()
-                for (const d of departments) {
-                  if (d.department_head_id && d.id !== headDepartment?.id) {
-                    ineligibleReason.set(String(d.department_head_id), `Dept Head — ${d.name || 'Department'}`)
-                  }
-                }
-                const targetCompanyId = headDepartment?.company_id
-                if (targetCompanyId) {
-                  for (const emp of listEmps) {
-                    const empId = String(emp.id)
-                    if (!ineligibleReason.has(empId) && emp.company_id && Number(emp.company_id) !== Number(targetCompanyId)) {
-                      const parts = [emp.company_name, emp.branch_name, emp.department].filter(Boolean)
-                      ineligibleReason.set(empId, `Assigned: ${parts.join(' → ') || 'another company'}`)
-                    }
-                  }
-                }
-                for (const c of companies) {
-                  if (c.company_head_id && !ineligibleReason.has(String(c.company_head_id))) {
-                    headRoleNote.set(String(c.company_head_id), `Company Head — ${c.name || 'Company'}`)
-                  }
-                }
-                for (const b of branches) {
-                  if (b.branch_manager_id && !ineligibleReason.has(String(b.branch_manager_id))) {
-                    headRoleNote.set(String(b.branch_manager_id), `Branch Manager — ${b.name || 'Branch'}`)
-                  }
-                }
-
-                return (
-                  <div className="max-h-[min(48vh,24rem)] overflow-y-auto rounded-xl border border-border/80 dark:border-border/70">
-                    <label className={[
-                      'flex cursor-pointer items-center gap-4 bg-background px-4 py-3 transition-colors hover:bg-muted/40 dark:bg-input/20 dark:hover:bg-input/35',
-                      headId === '' ? 'bg-brand/5 dark:bg-brand/10' : '',
-                    ].join(' ')}>
-                      <input
-                        type="radio"
-                        name="head-select"
-                        value=""
-                        checked={headId === ''}
-                        onChange={() => setHeadId('')}
-                        className="size-5 accent-orange-600"
-                      />
-                      <span className="flex size-10 items-center justify-center rounded-full border border-dashed border-border/60 dark:border-white/15">
-                        <UserMinus className="size-3.5 text-muted-foreground" />
-                      </span>
-                      <span className="text-sm text-muted-foreground italic">— Remove head —</span>
-                    </label>
-
-                    {listEmps.length === 0 && (
-                      <p className="px-3 py-4 text-center text-sm text-muted-foreground">
-                        No employees assigned to this department yet.
-                      </p>
-                    )}
-
-                    {listEmps.map((emp) => {
-                      const isCurrentHead = String(emp.id) === String(currentHeadId)
-                      const reason = ineligibleReason.get(String(emp.id))
-                      const roleNote = headRoleNote.get(String(emp.id))
-                      const isDisabled = !!reason && !isCurrentHead
-                      return (
-                      <label
-                        key={emp.id}
-                        className={[
-                          'flex items-center gap-4 border-t border-border/70 bg-background px-4 py-3 transition-colors dark:border-border/60 dark:bg-input/20',
-                          !isDisabled && 'cursor-pointer hover:bg-muted/40 dark:hover:bg-white/5',
-                          isDisabled && 'opacity-60 cursor-not-allowed',
-                          String(headId) === String(emp.id) ? 'bg-brand/5 dark:bg-brand/10' : '',
-                        ].join(' ')}
-                      >
-                        <input
-                          type="radio"
-                          name="head-select"
-                          value={emp.id}
-                          checked={String(headId) === String(emp.id)}
-                          onChange={() => { if (!isDisabled) setHeadId(String(emp.id)) }}
-                          disabled={isDisabled}
-                          className="size-5 accent-orange-600 disabled:cursor-not-allowed"
-                        />
-                        <Avatar className="size-12 shrink-0">
-                          <AvatarImage src={profileImageUrl(emp.profile_image_url || emp.profile_image)} alt={emp.name} />
-                          <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">
-                            {initials(emp.name)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-base font-extrabold text-foreground">{emp.name}</p>
-                          <p className="truncate text-xs text-muted-foreground">{emp.position || emp.employee_code || ''}</p>
-                          {isDisabled && reason && (
-                            <p className="mt-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400" title={reason}>{reason}</p>
-                          )}
-                          {!isDisabled && roleNote && (
-                            <p className="mt-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400" title={multiHeadInfo}>{roleNote}</p>
-                          )}
-                        </div>
-                        {String(headId) === String(emp.id) && !isDisabled && (
-                          <span className="shrink-0 rounded-full bg-brand/10 px-2.5 py-1 text-[10px] font-bold text-brand">Selected</span>
-                        )}
-                      </label>
-                      )
-                    })}
-                  </div>
-                )
-              })()}
-            </div>
-            </div>
-            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
-              <Button type="button" variant="outline" className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted" onClick={() => setHeadOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={headSubmitting || headModalLoading} className="h-11 min-w-[130px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
-                {headSubmitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                Save
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+        title="Assign Department Head"
+        unitName={headDepartment?.name}
+        fieldLabel="Department Head"
+        loading={headModalLoading}
+        loadingMessage="Loading department members…"
+        loadError={headModalLoadError}
+        onRetry={() => headDepartment && loadHeadCandidates(headDepartment)}
+        employees={headModalEmployees}
+        currentHeadId={headDepartment?.department_head_id}
+        currentHead={buildOrgCurrentHead({
+          id: headDepartment?.department_head_id,
+          name: headDepartment?.department_head_name,
+          profile_image_url: headDepartment?.department_head_profile_image,
+        })}
+        headId={headId}
+        onHeadIdChange={setHeadId}
+        headRoleNotes={departmentHeadRoleNotes}
+        submitting={headSubmitting}
+        onSubmit={handleAssignHead}
+        initialsFn={initials}
+      />
 
       <AssignEmployeesModal
         open={assignOpen}
@@ -2395,98 +2127,10 @@ export default function AdminDepartments() {
         initialsFn={initials}
         footerStats={assignFooterStats}
         onGoEmployees={() => navigate('/admin/employees')}
+        assignmentMode={assignMode}
+        onAssignmentModeChange={setAssignMode}
+        crossCompanySelectedCount={crossCompanySelectedCount}
       />
-
-
-      {/* Assign Team Leaders */}
-      <Dialog
-        open={teamLeadersOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            teamLeadersLoadSeqRef.current += 1
-            setTeamLeadersOpen(false)
-            setTeamLeadersDepartment(null)
-            setTeamLeaderIds([])
-            setTeamLeadersModalEmployees([])
-            setTeamLeadersModalLoadError(null)
-          }
-        }}
-      >
-        <DialogContent
-          showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
-          aria-describedby="dept-team-leaders-desc"
-        >
-          <form onSubmit={handleAssignTeamLeaders} className="flex min-h-0 flex-1 flex-col">
-            <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-              <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-                <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Assign Team Leaders</DialogTitle>
-                <p id="dept-team-leaders-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                  {teamLeadersDepartment && (
-                    <>Select one or more team leaders for <strong className="font-extrabold uppercase text-brand">{teamLeadersDepartment.name}</strong>. The immediate head may also be a team leader.</>
-                  )}
-                </p>
-              </DialogHeader>
-            </div>
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'min-h-0 flex-1 space-y-4')}>
-              {teamLeadersModalLoading ? (
-                <div className="flex items-center justify-center gap-2 rounded-xl border border-border/70 py-10 text-sm text-muted-foreground dark:bg-input/20">
-                  <Loader2 className="size-5 animate-spin shrink-0 text-brand" />
-                  Loading department members…
-                </div>
-              ) : teamLeadersModalLoadError ? (
-                <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                  <p>{teamLeadersModalLoadError}</p>
-                  <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => teamLeadersDepartment && loadTeamLeaderCandidates(teamLeadersDepartment)}>
-                    Try again
-                  </Button>
-                </div>
-              ) : (
-                <div className="max-h-[min(48vh,24rem)] overflow-y-auto rounded-xl border border-border/80 dark:border-border/70">
-                  {teamLeadersModalEmployees.length === 0 ? (
-                    <p className="px-3 py-4 text-center text-sm text-muted-foreground">No employees assigned to this department yet.</p>
-                  ) : (
-                    teamLeadersModalEmployees.map((emp) => {
-                      const checked = teamLeaderIds.some((id) => sameUserId(id, emp.id))
-                      return (
-                        <label
-                          key={emp.id}
-                          className={cn(
-                            'flex cursor-pointer items-center gap-4 border-t border-border/70 bg-background px-4 py-3 transition-colors hover:bg-muted/40 dark:border-border/60 dark:bg-input/20 dark:hover:bg-white/5',
-                            checked && 'bg-brand/5 dark:bg-brand/10',
-                          )}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleTeamLeaderId(emp.id)}
-                            className="size-5 accent-orange-600"
-                          />
-                          <Avatar className="size-12 shrink-0">
-                            <AvatarImage src={profileImageUrl(emp.profile_image_url || emp.profile_image)} alt={emp.name} />
-                            <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">{initials(emp.name)}</AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-base font-extrabold text-foreground">{emp.name}</p>
-                            <p className="truncate text-xs text-muted-foreground">{emp.position || emp.employee_code || ''}</p>
-                          </div>
-                        </label>
-                      )
-                    })
-                  )}
-                </div>
-              )}
-            </div>
-            <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
-              <Button type="button" variant="outline" className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted" onClick={() => setTeamLeadersOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={teamLeadersSubmitting || teamLeadersModalLoading} className="h-11 min-w-[130px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong">
-                {teamLeadersSubmitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                Save
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
 
       {/* Delete confirmation */}

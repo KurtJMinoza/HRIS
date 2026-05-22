@@ -106,6 +106,7 @@ return [
         'node_binary' => env('BROWSERSHOT_NODE_BINARY'),
         'npm_binary' => env('BROWSERSHOT_NPM_BINARY'),
         'chrome_path' => env('BROWSERSHOT_CHROME_PATH'),
+        'puppeteer_cache_dir' => env('BROWSERSHOT_PUPPETEER_CACHE_DIR'),
     ],
 
 ];

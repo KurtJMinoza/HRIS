@@ -264,7 +264,11 @@ class LeaveController extends Controller
             ], 422);
         }
 
-        $stage = $this->hrApprovalChainResolver->initialApprovalStage($employee, employeeSubmitted: false);
+        $stage = $this->hrApprovalChainResolver->initialApprovalStage(
+            $employee,
+            employeeSubmitted: false,
+            requestType: OrgApprovalWorkflowService::MODULE_LEAVE,
+        );
 
         $restBypassReason = $bypassRest ? trim((string) $request->input('rest_day_bypass_reason')) : null;
 
@@ -308,6 +312,14 @@ class LeaveController extends Controller
             'details' => $auditDetails,
             'approver_role' => $this->hrRoleResolver->resolve($actor)->badgeLabel(),
         ]);
+
+        $this->approvalWorkflowService->ensureRecordsForRequest(
+            $leave,
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+            $employee,
+            $actor,
+        );
+        $leave->refresh();
 
         return response()->json([
             'message' => 'Leave request created.',

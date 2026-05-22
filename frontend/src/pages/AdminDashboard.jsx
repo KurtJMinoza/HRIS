@@ -1090,7 +1090,7 @@ export default function AdminDashboard() {
       : pendingAttendanceCorrectionPreview
         ? [pendingAttendanceCorrectionPreview]
         : []
-  const todayLeavesPreview = todayLeaves.slice(0, 1)
+  const todayLeavesPreview = todayLeaves.slice(0, 5)
   // Used by other dashboard sections; keep available for future copy changes.
   // eslint-disable-next-line no-unused-vars
   const autoRegularizationMonths = Number(data?.employment_settings?.auto_regularization_months || 6)
@@ -1508,8 +1508,8 @@ export default function AdminDashboard() {
                   </CardTitle>
                   <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
                     {todayLeaves.length > 0
-                      ? `${todayLeaves.length} employee${todayLeaves.length !== 1 ? 's are' : ' is'} on leave today`
-                      : 'Updates automatically from approved leave requests.'}
+                      ? `${todayLeaves.length} on leave today or with pending leave starting soon`
+                      : 'Shows approved leave today and pending leave starting within the next 7 days.'}
                   </CardDescription>
                 </div>
                 {canViewLeave ? (
@@ -1535,9 +1535,9 @@ export default function AdminDashboard() {
                   <span className="mb-4 flex size-9 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
                     <ClipboardCheck className="size-5" aria-hidden />
                   </span>
-                  <p className="text-sm font-semibold leading-[1.55] text-foreground">No leaves today. Everyone is present.</p>
+                  <p className="text-sm font-semibold leading-[1.55] text-foreground">No leave activity for today.</p>
                   <p className="mt-2 max-w-56 text-xs font-normal leading-[1.55] text-muted-foreground">
-                    This section updates automatically from approved leave requests.
+                    Approved leave for today and pending leave starting within 7 days will appear here.
                   </p>
                 </div>
               ) : (
@@ -1563,7 +1563,27 @@ export default function AdminDashboard() {
                                 {leave.leave_type || 'Leave'}
                               </span>
                               <span className="text-[11px] font-medium text-muted-foreground">{leave.duration_label || 'Full day'}</span>
+                              {leave.start_date ? (
+                                <span className="text-[11px] font-medium text-muted-foreground">
+                                  {leave.start_date === leave.end_date ? leave.start_date : `${leave.start_date} – ${leave.end_date}`}
+                                </span>
+                              ) : null}
+                              <span
+                                className={cn(
+                                  'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                                  leave.status === 'pending'
+                                    ? 'border border-amber-400/40 bg-amber-500/15 text-amber-800 dark:text-amber-200'
+                                    : 'border border-emerald-400/40 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200',
+                                )}
+                              >
+                                {leave.status === 'pending' ? 'Pending' : 'Approved'}
+                              </span>
                             </div>
+                            {leave.display_status ? (
+                              <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground" title={leave.display_status}>
+                                {leave.display_status}
+                              </p>
+                            ) : null}
                           </div>
                         </div>
                         {canViewLeave && (leave.leave_request_id != null || leave.request_id != null) ? (

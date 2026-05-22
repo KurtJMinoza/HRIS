@@ -42,6 +42,7 @@ import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   getLeaveRequests,
+  getMyLeaveSummary,
   getAdminLeaveByRequestId,
   createLeaveRequest,
   approveLeaveRequest,
@@ -52,12 +53,26 @@ import {
   updateLeaveNotes,
   uploadAdminLeaveDocument,
   deleteAdminLeaveRequest,
+  deleteMyLeaveRequest,
   profileImageUrl,
   validateAdminLeaveDateRange,
 } from '@/api'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
+import {
+  requestModuleActionsTdClass,
+  requestModuleActionsWrapRowClass,
+  requestModuleCompactButtonClass,
+  requestModuleHeadRowClass,
+  requestModuleRowClass,
+  leaveAdminTableClass,
+  leaveEmployeeTableClass,
+  requestModuleTdClass,
+  requestModuleTdMutedClass,
+  requestModuleThClass,
+  requestModuleThRightClass,
+} from '@/lib/requestModuleTable'
 import {
   FIELD_TEXTAREA_CLASS,
   FIELD_TEXTAREA_CLASS_SM,
@@ -73,6 +88,7 @@ import {
   adminFormDialogContentClass,
 } from '@/lib/adminFormDialogStyles'
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
+import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
@@ -238,6 +254,11 @@ export default function AdminLeave() {
 
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLeave, setDetailLeave] = useState(null)
+  const tabInitialized = useRef(false)
+  const [tab, setTab] = useState('all')
+  const [myLeaveRequests, setMyLeaveRequests] = useState([])
+  const [loadingMine, setLoadingMine] = useState(false)
+  const [mineError, setMineError] = useState(null)
 
   const fetchLeaves = useCallback(async () => {
     setError(null)
@@ -256,10 +277,39 @@ export default function AdminLeave() {
     }
   }, [statusFilter, appliedFrom, appliedTo])
 
+  const fetchMineLeaves = useCallback(async () => {
+    setMineError(null)
+    try {
+      const data = await getMyLeaveSummary({
+        status: statusFilter || undefined,
+        from_date: appliedFrom || undefined,
+        to_date: appliedTo || undefined,
+      })
+      setMyLeaveRequests(Array.isArray(data.leave_requests) ? data.leave_requests : [])
+    } catch (e) {
+      setMineError(e.message)
+      setMyLeaveRequests([])
+    } finally {
+      setLoadingMine(false)
+    }
+  }, [statusFilter, appliedFrom, appliedTo])
+
+  useEffect(() => {
+    if (tabInitialized.current || !user?.id) return
+    tabInitialized.current = true
+    if (!showEmployeePicker) setTab('mine')
+  }, [user?.id, showEmployeePicker])
+
   useEffect(() => {
     setLoading(true)
     fetchLeaves()
   }, [fetchLeaves])
+
+  useEffect(() => {
+    if (tab !== 'mine') return
+    setLoadingMine(true)
+    fetchMineLeaves()
+  }, [tab, fetchMineLeaves])
 
   useEffect(() => {
     if (addOpen) {
@@ -512,7 +562,10 @@ export default function AdminLeave() {
         notes: '',
         supportingFiles: [],
       })
-      await fetchLeaves()
+      await Promise.all([fetchLeaves(), fetchMineLeaves()])
+      if (!showEmployeePicker || String(uid) === String(user?.id)) {
+        setTab('mine')
+      }
       toast({
         title: `Leave request submitted${showEmployeePicker ? ` for ${empName}` : ''}`,
         description: 'Pending review in your approval chain.',
@@ -717,10 +770,14 @@ export default function AdminLeave() {
     if (!deleteDialog.leave) return
     setDeleteSubmitting(true)
     try {
-      await deleteAdminLeaveRequest(deleteDialog.leave.id)
+      if (tab === 'mine') {
+        await deleteMyLeaveRequest(deleteDialog.leave.id)
+      } else {
+        await deleteAdminLeaveRequest(deleteDialog.leave.id)
+      }
       toast({ title: 'Leave deleted', variant: 'success' })
       setDeleteDialog({ open: false, leave: null })
-      await fetchLeaves()
+      await Promise.all([fetchLeaves(), fetchMineLeaves()])
     } catch (e) {
       toast({ title: 'Failed to delete leave', description: e.message, variant: 'error' })
     } finally {
@@ -753,16 +810,26 @@ export default function AdminLeave() {
     }
   }
 
-  const totalCount = leaveRequests.length
-  const pendingCount = leaveRequests.filter((l) => l.status === 'pending').length
-  const approvedCount = leaveRequests.filter((l) => l.status === 'approved').length
-  const rejectedCount = leaveRequests.filter((l) => l.status === 'rejected').length
+  const isMineTab = tab === 'mine'
+  const activeLeaveRequests = isMineTab ? myLeaveRequests : leaveRequests
+  const activeLoading = isMineTab ? loadingMine : loading
+  const activeError = isMineTab ? mineError : error
+  const totalCount = activeLeaveRequests.length
+  const pendingCount = activeLeaveRequests.filter((l) => l.status === 'pending').length
+  const approvedCount = activeLeaveRequests.filter((l) => l.status === 'approved').length
+  const rejectedCount = activeLeaveRequests.filter((l) => l.status === 'rejected').length
 
   const statusCounts = {
-    '': totalCount,
-    pending: pendingCount,
-    approved: approvedCount,
-    rejected: rejectedCount,
+    '': isMineTab ? myLeaveRequests.length : leaveRequests.length,
+    pending: isMineTab
+      ? myLeaveRequests.filter((l) => l.status === 'pending').length
+      : leaveRequests.filter((l) => l.status === 'pending').length,
+    approved: isMineTab
+      ? myLeaveRequests.filter((l) => l.status === 'approved').length
+      : leaveRequests.filter((l) => l.status === 'approved').length,
+    rejected: isMineTab
+      ? myLeaveRequests.filter((l) => l.status === 'rejected').length
+      : leaveRequests.filter((l) => l.status === 'rejected').length,
   }
   const bulkApprovalFilters = useMemo(
     () => ({
@@ -810,7 +877,7 @@ export default function AdminLeave() {
   const today = new Date()
   const currentMonth = today.getMonth()
   const currentYear = today.getFullYear()
-  const monthlyLeaves = leaveRequests.filter((leave) => {
+  const monthlyLeaves = (isMineTab ? myLeaveRequests : leaveRequests).filter((leave) => {
     const basis = leave.start_date || leave.created_at
     if (!basis) return false
     const d = new Date(basis)
@@ -847,9 +914,11 @@ export default function AdminLeave() {
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand">Leave management</p>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-foreground @sm:text-4xl">Leave</h1>
           <p className="mt-2 text-[15px] leading-relaxed text-muted-foreground">
-            {canApproveLeave || canLeaveNotes
-              ? 'View and manage employee leave requests in your scope. Approval, rejection, and notes require the matching permissions.'
-              : 'View employee leave requests in your scope (read-only).'}
+            {isMineTab
+              ? 'Track leave you filed and follow each step in the approval chain.'
+              : canApproveLeave || canLeaveNotes
+                ? 'View and manage employee leave requests in your scope. Approval, rejection, and notes require the matching permissions.'
+                : 'View employee leave requests in your scope (read-only).'}
           </p>
           {totalCount > 0 && (
             <p className="mt-1 text-xs text-muted-foreground">
@@ -864,8 +933,15 @@ export default function AdminLeave() {
             type="button"
             variant="outline"
             className={cn(adminLeaveOutlineButtonClass, 'flex-1 @lg:flex-initial')}
-            onClick={() => fetchLeaves()}
-            disabled={loading}
+            onClick={() => {
+              if (isMineTab) {
+                setLoadingMine(true)
+                fetchMineLeaves()
+              } else {
+                fetchLeaves()
+              }
+            }}
+            disabled={activeLoading}
           >
             {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Refresh
@@ -966,7 +1042,7 @@ export default function AdminLeave() {
         </div>
       )}
 
-      {pendingCount > 0 && (
+      {pendingCount > 0 && !isMineTab && (
         <div className="flex flex-col @sm:flex-row items-start @sm:items-center justify-between gap-3 rounded-xl border border-amber-400/50 bg-amber-500/10 px-4 py-3.5 dark:border-amber-500/40 dark:bg-amber-500/8">
           <div className="flex items-center gap-3">
             <AlertTriangle className="size-5 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -989,17 +1065,60 @@ export default function AdminLeave() {
         </div>
       )}
 
-      {error && (
+      {(activeError || error) && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-          {error}
+          {activeError || error}
         </div>
       )}
+
+      <div className="flex flex-wrap gap-2">
+        <div
+          className="inline-flex min-w-0 flex-wrap gap-2 rounded-2xl border border-border/70 bg-muted/30 p-1 shadow-inner"
+          role="tablist"
+          aria-label="Leave views"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'all'}
+            onClick={() => setTab('all')}
+            className={cn(
+              'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+              tab === 'all'
+                ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                : 'text-muted-foreground hover:bg-background hover:text-foreground',
+            )}
+          >
+            All Requests
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'mine'}
+            onClick={() => setTab('mine')}
+            className={cn(
+              'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+              tab === 'mine'
+                ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                : 'text-muted-foreground hover:bg-background hover:text-foreground',
+            )}
+          >
+            My Requests
+          </button>
+        </div>
+      </div>
 
       <Card className={cn(adminLeaveCardClass, 'w-full min-w-0 overflow-hidden')}>
         <CardHeader className="flex flex-col gap-4 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
           <div className="min-w-0">
-            <CardTitle className="text-lg font-semibold @md:text-xl">Leave requests</CardTitle>
-            <CardDescription className="text-sm @md:text-[15px]">Filter by status</CardDescription>
+            <CardTitle className="text-lg font-semibold @md:text-xl">
+              {isMineTab ? 'My leave requests' : 'Leave requests'}
+            </CardTitle>
+            <CardDescription className="text-sm @md:text-[15px]">
+              {isMineTab
+                ? 'Leave you submitted and its approval progress.'
+                : 'Filter by status'}
+            </CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {STATUS_OPTIONS.map((opt) => {
@@ -1037,6 +1156,7 @@ export default function AdminLeave() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
+          {!isMineTab ? (
           <div className="border-b border-border/40 px-4 py-4 @sm:px-6">
             <BulkApproveToolbar
               idPrefix="leave-bulk"
@@ -1066,7 +1186,8 @@ export default function AdminLeave() {
               approving={bulkApproving}
             />
           </div>
-          {loading ? (
+          ) : null}
+          {activeLoading ? (
             <div className="min-h-[min(42vh,400px)] overflow-x-auto px-2 @sm:px-0">
               <table className="w-full min-w-[min(100%,720px)] text-sm">
                 <tbody>
@@ -1074,7 +1195,7 @@ export default function AdminLeave() {
                 </tbody>
               </table>
             </div>
-          ) : leaveRequests.length === 0 ? (
+          ) : activeLeaveRequests.length === 0 ? (
             <div className="flex min-h-[min(58vh,620px)] flex-col items-center justify-center px-6 py-16 text-center @md:py-24">
               <div className="relative mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
                 <FileText className="size-11" strokeWidth={1.85} aria-hidden />
@@ -1086,10 +1207,16 @@ export default function AdminLeave() {
                 </span>
               </div>
               <p className="max-w-md text-xl font-semibold tracking-tight text-foreground">
-                {statusFilter ? `No ${statusFilter} leave requests.` : 'No leave requests yet.'}
+                {statusFilter
+                  ? `No ${statusFilter} leave requests.`
+                  : isMineTab
+                    ? 'No leave requests yet.'
+                    : 'No leave requests yet.'}
               </p>
               <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
-                When employees submit leave, they will appear here for review.
+                {isMineTab
+                  ? 'You have not filed leave yet. Use File New Leave to submit one.'
+                  : 'When employees submit leave, they will appear here for review.'}
               </p>
               {canApproveLeave ? (
                 <Button
@@ -1114,13 +1241,140 @@ export default function AdminLeave() {
                 </Button>
               ) : null}
             </div>
+          ) : isMineTab ? (
+            <div className="flex-1 overflow-x-auto">
+              <table className={leaveEmployeeTableClass}>
+                <colgroup>
+                  <col className="w-[9rem]" />
+                  <col className="w-[12rem]" />
+                  <col className="w-[7rem]" />
+                  <col className="w-[11rem]" />
+                  <col className="w-[14rem]" />
+                  <col className="w-[10rem]" />
+                  <col className="w-[9.5rem]" />
+                  <col className="w-[9rem]" />
+                </colgroup>
+                <thead>
+                  <tr className={requestModuleHeadRowClass}>
+                    <th className={requestModuleThClass}>Leave type</th>
+                    <th className={requestModuleThClass}>Date / range</th>
+                    <th className={requestModuleThClass}>Duration</th>
+                    <th className={requestModuleThClass}>Supporting documents</th>
+                    <th className={requestModuleThClass}>Reason / remarks</th>
+                    <th className={requestModuleThClass}>Status</th>
+                    <th className={requestModuleThRightClass}>Date filed</th>
+                    <th className={requestModuleThRightClass}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="text-[13px]">
+                  {activeLeaveRequests.map((leave, idx) => {
+                    const isUndertimeRow = leave.type === 'undertime'
+                    const isHalfDayRow = leave.type === 'half_day'
+                    const undertimeMinutes = typeof leave.undertime_minutes === 'number' ? leave.undertime_minutes : null
+                    const remarksPreview = [leave.notes, leave.rejection_note].filter(Boolean).join('\n\n') || ''
+                    return (
+                      <tr key={leave.id} className={requestModuleRowClass(idx)}>
+                        <td className={cn(requestModuleTdClass, 'text-muted-foreground')}>{formatType(leave.type)}</td>
+                        <td className={cn(requestModuleTdClass, 'font-medium leading-snug')}>
+                          {formatDateRange(leave.start_date, leave.end_date)}
+                        </td>
+                        <td className={requestModuleTdMutedClass}>
+                          {isUndertimeRow ? (
+                            undertimeMinutes !== null ? `${undertimeMinutes} min` : '—'
+                          ) : isHalfDayRow ? (
+                            leave.half_type === 'am' ? 'Half day (AM)' : leave.half_type === 'pm' ? 'Half day (PM)' : 'Half day'
+                          ) : (
+                            formatDuration(leave)
+                          )}
+                        </td>
+                        <td className={requestModuleTdClass}>
+                          {(() => {
+                            const urls = supportingDocUrls(leave)
+                            if (!urls.length) return <span className="text-muted-foreground">No</span>
+                            return (
+                              <div className="flex flex-col gap-1">
+                                {urls.map((url, i) => (
+                                  <a
+                                    key={`${url}-${i}`}
+                                    href={profileImageUrl(url)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                                  >
+                                    <Paperclip className="size-3.5 shrink-0" aria-hidden />
+                                    View{urls.length > 1 ? ` (${i + 1})` : ''}
+                                  </a>
+                                ))}
+                              </div>
+                            )
+                          })()}
+                        </td>
+                        <td className={requestModuleTdClass}>
+                          {remarksPreview ? (
+                            <p className="line-clamp-2 text-[13px] leading-snug text-foreground/90" title={remarksPreview}>
+                              {remarksPreview}
+                            </p>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className={requestModuleTdClass}>
+                          <LeaveStatusPill status={leave.status} displayStatus={leave.display_status} />
+                        </td>
+                        <td className={cn(requestModuleTdMutedClass, 'text-right')}>
+                          {leave.created_at ? formatDate(leave.created_at) : '—'}
+                        </td>
+                        <td className={requestModuleActionsTdClass}>
+                          <div className={requestModuleActionsWrapRowClass}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className={cn(requestModuleCompactButtonClass, 'text-foreground hover:bg-brand/10 hover:text-brand')}
+                              onClick={() => openDetailDialog(leave)}
+                            >
+                              <Eye className="size-3.5" />
+                              View details
+                            </Button>
+                            {leave.actor_can_delete ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className={cn(requestModuleCompactButtonClass, 'text-destructive hover:bg-destructive/10')}
+                                onClick={() => setDeleteDialog({ open: true, leave })}
+                              >
+                                <Trash2 className="size-3.5" />
+                                Delete
+                              </Button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <div className="flex-1 overflow-x-auto">
-              <table className="w-full min-w-[min(100%,820px)] text-sm @md:text-[15px]">
+              <table className={leaveAdminTableClass}>
+                <colgroup>
+                  {canApproveLeave ? <col className="w-10" /> : null}
+                  <col className="w-[12rem]" />
+                  <col className="w-[8rem]" />
+                  <col className="w-[11rem]" />
+                  <col className="w-[7rem]" />
+                  <col className="w-[11rem]" />
+                  <col className="w-[14rem]" />
+                  <col className="w-[14rem]" />
+                  <col className="w-[9rem]" />
+                  <col className="w-[15rem]" />
+                </colgroup>
                 <thead>
-                  <tr className="border-b border-border/40 bg-muted/30 dark:bg-card">
+                  <tr className={requestModuleHeadRowClass}>
                     {canApproveLeave && (
-                    <th className="w-10 px-5 py-3.5 text-left">
+                    <th className={cn(requestModuleThClass, 'w-10 px-3')}>
                       <Checkbox
                         checked={
                           bulkSelection.headerCheckboxIndeterminate
@@ -1133,41 +1387,18 @@ export default function AdminLeave() {
                       />
                     </th>
                     )}
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Employee
-                    </th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Leave type
-                    </th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Date / range
-                    </th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Duration
-                    </th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Supporting documents
-                    </th>
-                    <th className="min-w-[10rem] text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Reason / remarks
-                    </th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Status
-                    </th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Date filed
-                    </th>
-                    <th className="text-right px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400">
-                      Details
-                    </th>
-                    {(canApproveLeave || canLeaveNotes) && (
-                    <th className="text-right px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground dark:text-slate-400 min-w-[12rem]">
-                      Actions
-                    </th>
-                    )}
+                    <th className={requestModuleThClass}>Employee</th>
+                    <th className={requestModuleThClass}>Leave type</th>
+                    <th className={requestModuleThClass}>Date / range</th>
+                    <th className={requestModuleThClass}>Duration</th>
+                    <th className={requestModuleThClass}>Supporting documents</th>
+                    <th className={requestModuleThClass}>Reason / remarks</th>
+                    <th className={requestModuleThClass}>Status</th>
+                    <th className={requestModuleThRightClass}>Date filed</th>
+                    <th className={requestModuleThRightClass}>Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border/40 dark:divide-white/5 text-[13px]">
+                <tbody className="text-[13px]">
                   {leaveRequests.map((leave, idx) => {
                     const name = leave.employee_name || '—'
                     const initials =
@@ -1181,17 +1412,10 @@ export default function AdminLeave() {
 
                     const isPending = leave.status === 'pending'
 
-                    const rowClassName = [
-                      'group transition-all',
-                      'hover:bg-muted/20 dark:hover:bg-muted/40 dark:hover:shadow-[inset_3px_0_0_rgba(20,184,166,0.45)]',
-                      isPending
-                        ? 'bg-amber-50/30 dark:bg-amber-950/15'
-                        : idx % 2 === 0
-                          ? 'bg-white dark:bg-card'
-                          : 'bg-[#f8fafc] dark:bg-muted/25',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')
+                    const rowClassName = cn(
+                      requestModuleRowClass(idx, 'group transition-all hover:bg-muted/20 dark:hover:bg-muted/40 dark:hover:shadow-[inset_3px_0_0_rgba(20,184,166,0.45)]'),
+                      isPending && '!bg-amber-50/30 dark:!bg-amber-950/15',
+                    )
 
                     const isUndertimeRow = leave.type === 'undertime'
                     const isHalfDayRow = leave.type === 'half_day'
@@ -1201,7 +1425,7 @@ export default function AdminLeave() {
                     return (
                       <tr key={leave.id} className={rowClassName}>
                       {canApproveLeave && (
-                      <td className="px-4 py-4 align-middle">
+                      <td className={cn(requestModuleTdClass, 'w-10 px-3')}>
                         <Checkbox
                           checked={bulkSelection.isRowSelected(leave)}
                           disabled={leave.status !== 'pending' || !leave.actor_can_approve || bulkApproving}
@@ -1210,22 +1434,24 @@ export default function AdminLeave() {
                         />
                       </td>
                       )}
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="size-10 shrink-0 rounded-full">
+                      <td className={requestModuleTdClass}>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Avatar className="size-9 shrink-0 rounded-full">
                             <AvatarImage src={leave.employee_profile_image} alt="" className="object-cover" />
                             <AvatarFallback className="rounded-full bg-teal-500/20 text-xs font-bold text-teal-700 dark:text-teal-300">
                               {initials}
                             </AvatarFallback>
                           </Avatar>
-                          <span className="font-bold text-[13.5px] text-foreground">{name}</span>
+                          <span className="line-clamp-2 font-semibold text-[13px] leading-snug text-foreground" title={name}>
+                            {name}
+                          </span>
                         </div>
                       </td>
-                      <td className="px-4 py-4 text-sm text-muted-foreground">{formatType(leave.type)}</td>
-                      <td className="px-4 py-4 text-sm text-muted-foreground">
+                      <td className={cn(requestModuleTdClass, 'text-muted-foreground')}>{formatType(leave.type)}</td>
+                      <td className={cn(requestModuleTdClass, 'text-muted-foreground')}>
                         {formatDateRange(leave.start_date, leave.end_date)}
                       </td>
-                      <td className="px-4 py-4 text-muted-foreground">
+                      <td className={requestModuleTdMutedClass}>
                         {isUndertimeRow ? (
                           undertimeMinutes !== null ? (
                             <span className="flex flex-col gap-0.5">
@@ -1251,7 +1477,7 @@ export default function AdminLeave() {
                           formatDuration(leave)
                         )}
                       </td>
-                      <td className="px-4 py-4 text-sm">
+                      <td className={requestModuleTdClass}>
                         {(() => {
                           const urls = supportingDocUrls(leave)
                           if (!urls.length) {
@@ -1275,76 +1501,60 @@ export default function AdminLeave() {
                           )
                         })()}
                       </td>
-                      <td className="max-w-[14rem] px-4 py-4 align-top text-sm text-muted-foreground">
+                      <td className={requestModuleTdClass}>
                         {remarksPreview ? (
-                          <p className="line-clamp-3 whitespace-pre-wrap break-words text-[13px] leading-snug text-foreground/90">
+                          <p className="line-clamp-2 text-[13px] leading-snug text-foreground/90" title={remarksPreview}>
                             {remarksPreview}
                           </p>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-4">
-                        {leave.status === 'pending' && (
-                          <div className="space-y-1.5">
-                            <span className="inline-flex max-w-[14rem] items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-xs font-semibold text-white shadow-sm">
-                              <Clock className="size-3 shrink-0" />
-                              <span className="line-clamp-2 leading-tight">{leave.display_status || 'Pending'}</span>
-                            </span>
-                          </div>
-                        )}
-                        {leave.status === 'approved' && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-semibold text-white shadow-sm">
-                            <CheckCircle2 className="size-3" />
-                            Approved
-                          </span>
-                        )}
-                        {leave.status === 'rejected' && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-2.5 py-0.5 text-xs font-semibold text-white shadow-sm">
-                            <XCircle className="size-3" />
-                            Rejected
-                          </span>
-                        )}
+                      <td className={requestModuleTdClass}>
+                        <LeaveStatusPill
+                          status={leave.status}
+                          displayStatus={leave.display_status}
+                          hrWaitMessage={
+                            leave.status === 'pending' && !leave.actor_can_approve
+                              ? leave.hr_wait_message ||
+                                'You are not the approver for this request at this stage.'
+                              : null
+                          }
+                        />
                       </td>
-                      <td className="px-4 py-4 align-top text-sm tabular-nums text-muted-foreground">
+                      <td className={cn(requestModuleTdMutedClass, 'text-right')}>
                         {leave.created_at ? formatDate(leave.created_at) : '—'}
                       </td>
-                      <td className="px-4 py-4 text-right align-middle">
-                        <div className="flex flex-wrap justify-end gap-2">
+                      <td className={requestModuleActionsTdClass}>
+                        <div className={requestModuleActionsWrapRowClass}>
                           <Button
                             type="button"
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
-                            className="h-9 gap-1.5 rounded-lg px-3 text-xs font-semibold text-foreground hover:bg-slate-100 dark:hover:bg-slate-800"
+                            className={cn(requestModuleCompactButtonClass, 'border-border/80 bg-card hover:bg-brand/10 hover:text-brand')}
                             onClick={() => openDetailDialog(leave)}
                           >
                             <Eye className="size-3.5" aria-hidden />
-                            Details
+                            View details
                           </Button>
                           {leave.actor_can_delete ? (
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
-                              className="h-9 gap-1.5 rounded-lg px-3 text-xs font-semibold text-destructive hover:bg-destructive/10"
+                              className={cn(requestModuleCompactButtonClass, 'text-destructive hover:bg-destructive/10')}
                               onClick={() => setDeleteDialog({ open: true, leave })}
                             >
                               <Trash2 className="size-3.5" aria-hidden />
                               Delete
                             </Button>
                           ) : null}
-                        </div>
-                      </td>
-                      {(canApproveLeave || canLeaveNotes) && (
-                      <td className="px-4 py-4 text-right align-middle">
-                        <div className="flex flex-col items-end gap-2 @sm:flex-row @sm:flex-wrap @sm:items-center @sm:justify-end">
-                          {canApproveLeave && leave.status === 'pending' && (
-                            leave.actor_can_approve ? (
+                          {canApproveLeave && leave.status === 'pending' && leave.actor_can_approve ? (
                             <>
                               <Button
                                 variant="default"
                                 size="sm"
-                                className="h-9 min-w-[5.5rem] gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500/60 shadow-sm"
+                                className={cn(requestModuleCompactButtonClass, 'bg-emerald-600 text-white hover:bg-emerald-700')}
                                 onClick={() => openApproveDialog(leave)}
                                 disabled={actionLoadingId === leave.id}
                               >
@@ -1353,39 +1563,33 @@ export default function AdminLeave() {
                                 ) : (
                                   <CheckCircle2 className="size-3.5" />
                                 )}
-                                <span>Approve</span>
+                                Approve
                               </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="h-9 min-w-[5.5rem] gap-1.5 text-xs font-semibold border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                                className={cn(requestModuleCompactButtonClass, 'border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300')}
                                 onClick={() => openRejectDialog(leave)}
                                 disabled={actionLoadingId === leave.id || leave.actor_can_reject === false}
                               >
                                 <XCircle className="size-3.5" />
-                                <span>Reject</span>
+                                Reject
                               </Button>
                             </>
-                            ) : (
-                              <p className="max-w-[14rem] text-right text-[11px] leading-snug text-muted-foreground">
-                                {leave.hr_wait_message || 'You are not the approver for this request at this stage.'}
-                              </p>
-                            )
-                          )}
-                          {canLeaveNotes && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 gap-1 text-xs"
-                                onClick={() => openNotesDialog(leave)}
-                          >
-                            <FileText className="size-3.5" />
-                            <span>{leave.notes ? 'Edit note' : 'Add note'}</span>
-                          </Button>
-                          )}
+                          ) : null}
+                          {canLeaveNotes ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={requestModuleCompactButtonClass}
+                              onClick={() => openNotesDialog(leave)}
+                            >
+                              <FileText className="size-3.5" />
+                              {leave.notes ? 'Edit note' : 'Add note'}
+                            </Button>
+                          ) : null}
                         </div>
                       </td>
-                      )}
                     </tr>
                     )
                   })}

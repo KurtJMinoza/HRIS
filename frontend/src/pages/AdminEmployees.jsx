@@ -1801,6 +1801,11 @@ export default function AdminEmployees() {
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <p className="max-w-[190px] truncate text-[14.5px] font-bold leading-tight text-foreground">{emp.name}</p>
                                   <RoleBadge user={emp} size={density === 'compact' ? 'xs' : 'sm'} />
+                                  {emp.scope_assignment_source && emp.scope_assignment_source !== 'primary' && (
+                                    <Badge variant="outline" className="rounded-md px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                                      {emp.scope_assignment_source}
+                                    </Badge>
+                                  )}
                                 </div>
                                 <p className="max-w-[190px] truncate text-[11px] text-muted-foreground">{emp.email}</p>
                                 {emp.phone_number && density !== 'compact' && (

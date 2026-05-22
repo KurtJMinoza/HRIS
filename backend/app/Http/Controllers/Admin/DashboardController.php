@@ -20,6 +20,7 @@ use App\Services\DataScopeService;
 use App\Services\EmployeeStatusService;
 use App\Services\HolidayCalendarService;
 use App\Services\HrRoleResolver;
+use App\Services\LeaveApprovalService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PresenceFilingService;
 use App\Support\TextSanitizer;
@@ -42,6 +43,7 @@ class DashboardController extends Controller
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PresenceFilingCorrectionFormatter $correctionFormatter,
         private readonly PresenceFilingService $presenceFilingService,
+        private readonly LeaveApprovalService $leaveApprovalService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -1945,7 +1947,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * Approved leave requests that overlap today's date.
+     * Approved leave overlapping today, plus pending leave starting today or within the next week.
      *
      * @param  array<int, int>  $scopedActiveUserIds
      * @return array<int, array<string, mixed>>
@@ -1953,10 +1955,19 @@ class DashboardController extends Controller
     private function todayLeaves(Carbon $today, array $scopedActiveUserIds): array
     {
         $dateKey = $today->toDateString();
+        $upcomingEnd = $today->copy()->addDays(7)->toDateString();
         $query = LeaveRequest::query()
-            ->where('status', LeaveRequest::STATUS_APPROVED)
-            ->whereDate('start_date', '<=', $dateKey)
-            ->whereDate('end_date', '>=', $dateKey);
+            ->where(function (Builder $q) use ($dateKey, $upcomingEnd) {
+                $q->where(function (Builder $approved) use ($dateKey) {
+                    $approved->where('status', LeaveRequest::STATUS_APPROVED)
+                        ->whereDate('start_date', '<=', $dateKey)
+                        ->whereDate('end_date', '>=', $dateKey);
+                })->orWhere(function (Builder $pending) use ($dateKey, $upcomingEnd) {
+                    $pending->where('status', LeaveRequest::STATUS_PENDING)
+                        ->whereDate('start_date', '>=', $dateKey)
+                        ->whereDate('start_date', '<=', $upcomingEnd);
+                });
+            });
         if ($scopedActiveUserIds !== []) {
             $query->whereIn('user_id', $scopedActiveUserIds);
         } else {
@@ -1989,6 +2000,7 @@ class DashboardController extends Controller
 
             $items[] = [
                 'leave_request_id' => $leave->id,
+                'request_id' => $leave->id,
                 'user_id' => $user->id,
                 'employee_name' => $user->display_name ?: '—',
                 'employee_sort_key' => $user->employeeListingSortKey(),
@@ -2000,10 +2012,24 @@ class DashboardController extends Controller
                 'profile_image_url' => $user->profile_image_url,
                 'start_date' => $start?->toDateString(),
                 'end_date' => $end?->toDateString(),
+                'status' => $leave->status,
+                'display_status' => $this->leaveApprovalService->deriveDisplayStatusLabel($leave),
             ];
         }
 
-        usort($items, fn (array $a, array $b) => strcmp((string) ($a['employee_sort_key'] ?? ''), (string) ($b['employee_sort_key'] ?? '')));
+        usort($items, function (array $a, array $b) {
+            $aPending = ($a['status'] ?? '') === LeaveRequest::STATUS_PENDING ? 0 : 1;
+            $bPending = ($b['status'] ?? '') === LeaveRequest::STATUS_PENDING ? 0 : 1;
+            if ($aPending !== $bPending) {
+                return $aPending <=> $bPending;
+            }
+            $startCmp = strcmp((string) ($a['start_date'] ?? ''), (string) ($b['start_date'] ?? ''));
+            if ($startCmp !== 0) {
+                return $startCmp;
+            }
+
+            return strcmp((string) ($a['employee_sort_key'] ?? ''), (string) ($b['employee_sort_key'] ?? ''));
+        });
 
         return $items;
     }

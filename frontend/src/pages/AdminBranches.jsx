@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import LeadershipPositionsSection from '@/components/organization/LeadershipPositionsSection'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Dialog,
@@ -131,7 +132,7 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
           {needsCompany ? (
             <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
               <p className="text-sm text-muted-foreground">Select a company first</p>
-              <p className="text-[11px] text-muted-foreground/70">Branch Manager must be from the same company</p>
+              <p className="text-[11px] text-muted-foreground/70">Any active employee can be assigned, including cross-company leaders.</p>
             </div>
           ) : (
             <>
@@ -158,28 +159,21 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
               {filtered.map((emp, idx) => {
                 const branchAssignment = branchManagerMap.get(String(emp.id))
                 const companyHeadOf = companyHeadMap.get(String(emp.id))
-                const inDifferentCompany = !branchAssignment
-                  && emp.company_id && companyId && Number(emp.company_id) !== Number(companyId)
-                const isDisabled = !!branchAssignment || !!inDifferentCompany
-                const crossCompanyLabel = inDifferentCompany
-                  ? [emp.company_name, emp.branch_name, emp.department].filter(Boolean).join(' -> ') || 'Another company'
-                  : null
+                const isInactive = emp.is_active === false
                 return (
                   <button
                     key={emp.id}
                     type="button"
-                    disabled={isDisabled}
-                    onClick={() => { if (!isDisabled) { onChange(String(emp.id)); setOpen(false) } }}
+                    disabled={isInactive}
+                    onClick={() => { if (!isInactive) { onChange(String(emp.id)); setOpen(false) } }}
                     title={
                       branchAssignment
-                        ? `Assigned to ${branchAssignment.companyName} -> ${branchAssignment.branchName}`
-                        : crossCompanyLabel
-                        ? `Assigned to ${crossCompanyLabel}`
+                        ? `Also Branch Manager — ${branchAssignment.companyName} / ${branchAssignment.branchName}`
                         : companyHeadOf
-                        ? `Also Company Head of ${companyHeadOf}. Multiple leadership assignments are allowed.`
+                        ? `Also Company Head of ${companyHeadOf}`
                         : undefined
                     }
-                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${!isDisabled ? 'hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer' : 'opacity-60 cursor-not-allowed'} ${value === String(emp.id) ? 'bg-slate-100 dark:bg-slate-800/60 dark:border-l-2 dark:border-l-teal-500' : ''} ${idx % 2 === 1 ? 'dark:bg-slate-900/30' : ''}`}
+                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${!isInactive ? 'hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer' : 'opacity-60 cursor-not-allowed'} ${value === String(emp.id) ? 'bg-slate-100 dark:bg-slate-800/60 dark:border-l-2 dark:border-l-teal-500' : ''} ${idx % 2 === 1 ? 'dark:bg-slate-900/30' : ''}`}
                   >
                     <Avatar className="size-8 shrink-0">
                       <AvatarImage src={profileImageUrl(emp.profile_image)} />
@@ -199,12 +193,7 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
                       )}
                       {!companyHeadOf && branchAssignment && (
                         <Badge variant="secondary" className="mt-1 h-5 text-[10px] bg-amber-500/20 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 border-0">
-                          Branch Manager - {branchAssignment.companyName} / {branchAssignment.branchName}
-                        </Badge>
-                      )}
-                      {crossCompanyLabel && (
-                        <Badge variant="secondary" className="mt-1 h-5 text-[10px] bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300 border-0">
-                          Assigned: {crossCompanyLabel}
+                          Branch Manager — {branchAssignment.companyName} / {branchAssignment.branchName}
                         </Badge>
                       )}
                     </div>
@@ -295,8 +284,7 @@ export default function AdminBranches() {
 
   const fetchEmployees = useCallback(async (companyId) => {
     try {
-      const params = { per_page: 100 }
-      if (companyId) params.assignable_to_company_id = companyId
+      const params = { for_leadership_assignment: true, per_page: 'all' }
       const data = await getEmployees(params)
       setAllEmployees(data.employees || [])
     } catch {
@@ -767,6 +755,14 @@ export default function AdminBranches() {
                 />
               </div>
             </div>
+            {editBranch?.id ? (
+              <LeadershipPositionsSection
+                legacyType="branch"
+                legacyId={editBranch.id}
+                employeeOptions={allEmployees}
+                canManage
+              />
+            ) : null}
             </div>
             <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
               <Button type="button" variant="outline" onClick={() => setEditOpen(false)} className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted">

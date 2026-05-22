@@ -22,6 +22,7 @@ use App\Models\UserAdminActivityLog;
 use App\Models\UserPhoneChangeLog;
 use App\Models\WorkingSchedule;
 use App\Services\DataScopeService;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\ESignatureService;
 use App\Services\FaceEmbeddingCacheService;
 use App\Services\FaceRegistrationStatusService;
@@ -81,6 +82,8 @@ class EmployeeController extends Controller
             'user_id' => $request->user()?->id,
         ]);
         $forScheduleAssignment = $request->boolean('for_schedule_assignment', false);
+        $forLeadershipAssignment = $request->boolean('for_leadership_assignment', false);
+        $forOrganizationAssignment = $request->boolean('for_organization_assignment', false);
         // Default to lightweight rows; full payload is opt-in via ?lite=0 for legacy screens.
         $lite = $request->boolean('lite', true);
         $perPageParam = $request->query('per_page', '10');
@@ -121,7 +124,10 @@ class EmployeeController extends Controller
             });
         };
 
-        $applyOrgFilters = function ($query) use ($companyId, $branchId, $departmentId, $divisionId, $sectionUnitId, $assignableToCompanyId) {
+        $applyOrgFilters = function ($query) use ($companyId, $branchId, $departmentId, $divisionId, $sectionUnitId, $assignableToCompanyId, $forOrganizationAssignment) {
+            if ($forOrganizationAssignment) {
+                return $query;
+            }
             if ($companyId !== null) {
                 $query->where(function ($q) use ($companyId) {
                     $q->where('company_id', $companyId)
@@ -160,7 +166,7 @@ class EmployeeController extends Controller
                 $query->where('section_unit_id', $sectionUnitId);
             }
             if ($assignableToCompanyId !== null) {
-                // Include: (1) employees in this company (and not head of another), or (2) unassigned employees
+                // Include: (1) employees in this company (and not head of another), or (2) no company_id on profile
                 $query->where(function ($q) use ($assignableToCompanyId) {
                     $q->where(function ($sub) use ($assignableToCompanyId) {
                         $sub->where('company_id', $assignableToCompanyId)
@@ -172,10 +178,6 @@ class EmployeeController extends Controller
                     });
                 })->orWhere(function ($q) {
                     $q->whereNull('company_id')
-                        ->whereNull('branch_id')
-                        ->whereNull('department_id')
-                        ->whereNull('division_id')
-                        ->whereNull('section_unit_id')
                         ->whereDoesntHave('companyHeadships');
                 });
             }
@@ -317,6 +319,7 @@ class EmployeeController extends Controller
             'time_ms' => round((microtime(true) - $start) * 1000),
             'lite' => $lite,
             'for_schedule_assignment' => $forScheduleAssignment,
+            'for_leadership_assignment' => $forLeadershipAssignment,
             'q_present' => $q !== '',
             'company_id' => $companyId,
             'branch_id' => $branchId,
@@ -325,12 +328,15 @@ class EmployeeController extends Controller
             'section_unit_id' => $sectionUnitId,
         ]);
 
-        if ($forScheduleAssignment || $perPageParam === 'all' || (int) $perPageParam === 0) {
+        if ($forLeadershipAssignment || $forScheduleAssignment || $forOrganizationAssignment || $perPageParam === 'all' || (int) $perPageParam === 0) {
             $buildStart = microtime(true);
-            $query = $applyOrgFilters($applySearch(User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns)))
+            $baseQuery = User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns);
+            $query = ($forLeadershipAssignment ? $applySearch($baseQuery) : $applyOrgFilters($applySearch($baseQuery)))
                 ->orderByLastName();
             $this->applyActiveFilter($query, $activeFilter);
-            $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
+            if (! $forLeadershipAssignment) {
+                $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
+            }
             Log::info('AdminEmployees index timing step', [
                 'endpoint' => 'AdminEmployees.index',
                 'step' => 'build_and_scope_query_all_mode',
@@ -348,10 +354,13 @@ class EmployeeController extends Controller
             $canSensitive = $this->viewerCanSensitive($request->user());
             $mapBuildStart = microtime(true);
             $orgMaps = $lite ? $this->buildLiteOrgMaps($users) : [];
+            $assignmentMaps = $lite
+                ? app(\App\Services\EmployeeOrganizationAssignmentService::class)->buildActiveAssignmentMapForUsers($users)
+                : [];
             $mapBuildMs = round((microtime(true) - $mapBuildStart) * 1000);
             $rowsStart = microtime(true);
             $employees = $users->map(fn (User $u) => $lite
-                ? $this->employeeLiteResponse($u, $canSensitive, $orgMaps)
+                ? $this->employeeLiteResponse($u, $canSensitive, $orgMaps, $assignmentMaps[(int) $u->id] ?? [])
                 : $this->employeeResponse($u, $canSensitive, true, false, true))->values();
             $rowsMs = round((microtime(true) - $rowsStart) * 1000);
             $transformMs = round((microtime(true) - $transformStart) * 1000);
@@ -387,14 +396,17 @@ class EmployeeController extends Controller
         $perPage = min($perPage, 100);
 
         $buildStart = microtime(true);
-        $query = $applyOrgFilters($applySearch(User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns)))
+        $baseQuery = User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns);
+        $query = ($forLeadershipAssignment ? $applySearch($baseQuery) : $applyOrgFilters($applySearch($baseQuery)))
             ->orderByLastName();
         $this->applyActiveFilter($query, $activeFilter);
         if (! $lite) {
             $query->with($fullEagerLoads);
         }
 
-        $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
+        if (! $forLeadershipAssignment) {
+            $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
+        }
         Log::info('AdminEmployees index timing step', [
             'endpoint' => 'AdminEmployees.index',
             'step' => 'build_and_scope_query_paginated',
@@ -412,11 +424,14 @@ class EmployeeController extends Controller
         $items = collect($paginator->items());
         $mapBuildStart = microtime(true);
         $orgMaps = $lite ? $this->buildLiteOrgMaps($items) : [];
+        $assignmentMaps = $lite
+            ? app(\App\Services\EmployeeOrganizationAssignmentService::class)->buildActiveAssignmentMapForUsers($items)
+            : [];
         $mapBuildMs = round((microtime(true) - $mapBuildStart) * 1000);
         $rowsStart = microtime(true);
         $employees = collect($paginator->items())
             ->map(fn (User $u) => $lite
-                ? $this->employeeLiteResponse($u, $canSensitive, $orgMaps)
+                ? $this->employeeLiteResponse($u, $canSensitive, $orgMaps, $assignmentMaps[(int) $u->id] ?? [])
                 : $this->employeeResponse($u, $canSensitive, true, false, true))
             ->values();
         $rowsMs = round((microtime(true) - $rowsStart) * 1000);
@@ -2247,6 +2262,16 @@ class EmployeeController extends Controller
         ]);
     }
 
+    public function organizationAssignments(Request $request, int $id, EmployeeOrganizationAssignmentService $assignmentService): JsonResponse
+    {
+        $employee = $this->loadScopedEmployee($request, $id, false);
+
+        return response()->json([
+            'employee_id' => (int) $employee->id,
+            'assignments' => $assignmentService->assignmentsForEmployee($employee),
+        ]);
+    }
+
     /**
      * @param  bool  $includePayCyclePreviewAndLeaveSnapshot  When false, pay-cycle preview is omitted (lighter JSON).
      * @param  bool  $includeLeaveCreditsWhenPayCyclePreviewSkipped  When the pay-cycle block is off, set true to still merge {@see leaveCreditsSnapshotFields()} (admin employee index uses this so list rows match profile / Leave Credits).
@@ -2962,7 +2987,7 @@ class EmployeeController extends Controller
         };
     }
 
-    private function employeeLiteResponse(User $user, bool $includeSensitive, array $orgMaps): array
+    private function employeeLiteResponse(User $user, bool $includeSensitive, array $orgMaps, array $activeAssignments = []): array
     {
         $branchesById = $orgMaps['branches'] ?? collect();
         $departmentsById = $orgMaps['departments'] ?? collect();
@@ -3019,6 +3044,31 @@ class EmployeeController extends Controller
         }
         $companyName = $companyIdResolved ? ($companiesById->get((int) $companyIdResolved) ?? null) : null;
 
+        $currentOrgPath = array_values(array_filter([
+            $companyName,
+            $branchName,
+            $divisionName,
+            $department,
+            $sectionUnitName,
+        ], fn ($part) => is_string($part) && trim($part) !== ''));
+
+        $hasCrossCompanyAssignment = false;
+        $scopeAssignmentSource = $user->section_unit_id ? 'primary' : null;
+        $scopeAssignment = null;
+        foreach ($activeAssignments as $assignmentRow) {
+            if (
+                isset($assignmentRow['company_id'])
+                && $companyIdResolved
+                && (int) $assignmentRow['company_id'] !== (int) $companyIdResolved
+            ) {
+                $hasCrossCompanyAssignment = true;
+            }
+            if (! ($assignmentRow['is_primary'] ?? false) && $scopeAssignment === null) {
+                $scopeAssignment = $assignmentRow;
+                $scopeAssignmentSource = $assignmentRow['assignment_type'] ?? 'shared';
+            }
+        }
+
         $hasFace = ($user->face_status === 'registered') || ($user->face_registered_at !== null);
 
         $uid = (int) $user->id;
@@ -3067,6 +3117,11 @@ class EmployeeController extends Controller
             'company_name' => $companyName,
             'branch_id' => $user->branch_id,
             'branch_name' => $branchName,
+            'current_org_path' => implode(' > ', $currentOrgPath),
+            'organization_assignments' => $activeAssignments,
+            'scope_assignment_source' => $scopeAssignmentSource,
+            'scope_assignment_id' => $scopeAssignment['id'] ?? null,
+            'has_cross_company_assignment' => $hasCrossCompanyAssignment,
             'position' => $user->position,
             'employment_status' => $user->employment_status,
             'employment_status_label' => EmploymentStatus::normalizeToCanonicalLabel($user->employment_status)

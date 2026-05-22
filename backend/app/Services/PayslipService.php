@@ -44,6 +44,7 @@ class PayslipService
     private static ?array $payrollBatchRunColumns = null;
 
     public function __construct(
+        private readonly BrowsershotEnvironment $browsershotEnvironment,
         private readonly PayrollComputationService $payrollComputation,
         private readonly PayCycleService $payCycleService,
         private readonly DataScopeService $dataScopeService,
@@ -1242,32 +1243,17 @@ class PayslipService
                 ->noSandbox()
                 ->setTemporaryDirectory($tmp);
 
-            // Browsershot resolves puppeteer from Node module paths.
-            // Reuse frontend dependency installation in this monorepo layout.
-            $frontendNodeModules = realpath(base_path('../frontend/node_modules'));
-            if (is_string($frontendNodeModules) && $frontendNodeModules !== '' && is_dir($frontendNodeModules)) {
-                $shot->setNodeModulePath($frontendNodeModules);
-            }
-
-            $nodeBinary = trim((string) config('services.browsershot.node_binary', ''));
-            if ($nodeBinary !== '') {
-                $shot->setNodeBinary($nodeBinary);
-            }
-            $npmBinary = trim((string) config('services.browsershot.npm_binary', ''));
-            if ($npmBinary !== '') {
-                $shot->setNpmBinary($npmBinary);
-            }
-            $chromePath = trim((string) config('services.browsershot.chrome_path', ''));
-            if ($chromePath !== '') {
-                $shot->setChromePath($chromePath);
-            }
+            $this->browsershotEnvironment->configure($shot);
 
             return $shot->pdf();
         } catch (Throwable $e) {
+            $chromePath = $this->browsershotEnvironment->resolveChromePath();
             Log::error('Payslip PDF: Browsershot render failed', [
                 'stage' => $stage,
                 'exception' => $e->getMessage(),
                 'exception_class' => $e::class,
+                'chrome_path' => $chromePath,
+                'node_module_path' => $this->browsershotEnvironment->resolveNodeModulePath(),
             ]);
             throw $e;
         }

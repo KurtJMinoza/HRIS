@@ -14,7 +14,11 @@ class LeaveApprovalService
 
     public function getApprovalChain(User $employee): ?array
     {
-        return $this->chainResolver->getApprovalChain($employee);
+        return $this->chainResolver->getApprovalChain(
+            $employee,
+            true,
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+        );
     }
 
     public function canApprove(User $actor, LeaveRequest $leave): bool

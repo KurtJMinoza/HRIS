@@ -4,6 +4,7 @@ import { EmployeeListRedirect, LegacyTeamPayslipsRedirect, ToEmployeesRedirect }
 import AttendanceCorrections from '@/pages/AttendanceCorrections'
 import AdminSchedules from '@/pages/AdminSchedules'
 import AdminPolicySettings from '@/pages/AdminPolicySettings'
+import AdminApprovalWorkflowSettings from '@/pages/AdminApprovalWorkflowSettings'
 import AdminUsersPermissions from '@/pages/AdminUsersPermissions'
 import AdminPayrollLogisticsPlaceholder from '@/pages/AdminPayrollLogisticsPlaceholder'
 import AdminEmployeeCompensationPage from '@/pages/AdminEmployeeCompensationPage'
@@ -84,6 +85,7 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-dc-rules" path="daily-computation/rules" element={<AdminPayrollLogisticsPlaceholder />} />,
   <Route key="hr-dc-audit" path="daily-computation/audit" element={<AdminPayrollLogisticsPlaceholder />} />,
   <Route key="hr-dc-pol" path="daily-computation/policy-settings" element={<AdminPolicySettings />} />,
+  <Route key="hr-approval-workflow" path="approval-workflow-settings" element={<AdminApprovalWorkflowSettings />} />,
   <Route
     key="hr-dc"
     path="daily-computation"

@@ -267,6 +267,7 @@ class User extends Authenticatable
         'contract_start_date',
         'contract_end_date',
         'supervisor_id',
+        'assigned_team_leader_id',
         'pay_cycle_id',
         'profile_image',
         'signature_image',
@@ -892,6 +893,24 @@ class User extends Authenticatable
     public function supervisor(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(User::class, 'supervisor_id');
+    }
+
+    public function assignedTeamLeader(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_team_leader_id');
+    }
+
+    public function organizationAssignments(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(EmployeeOrganizationAssignment::class, 'employee_id');
+    }
+
+    public function primaryOrganizationAssignment(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(EmployeeOrganizationAssignment::class, 'employee_id')
+            ->where('is_primary', true)
+            ->where('is_active', true)
+            ->latest('id');
     }
 
     public function payCycle(): \Illuminate\Database\Eloquent\Relations\BelongsTo

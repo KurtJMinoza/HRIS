@@ -9,6 +9,7 @@ import { isAdminHrUser } from '@/lib/hrRoutes'
 const PATHS_ADMIN_HR_ONLY = new Set([
   '/admin/users-permissions',
   '/admin/daily-computation/policy-settings',
+  '/admin/approval-workflow-settings',
 ])
 
 /** Minimum permission (any) required to show a nav entry; super admin sees all. */
@@ -33,6 +34,7 @@ const pathToPermissions = {
   '/admin/schedule-requests': ['approve-schedule', 'manage-schedules'],
   '/admin/daily-computation': ['payroll.view'],
   '/admin/daily-computation/policy-settings': ['payroll.policies'],
+  '/admin/approval-workflow-settings': ['approval.workflow.manage'],
   '/admin/compensation/pay-cycles': ['compensation.view'],
   '/admin/compensation/pay-components': ['compensation.view'],
   '/admin/compensation/deduction-schedule-settings': ['compensation.view'],

@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use App\Contracts\OrgUnitEmployeeCounter;
+use App\Models\Department;
 use App\Models\Division;
+use App\Models\EmployeeOrganizationAssignment;
 use App\Models\SectionUnit;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -14,16 +17,83 @@ use Illuminate\Support\Facades\DB;
  *
  * Hierarchy: Company → Branch → Division → Department → Section/Unit.
  */
-class OrgUnitEmployeeCountService
+class OrgUnitEmployeeCountService implements OrgUnitEmployeeCounter
 {
+    public function __construct(
+        private readonly SectionUnitRosterService $sectionUnitRoster,
+    ) {}
     /**
-     * @return array{
-     *   assigned_employee_count: int,
-     *   branch_employee_count: int,
-     *   unassigned_employee_count: int,
-     *   total_employees: int
-     * }
+     * @return Builder<User>
      */
+    public function divisionMembersQuery(int $divisionId): Builder
+    {
+        if ($divisionId <= 0) {
+            return $this->rosterQuery()->whereRaw('1 = 0');
+        }
+
+        $departmentIds = Department::query()
+            ->where('division_id', $divisionId)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->values()
+            ->all();
+
+        $sectionIds = SectionUnit::query()
+            ->where('division_id', $divisionId)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->values()
+            ->all();
+
+        return $this->rosterQuery()->where(function (Builder $query) use ($divisionId, $departmentIds, $sectionIds): void {
+            $query->where('division_id', $divisionId);
+
+            if ($departmentIds !== []) {
+                $query->orWhereIn('department_id', $departmentIds);
+            }
+
+            if ($sectionIds !== []) {
+                $query->orWhereIn('section_unit_id', $sectionIds);
+            }
+
+            $sharedIds = $this->sharedAssignmentEmployeeIdsForDivision($divisionId, $departmentIds, $sectionIds);
+            if ($sharedIds !== []) {
+                $query->orWhereIn('id', $sharedIds);
+            }
+        });
+    }
+
+    /**
+     * @param  list<int>  $departmentIds
+     * @param  list<int>  $sectionIds
+     * @return list<int>
+     */
+    private function sharedAssignmentEmployeeIdsForDivision(int $divisionId, array $departmentIds, array $sectionIds): array
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('employee_organization_assignments')) {
+            return [];
+        }
+
+        return EmployeeOrganizationAssignment::query()
+            ->active()
+            ->where(function (Builder $query) use ($divisionId, $departmentIds, $sectionIds): void {
+                $query->where('division_id', $divisionId);
+                if ($departmentIds !== []) {
+                    $query->orWhereIn('department_id', $departmentIds);
+                }
+                if ($sectionIds !== []) {
+                    $query->orWhereIn('section_unit_id', $sectionIds);
+                }
+            })
+            ->pluck('employee_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
     public function forDivision(Division $division): array
     {
         $assigned = $this->assignedDivisionCount((int) $division->id);
@@ -47,17 +117,7 @@ class OrgUnitEmployeeCountService
      */
     public function forSectionUnit(SectionUnit $section): array
     {
-        $assigned = $this->assignedSectionCount((int) $section->id);
-        $pool = $section->department_id
-            ? $this->departmentEmployeeCount((int) $section->department_id)
-            : ($section->division_id ? $this->assignedDivisionCount((int) $section->division_id) : 0);
-        $unassigned = $section->department_id
-            ? $this->unassignedToSectionInDepartmentCount((int) $section->id, (int) $section->department_id)
-            : ($section->division_id
-                ? $this->unassignedToSectionInDivisionCount((int) $section->id, (int) $section->division_id)
-                : 0);
-
-        return $this->formatSectionCounts($assigned, $pool, $unassigned);
+        return $this->sectionUnitRoster->countsForSection($section);
     }
 
     /**
@@ -73,11 +133,6 @@ class OrgUnitEmployeeCountService
         $divisionIds = $divisions->pluck('id')->map(fn ($id) => (int) $id)->all();
         $branchIds = $divisions->pluck('branch_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
 
-        $assignedByDivision = $this->groupedCount(
-            $this->rosterQuery()->whereIn('division_id', $divisionIds),
-            'division_id'
-        );
-
         $branchCounts = $branchIds !== []
             ? $this->groupedCount(
                 $this->rosterQuery()->whereIn('branch_id', $branchIds),
@@ -91,7 +146,7 @@ class OrgUnitEmployeeCountService
         foreach ($divisions as $division) {
             $id = (int) $division->id;
             $branchId = $division->branch_id ? (int) $division->branch_id : null;
-            $assigned = (int) ($assignedByDivision[$id] ?? 0);
+            $assigned = $this->assignedDivisionCount($id);
             $branch = $branchId !== null ? (int) ($branchCounts[$branchId] ?? 0) : 0;
             $unassigned = (int) ($unassignedByDivision[$id] ?? 0);
             $result[$id] = $this->formatDivisionCounts($assigned, $branch, $unassigned);
@@ -106,39 +161,7 @@ class OrgUnitEmployeeCountService
      */
     public function forSectionUnits(Collection $sections): array
     {
-        if ($sections->isEmpty()) {
-            return [];
-        }
-
-        $sectionIds = $sections->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $departmentIds = $sections->pluck('department_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
-
-        $assignedBySection = $this->groupedCount(
-            $this->rosterQuery()->whereIn('section_unit_id', $sectionIds),
-            'section_unit_id'
-        );
-
-        $departmentPoolCounts = $departmentIds !== []
-            ? $this->groupedCount(
-                $this->rosterQuery()->whereIn('department_id', $departmentIds),
-                'department_id'
-            )
-            : [];
-
-        $unassignedBySection = $this->unassignedToSectionCountsBulk($sections);
-
-        $result = [];
-        foreach ($sections as $section) {
-            $id = (int) $section->id;
-            $assigned = (int) ($assignedBySection[$id] ?? 0);
-            $pool = $section->department_id
-                ? (int) ($departmentPoolCounts[(int) $section->department_id] ?? 0)
-                : 0;
-            $unassigned = (int) ($unassignedBySection[$id] ?? 0);
-            $result[$id] = $this->formatSectionCounts($assigned, $pool, $unassigned);
-        }
-
-        return $result;
+        return $this->sectionUnitRoster->countsForSections($sections);
     }
 
     private function rosterQuery(): Builder
@@ -148,12 +171,12 @@ class OrgUnitEmployeeCountService
 
     private function assignedDivisionCount(int $divisionId): int
     {
-        return (int) $this->rosterQuery()->where('division_id', $divisionId)->count();
+        return (int) $this->divisionMembersQuery($divisionId)->count();
     }
 
     private function assignedSectionCount(int $sectionId): int
     {
-        return (int) $this->rosterQuery()->where('section_unit_id', $sectionId)->count();
+        return (int) $this->sectionUnitRoster->sectionMembersQuery($sectionId)->count();
     }
 
     private function departmentEmployeeCount(int $departmentId): int

@@ -14,7 +14,11 @@ class OvertimeApprovalService
 
     public function getApprovalChain(User $employee): ?array
     {
-        return $this->chainResolver->getApprovalChain($employee);
+        return $this->chainResolver->getApprovalChain(
+            $employee,
+            true,
+            OrgApprovalWorkflowService::MODULE_OVERTIME,
+        );
     }
 
     public function canApprove(User $actor, Overtime $overtime): bool

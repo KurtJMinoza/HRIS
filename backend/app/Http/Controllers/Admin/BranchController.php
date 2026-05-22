@@ -7,6 +7,8 @@ use App\Models\Branch;
 use App\Models\Company;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\OrganizationLeadershipAssignmentService;
+use App\Services\OrganizationLeadershipService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,6 +17,8 @@ class BranchController extends Controller
 {
     public function __construct(
         private readonly DataScopeService $dataScopeService,
+        private readonly OrganizationLeadershipAssignmentService $leadershipAssignments,
+        private readonly OrganizationLeadershipService $organizationLeadershipService,
     ) {}
 
     /**
@@ -57,7 +61,9 @@ class BranchController extends Controller
             ]);
         }
 
-        $this->validateBranchManagerExclusive($validated['branch_manager_id'] ?? null, null);
+        if (($validated['branch_manager_id'] ?? null) !== null) {
+            $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['branch_manager_id']);
+        }
 
         $branch = Branch::create([
             'name' => $validated['name'],
@@ -66,12 +72,12 @@ class BranchController extends Controller
             'branch_manager_id' => $validated['branch_manager_id'] ?? null,
         ]);
 
-        // Sync Branch Manager → Employee Profile (company_id, branch_id)
         if ($branch->branch_manager_id) {
-            User::where('id', $branch->branch_manager_id)->update([
-                'company_id' => $branch->company_id,
-                'branch_id' => $branch->id,
-            ]);
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'branch',
+                (int) $branch->id,
+                (int) $branch->branch_manager_id,
+            );
             EmployeeProfileCache::invalidate((int) $branch->branch_manager_id);
         }
 
@@ -145,20 +151,8 @@ class BranchController extends Controller
         }
 
         if (array_key_exists('branch_manager_id', $validated)) {
-            $this->validateBranchManagerExclusive($validated['branch_manager_id'] ?? null, $id);
-
-            $manager = User::with(['company', 'branch', 'departmentRelation.branch', 'companyHeadships'])
-                ->where('id', $validated['branch_manager_id'])
-                ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
-                ->first();
-            if ($manager) {
-                $effectiveCompanyId = $manager->getEffectiveCompanyId();
-                $branchCompanyId = $branch->company_id;
-                if ($effectiveCompanyId !== null && (int) $effectiveCompanyId !== (int) $branchCompanyId) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
-                        'branch_manager_id' => ['The selected employee is assigned to another company and cannot be branch manager here. An employee can only belong to one company.'],
-                    ]);
-                }
+            if (($validated['branch_manager_id'] ?? null) !== null) {
+                $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['branch_manager_id']);
             }
         }
 
@@ -167,31 +161,13 @@ class BranchController extends Controller
         $branch->fill($validated);
         $branch->save();
 
-        $newManagerId = $branch->branch_manager_id;
-
-        // Sync Branch Manager → Employee Profile (company_id, branch_id)
-        if ($oldManagerId && (int) $oldManagerId !== (int) $newManagerId) {
-            $oldManager = User::where('id', $oldManagerId)->first();
-            if ($oldManager) {
-                if ($oldManager->department_id) {
-                    $dept = \App\Models\Department::with('branch')->find($oldManager->department_id);
-                    User::where('id', $oldManagerId)->update([
-                        'company_id' => $dept?->branch?->company_id,
-                        'branch_id' => $dept?->branch_id,
-                    ]);
-                } else {
-                    User::where('id', $oldManagerId)->update(['company_id' => null, 'branch_id' => null]);
-                }
-            }
-        }
-        if ($newManagerId) {
-            User::where('id', $newManagerId)->update([
-                'company_id' => $branch->company_id,
-                'branch_id' => $branch->id,
-            ]);
-        }
-
         if (array_key_exists('branch_manager_id', $validated)) {
+            $this->organizationLeadershipService->upsertLegacyHeadAssignment(
+                'branch',
+                (int) $branch->id,
+                $branch->branch_manager_id !== null ? (int) $branch->branch_manager_id : null,
+                $oldManagerId !== null ? (int) $oldManagerId : null,
+            );
             foreach (array_unique(array_filter([
                 $oldManagerId ? (int) $oldManagerId : null,
                 $branch->branch_manager_id ? (int) $branch->branch_manager_id : null,
@@ -266,25 +242,5 @@ class BranchController extends Controller
         $encoded = implode('/', array_map('rawurlencode', explode('/', $normalized)));
 
         return '/api/media/public/'.$encoded;
-    }
-
-    /**
-     * Prevent the same employee from managing more than one branch at a time.
-     * excludeBranchId: when editing, the current branch is excluded so the existing manager can stay.
-     */
-    private function validateBranchManagerExclusive(?int $userId, ?int $excludeBranchId): void
-    {
-        if ($userId === null) {
-            return;
-        }
-        $query = Branch::where('branch_manager_id', $userId);
-        if ($excludeBranchId !== null) {
-            $query->where('id', '!=', $excludeBranchId);
-        }
-        if ($query->exists()) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
-                'branch_manager_id' => ['This employee is already Branch Manager of another branch. An employee can only manage one branch at a time.'],
-            ]);
-        }
     }
 }

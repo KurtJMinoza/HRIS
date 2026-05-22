@@ -16,6 +16,13 @@ class Overtime extends Model
 
     protected $fillable = [
         'user_id',
+        'assignment_id',
+        'assignment_type',
+        'company_id',
+        'branch_id',
+        'division_id',
+        'department_id',
+        'section_unit_id',
         'date',
         'schedule_end',
         'time_out',
@@ -66,6 +73,11 @@ class Overtime extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function organizationAssignment(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeOrganizationAssignment::class, 'assignment_id');
     }
 
     public function createdBy(): BelongsTo
