@@ -11,6 +11,7 @@ use App\Models\SssBracket;
 use App\Models\StatutoryContribution;
 use App\Models\User;
 use App\Support\BulkPayrollDraftContext;
+use App\Support\CalculationStandard;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
@@ -1588,16 +1589,15 @@ class PayrollCalculatorService
                 'pay_component_id' => $row->pay_component_id,
                 /** Used by {@see attachPayScheduleTypes} so schedule metadata matches this assignment row. */
                 'assignment_schedule_override' => $row->schedule_override,
+                /** Used by {@see attachCalculationStandardFields} for employee override resolution. */
+                'assignment_calculation_standard_override' => $this->readAssignmentCalculationStandardOverride($row),
                 'structure_name' => $row->structure_name,
                 'name' => $row->name,
                 'code' => $row->code,
                 'type' => $row->type,
                 'category' => $row->category,
                 'calculation_type' => $row->calculation_type,
-                'calculation_standard' => $this->normalizeCalculationStandard(
-                    $row->calculation_standard ?? $row->payComponent?->calculation_standard ?? null
-                ),
-                'pay_component_calculation_standard' => $this->normalizeCalculationStandard(
+                'pay_component_calculation_standard' => CalculationStandard::normalizeDefault(
                     $row->payComponent?->calculation_standard ?? null
                 ),
                 'computed_amount' => $amount,
@@ -1659,8 +1659,12 @@ class PayrollCalculatorService
                 'type' => PayComponent::TYPE_EARNING,
                 'category' => 'Basic Salary',
                 'calculation_type' => PayComponent::CALC_FIXED,
-                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'pay_component_calculation_standard' => PayComponent::STANDARD_MONTHLY,
+                'default_calculation_standard' => PayComponent::STANDARD_MONTHLY,
+                'calculation_standard_override' => null,
+                'resolved_calculation_standard' => PayComponent::STANDARD_MONTHLY,
+                'calculation_standard_source' => 'pay_component_default',
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'computed_amount' => round($basicSalary, 2),
                 'configured_value' => round($basicSalary, 2),
                 'hourly_rate' => null,
@@ -1726,8 +1730,8 @@ class PayrollCalculatorService
             ? app(DeductionScheduleService::class)->listRowsForAdmin($user->getEffectiveCompanyId())
             : [];
 
-        $earnings = $this->attachPayScheduleTypes($user, $earnings);
-        $deductions = $this->attachPayScheduleTypes($user, $deductions);
+        $earnings = $this->attachCalculationStandardFields($this->attachPayScheduleTypes($user, $earnings));
+        $deductions = $this->attachCalculationStandardFields($this->attachPayScheduleTypes($user, $deductions));
 
         $scheduleSvc = app(DeductionScheduleService::class);
         $companyId = $user->getEffectiveCompanyId();
@@ -1822,7 +1826,6 @@ class PayrollCalculatorService
                 'type' => PayComponent::TYPE_EARNING,
                 'category' => $master?->category ?: 'Basic Salary',
                 'calculation_type' => PayComponent::CALC_FIXED,
-                'calculation_standard' => $this->normalizeCalculationStandard($master?->calculation_standard ?? null),
                 'value' => round($resolvedBasic, 2),
                 'hourly_rate' => null,
                 'hours' => null,
@@ -1838,9 +1841,6 @@ class PayrollCalculatorService
                 'is_active' => true,
                 'metadata' => $metadata,
             ];
-            if (! $this->hasColumnCached('employee_compensation_components', 'calculation_standard')) {
-                unset($payload['calculation_standard']);
-            }
             EmployeeCompensationComponent::query()->create($payload);
         } catch (\Throwable $e) {
             Log::warning('Payroll baseline BASIC_SALARY backfill skipped', [
@@ -1909,6 +1909,60 @@ class PayrollCalculatorService
      * @param  list<array<string, mixed>>  $lines
      * @return list<array<string, mixed>>
      */
+    /**
+     * @param  list<array<string, mixed>>  $lines
+     * @return list<array<string, mixed>>
+     */
+    private function attachCalculationStandardFields(array $lines): array
+    {
+        return array_map(function (array $line) {
+            $usesLoadedAssignmentRow = \array_key_exists('assignment_calculation_standard_override', $line);
+            $loadedOverride = $usesLoadedAssignmentRow
+                ? CalculationStandard::normalizeForStorage(
+                    \is_string($line['assignment_calculation_standard_override'] ?? null)
+                        ? $line['assignment_calculation_standard_override']
+                        : null
+                )
+                : null;
+            $default = CalculationStandard::normalizeDefault($line['pay_component_calculation_standard'] ?? null);
+            $meta = CalculationStandard::resolveMetadata($loadedOverride, $default);
+
+            $line = array_merge($line, $meta);
+            $line['calculation_standard'] = $meta['resolved_calculation_standard'];
+
+            Log::debug('payroll.pay_component_calculation_standard_resolution', [
+                'employee_component_id' => $line['id'] ?? null,
+                'component_id' => $line['pay_component_id'] ?? null,
+                'uses_loaded_assignment_row' => $usesLoadedAssignmentRow,
+                'saved_calculation_standard_override' => $meta['calculation_standard_override'],
+                'default_calculation_standard' => $meta['default_calculation_standard'],
+                'resolved_calculation_standard' => $meta['resolved_calculation_standard'],
+                'calculation_standard_source' => $meta['calculation_standard_source'],
+                'payroll_applied_standard' => $meta['resolved_calculation_standard'],
+            ]);
+
+            unset($line['assignment_calculation_standard_override']);
+
+            return $line;
+        }, $lines);
+    }
+
+    private function readAssignmentCalculationStandardOverride(EmployeeCompensationComponent $row): ?string
+    {
+        if ($this->hasColumnCached('employee_compensation_components', 'calculation_standard_override')) {
+            return CalculationStandard::normalizeForStorage(
+                \is_string($row->calculation_standard_override) ? $row->calculation_standard_override : null
+            );
+        }
+        if ($this->hasColumnCached('employee_compensation_components', 'calculation_standard')) {
+            return CalculationStandard::normalizeForStorage(
+                \is_string($row->calculation_standard) ? $row->calculation_standard : null
+            );
+        }
+
+        return null;
+    }
+
     private function attachPayScheduleTypes(User $user, array $lines): array
     {
         $companyId = $user->getEffectiveCompanyId();

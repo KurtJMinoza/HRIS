@@ -428,6 +428,9 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/payslips/preview-employee', [AdminPayslipController::class, 'previewEmployee']);
             Route::post('/admin/payslips/preview-employee-data', [AdminPayslipController::class, 'previewEmployeeData']);
             Route::post('/admin/payslips/view-preview-data', [AdminPayslipController::class, 'viewPreviewData']);
+            Route::get('/payroll/{payrollPeriodId}/employees/{employeeId}/draft-payslip', [AdminPayslipController::class, 'draftPayslip'])
+                ->whereNumber('payrollPeriodId')
+                ->whereNumber('employeeId');
             Route::get('/admin/payslips/{id}/data', [AdminPayslipController::class, 'showData'])->whereNumber('id');
             Route::get('/admin/payslips/{id}/view', [AdminPayslipController::class, 'viewData'])->whereNumber('id');
         });

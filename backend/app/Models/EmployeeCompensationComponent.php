@@ -18,7 +18,7 @@ class EmployeeCompensationComponent extends Model
         'type',
         'category',
         'calculation_type',
-        'calculation_standard',
+        'calculation_standard_override',
         'value',
         'hourly_rate',
         'hours',
@@ -58,7 +58,7 @@ class EmployeeCompensationComponent extends Model
     {
         return [
             'value' => 'decimal:2',
-            'calculation_standard' => 'string',
+            'calculation_standard_override' => 'string',
             'hourly_rate' => 'decimal:2',
             'hours' => 'decimal:2',
             'is_taxable' => 'boolean',

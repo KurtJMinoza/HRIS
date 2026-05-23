@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\GeneratePayrollBatchJob;
 use App\Models\Company;
 use App\Models\PayrollBatchRun;
+use App\Models\PayrollPeriod;
 use App\Models\Payslip;
 use App\Models\User;
 use App\Models\PayslipBulkDownload;
@@ -17,6 +18,7 @@ use App\Services\PayslipService;
 use App\Support\PayslipStoredSnapshotViewPayload;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -614,11 +616,7 @@ class PayslipController extends Controller
         $immutableStatuses = Payslip::lockingStatuses();
         $isFinalized = in_array($status, $immutableStatuses, true);
 
-        $hasStoredSnapshot = is_array($payslip->snapshot ?? null) && $payslip->snapshot !== [];
-
-        // Detail endpoints should be cheap: prefer the stored generation snapshot and only recompute
-        // older draft rows that do not have one yet.
-        if (! $isFinalized && ! $hasStoredSnapshot) {
+        if (! $isFinalized) {
             $periodInput = [
                 'from_date' => $payslip->pay_period_start?->toDateString(),
                 'to_date' => $payslip->pay_period_end?->toDateString(),
@@ -631,7 +629,12 @@ class PayslipController extends Controller
             ];
 
             try {
-                $live = $this->payslipService->previewDataForEmployee($employee, $periodInput);
+                $live = $this->payslipService->computePayrollForEmployee(
+                    $employee,
+                    $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
+                    'draft',
+                    $periodInput
+                );
                 if (isset($live['company']) && is_array($live['company'])) {
                     $live['company']['logo_url'] = $this->publicCompanyLogoUrl($payslip->company?->logo ?? $employee->company?->logo ?? null);
                 }
@@ -648,11 +651,13 @@ class PayslipController extends Controller
                     $live['payroll'] = [];
                 }
                 $live['payroll']['status'] = (string) ($payslip->status ?? Payslip::STATUS_DRAFT);
+                $live['payroll']['mode'] = 'draft';
                 $live['payroll']['cycle_label'] = $payslip->cycle_label ?: ($live['payroll']['cycle_label'] ?? null);
+                $live['source'] = 'live_computation';
 
                 return response()->json($live);
-            } catch (\RuntimeException) {
-                // Fallback to stored snapshot payload below if live recomputation fails.
+            } catch (\RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
             }
         }
 
@@ -664,6 +669,78 @@ class PayslipController extends Controller
             $this->payslipService,
             $this->publicCompanyLogoUrl($company?->logo)
         ));
+    }
+
+    public function draftPayslip(Request $request, int $payrollPeriodId, int $employeeId): JsonResponse
+    {
+        $this->ensurePayslipAccess($request);
+
+        $employee = User::query()->findOrFail($employeeId);
+        $this->dataScopeService->ensureEmployeeAccessible($request->user(), $employee);
+
+        $period = PayrollPeriod::query()
+            ->whereKey($payrollPeriodId)
+            ->where('user_id', $employee->id)
+            ->firstOrFail();
+
+        $payslip = Payslip::query()
+            ->with(['employee.company', 'employee.branch', 'employee.departmentRelation', 'employee.governmentIds', 'company'])
+            ->where('user_id', $employee->id)
+            ->where('payroll_period_id', $period->id)
+            ->orderByDesc('id')
+            ->first();
+
+        $isFinalized = $payslip
+            ? in_array(strtolower(trim((string) ($payslip->status ?? ''))), Payslip::lockingStatuses(), true)
+            : false;
+
+        $started = microtime(true);
+        if ($isFinalized && $payslip) {
+            $payload = PayslipStoredSnapshotViewPayload::fromStoredPayslip(
+                $payslip,
+                $employee,
+                $this->payslipService,
+                $this->publicCompanyLogoUrl(($payslip->company ?? $employee->company)?->logo)
+            );
+            $payload['mode'] = 'finalized';
+            $payload['computed_at'] = $payslip->finalized_at?->toIso8601String() ?: $payslip->updated_at?->toIso8601String();
+            $payload['source'] = 'finalized_lines';
+            $payload['employee_id'] = (int) $employee->id;
+            $payload['payroll_period_id'] = (int) $period->id;
+            $summary = is_array($payload['summary'] ?? null) ? $payload['summary'] : [];
+            $payload['gross_pay'] = (float) data_get($payload, 'amounts.gross_pay', 0);
+            $payload['net_pay'] = (float) data_get($payload, 'amounts.net_pay', 0);
+            $payload['earnings'] = is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [];
+            $payload['deductions'] = is_array($summary['payslip_custom_deduction_lines'] ?? null) ? $summary['payslip_custom_deduction_lines'] : [];
+            $payload['contributions'] = is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [];
+            $payload['payroll'] = array_merge($payload['payroll'] ?? [], [
+                'mode' => 'finalized',
+                'computed_at' => $payload['computed_at'],
+                'source' => 'finalized_lines',
+            ]);
+
+            Log::info('payslip.draft_endpoint', [
+                'employee_id' => (int) $employee->id,
+                'payroll_period_id' => (int) $period->id,
+                'mode' => 'finalized',
+                'payroll_finalized' => true,
+                'source' => 'finalized_lines',
+                'gross_pay' => data_get($payload, 'amounts.gross_pay'),
+                'net_pay' => data_get($payload, 'amounts.net_pay'),
+                'computation_ms' => round((microtime(true) - $started) * 1000, 2),
+            ]);
+
+            return response()->json($payload);
+        }
+
+        $payload = $this->payslipService->computePayrollForEmployee($employee, (int) $period->id, 'draft');
+        if (isset($payload['company']) && is_array($payload['company'])) {
+            $payload['company']['logo_url'] = $this->publicCompanyLogoUrl($employee->company?->logo ?? null);
+        }
+        $payload['mode'] = 'draft';
+        $payload['source'] = 'live_computation';
+
+        return response()->json($payload);
     }
 
     /**

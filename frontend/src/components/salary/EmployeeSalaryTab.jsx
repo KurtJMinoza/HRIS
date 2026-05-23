@@ -748,6 +748,14 @@ function formatCompCalculationStandard(value) {
   return 'Monthly Standard'
 }
 
+function formatCompCalculationStandardCell(item) {
+  if (item?.calculation_standard_source === 'employee_override') {
+    return formatCompCalculationStandard(item.resolved_calculation_standard ?? item.calculation_standard)
+  }
+  const def = item?.default_calculation_standard ?? item?.calculation_standard ?? 'monthly_standard'
+  return `Use default: ${formatCompCalculationStandard(def)}`
+}
+
 function componentTypeLabel(type) {
   const t = String(type || '').toLowerCase()
   if (t === 'earning') return 'Earning'
@@ -821,7 +829,7 @@ export function SalaryPayComponentsBreakdownCard({
           <TableCell className={cn('font-medium', TEXT)}>{item.name || item.code || '—'}</TableCell>
           <TableCell className="text-slate-600 dark:text-slate-400">{item.category || '—'}</TableCell>
           <TableCell className="text-slate-600 dark:text-slate-400">{formatCompCalculationType(item.calculation_type)}</TableCell>
-          <TableCell className="text-slate-600 dark:text-slate-400">{formatCompCalculationStandard(item.calculation_standard)}</TableCell>
+          <TableCell className="text-slate-600 dark:text-slate-400">{formatCompCalculationStandardCell(item)}</TableCell>
           <TableCell className="text-slate-600 dark:text-slate-400">{componentTypeLabel(item.type)}</TableCell>
           <TableCell className={cn('text-right tabular-nums font-semibold', amountClass)}>{formatSalaryTabPhp(item.computed_amount)}</TableCell>
           <TableCell className="text-slate-700 dark:text-slate-300">{schedLabel}</TableCell>

@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\PayCycleService;
 use App\Services\PayrollCalculatorService;
 use App\Services\ScheduleRateService;
+use App\Support\CalculationStandard;
 use App\Support\EmployeeProfileCache;
 use App\Support\PayComponentSchedule;
 use Carbon\Carbon;
@@ -141,7 +142,8 @@ class EmployeeCompensationController extends Controller
             'components.*.type' => ['nullable', 'string', Rule::in(PayComponent::TYPES)],
             'components.*.category' => ['nullable', 'string', 'max:64'],
             'components.*.calculation_type' => ['nullable', 'string', Rule::in(PayComponent::CALCULATION_TYPES)],
-            'components.*.calculation_standard' => ['nullable', 'string', Rule::in(PayComponent::CALCULATION_STANDARDS)],
+            'components.*.calculation_standard' => ['nullable', 'string', Rule::in(CalculationStandard::validationSlugs())],
+            'components.*.calculation_standard_override' => ['nullable', 'string', Rule::in(CalculationStandard::validationSlugs())],
             'components.*.value' => ['nullable', 'numeric'],
             'components.*.default_value' => ['nullable', 'numeric'],
             'components.*.hourly_rate' => ['nullable', 'numeric', 'min:0'],
@@ -221,7 +223,8 @@ class EmployeeCompensationController extends Controller
             'type' => ['sometimes', 'string', Rule::in(PayComponent::TYPES)],
             'category' => ['nullable', 'string', 'max:64'],
             'calculation_type' => ['sometimes', 'string', Rule::in(PayComponent::CALCULATION_TYPES)],
-            'calculation_standard' => ['nullable', 'string', Rule::in(PayComponent::CALCULATION_STANDARDS)],
+            'calculation_standard' => ['nullable', 'string', Rule::in(CalculationStandard::validationSlugs())],
+            'calculation_standard_override' => ['nullable', 'string', Rule::in(CalculationStandard::validationSlugs())],
             'value' => ['nullable', 'numeric'],
             'hourly_rate' => ['nullable', 'numeric', 'min:0'],
             'hours' => ['nullable', 'numeric', 'min:0'],
@@ -249,11 +252,20 @@ class EmployeeCompensationController extends Controller
                     : null
             );
         }
-        if (\array_key_exists('calculation_standard', $validated)) {
-            $validated['calculation_standard'] = $this->normalizeCalculationStandard($validated['calculation_standard']);
-            if (! Schema::hasColumn('employee_compensation_components', 'calculation_standard')) {
-                unset($validated['calculation_standard']);
-            }
+        $standardIncoming = $this->applyCalculationStandardOverrideToPayload($validated, $assignment);
+        if ($standardIncoming !== null) {
+            Log::debug('employee_compensation.calculation_standard_persist', [
+                'employee_id' => (int) $employee->id,
+                'employee_component_id' => (int) $assignment->id,
+                'component_id' => $assignment->pay_component_id,
+                'selected_calculation_standard' => $standardIncoming['selected'],
+                'payload_calculation_standard_override' => $standardIncoming['payload'],
+                'saved_calculation_standard_override' => $standardIncoming['saved'],
+                'default_calculation_standard' => $standardIncoming['default'],
+                'resolved_calculation_standard' => $standardIncoming['resolved'],
+                'calculation_standard_source' => $standardIncoming['source'],
+                'context' => 'assignment_update',
+            ]);
         }
 
         $metadata = is_array($assignment->metadata) ? $assignment->metadata : [];
@@ -358,11 +370,7 @@ class EmployeeCompensationController extends Controller
 
         $masterMeta = is_array($master?->metadata ?? null) ? $master->metadata : [];
         $calc = strtolower((string) ($componentPayload['calculation_type'] ?? $master?->calculation_type ?? PayComponent::CALC_FIXED));
-        $calculationStandard = \array_key_exists('calculation_standard', $componentPayload)
-            ? $this->normalizeCalculationStandard($componentPayload['calculation_standard'])
-            : ($existingAssignment?->calculation_standard
-                ? $this->normalizeCalculationStandard($existingAssignment->calculation_standard)
-                : $this->normalizeCalculationStandard($master?->calculation_standard));
+        $standardIncoming = $this->resolveIncomingCalculationStandardOverride($componentPayload, $existingAssignment);
 
         $resolvedValue = isset($componentPayload['value'])
             ? (float) $componentPayload['value']
@@ -397,7 +405,6 @@ class EmployeeCompensationController extends Controller
             'type' => strtolower((string) ($componentPayload['type'] ?? $master?->type ?? PayComponent::TYPE_EARNING)),
             'category' => $componentPayload['category'] ?? $master?->category,
             'calculation_type' => $calc,
-            'calculation_standard' => $calculationStandard,
             'value' => $resolvedValue,
             'hourly_rate' => $resolvedHourlyRate,
             'hours' => $resolvedHours,
@@ -426,8 +433,8 @@ class EmployeeCompensationController extends Controller
         } else {
             $payload['schedule_override'] = null;
         }
-        if (! Schema::hasColumn('employee_compensation_components', 'calculation_standard')) {
-            unset($payload['calculation_standard']);
+        if ($this->employeeCalculationStandardOverrideColumn() !== null) {
+            $payload[$this->employeeCalculationStandardOverrideColumn()] = $standardIncoming;
         }
 
         if ($existingAssignment) {
@@ -441,6 +448,12 @@ class EmployeeCompensationController extends Controller
                 'request_schedule_override' => $componentPayload['schedule_override'] ?? null,
                 'persisted_schedule_override' => $existingAssignment->schedule_override,
             ]);
+            $this->logCalculationStandardPersist(
+                (int) $employee->id,
+                $existingAssignment->fresh(['payComponent']),
+                $componentPayload,
+                'assignment_store_update'
+            );
 
             return $existingAssignment->load('payComponent');
         }
@@ -454,6 +467,12 @@ class EmployeeCompensationController extends Controller
             'request_schedule_override' => $componentPayload['schedule_override'] ?? null,
             'persisted_schedule_override' => $assignment->schedule_override,
         ]);
+        $this->logCalculationStandardPersist(
+            (int) $employee->id,
+            $assignment->fresh(['payComponent']),
+            $componentPayload,
+            'assignment_store_create'
+        );
 
         return $assignment->load('payComponent');
     }
@@ -519,19 +538,25 @@ class EmployeeCompensationController extends Controller
 
     private function assignmentResponse(EmployeeCompensationComponent $assignment): array
     {
+        $standardMeta = $this->calculationStandardMetadata($assignment);
+
         return [
             'id' => $assignment->id,
+            'employee_component_id' => $assignment->id,
             'user_id' => $assignment->user_id,
             'pay_component_id' => $assignment->pay_component_id,
+            'component_id' => $assignment->pay_component_id,
             'structure_name' => $assignment->structure_name,
             'name' => $assignment->name,
             'code' => $assignment->code,
             'type' => $assignment->type,
             'category' => $assignment->category,
             'calculation_type' => $assignment->calculation_type,
-            'calculation_standard' => $this->normalizeCalculationStandard(
-                $assignment->calculation_standard ?? $assignment->payComponent?->calculation_standard ?? null
-            ),
+            'calculation_standard' => $standardMeta['resolved_calculation_standard'],
+            'default_calculation_standard' => $standardMeta['default_calculation_standard'],
+            'calculation_standard_override' => $standardMeta['calculation_standard_override'],
+            'resolved_calculation_standard' => $standardMeta['resolved_calculation_standard'],
+            'calculation_standard_source' => $standardMeta['calculation_standard_source'],
             'value' => (float) $assignment->value,
             'hourly_rate' => $assignment->hourly_rate !== null ? (float) $assignment->hourly_rate : null,
             'hours' => $assignment->hours !== null ? (float) $assignment->hours : null,
@@ -568,13 +593,132 @@ class EmployeeCompensationController extends Controller
         ], 409);
     }
 
-    private function normalizeCalculationStandard(mixed $value): string
+    private function employeeCalculationStandardOverrideColumn(): ?string
     {
-        $normalized = strtolower(trim((string) $value));
+        if (Schema::hasColumn('employee_compensation_components', 'calculation_standard_override')) {
+            return 'calculation_standard_override';
+        }
+        if (Schema::hasColumn('employee_compensation_components', 'calculation_standard')) {
+            return 'calculation_standard';
+        }
 
-        return in_array($normalized, PayComponent::CALCULATION_STANDARDS, true)
-            ? $normalized
-            : PayComponent::STANDARD_MONTHLY;
+        return null;
+    }
+
+    /**
+     * @return array{
+     *     default_calculation_standard: string,
+     *     calculation_standard_override: string|null,
+     *     resolved_calculation_standard: string,
+     *     calculation_standard_source: 'employee_override'|'pay_component_default'
+     * }
+     */
+    private function calculationStandardMetadata(EmployeeCompensationComponent $assignment): array
+    {
+        $column = $this->employeeCalculationStandardOverrideColumn();
+        $stored = $column ? $assignment->getAttribute($column) : null;
+
+        return CalculationStandard::resolveMetadata(
+            \is_string($stored) ? $stored : null,
+            $assignment->payComponent?->calculation_standard
+        );
+    }
+
+    private function resolveIncomingCalculationStandardOverride(
+        array $componentPayload,
+        ?EmployeeCompensationComponent $existingAssignment
+    ): ?string {
+        $column = $this->employeeCalculationStandardOverrideColumn();
+        if ($column === null) {
+            return null;
+        }
+
+        if (\array_key_exists('calculation_standard_override', $componentPayload)
+            || \array_key_exists('calculation_standard', $componentPayload)) {
+            $raw = $componentPayload['calculation_standard_override']
+                ?? $componentPayload['calculation_standard']
+                ?? null;
+
+            return CalculationStandard::normalizeForStorage(\is_string($raw) ? $raw : null);
+        }
+
+        if ($existingAssignment) {
+            $stored = $existingAssignment->getAttribute($column);
+
+            return CalculationStandard::normalizeForStorage(\is_string($stored) ? $stored : null);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     * @return array{selected: mixed, payload: string|null, saved: string|null, default: string, resolved: string, source: string}|null
+     */
+    private function applyCalculationStandardOverrideToPayload(array &$validated, EmployeeCompensationComponent $assignment): ?array
+    {
+        $column = $this->employeeCalculationStandardOverrideColumn();
+        if ($column === null) {
+            unset($validated['calculation_standard'], $validated['calculation_standard_override']);
+
+            return null;
+        }
+
+        if (! \array_key_exists('calculation_standard_override', $validated)
+            && ! \array_key_exists('calculation_standard', $validated)) {
+            unset($validated['calculation_standard'], $validated['calculation_standard_override']);
+
+            return null;
+        }
+
+        $selected = $validated['calculation_standard_override'] ?? $validated['calculation_standard'] ?? null;
+        $stored = CalculationStandard::normalizeForStorage(\is_string($selected) ? $selected : null);
+        $validated[$column] = $stored;
+        if ($column !== 'calculation_standard') {
+            unset($validated['calculation_standard']);
+        }
+        if ($column !== 'calculation_standard_override') {
+            unset($validated['calculation_standard_override']);
+        }
+
+        $meta = CalculationStandard::resolveMetadata($stored, $assignment->payComponent?->calculation_standard);
+
+        return [
+            'selected' => $selected,
+            'payload' => $stored,
+            'saved' => $stored,
+            'default' => $meta['default_calculation_standard'],
+            'resolved' => $meta['resolved_calculation_standard'],
+            'source' => $meta['calculation_standard_source'],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $componentPayload
+     */
+    private function logCalculationStandardPersist(
+        int $employeeId,
+        EmployeeCompensationComponent $assignment,
+        array $componentPayload,
+        string $context
+    ): void {
+        $meta = $this->calculationStandardMetadata($assignment);
+        $selected = $componentPayload['calculation_standard_override']
+            ?? $componentPayload['calculation_standard']
+            ?? null;
+
+        Log::debug('employee_compensation.calculation_standard_persist', [
+            'employee_id' => $employeeId,
+            'employee_component_id' => (int) $assignment->id,
+            'component_id' => $assignment->pay_component_id,
+            'selected_calculation_standard' => $selected,
+            'payload_calculation_standard_override' => $meta['calculation_standard_override'],
+            'saved_calculation_standard_override' => $meta['calculation_standard_override'],
+            'default_calculation_standard' => $meta['default_calculation_standard'],
+            'resolved_calculation_standard' => $meta['resolved_calculation_standard'],
+            'calculation_standard_source' => $meta['calculation_standard_source'],
+            'context' => $context,
+        ]);
     }
 
     private function refreshCompensationCaches(int $userId, string $reason): void

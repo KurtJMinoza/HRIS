@@ -1666,7 +1666,8 @@ class PayrollComputationService
             'as_of_date' => $to->toDateString(),
             'proration_factor' => 1,
             'include_deduction_schedule_catalog' => false,
-            'cache' => true,
+            // Payroll must read fresh calculation-standard metadata (override + pay component default).
+            'cache' => false,
         ]);
         $basicSalary = (float) ($compensationSummary['basic_salary'] ?? 0);
         $statutory = $compensationSummary['statutory'] ?? $this->payrollCalculator->calculateAllStatutoryContributions($basicSalary);

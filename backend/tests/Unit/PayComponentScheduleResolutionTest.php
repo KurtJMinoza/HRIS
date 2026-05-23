@@ -120,7 +120,10 @@ class PayComponentScheduleResolutionTest extends TestCase
         $svc = app(DeductionScheduleService::class);
         $resolved = $svc->resolvePayComponentAmount([
             'computed_amount' => $amount,
-            'calculation_standard' => $standard,
+            'resolved_calculation_standard' => $standard,
+            'default_calculation_standard' => $standard,
+            'pay_component_calculation_standard' => $standard,
+            'calculation_standard_source' => 'pay_component_default',
             'resolved_schedule' => DeductionScheduleSetting::SCHEDULE_BOTH,
         ], [
             'reference_date' => $segment === 'first' ? '2026-05-15' : '2026-05-30',
@@ -224,6 +227,162 @@ class PayComponentScheduleResolutionTest extends TestCase
             $payComponent->forceDelete();
             $user->forceDelete();
         }
+    }
+
+    #[DataProvider('payrollGenerationCalculationStandardCases')]
+    public function test_summarize_for_payroll_honors_calculation_standard_on_split_schedule(
+        string $standard,
+        float $amount,
+        string $segment,
+        string $lineType,
+        float $expected
+    ): void {
+        $svc = app(DeductionScheduleService::class);
+        $user = User::factory()->make(['id' => 88001]);
+        $summary = [
+            'statutory' => [],
+            'totals' => ['withholding_tax' => 0],
+            'deductions' => $lineType === 'deduction' ? [[
+                'id' => 1,
+                'pay_component_id' => 501,
+                'code' => 'DED_SPLIT',
+                'name' => 'Deduction',
+                'computed_amount' => $amount,
+                'is_proratable' => false,
+                'resolved_schedule' => DeductionScheduleSetting::SCHEDULE_BOTH,
+                'pay_component_calculation_standard' => $standard,
+                'default_calculation_standard' => $standard,
+                'resolved_calculation_standard' => $standard,
+                'calculation_standard_source' => 'pay_component_default',
+            ]] : [],
+            'earnings' => $lineType === 'earning' ? [[
+                'id' => 2,
+                'pay_component_id' => 502,
+                'code' => 'ALLOW_SPLIT',
+                'name' => 'Allowance',
+                'computed_amount' => $amount,
+                'is_proratable' => false,
+                'pay_component_calculation_standard' => $standard,
+                'default_calculation_standard' => $standard,
+                'resolved_calculation_standard' => $standard,
+                'calculation_standard_source' => 'pay_component_default',
+                'resolved_schedule' => DeductionScheduleSetting::SCHEDULE_BOTH,
+            ]] : [],
+            'pay_cycle_preview' => ['code' => 'semi_monthly'],
+            'selected_pay_date' => $segment === 'first' ? '2026-05-15' : '2026-05-30',
+            '_attendance_proration' => null,
+        ];
+
+        $out = $svc->summarizeForPayrollComputation(
+            $user,
+            Carbon::parse($segment === 'first' ? '2026-05-15' : '2026-05-30', 'Asia/Manila'),
+            $summary
+        );
+
+        if ($lineType === 'earning') {
+            $line = $out['earning_lines'][0] ?? null;
+            $this->assertNotNull($line);
+            $this->assertSame($expected, (float) ($line['scheduled_this_period'] ?? 0));
+            $this->assertSame($standard, $line['resolved_calculation_standard'] ?? null);
+            $expectedDivisor = $standard === PayComponent::STANDARD_PAYROLL ? 1.0 : 0.5;
+            $this->assertSame($expectedDivisor, (float) ($line['pay_component_resolution']['divisor_applied'] ?? 0));
+        } else {
+            $line = $out['custom_lines'][0] ?? null;
+            $this->assertNotNull($line);
+            $this->assertSame($expected, (float) ($line['scheduled_this_period'] ?? 0));
+        }
+    }
+
+    public static function payrollGenerationCalculationStandardCases(): array
+    {
+        return [
+            'allowance_17500_payroll_15th' => [PayComponent::STANDARD_PAYROLL, 17500.0, 'first', 'earning', 17500.0],
+            'allowance_17500_payroll_30th' => [PayComponent::STANDARD_PAYROLL, 17500.0, 'second', 'earning', 17500.0],
+            'allowance_17500_monthly_15th' => [PayComponent::STANDARD_MONTHLY, 17500.0, 'first', 'earning', 8750.0],
+            'deduction_1000_payroll_15th' => [PayComponent::STANDARD_PAYROLL, 1000.0, 'first', 'deduction', 1000.0],
+            'deduction_1000_monthly_15th' => [PayComponent::STANDARD_MONTHLY, 1000.0, 'first', 'deduction', 500.0],
+        ];
+    }
+
+    public function test_summarize_uses_pay_component_default_when_legacy_calculation_standard_is_monthly(): void
+    {
+        $svc = app(DeductionScheduleService::class);
+        $user = User::factory()->make(['id' => 88002]);
+        $summary = [
+            'statutory' => [],
+            'totals' => ['withholding_tax' => 0],
+            'deductions' => [],
+            'earnings' => [[
+                'id' => 3,
+                'pay_component_id' => 503,
+                'code' => 'ALLOW_LEGACY',
+                'name' => 'Allowance',
+                'computed_amount' => 17500.0,
+                'is_proratable' => false,
+                // Stale cached line: legacy monthly label only, but pay component default is payroll.
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
+                'pay_component_calculation_standard' => PayComponent::STANDARD_PAYROLL,
+                'default_calculation_standard' => PayComponent::STANDARD_PAYROLL,
+                'resolved_calculation_standard' => PayComponent::STANDARD_PAYROLL,
+                'calculation_standard_source' => 'pay_component_default',
+                'resolved_schedule' => DeductionScheduleSetting::SCHEDULE_BOTH,
+            ]],
+            'pay_cycle_preview' => ['code' => 'semi_monthly'],
+            'selected_pay_date' => '2026-05-15',
+            '_attendance_proration' => null,
+        ];
+
+        $out = $svc->summarizeForPayrollComputation($user, Carbon::parse('2026-05-15', 'Asia/Manila'), $summary);
+        $line = $out['earning_lines'][0] ?? null;
+        $this->assertNotNull($line);
+        $this->assertSame(17500.0, (float) ($line['scheduled_this_period'] ?? 0));
+        $this->assertSame(PayComponent::STANDARD_PAYROLL, $line['resolved_calculation_standard']);
+        $this->assertSame('pay_component_default', $line['calculation_standard_source']);
+    }
+
+    public function test_payroll_standard_proratable_allowance_keeps_full_run_amount(): void
+    {
+        $svc = app(DeductionScheduleService::class);
+        $user = User::factory()->make(['id' => 88003]);
+        $summary = [
+            'statutory' => [],
+            'totals' => ['withholding_tax' => 0],
+            'deductions' => [],
+            'earnings' => [[
+                'id' => 4,
+                'pay_component_id' => 504,
+                'code' => 'ALLOWANCE_EVERY_15_AND_30',
+                'name' => 'ALLOWANCE EVERY 15 AND 30',
+                'category' => 'Fixed Allowance',
+                'computed_amount' => 17500.0,
+                // Fixed Allowance defaults to proratable in the UI; Payroll Standard must still be per-run.
+                'is_proratable' => true,
+                'pay_component_calculation_standard' => PayComponent::STANDARD_PAYROLL,
+                'default_calculation_standard' => PayComponent::STANDARD_PAYROLL,
+                'resolved_calculation_standard' => PayComponent::STANDARD_PAYROLL,
+                'calculation_standard_source' => 'pay_component_default',
+                'resolved_schedule' => DeductionScheduleSetting::SCHEDULE_BOTH,
+            ]],
+            'pay_cycle_preview' => ['code' => 'semi_monthly'],
+            'selected_pay_date' => '2026-05-15',
+            '_attendance_proration' => [
+                'factor' => 0.25,
+                'allowance' => [
+                    'monthly_divisor_days' => 22,
+                    'payable_day_units' => 2,
+                    'unpaid_absent_days' => 8,
+                ],
+            ],
+        ];
+
+        $out = $svc->summarizeForPayrollComputation($user, Carbon::parse('2026-05-15', 'Asia/Manila'), $summary);
+        $line = $out['earning_lines'][0] ?? null;
+
+        $this->assertNotNull($line);
+        $this->assertSame(17500.0, (float) ($line['scheduled_this_period'] ?? 0));
+        $this->assertSame(1.0, (float) ($line['divisor_applied'] ?? 0));
+        $this->assertNull($line['allowance_proration']);
+        $this->assertSame(PayComponent::STANDARD_PAYROLL, $line['resolved_calculation_standard']);
     }
 
     public function test_summarize_prefers_resolved_schedule_on_earning_line(): void

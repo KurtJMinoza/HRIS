@@ -3048,6 +3048,7 @@ export async function createPayComponent(payload) {
     const msg = data.errors ? Object.values(data.errors).flat().join(' ') : data.message || 'Failed to create pay component'
     throw new Error(msg)
   }
+  clearCachesAfterAdminEmployeeDataChange(null)
   return data
 }
 
@@ -3062,6 +3063,7 @@ export async function updatePayComponent(id, payload) {
     const msg = data.errors ? Object.values(data.errors).flat().join(' ') : data.message || 'Failed to update pay component'
     throw new Error(msg)
   }
+  clearCachesAfterAdminEmployeeDataChange(null)
   return data
 }
 
@@ -3078,6 +3080,7 @@ export async function deletePayComponent(id, opts = {}) {
     err.requires_confirmation = data.requires_confirmation
     throw err
   }
+  clearCachesAfterAdminEmployeeDataChange(null)
   return data
 }
 

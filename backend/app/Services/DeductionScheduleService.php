@@ -8,6 +8,7 @@ use App\Models\PayComponent;
 use App\Models\PayCycle;
 use App\Models\User;
 use App\Support\BulkPayrollDraftContext;
+use App\Support\CalculationStandard;
 use App\Support\PayComponentSchedule;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -482,7 +483,9 @@ class DeductionScheduleService
             $fullMonthly = (float) ($line['computed_amount'] ?? 0);
             $sched = $this->normalizeScheduleType((string) ($line['earning_schedule_type'] ?? DeductionScheduleSetting::SCHEDULE_BOTH))
                 ?? DeductionScheduleSetting::SCHEDULE_BOTH;
-            $standard = $this->normalizeCalculationStandard($line['calculation_standard'] ?? null);
+            $standard = $this->normalizeCalculationStandard(
+                $line['resolved_calculation_standard'] ?? $line['calculation_standard'] ?? null
+            );
             // Use the prorated amount for the current pay period (50/50 split, 15th-only, 30th-only).
             // Falls back to full monthly only when scheduled_this_period is absent (legacy data).
             $thisPeriod = array_key_exists('scheduled_this_period', $line)
@@ -599,17 +602,25 @@ class DeductionScheduleService
      *
      * @param  array<string, mixed>  $component
      * @param  array<string, mixed>  $payrollRun
-     * @return array{original_amount: float, calculation_standard: string, resolved_schedule: string, payroll_run_type: string, applied_amount: float}
+     * @return array{
+     *     original_amount: float,
+     *     calculation_standard: string,
+     *     default_calculation_standard: string,
+     *     calculation_standard_override: string|null,
+     *     resolved_calculation_standard: string,
+     *     calculation_standard_source: string,
+     *     resolved_schedule: string,
+     *     payroll_run_type: string,
+     *     divisor_applied: float,
+     *     applied_amount: float
+     * }
      */
     public function resolvePayComponentAmount(array $component, array $payrollRun): array
     {
+        $component = $this->enrichPayrollLineCalculationStandard($component);
         $original = round(max(0.0, (float) ($component['computed_amount'] ?? $component['configured_value'] ?? $component['value'] ?? $component['default_value'] ?? 0)), 2);
-        $standard = $this->normalizeCalculationStandard(
-            $component['calculation_standard']
-                ?? $component['assignment_calculation_standard']
-                ?? $component['pay_component_calculation_standard']
-                ?? null
-        );
+        $standardMeta = $this->resolveCalculationStandardMeta($component);
+        $standard = $standardMeta['resolved_calculation_standard'];
         $schedule = $this->normalizeScheduleType((string) ($component['resolved_schedule'] ?? $component['pay_schedule_type'] ?? $payrollRun['resolved_schedule'] ?? DeductionScheduleSetting::SCHEDULE_BOTH))
             ?? DeductionScheduleSetting::SCHEDULE_BOTH;
 
@@ -637,27 +648,104 @@ class DeductionScheduleService
             $payrollRun['period_end'] ?? $payrollRun['pay_period_end'] ?? null
         );
 
-        $applies = $monthlyFactor > 0.0;
-        $factor = $standard === PayComponent::STANDARD_PAYROLL
-            ? ($applies ? 1.0 : 0.0)
-            : $monthlyFactor;
+        $runApplies = $monthlyFactor > 0.0;
+        $divisorApplied = $standard === PayComponent::STANDARD_PAYROLL
+            ? ($runApplies ? 1.0 : 0.0)
+            : ($runApplies ? $monthlyFactor : 0.0);
+        $appliedAmount = round($original * $divisorApplied, 2);
 
-        return [
+        $resolution = array_merge($standardMeta, [
             'original_amount' => $original,
             'calculation_standard' => $standard,
             'resolved_schedule' => $schedule,
             'payroll_run_type' => $payrollRunType,
-            'applied_amount' => round($original * $factor, 2),
-        ];
+            'divisor_applied' => $divisorApplied,
+            'applied_amount' => $appliedAmount,
+        ]);
+
+        if (! BulkPayrollDraftContext::$active) {
+            Log::debug('payroll.pay_component_amount_resolution', [
+                'employee_id' => $user ? (int) $user->id : null,
+                'employee_component_id' => $component['id'] ?? null,
+                'component_id' => $component['pay_component_id'] ?? null,
+                'component_code' => $component['code'] ?? null,
+                'original_amount' => $original,
+                'schedule_override' => $component['schedule_override'] ?? null,
+                'default_schedule' => $component['default_schedule'] ?? null,
+                'resolved_schedule' => $schedule,
+                'calculation_standard_override' => $standardMeta['calculation_standard_override'],
+                'default_calculation_standard' => $standardMeta['default_calculation_standard'],
+                'resolved_calculation_standard' => $standard,
+                'calculation_standard_source' => $standardMeta['calculation_standard_source'],
+                'current_payroll_run' => $payrollRunType,
+                'divisor_applied' => $divisorApplied,
+                'final_applied_amount' => $appliedAmount,
+            ]);
+        }
+
+        return $resolution;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     * @return array<string, mixed>
+     */
+    private function enrichPayrollLineCalculationStandard(array $line): array
+    {
+        $pcId = isset($line['pay_component_id']) ? (int) $line['pay_component_id'] : 0;
+        if ($pcId > 0
+            && ! isset($line['pay_component_calculation_standard'])
+            && ! isset($line['default_calculation_standard'])) {
+            $master = PayComponent::query()->find($pcId);
+            if ($master) {
+                $line['pay_component_calculation_standard'] = CalculationStandard::normalizeDefault($master->calculation_standard);
+                $line['default_calculation_standard'] = $line['pay_component_calculation_standard'];
+            }
+        }
+
+        return array_merge($line, $this->resolveCalculationStandardMeta($line));
+    }
+
+    /**
+     * @param  array<string, mixed>  $component
+     * @return array{
+     *     default_calculation_standard: string,
+     *     calculation_standard_override: string|null,
+     *     resolved_calculation_standard: string,
+     *     calculation_standard_source: 'employee_override'|'pay_component_default'
+     * }
+     */
+    private function resolveCalculationStandardMeta(array $component): array
+    {
+        $overrideRaw = $component['calculation_standard_override']
+            ?? $component['assignment_calculation_standard_override']
+            ?? null;
+
+        if (isset($component['resolved_calculation_standard'], $component['calculation_standard_source'])
+            && ($component['default_calculation_standard'] ?? $component['pay_component_calculation_standard'] ?? null) !== null) {
+            return [
+                'default_calculation_standard' => CalculationStandard::normalizeDefault(
+                    $component['default_calculation_standard'] ?? $component['pay_component_calculation_standard'] ?? null
+                ),
+                'calculation_standard_override' => CalculationStandard::normalizeForStorage(
+                    \is_string($overrideRaw) ? $overrideRaw : null
+                ),
+                'resolved_calculation_standard' => CalculationStandard::normalizeDefault($component['resolved_calculation_standard']),
+                'calculation_standard_source' => $component['calculation_standard_source'] === 'employee_override'
+                    ? 'employee_override'
+                    : 'pay_component_default',
+            ];
+        }
+
+        return CalculationStandard::resolveMetadata(
+            \is_string($overrideRaw) ? $overrideRaw : null,
+            $component['default_calculation_standard'] ?? $component['pay_component_calculation_standard'] ?? null
+        );
     }
 
     private function normalizeCalculationStandard(mixed $value): string
     {
-        $normalized = strtolower(trim((string) $value));
-
-        return in_array($normalized, PayComponent::CALCULATION_STANDARDS, true)
-            ? $normalized
-            : PayComponent::STANDARD_MONTHLY;
+        return CalculationStandard::normalizeDefault($value);
     }
 
     /**
@@ -803,6 +891,7 @@ class DeductionScheduleService
         $customThisPeriod = 0.0;
         $customLines = [];
         foreach ($compensationSummary['deductions'] ?? [] as $d) {
+            $d = $this->enrichPayrollLineCalculationStandard($d);
             $code = strtoupper(trim((string) ($d['code'] ?? '')));
             // Prevent duplicate statutory/withholding rows in payroll totals and payslip breakdown.
             if ($code !== '' && in_array($code, self::GOVERNMENT_COMPONENT_CODES, true)) {
@@ -839,7 +928,7 @@ class DeductionScheduleService
                     'resolved_schedule' => $sched,
                 ]), $payrollRun);
                 $thisAmt = (float) ($resolvedAmount['applied_amount'] ?? 0.0);
-                if (! empty($d['is_proratable'])) {
+                if (! $this->isPayrollStandardResolution($resolvedAmount) && ! empty($d['is_proratable'])) {
                     $thisAmt = round($thisAmt * $attendanceFactor, 2);
                 }
             }
@@ -848,7 +937,12 @@ class DeductionScheduleService
                 'deduction_schedule_type' => $sched,
                 'scheduled_this_period' => $thisAmt,
                 'original_amount' => round($amt, 2),
-                'calculation_standard' => $resolvedAmount['calculation_standard'] ?? $this->normalizeCalculationStandard($d['calculation_standard'] ?? null),
+                'calculation_standard' => $resolvedAmount['resolved_calculation_standard'] ?? $resolvedAmount['calculation_standard'] ?? PayComponent::STANDARD_MONTHLY,
+                'default_calculation_standard' => $resolvedAmount['default_calculation_standard'] ?? $d['default_calculation_standard'] ?? null,
+                'calculation_standard_override' => $resolvedAmount['calculation_standard_override'] ?? $d['calculation_standard_override'] ?? null,
+                'resolved_calculation_standard' => $resolvedAmount['resolved_calculation_standard'] ?? null,
+                'calculation_standard_source' => $resolvedAmount['calculation_standard_source'] ?? null,
+                'divisor_applied' => $resolvedAmount['divisor_applied'] ?? null,
                 'payroll_run_type' => $resolvedAmount['payroll_run_type'] ?? null,
                 'pay_component_resolution' => $resolvedAmount,
                 'attendance_proration_factor' => (! empty($d['is_proratable']) && $amortizedInstallment === null)
@@ -860,6 +954,7 @@ class DeductionScheduleService
         $nonBasicEarningsThisPeriod = 0.0;
         $earningLines = [];
         foreach ($compensationSummary['earnings'] ?? [] as $e) {
+            $e = $this->enrichPayrollLineCalculationStandard($e);
             $amt = (float) ($e['computed_amount'] ?? 0);
             $code = strtoupper((string) ($e['code'] ?? ''));
             $isBasic = $code === 'BASIC_SALARY';
@@ -874,10 +969,13 @@ class DeductionScheduleService
                 'resolved_schedule' => $sched,
             ]), $payrollRun);
             $thisAmt = (float) ($resolvedAmount['applied_amount'] ?? 0.0);
-            $factor = $amt > 0.0 ? round($thisAmt / $amt, 6) : 0.0;
-            $lineAttendanceFactor = (! $isBasic && ! empty($e['is_proratable'])) ? $attendanceFactor : 1.0;
+            $factor = (float) ($resolvedAmount['divisor_applied'] ?? ($amt > 0.0 ? round($thisAmt / $amt, 6) : 0.0));
+            $usesPayrollStandard = $this->isPayrollStandardResolution($resolvedAmount);
+            $lineAttendanceFactor = (! $usesPayrollStandard && ! $isBasic && ! empty($e['is_proratable'])) ? $attendanceFactor : 1.0;
             $allowanceProration = null;
-            $allowanceMode = $this->resolveAllowanceProrationType($e, $isBasic);
+            $allowanceMode = $usesPayrollStandard
+                ? 'scheduled_fixed'
+                : $this->resolveAllowanceProrationType($e, $isBasic);
             if ($allowanceMode === 'attendance_prorated') {
                 $allowanceProration = $this->computeAttendanceProratedAllowanceAmount(
                     $e,
@@ -900,11 +998,18 @@ class DeductionScheduleService
                     'employee_id' => (int) $user->id,
                     'pay_component_id' => (int) $pcId,
                     'comp_assignment_id' => $e['id'] ?? null,
+                    'component_code' => $e['code'] ?? null,
                     'payroll_run_segment' => $segment,
                     'schedule_override' => $e['schedule_override'] ?? null,
                     'default_schedule' => $e['default_schedule'] ?? null,
-                    'resolved_schedule' => $e['resolved_schedule'] ?? null,
+                    'resolved_schedule' => $sched,
                     'schedule_source' => $e['schedule_source'] ?? null,
+                    'calculation_standard_override' => $resolvedAmount['calculation_standard_override'] ?? null,
+                    'default_calculation_standard' => $resolvedAmount['default_calculation_standard'] ?? null,
+                    'resolved_calculation_standard' => $resolvedAmount['resolved_calculation_standard'] ?? null,
+                    'calculation_standard_source' => $resolvedAmount['calculation_standard_source'] ?? null,
+                    'current_payroll_run' => $resolvedAmount['payroll_run_type'] ?? null,
+                    'divisor_applied' => $resolvedAmount['divisor_applied'] ?? null,
                     'earning_schedule_type_applied' => $sched,
                     'full_monthly_computed_amount' => round($amt, 2),
                     'final_payroll_amount_this_period' => round($thisAmt, 2),
@@ -914,7 +1019,12 @@ class DeductionScheduleService
                 'earning_schedule_type' => $sched,
                 'scheduled_this_period' => $thisAmt,
                 'original_amount' => round($amt, 2),
-                'calculation_standard' => $resolvedAmount['calculation_standard'] ?? $this->normalizeCalculationStandard($e['calculation_standard'] ?? null),
+                'calculation_standard' => $resolvedAmount['resolved_calculation_standard'] ?? $resolvedAmount['calculation_standard'] ?? PayComponent::STANDARD_MONTHLY,
+                'default_calculation_standard' => $resolvedAmount['default_calculation_standard'] ?? $e['default_calculation_standard'] ?? null,
+                'calculation_standard_override' => $resolvedAmount['calculation_standard_override'] ?? $e['calculation_standard_override'] ?? null,
+                'resolved_calculation_standard' => $resolvedAmount['resolved_calculation_standard'] ?? null,
+                'calculation_standard_source' => $resolvedAmount['calculation_standard_source'] ?? null,
+                'divisor_applied' => $resolvedAmount['divisor_applied'] ?? null,
                 'payroll_run_type' => $resolvedAmount['payroll_run_type'] ?? null,
                 'pay_component_resolution' => $resolvedAmount,
                 'is_basic_salary_line' => $isBasic,
@@ -957,6 +1067,22 @@ class DeductionScheduleService
         $f = (float) ($meta['factor'] ?? 1.0);
 
         return max(0.0, min(1.0, $f));
+    }
+
+    /**
+     * Payroll Standard means the configured amount is already per payroll run.
+     * Do not run monthly attendance/schedule distribution after the central resolver
+     * has selected it for the current run.
+     *
+     * @param  array<string, mixed>  $resolvedAmount
+     */
+    private function isPayrollStandardResolution(array $resolvedAmount): bool
+    {
+        return CalculationStandard::normalizeDefault(
+            $resolvedAmount['resolved_calculation_standard']
+                ?? $resolvedAmount['calculation_standard']
+                ?? null
+        ) === PayComponent::STANDARD_PAYROLL;
     }
 
     /**

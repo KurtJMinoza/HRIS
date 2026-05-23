@@ -105,9 +105,6 @@ class PayComponentAssignmentService
             'type' => $component->type,
             'category' => $component->category,
             'calculation_type' => $component->calculation_type,
-            'calculation_standard' => in_array((string) ($component->calculation_standard ?? ''), PayComponent::CALCULATION_STANDARDS, true)
-                ? (string) $component->calculation_standard
-                : PayComponent::STANDARD_MONTHLY,
             'value' => $assignmentValue,
             'hourly_rate' => $assignmentHourlyRate,
             'hours' => $assignmentHours,
@@ -126,10 +123,6 @@ class PayComponentAssignmentService
                 'auto_applied' => true,
             ]),
         ];
-
-        if (! Schema::hasColumn('employee_compensation_components', 'calculation_standard')) {
-            unset($payload['calculation_standard']);
-        }
 
         return $payload;
     }

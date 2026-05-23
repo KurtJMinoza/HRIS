@@ -59,7 +59,7 @@ const EMPTY_FORM = {
   type: 'earning',
   category: 'Fixed Allowance',
   calculation_type: 'fixed_amount',
-  calculation_standard: 'monthly_standard',
+  calculation_standard_override: 'default',
   value: '0',
   hourly_rate: '',
   hours: '',
@@ -83,6 +83,7 @@ const PAY_COMPONENT_SCHEDULE_OPTIONS = [
 ]
 
 const CALCULATION_STANDARD_OPTIONS = [
+  { value: 'default', label: 'Use default (from Pay Component Settings)' },
   { value: 'monthly_standard', label: 'Monthly Standard' },
   { value: 'payroll_standard', label: 'Payroll Standard' },
 ]
@@ -90,6 +91,44 @@ const CALCULATION_STANDARD_OPTIONS = [
 function normalizedCalculationStandard(value) {
   const s = value == null || value === '' ? 'monthly_standard' : String(value).trim()
   return s === 'payroll_standard' ? 'payroll_standard' : 'monthly_standard'
+}
+
+function normalizedCalculationStandardSelectValue(item) {
+  const override = item?.calculation_standard_override
+  if (override == null || override === '' || override === 'default') {
+    return 'default'
+  }
+  return normalizedCalculationStandard(override)
+}
+
+function calculationStandardOptionLabel(value, defaultStandard) {
+  if (value === 'default') {
+    return `Use default: ${formatCalculationStandard(defaultStandard ?? 'monthly_standard')}`
+  }
+  return CALCULATION_STANDARD_OPTIONS.find((o) => o.value === value)?.label ?? formatCalculationStandard(value)
+}
+
+function mergeCalculationStandardFields(row, assignment) {
+  const defaultStandard = assignment?.default_calculation_standard
+    ?? row?.default_calculation_standard
+    ?? row?.pay_component_calculation_standard
+    ?? 'monthly_standard'
+  const override = assignment?.calculation_standard_override ?? row?.calculation_standard_override ?? null
+  const resolved = assignment?.resolved_calculation_standard
+    ?? row?.resolved_calculation_standard
+    ?? (override ? normalizedCalculationStandard(override) : normalizedCalculationStandard(defaultStandard))
+  const source = assignment?.calculation_standard_source
+    ?? row?.calculation_standard_source
+    ?? (override ? 'employee_override' : 'pay_component_default')
+
+  return {
+    ...row,
+    default_calculation_standard: normalizedCalculationStandard(defaultStandard),
+    calculation_standard_override: override == null || override === '' ? null : normalizedCalculationStandard(override),
+    resolved_calculation_standard: normalizedCalculationStandard(resolved),
+    calculation_standard_source: source,
+    calculation_standard: normalizedCalculationStandard(resolved),
+  }
 }
 
 function normalizedScheduleSelectValue(scheduleOverride) {
@@ -153,10 +192,10 @@ function mergeSchedulePatchIntoDetailEntry(prevEntry, employeeId, assignment) {
 
   const patchLines = (lines) => {
     if (!Array.isArray(lines)) return lines
-    return lines.map((line) => (Number(line?.id) === aid ? {
-      ...patchCompensationRowSchedule(line, assignment),
-      calculation_standard: normalizedCalculationStandard(assignment?.calculation_standard ?? line?.calculation_standard),
-    } : line))
+    return lines.map((line) => (Number(line?.id) === aid ? mergeCalculationStandardFields(
+      patchCompensationRowSchedule(line, assignment),
+      assignment,
+    ) : line))
   }
 
   return {
@@ -554,7 +593,7 @@ export default function AdminEmployeeCompensationPage() {
       type: master.type,
       category: master.category || 'Fixed Allowance',
       calculation_type: calc,
-      calculation_standard: normalizedCalculationStandard(master.calculation_standard),
+      calculation_standard_override: 'default',
       value: initValue,
       hourly_rate: initHourlyRate,
       hours: initHours,
@@ -599,7 +638,9 @@ export default function AdminEmployeeCompensationPage() {
         show_on_payslip: true,
         is_custom: false,
         schedule_override: draftForm.schedule_override,
-        calculation_standard: normalizedCalculationStandard(draftForm.calculation_standard),
+        calculation_standard_override: draftForm.calculation_standard_override !== 'default'
+          ? normalizedCalculationStandard(draftForm.calculation_standard_override)
+          : null,
       },
     ])
     setDialogOpen(false)
@@ -650,7 +691,9 @@ export default function AdminEmployeeCompensationPage() {
             hourly_rate: item.hourly_rate != null ? Number(item.hourly_rate) : null,
             hours: item.hours != null ? Number(item.hours) : null,
             formula: item.formula || null,
-            calculation_standard: normalizedCalculationStandard(item.calculation_standard),
+            calculation_standard_override: item.calculation_standard_override !== 'default' && item.calculation_standard_override != null
+              ? normalizedCalculationStandard(item.calculation_standard_override)
+              : null,
             is_taxable: item.is_taxable,
             contributes_sss: item.contributes_sss,
             contributes_philhealth: item.contributes_philhealth,
@@ -767,19 +810,22 @@ export default function AdminEmployeeCompensationPage() {
 
   const saveCalculationStandard = useCallback(async (item, selectValue) => {
     if (!activeEmployee?.id || !item?.id) return
-    const incoming = normalizedCalculationStandard(selectValue)
-    const current = normalizedCalculationStandard(item.calculation_standard)
+    const incoming = selectValue === 'default' ? 'default' : normalizedCalculationStandard(selectValue)
+    const current = normalizedCalculationStandardSelectValue(item)
     if (incoming === current) return
 
     setUpdatingStandardId(item.id)
     try {
       const patchRes = await updateEmployeeCompensation(activeEmployee.id, item.id, {
-        calculation_standard: incoming,
+        calculation_standard_override: incoming,
       })
       const assignment = patchRes?.assignment
+      const label = incoming === 'default'
+        ? `Use default: ${formatCalculationStandard(assignment?.default_calculation_standard ?? item.default_calculation_standard)}`
+        : formatCalculationStandard(incoming)
       toast({
         title: 'Calculation standard updated',
-        description: `${item.name}: ${formatCalculationStandard(incoming)}.`,
+        description: `${item.name}: ${label}.`,
       })
       await refreshCompensation(activeEmployee.id)
       if (assignment && typeof assignment === 'object') {
@@ -1276,8 +1322,8 @@ export default function AdminEmployeeCompensationPage() {
                 <Field label="Calculation Standard" required>
                   <div className="relative">
                     <select
-                      value={normalizedCalculationStandard(draftForm.calculation_standard)}
-                      onChange={(e) => setDraftForm((prev) => ({ ...prev, calculation_standard: e.target.value }))}
+                      value={normalizedCalculationStandardSelectValue(draftForm)}
+                      onChange={(e) => setDraftForm((prev) => ({ ...prev, calculation_standard_override: e.target.value }))}
                       className={componentModalSelectClass}
                     >
                       {CALCULATION_STANDARD_OPTIONS.map((opt) => (
@@ -1516,18 +1562,22 @@ function CompTable({
                       <select
                         aria-label={`Calculation standard for ${item.name ?? 'component'}`}
                         className="max-w-[min(230px,calc(100vw-220px))] rounded-lg border border-border/70 bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-brand/60 focus:ring-2 focus:ring-brand/15 disabled:opacity-60"
-                        value={normalizedCalculationStandard(item.calculation_standard)}
+                        value={normalizedCalculationStandardSelectValue(item)}
                         disabled={updatingStandardId === item.id || updatingScheduleId === item.id || (updatingValue && editingId === item.id)}
                         onChange={(e) => onCalculationStandardChange?.(item, e.target.value)}
                       >
                         {CALCULATION_STANDARD_OPTIONS.map((opt) => (
                           <option key={opt.value} value={opt.value}>
-                            {opt.label}
+                            {calculationStandardOptionLabel(opt.value, item.default_calculation_standard)}
                           </option>
                         ))}
                       </select>
                     ) : (
-                      <span className="text-xs text-muted-foreground/70">{formatCalculationStandard(item.calculation_standard)}</span>
+                      <span className="text-xs text-muted-foreground/70">
+                        {item.calculation_standard_source === 'employee_override'
+                          ? formatCalculationStandard(item.resolved_calculation_standard ?? item.calculation_standard)
+                          : `Use default: ${formatCalculationStandard(item.default_calculation_standard ?? item.calculation_standard)}`}
+                      </span>
                     )}
                     {item?.id && updatingStandardId === item.id ? (
                       <span className="mt-1 block text-[11px] text-muted-foreground">Saving...</span>
@@ -1631,7 +1681,13 @@ function ComponentDefinitionStrip({ draftForm }) {
     { label: 'Type', value: draftForm.type || '—', Icon: Wallet, valueClassName: 'capitalize' },
     { label: 'Category', value: draftForm.category || '—', Icon: BriefcaseBusiness },
     { label: 'Calculation', value: formatCalculationType(draftForm.calculation_type), Icon: Calculator },
-    { label: 'Standard', value: formatCalculationStandard(draftForm.calculation_standard), Icon: Calculator },
+    {
+      label: 'Standard',
+      value: draftForm.calculation_standard_override === 'default'
+        ? 'Use default'
+        : formatCalculationStandard(draftForm.calculation_standard_override),
+      Icon: Calculator,
+    },
   ]
 
   return (

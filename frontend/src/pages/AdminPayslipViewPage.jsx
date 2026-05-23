@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react'
+import { ArrowLeft, FileDown, Loader2, Printer, RefreshCw } from 'lucide-react'
 import {
   adminPreviewPayslipEmployeeBlob,
   getAdminPayslipViewData,
@@ -25,6 +25,7 @@ export default function AdminPayslipViewPage() {
   const hrBase = useHrBasePath()
   const employeeSelfServiceView = pathname.includes('/employee/payslips/view/')
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [data, setData] = useState(null)
 
@@ -66,6 +67,15 @@ export default function AdminPayslipViewPage() {
 
   useEffect(() => {
     loadPayslip()
+  }, [loadPayslip])
+
+  const refreshPayslip = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      await loadPayslip()
+    } finally {
+      setRefreshing(false)
+    }
   }, [loadPayslip])
 
   const getFinalizePayrollListUrl = useCallback(() => {
@@ -145,6 +155,22 @@ export default function AdminPayslipViewPage() {
     return Number.isFinite(n) ? n : null
   }, [data?.employee?.id, searchParams])
   const employeeCodeLabel = data?.employee?.employee_code || (payslipId ? `Payslip #${payslipId}` : '—')
+  const isLiveDraft = String(data?.mode || data?.payroll?.mode || '').toLowerCase() === 'draft'
+    || String(data?.source || data?.payroll?.source || '').toLowerCase() === 'live_computation'
+  const computedAtLabel = useMemo(() => {
+    const raw = data?.computed_at || data?.payroll?.computed_at
+    if (!raw) return null
+    const d = new Date(raw)
+    if (Number.isNaN(d.getTime())) return String(raw)
+    return d.toLocaleString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+  }, [data?.computed_at, data?.payroll?.computed_at])
 
   const buildDraftDownloadPayload = useCallback(() => {
     const employeeId = Number(
@@ -266,6 +292,28 @@ export default function AdminPayslipViewPage() {
               </nav>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {isLiveDraft ? (
+                <span className="inline-flex h-10 items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+                  Live draft{computedAtLabel ? <span className="ml-2 font-normal opacity-80">Computed {computedAtLabel}</span> : null}
+                </span>
+              ) : null}
+              {isLiveDraft ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="default"
+                  className="h-10 rounded-xl border-slate-200/90 bg-white px-4 text-[#0A0A0A] shadow-sm dark:border-slate-700 dark:bg-card"
+                  onClick={refreshPayslip}
+                  disabled={refreshing || loading}
+                >
+                  {refreshing ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                  )}
+                  Recompute
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"

@@ -70,6 +70,7 @@ class PayComponentController extends Controller
         $payload = $this->validatePayload($request);
         $component = PayComponent::create($this->filterPayloadForExistingColumns($payload));
         $assignedCount = $this->assignmentService->syncForAllEmployees($component);
+        $this->forgetCompensationSummaryCacheForPayComponent((int) $component->id);
 
         return response()->json([
             'message' => $assignedCount > 0
@@ -90,6 +91,7 @@ class PayComponentController extends Controller
         $component->fill($this->filterPayloadForExistingColumns($payload));
         $component->save();
         $assignedCount = $this->assignmentService->syncForAllEmployees($component);
+        $this->forgetCompensationSummaryCacheForPayComponent((int) $component->id);
 
         Log::info('pay_component.updated', [
             'pay_component_id' => $component->id,

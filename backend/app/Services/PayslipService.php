@@ -677,6 +677,83 @@ class PayslipService
     }
 
     /**
+     * Shared live payroll computation entrypoint for draft/preview payslip reads.
+     * Draft/preview modes do not persist or freeze rows; finalization uses the same
+     * computation data through generatePayslipFromComputedPayroll()/generatePayslip().
+     *
+     * @param  array<string, mixed>  $periodInput
+     * @return array<string, mixed>
+     */
+    public function computePayrollForEmployee(User|int $employee, ?int $payrollPeriodId = null, string $mode = 'draft', array $periodInput = []): array
+    {
+        $started = microtime(true);
+        $user = $employee instanceof User ? $employee : User::query()->findOrFail((int) $employee);
+        $period = null;
+
+        if ($payrollPeriodId !== null) {
+            $period = PayrollPeriod::query()
+                ->whereKey($payrollPeriodId)
+                ->where('user_id', $user->id)
+                ->firstOrFail();
+
+            $periodInput = array_merge([
+                'from_date' => $period->from_date?->toDateString(),
+                'to_date' => $period->to_date?->toDateString(),
+                'pay_cycle_id' => $period->pay_cycle_id !== null ? (int) $period->pay_cycle_id : null,
+                'reference_date' => $period->pay_date?->toDateString() ?: $period->reference_date?->toDateString(),
+                'payroll_period_id' => (int) $period->id,
+                'use_company_default' => $period->pay_cycle_id === null,
+                'is_final_pay' => false,
+                'password_protect' => false,
+            ], $periodInput);
+        }
+
+        $payload = $this->previewDataForEmployee($user, $periodInput);
+        $computedAt = now()->toIso8601String();
+        $summary = is_array($payload['snapshot']['summary'] ?? null) ? $payload['snapshot']['summary'] : [];
+
+        $payload['employee_id'] = (int) $user->id;
+        $payload['payroll_period_id'] = $payrollPeriodId ?? ($payload['payroll']['payroll_period_id'] ?? null);
+        $payload['mode'] = $mode === 'preview' ? 'preview' : 'draft';
+        $payload['computed_at'] = $computedAt;
+        $payload['source'] = 'live_computation';
+        $payload['gross_pay'] = (float) ($payload['amounts']['gross_pay'] ?? 0);
+        $payload['net_pay'] = (float) ($payload['amounts']['net_pay'] ?? 0);
+        $payload['earnings'] = is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [];
+        $payload['deductions'] = is_array($summary['payslip_custom_deduction_lines'] ?? null) ? $summary['payslip_custom_deduction_lines'] : [];
+        $payload['contributions'] = is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [];
+
+        $payload['payroll'] = array_merge($payload['payroll'] ?? [], [
+            'mode' => $payload['mode'],
+            'status' => Payslip::STATUS_DRAFT,
+            'computed_at' => $computedAt,
+            'source' => 'live_computation',
+        ]);
+
+        $debugLines = collect(array_merge(
+            (array) data_get($summary, 'deduction_schedule.earning_lines', []),
+            (array) data_get($summary, 'deduction_schedule.custom_lines', [])
+        ));
+
+        Log::info('payslip.live_compute', [
+            'employee_id' => (int) $user->id,
+            'payroll_period_id' => $payrollPeriodId,
+            'mode' => $payload['mode'],
+            'payroll_finalized' => false,
+            'source' => 'live_computation',
+            'pay_components_loaded' => $debugLines->count(),
+            'resolved_calculation_standards' => $debugLines->pluck('resolved_calculation_standard')->filter()->unique()->values()->all(),
+            'resolved_schedules' => $debugLines->pluck('resolved_schedule')->merge($debugLines->pluck('earning_schedule_type'))->merge($debugLines->pluck('deduction_schedule_type'))->filter()->unique()->values()->all(),
+            'gross_pay' => $payload['gross_pay'],
+            'net_pay' => $payload['net_pay'],
+            'computation_ms' => round((microtime(true) - $started) * 1000, 2),
+            'cache' => 'skipped',
+        ]);
+
+        return $payload;
+    }
+
+    /**
      * Shared computation for generate + preview — keeps one source of truth for payroll snapshot fields.
      *
      * Withholding tax (`withholding_tax_this_period_estimate`, `withholding_tax_monthly_estimate`) comes only from
