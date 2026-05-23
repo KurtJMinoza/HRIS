@@ -12,7 +12,6 @@ use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\SectionUnitRosterService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class SectionUnitRosterServiceTest extends TestCase
@@ -118,7 +117,7 @@ class SectionUnitRosterServiceTest extends TestCase
         $this->assertSame(3, $counts['shared_employee_count']);
     }
 
-    public function test_duplicate_shared_assignment_is_rejected(): void
+    public function test_duplicate_shared_assignment_is_skipped(): void
     {
         [, , $sectionB] = $this->seedSectionInCompanyB();
         $employee = User::factory()->create([
@@ -134,13 +133,15 @@ class SectionUnitRosterServiceTest extends TestCase
             EmployeeOrganizationAssignmentService::MODE_SHARED,
         );
 
-        $this->expectException(ValidationException::class);
-        $service->assignToLegacyUnit(
+        $result = $service->assignToLegacyUnit(
             'section_unit',
             (int) $sectionB->id,
             [(int) $employee->id],
             EmployeeOrganizationAssignmentService::MODE_SHARED,
         );
+
+        $this->assertSame(0, $result['added_count']);
+        $this->assertSame(1, $result['skipped_existing_count']);
     }
 
     public function test_primary_and_shared_same_section_counts_once_as_primary(): void

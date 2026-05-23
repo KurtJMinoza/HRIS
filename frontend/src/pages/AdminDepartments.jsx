@@ -48,9 +48,11 @@ import AssignOrgHeadModal from '@/components/admin/AssignOrgHeadModal'
 import { buildOrgCurrentHead, employeeDisplayName } from '@/lib/employeeSearch'
 import {
   ASSIGNMENT_MODE_TRANSFER_PRIMARY,
+  assignEmployeesToastPayload,
   buildOrgAssignCounts,
   buildOrgAssignRows,
   employeeAssignedToUnit,
+  newAssigneeIdsFromSelection,
   selectedCrossCompanyEmployees,
 } from '@/lib/orgEmployeeAssignment'
 import { patchOrgUnitEmployeeCount, resolveOrgUnitEmployeeCount } from '@/lib/orgUnitEmployeeSync'
@@ -645,10 +647,22 @@ export default function AdminDepartments() {
   const handleAssignEmployees = async (e) => {
     e.preventDefault()
     if (!assignDepartment) return
+    const newIds = newAssigneeIdsFromSelection(assignIds, assignList, assignDepartment, 'department_id')
+    const employeeIdsToSubmit = newIds.length > 0 ? newIds : assignIds
+    if (employeeIdsToSubmit.length === 0) {
+      toast({
+        title: 'No employees selected',
+        description: 'Select at least one employee who is not already assigned to this department.',
+        variant: 'default',
+      })
+      return
+    }
     setAssignSubmitting(true)
     setError(null)
     try {
-      const data = await assignEmployeesToDepartment(assignDepartment.id, assignIds, { assignmentMode: assignMode })
+      const data = await assignEmployeesToDepartment(assignDepartment.id, employeeIdsToSubmit, {
+        assignmentMode: assignMode,
+      })
       if (data?.department?.id != null) {
         setDepartments((prev) =>
           prev.map((d) => (sameUserId(d.id, data.department.id) ? { ...d, ...data.department } : d)),
@@ -659,7 +673,7 @@ export default function AdminDepartments() {
       setAssignModalEmployees([])
       await fetchDepartments()
       await fetchEmployees()
-      toast({ title: 'Employees assigned', description: assignDepartment.name, variant: 'success' })
+      toast(assignEmployeesToastPayload(data, assignDepartment.name))
     } catch (e) {
       setError(e.message)
       toast({ title: 'Failed to assign employees', description: e.message, variant: 'error' })

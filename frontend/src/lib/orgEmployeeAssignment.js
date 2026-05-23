@@ -159,3 +159,28 @@ export function buildOrgAssignCounts(assignList, targetUnit, memberIdField, isEx
 export function selectedCrossCompanyEmployees(selectedEmployees, targetCompanyId) {
   return (selectedEmployees || []).filter((employee) => isCrossCompanyForTarget(employee, targetCompanyId))
 }
+
+/** IDs selected in the modal that are not yet assigned to the target unit. */
+export function newAssigneeIdsFromSelection(assignIds, assignList, targetUnit, memberIdField = 'department_id') {
+  return (assignIds || []).filter((id) => {
+    const employee = (assignList || []).find((row) => sameUserId(row.id, id))
+    return employee && !employeeAssignedToUnit(employee, targetUnit, memberIdField)
+  })
+}
+
+export function assignEmployeesToastPayload(data, unitName) {
+  const added = Number(data?.added_count ?? 0)
+  const skipped = Number(data?.skipped_existing_count ?? 0)
+  if (added === 0 && skipped > 0) {
+    return {
+      title: 'Already assigned',
+      description: data?.message || `${skipped} employee(s) already in ${unitName}.`,
+      variant: 'default',
+    }
+  }
+  return {
+    title: added > 0 ? 'Employees assigned' : 'Assignment saved',
+    description: data?.message || unitName,
+    variant: added > 0 || skipped > 0 ? 'success' : 'default',
+  }
+}

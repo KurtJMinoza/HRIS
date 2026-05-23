@@ -81,7 +81,6 @@ import { useToast } from '@/components/ui/use-toast'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath, isAdminHrUser } from '@/lib/hrRoutes'
 import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
-import { cn } from '@/lib/utils'
 import { employmentStatusBadgeClassName, formatEmploymentStatusForViewer } from '@/lib/employmentStatus'
 import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
 import { useAuth } from '@/contexts/AuthContext'
@@ -232,9 +231,8 @@ export default function AdminEmployees() {
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ total: 0, perPage: 20, lastPage: 1 })
   const didInitialEmployeeLoadRef = useRef(false)
-  /** Company id (string) or '' for all — passed to API as company_id */
-  const [filterCompany, setFilterCompany] = useState('')
   const [filterStatus, setFilterStatus] = useState('active')
+  const [filterCompany, setFilterCompany] = useState('')
   const [filterSchedule, setFilterSchedule] = useState('')
   const [filterFace, setFilterFace] = useState('')
   const [sortBy, setSortBy] = useState('')
@@ -349,21 +347,31 @@ export default function AdminEmployees() {
   }, [hasClientSideFilters, page])
 
   useEffect(() => {
+    if (page !== 1) setPage(1)
+  }, [filterCompany, page])
+
+  useEffect(() => {
     if (location.pathname === hrPanelPath(hrBase, 'employees/add')) {
       setAddOpen(true)
     }
   }, [location.pathname, hrBase])
 
   const employeesQuery = useQuery({
-    queryKey: ['admin-employees-list', { page: listPage, perPage: listPerPage, q: debouncedSearchQuery, companyId: filterCompany || '', activeFilter: filterStatus }],
+    queryKey: ['admin-employees-list', {
+      page: listPage,
+      perPage: listPerPage,
+      q: debouncedSearchQuery,
+      activeFilter: filterStatus,
+      companyId: filterCompany,
+    }],
     queryFn: () =>
       getEmployees({
         lite: true,
         page: listPage,
         per_page: listPerPage,
         q: debouncedSearchQuery || undefined,
-        company_id: filterCompany || undefined,
         active_filter: filterStatus || 'active',
+        company_id: filterCompany || undefined,
       }),
     staleTime: 60 * 1000,
     gcTime: 2 * 60 * 1000,
@@ -607,15 +615,6 @@ export default function AdminEmployees() {
         setWorkingSchedules([])
       })
   }, [])
-
-  const filterCompanyInitRef = useRef(true)
-  useEffect(() => {
-    if (filterCompanyInitRef.current) {
-      filterCompanyInitRef.current = false
-      return
-    }
-    setPage(1)
-  }, [filterCompany])
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -888,6 +887,18 @@ export default function AdminEmployees() {
     })
   }, [employees, normalizedSearchQuery, filterStatus, filterSchedule, filterFace, sortBy, sortDir])
 
+  const hasListFilters = useMemo(
+    () =>
+      Boolean(
+        filterCompany ||
+        filterSchedule ||
+        filterFace ||
+        debouncedSearchQuery ||
+        (filterStatus && filterStatus !== 'active'),
+      ),
+    [filterCompany, filterSchedule, filterFace, debouncedSearchQuery, filterStatus],
+  )
+
   const toggleSort = (column) => {
     if (sortBy === column) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -913,6 +924,14 @@ export default function AdminEmployees() {
     })
     return byId
   }, [companies])
+
+  const activeCompanyOptions = useMemo(
+    () =>
+      companies
+        .filter((company) => String(company?.status || 'active').toLowerCase() === 'active')
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
+    [companies]
+  )
 
   const getCompanyNameById = useCallback((companyId) => companyNameById.get(String(companyId)) || '', [companyNameById])
 
@@ -1541,49 +1560,28 @@ export default function AdminEmployees() {
                 </div>
               </div>
             )}
-            {(employeesQuery.isLoading || employeesQuery.isFetching) ? (
-              <div className="overflow-x-auto bg-card px-4 py-4">
-                <TableSkeleton rows={10} cols={9} className="rounded-xl border border-border/40" />
-              </div>
-            ) : employees.length === 0 ? (
-              <p className="py-12 text-center text-muted-foreground">No employees yet. Add one to get started.</p>
-            ) : (
-              <>
-                {/* Filter chips bar — glass */}
-                <div className="border-b border-border/60 bg-background/55 px-5 py-4 backdrop-blur-sm dark:bg-background/25">
+            {/* Filter bar always visible — never tied to result count or refresh */}
+            <div className="border-b border-border/60 bg-background/55 px-5 py-4 backdrop-blur-sm dark:bg-background/25">
                   <div className="flex flex-wrap items-center gap-2.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Filter:</span>
 
-                    {/* Company — neutral chip styling (matches status chips); avoids sky-on-sky + native option contrast issues */}
-                    <div className="relative inline-flex items-center">
+                    <label className="inline-flex items-center gap-2">
+                      <span className="sr-only">Company</span>
                       <select
                         value={filterCompany}
-                        onChange={(e) => setFilterCompany(e.target.value)}
-                        className={cn(
-                          'h-10 min-w-40 max-w-60 truncate appearance-none rounded-md border pl-3 text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-brand/25 cursor-pointer bg-card text-foreground dark:scheme-dark',
-                          filterCompany ? 'pr-17' : 'pr-8',
-                          filterCompany
-                            ? 'border-brand/50 bg-brand/8 text-foreground dark:border-brand/45 dark:bg-brand/12'
-                            : 'border-border/70 bg-card text-foreground hover:border-border hover:bg-muted/35 dark:border-border',
-                        )}
+                        onChange={(event) => setFilterCompany(event.target.value)}
+                        className={`${FIELD_SELECT_CLASS} h-10 min-w-[13rem] rounded-md text-sm`}
+                        aria-label="Filter employees by company"
                       >
-                        <option value="">All companies</option>
-                        {companies.map((c) => (
-                          <option key={c.id} value={String(c.id)}>{c.name}</option>
+                        <option value="">All Companies</option>
+                        <option value="no_company">No Company Assigned</option>
+                        {activeCompanyOptions.map((company) => (
+                          <option key={company.id} value={company.id}>
+                            {company.name}
+                          </option>
                         ))}
                       </select>
-                      {filterCompany && (
-                        <button
-                          type="button"
-                          onClick={() => setFilterCompany('')}
-                          className="absolute right-7 top-1/2 z-1 flex size-5 -translate-y-1/2 items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground dark:border-border dark:bg-card"
-                          title="Clear company filter"
-                        >
-                          <X className="size-2.5" />
-                        </button>
-                      )}
-                      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground opacity-80" />
-                    </div>
+                    </label>
 
                     {/* Status chips */}
                     {[{ val: 'active', label: 'Active', color: 'emerald' }, { val: 'deactivated', label: 'Deactivated', color: 'zinc' }, { val: 'all', label: 'All', color: 'blue' }].map(({ val, label, color }) => (
@@ -1660,8 +1658,20 @@ export default function AdminEmployees() {
                       </button>
                     )}
                   </div>
-                </div>
-                <div className="overflow-x-auto bg-card">
+            </div>
+
+            {(employeesQuery.isLoading || employeesQuery.isFetching) ? (
+              <div className="overflow-x-auto bg-card px-4 py-4">
+                <TableSkeleton rows={10} cols={9} className="rounded-xl border border-border/40" />
+              </div>
+            ) : filteredEmployees.length === 0 ? (
+              <p className="py-12 text-center text-muted-foreground">
+                {hasListFilters
+                  ? 'No employees found for the selected filters.'
+                  : 'No employees yet. Add one to get started.'}
+              </p>
+            ) : (
+              <div className="overflow-x-auto bg-card">
                   <table className="w-full text-sm text-foreground">
                     <thead className="sticky top-0 z-10 border-b border-border/60 bg-muted/35 shadow-[0_1px_0_0_var(--border)] dark:border-border dark:bg-background/35">
                       <tr>
@@ -2128,7 +2138,6 @@ export default function AdminEmployees() {
                   </tbody>
                 </table>
               </div>
-              </>
             )}
           </CardContent>
           {pagination.total > 0 && (

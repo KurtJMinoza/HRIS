@@ -201,7 +201,7 @@ class DivisionController extends Controller
         ]);
 
         $assignmentMode = $validated['assignment_mode'] ?? EmployeeOrganizationAssignmentService::MODE_TRANSFER_PRIMARY;
-        $this->organizationAssignments->assignToLegacyUnit(
+        $result = $this->organizationAssignments->assignToLegacyUnit(
             'division',
             (int) $division->id,
             $validated['employee_ids'],
@@ -210,7 +210,11 @@ class DivisionController extends Controller
         );
 
         return response()->json([
-            'message' => 'Employees assigned successfully.',
+            'message' => $this->organizationAssignments->assignResultMessage($result),
+            'added_count' => $result['added_count'],
+            'skipped_existing_count' => $result['skipped_existing_count'],
+            'skipped_existing_names' => $result['skipped_existing_names'],
+            'final_assigned_count' => $result['final_assigned_count'],
             'division' => $this->divisionResponse($division->fresh($this->responseRelations())->loadCount(['employees', 'sectionsOrUnits'])),
         ]);
     }

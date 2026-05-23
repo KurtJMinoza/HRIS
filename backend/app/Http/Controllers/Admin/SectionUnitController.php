@@ -220,7 +220,7 @@ class SectionUnitController extends Controller
         ]);
 
         $assignmentMode = $validated['assignment_mode'] ?? EmployeeOrganizationAssignmentService::MODE_TRANSFER_PRIMARY;
-        $created = $this->organizationAssignments->assignToLegacyUnit(
+        $result = $this->organizationAssignments->assignToLegacyUnit(
             'section_unit',
             (int) $section->id,
             $validated['employee_ids'],
@@ -239,7 +239,9 @@ class SectionUnitController extends Controller
             'assignment_type' => $assignmentMode === EmployeeOrganizationAssignmentService::MODE_SHARED
                 ? EmployeeOrganizationAssignmentService::TYPE_SHARED
                 : EmployeeOrganizationAssignmentService::TYPE_PRIMARY,
-            'rows_created' => collect($created)->map(fn ($row) => [
+            'added_count' => $result['added_count'],
+            'skipped_existing_count' => $result['skipped_existing_count'],
+            'rows_created' => collect($result['assignments'])->map(fn ($row) => [
                 'id' => (int) $row->id,
                 'employee_id' => (int) $row->employee_id,
                 'assignment_type' => $row->assignment_type,
@@ -252,7 +254,11 @@ class SectionUnitController extends Controller
         ]);
 
         return response()->json([
-            'message' => 'Employees assigned successfully.',
+            'message' => $this->organizationAssignments->assignResultMessage($result),
+            'added_count' => $result['added_count'],
+            'skipped_existing_count' => $result['skipped_existing_count'],
+            'skipped_existing_names' => $result['skipped_existing_names'],
+            'final_assigned_count' => $result['final_assigned_count'],
             'section_or_unit' => array_merge(
                 $this->sectionResponse($fresh, $counts),
                 ['assigned_employees' => $assignedEmployees],

@@ -88,7 +88,11 @@ class EmployeeController extends Controller
         $lite = $request->boolean('lite', true);
         $perPageParam = $request->query('per_page', '10');
         $q = trim((string) $request->query('q', ''));
-        $companyId = $request->filled('company_id') ? (int) $request->query('company_id') : null;
+        $companyFilter = trim((string) $request->query('company_id', ''));
+        $noCompanyFilter = $companyFilter === 'no_company';
+        $companyId = ($companyFilter !== '' && $companyFilter !== 'all' && ! $noCompanyFilter && ctype_digit($companyFilter))
+            ? (int) $companyFilter
+            : null;
         $branchId = $request->filled('branch_id') ? (int) $request->query('branch_id') : null;
         $departmentId = $request->filled('department_id') ? (int) $request->query('department_id') : null;
         $divisionId = $request->filled('division_id') ? (int) $request->query('division_id') : null;
@@ -124,9 +128,12 @@ class EmployeeController extends Controller
             });
         };
 
-        $applyOrgFilters = function ($query) use ($companyId, $branchId, $departmentId, $divisionId, $sectionUnitId, $assignableToCompanyId, $forOrganizationAssignment) {
+        $applyOrgFilters = function ($query) use ($companyId, $noCompanyFilter, $branchId, $departmentId, $divisionId, $sectionUnitId, $assignableToCompanyId, $forOrganizationAssignment) {
             if ($forOrganizationAssignment) {
                 return $query;
+            }
+            if ($noCompanyFilter) {
+                $query->whereNull('company_id');
             }
             if ($companyId !== null) {
                 $query->where(function ($q) use ($companyId) {
@@ -321,7 +328,7 @@ class EmployeeController extends Controller
             'for_schedule_assignment' => $forScheduleAssignment,
             'for_leadership_assignment' => $forLeadershipAssignment,
             'q_present' => $q !== '',
-            'company_id' => $companyId,
+            'company_id' => $noCompanyFilter ? 'no_company' : $companyId,
             'branch_id' => $branchId,
             'department_id' => $departmentId,
             'division_id' => $divisionId,

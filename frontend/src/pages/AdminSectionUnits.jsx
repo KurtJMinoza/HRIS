@@ -48,9 +48,11 @@ import AssignOrgHeadModal from '@/components/admin/AssignOrgHeadModal'
 import { buildOrgCurrentHead, employeeDisplayName } from '@/lib/employeeSearch'
 import {
   ASSIGNMENT_MODE_TRANSFER_PRIMARY,
+  assignEmployeesToastPayload,
   buildOrgAssignCounts,
   buildOrgAssignRows,
   employeeAssignedToUnit,
+  newAssigneeIdsFromSelection,
   selectedCrossCompanyEmployees,
 } from '@/lib/orgEmployeeAssignment'
 import { patchOrgUnitEmployeeCount, resolveOrgUnitEmployeeCount, assignmentSourceLabel } from '@/lib/orgUnitEmployeeSync'
@@ -791,10 +793,22 @@ export default function AdminSectionUnits() {
   const handleAssignEmployees = async (e) => {
     e.preventDefault()
     if (!assignSection) return
+    const newIds = newAssigneeIdsFromSelection(assignIds, assignList, assignSection, 'section_unit_id')
+    const employeeIdsToSubmit = newIds.length > 0 ? newIds : assignIds
+    if (employeeIdsToSubmit.length === 0) {
+      toast({
+        title: 'No employees selected',
+        description: 'Select at least one employee who is not already assigned to this section/unit.',
+        variant: 'default',
+      })
+      return
+    }
     setAssignSubmitting(true)
     setError(null)
     try {
-      const data = await assignEmployeesToSectionOrUnit(assignSection.id, assignIds, { assignmentMode: assignMode })
+      const data = await assignEmployeesToSectionOrUnit(assignSection.id, employeeIdsToSubmit, {
+        assignmentMode: assignMode,
+      })
       if (data?.section_or_unit?.id != null) {
         setSectionUnits((prev) =>
           prev.map((d) => (sameUserId(d.id, data.section_or_unit.id) ? { ...d, ...data.section_or_unit } : d)),
@@ -805,7 +819,7 @@ export default function AdminSectionUnits() {
       setAssignModalEmployees([])
       await fetchSectionUnits()
       await fetchEmployees()
-      toast({ title: 'Employees assigned', description: assignSection.name, variant: 'success' })
+      toast(assignEmployeesToastPayload(data, assignSection.name))
     } catch (e) {
       setError(e.message)
       toast({ title: 'Failed to assign employees', description: e.message, variant: 'error' })

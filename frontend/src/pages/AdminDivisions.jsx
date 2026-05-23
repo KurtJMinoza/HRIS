@@ -48,9 +48,11 @@ import AssignOrgHeadModal from '@/components/admin/AssignOrgHeadModal'
 import { buildOrgCurrentHead, employeeDisplayName } from '@/lib/employeeSearch'
 import {
   ASSIGNMENT_MODE_TRANSFER_PRIMARY,
+  assignEmployeesToastPayload,
   buildOrgAssignCounts,
   buildOrgAssignRows,
   employeeAssignedToUnit,
+  newAssigneeIdsFromSelection,
   selectedCrossCompanyEmployees,
 } from '@/lib/orgEmployeeAssignment'
 import { patchOrgUnitEmployeeCount, resolveOrgUnitEmployeeCount } from '@/lib/orgUnitEmployeeSync'
@@ -681,10 +683,22 @@ export default function AdminDivisions() {
   const handleAssignEmployees = async (e) => {
     e.preventDefault()
     if (!assignDivision) return
+    const newIds = newAssigneeIdsFromSelection(assignIds, assignList, assignDivision, 'division_id')
+    const employeeIdsToSubmit = newIds.length > 0 ? newIds : assignIds
+    if (employeeIdsToSubmit.length === 0) {
+      toast({
+        title: 'No employees selected',
+        description: 'Select at least one employee who is not already assigned to this division.',
+        variant: 'default',
+      })
+      return
+    }
     setAssignSubmitting(true)
     setError(null)
     try {
-      const data = await assignEmployeesToDivision(assignDivision.id, assignIds, { assignmentMode: assignMode })
+      const data = await assignEmployeesToDivision(assignDivision.id, employeeIdsToSubmit, {
+        assignmentMode: assignMode,
+      })
       if (data?.division?.id != null) {
         setDivisions((prev) =>
           prev.map((d) => (sameUserId(d.id, data.division.id) ? { ...d, ...data.division } : d)),
@@ -695,7 +709,7 @@ export default function AdminDivisions() {
       setAssignModalEmployees([])
       await fetchDivisions()
       await fetchEmployees()
-      toast({ title: 'Employees assigned', description: assignDivision.name, variant: 'success' })
+      toast(assignEmployeesToastPayload(data, assignDivision.name))
     } catch (e) {
       setError(e.message)
       toast({ title: 'Failed to assign employees', description: e.message, variant: 'error' })

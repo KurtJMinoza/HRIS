@@ -34,7 +34,13 @@ class EmployeeOrganizationAssignmentService
 
     /**
      * @param  list<int>  $employeeIds
-     * @return list<EmployeeOrganizationAssignment>
+     * @return array{
+     *   assignments: list<EmployeeOrganizationAssignment>,
+     *   added_count: int,
+     *   skipped_existing_count: int,
+     *   skipped_existing_names: list<string>,
+     *   final_assigned_count: int,
+     * }
      */
     public function assignToLegacyUnit(
         string $legacyType,
@@ -85,28 +91,29 @@ class EmployeeOrganizationAssignmentService
             ]);
         }
 
-        $duplicates = [];
-        foreach ($employeeIds as $employeeId) {
-            $exists = EmployeeOrganizationAssignment::query()
-                ->active()
-                ->where('employee_id', $employeeId)
-                ->where('organization_unit_id', (int) $context['organization_unit_id'])
-                ->exists();
-            if ($exists) {
-                $duplicates[] = $users->get($employeeId)?->display_name ?? (string) $employeeId;
-            }
-        }
-        if ($duplicates !== []) {
-            throw ValidationException::withMessages([
-                'employee_ids' => [
-                    'These employees already have an active assignment to this organization unit: '.implode(', ', $duplicates).'.',
-                ],
-            ]);
-        }
+        $targetAssignmentType = $assignmentMode === self::MODE_SHARED
+            ? self::TYPE_SHARED
+            : self::TYPE_PRIMARY;
+
+        $existingEmployeeIds = EmployeeOrganizationAssignment::query()
+            ->active()
+            ->where('organization_unit_id', (int) $context['organization_unit_id'])
+            ->where('assignment_type', $targetAssignmentType)
+            ->whereIn('employee_id', $employeeIds)
+            ->pluck('employee_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $newEmployeeIds = array_values(array_diff($employeeIds, $existingEmployeeIds));
+        $skippedExistingIds = array_values(array_intersect($employeeIds, $existingEmployeeIds));
+        $skippedExistingNames = array_values(array_filter(array_map(
+            fn (int $employeeId): string => (string) ($users->get($employeeId)?->display_name ?? $employeeId),
+            $skippedExistingIds,
+        )));
 
         $created = [];
-        DB::transaction(function () use ($employeeIds, $users, $context, $assignmentMode, $remarks, &$created, $legacyType): void {
-            foreach ($employeeIds as $employeeId) {
+        DB::transaction(function () use ($newEmployeeIds, $users, $context, $assignmentMode, $remarks, &$created, $legacyType): void {
+            foreach ($newEmployeeIds as $employeeId) {
                 /** @var User $user */
                 $user = $users->get($employeeId);
 
@@ -155,7 +162,55 @@ class EmployeeOrganizationAssignmentService
             }
         });
 
-        return $created;
+        $finalAssignedCount = EmployeeOrganizationAssignment::query()
+            ->active()
+            ->where('organization_unit_id', (int) $context['organization_unit_id'])
+            ->pluck('employee_id')
+            ->unique()
+            ->count();
+
+        return [
+            'assignments' => $created,
+            'added_count' => count($created),
+            'skipped_existing_count' => count($skippedExistingIds),
+            'skipped_existing_names' => $skippedExistingNames,
+            'final_assigned_count' => $finalAssignedCount,
+        ];
+    }
+
+    /**
+     * @param  array{
+     *   added_count: int,
+     *   skipped_existing_count: int,
+     *   skipped_existing_names: list<string>,
+     * }  $result
+     */
+    public function assignResultMessage(array $result): string
+    {
+        $added = (int) ($result['added_count'] ?? 0);
+        $skipped = (int) ($result['skipped_existing_count'] ?? 0);
+        $skippedNames = $result['skipped_existing_names'] ?? [];
+
+        if ($added > 0 && $skipped > 0) {
+            return sprintf(
+                '%d employee(s) added. %d already assigned (%s).',
+                $added,
+                $skipped,
+                implode(', ', $skippedNames),
+            );
+        }
+
+        if ($added > 0) {
+            return $added === 1
+                ? '1 employee assigned successfully.'
+                : sprintf('%d employees assigned successfully.', $added);
+        }
+
+        if ($skipped > 0) {
+            return 'Selected employee(s) are already assigned to this organization unit.';
+        }
+
+        return 'Employees assigned successfully.';
     }
 
     /**

@@ -673,11 +673,13 @@ export default function AssignEmployeesModal({
               </Button>
               <Button
                 type="submit"
-                disabled={submitting || assignIds.length === 0}
+                disabled={submitting || assignNewToDeptCount === 0}
                 className="h-11 min-w-[190px] rounded-xl bg-brand px-6 text-sm font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong"
               >
                 {submitting ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
-                {assignIds.length === 0 ? 'Assign selected' : `Assign selected (${assignIds.length})`}
+                {assignNewToDeptCount === 0
+                  ? 'Assign selected'
+                  : `Assign selected (${assignNewToDeptCount} new)`}
               </Button>
             </div>
           </div>

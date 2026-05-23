@@ -54,7 +54,8 @@ class EmployeeOrganizationAssignmentServiceTest extends TestCase
             EmployeeOrganizationAssignmentService::MODE_SHARED,
         );
 
-        $this->assertCount(1, $created);
+        $this->assertCount(1, $created['assignments']);
+        $this->assertSame(1, $created['added_count']);
         $this->assertSame((int) $companyA->id, (int) $employee->fresh()->company_id);
         $this->assertTrue(
             EmployeeOrganizationAssignment::query()
@@ -160,7 +161,7 @@ class EmployeeOrganizationAssignmentServiceTest extends TestCase
         );
     }
 
-    public function test_duplicate_active_assignment_is_rejected(): void
+    public function test_resubmitting_existing_assignment_skips_without_error(): void
     {
         [$companyA, $companyB, $departmentB] = $this->seedTwoCompanyDepartments();
         $employee = $this->employeeInCompany($companyA);
@@ -173,13 +174,42 @@ class EmployeeOrganizationAssignmentServiceTest extends TestCase
             EmployeeOrganizationAssignmentService::MODE_SHARED,
         );
 
-        $this->expectException(ValidationException::class);
-        $service->assignToLegacyUnit(
+        $result = $service->assignToLegacyUnit(
             'department',
             (int) $departmentB->id,
             [(int) $employee->id],
             EmployeeOrganizationAssignmentService::MODE_SHARED,
         );
+
+        $this->assertSame(0, $result['added_count']);
+        $this->assertSame(1, $result['skipped_existing_count']);
+        $this->assertCount(0, $result['assignments']);
+    }
+
+    public function test_add_second_employee_while_resubmitting_existing(): void
+    {
+        [$companyA, $companyB, $departmentB] = $this->seedTwoCompanyDepartments();
+        $first = $this->employeeInCompany($companyA);
+        $second = $this->employeeInCompany($companyA);
+        $service = app(EmployeeOrganizationAssignmentService::class);
+
+        $service->assignToLegacyUnit(
+            'department',
+            (int) $departmentB->id,
+            [(int) $first->id],
+            EmployeeOrganizationAssignmentService::MODE_SHARED,
+        );
+
+        $result = $service->assignToLegacyUnit(
+            'department',
+            (int) $departmentB->id,
+            [(int) $first->id, (int) $second->id],
+            EmployeeOrganizationAssignmentService::MODE_SHARED,
+        );
+
+        $this->assertSame(1, $result['added_count']);
+        $this->assertSame(1, $result['skipped_existing_count']);
+        $this->assertSame(2, $result['final_assigned_count']);
     }
 
     public function test_request_context_filters_partial_primary_and_defaults_to_complete_shared_section(): void
