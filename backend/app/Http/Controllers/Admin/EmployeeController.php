@@ -147,16 +147,34 @@ class EmployeeController extends Controller
                                 $q->where('is_primary', true)
                                     ->orWhere('assignment_type', EmployeeOrganizationAssignment::TYPE_PRIMARY);
                             })
-                            ->whereNotNull('company_id');
+                            ->where(function ($q): void {
+                                $q->whereNotNull('company_id')
+                                    ->orWhereNotNull('branch_id')
+                                    ->orWhereNotNull('department_id')
+                                    ->orWhereNotNull('division_id')
+                                    ->orWhereNotNull('section_unit_id');
+                            });
                     });
             }
             if ($companyId !== null) {
                 $query->where(function ($q) use ($companyId) {
                     $q->where('company_id', $companyId)
                         ->orWhereHas('branch', fn ($b) => $b->where('company_id', $companyId))
-                        ->orWhereHas('departmentRelation', fn ($d) => $d->whereHas('branch', fn ($b) => $b->where('company_id', $companyId)))
-                        ->orWhereHas('division', fn ($d) => $d->where('company_id', $companyId))
-                        ->orWhereHas('sectionUnit', fn ($s) => $s->where('company_id', $companyId));
+                        ->orWhereHas('departmentRelation', fn ($d) => $d
+                            ->where('company_id', $companyId)
+                            ->orWhereHas('branch', fn ($b) => $b->where('company_id', $companyId)))
+                        ->orWhereHas('division', fn ($d) => $d
+                            ->where('company_id', $companyId)
+                            ->orWhereHas('branch', fn ($b) => $b->where('company_id', $companyId)))
+                        ->orWhereHas('sectionUnit', fn ($s) => $s
+                            ->where('company_id', $companyId)
+                            ->orWhereHas('branch', fn ($b) => $b->where('company_id', $companyId))
+                            ->orWhereHas('department', fn ($d) => $d
+                                ->where('company_id', $companyId)
+                                ->orWhereHas('branch', fn ($b) => $b->where('company_id', $companyId)))
+                            ->orWhereHas('division', fn ($d) => $d
+                                ->where('company_id', $companyId)
+                                ->orWhereHas('branch', fn ($b) => $b->where('company_id', $companyId))));
                 });
                 // Exclude employees who are Company Head of another company — they belong to that company only
                 $query->where(function ($q) use ($companyId) {
@@ -2879,7 +2897,7 @@ class EmployeeController extends Controller
 
         $departmentsById = $departmentIds->isEmpty()
             ? collect()
-            : Department::query()->whereIn('id', $departmentIds)->get(['id', 'name', 'branch_id'])->keyBy('id');
+            : Department::query()->whereIn('id', $departmentIds)->get(['id', 'name', 'company_id', 'branch_id'])->keyBy('id');
 
         $divisionsById = $divisionIds->isEmpty()
             ? collect()
@@ -2905,6 +2923,7 @@ class EmployeeController extends Controller
 
         // Companies: from user.company_id and from every branch row we resolved (so company + branch columns match import).
         $companyIds = $users->pluck('company_id')
+            ->merge($departmentsById->pluck('company_id'))
             ->merge($branchesById->pluck('company_id'))
             ->merge($divisionsById->pluck('company_id'))
             ->merge($sectionsById->pluck('company_id'))
@@ -3029,6 +3048,7 @@ class EmployeeController extends Controller
         $sectionsById = $orgMaps['sections_or_units'] ?? collect();
         $companiesById = $orgMaps['companies'] ?? collect();
 
+        $companyIdResolved = $user->company_id ? (int) $user->company_id : null;
         $department = $user->department;
         $departmentBranchId = null;
         if ($user->department_id) {
@@ -3036,10 +3056,10 @@ class EmployeeController extends Controller
             if ($dept) {
                 $department = $dept->name ?: $department;
                 $departmentBranchId = (int) $dept->branch_id;
+                $companyIdResolved = $companyIdResolved ?: ($dept->company_id ? (int) $dept->company_id : null);
             }
         }
 
-        $companyIdResolved = $user->company_id ? (int) $user->company_id : null;
         $divisionName = null;
         if ($user->division_id) {
             $division = $divisionsById->get((int) $user->division_id);
