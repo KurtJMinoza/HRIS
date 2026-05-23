@@ -191,6 +191,7 @@ class PayComponentController extends Controller
             'type' => [$required, 'string', Rule::in(PayComponent::TYPES)],
             'category' => ['nullable', 'string', 'max:64'],
             'calculation_type' => [$required, 'string', Rule::in(PayComponent::CALCULATION_TYPES)],
+            'calculation_standard' => ['sometimes', 'nullable', 'string', Rule::in(PayComponent::CALCULATION_STANDARDS)],
             'default_value' => ['nullable', 'numeric'],
             'formula' => ['nullable', 'string'],
             'is_taxable' => ['sometimes', 'boolean'],
@@ -248,6 +249,11 @@ class PayComponentController extends Controller
                     'formula' => ['Unsafe formula. Only BASIC, GROSS, DEFAULT_VALUE, HOURS, HOURLY_RATE, DAILY_RATE and arithmetic operators are allowed.'],
                 ]);
             }
+        }
+        if (array_key_exists('calculation_standard', $validated)) {
+            $validated['calculation_standard'] = $this->payComponentService->normalizeCalculationStandard($validated['calculation_standard']);
+        } elseif (! $partial) {
+            $validated['calculation_standard'] = PayComponent::STANDARD_MONTHLY;
         }
         if (array_key_exists('component_type', $validated)) {
             $validated['component_type'] = strtolower((string) $validated['component_type']);
@@ -327,6 +333,9 @@ class PayComponentController extends Controller
             'type' => $component->type,
             'category' => Schema::hasColumn('pay_components', 'category') ? $component->category : null,
             'calculation_type' => $component->calculation_type,
+            'calculation_standard' => Schema::hasColumn('pay_components', 'calculation_standard')
+                ? $this->payComponentService->normalizeCalculationStandard($component->calculation_standard)
+                : PayComponent::STANDARD_MONTHLY,
             'default_value' => (float) $component->default_value,
             'formula' => $component->formula,
             'is_taxable' => (bool) $component->is_taxable,
@@ -406,6 +415,7 @@ class PayComponentController extends Controller
             'type',
             'category',
             'calculation_type',
+            'calculation_standard',
             'default_value',
             'formula',
             'is_taxable',

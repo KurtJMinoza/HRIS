@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\DeductionScheduleSetting;
 use App\Models\EmployeeCompensationComponent;
+use App\Models\PayComponent;
+use App\Models\PayCycle;
 use App\Models\User;
 use App\Support\BulkPayrollDraftContext;
 use App\Support\PayComponentSchedule;
@@ -440,17 +442,20 @@ class DeductionScheduleService
             if ($short === '') {
                 $short = $rawName;
             }
-            $full = (float) ($line['applied_this_period'] ?? $line['scheduled_this_period'] ?? $line['computed_amount'] ?? 0);
+            $amount = (float) ($line['applied_this_period'] ?? $line['scheduled_this_period'] ?? $line['computed_amount'] ?? 0);
+            $basis = (float) ($line['original_amount'] ?? $line['computed_amount'] ?? $amount);
             $sched = $this->normalizeScheduleType((string) ($line['deduction_schedule_type'] ?? DeductionScheduleSetting::SCHEDULE_BOTH))
                 ?? DeductionScheduleSetting::SCHEDULE_BOTH;
+            $standard = $this->normalizeCalculationStandard($line['calculation_standard'] ?? null);
             $out[] = [
                 'label' => $rawName,
-                'amount' => round(max(0.0, $full), 2),
+                'amount' => round(max(0.0, $amount), 2),
                 'deduction_schedule_type' => $sched,
+                'calculation_standard' => $standard,
                 'priority_order' => (int) ($line['priority_order'] ?? 0),
                 'priority_bucket' => $line['priority_bucket'] ?? null,
                 'legal_warning' => $line['legal_warning'] ?? null,
-                'display' => $this->formatPayslipDeductionLineDisplay($short, $full, $sched),
+                'display' => $this->formatPayslipDeductionLineDisplay($short, $basis, $sched, $standard),
             ];
         }
 
@@ -477,6 +482,7 @@ class DeductionScheduleService
             $fullMonthly = (float) ($line['computed_amount'] ?? 0);
             $sched = $this->normalizeScheduleType((string) ($line['earning_schedule_type'] ?? DeductionScheduleSetting::SCHEDULE_BOTH))
                 ?? DeductionScheduleSetting::SCHEDULE_BOTH;
+            $standard = $this->normalizeCalculationStandard($line['calculation_standard'] ?? null);
             // Use the prorated amount for the current pay period (50/50 split, 15th-only, 30th-only).
             // Falls back to full monthly only when scheduled_this_period is absent (legacy data).
             $thisPeriod = array_key_exists('scheduled_this_period', $line)
@@ -488,9 +494,10 @@ class DeductionScheduleService
                 'key' => $key,
                 'label' => $label,
                 'schedule_type' => $sched,
+                'calculation_standard' => $standard,
                 'amount' => round(max(0.0, $thisPeriod), 2),
                 'full_monthly' => round(max(0.0, $fullMonthly), 2),
-                'display' => $this->formatPayslipEarningLineDisplay($label, $fullMonthly, $sched),
+                'display' => $this->formatPayslipEarningLineDisplay($label, $fullMonthly, $sched, $standard),
             ];
             if (is_array($line['allowance_proration'] ?? null)) {
                 $row['allowance_proration'] = $line['allowance_proration'];
@@ -501,11 +508,13 @@ class DeductionScheduleService
         return $out;
     }
 
-    private function formatPayslipEarningLineDisplay(string $label, float $fullMonthly, string $sched): string
+    private function formatPayslipEarningLineDisplay(string $label, float $fullMonthly, string $sched, string $calculationStandard = PayComponent::STANDARD_MONTHLY): string
     {
         $fullMonthly = round(max(0.0, $fullMonthly), 2);
         if ($sched === DeductionScheduleSetting::SCHEDULE_BOTH) {
-            $half = round($fullMonthly / 2, 2);
+            $half = $calculationStandard === PayComponent::STANDARD_PAYROLL
+                ? $fullMonthly
+                : round($fullMonthly / 2, 2);
 
             return sprintf(
                 '%s (15th): ₱%s | %s (30th): ₱%s',
@@ -522,11 +531,13 @@ class DeductionScheduleService
         return sprintf('%s (30th): ₱%s', $label, number_format($fullMonthly, 2));
     }
 
-    private function formatPayslipDeductionLineDisplay(string $short, float $fullMonthly, string $sched): string
+    private function formatPayslipDeductionLineDisplay(string $short, float $fullMonthly, string $sched, string $calculationStandard = PayComponent::STANDARD_MONTHLY): string
     {
         $fullMonthly = round(max(0.0, $fullMonthly), 2);
         if ($sched === DeductionScheduleSetting::SCHEDULE_BOTH) {
-            $half = round($fullMonthly / 2, 2);
+            $half = $calculationStandard === PayComponent::STANDARD_PAYROLL
+                ? $fullMonthly
+                : round($fullMonthly / 2, 2);
 
             return sprintf(
                 '%s 15th: ₱%s | %s 30th: ₱%s',
@@ -584,6 +595,174 @@ class DeductionScheduleService
     }
 
     /**
+     * Central resolver for payroll-run pay component amounts.
+     *
+     * @param  array<string, mixed>  $component
+     * @param  array<string, mixed>  $payrollRun
+     * @return array{original_amount: float, calculation_standard: string, resolved_schedule: string, payroll_run_type: string, applied_amount: float}
+     */
+    public function resolvePayComponentAmount(array $component, array $payrollRun): array
+    {
+        $original = round(max(0.0, (float) ($component['computed_amount'] ?? $component['configured_value'] ?? $component['value'] ?? $component['default_value'] ?? 0)), 2);
+        $standard = $this->normalizeCalculationStandard(
+            $component['calculation_standard']
+                ?? $component['assignment_calculation_standard']
+                ?? $component['pay_component_calculation_standard']
+                ?? null
+        );
+        $schedule = $this->normalizeScheduleType((string) ($component['resolved_schedule'] ?? $component['pay_schedule_type'] ?? $payrollRun['resolved_schedule'] ?? DeductionScheduleSetting::SCHEDULE_BOTH))
+            ?? DeductionScheduleSetting::SCHEDULE_BOTH;
+
+        $segment = $payrollRun['segment'] ?? null;
+        $segment = in_array($segment, ['first', 'second'], true) ? (string) $segment : null;
+        $referenceDate = $payrollRun['reference_date'] instanceof Carbon
+            ? $payrollRun['reference_date']->copy()->timezone($this->timezone())->startOfDay()
+            : Carbon::parse((string) ($payrollRun['reference_date'] ?? now()), $this->timezone())->startOfDay();
+        $selectedPayDate = $payrollRun['selected_pay_date'] instanceof Carbon
+            ? $payrollRun['selected_pay_date']->copy()->timezone($this->timezone())->startOfDay()
+            : Carbon::parse((string) ($payrollRun['selected_pay_date'] ?? $referenceDate->toDateString()), $this->timezone())->startOfDay();
+        $user = ($payrollRun['user'] ?? null) instanceof User ? $payrollRun['user'] : null;
+
+        $payCycleCode = strtolower(trim((string) ($payrollRun['pay_cycle_code'] ?? $this->resolvePayCycleCodeForRun($user, $payrollRun))));
+        $payrollRunType = $this->resolvePayrollRunType($payCycleCode, $segment, $selectedPayDate);
+
+        $monthlyFactor = $this->resolveMonthlyStandardFactor(
+            $user,
+            $schedule,
+            $payCycleCode,
+            $segment,
+            $referenceDate,
+            $selectedPayDate,
+            $payrollRun['period_start'] ?? $payrollRun['pay_period_start'] ?? null,
+            $payrollRun['period_end'] ?? $payrollRun['pay_period_end'] ?? null
+        );
+
+        $applies = $monthlyFactor > 0.0;
+        $factor = $standard === PayComponent::STANDARD_PAYROLL
+            ? ($applies ? 1.0 : 0.0)
+            : $monthlyFactor;
+
+        return [
+            'original_amount' => $original,
+            'calculation_standard' => $standard,
+            'resolved_schedule' => $schedule,
+            'payroll_run_type' => $payrollRunType,
+            'applied_amount' => round($original * $factor, 2),
+        ];
+    }
+
+    private function normalizeCalculationStandard(mixed $value): string
+    {
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, PayComponent::CALCULATION_STANDARDS, true)
+            ? $normalized
+            : PayComponent::STANDARD_MONTHLY;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payrollRun
+     */
+    private function resolvePayCycleCodeForRun(?User $user, array $payrollRun): string
+    {
+        $preview = is_array($payrollRun['pay_cycle_preview'] ?? null) ? $payrollRun['pay_cycle_preview'] : [];
+        $fromPreview = strtolower(trim((string) ($preview['code'] ?? $preview['pay_cycle_code'] ?? '')));
+        if ($fromPreview !== '') {
+            return $fromPreview;
+        }
+        if ($user) {
+            try {
+                $cycle = $this->payCycleService->resolveForUser($user);
+                if ($cycle?->code) {
+                    return (string) $cycle->code;
+                }
+            } catch (\Throwable) {
+                return PayCycle::CODE_SEMI_MONTHLY;
+            }
+        }
+
+        return PayCycle::CODE_SEMI_MONTHLY;
+    }
+
+    private function resolvePayrollRunType(string $payCycleCode, ?string $segment, Carbon $selectedPayDate): string
+    {
+        if ($payCycleCode === PayCycle::CODE_WEEKLY) {
+            return 'weekly';
+        }
+        if ($payCycleCode === PayCycle::CODE_BI_WEEKLY) {
+            return 'bi_weekly';
+        }
+        if ($payCycleCode === PayCycle::CODE_MONTHLY) {
+            return 'monthly';
+        }
+        if ($segment === 'first') {
+            return '15th';
+        }
+        if ($segment === 'second') {
+            return '30th';
+        }
+
+        return $selectedPayDate->day <= 15 ? '15th' : '30th';
+    }
+
+    private function resolveMonthlyStandardFactor(
+        ?User $user,
+        string $schedule,
+        string $payCycleCode,
+        ?string $segment,
+        Carbon $referenceDate,
+        Carbon $selectedPayDate,
+        mixed $periodStartRaw,
+        mixed $periodEndRaw
+    ): float {
+        if (in_array($payCycleCode, [PayCycle::CODE_WEEKLY, PayCycle::CODE_BI_WEEKLY], true)
+            && $schedule === DeductionScheduleSetting::SCHEDULE_BOTH) {
+            return 1.0 / max(1, $this->countPayrollRunsInMonth($user, $payCycleCode, $selectedPayDate));
+        }
+
+        if ($payCycleCode === PayCycle::CODE_MONTHLY && $schedule === DeductionScheduleSetting::SCHEDULE_BOTH) {
+            return 1.0;
+        }
+
+        if ($user) {
+            return $this->resolvePeriodAwareFactor($user, $schedule, $segment, $referenceDate, $selectedPayDate, $periodStartRaw, $periodEndRaw);
+        }
+
+        return $segment
+            ? $this->prorationFactorForMonthlyAmountBySegment($schedule, $segment)
+            : $this->prorationFactorForMonthlyAmount($schedule, $selectedPayDate);
+    }
+
+    private function countPayrollRunsInMonth(?User $user, string $payCycleCode, Carbon $selectedPayDate): int
+    {
+        if ($user) {
+            try {
+                $start = $selectedPayDate->copy()->startOfMonth();
+                $end = $selectedPayDate->copy()->endOfMonth();
+                $window = $this->payCycleService->getPayDatesForPeriod($start, $end, null, $user);
+                $count = collect($window['periods'] ?? [])
+                    ->pluck('pay_date')
+                    ->filter()
+                    ->map(fn ($date) => Carbon::parse((string) $date, $this->timezone())->toDateString())
+                    ->filter(fn (string $date) => Carbon::parse($date, $this->timezone())->betweenIncluded($start, $end))
+                    ->unique()
+                    ->count();
+                if ($count > 0) {
+                    return $count;
+                }
+            } catch (\Throwable) {
+                // Fall through to calendar estimate.
+            }
+        }
+
+        if ($payCycleCode === PayCycle::CODE_BI_WEEKLY) {
+            return (int) ceil($selectedPayDate->daysInMonth / 14);
+        }
+
+        return (int) ceil($selectedPayDate->daysInMonth / 7);
+    }
+
+    /**
      * Applies HR deduction schedules to compensation summary amounts for payroll preview (semi-monthly 15th vs 30th vs split).
      *
      * @param  array<string, mixed>  $compensationSummary  Output of {@see PayrollCalculatorService::buildEmployeeCompensationSummary}
@@ -607,6 +786,15 @@ class DeductionScheduleService
         $segment = $this->inferSemiMonthSegmentFromPayDate($selectedPayDate)
             ?? $this->resolveSemiMonthSegmentForPayrollContext($user, $selectedPayDate, $payCyclePreview);
         $gov = $this->buildGovernmentSchedulePreview($user, $selectedPayDate, $statutory, $withholdingMonthly, $payCyclePreview, $segment);
+        $payrollRun = [
+            'user' => $user,
+            'reference_date' => $ref,
+            'selected_pay_date' => $selectedPayDate,
+            'segment' => $segment,
+            'pay_period_start' => $periodStartRaw,
+            'pay_period_end' => $periodEndRaw,
+            'pay_cycle_preview' => $payCyclePreview,
+        ];
 
         $attendanceProration = $compensationSummary['_attendance_proration'] ?? null;
         $attendanceFactor = $this->normalizeAttendanceProrationFactor($attendanceProration);
@@ -638,9 +826,19 @@ class DeductionScheduleService
             );
             if ($amortizedInstallment !== null) {
                 $thisAmt = $amortizedInstallment;
+                $resolvedAmount = [
+                    'original_amount' => $amt,
+                    'calculation_standard' => $this->normalizeCalculationStandard($d['calculation_standard'] ?? null),
+                    'resolved_schedule' => $sched,
+                    'payroll_run_type' => $segment === 'first' ? '15th' : ($segment === 'second' ? '30th' : 'payroll'),
+                    'applied_amount' => $thisAmt,
+                ];
             } else {
-                $factor = $this->resolvePeriodAwareFactor($user, $sched, $segment, $ref, $selectedPayDate, $periodStartRaw, $periodEndRaw);
-                $thisAmt = round($amt * $factor, 2);
+                $resolvedAmount = $this->resolvePayComponentAmount(array_merge($d, [
+                    'computed_amount' => $amt,
+                    'resolved_schedule' => $sched,
+                ]), $payrollRun);
+                $thisAmt = (float) ($resolvedAmount['applied_amount'] ?? 0.0);
                 if (! empty($d['is_proratable'])) {
                     $thisAmt = round($thisAmt * $attendanceFactor, 2);
                 }
@@ -649,6 +847,10 @@ class DeductionScheduleService
             $customLines[] = array_merge($d, [
                 'deduction_schedule_type' => $sched,
                 'scheduled_this_period' => $thisAmt,
+                'original_amount' => round($amt, 2),
+                'calculation_standard' => $resolvedAmount['calculation_standard'] ?? $this->normalizeCalculationStandard($d['calculation_standard'] ?? null),
+                'payroll_run_type' => $resolvedAmount['payroll_run_type'] ?? null,
+                'pay_component_resolution' => $resolvedAmount,
                 'attendance_proration_factor' => (! empty($d['is_proratable']) && $amortizedInstallment === null)
                     ? $attendanceFactor
                     : 1.0,
@@ -667,8 +869,12 @@ class DeductionScheduleService
             } else {
                 $sched = DeductionScheduleSetting::SCHEDULE_BOTH;
             }
-            $factor = $this->resolvePeriodAwareFactor($user, $sched, $segment, $ref, $selectedPayDate, $periodStartRaw, $periodEndRaw);
-            $thisAmt = round($amt * $factor, 2);
+            $resolvedAmount = $this->resolvePayComponentAmount(array_merge($e, [
+                'computed_amount' => $amt,
+                'resolved_schedule' => $sched,
+            ]), $payrollRun);
+            $thisAmt = (float) ($resolvedAmount['applied_amount'] ?? 0.0);
+            $factor = $amt > 0.0 ? round($thisAmt / $amt, 6) : 0.0;
             $lineAttendanceFactor = (! $isBasic && ! empty($e['is_proratable'])) ? $attendanceFactor : 1.0;
             $allowanceProration = null;
             $allowanceMode = $this->resolveAllowanceProrationType($e, $isBasic);
@@ -707,6 +913,10 @@ class DeductionScheduleService
             $earningLines[] = array_merge($e, [
                 'earning_schedule_type' => $sched,
                 'scheduled_this_period' => $thisAmt,
+                'original_amount' => round($amt, 2),
+                'calculation_standard' => $resolvedAmount['calculation_standard'] ?? $this->normalizeCalculationStandard($e['calculation_standard'] ?? null),
+                'payroll_run_type' => $resolvedAmount['payroll_run_type'] ?? null,
+                'pay_component_resolution' => $resolvedAmount,
                 'is_basic_salary_line' => $isBasic,
                 'attendance_proration_factor' => $lineAttendanceFactor,
                 'allowance_proration' => $allowanceProration,

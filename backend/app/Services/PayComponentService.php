@@ -21,6 +21,7 @@ class PayComponentService
                 'type' => PayComponent::TYPE_EARNING,
                 'category' => 'Basic Salary',
                 'calculation_type' => PayComponent::CALC_FIXED,
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'default_value' => 0,
                 'is_taxable' => true,
                 'contributes_sss' => false,
@@ -34,6 +35,7 @@ class PayComponentService
                 'type' => PayComponent::TYPE_EARNING,
                 'category' => 'Bonus',
                 'calculation_type' => PayComponent::CALC_PERCENT_BASIC,
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'default_value' => 8.3333,
                 'is_taxable' => false,
                 'contributes_sss' => false,
@@ -47,6 +49,7 @@ class PayComponentService
                 'type' => PayComponent::TYPE_DEDUCTION,
                 'category' => 'Government Deduction',
                 'calculation_type' => PayComponent::CALC_FORMULA,
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'formula' => 'DEFAULT_VALUE',
                 'default_value' => 0,
                 'is_taxable' => false,
@@ -61,6 +64,7 @@ class PayComponentService
                 'type' => PayComponent::TYPE_DEDUCTION,
                 'category' => 'Government Deduction',
                 'calculation_type' => PayComponent::CALC_FORMULA,
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'formula' => 'DEFAULT_VALUE',
                 'default_value' => 0,
                 'is_taxable' => false,
@@ -75,6 +79,7 @@ class PayComponentService
                 'type' => PayComponent::TYPE_DEDUCTION,
                 'category' => 'Government Deduction',
                 'calculation_type' => PayComponent::CALC_FORMULA,
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'formula' => 'DEFAULT_VALUE',
                 'default_value' => 0,
                 'is_taxable' => false,
@@ -89,6 +94,7 @@ class PayComponentService
                 'type' => PayComponent::TYPE_DEDUCTION,
                 'category' => 'Government Deduction',
                 'calculation_type' => PayComponent::CALC_FORMULA,
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'formula' => 'DEFAULT_VALUE',
                 'default_value' => 0,
                 'is_taxable' => false,
@@ -119,6 +125,15 @@ class PayComponentService
         $value = str_replace($tokens, '1', $value);
 
         return (bool) preg_match('/^[0-9\.\+\-\*\/\(\)\s]+$/', $value);
+    }
+
+    public function normalizeCalculationStandard(mixed $value): string
+    {
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, PayComponent::CALCULATION_STANDARDS, true)
+            ? $normalized
+            : PayComponent::STANDARD_MONTHLY;
     }
 
     /**

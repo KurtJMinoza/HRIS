@@ -57,6 +57,7 @@ const EMPTY_FORM = {
   type: 'earning',
   category: 'Fixed Allowance',
   calculation_type: 'fixed_amount',
+  calculation_standard: 'monthly_standard',
   default_value: '0',
   default_hourly_rate: '',
   default_hours: '',
@@ -185,6 +186,11 @@ const FILTERS = [
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50]
 
+const CALCULATION_STANDARD_OPTIONS = [
+  { value: 'monthly_standard', label: 'Monthly Standard' },
+  { value: 'payroll_standard', label: 'Payroll Standard' },
+]
+
 export default function AdminPayComponentsPage() {
   const hrBase = useHrBasePath()
   const { toast } = useToast()
@@ -239,7 +245,7 @@ export default function AdminPayComponentsPage() {
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase() 
     return components.filter((item) => {
-      const matchesText = !needle || `${item.name} ${item.code} ${item.category} ${item.calculation_type}`.toLowerCase().includes(needle)
+      const matchesText = !needle || `${item.name} ${item.code} ${item.category} ${item.calculation_type} ${item.calculation_standard}`.toLowerCase().includes(needle)
       const matchesFilter = (() => {
         if (activeFilter === 'all') return true
         if (activeFilter === 'system' || activeFilter === 'user') return (item.component_type || 'user') === activeFilter
@@ -310,6 +316,7 @@ export default function AdminPayComponentsPage() {
       type: item.type || 'earning',
       category: item.category || 'Fixed Allowance',
       calculation_type: calc,
+      calculation_standard: item.calculation_standard || 'monthly_standard',
       default_value: String(item.default_value ?? 0),
       default_hourly_rate: meta.default_hourly_rate != null && meta.default_hourly_rate !== ''
         ? String(meta.default_hourly_rate)
@@ -562,6 +569,7 @@ export default function AdminPayComponentsPage() {
         type: item.type || 'earning',
         category: item.category || 'Fixed Allowance',
         calculation_type: item.calculation_type || 'fixed_amount',
+        calculation_standard: item.calculation_standard || 'monthly_standard',
         default_value: Number(item.default_value || 0),
         formula: item.formula || null,
         is_taxable: Boolean(item.is_taxable),
@@ -598,6 +606,7 @@ export default function AdminPayComponentsPage() {
         type: item.type || 'earning',
         category: item.category || 'Fixed Allowance',
         calculation_type: item.calculation_type || 'fixed_amount',
+        calculation_standard: item.calculation_standard || 'monthly_standard',
         default_value: Number(item.default_value || 0),
         formula: item.formula || null,
         is_taxable: Boolean(item.is_taxable),
@@ -738,13 +747,14 @@ export default function AdminPayComponentsPage() {
 
             <div className="mt-6 overflow-x-auto rounded-xl border border-border/60 bg-card">
               <TooltipProvider>
-                <Table className="min-w-[1120px]">
+                <Table className="min-w-[1240px]">
                   <TableHeader className="[&_tr]:border-b-0">
                     <TableRow className="bg-muted/35 hover:bg-muted/35">
                       <TableHead className="min-w-[300px] px-5 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Component</TableHead>
                       <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Code</TableHead>
                       <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Type</TableHead>
                       <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Calculation</TableHead>
+                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Standard</TableHead>
                       <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Taxability</TableHead>
                       <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Contributory</TableHead>
                       <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Status</TableHead>
@@ -755,7 +765,7 @@ export default function AdminPayComponentsPage() {
                     {loading ? (
                       Array.from({ length: 6 }).map((_, index) => (
                         <TableRow key={`skeleton-${index}`} className="border-b border-border/60">
-                          {Array.from({ length: 8 }).map((__, cellIndex) => (
+                          {Array.from({ length: 9 }).map((__, cellIndex) => (
                             <TableCell key={cellIndex} className="px-4 py-5">
                               <div className="h-4 animate-pulse rounded bg-muted" />
                             </TableCell>
@@ -764,7 +774,7 @@ export default function AdminPayComponentsPage() {
                       ))
                     ) : filtered.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="px-5 py-16 text-center text-sm text-muted-foreground">
+                        <TableCell colSpan={9} className="px-5 py-16 text-center text-sm text-muted-foreground">
                           No pay components matched your filters.
                         </TableCell>
                       </TableRow>
@@ -831,6 +841,7 @@ export default function AdminPayComponentsPage() {
                               <span>{formatCalculationType(item.calculation_type)}</span>
                             </div>
                           </TableCell>
+                          <TableCell className="px-4 py-5 text-sm text-foreground">{formatCalculationStandard(item.calculation_standard)}</TableCell>
                           <TableCell className="px-4 py-5 text-sm text-foreground">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
                           <TableCell className="px-4 py-5 text-sm text-foreground">{describeContributions(item)}</TableCell>
                           <TableCell className="px-4 py-5">
@@ -1057,6 +1068,20 @@ export default function AdminPayComponentsPage() {
                 </select>
               </Field>
             </div>
+
+            <Field label="Calculation Standard" hint="Monthly Standard distributes the configured amount across scheduled runs. Payroll Standard applies the full amount every scheduled payroll run.">
+              <select
+                value={form.calculation_standard}
+                onChange={(e) => updateForm({ calculation_standard: e.target.value })}
+                className={inputClass}
+              >
+                {CALCULATION_STANDARD_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
 
             {/* Calculation-specific inputs */}
             {form.calculation_type === 'formula' ? (
@@ -1466,6 +1491,14 @@ function formatCalculationType(value) {
     hourly: 'Hourly',
   }
   return map[value] || value
+}
+
+function formatCalculationStandard(value) {
+  const map = {
+    monthly_standard: 'Monthly Standard',
+    payroll_standard: 'Payroll Standard',
+  }
+  return map[value] || 'Monthly Standard'
 }
 
 function describeCalculationHint(calc) {

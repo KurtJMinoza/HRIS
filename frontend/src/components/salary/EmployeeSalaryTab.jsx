@@ -742,6 +742,12 @@ function formatCompCalculationType(value) {
   return map[value] || (value ? String(value).replace(/_/g, ' ') : '—')
 }
 
+function formatCompCalculationStandard(value) {
+  const s = String(value || 'monthly_standard').toLowerCase()
+  if (s === 'payroll_standard') return 'Payroll Standard'
+  return 'Monthly Standard'
+}
+
 function componentTypeLabel(type) {
   const t = String(type || '').toLowerCase()
   if (t === 'earning') return 'Earning'
@@ -765,6 +771,7 @@ function payComponentsTableHeader() {
       <TableHead className={th}>Name</TableHead>
       <TableHead className={th}>Category</TableHead>
       <TableHead className={th}>Calculation</TableHead>
+      <TableHead className={th}>Standard</TableHead>
       <TableHead className={th}>Type</TableHead>
       <TableHead className={cn('text-right', th)}>Amount</TableHead>
       <TableHead className={th}>Schedule</TableHead>
@@ -814,6 +821,7 @@ export function SalaryPayComponentsBreakdownCard({
           <TableCell className={cn('font-medium', TEXT)}>{item.name || item.code || '—'}</TableCell>
           <TableCell className="text-slate-600 dark:text-slate-400">{item.category || '—'}</TableCell>
           <TableCell className="text-slate-600 dark:text-slate-400">{formatCompCalculationType(item.calculation_type)}</TableCell>
+          <TableCell className="text-slate-600 dark:text-slate-400">{formatCompCalculationStandard(item.calculation_standard)}</TableCell>
           <TableCell className="text-slate-600 dark:text-slate-400">{componentTypeLabel(item.type)}</TableCell>
           <TableCell className={cn('text-right tabular-nums font-semibold', amountClass)}>{formatSalaryTabPhp(item.computed_amount)}</TableCell>
           <TableCell className="text-slate-700 dark:text-slate-300">{schedLabel}</TableCell>

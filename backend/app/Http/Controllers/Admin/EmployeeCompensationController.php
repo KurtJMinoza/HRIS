@@ -141,6 +141,7 @@ class EmployeeCompensationController extends Controller
             'components.*.type' => ['nullable', 'string', Rule::in(PayComponent::TYPES)],
             'components.*.category' => ['nullable', 'string', 'max:64'],
             'components.*.calculation_type' => ['nullable', 'string', Rule::in(PayComponent::CALCULATION_TYPES)],
+            'components.*.calculation_standard' => ['nullable', 'string', Rule::in(PayComponent::CALCULATION_STANDARDS)],
             'components.*.value' => ['nullable', 'numeric'],
             'components.*.default_value' => ['nullable', 'numeric'],
             'components.*.hourly_rate' => ['nullable', 'numeric', 'min:0'],
@@ -220,6 +221,7 @@ class EmployeeCompensationController extends Controller
             'type' => ['sometimes', 'string', Rule::in(PayComponent::TYPES)],
             'category' => ['nullable', 'string', 'max:64'],
             'calculation_type' => ['sometimes', 'string', Rule::in(PayComponent::CALCULATION_TYPES)],
+            'calculation_standard' => ['nullable', 'string', Rule::in(PayComponent::CALCULATION_STANDARDS)],
             'value' => ['nullable', 'numeric'],
             'hourly_rate' => ['nullable', 'numeric', 'min:0'],
             'hours' => ['nullable', 'numeric', 'min:0'],
@@ -246,6 +248,12 @@ class EmployeeCompensationController extends Controller
                     ? (string) $validated['schedule_override']
                     : null
             );
+        }
+        if (\array_key_exists('calculation_standard', $validated)) {
+            $validated['calculation_standard'] = $this->normalizeCalculationStandard($validated['calculation_standard']);
+            if (! Schema::hasColumn('employee_compensation_components', 'calculation_standard')) {
+                unset($validated['calculation_standard']);
+            }
         }
 
         $metadata = is_array($assignment->metadata) ? $assignment->metadata : [];
@@ -350,6 +358,11 @@ class EmployeeCompensationController extends Controller
 
         $masterMeta = is_array($master?->metadata ?? null) ? $master->metadata : [];
         $calc = strtolower((string) ($componentPayload['calculation_type'] ?? $master?->calculation_type ?? PayComponent::CALC_FIXED));
+        $calculationStandard = \array_key_exists('calculation_standard', $componentPayload)
+            ? $this->normalizeCalculationStandard($componentPayload['calculation_standard'])
+            : ($existingAssignment?->calculation_standard
+                ? $this->normalizeCalculationStandard($existingAssignment->calculation_standard)
+                : $this->normalizeCalculationStandard($master?->calculation_standard));
 
         $resolvedValue = isset($componentPayload['value'])
             ? (float) $componentPayload['value']
@@ -384,6 +397,7 @@ class EmployeeCompensationController extends Controller
             'type' => strtolower((string) ($componentPayload['type'] ?? $master?->type ?? PayComponent::TYPE_EARNING)),
             'category' => $componentPayload['category'] ?? $master?->category,
             'calculation_type' => $calc,
+            'calculation_standard' => $calculationStandard,
             'value' => $resolvedValue,
             'hourly_rate' => $resolvedHourlyRate,
             'hours' => $resolvedHours,
@@ -411,6 +425,9 @@ class EmployeeCompensationController extends Controller
             );
         } else {
             $payload['schedule_override'] = null;
+        }
+        if (! Schema::hasColumn('employee_compensation_components', 'calculation_standard')) {
+            unset($payload['calculation_standard']);
         }
 
         if ($existingAssignment) {
@@ -512,6 +529,9 @@ class EmployeeCompensationController extends Controller
             'type' => $assignment->type,
             'category' => $assignment->category,
             'calculation_type' => $assignment->calculation_type,
+            'calculation_standard' => $this->normalizeCalculationStandard(
+                $assignment->calculation_standard ?? $assignment->payComponent?->calculation_standard ?? null
+            ),
             'value' => (float) $assignment->value,
             'hourly_rate' => $assignment->hourly_rate !== null ? (float) $assignment->hourly_rate : null,
             'hours' => $assignment->hours !== null ? (float) $assignment->hours : null,
@@ -546,6 +566,15 @@ class EmployeeCompensationController extends Controller
         return response()->json([
             'message' => 'Employee compensation is not available yet because the database migration for employee_compensation_components has not been run.',
         ], 409);
+    }
+
+    private function normalizeCalculationStandard(mixed $value): string
+    {
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, PayComponent::CALCULATION_STANDARDS, true)
+            ? $normalized
+            : PayComponent::STANDARD_MONTHLY;
     }
 
     private function refreshCompensationCaches(int $userId, string $reason): void

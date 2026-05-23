@@ -1594,6 +1594,12 @@ class PayrollCalculatorService
                 'type' => $row->type,
                 'category' => $row->category,
                 'calculation_type' => $row->calculation_type,
+                'calculation_standard' => $this->normalizeCalculationStandard(
+                    $row->calculation_standard ?? $row->payComponent?->calculation_standard ?? null
+                ),
+                'pay_component_calculation_standard' => $this->normalizeCalculationStandard(
+                    $row->payComponent?->calculation_standard ?? null
+                ),
                 'computed_amount' => $amount,
                 'configured_value' => round((float) ($row->value ?? 0), 2),
                 'hourly_rate' => $row->hourly_rate !== null ? round((float) $row->hourly_rate, 2) : null,
@@ -1653,6 +1659,8 @@ class PayrollCalculatorService
                 'type' => PayComponent::TYPE_EARNING,
                 'category' => 'Basic Salary',
                 'calculation_type' => PayComponent::CALC_FIXED,
+                'calculation_standard' => PayComponent::STANDARD_MONTHLY,
+                'pay_component_calculation_standard' => PayComponent::STANDARD_MONTHLY,
                 'computed_amount' => round($basicSalary, 2),
                 'configured_value' => round($basicSalary, 2),
                 'hourly_rate' => null,
@@ -1805,7 +1813,7 @@ class PayrollCalculatorService
         ];
 
         try {
-            EmployeeCompensationComponent::query()->create([
+            $payload = [
                 'user_id' => (int) $user->id,
                 'pay_component_id' => $master?->id,
                 'structure_name' => null,
@@ -1814,6 +1822,7 @@ class PayrollCalculatorService
                 'type' => PayComponent::TYPE_EARNING,
                 'category' => $master?->category ?: 'Basic Salary',
                 'calculation_type' => PayComponent::CALC_FIXED,
+                'calculation_standard' => $this->normalizeCalculationStandard($master?->calculation_standard ?? null),
                 'value' => round($resolvedBasic, 2),
                 'hourly_rate' => null,
                 'hours' => null,
@@ -1828,7 +1837,11 @@ class PayrollCalculatorService
                 'effective_to' => null,
                 'is_active' => true,
                 'metadata' => $metadata,
-            ]);
+            ];
+            if (! $this->hasColumnCached('employee_compensation_components', 'calculation_standard')) {
+                unset($payload['calculation_standard']);
+            }
+            EmployeeCompensationComponent::query()->create($payload);
         } catch (\Throwable $e) {
             Log::warning('Payroll baseline BASIC_SALARY backfill skipped', [
                 'employee_id' => $user->id,
@@ -2012,6 +2025,15 @@ class PayrollCalculatorService
 
         return in_array($source, ['legacy_salary_fields', 'salary_profile'], true)
             || in_array($assignmentSource, ['auto_backfill_basic_salary'], true);
+    }
+
+    private function normalizeCalculationStandard(mixed $value): string
+    {
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, PayComponent::CALCULATION_STANDARDS, true)
+            ? $normalized
+            : PayComponent::STANDARD_MONTHLY;
     }
 
     private function computeCompensationAmount(

@@ -110,6 +110,43 @@ class PayComponentScheduleResolutionTest extends TestCase
         ];
     }
 
+    #[DataProvider('calculationStandardCases')]
+    public function test_resolve_pay_component_amount_honors_calculation_standard(
+        string $standard,
+        float $amount,
+        string $segment,
+        float $expected
+    ): void {
+        $svc = app(DeductionScheduleService::class);
+        $resolved = $svc->resolvePayComponentAmount([
+            'computed_amount' => $amount,
+            'calculation_standard' => $standard,
+            'resolved_schedule' => DeductionScheduleSetting::SCHEDULE_BOTH,
+        ], [
+            'reference_date' => $segment === 'first' ? '2026-05-15' : '2026-05-30',
+            'selected_pay_date' => $segment === 'first' ? '2026-05-15' : '2026-05-30',
+            'segment' => $segment,
+            'pay_cycle_code' => 'semi_monthly',
+        ]);
+
+        $this->assertSame($standard, $resolved['calculation_standard']);
+        $this->assertSame($expected, $resolved['applied_amount']);
+    }
+
+    public static function calculationStandardCases(): array
+    {
+        return [
+            'test_1_monthly_1000_15th' => [PayComponent::STANDARD_MONTHLY, 1000.0, 'first', 500.0],
+            'test_1_monthly_1000_30th' => [PayComponent::STANDARD_MONTHLY, 1000.0, 'second', 500.0],
+            'test_2_payroll_1000_15th' => [PayComponent::STANDARD_PAYROLL, 1000.0, 'first', 1000.0],
+            'test_2_payroll_1000_30th' => [PayComponent::STANDARD_PAYROLL, 1000.0, 'second', 1000.0],
+            'test_3_monthly_500_15th' => [PayComponent::STANDARD_MONTHLY, 500.0, 'first', 250.0],
+            'test_3_monthly_500_30th' => [PayComponent::STANDARD_MONTHLY, 500.0, 'second', 250.0],
+            'test_4_payroll_500_15th' => [PayComponent::STANDARD_PAYROLL, 500.0, 'first', 500.0],
+            'test_4_payroll_500_30th' => [PayComponent::STANDARD_PAYROLL, 500.0, 'second', 500.0],
+        ];
+    }
+
     /** When two active rows share one pay component, resolution must be keyed by assignment id. */
     public function test_assignment_id_disambiguates_duplicate_pay_component_rows(): void
     {

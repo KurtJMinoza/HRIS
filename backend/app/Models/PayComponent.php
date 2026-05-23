@@ -31,6 +31,10 @@ class PayComponent extends Model
 
     public const CALC_HOURLY = 'hourly';
 
+    public const STANDARD_PAYROLL = 'payroll_standard';
+
+    public const STANDARD_MONTHLY = 'monthly_standard';
+
     public const TYPES = [
         self::TYPE_EARNING,
         self::TYPE_DEDUCTION,
@@ -50,12 +54,18 @@ class PayComponent extends Model
         self::COMPONENT_USER,
     ];
 
+    public const CALCULATION_STANDARDS = [
+        self::STANDARD_PAYROLL,
+        self::STANDARD_MONTHLY,
+    ];
+
     protected $fillable = [
         'name',
         'code',
         'type',
         'category',
         'calculation_type',
+        'calculation_standard',
         'default_value',
         'formula',
         'is_taxable',
@@ -79,6 +89,7 @@ class PayComponent extends Model
     {
         return [
             'default_value' => 'decimal:2',
+            'calculation_standard' => 'string',
             'is_taxable' => 'boolean',
             'contributes_sss' => 'boolean',
             'contributes_philhealth' => 'boolean',

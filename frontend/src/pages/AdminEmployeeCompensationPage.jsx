@@ -59,6 +59,7 @@ const EMPTY_FORM = {
   type: 'earning',
   category: 'Fixed Allowance',
   calculation_type: 'fixed_amount',
+  calculation_standard: 'monthly_standard',
   value: '0',
   hourly_rate: '',
   hours: '',
@@ -80,6 +81,16 @@ const PAY_COMPONENT_SCHEDULE_OPTIONS = [
   { value: 'split', label: 'Split 15/30' },
   { value: 'second_run', label: 'End of month' },
 ]
+
+const CALCULATION_STANDARD_OPTIONS = [
+  { value: 'monthly_standard', label: 'Monthly Standard' },
+  { value: 'payroll_standard', label: 'Payroll Standard' },
+]
+
+function normalizedCalculationStandard(value) {
+  const s = value == null || value === '' ? 'monthly_standard' : String(value).trim()
+  return s === 'payroll_standard' ? 'payroll_standard' : 'monthly_standard'
+}
 
 function normalizedScheduleSelectValue(scheduleOverride) {
   const v = scheduleOverride
@@ -142,7 +153,10 @@ function mergeSchedulePatchIntoDetailEntry(prevEntry, employeeId, assignment) {
 
   const patchLines = (lines) => {
     if (!Array.isArray(lines)) return lines
-    return lines.map((line) => (Number(line?.id) === aid ? patchCompensationRowSchedule(line, assignment) : line))
+    return lines.map((line) => (Number(line?.id) === aid ? {
+      ...patchCompensationRowSchedule(line, assignment),
+      calculation_standard: normalizedCalculationStandard(assignment?.calculation_standard ?? line?.calculation_standard),
+    } : line))
   }
 
   return {
@@ -181,6 +195,7 @@ export default function AdminEmployeeCompensationPage() {
   const [editValue, setEditValue] = useState('')
   const [updatingValue, setUpdatingValue] = useState(false)
   const [updatingScheduleId, setUpdatingScheduleId] = useState(null)
+  const [updatingStandardId, setUpdatingStandardId] = useState(null)
   const [urlEmployeeIdOnMount] = useState(() => {
     try {
       return Number(new URLSearchParams(window.location.search).get('employee_id') || 0)
@@ -448,6 +463,7 @@ export default function AdminEmployeeCompensationPage() {
     setEditingId(null)
     setEditValue('')
     setUpdatingScheduleId(null)
+    setUpdatingStandardId(null)
   }, [activeEmployeeId])
 
   const activeEmployee = useMemo(() => {
@@ -538,6 +554,7 @@ export default function AdminEmployeeCompensationPage() {
       type: master.type,
       category: master.category || 'Fixed Allowance',
       calculation_type: calc,
+      calculation_standard: normalizedCalculationStandard(master.calculation_standard),
       value: initValue,
       hourly_rate: initHourlyRate,
       hours: initHours,
@@ -582,6 +599,7 @@ export default function AdminEmployeeCompensationPage() {
         show_on_payslip: true,
         is_custom: false,
         schedule_override: draftForm.schedule_override,
+        calculation_standard: normalizedCalculationStandard(draftForm.calculation_standard),
       },
     ])
     setDialogOpen(false)
@@ -632,6 +650,7 @@ export default function AdminEmployeeCompensationPage() {
             hourly_rate: item.hourly_rate != null ? Number(item.hourly_rate) : null,
             hours: item.hours != null ? Number(item.hours) : null,
             formula: item.formula || null,
+            calculation_standard: normalizedCalculationStandard(item.calculation_standard),
             is_taxable: item.is_taxable,
             contributes_sss: item.contributes_sss,
             contributes_philhealth: item.contributes_philhealth,
@@ -746,9 +765,46 @@ export default function AdminEmployeeCompensationPage() {
     }
   }, [activeEmployee, debugSchedule, refreshCompensation, toast])
 
+  const saveCalculationStandard = useCallback(async (item, selectValue) => {
+    if (!activeEmployee?.id || !item?.id) return
+    const incoming = normalizedCalculationStandard(selectValue)
+    const current = normalizedCalculationStandard(item.calculation_standard)
+    if (incoming === current) return
+
+    setUpdatingStandardId(item.id)
+    try {
+      const patchRes = await updateEmployeeCompensation(activeEmployee.id, item.id, {
+        calculation_standard: incoming,
+      })
+      const assignment = patchRes?.assignment
+      toast({
+        title: 'Calculation standard updated',
+        description: `${item.name}: ${formatCalculationStandard(incoming)}.`,
+      })
+      await refreshCompensation(activeEmployee.id)
+      if (assignment && typeof assignment === 'object') {
+        setDetailEntry((prev) => {
+          const next = mergeSchedulePatchIntoDetailEntry(prev, activeEmployee.id, assignment)
+          const nid = next?.employee?.id
+          if (nid) compensationCacheRef.current.set(Number(nid), next)
+          return next
+        })
+      }
+      window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
+    } catch (error) {
+      toast({
+        title: 'Standard update failed',
+        description: error.message || 'Failed to update calculation standard',
+        variant: 'destructive',
+      })
+    } finally {
+      setUpdatingStandardId(null)
+    }
+  }, [activeEmployee, refreshCompensation, toast])
+
   async function saveEditedValue(item) {
     if (!activeEmployee || !item?.id) return
-    if (updatingScheduleId === item.id) return
+    if (updatingScheduleId === item.id || updatingStandardId === item.id) return
     const newValue = Number(editValue || 0)
     setUpdatingValue(true)
     try {
@@ -1031,6 +1087,8 @@ export default function AdminEmployeeCompensationPage() {
                         updatingValue={updatingValue}
                         updatingScheduleId={updatingScheduleId}
                         onScheduleChange={saveScheduleOverride}
+                        updatingStandardId={updatingStandardId}
+                        onCalculationStandardChange={saveCalculationStandard}
                       />
                     )}
                   </TabsContent>
@@ -1053,6 +1111,8 @@ export default function AdminEmployeeCompensationPage() {
                         updatingValue={updatingValue}
                         updatingScheduleId={updatingScheduleId}
                         onScheduleChange={saveScheduleOverride}
+                        updatingStandardId={updatingStandardId}
+                        onCalculationStandardChange={saveCalculationStandard}
                       />
                     )}
                   </TabsContent>
@@ -1213,6 +1273,28 @@ export default function AdminEmployeeCompensationPage() {
               ) : null}
 
               {draftForm.type === 'earning' || draftForm.type === 'deduction' ? (
+                <Field label="Calculation Standard" required>
+                  <div className="relative">
+                    <select
+                      value={normalizedCalculationStandard(draftForm.calculation_standard)}
+                      onChange={(e) => setDraftForm((prev) => ({ ...prev, calculation_standard: e.target.value }))}
+                      className={componentModalSelectClass}
+                    >
+                      {CALCULATION_STANDARD_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-5 top-1/2 size-5 -translate-y-1/2 text-foreground" aria-hidden />
+                  </div>
+                  <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                    Monthly Standard splits the amount by schedule. Payroll Standard applies the full amount on each scheduled run.
+                  </p>
+                </Field>
+              ) : null}
+
+              {draftForm.type === 'earning' || draftForm.type === 'deduction' ? (
                 <Field label="Pay Component Schedule" required>
                   <div className="relative">
                     <select
@@ -1360,10 +1442,12 @@ function CompTable({
   updatingValue,
   updatingScheduleId = null,
   onScheduleChange,
+  updatingStandardId = null,
+  onCalculationStandardChange,
 }) {
   return (
     <div className="overflow-x-auto">
-      <Table className="min-w-[820px]">
+      <Table className="min-w-[960px]">
         <TableHeader className="[&_tr]:border-b-0">
           <TableRow>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Component</TableHead>
@@ -1371,6 +1455,9 @@ function CompTable({
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Calculation</TableHead>
             <TableHead className="min-w-48 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Schedule
+            </TableHead>
+            <TableHead className="min-w-44 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Standard
             </TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Taxability</TableHead>
             <TableHead className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contributory</TableHead>
@@ -1381,7 +1468,7 @@ function CompTable({
         <TableBody>
           {items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="px-3 py-10 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={9} className="px-3 py-10 text-center text-sm text-muted-foreground">
                 {emptyLabel}
               </TableCell>
             </TableRow>
@@ -1424,6 +1511,28 @@ function CompTable({
                       <span className="mt-1 block text-[11px] text-muted-foreground">Saving…</span>
                     ) : null}
                   </TableCell>
+                  <TableCell className="px-3 py-3.5">
+                    {item?.id ? (
+                      <select
+                        aria-label={`Calculation standard for ${item.name ?? 'component'}`}
+                        className="max-w-[min(230px,calc(100vw-220px))] rounded-lg border border-border/70 bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-brand/60 focus:ring-2 focus:ring-brand/15 disabled:opacity-60"
+                        value={normalizedCalculationStandard(item.calculation_standard)}
+                        disabled={updatingStandardId === item.id || updatingScheduleId === item.id || (updatingValue && editingId === item.id)}
+                        onChange={(e) => onCalculationStandardChange?.(item, e.target.value)}
+                      >
+                        {CALCULATION_STANDARD_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/70">{formatCalculationStandard(item.calculation_standard)}</span>
+                    )}
+                    {item?.id && updatingStandardId === item.id ? (
+                      <span className="mt-1 block text-[11px] text-muted-foreground">Saving...</span>
+                    ) : null}
+                  </TableCell>
                   <TableCell className="px-3 py-3.5">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
                   <TableCell className="px-3 py-3.5">{describeContributions(item)}</TableCell>
                   <TableCell className="px-3 py-3.5">
@@ -1440,7 +1549,7 @@ function CompTable({
                           }}
                           className="w-28 rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none focus:border-brand/60 focus:ring-2 focus:ring-brand/15"
                           inputMode="decimal"
-                          disabled={updatingValue || updatingScheduleId === item.id}
+                          disabled={updatingValue || updatingScheduleId === item.id || updatingStandardId === item.id}
                         />
                       </div>
                     ) : (
@@ -1448,7 +1557,7 @@ function CompTable({
                         type="button"
                         onClick={() => item?.id && onEditStart(item)}
                         className={`group inline-flex items-center gap-1.5 rounded-lg px-2 py-1 transition ${item?.id ? 'cursor-pointer hover:bg-muted' : 'cursor-default'}`}
-                        disabled={!item?.id || updatingScheduleId === item.id}
+                        disabled={!item?.id || updatingScheduleId === item.id || updatingStandardId === item.id}
                         title={
                           !item?.id
                             ? undefined
@@ -1475,7 +1584,7 @@ function CompTable({
                           size="sm"
                           className="rounded-lg px-3 text-muted-foreground hover:bg-muted"
                           onClick={onEditCancel}
-                          disabled={updatingValue || updatingScheduleId === item.id}
+                          disabled={updatingValue || updatingScheduleId === item.id || updatingStandardId === item.id}
                         >
                           Cancel
                         </Button>
@@ -1484,7 +1593,7 @@ function CompTable({
                           size="sm"
                           className="rounded-lg bg-brand px-3 text-brand-foreground hover:bg-brand-strong"
                           onClick={() => onEditSave(item)}
-                          disabled={updatingValue || updatingScheduleId === item.id}
+                          disabled={updatingValue || updatingScheduleId === item.id || updatingStandardId === item.id}
                         >
                           {updatingValue ? 'Saving...' : 'Save'}
                         </Button>
@@ -1496,7 +1605,7 @@ function CompTable({
                         size="sm"
                         className="rounded-lg border-0 bg-rose-50 px-3 text-rose-600 hover:bg-rose-100 hover:text-rose-700"
                         onClick={() => onRemove(item)}
-                        disabled={updatingScheduleId === item.id || updatingValue}
+                        disabled={updatingScheduleId === item.id || updatingStandardId === item.id || updatingValue}
                       >
                         <Trash2 className="mr-2 size-4" />
                         Remove
@@ -1522,10 +1631,11 @@ function ComponentDefinitionStrip({ draftForm }) {
     { label: 'Type', value: draftForm.type || '—', Icon: Wallet, valueClassName: 'capitalize' },
     { label: 'Category', value: draftForm.category || '—', Icon: BriefcaseBusiness },
     { label: 'Calculation', value: formatCalculationType(draftForm.calculation_type), Icon: Calculator },
+    { label: 'Standard', value: formatCalculationStandard(draftForm.calculation_standard), Icon: Calculator },
   ]
 
   return (
-    <div className="grid grid-cols-1 gap-4 rounded-2xl border border-brand/20 bg-brand/5 px-4 py-4 text-sm dark:bg-brand/10 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 rounded-2xl border border-brand/20 bg-brand/5 px-4 py-4 text-sm dark:bg-brand/10 sm:grid-cols-4">
       {items.map((item) => {
         const DefinitionIcon = item.Icon
         return (
@@ -1598,6 +1708,14 @@ function formatCalculationType(value) {
     hourly: 'Hourly',
   }
   return map[value] || value
+}
+
+function formatCalculationStandard(value) {
+  const map = {
+    monthly_standard: 'Monthly Standard',
+    payroll_standard: 'Payroll Standard',
+  }
+  return map[normalizedCalculationStandard(value)] || 'Monthly Standard'
 }
 
 function formatPeso(value) {
