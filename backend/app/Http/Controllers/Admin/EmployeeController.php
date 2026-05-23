@@ -12,6 +12,7 @@ use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
+use App\Models\EmployeeOrganizationAssignment;
 use App\Models\DuplicateFaceRegistrationAttempt;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeTransferLog;
@@ -133,7 +134,21 @@ class EmployeeController extends Controller
                 return $query;
             }
             if ($noCompanyFilter) {
-                $query->whereNull('company_id');
+                $query
+                    ->whereNull('company_id')
+                    ->whereNull('branch_id')
+                    ->whereNull('department_id')
+                    ->whereNull('division_id')
+                    ->whereNull('section_unit_id')
+                    ->whereDoesntHave('companyHeadships')
+                    ->whereDoesntHave('organizationAssignments', function ($assignmentQuery): void {
+                        $assignmentQuery->active()
+                            ->where(function ($q): void {
+                                $q->where('is_primary', true)
+                                    ->orWhere('assignment_type', EmployeeOrganizationAssignment::TYPE_PRIMARY);
+                            })
+                            ->whereNotNull('company_id');
+                    });
             }
             if ($companyId !== null) {
                 $query->where(function ($q) use ($companyId) {
