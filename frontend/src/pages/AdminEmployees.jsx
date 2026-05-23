@@ -347,8 +347,8 @@ export default function AdminEmployees() {
   }, [hasClientSideFilters, page])
 
   useEffect(() => {
-    if (page !== 1) setPage(1)
-  }, [filterCompany, page])
+    setPage(1)
+  }, [filterCompany])
 
   useEffect(() => {
     if (location.pathname === hrPanelPath(hrBase, 'employees/add')) {
