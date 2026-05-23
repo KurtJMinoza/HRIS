@@ -308,7 +308,16 @@ class EmployeeOrganizationAssignmentService
             ->filter(fn (EmployeeOrganizationAssignment $row): bool => $this->isCompleteSectionContext($row))
             ->values();
 
-        $supplementalSectionRows = $validSectionRows
+        $validDepartmentRows = $rows
+            ->filter(fn (EmployeeOrganizationAssignment $row): bool => $this->isCompleteDepartmentContext($row))
+            ->values();
+
+        $actionableRows = $validSectionRows
+            ->merge($validDepartmentRows)
+            ->unique(fn (EmployeeOrganizationAssignment $row): int => (int) $row->id)
+            ->values();
+
+        $supplementalRows = $actionableRows
             ->filter(fn (EmployeeOrganizationAssignment $row): bool => in_array((string) $row->assignment_type, [
                 self::TYPE_SHARED,
                 self::TYPE_TEMPORARY,
@@ -316,13 +325,13 @@ class EmployeeOrganizationAssignmentService
             ], true))
             ->values();
 
-        $primarySectionRows = $validSectionRows
+        $primaryRows = $actionableRows
             ->filter(fn (EmployeeOrganizationAssignment $row): bool => (bool) $row->is_primary || $row->assignment_type === self::TYPE_PRIMARY)
             ->values();
 
-        $candidateRows = $supplementalSectionRows->isNotEmpty()
-            ? $supplementalSectionRows
-            : $primarySectionRows;
+        $candidateRows = $supplementalRows->isNotEmpty()
+            ? $supplementalRows
+            : $primaryRows;
 
         if ($candidateRows->isEmpty()) {
             return ['assignments' => [], 'default_assignment' => null];
@@ -354,8 +363,9 @@ class EmployeeOrganizationAssignmentService
             'employee_id' => (int) $employee->id,
             'request_date' => $date,
             'valid_section_assignment_ids' => $validSectionRows->pluck('id')->map(fn ($id) => (int) $id)->all(),
-            'supplemental_section_assignment_ids' => $supplementalSectionRows->pluck('id')->map(fn ($id) => (int) $id)->all(),
-            'primary_section_assignment_ids' => $primarySectionRows->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'valid_department_assignment_ids' => $validDepartmentRows->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'supplemental_assignment_ids' => $supplementalRows->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'primary_assignment_ids' => $primaryRows->pluck('id')->map(fn ($id) => (int) $id)->all(),
             'selected_assignment_ids' => $selected->pluck('id')->map(fn ($id) => (int) $id)->all(),
             'default_assignment_id' => $default?->id ? (int) $default->id : null,
             'request_selected_default_context' => $default ? $this->requestContextPayload($default) : null,
@@ -442,6 +452,44 @@ class EmployeeOrganizationAssignmentService
             })
             ->where(function ($query): void {
                 $query->whereNull('status')->orWhere('status', 'active');
+            })
+            ->exists();
+    }
+
+    private function isCompleteDepartmentContext(EmployeeOrganizationAssignment $row): bool
+    {
+        if (! in_array((string) $row->assignment_type, [
+            self::TYPE_PRIMARY,
+            self::TYPE_SHARED,
+            self::TYPE_TEMPORARY,
+            self::TYPE_ACTING,
+        ], true)) {
+            return false;
+        }
+
+        if ($row->section_unit_id !== null || $row->company_id === null || $row->department_id === null) {
+            return false;
+        }
+
+        return Department::query()
+            ->whereKey((int) $row->department_id)
+            ->where(function ($query) use ($row): void {
+                $query->where('company_id', (int) $row->company_id)
+                    ->orWhereHas('branch', fn ($branch) => $branch->where('company_id', (int) $row->company_id));
+            })
+            ->where(function ($query) use ($row): void {
+                if ($row->branch_id === null) {
+                    $query->whereNull('branch_id');
+                } else {
+                    $query->where('branch_id', (int) $row->branch_id);
+                }
+            })
+            ->where(function ($query) use ($row): void {
+                if ($row->division_id === null) {
+                    $query->whereNull('division_id');
+                } else {
+                    $query->where('division_id', (int) $row->division_id);
+                }
             })
             ->exists();
     }
@@ -548,7 +596,7 @@ class EmployeeOrganizationAssignmentService
             'company' => $this->fillCompanyContext($context, Company::query()->findOrFail($legacyId)),
             'branch' => $this->fillBranchContext($context, Branch::query()->with('company:id,name')->findOrFail($legacyId)),
             'division' => $this->fillDivisionContext($context, Division::query()->with(['company:id,name', 'branch:id,name,company_id'])->findOrFail($legacyId)),
-            'department' => $this->fillDepartmentContext($context, Department::query()->with(['branch.company:id,name', 'division:id,name'])->findOrFail($legacyId)),
+            'department' => $this->fillDepartmentContext($context, Department::query()->with(['company:id,name', 'branch.company:id,name', 'division:id,name'])->findOrFail($legacyId)),
             'section_unit' => $this->fillSectionContext($context, SectionUnit::query()->with(['company:id,name', 'branch:id,name', 'division:id,name', 'department:id,name'])->findOrFail($legacyId)),
             default => throw ValidationException::withMessages([
                 'organization_unit' => ['Unsupported organization unit type.'],
@@ -740,7 +788,7 @@ class EmployeeOrganizationAssignmentService
         $context['branch_id'] = $department->branch_id ? (int) $department->branch_id : null;
         $context['division_id'] = $department->division_id ? (int) $department->division_id : null;
         $context['department_id'] = (int) $department->id;
-        $context['company_name'] = $department->branch?->company?->name;
+        $context['company_name'] = $department->company?->name ?? $department->branch?->company?->name;
         $context['branch_name'] = $department->branch?->name;
         $context['division_name'] = $department->division?->name;
         $context['department_name'] = $department->name;

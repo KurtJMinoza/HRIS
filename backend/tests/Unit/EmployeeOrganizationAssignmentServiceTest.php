@@ -212,6 +212,27 @@ class EmployeeOrganizationAssignmentServiceTest extends TestCase
         $this->assertSame(2, $result['final_assigned_count']);
     }
 
+    public function test_request_context_includes_shared_department_assignment(): void
+    {
+        [$companyA, , $departmentB] = $this->seedTwoCompanyDepartments();
+        $employee = $this->employeeInCompany($companyA);
+
+        app(EmployeeOrganizationAssignmentService::class)->assignToLegacyUnit(
+            'department',
+            (int) $departmentB->id,
+            [(int) $employee->id],
+            EmployeeOrganizationAssignmentService::MODE_SHARED,
+        );
+
+        $contexts = app(EmployeeOrganizationAssignmentService::class)
+            ->requestContextOptionsForEmployee($employee->fresh());
+
+        $this->assertCount(1, $contexts['assignments']);
+        $this->assertSame(EmployeeOrganizationAssignment::TYPE_SHARED, $contexts['default_assignment']['assignment_type']);
+        $this->assertSame((int) $departmentB->id, (int) $contexts['default_assignment']['department_id']);
+        $this->assertNull($contexts['default_assignment']['section_unit_id']);
+    }
+
     public function test_request_context_filters_partial_primary_and_defaults_to_complete_shared_section(): void
     {
         [$companyA, , $departmentB] = $this->seedTwoCompanyDepartments();

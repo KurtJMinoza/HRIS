@@ -3,6 +3,8 @@
 namespace Tests\Unit;
 
 use App\Models\ApprovalWorkflowSetting;
+use App\Models\Branch;
+use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
 use App\Models\EmployeeOrganizationAssignment;
@@ -1278,6 +1280,90 @@ class FlexibleImmediateApproverResolverTest extends TestCase
 
         $this->assertSame((int) $primaryLeader->id, (int) $chain[0]['approver_id']);
         $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
+    public function test_shared_department_assignment_context_routes_leave_and_overtime_to_assigned_department_head(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', false);
+        $this->setWorkflowFallbackToParent('overtime', false);
+
+        $this->user(['role' => User::ROLE_ADMIN]);
+        $companyA = Company::query()->create(['name' => 'Primary Company '.Str::random(5)]);
+        $companyB = Company::query()->create(['name' => 'Shared Company '.Str::random(5)]);
+        $branchA = Branch::query()->create(['name' => 'Primary Branch '.Str::random(5), 'company_id' => (int) $companyA->id]);
+        $branchB = Branch::query()->create(['name' => 'Shared Branch '.Str::random(5), 'company_id' => (int) $companyB->id]);
+        $primaryHead = $this->user(['company_id' => (int) $companyA->id]);
+        $sharedHead = $this->user(['company_id' => (int) $companyA->id]);
+        $employee = $this->user(['company_id' => (int) $companyA->id, 'branch_id' => (int) $branchA->id]);
+
+        $primaryDepartment = Department::query()->create([
+            'name' => 'Primary Department '.Str::random(5),
+            'company_id' => (int) $companyA->id,
+            'branch_id' => (int) $branchA->id,
+            'department_head_id' => (int) $primaryHead->id,
+        ]);
+        $sharedDepartment = Department::query()->create([
+            'name' => 'Shared Department '.Str::random(5),
+            'company_id' => (int) $companyB->id,
+            'branch_id' => (int) $branchB->id,
+            'department_head_id' => (int) $sharedHead->id,
+        ]);
+        $employee->forceFill(['department_id' => (int) $primaryDepartment->id])->save();
+
+        $primaryUnit = $this->unit('Primary Department', null, [
+            'legacy_source_type' => 'department',
+            'legacy_source_id' => (int) $primaryDepartment->id,
+            'company_id' => (int) $companyA->id,
+        ], 'department');
+        $sharedUnit = $this->unit('Shared Department', null, [
+            'legacy_source_type' => 'department',
+            'legacy_source_id' => (int) $sharedDepartment->id,
+            'company_id' => (int) $companyB->id,
+        ], 'department');
+
+        EmployeeOrganizationAssignment::query()->create([
+            'employee_id' => (int) $employee->id,
+            'organization_unit_id' => (int) $primaryUnit->id,
+            'assignment_type' => EmployeeOrganizationAssignment::TYPE_PRIMARY,
+            'company_id' => (int) $companyA->id,
+            'branch_id' => (int) $branchA->id,
+            'department_id' => (int) $primaryDepartment->id,
+            'is_primary' => true,
+            'effective_from' => null,
+            'effective_to' => null,
+            'is_active' => true,
+        ]);
+        $sharedAssignment = EmployeeOrganizationAssignment::query()->create([
+            'employee_id' => (int) $employee->id,
+            'organization_unit_id' => (int) $sharedUnit->id,
+            'assignment_type' => EmployeeOrganizationAssignment::TYPE_SHARED,
+            'company_id' => (int) $companyB->id,
+            'branch_id' => (int) $branchB->id,
+            'department_id' => (int) $sharedDepartment->id,
+            'is_primary' => false,
+            'effective_from' => null,
+            'effective_to' => null,
+            'is_active' => true,
+        ]);
+
+        foreach (['leave', 'overtime'] as $requestType) {
+            $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain(
+                $employee->fresh(),
+                $requestType,
+                $employee->fresh(),
+                [
+                    'assignment_id' => (int) $sharedAssignment->id,
+                    'assignment_type' => EmployeeOrganizationAssignment::TYPE_SHARED,
+                    'company_id' => (int) $companyB->id,
+                    'branch_id' => (int) $branchB->id,
+                    'department_id' => (int) $sharedDepartment->id,
+                    'section_unit_id' => null,
+                ],
+            );
+
+            $this->assertSame((int) $sharedHead->id, (int) $chain[0]['approver_id']);
+            $this->assertSame('admin_hr', $chain[1]['approval_level']);
+        }
     }
 
     private function type(string $name, string $code = 'custom'): OrganizationType
