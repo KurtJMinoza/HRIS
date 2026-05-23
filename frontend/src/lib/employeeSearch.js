@@ -33,8 +33,14 @@ export function employeeSearchHaystack(employee) {
     employee?.position,
     employee?.department,
     employee?.department_name,
+    employee?.division_name,
+    employee?.section_unit_name,
     employee?.branch_name,
     employee?.company_name,
+    employee?.current_org_path,
+    employee?.original_org_path,
+    employee?.assigned_org_path,
+    employee?.source,
   ]
     .map(toDisplayText)
     .filter(Boolean)

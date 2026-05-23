@@ -45,7 +45,7 @@ import {
 } from '@/lib/adminFormDialogStyles'
 import AssignEmployeesModal from '@/components/admin/AssignEmployeesModal'
 import AssignOrgHeadModal from '@/components/admin/AssignOrgHeadModal'
-import { buildOrgCurrentHead, employeeDisplayName } from '@/lib/employeeSearch'
+import { buildOrgCurrentHead, employeeDisplayName, filterEmployeesByQuery } from '@/lib/employeeSearch'
 import {
   ASSIGNMENT_MODE_TRANSFER_PRIMARY,
   assignEmployeesToastPayload,
@@ -140,6 +140,7 @@ export default function AdminDepartments() {
   const [viewEmployeesList, setViewEmployeesList] = useState([])
   const [viewEmployeesLoading, setViewEmployeesLoading] = useState(false)
   const [viewEmployeesSelectedIds, setViewEmployeesSelectedIds] = useState([])
+  const [viewEmployeesSearchQuery, setViewEmployeesSearchQuery] = useState('')
   const [unassigningId, setUnassigningId] = useState(null)
   const [unassignConfirm, setUnassignConfirm] = useState(null)
 
@@ -498,15 +499,23 @@ export default function AdminDepartments() {
     )
   }
 
+  const filteredViewEmployeesList = useMemo(
+    () => filterEmployeesByQuery(viewEmployeesList, viewEmployeesSearchQuery),
+    [viewEmployeesList, viewEmployeesSearchQuery],
+  )
+
   const toggleViewEmployeesSelectAll = () => {
-    const listIds = viewEmployeesList.map((e) => e.id)
+    const listIds = filteredViewEmployeesList.map((e) => e.id)
     const allSelected =
       listIds.length > 0 &&
       listIds.every((lid) => viewEmployeesSelectedIds.some((sid) => sameUserId(sid, lid)))
     if (allSelected) {
-      setViewEmployeesSelectedIds([])
+      setViewEmployeesSelectedIds((prev) => prev.filter((sid) => !listIds.some((lid) => sameUserId(sid, lid))))
     } else {
-      setViewEmployeesSelectedIds(listIds)
+      setViewEmployeesSelectedIds((prev) => [
+        ...prev,
+        ...listIds.filter((lid) => !prev.some((sid) => sameUserId(sid, lid))),
+      ])
     }
   }
 
@@ -520,7 +529,6 @@ export default function AdminDepartments() {
     if (dept?.id == null) return
     headLoadSeqRef.current += 1
     const seq = headLoadSeqRef.current
-    const resolvedDeptId = dept.id
     setHeadModalEmployees([])
     setHeadModalLoadError(null)
     setHeadModalLoading(true)
@@ -1898,7 +1906,10 @@ export default function AdminDepartments() {
         open={viewEmployeesOpen}
         onOpenChange={(open) => {
           setViewEmployeesOpen(open)
-          if (!open) setViewEmployeesSelectedIds([])
+          if (!open) {
+            setViewEmployeesSelectedIds([])
+            setViewEmployeesSearchQuery('')
+          }
         }}
       >
         <DialogContent
@@ -1925,6 +1936,26 @@ export default function AdminDepartments() {
             </DialogHeader>
           </div>
           <div className="flex min-h-0 flex-1 flex-col px-6 py-5 @md:px-8">
+            <div className="relative mb-4">
+              <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="text"
+                value={viewEmployeesSearchQuery}
+                onChange={(event) => setViewEmployeesSearchQuery(event.target.value)}
+                placeholder="Search employees by name, code, email, position, or organization..."
+                className="h-11 rounded-xl border-border/80 bg-background pl-11 pr-10 text-sm shadow-sm dark:bg-input/25"
+              />
+              {viewEmployeesSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setViewEmployeesSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label="Clear employee search"
+                >
+                  <X className="size-4" />
+                </button>
+              )}
+            </div>
             {viewEmployeesLoading ? (
               <div className="flex items-center justify-center gap-2 rounded-xl border border-border/70 py-10 text-sm text-muted-foreground dark:bg-input/20">
                 <Loader2 className="size-5 animate-spin text-brand" />
@@ -1934,6 +1965,10 @@ export default function AdminDepartments() {
               <div className="rounded-xl border border-dashed border-border/80 px-6 py-10 text-center text-sm text-muted-foreground">
                 No employees assigned to this department.
               </div>
+            ) : filteredViewEmployeesList.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border/80 px-6 py-10 text-center text-sm text-muted-foreground">
+                No employees match your search.
+              </div>
             ) : (
               <>
                 <div className="mb-4 flex items-center gap-4 rounded-xl border border-border/80 bg-background px-4 py-4 dark:bg-input/25">
@@ -1941,16 +1976,16 @@ export default function AdminDepartments() {
                     <input
                       type="checkbox"
                       checked={
-                        viewEmployeesList.length > 0 &&
-                        viewEmployeesList.every((emp) =>
+                        filteredViewEmployeesList.length > 0 &&
+                        filteredViewEmployeesList.every((emp) =>
                           viewEmployeesSelectedIds.some((sid) => sameUserId(sid, emp.id))
                         )
                       }
                       onChange={toggleViewEmployeesSelectAll}
                       className="size-5 rounded border-input accent-orange-600"
                     />
-                    {viewEmployeesList.length > 0 &&
-                    viewEmployeesList.every((emp) =>
+                    {filteredViewEmployeesList.length > 0 &&
+                    filteredViewEmployeesList.every((emp) =>
                       viewEmployeesSelectedIds.some((sid) => sameUserId(sid, emp.id))
                     )
                       ? 'Deselect all'
@@ -1963,7 +1998,7 @@ export default function AdminDepartments() {
                   )}
                 </div>
                 <ul className="max-h-[min(48vh,24rem)] space-y-3 overflow-y-auto pr-1">
-                  {viewEmployeesList.map((emp) => (
+                  {filteredViewEmployeesList.map((emp) => (
                     <li
                       key={emp.id}
                       className={`flex items-center gap-4 rounded-xl border px-4 py-3 transition-colors ${
