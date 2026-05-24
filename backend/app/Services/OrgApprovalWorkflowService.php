@@ -83,7 +83,7 @@ class OrgApprovalWorkflowService
                     'existing_count' => $existing->count(),
                     'resolved_count' => count($steps),
                 ]);
-                $this->syncRecordsToChain($request, $moduleType, $requestId, $steps, $existing);
+                $this->syncRecordsToChain($request, $moduleType, $requestId, $steps, $existing, $employee, $requestor ?? $employee);
             }
 
             return $this->records($moduleType, $requestId);
@@ -115,6 +115,14 @@ class OrgApprovalWorkflowService
 
             $this->syncLegacyRequestApprovers($request, $moduleType, $steps);
         });
+
+        Log::info('request_submitted', [
+            'module_type' => $moduleType,
+            'request_id' => $requestId,
+            'employee_id' => (int) $employee->id,
+            'requestor_id' => $requestor ? (int) $requestor->id : (int) $employee->id,
+        ]);
+        $this->logSelfApprovalDetection($request, $moduleType, $steps, $employee, $requestor ?? $employee);
 
         return $this->records($moduleType, $requestId);
     }
@@ -224,6 +232,8 @@ class OrgApprovalWorkflowService
         int $requestId,
         array $steps,
         EloquentCollection $existing,
+        User $employee,
+        ?User $requestor,
     ): void {
         DB::transaction(function () use ($request, $moduleType, $requestId, $steps, $existing): void {
             OrgApprovalRecord::query()
@@ -257,6 +267,8 @@ class OrgApprovalWorkflowService
 
             $this->syncLegacyRequestApprovers($request, $moduleType, $steps);
         });
+
+        $this->logSelfApprovalDetection($request, $moduleType, $steps, $employee, $requestor ?? $employee);
     }
 
     /**
@@ -286,14 +298,17 @@ class OrgApprovalWorkflowService
         ?User $requestor = null,
         bool $forbidSubjectSelfApproval = false
     ): bool {
-        if ($forbidSubjectSelfApproval && (int) $actor->id === (int) $employee->id) {
-            return false;
-        }
-
         $pending = $this->currentPendingRecord($request, $moduleType, $employee, $requestor);
 
         if ($pending === null) {
             return false;
+        }
+
+        if ($forbidSubjectSelfApproval && (int) $actor->id === (int) $employee->id) {
+            $result = $this->selfApprovalValidationResult($actor, $employee, $pending, $moduleType);
+            $this->logApprovalActionValidation('can_act', $request, $moduleType, $employee, $actor, $pending, $requestor, $result);
+
+            return (bool) $result['allowed'];
         }
 
         if ($pending->approver_role === HrRole::AdminHr->value) {
@@ -308,16 +323,59 @@ class OrgApprovalWorkflowService
     {
         return DB::transaction(function () use ($request, $moduleType, $employee, $actor, $remarks, $requestor): ?OrgApprovalRecord {
             $pending = $this->currentPendingRecord($request, $moduleType, $employee, $requestor);
-            if (! $pending || ! $this->canActorActOnRecord($actor, $pending)) {
+            if (! $pending) {
+                $this->logApprovalActionValidation('approve', $request, $moduleType, $employee, $actor, null, $requestor, [
+                    'allowed' => false,
+                    'deny_reason' => 'no_pending_approval_step',
+                ]);
+
+                return null;
+            }
+            if (! $this->canActorActOnRecord($actor, $pending)) {
+                $this->logApprovalActionValidation('approve', $request, $moduleType, $employee, $actor, $pending, $requestor, [
+                    'allowed' => false,
+                    'deny_reason' => 'current_user_not_assigned_or_authorized_for_step',
+                ]);
+
+                return null;
+            }
+            if ((int) $actor->id === (int) $employee->id) {
+                $result = $this->selfApprovalValidationResult($actor, $employee, $pending, $moduleType);
+                if (! $result['allowed']) {
+                    $this->logApprovalActionValidation('approve', $request, $moduleType, $employee, $actor, $pending, $requestor, $result);
+
+                    return null;
+                }
+                $this->logApprovalActionValidation('approve', $request, $moduleType, $employee, $actor, $pending, $requestor, $result);
+            } else {
+                $this->logApprovalActionValidation('approve', $request, $moduleType, $employee, $actor, $pending, $requestor, [
+                    'allowed' => true,
+                    'deny_reason' => null,
+                ]);
+            }
+
+            if ((int) $actor->id === (int) $employee->id && ! $this->canSelfApproveAssignedRecord($actor, $employee, $pending, $moduleType)) {
                 return null;
             }
 
+            $isSelfApproval = $this->isAssignedSelfApproval($actor, $employee, $pending);
             $pending->approval_status = OrgApprovalRecord::STATUS_APPROVED;
             $pending->remarks = $remarks;
             $pending->approved_at = now();
             $pending->approver_id = $actor->id;
             $pending->approver_name = $actor->display_name;
             $pending->save();
+
+            Log::info($isSelfApproval ? 'self_approved' : 'approved_by', [
+                'module_type' => $moduleType,
+                'request_id' => (int) $request->getKey(),
+                'employee_id' => (int) $employee->id,
+                'requestor_id' => $requestor ? (int) $requestor->id : null,
+                'approved_by' => (int) $actor->id,
+                'approved_at' => $pending->approved_at?->toIso8601String(),
+                'approval_record_id' => (int) $pending->id,
+                'self_approval' => $isSelfApproval,
+            ]);
 
             return $this->currentPendingRecord($request, $moduleType, $employee, $requestor);
         });
@@ -327,16 +385,58 @@ class OrgApprovalWorkflowService
     {
         return DB::transaction(function () use ($request, $moduleType, $employee, $actor, $remarks, $requestor): ?OrgApprovalRecord {
             $pending = $this->currentPendingRecord($request, $moduleType, $employee, $requestor);
-            if (! $pending || ! $this->canActorActOnRecord($actor, $pending)) {
+            if (! $pending) {
+                $this->logApprovalActionValidation('reject', $request, $moduleType, $employee, $actor, null, $requestor, [
+                    'allowed' => false,
+                    'deny_reason' => 'no_pending_approval_step',
+                ]);
+
+                return null;
+            }
+            if (! $this->canActorActOnRecord($actor, $pending)) {
+                $this->logApprovalActionValidation('reject', $request, $moduleType, $employee, $actor, $pending, $requestor, [
+                    'allowed' => false,
+                    'deny_reason' => 'current_user_not_assigned_or_authorized_for_step',
+                ]);
+
+                return null;
+            }
+            if ((int) $actor->id === (int) $employee->id) {
+                $result = $this->selfApprovalValidationResult($actor, $employee, $pending, $moduleType);
+                if (! $result['allowed']) {
+                    $this->logApprovalActionValidation('reject', $request, $moduleType, $employee, $actor, $pending, $requestor, $result);
+
+                    return null;
+                }
+                $this->logApprovalActionValidation('reject', $request, $moduleType, $employee, $actor, $pending, $requestor, $result);
+            } else {
+                $this->logApprovalActionValidation('reject', $request, $moduleType, $employee, $actor, $pending, $requestor, [
+                    'allowed' => true,
+                    'deny_reason' => null,
+                ]);
+            }
+            if ((int) $actor->id === (int) $employee->id && ! $this->canSelfApproveAssignedRecord($actor, $employee, $pending, $moduleType)) {
                 return null;
             }
 
+            $isSelfApproval = $this->isAssignedSelfApproval($actor, $employee, $pending);
             $pending->approval_status = OrgApprovalRecord::STATUS_REJECTED;
             $pending->remarks = $remarks;
             $pending->approved_at = now();
             $pending->approver_id = $actor->id;
             $pending->approver_name = $actor->display_name;
             $pending->save();
+
+            Log::info($isSelfApproval ? 'self_rejected' : 'rejected_by', [
+                'module_type' => $moduleType,
+                'request_id' => (int) $request->getKey(),
+                'employee_id' => (int) $employee->id,
+                'requestor_id' => $requestor ? (int) $requestor->id : null,
+                'rejected_by' => (int) $actor->id,
+                'rejected_at' => $pending->approved_at?->toIso8601String(),
+                'approval_record_id' => (int) $pending->id,
+                'self_approval' => $isSelfApproval,
+            ]);
 
             return $pending;
         });
@@ -394,6 +494,7 @@ class OrgApprovalWorkflowService
             'profile_image_url' => ($submitter ?? $employee)->profile_image_url,
             'acted_at' => $this->toIso8601String($submittedAt),
             'remarks' => null,
+            'is_self_approval' => false,
         ]];
 
         $currentMarked = false;
@@ -423,6 +524,7 @@ class OrgApprovalWorkflowService
                 'sequence_order' => (int) $record->sequence_order,
                 'approver_role' => $record->approver_role,
                 'approver_id' => $record->approver_id,
+                'is_self_approval' => $this->recordIsSelfApproval($record, $employee, $requestor ?? $submitter ?? $employee),
             ];
         }
 
@@ -466,6 +568,144 @@ class OrgApprovalWorkflowService
         }
 
         return in_array((int) $actor->id, array_map('intval', $eligible), true);
+    }
+
+    private function canSelfApproveAssignedRecord(User $actor, User $employee, OrgApprovalRecord $record, string $moduleType): bool
+    {
+        return (bool) $this->selfApprovalValidationResult($actor, $employee, $record, $moduleType)['allowed'];
+    }
+
+    /**
+     * @return array{allowed: bool, deny_reason: ?string, self_approval_setting: bool, user_is_assigned_approver: bool, is_self_approval: bool}
+     */
+    private function selfApprovalValidationResult(User $actor, User $employee, OrgApprovalRecord $record, string $moduleType): array
+    {
+        $isSelfApproval = $this->isAssignedSelfApproval($actor, $employee, $record);
+        $userIsAssignedApprover = (int) $record->approver_id === (int) $actor->id
+            || $this->actorIsEligibleApprover($actor, $record);
+        $roleAllowed = $this->roleResolver->resolve($actor) === HrRole::AdminHr;
+        $settingEnabled = $this->selfApprovalSettingEnabled($actor, $moduleType);
+
+        $denyReason = null;
+        if (! $isSelfApproval) {
+            $denyReason = 'not_assigned_self_approval_step';
+        } elseif (! $userIsAssignedApprover) {
+            $denyReason = 'current_user_is_not_assigned_approver';
+        } elseif (! $roleAllowed) {
+            $denyReason = 'current_user_role_not_authorized_for_self_approval';
+        } elseif (! $settingEnabled) {
+            $denyReason = 'self_approval_setting_disabled';
+        }
+
+        return [
+            'allowed' => $denyReason === null,
+            'deny_reason' => $denyReason,
+            'self_approval_setting' => $settingEnabled,
+            'user_is_assigned_approver' => $userIsAssignedApprover,
+            'is_self_approval' => $isSelfApproval,
+        ];
+    }
+
+    private function selfApprovalSettingEnabled(User $actor, string $moduleType): bool
+    {
+        $setting = $this->workflowSettingService->resolveSetting(self::normalizeModuleType($moduleType));
+
+        if ($actor->isSuperAdmin()) {
+            return $this->settingFlag($setting, 'allow_super_admin_self_approval', true);
+        }
+
+        return $this->settingFlag($setting, 'allow_admin_self_approval', true)
+            && $this->settingFlag($setting, 'allow_hr_self_approval', true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $setting
+     */
+    private function settingFlag(array $setting, string $key, bool $default): bool
+    {
+        return array_key_exists($key, $setting) ? (bool) $setting[$key] : $default;
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    private function logApprovalActionValidation(
+        string $action,
+        Model $request,
+        string $moduleType,
+        User $employee,
+        User $actor,
+        ?OrgApprovalRecord $record,
+        ?User $requestor,
+        array $result,
+    ): void {
+        $roleValues = array_map(
+            fn (HrRole $role): string => $role->value,
+            $this->roleResolver->listEffectiveHrRoles($actor),
+        );
+
+        Log::info('approval_action_validation', [
+            'action' => $action,
+            'request_id' => (int) $request->getKey(),
+            'request_type' => $moduleType,
+            'requester_employee_id' => $requestor ? (int) $requestor->id : (int) $employee->id,
+            'approver_employee_id' => $record ? (int) $record->approver_id : null,
+            'current_user_id' => (int) $actor->id,
+            'current_user_employee_id' => (int) $actor->id,
+            'current_user_roles' => $roleValues,
+            'is_self_approval' => (bool) ($result['is_self_approval'] ?? false),
+            'self_approval_setting' => (bool) ($result['self_approval_setting'] ?? true),
+            'user_is_assigned_approver' => (bool) ($result['user_is_assigned_approver'] ?? false),
+            'approve_button_visible' => (bool) ($result['allowed'] ?? false),
+            'validation_result' => (bool) ($result['allowed'] ?? false) ? 'allowed' : 'denied',
+            'deny_reason' => $result['deny_reason'] ?? null,
+            'final_request_status' => (string) ($request->getAttribute('status') ?? ($request->getAttribute('approved') ? 'approved' : 'pending')),
+        ]);
+    }
+
+    private function isAssignedSelfApproval(User $actor, User $employee, OrgApprovalRecord $record): bool
+    {
+        return (int) $actor->id === (int) $employee->id
+            && (int) $record->approver_id === (int) $actor->id;
+    }
+
+    private function recordIsSelfApproval(OrgApprovalRecord $record, User $employee, ?User $requestor): bool
+    {
+        $requesterId = $requestor ? (int) $requestor->id : (int) $employee->id;
+
+        return (int) $record->approver_id === $requesterId
+            && (int) $record->approver_id === (int) $employee->id
+            && $record->approver_role === HrRole::AdminHr->value;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $steps
+     */
+    private function logSelfApprovalDetection(Model $request, string $moduleType, array $steps, User $employee, ?User $requestor): void
+    {
+        $requesterId = $requestor ? (int) $requestor->id : (int) $employee->id;
+        foreach ($steps as $step) {
+            if ((int) ($step['approver_id'] ?? 0) !== $requesterId || $requesterId !== (int) $employee->id) {
+                continue;
+            }
+
+            $role = $step['approver_role'] ?? null;
+            if (! $role instanceof HrRole || $role !== HrRole::AdminHr) {
+                continue;
+            }
+
+            Log::info('self_approval_detected', [
+                'module_type' => $moduleType,
+                'request_id' => (int) $request->getKey(),
+                'employee_id' => (int) $employee->id,
+                'requestor_id' => $requesterId,
+                'approver_id' => $requesterId,
+                'sequence_order' => (int) ($step['sequence_order'] ?? 0),
+                'approver_role' => $role->value,
+            ]);
+
+            return;
+        }
     }
 
     /**

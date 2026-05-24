@@ -30,6 +30,19 @@ class RepairDuplicatePayrollRowsCommand extends Command
             $this->warn('Dry run — no rows will be changed.');
         }
 
+        if (! $dryRun) {
+            $cleared = Payslip::query()
+                ->whereNotNull('payroll_period_id')
+                ->where(function ($q) {
+                    $q->where('status', Payslip::STATUS_VOIDED)
+                        ->orWhereNotNull('voided_at');
+                })
+                ->update(['payroll_period_id' => null]);
+            if ($cleared > 0) {
+                $this->info('Cleared payroll_period_id from '.$cleared.' voided payslip(s).');
+            }
+        }
+
         $duplicateGroups = DB::table('payslips')
             ->select(
                 'user_id',
@@ -93,6 +106,7 @@ class RepairDuplicatePayrollRowsCommand extends Command
                     'status' => Payslip::STATUS_VOIDED,
                     'voided_at' => now(),
                     'period_slot' => (int) $duplicate->id,
+                    'payroll_period_id' => null,
                     'is_sent' => false,
                     'delivered_at' => null,
                     'sent_at' => null,

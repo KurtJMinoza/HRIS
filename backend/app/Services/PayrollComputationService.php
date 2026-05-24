@@ -41,7 +41,13 @@ class PayrollComputationService
     /** @var array<string, bool> */
     private array $attendanceLogExistsCache = [];
 
+    /** @var array<string, list<Overtime>> */
+    private array $approvedOvertimeByUserDate = [];
+
+    private ?int $activePayrollBatchRunId = null;
+
     public function __construct(
+        private readonly OvertimePayrollService $overtimePayroll,
         private readonly PayrollRulesEngineService $rulesEngine,
         private readonly PayrollCalculatorService $payrollCalculator,
         private readonly ScheduleRateService $scheduleRateService,
@@ -62,6 +68,8 @@ class PayrollComputationService
         $this->dayStatusCache = [];
         $this->overtimeHoursCache = [];
         $this->overtimeExistsCache = [];
+        $this->approvedOvertimeByUserDate = [];
+        $this->activePayrollBatchRunId = null;
         $this->attendanceLogExistsCache = [];
         $this->attendanceSession->flushRuntimeCache();
         $this->policyResolver->flushRuntimeCaches();
@@ -277,20 +285,42 @@ class PayrollComputationService
             }
         }
 
-        $rows = Overtime::query()
+        $this->approvedOvertimeByUserDate = $this->overtimePayroll->prefetchApprovedByUserDate(
+            $ids,
+            $from,
+            $to,
+            null,
+            $this->activePayrollBatchRunId
+        );
+
+        foreach ($this->approvedOvertimeByUserDate as $key => $records) {
+            [$uidStr, $d] = explode('|', $key, 2);
+            $uid = (int) $uidStr;
+            $existsKey = $uid.'|'.$d;
+            $this->overtimeExistsCache[$existsKey] = true;
+            $approvedHours = 0.0;
+            foreach ($records as $ot) {
+                $approvedHours += (float) ($ot->computed_hours ?? 0);
+            }
+            $hk = $existsKey.'|'.Overtime::STATUS_APPROVED;
+            $this->overtimeHoursCache[$hk] = ($this->overtimeHoursCache[$hk] ?? 0.0) + $approvedHours;
+        }
+
+        $pendingRows = Overtime::query()
             ->whereIn('user_id', $ids)
+            ->where('status', Overtime::STATUS_PENDING)
             ->whereDate('date', '>=', $fromExt->toDateString())
             ->whereDate('date', '<=', $toExt->toDateString())
             ->get(['user_id', 'date', 'status', 'computed_hours']);
 
-        foreach ($rows as $ot) {
+        foreach ($pendingRows as $ot) {
             $d = $ot->date instanceof Carbon
                 ? $ot->date->toDateString()
                 : Carbon::parse((string) $ot->date)->toDateString();
             $uid = (int) $ot->user_id;
             $existsKey = $uid.'|'.$d;
             $this->overtimeExistsCache[$existsKey] = true;
-            $hk = $existsKey.'|'.(string) $ot->status;
+            $hk = $existsKey.'|'.Overtime::STATUS_PENDING;
             $this->overtimeHoursCache[$hk] = ($this->overtimeHoursCache[$hk] ?? 0.0) + (float) ($ot->computed_hours ?? 0);
         }
     }
@@ -633,49 +663,40 @@ class PayrollComputationService
                 }
             }
 
-            // Section 12: Approved OT without actual clock logs.
-            // Default = not payable. Exception: rest day, holiday, or no schedule (special policy).
-            $noPunchApprovedOtHours = 0.0;
-            $noPunchOtPay = 0.0;
-            $noPunchOtApplied = 0.0;
-            $noPunchHasOtRequest = false;
-            $isPolicyException = $isRestDay || $holiday !== null || $daySchedule === null;
+            // Approved OT without clock logs: pay all eligible approved requests for this date.
+            $noPunchOtComp = $this->computeApprovedOvertimeCompensationForDay(
+                $user,
+                $dateKey,
+                $hourlyRate,
+                $policy,
+                $ruleCode,
+                0
+            );
+            $noPunchApprovedOtHours = (float) ($noPunchOtComp['payable_hours'] ?? 0);
+            $noPunchOtPay = (float) ($noPunchOtComp['ot_pay'] ?? 0);
+            $noPunchOtApplied = $noPunchApprovedOtHours;
+            $noPunchHasOtRequest = $noPunchApprovedOtHours > 0.0001
+                || $this->hasOvertimeRequestForWorkday($user, $dateKey, Carbon::parse($dateKey, $tz)->startOfDay());
+            $otDayMinutes = 0;
 
-            if ($isPolicyException) {
-                $uid = (int) $user->id;
-                $hoursCacheKey = $uid.'|'.$dateKey.'|'.Overtime::STATUS_APPROVED;
-                $existsCacheKey = $uid.'|'.$dateKey;
-                if (array_key_exists($hoursCacheKey, $this->overtimeHoursCache)) {
-                    $noPunchApprovedOtHours = (float) $this->overtimeHoursCache[$hoursCacheKey];
-                } else {
-                    $noPunchApprovedOtHours = (float) Overtime::query()
-                        ->where('user_id', $user->id)
-                        ->where('status', Overtime::STATUS_APPROVED)
-                        ->whereDate('date', $dateKey)
-                        ->sum('computed_hours');
-                }
-                if (array_key_exists($existsCacheKey, $this->overtimeExistsCache)) {
-                    $noPunchHasOtRequest = $noPunchApprovedOtHours > 0.0001
-                        || (bool) $this->overtimeExistsCache[$existsCacheKey];
-                } else {
-                    $noPunchHasOtRequest = $noPunchApprovedOtHours > 0.0001
-                        || Overtime::query()
-                            ->where('user_id', $user->id)
-                            ->whereDate('date', $dateKey)
-                            ->exists();
-                }
-
-                if ($noPunchApprovedOtHours > 0.0001) {
-                    $noPunchOtApplied = $noPunchApprovedOtHours;
-                    $noPunchOtPay = round($noPunchApprovedOtHours * $hourlyRate * $otMult, 2);
-                    $totalPay += $noPunchOtPay;
+            if ($noPunchApprovedOtHours > 0.0001 && $noPunchOtPay > 0) {
+                $totalPay += $noPunchOtPay;
+                $otDayMinutes = (int) round($noPunchApprovedOtHours * 60);
+                foreach ($noPunchOtComp['items'] ?? [] as $item) {
+                    $payableHours = (float) ($item['payable_hours'] ?? $item['approved_hours'] ?? 0);
                     $breakdown[] = [
-                        'component' => 'ot_pay_no_clock',
-                        'hours' => $noPunchApprovedOtHours,
+                        'component' => 'ot_pay',
+                        'overtime_id' => $item['overtime_id'] ?? null,
+                        'hours' => $payableHours,
+                        'minutes' => (int) round($payableHours * 60),
+                        'approved_hours' => (float) ($item['approved_hours'] ?? 0),
                         'rate' => $hourlyRate,
-                        'multiplier' => $otMult,
-                        'amount' => $noPunchOtPay,
-                        'note' => 'Approved OT on rest day/holiday/no-schedule without clock logs (policy exception).',
+                        'multiplier' => (float) ($item['multiplier'] ?? $otMult),
+                        'amount' => (float) ($item['amount'] ?? 0),
+                        'ph_ot_rule' => $item['ph_ot_rule'] ?? $ruleCode,
+                        'ot_type' => $item['ot_type'] ?? null,
+                        'note' => 'Approved overtime without clock logs.',
+                        'no_clock' => true,
                     ];
                 }
             }
@@ -694,6 +715,8 @@ class PayrollComputationService
                 'nd_pay' => 0.0,
                 'holiday_premium_pay' => round($holidayPremiumPayForLeave, 2),
                 'approved_ot_hours' => $noPunchApprovedOtHours,
+                'approved_ot_requested_hours' => (float) ($noPunchOtComp['approved_hours'] ?? $noPunchApprovedOtHours),
+                'approved_overtime_items' => $noPunchOtComp['items'] ?? [],
                 'pending_ot_hours' => 0.0,
                 'unapproved_ot_hours' => 0.0,
                 'has_overtime_request' => $noPunchHasOtRequest,
@@ -701,6 +724,8 @@ class PayrollComputationService
                 'ot_premium_ratio' => 0.0,
                 'uncovered_ot_hours' => 0.0,
                 'nd_premium_applied' => false,
+                'ot_day_minutes' => $otDayMinutes ?? 0,
+                'ot_night_minutes' => 0,
             ]);
         }
 
@@ -802,15 +827,26 @@ class PayrollComputationService
             $regularDayMinutes += $deltaPaid;
         }
 
-        // Phase 5 (before pay): OT requests from Overtime module — premium pay only on approved hours.
-        $approvedOtHours = $this->sumOvertimeHoursForWorkday($user, $dateKey, $timeInTz, Overtime::STATUS_APPROVED);
+        // Phase 5 (before pay): OT requests from Overtime module — premium pay on approved (configurable) hours.
+        $approvedOtComp = $this->computeApprovedOvertimeCompensationForDay(
+            $user,
+            $dateKey,
+            $hourlyRate,
+            $policy,
+            $ruleCode,
+            (int) $seg['overtime_minutes']
+        );
+        $approvedOtHours = (float) ($approvedOtComp['approved_hours'] ?? 0);
+        $approvedOtRequestedHours = $approvedOtHours;
         $pendingOtHours = $this->sumOvertimeHoursForWorkday($user, $dateKey, $timeInTz, Overtime::STATUS_PENDING);
         $hasOvertimeRequest = $this->hasOvertimeRequestForWorkday($user, $dateKey, $timeInTz);
 
         $renderedOtMinutes = (int) $seg['overtime_minutes'];
         $approvedOtMinutes = (int) round($approvedOtHours * 60);
-        $paidOtMinutes = min($renderedOtMinutes, max(0, $approvedOtMinutes));
-        $otPremiumRatio = $renderedOtMinutes > 0 ? ($paidOtMinutes / $renderedOtMinutes) : 0.0;
+        $paidOtMinutes = $this->overtimePayroll->resolvePayableOtMinutes($renderedOtMinutes, $approvedOtMinutes);
+        $otPremiumRatio = $renderedOtMinutes > 0
+            ? ($paidOtMinutes / $renderedOtMinutes)
+            : ($paidOtMinutes > 0 ? 1.0 : 0.0);
         $ndOvertimeMinutesRaw = (int) ($seg['nd_overtime_minutes'] ?? 0);
         $effectiveNdOvertimeMinutes = (int) round($ndOvertimeMinutesRaw * $otPremiumRatio);
 
@@ -841,7 +877,9 @@ class PayrollComputationService
         $payFirst8Multiplier = $qualifiesStatutoryHolidayPremium ? $first8 : 1.0;
 
         $first8Pay = ($paidReg / 60.0) * $hourlyRate * $payFirst8Multiplier;
-        $otPay = ($paidOtMinutes / 60.0) * $hourlyRate * $otMult;
+        $otPay = $this->overtimePayroll->payableBasis() === 'approved'
+            ? (float) ($approvedOtComp['ot_pay'] ?? 0)
+            : ($paidOtMinutes / 60.0) * $hourlyRate * $otMult;
         $ndPayRegular = ($ndRegPaid / 60.0) * $hourlyRate * $ndBase * $ndPremium;
         $ndPayOt = ($effectiveNdOvertimeMinutes / 60.0) * $hourlyRate * $otMult * $ndPremium;
         $ndPay = $allowNdPremium ? ($ndPayRegular + $ndPayOt) : 0.0;
@@ -863,14 +901,26 @@ class PayrollComputationService
                 'note' => 'Scheduled minutes beyond '.($regularDailyThresholdMinutes / 60).'h daily threshold (Labor Code Art. 83). Excluded from Regular pay — file as overtime to earn premium.',
             ];
         }
-        $breakdown[] = [
-            'component' => 'ot_pay',
-            'minutes' => $paidOtMinutes,
-            'rendered_ot_minutes' => $renderedOtMinutes,
-            'rate' => $hourlyRate,
-            'multiplier' => $otMult,
-            'amount' => round($otPay, 2),
-        ];
+        if ($paidOtMinutes > 0 || $otPay > 0) {
+            $breakdown[] = [
+                'component' => 'ot_pay',
+                'minutes' => $paidOtMinutes,
+                'rendered_ot_minutes' => $renderedOtMinutes,
+                'approved_ot_minutes' => $approvedOtMinutes,
+                'rate' => $hourlyRate,
+                'multiplier' => $otMult,
+                'amount' => round($otPay, 2),
+                'approved_overtime_items' => $approvedOtComp['items'] ?? [],
+            ];
+        }
+        if ($approvedOtMinutes > $paidOtMinutes && $approvedOtMinutes > 0) {
+            $breakdown[] = [
+                'component' => 'ot_payable_basis_adjustment',
+                'minutes' => $approvedOtMinutes - $paidOtMinutes,
+                'amount' => 0.0,
+                'note' => 'Approved OT exceeds rendered OT; payable basis is '.$this->overtimePayroll->payableBasis().'.',
+            ];
+        }
         $breakdown[] = [
             'component' => 'nd_pay',
             'minutes' => $ndNightMinutesForBreakdown,
@@ -943,10 +993,9 @@ class PayrollComputationService
             'ot_pay' => round($otPay, 2),
             'nd_pay' => round($ndPay, 2),
             'holiday_premium_pay' => round($holidayPremiumPay, 2),
-            // Applied approved OT is capped by actual rendered OT. Keep the raw request separately
-            // so payroll/daily records do not display an 8.00h approval when only 0.17h was worked.
             'approved_ot_hours' => round($paidOtMinutes / 60.0, 2),
-            'approved_ot_requested_hours' => round($approvedOtHours, 2),
+            'approved_ot_requested_hours' => round($approvedOtRequestedHours, 2),
+            'approved_overtime_items' => $approvedOtComp['items'] ?? [],
             'pending_ot_hours' => $pendingOtHours,
             'unapproved_ot_hours' => $unapprovedOtHours,
             'has_overtime_request' => $hasOvertimeRequest,
@@ -1054,6 +1103,53 @@ class PayrollComputationService
      * previous calendar day ONLY when the clock-in is actually from a different calendar day
      * (true overnight/graveyard shift where OT was filed on the prior date).
      */
+    /**
+     * @return list<Overtime>
+     */
+    private function approvedOvertimeRecordsForUserDate(User $user, string $dateKey): array
+    {
+        $key = (int) $user->id.'|'.$dateKey;
+        if (array_key_exists($key, $this->approvedOvertimeByUserDate)) {
+            return $this->approvedOvertimeByUserDate[$key];
+        }
+
+        return $this->overtimePayroll->fetchApprovedForUserDate(
+            (int) $user->id,
+            $dateKey,
+            $user->getEffectiveCompanyId(),
+            $this->activePayrollBatchRunId
+        );
+    }
+
+    /**
+     * @return array{
+     *   approved_hours: float,
+     *   payable_hours: float,
+     *   ot_pay: float,
+     *   items: list<array<string, mixed>>,
+     *   overtime_ids: list<int>
+     * }
+     */
+    private function computeApprovedOvertimeCompensationForDay(
+        User $user,
+        string $dateKey,
+        float $hourlyRate,
+        ?object $policy,
+        string $fallbackRuleCode,
+        int $renderedOtMinutes
+    ): array {
+        return $this->overtimePayroll->computeApprovedOvertimeForDate(
+            $user,
+            $dateKey,
+            $hourlyRate,
+            $policy,
+            $fallbackRuleCode,
+            $renderedOtMinutes,
+            $this->activePayrollBatchRunId,
+            $this->approvedOvertimeRecordsForUserDate($user, $dateKey)
+        );
+    }
+
     private function sumOvertimeHoursForWorkday(User $user, string $dateKey, Carbon $timeInTz, string $status): float
     {
         $sumForDate = function (string $d) use ($user, $status): float {
@@ -1340,6 +1436,13 @@ class PayrollComputationService
     ): array {
         $timingSink = $periodContext['_timing_sink'] ?? null;
         $__segStart = microtime(true);
+
+        $this->activePayrollBatchRunId = isset($periodContext['payroll_batch_run_id'])
+            ? (int) $periodContext['payroll_batch_run_id']
+            : null;
+        if ($this->activePayrollBatchRunId !== null && $this->activePayrollBatchRunId <= 0) {
+            $this->activePayrollBatchRunId = null;
+        }
 
         $tz = $this->getTimezone();
         $monthlyBaseForRate = $this->resolveMonthlyBaseForDailyRate($user, $to->toDateString());
@@ -1800,6 +1903,28 @@ class PayrollComputationService
             $timingSink->load_deductions_ms = ($timingSink->load_deductions_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
         }
 
+        $overtimeBreakdown = [];
+        $overtimeTotalHours = 0.0;
+        $overtimeTotalAmount = 0.0;
+        foreach ($days as $day) {
+            foreach ((array) ($day['approved_overtime_items'] ?? []) as $item) {
+                $overtimeBreakdown[] = $item;
+                $overtimeTotalHours += (float) ($item['payable_hours'] ?? $item['approved_hours'] ?? 0);
+                $overtimeTotalAmount += (float) ($item['amount'] ?? 0);
+            }
+        }
+        $this->overtimePayroll->logPayrollOvertimeDebug(
+            (int) $user->id,
+            $this->activePayrollBatchRunId,
+            $from->toDateString(),
+            $to->toDateString(),
+            $overtimeBreakdown,
+            $overtimeTotalHours,
+            $overtimeTotalAmount
+        );
+
+        $this->activePayrollBatchRunId = null;
+
         return [
             'user_id' => $user->id,
             'from_date' => $from->toDateString(),
@@ -1853,6 +1978,10 @@ class PayrollComputationService
                 'total_regular_night_minutes' => $totalRegularNight,
                 'total_ot_day_minutes' => $totalOtDay,
                 'total_ot_night_minutes' => $totalOtNight,
+                'overtime_breakdown' => $overtimeBreakdown,
+                'overtime_total_hours' => round($overtimeTotalHours, 2),
+                'overtime_total_amount' => round($overtimeTotalAmount, 2),
+                'ot_payable_basis' => $this->overtimePayroll->payableBasis(),
                 'daily_rate_divisor_days' => $dailyRateDivisorDays,
                 'attendance_proration' => $deductionSchedule['attendance_proration'] ?? $attendanceProration,
             ],

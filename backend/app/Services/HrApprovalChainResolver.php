@@ -154,7 +154,7 @@ class HrApprovalChainResolver
                 'request_type' => $workflowSetting['request_type'] ?? $moduleType,
                 'skip_reason' => 'workflow_setting_hierarchy_off',
             ]);
-            $this->appendAdminHrFinalStep($steps, $subjectId, $usedApproverIds);
+            $this->appendAdminHrFinalStep($steps, $subject, $requestor, $usedApproverIds);
 
             return $steps;
         }
@@ -197,7 +197,7 @@ class HrApprovalChainResolver
             ]);
         }
 
-        $this->appendAdminHrFinalStep($steps, $subjectId, $usedApproverIds);
+        $this->appendAdminHrFinalStep($steps, $subject, $requestor, $usedApproverIds);
 
         Log::info('approval_chain: final order', [
             'request_id' => $logContext['request_id'] ?? null,
@@ -330,9 +330,10 @@ class HrApprovalChainResolver
      * @param  array<int, array<string, mixed>>  $steps
      * @param  list<int>  $usedApproverIds
      */
-    private function appendAdminHrFinalStep(array &$steps, int $subjectId, array $usedApproverIds): void
+    private function appendAdminHrFinalStep(array &$steps, User $subject, ?User $requestor, array $usedApproverIds): void
     {
-        $hrApprover = $this->resolveHrApprover();
+        $subjectId = (int) $subject->id;
+        $hrApprover = $this->resolveHrApproverForFinalStep($subject, $requestor);
         if (! $hrApprover) {
             Log::error('approval_chain: Admin HR final step not appended — no visible approvable Admin HR account', [
                 'employee_id' => $subjectId,
@@ -358,6 +359,17 @@ class HrApprovalChainResolver
             'approver_name' => $hrApprover->display_name,
             'sequence_order' => count($steps),
         ]);
+    }
+
+    private function resolveHrApproverForFinalStep(User $subject, ?User $requestor): ?User
+    {
+        if ($requestor
+            && (int) $requestor->id === (int) $subject->id
+            && $subject->isAdmin()) {
+            return $subject;
+        }
+
+        return $this->resolveHrApprover();
     }
 
     /**

@@ -421,11 +421,13 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(800.0, $result['regular_pay']);
     }
 
-    public function test_approved_ot_hours_are_capped_to_rendered_overtime(): void
+    public function test_approved_ot_hours_use_approved_basis_by_default(): void
     {
         if (! $this->tablesExist()) {
             $this->markTestSkipped('Database tables not available');
         }
+
+        config(['payroll.ot_payable_basis' => 'approved']);
 
         $effectiveSchedule = [
             'sun' => null,
@@ -448,9 +450,10 @@ class PolicyEngineTest extends TestCase
             'user_id' => $user->id,
             'date' => $dateKey,
             'schedule_end' => '17:00:00',
-            'expected_end_time' => '01:00:00',
-            'computed_minutes' => 480,
-            'computed_hours' => 8.00,
+            'expected_end_time' => '20:00:00',
+            'computed_minutes' => 180,
+            'computed_hours' => 3.00,
+            'ph_ot_rule' => 'ORD',
             'status' => Overtime::STATUS_APPROVED,
         ]);
 
@@ -466,16 +469,109 @@ class PolicyEngineTest extends TestCase
         );
 
         $this->assertSame(480, $result['regular_day_minutes'] + $result['regular_night_minutes']);
-        $this->assertSame(10, $result['ot_day_minutes'] + $result['ot_night_minutes']);
-        $this->assertSame(0.17, $result['approved_ot_hours']);
-        $this->assertSame(8.0, $result['approved_ot_requested_hours']);
-        $this->assertSame(490, $payroll->payrollImpactMinutesForAttendanceDisplay(
+        $this->assertSame(180, $result['ot_day_minutes'] + $result['ot_night_minutes']);
+        $this->assertSame(3.0, $result['approved_ot_hours']);
+        $this->assertSame(3.0, $result['approved_ot_requested_hours']);
+        $this->assertGreaterThan(150.0, (float) $result['ot_pay']);
+    }
+
+    public function test_approved_ot_can_still_cap_to_rendered_when_configured(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        config(['payroll.ot_payable_basis' => 'min']);
+
+        $effectiveSchedule = [
+            'sun' => null,
+            'mon' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'tue' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'thu' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'fri' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'sat' => null,
+        ];
+
+        $user = User::factory()->create([
+            'company_id' => null,
+            'daily_rate' => 800,
+            'schedule' => $effectiveSchedule,
+        ]);
+
+        $dateKey = '2026-04-30';
+        Overtime::create([
+            'user_id' => $user->id,
+            'date' => $dateKey,
+            'schedule_end' => '17:00:00',
+            'expected_end_time' => '01:00:00',
+            'computed_minutes' => 480,
+            'computed_hours' => 8.00,
+            'status' => Overtime::STATUS_APPROVED,
+        ]);
+
+        $result = app(PayrollComputationService::class)->computeDayPayroll(
             $user,
             $dateKey,
             Carbon::parse("{$dateKey} 07:51:00", 'Asia/Manila'),
             Carbon::parse("{$dateKey} 17:01:00", 'Asia/Manila'),
+            $effectiveSchedule,
+            800,
             'Asia/Manila'
-        ));
+        );
+
+        $this->assertSame(0.17, $result['approved_ot_hours']);
+        $this->assertSame(8.0, $result['approved_ot_requested_hours']);
+    }
+
+    public function test_multiple_approved_ot_days_sum_in_period_payroll(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        config(['payroll.ot_payable_basis' => 'approved']);
+
+        $effectiveSchedule = [
+            'sun' => null,
+            'mon' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'tue' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'thu' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'fri' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'sat' => null,
+        ];
+
+        $user = User::factory()->create([
+            'company_id' => null,
+            'daily_rate' => 800,
+            'schedule' => $effectiveSchedule,
+        ]);
+
+        foreach (['2026-05-12', '2026-05-13', '2026-05-14'] as $dateKey) {
+            Overtime::create([
+                'user_id' => $user->id,
+                'date' => $dateKey,
+                'schedule_end' => '17:00:00',
+                'expected_end_time' => '20:00:00',
+                'computed_minutes' => 180,
+                'computed_hours' => 3.00,
+                'ph_ot_rule' => 'ORD',
+                'status' => Overtime::STATUS_APPROVED,
+            ]);
+        }
+
+        $from = Carbon::parse('2026-05-12', 'Asia/Manila');
+        $to = Carbon::parse('2026-05-14', 'Asia/Manila');
+        $computed = app(PayrollComputationService::class)->computeEmployeePayroll($user, $from, $to, 800.0);
+
+        $summary = $computed['summary'] ?? [];
+        $this->assertSame(9.0, (float) ($summary['overtime_total_hours'] ?? 0));
+        $this->assertCount(3, $summary['overtime_breakdown'] ?? []);
+        $otLine = collect($summary['daily_computation_earning_lines'] ?? [])
+            ->first(fn ($line) => ($line['key'] ?? '') === 'daily:ot_pay');
+        $this->assertNotNull($otLine);
+        $this->assertSame(540, (int) ($otLine['minutes_worked'] ?? 0));
     }
 
     public function test_regular_pay_units_show_zero_days_for_partial_work(): void

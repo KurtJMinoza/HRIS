@@ -8,6 +8,8 @@ use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
 use App\Models\EmployeeOrganizationAssignment;
+use App\Models\LeaveRequest;
+use App\Models\OrgApprovalRecord;
 use App\Models\OrganizationPositionAssignment;
 use App\Models\OrganizationPositionType;
 use App\Models\OrganizationType;
@@ -17,6 +19,7 @@ use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\FlexibleImmediateApproverResolver;
 use App\Services\HrApprovalChainResolver;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\OrganizationLeadershipAssignmentScopeService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -1364,6 +1367,102 @@ class FlexibleImmediateApproverResolverTest extends TestCase
             $this->assertSame((int) $sharedHead->id, (int) $chain[0]['approver_id']);
             $this->assertSame('admin_hr', $chain[1]['approval_level']);
         }
+    }
+
+    public function test_admin_hr_self_request_assigns_self_as_final_approver_and_requires_manual_approval(): void
+    {
+        if (! Schema::hasTable('leave_requests') || ! Schema::hasTable('org_approval_records')) {
+            $this->markTestSkipped('Leave approval workflow tables are not available.');
+        }
+
+        $admin = $this->user(['role' => User::ROLE_ADMIN]);
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($admin, 'leave', $admin);
+
+        $this->assertCount(1, $chain);
+        $this->assertSame('admin_hr', $chain[0]['approval_level']);
+        $this->assertSame((int) $admin->id, (int) $chain[0]['approver_id']);
+
+        $leave = LeaveRequest::query()->create([
+            'user_id' => $admin->id,
+            'type' => 'vacation',
+            'start_date' => now()->toDateString(),
+            'end_date' => now()->toDateString(),
+            'status' => LeaveRequest::STATUS_PENDING,
+            'pending_approval' => true,
+            'filed_at' => now(),
+            'filed_by' => $admin->id,
+        ]);
+        $leave->load(['user', 'filedBy']);
+
+        $workflow = app(OrgApprovalWorkflowService::class);
+        $records = $workflow->ensureRecordsForRequest($leave, OrgApprovalWorkflowService::MODULE_LEAVE, $admin, $admin);
+
+        $this->assertCount(1, $records);
+        $this->assertSame('pending', $records->first()->approval_status);
+        $this->assertTrue($workflow->canAct($admin, $leave, OrgApprovalWorkflowService::MODULE_LEAVE, $admin, $admin, true));
+
+        $nextPending = $workflow->approveCurrent($leave, OrgApprovalWorkflowService::MODULE_LEAVE, $admin, $admin, null, $admin);
+
+        $this->assertNull($nextPending);
+        $this->assertSame('approved', $workflow->records(OrgApprovalWorkflowService::MODULE_LEAVE, (int) $leave->id)->first()->approval_status);
+        $this->assertSame(LeaveRequest::STATUS_PENDING, $leave->fresh()->status);
+        $this->assertTrue((bool) $leave->fresh()->pending_approval);
+
+        $rejectLeave = LeaveRequest::query()->create([
+            'user_id' => $admin->id,
+            'type' => 'vacation',
+            'start_date' => now()->addDay()->toDateString(),
+            'end_date' => now()->addDay()->toDateString(),
+            'status' => LeaveRequest::STATUS_PENDING,
+            'pending_approval' => true,
+            'filed_at' => now(),
+            'filed_by' => $admin->id,
+        ]);
+        $rejectLeave->load(['user', 'filedBy']);
+
+        $workflow->ensureRecordsForRequest($rejectLeave, OrgApprovalWorkflowService::MODULE_LEAVE, $admin, $admin);
+        $rejectedStep = $workflow->rejectCurrent($rejectLeave, OrgApprovalWorkflowService::MODULE_LEAVE, $admin, $admin, 'Rejected by self approver.', $admin);
+
+        $this->assertNotNull($rejectedStep);
+        $this->assertSame('rejected', $workflow->records(OrgApprovalWorkflowService::MODULE_LEAVE, (int) $rejectLeave->id)->first()->approval_status);
+    }
+
+    public function test_employee_self_approval_is_denied_even_when_assigned_to_own_step(): void
+    {
+        if (! Schema::hasTable('leave_requests') || ! Schema::hasTable('org_approval_records')) {
+            $this->markTestSkipped('Leave approval workflow tables are not available.');
+        }
+
+        $employee = $this->user();
+        $leave = LeaveRequest::query()->create([
+            'user_id' => $employee->id,
+            'type' => 'vacation',
+            'start_date' => now()->toDateString(),
+            'end_date' => now()->toDateString(),
+            'status' => LeaveRequest::STATUS_PENDING,
+            'pending_approval' => false,
+            'filed_at' => now(),
+            'filed_by' => $employee->id,
+        ]);
+
+        OrgApprovalRecord::query()->create([
+            'request_id' => $leave->id,
+            'module_type' => OrgApprovalWorkflowService::MODULE_LEAVE,
+            'approval_level' => 'section_unit_head',
+            'approval_label' => 'Accidental self approval',
+            'approver_role' => \App\Enums\HrRole::SectionUnitHead->value,
+            'approver_id' => $employee->id,
+            'approver_name' => $employee->display_name,
+            'approval_status' => OrgApprovalRecord::STATUS_PENDING,
+            'sequence_order' => 1,
+        ]);
+
+        $workflow = app(OrgApprovalWorkflowService::class);
+
+        $this->assertFalse($workflow->canAct($employee, $leave, OrgApprovalWorkflowService::MODULE_LEAVE, $employee, $employee, true));
+        $this->assertNull($workflow->approveCurrent($leave, OrgApprovalWorkflowService::MODULE_LEAVE, $employee, $employee, null, $employee));
+        $this->assertSame(OrgApprovalRecord::STATUS_PENDING, $workflow->records(OrgApprovalWorkflowService::MODULE_LEAVE, (int) $leave->id)->first()->approval_status);
     }
 
     private function type(string $name, string $code = 'custom'): OrganizationType

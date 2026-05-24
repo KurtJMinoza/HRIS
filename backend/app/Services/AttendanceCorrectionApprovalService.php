@@ -104,6 +104,7 @@ class AttendanceCorrectionApprovalService
             OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
             $employee,
             $requestor,
+            true,
         );
     }
 

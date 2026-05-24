@@ -201,6 +201,11 @@ function ScheduleApprovalChain({ steps }) {
                   <div className="min-w-0 flex-1">
                     <p className="text-[15px] font-bold leading-snug text-foreground">{name}</p>
                     {role ? <p className="mt-1 text-sm font-medium text-foreground/85">{role}</p> : null}
+                    {step?.is_self_approval ? (
+                      <span className="mt-2 inline-flex w-fit rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/35 dark:text-amber-200">
+                        Self Approval
+                      </span>
+                    ) : null}
                     <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{statusLine}</p>
                     {remarks ? (
                       <p className="mt-3 text-sm leading-relaxed text-foreground">

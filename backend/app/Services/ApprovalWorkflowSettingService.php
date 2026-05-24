@@ -172,6 +172,11 @@ class ApprovalWorkflowSettingService
             if (array_key_exists('fallback_to_parent_approver', $row)) {
                 $setting->fallback_to_parent_approver = (bool) $row['fallback_to_parent_approver'];
             }
+            foreach (['allow_admin_self_approval', 'allow_hr_self_approval', 'allow_super_admin_self_approval'] as $flag) {
+                if (array_key_exists($flag, $row) && Schema::hasColumn('approval_workflow_settings', $flag)) {
+                    $setting->{$flag} = (bool) $row[$flag];
+                }
+            }
             if (array_key_exists('immediate_approver_mode', $row)) {
                 $mode = trim((string) $row['immediate_approver_mode']);
                 if ($mode !== '') {
@@ -205,10 +210,29 @@ class ApprovalWorkflowSettingService
                     'immediate_approver_mode' => $this->defaultImmediateModeFor($requestType),
                     'fallback_to_hr' => true,
                     'fallback_to_parent_approver' => false,
+                    ...$this->defaultSelfApprovalFlagsForDatabase(),
                     'is_active' => true,
                 ],
             );
         }
+    }
+
+    /**
+     * @return array<string, bool>
+     */
+    private function defaultSelfApprovalFlagsForDatabase(): array
+    {
+        if (! Schema::hasTable('approval_workflow_settings')) {
+            return [];
+        }
+
+        return collect([
+            'allow_admin_self_approval' => true,
+            'allow_hr_self_approval' => true,
+            'allow_super_admin_self_approval' => true,
+        ])->filter(
+            fn (bool $enabled, string $column): bool => Schema::hasColumn('approval_workflow_settings', $column)
+        )->all();
     }
 
     private function defaultImmediateModeFor(string $requestType): string
@@ -245,6 +269,9 @@ class ApprovalWorkflowSettingService
             'require_final_hr_approval' => true,
             'fallback_to_hr' => true,
             'fallback_to_parent_approver' => false,
+            'allow_admin_self_approval' => true,
+            'allow_hr_self_approval' => true,
+            'allow_super_admin_self_approval' => true,
             'is_active' => true,
             'updated_at' => null,
             'updated_by_name' => null,
@@ -273,6 +300,9 @@ class ApprovalWorkflowSettingService
             'require_final_hr_approval' => (bool) $row->require_final_hr_approval,
             'fallback_to_hr' => (bool) $row->fallback_to_hr,
             'fallback_to_parent_approver' => (bool) ($row->fallback_to_parent_approver ?? false),
+            'allow_admin_self_approval' => (bool) ($row->allow_admin_self_approval ?? true),
+            'allow_hr_self_approval' => (bool) ($row->allow_hr_self_approval ?? true),
+            'allow_super_admin_self_approval' => (bool) ($row->allow_super_admin_self_approval ?? true),
             'is_active' => (bool) $row->is_active,
             'updated_at' => $row->updated_at?->toIso8601String(),
             'updated_by_name' => $row->updatedBy?->display_name,

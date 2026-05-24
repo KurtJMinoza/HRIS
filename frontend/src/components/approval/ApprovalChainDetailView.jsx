@@ -106,6 +106,11 @@ export function ApprovalChainDetailView({ steps }) {
                 <div className="min-w-0 flex-1 space-y-1">
                   <p className="text-[15px] font-semibold leading-snug text-foreground">{name}</p>
                   {roleLine ? <p className="text-xs font-medium text-muted-foreground">{roleLine}</p> : null}
+                  {s?.is_self_approval ? (
+                    <span className="inline-flex w-fit rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/35 dark:text-amber-200">
+                      Self Approval
+                    </span>
+                  ) : null}
                   <p className="text-xs leading-relaxed text-muted-foreground">{statusDateLine}</p>
                   {remarks ? (
                     <p className="pt-1 text-sm leading-relaxed text-foreground/90">

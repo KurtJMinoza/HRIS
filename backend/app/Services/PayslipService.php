@@ -12,6 +12,7 @@ use App\Models\PayrollPeriod;
 use App\Models\Payslip;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -144,7 +145,7 @@ class PayslipService
 
         $payslip = DB::transaction(function () use ($employee, $gen, $plainPassword, $withPdf) {
             /** @var Payslip $payslip */
-            $payslip = Payslip::query()->updateOrCreate($gen['unique'], $gen['attributes']);
+            $payslip = $this->upsertPayslipRow($gen['unique'], $gen['attributes']);
             if ($withPdf) {
                 $pdfPath = $this->generatePdf($payslip->fresh(), $employee->fresh(), $plainPassword);
                 $payslip->update([
@@ -185,7 +186,7 @@ class PayslipService
 
         $payslip = DB::transaction(function () use ($employee, $gen, $plainPassword, $withPdf) {
             /** @var Payslip $payslip */
-            $payslip = Payslip::query()->updateOrCreate($gen['unique'], $gen['attributes']);
+            $payslip = $this->upsertPayslipRow($gen['unique'], $gen['attributes']);
             if ($withPdf) {
                 $pdfPath = $this->generatePdf($payslip->fresh(), $employee->fresh(), $plainPassword);
                 $payslip->update([
@@ -201,6 +202,199 @@ class PayslipService
             'payslip' => $payslip,
             'pdf_password' => $plainPassword,
         ];
+    }
+
+    /**
+     * Link a payslip to a payroll period while respecting {@code pg_payslips_user_period_unique}.
+     * Supersedes duplicate draft rows that already hold the same period link.
+     */
+    public function assignPayrollPeriodId(Payslip $payslip, int $payrollPeriodId): Payslip
+    {
+        $payrollPeriodId = (int) $payrollPeriodId;
+        if ($payrollPeriodId <= 0) {
+            return $payslip;
+        }
+
+        if ((int) ($payslip->payroll_period_id ?? 0) === $payrollPeriodId) {
+            return $payslip;
+        }
+
+        return DB::transaction(function () use ($payslip, $payrollPeriodId): Payslip {
+            /** @var Payslip $locked */
+            $locked = Payslip::query()->whereKey($payslip->id)->lockForUpdate()->firstOrFail();
+            $this->releaseConflictingPayrollPeriodLinks($locked, $payrollPeriodId);
+
+            try {
+                $locked->forceFill(['payroll_period_id' => $payrollPeriodId])->save();
+            } catch (QueryException $e) {
+                if (! $this->isDuplicateUserPayrollPeriodException($e)) {
+                    throw $e;
+                }
+                $this->forceReleasePayrollPeriodSlot((int) $locked->user_id, $payrollPeriodId, (int) $locked->id);
+                $locked->forceFill(['payroll_period_id' => $payrollPeriodId])->save();
+            }
+
+            return $locked->fresh();
+        });
+    }
+
+    /**
+     * Clear payroll_period_id from voided/archived payslips that still block pg_payslips_user_period_unique.
+     *
+     * @param  list<int>  $userIds
+     */
+    public function clearBlockingPayrollPeriodLinksForUsers(array $userIds): int
+    {
+        $ids = array_values(array_unique(array_map(static fn ($id) => (int) $id, $userIds)));
+        if ($ids === []) {
+            return 0;
+        }
+
+        return Payslip::query()
+            ->whereIn('user_id', $ids)
+            ->whereNotNull('payroll_period_id')
+            ->where(function ($q): void {
+                $q->where('status', Payslip::STATUS_VOIDED)
+                    ->orWhereNotNull('voided_at');
+            })
+            ->update(['payroll_period_id' => null]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $unique
+     * @param  array<string, mixed>  $attributes
+     */
+    private function upsertPayslipRow(array $unique, array $attributes): Payslip
+    {
+        $periodId = isset($attributes['payroll_period_id']) ? (int) $attributes['payroll_period_id'] : 0;
+        $attrs = $attributes;
+        if ($periodId > 0) {
+            unset($attrs['payroll_period_id']);
+        }
+        $attrs['period_slot'] = (int) ($attrs['period_slot'] ?? 0);
+
+        $lookup = array_merge($unique, ['period_slot' => 0]);
+
+        /** @var Payslip|null $payslip */
+        $payslip = Payslip::query()
+            ->where($lookup)
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($payslip instanceof Payslip) {
+            $payslip->fill($attrs);
+            $payslip->save();
+        } else {
+            $payslip = Payslip::query()->create(array_merge($lookup, $attrs));
+        }
+
+        if ($periodId > 0) {
+            return $this->assignPayrollPeriodId($payslip, $periodId);
+        }
+
+        return $payslip;
+    }
+
+    private function releaseConflictingPayrollPeriodLinks(Payslip $keeper, int $payrollPeriodId): void
+    {
+        $userId = (int) $keeper->user_id;
+        $keeperId = (int) $keeper->id;
+
+        $this->forceReleasePayrollPeriodSlot($userId, $payrollPeriodId, $keeperId);
+
+        // Voided rows are excluded from active conflict scans but still occupy pg_payslips_user_period_unique.
+        $voidedCleared = Payslip::query()
+            ->where('user_id', $userId)
+            ->where('payroll_period_id', $payrollPeriodId)
+            ->whereKeyNot($keeperId)
+            ->where(function ($q): void {
+                $q->where('status', Payslip::STATUS_VOIDED)
+                    ->orWhereNotNull('voided_at');
+            })
+            ->update(['payroll_period_id' => null]);
+
+        if ($voidedCleared > 0) {
+            Log::info('payslip: cleared payroll_period_id from voided duplicates', [
+                'keeper_payslip_id' => (int) $keeper->id,
+                'user_id' => $userId,
+                'payroll_period_id' => $payrollPeriodId,
+                'rows_cleared' => $voidedCleared,
+            ]);
+        }
+
+        $conflicts = Payslip::query()
+            ->where('user_id', $userId)
+            ->where('payroll_period_id', $payrollPeriodId)
+            ->whereKeyNot($keeper->id)
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
+            ->orderByDesc('id')
+            ->get();
+
+        foreach ($conflicts as $conflict) {
+            if ($this->shouldArchivePayrollPeriodConflict($keeper, $conflict)) {
+                $this->archiveSupersededPayslip($conflict);
+
+                continue;
+            }
+
+            throw new \RuntimeException(
+                'Payslip '.(int) $conflict->id.' ('.$conflict->status.') already uses payroll period '.$payrollPeriodId
+                .' for user_id='.$userId.'. Payslip '.$keeperId.' cannot be linked.'
+                .' Run: php artisan payroll:repair-duplicate-rows'
+            );
+        }
+
+        $this->forceReleasePayrollPeriodSlot($userId, $payrollPeriodId, $keeperId);
+    }
+
+    private function forceReleasePayrollPeriodSlot(int $userId, int $payrollPeriodId, int $keeperId): void
+    {
+        Payslip::query()
+            ->where('user_id', $userId)
+            ->where('payroll_period_id', $payrollPeriodId)
+            ->where('id', '!=', $keeperId)
+            ->update(['payroll_period_id' => null]);
+    }
+
+    private function isDuplicateUserPayrollPeriodException(QueryException $e): bool
+    {
+        $message = $e->getMessage();
+
+        return str_contains($message, 'pg_payslips_user_period_unique')
+            || (str_contains($message, 'Duplicate entry') && str_contains($message, 'payroll_period'));
+    }
+
+    private function shouldArchivePayrollPeriodConflict(Payslip $keeper, Payslip $conflict): bool
+    {
+        if (in_array((string) $conflict->status, Payslip::lockingStatuses(), true)) {
+            return false;
+        }
+
+        // Any superseded draft/generated row holding the same payroll_period_id must be archived.
+        return true;
+    }
+
+    private function archiveSupersededPayslip(Payslip $duplicate): void
+    {
+        Log::info('payslip: archiving superseded duplicate before payroll period link', [
+            'payslip_id' => (int) $duplicate->id,
+            'user_id' => (int) $duplicate->user_id,
+            'payroll_period_id' => $duplicate->payroll_period_id,
+            'pay_period_start' => $duplicate->pay_period_start?->toDateString(),
+            'pay_period_end' => $duplicate->pay_period_end?->toDateString(),
+            'status' => (string) $duplicate->status,
+        ]);
+
+        $duplicate->forceFill([
+            'status' => Payslip::STATUS_VOIDED,
+            'voided_at' => now(),
+            'period_slot' => (int) $duplicate->id,
+            'payroll_period_id' => null,
+            'is_sent' => false,
+            'delivered_at' => null,
+            'sent_at' => null,
+        ])->save();
     }
 
     /**
@@ -865,6 +1059,7 @@ class PayslipService
                 'user_id' => $employee->id,
                 'pay_period_start' => $from->toDateString(),
                 'pay_period_end' => $to->toDateString(),
+                'period_slot' => 0,
             ],
             'attributes' => [
                 'payroll_period_id' => $input['payroll_period_id'] ?? null,
@@ -1105,12 +1300,24 @@ class PayslipService
             }
 
             $upsertStartedAt = microtime(true);
-            DB::transaction(function () use ($rows) {
+            DB::transaction(function () use ($rows, $periodStartStr, $periodEndStr) {
+                $periodLinks = [];
+                $upsertRows = [];
+                foreach ($rows as $row) {
+                    $periodId = isset($row['payroll_period_id']) ? (int) $row['payroll_period_id'] : 0;
+                    $uid = (int) ($row['user_id'] ?? 0);
+                    if ($periodId > 0 && $uid > 0) {
+                        $periodLinks[$uid] = $periodId;
+                    }
+                    $clean = $row;
+                    unset($clean['payroll_period_id']);
+                    $upsertRows[] = $clean;
+                }
+
                 Payslip::query()->upsert(
-                    $rows,
-                    ['user_id', 'pay_period_start', 'pay_period_end'],
+                    $upsertRows,
+                    ['user_id', 'pay_period_start', 'pay_period_end', 'period_slot'],
                     [
-                        'payroll_period_id',
                         'pay_cycle_id',
                         'company_id',
                         'branch_id',
@@ -1132,6 +1339,20 @@ class PayslipService
                         'updated_at',
                     ]
                 );
+
+                foreach ($periodLinks as $uid => $periodId) {
+                    $payslip = Payslip::query()
+                        ->where('user_id', $uid)
+                        ->whereDate('pay_period_start', $periodStartStr)
+                        ->whereDate('pay_period_end', $periodEndStr)
+                        ->where('period_slot', 0)
+                        ->where('status', '!=', Payslip::STATUS_VOIDED)
+                        ->orderByDesc('id')
+                        ->first();
+                    if ($payslip instanceof Payslip) {
+                        $this->assignPayrollPeriodId($payslip, $periodId);
+                    }
+                }
             });
             $timings['bulk_upsert_ms'] += (microtime(true) - $upsertStartedAt) * 1000;
             $processedEmployees += count($chunkIds);

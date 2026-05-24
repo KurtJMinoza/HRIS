@@ -527,12 +527,11 @@ function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelet
 }
 
 /** Approve/Reject only when API says the actor is the current approver and the row is still actionable. */
-function showOvertimeActions(row, currentUser, hasApprovePermission) {
+function showOvertimeActions(row, hasApprovePermission) {
   if (!hasApprovePermission) return false
   if (!row || row.status !== 'pending') return false
   if (row.pending_approval === false) return false
   if (!row.actor_can_approve || !row.actor_can_reject) return false
-  if (currentUser?.id != null && Number(row.employee_id) === Number(currentUser.id)) return false
   return true
 }
 
@@ -546,7 +545,7 @@ function approvalStepsSummary(steps) {
 }
 
 const APPROVAL_INFO =
-  'Approval chain depends on your role: Employee → Department Head → Admin (HR); Department Head → Branch Head → Admin (HR); Branch Head → Company Head → Admin (HR); Company Head → Admin (HR). Admin (HR) is always the final approver (except for their own requests, which another HR must finalize).'
+  'Approval chain depends on your role: Employee → Department Head → Admin (HR); Department Head → Branch Head → Admin (HR); Branch Head → Company Head → Admin (HR); Company Head → Admin (HR). Admin (HR) is always the final approver; assigned Admin/HR self-approval still requires a manual approve or reject action.'
 
 const STATUS_CHIPS = [
   { value: 'all', label: 'All' },
@@ -695,6 +694,11 @@ function OvertimeApprovalChain({ steps }) {
                 <div className="min-w-0 flex-1">
                   <p className="text-[15px] font-bold leading-snug text-foreground">{name}</p>
                   {role ? <p className="mt-1 text-sm font-medium text-foreground/85">{role}</p> : null}
+                  {step?.is_self_approval ? (
+                    <span className="mt-2 inline-flex w-fit rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/35 dark:text-amber-200">
+                      Self Approval
+                    </span>
+                  ) : null}
                   <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{statusLine}</p>
                   {remarks ? (
                     <p className="mt-3 text-sm leading-relaxed text-foreground">
@@ -1987,7 +1991,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                                 row={row}
                                 tab={tab}
                                 canEdit={canEditPendingOvertime(row)}
-                                canAct={showOvertimeActions(row, user, canApproveOvertime)}
+                                canAct={showOvertimeActions(row, canApproveOvertime)}
                                 onView={() => openView(row)}
                                 onEdit={() => openEdit(row)}
                                 onDelete={() => setDeleteDialog({ open: true, row })}

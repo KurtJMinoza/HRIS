@@ -1,0 +1,226 @@
+@page {
+  size: __PAGE_SIZE__ landscape;
+  margin: 8mm 6mm 10mm 6mm;
+}
+:root {
+  --pdf-body-font-size: __BODY_FONT_SIZE__;
+  --pdf-header-font-size: __HEADER_FONT_SIZE__;
+  --pdf-header-padding: __HEADER_PADDING__;
+  --pdf-cell-padding: __CELL_PADDING__;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: #1f2937;
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: var(--pdf-body-font-size);
+  line-height: 1.12;
+  background-color: #ffffff;
+}
+.header-container {
+  display: table;
+  width: 100%;
+  border-bottom: 2px solid #e5e7eb;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+.header-logo-section {
+  display: table-cell;
+  vertical-align: middle;
+  width: 50%;
+}
+.header-meta-section {
+  display: table-cell;
+  vertical-align: middle;
+  text-align: right;
+  width: 50%;
+}
+.logo-container {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.logo-img {
+  max-height: 36px;
+  max-width: 108px;
+  object-fit: contain;
+}
+.logo-fallback {
+  width: 36px;
+  height: 36px;
+  background-color: #3b82f6;
+  border-radius: 6px;
+  display: inline-block;
+}
+.company-info {
+  display: inline-block;
+  vertical-align: middle;
+}
+.company-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 2px 0;
+}
+.report-title-badge {
+  display: inline-block;
+  background-color: #eff6ff;
+  color: #2563eb;
+  font-size: 6.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid #bfdbfe;
+}
+.report-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #111827;
+  margin: 0 0 2px 0;
+  letter-spacing: -0.02em;
+}
+.period-badge {
+  font-size: 7.5px;
+  font-weight: 600;
+  color: #4b5563;
+}
+.meta-grid {
+  display: inline-block;
+  text-align: left;
+  font-size: 6.3px;
+  color: #4b5563;
+}
+.meta-grid table {
+  border-collapse: collapse;
+  border: none;
+}
+.meta-grid td {
+  border: none;
+  padding: 1px 4px;
+  vertical-align: middle;
+}
+.meta-grid td.label {
+  font-weight: 600;
+  color: #374151;
+  text-align: right;
+  padding-right: 6px;
+}
+table.payroll-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin-top: 5px;
+  page-break-inside: auto;
+}
+table.payroll-table col.col-employee {
+  width: __EMPLOYEE_COL_WIDTH__%;
+}
+table.payroll-table col.col-numeric {
+  width: __NUMERIC_COL_WIDTH__%;
+}
+.header-title-block {
+  display: inline-block;
+  vertical-align: middle;
+  text-align: left;
+  margin-right: 20px;
+}
+.empty-message {
+  text-align: center;
+  padding: 16px;
+  color: #6b7280;
+  font-style: italic;
+}
+td.cell-gross {
+  font-weight: 600;
+  color: #111827;
+}
+td.cell-ded-total {
+  font-weight: 600;
+  color: #b91c1c;
+}
+td.cell-net {
+  font-weight: 700;
+  color: #15803d;
+}
+tfoot .totals-ded {
+  color: #b91c1c;
+}
+tfoot .totals-net {
+  color: #15803d;
+}
+thead { display: table-header-group; }
+tfoot { display: table-footer-group; }
+tr { page-break-inside: avoid; }
+th {
+  background-color: #f3f4f6;
+  color: #374151;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: var(--pdf-header-font-size);
+  letter-spacing: 0.01em;
+  border: 1px solid #d1d5db;
+  padding: var(--pdf-header-padding);
+  text-align: center;
+  line-height: 1;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+  white-space: normal;
+}
+.group-row th {
+  background-color: #e5e7eb;
+  color: #111827;
+  font-size: calc(var(--pdf-header-font-size) + 0.4px);
+  letter-spacing: 0.03em;
+}
+.column-row th {
+  background-color: #f9fafb;
+}
+td {
+  border: 1px solid #e5e7eb;
+  padding: var(--pdf-cell-padding);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+tr:nth-child(even) {
+  background-color: #fafafa;
+}
+td.num, th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+  word-break: normal;
+}
+.employee-name {
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.14;
+}
+.totals-row td {
+  background-color: #f3f4f6;
+  border-top: 2px solid #9ca3af;
+  border-bottom: 2px solid #9ca3af;
+  font-weight: 700;
+  color: #111827;
+}
+.footer {
+  position: fixed;
+  bottom: -6mm;
+  left: 0;
+  right: 0;
+  display: table;
+  width: 100%;
+  color: #9ca3af;
+  font-size: 6px;
+  border-top: 1px solid #f3f4f6;
+  padding-top: 4px;
+}
+.footer-cell {
+  display: table-cell;
+  width: 50%;
+}
+.footer-cell.right {
+  text-align: right;
+}
+.page-number:after { content: "Page " counter(page) " of " counter(pages); }

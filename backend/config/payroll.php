@@ -102,6 +102,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Overtime payable basis (approved OT requests vs attendance-rendered OT)
+    |--------------------------------------------------------------------------
+    | approved — pay approved OT hours from the Overtime module (recommended).
+    | rendered — pay only attendance-rendered OT minutes (legacy cap).
+    | min — pay min(approved hours, rendered OT minutes).
+    */
+    'ot_payable_basis' => env('PAYROLL_OT_PAYABLE_BASIS', 'approved'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Rules Table (Phase 2) – Config-driven multipliers
     |--------------------------------------------------------------------------
     | Aligns with PH Labor Code (Arts. 87, 93, 94) / DOLE Omnibus Rules: ordinary OT 1.25×;

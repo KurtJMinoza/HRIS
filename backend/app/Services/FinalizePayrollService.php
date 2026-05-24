@@ -39,6 +39,7 @@ class FinalizePayrollService
         private readonly PayslipService $payslipService,
         private readonly PayCycleService $payCycleService,
         private readonly PayrollPersistService $payrollPersistService,
+        private readonly OvertimePayrollService $overtimePayroll,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly DataScopeService $dataScopeService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
@@ -1059,6 +1060,7 @@ class FinalizePayrollService
                 $toDate
             ) {
                 $employeeIds = $employees->pluck('id')->map(fn ($id) => (int) $id)->all();
+                $this->payslipService->clearBlockingPayrollPeriodLinksForUsers($employeeIds);
                 $periodIds = [];
                 $existingPayslipsByUser = Payslip::query()
                     ->whereIn('user_id', $employeeIds)
@@ -1242,6 +1244,7 @@ class FinalizePayrollService
 
         $this->payslipService->syncBatchRunTotals($run);
         $run = $run->fresh();
+        $this->markOvertimePaidForBatch($run, $employees, $periodStart, $periodEnd, $companyId);
 
         Log::info('Payroll FINALIZED', [
             'batch_run_id' => (int) $run->id,
@@ -2125,7 +2128,7 @@ class FinalizePayrollService
             $branchId,
             $departmentId,
             $singleEmployeeId
-        )->get()->keyBy(fn (Payslip $p) => (int) $p->user_id);
+        )->orderByDesc('id')->get()->unique('user_id')->keyBy(fn (Payslip $p) => (int) $p->user_id);
         $timings['load_employees_ms'] = round((microtime(true) - $t0) * 1000, 2);
 
         $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
@@ -2156,6 +2159,8 @@ class FinalizePayrollService
                 if ((string) $lockedRun->status === PayrollBatchRun::STATUS_FINALIZED) {
                     throw new \RuntimeException('__PAYROLL_BATCH_ALREADY_FINALIZED__');
                 }
+
+                $this->payslipService->clearBlockingPayrollPeriodLinksForUsers($employeeIds);
 
                 foreach ($employees as $user) {
                     $payslip = $draftPayslips->get((int) $user->id);
@@ -2200,7 +2205,7 @@ class FinalizePayrollService
                             $cycle
                         );
                         if ($period instanceof PayrollPeriod) {
-                            Payslip::query()->whereKey($payslip->id)->update(['payroll_period_id' => $period->id]);
+                            $this->payslipService->assignPayrollPeriodId($payslip, (int) $period->id);
                         }
                     }
                 }
@@ -2269,6 +2274,7 @@ class FinalizePayrollService
         $run = PayrollBatchRun::query()->findOrFail($existingBatchRunId);
         $this->payslipService->syncBatchRunTotals($run);
         $run = $run->fresh();
+        $this->markOvertimePaidForBatch($run, $employees, $periodStart, $periodEnd, $companyId);
 
         Log::info('Payroll FINALIZED (draft snapshot fast path)', [
             'batch_run_id' => (int) $run->id,
@@ -2538,5 +2544,28 @@ class FinalizePayrollService
             ->orWhere('middle_name', 'like', $like)
             ->orWhere('last_name', 'like', $like)
             ->orWhere('suffix', 'like', $like);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, User>|\Illuminate\Database\Eloquent\Collection<int, User>  $employees
+     */
+    private function markOvertimePaidForBatch(
+        PayrollBatchRun $run,
+        $employees,
+        Carbon $periodStart,
+        Carbon $periodEnd,
+        ?int $companyId
+    ): void {
+        if ($employees->isEmpty()) {
+            return;
+        }
+
+        $this->overtimePayroll->markIncludedAsPaid(
+            (int) $run->id,
+            $employees->pluck('id')->map(static fn ($id) => (int) $id)->all(),
+            $periodStart,
+            $periodEnd,
+            $companyId
+        );
     }
 }
