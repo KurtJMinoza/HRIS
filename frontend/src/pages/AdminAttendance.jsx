@@ -33,6 +33,8 @@ import {
   minutesCellText,
   resolveAdminStatusLabel,
   tableApprovedOtHours,
+  tableActualRenderedOtHours,
+  tablePayableOtHours,
   tableOtHoursHrs,
   displayAttendanceTime,
 } from '@/components/attendance/attendanceRecordUtils'
@@ -448,6 +450,9 @@ export default function AdminAttendance() {
       { key: 'overtime_min', label: 'Overtime (min)', accessor: (r) => minutesCellText(tableOvertimeMinutes(r)) },
       { key: 'unapproved_ot', label: 'Unapproved OT (hrs)', accessor: (r) => tableOtHoursHrs(r.unapproved_overtime_hours) },
       { key: 'approved_ot', label: 'Approved OT (hrs)', accessor: (r) => tableApprovedOtHours(r) },
+      { key: 'actual_rendered_ot', label: 'Actual Rendered OT (hrs)', accessor: (r) => tableActualRenderedOtHours(r) },
+      { key: 'payable_ot', label: 'Payable OT (hrs)', accessor: (r) => tablePayableOtHours(r) },
+      { key: 'ot_reduction_reason', label: 'OT Reduction Reason', accessor: (r) => r.overtime_reduction_reason || '—' },
       {
         key: 'overtime_status',
         label: 'Overtime Status',
@@ -499,13 +504,20 @@ export default function AdminAttendance() {
         accessor: (row) => (row.overtime_minutes != null ? String(row.overtime_minutes) : '0'),
       },
       {
-        label: 'Rendered OT (h)',
-        accessor: (row) =>
-          row.rendered_overtime_hours != null ? String(row.rendered_overtime_hours) : '—',
+        label: 'Actual Rendered OT (hrs)',
+        accessor: (row) => tableActualRenderedOtHours(row),
       },
       {
-        label: 'OT hrs (approved)',
+        label: 'Approved OT (hrs)',
         accessor: (row) => tableApprovedOtHours(row),
+      },
+      {
+        label: 'Payable OT (hrs)',
+        accessor: (row) => tablePayableOtHours(row),
+      },
+      {
+        label: 'OT Reduction Reason',
+        accessor: (row) => row.overtime_reduction_reason || '—',
       },
       {
         label: 'Unapproved OT (hrs)',

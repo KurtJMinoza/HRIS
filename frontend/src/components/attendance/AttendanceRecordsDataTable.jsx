@@ -27,6 +27,8 @@ import {
   tableUndertimeMinutes,
   tableOvertimeMinutes,
   tableApprovedOtHours,
+  tableActualRenderedOtHours,
+  tablePayableOtHours,
   tableOtHoursHrs,
   minutesCellText,
 } from '@/components/attendance/attendanceRecordUtils'
@@ -310,6 +312,22 @@ export function AttendanceRecordsDataTable({
         ),
       },
       {
+        id: 'actual_rendered_ot_hrs',
+        header: 'Actual Rendered OT (hrs)',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm tabular-nums text-foreground">{tableActualRenderedOtHours(row.original)}</span>
+        ),
+      },
+      {
+        id: 'payable_ot_hrs',
+        header: 'Payable OT (hrs)',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm tabular-nums text-foreground">{tablePayableOtHours(row.original)}</span>
+        ),
+      },
+      {
         id: 'overtime_status',
         header: 'Overtime Status',
         enableSorting: false,
@@ -543,9 +561,9 @@ export function AttendanceRecordsDataTable({
                   </p>
                 </div>
                 <div className="col-span-2">
-                  <p className="font-semibold uppercase tracking-wide text-muted-foreground">Approved / Unapproved OT (hrs)</p>
+                  <p className="font-semibold uppercase tracking-wide text-muted-foreground">Approved / Actual / Payable OT (hrs)</p>
                   <p className="tabular-nums text-[11px]">
-                    {tableApprovedOtHours(r)} / {tableOtHoursHrs(r.unapproved_overtime_hours)}
+                    {tableApprovedOtHours(r)} / {tableActualRenderedOtHours(r)} / {tablePayableOtHours(r)}
                   </p>
                 </div>
                 <div className="col-span-2">

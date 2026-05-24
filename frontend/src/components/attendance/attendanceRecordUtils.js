@@ -178,6 +178,16 @@ export function tableApprovedOtHours(row) {
   return tableOtHoursHrs(v)
 }
 
+export function tableActualRenderedOtHours(row) {
+  const v = row?.actual_rendered_overtime_hours ?? row?.rendered_overtime_hours
+  return tableOtHoursHrs(v)
+}
+
+export function tablePayableOtHours(row) {
+  const v = row?.payable_overtime_hours ?? row?.overtime_hours
+  return tableOtHoursHrs(v)
+}
+
 export function minutesCellText(n) {
   if (n == null || typeof n !== 'number' || n <= 0) return EMPTY_PLACEHOLDER
   return String(Math.round(n))

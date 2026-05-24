@@ -19,6 +19,7 @@ use App\Services\FaceVerificationService;
 use App\Services\FaceVerificationResultCacheService;
 use App\Services\LeaveCreditService;
 use App\Services\OtDetectionService;
+use App\Services\OvertimePayrollService;
 use App\Services\OvertimeService;
 use App\Services\PayrollComputationService;
 use App\Services\PremiumPayCalculatorService;
@@ -27,6 +28,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class AttendanceController extends Controller
@@ -39,6 +41,7 @@ class AttendanceController extends Controller
         private readonly LeaveCreditService $leaveCreditService,
         private readonly OtDetectionService $otDetectionService,
         private readonly PayrollComputationService $payrollComputation,
+        private readonly OvertimePayrollService $overtimePayroll,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -1979,20 +1982,29 @@ class AttendanceController extends Controller
             }
         }
 
-        $overtimeByDate = Overtime::query()
+        $overtimeQuery = Overtime::query()
             ->select([
                 'id',
                 'user_id',
                 'date',
                 'computed_hours',
                 'expected_end_time',
+                'time_out',
+                'schedule_end',
                 'status',
                 'ph_ot_rule',
             ])
             ->where('user_id', $user->id)
-            ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+            ->whereBetween('date', [$from->toDateString(), $to->toDateString()]);
+        if (Schema::hasColumn('overtimes', 'voided_at')) {
+            $overtimeQuery->whereNull('voided_at');
+        }
+        if (Schema::hasColumn('overtimes', 'deleted_at')) {
+            $overtimeQuery->whereNull('deleted_at');
+        }
+        $overtimeByDate = $overtimeQuery
             ->get()
-            ->keyBy(fn (Overtime $o) => $o->date->toDateString());
+            ->groupBy(fn (Overtime $o) => $o->date->toDateString());
 
         $bulkFetchMs = (int) round((microtime(true) - $bulkFetchStart) * 1000);
 
@@ -2094,7 +2106,8 @@ class AttendanceController extends Controller
 
             $virtualTimeOutFromOt = false;
             if ($effectiveTimeIn && $effectiveTimeOut === null) {
-                $otApproved = $overtimeByDate->get($dateKey);
+                $otRecordsForVirtual = $overtimeByDate->get($dateKey)?->all() ?? [];
+                $otApproved = $this->pickOvertimeForVirtualEnd($this->overtimeRecordsByStatus($otRecordsForVirtual, Overtime::STATUS_APPROVED));
                 if ($otApproved && $otApproved->status === Overtime::STATUS_APPROVED) {
                     $resolvedOut = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
                         $otApproved,
@@ -2282,12 +2295,12 @@ class AttendanceController extends Controller
             $dayLogsForDate = $logsByDate[$dateKey] ?? null;
             $clockOutForDay = $dayLogsForDate ? $dayLogsForDate->first(fn ($l) => $l->type === AttendanceLog::TYPE_CLOCK_OUT) : null;
 
-            $otRow = $overtimeByDate->get($dateKey);
+            $otRecords = $overtimeByDate->get($dateKey)?->all() ?? [];
+            $approvedOtRecords = $this->overtimeRecordsByStatus($otRecords, Overtime::STATUS_APPROVED);
+            $otRow = $this->pickOvertimeForVirtualEnd($approvedOtRecords) ?? ($otRecords[0] ?? null);
             $hasEffectiveTimeOut = $effectiveTimeOut !== null;
 
-            $approvedOtHours = ($otRow && $otRow->status === Overtime::STATUS_APPROVED)
-                ? (float) ($otRow->computed_hours ?? 0)
-                : 0.0;
+            $approvedOtHours = $this->sumOvertimeHours($approvedOtRecords);
 
             // Raw-log possible OT for dashboard/unfiled OT:
             // mirror Admin Reports by counting pre-shift minutes before scheduled start
@@ -2354,20 +2367,24 @@ class AttendanceController extends Controller
             $clockOtHours = $otMinutesForRow !== null
                 ? round($otMinutesForRow / 60, 2)
                 : null;
-            $clockVal = $clockOtHours ?? 0.0;
+            $actualRenderedOtHours = $virtualTimeOutFromOt ? 0.0 : ($clockOtHours ?? 0.0);
+            $actualRenderedOtMinutes = (int) round($actualRenderedOtHours * 60);
             $approvedFromFiling = round((float) $approvedOtHours, 2);
-            $approvedOtAppliedHours = $clockVal > 0.0001
-                ? min($approvedFromFiling, $clockVal)
-                : 0.0;
+            $approvedOtMinutes = (int) round($approvedFromFiling * 60);
+            $payableOtMinutes = $approvedOtMinutes > 0
+                ? $this->overtimePayroll->resolvePayableOtMinutes($actualRenderedOtMinutes, $approvedOtMinutes)
+                : 0;
+            $payableOtHours = round($payableOtMinutes / 60, 2);
+            $otPayableBasis = $this->overtimePayroll->payableBasis();
+            $otReductionReason = $this->overtimeReductionReason($otPayableBasis, $approvedOtMinutes, $actualRenderedOtMinutes, $payableOtMinutes);
+            $clockVal = $actualRenderedOtHours;
             $unapprovedOtHours = max(0.0, round($clockVal - min($approvedFromFiling, $clockVal), 2));
             if ($clockVal <= 0.0001 && $approvedFromFiling > 0) {
                 $unapprovedOtHours = 0.0;
             }
-            // Payable OT in attendance views = approved OT that was actually rendered by the logs.
-            // The raw request remains available as overtime_hours_requested.
-            $displayOvertimeHours = $approvedOtAppliedHours > 0.0001 ? round($approvedOtAppliedHours, 2) : null;
-            if ($approvedOtAppliedHours > 0.0001) {
-                $metrics['approved_overtime_minutes'] += (int) round($approvedOtAppliedHours * 60);
+            $displayOvertimeHours = $payableOtHours > 0.0001 ? round($payableOtHours, 2) : null;
+            if ($approvedFromFiling > 0.0001) {
+                $metrics['approved_overtime_minutes'] += (int) round($approvedFromFiling * 60);
             }
             $displayNightHours = $clockOutForDay?->night_hours;
             $premiumTypeForDesc = $clockOutForDay?->premium_type;
@@ -2382,8 +2399,8 @@ class AttendanceController extends Controller
                 };
             }
 
-            $showOtPremiumFields = $hasEffectiveTimeOut || $approvedOtAppliedHours > 0.0001;
-            $employeeStatusLabel = ($approvedOtAppliedHours > 0.0001 && in_array($status, ['present', 'late'], true))
+            $showOtPremiumFields = $hasEffectiveTimeOut || $approvedFromFiling > 0.0001;
+            $employeeStatusLabel = ($approvedFromFiling > 0.0001 && in_array($status, ['present', 'late'], true))
                 ? ($status === 'late' ? 'Late + OT' : 'Present + OT')
                 : null;
 
@@ -2448,7 +2465,8 @@ class AttendanceController extends Controller
                 'undertime_minutes' => $dayUndertimeMinutes,
                 // Reports parity: OT minutes only when we have an actual/virtual time-out anchor.
                 'overtime_minutes' => $otMinutesForRow,
-                'rendered_overtime_hours' => $showOtPremiumFields && $renderedOtHours !== null ? $renderedOtHours : null,
+                'rendered_overtime_hours' => $showOtPremiumFields ? round($actualRenderedOtHours, 2) : null,
+                'actual_rendered_overtime_hours' => $showOtPremiumFields ? round($actualRenderedOtHours, 2) : null,
                 'raw_overtime_minutes' => $rawOtMinutes > 0 ? $rawOtMinutes : null,
                 'raw_overtime_hours' => $rawOtHours,
                 'raw_pre_ot' => $rawPreOtSegment,
@@ -2464,14 +2482,16 @@ class AttendanceController extends Controller
                     )
                     : null,
                 'calculated_pay_factor' => $hasEffectiveTimeOut ? $clockOutForDay?->calculated_pay_factor : null,
-                'overtime_status' => $this->normalizeOvertimeModuleStatusForDisplay($otRow),
-                'approved_overtime_hours' => $approvedOtAppliedHours > 0 ? round($approvedOtAppliedHours, 2) : null,
-                'overtime_hours_requested' => $otRow !== null ? round((float) ($otRow->computed_hours ?? 0), 2) : null,
-                /** Same derivation as {@see ReportsController::detailed()} `approved_overtime_hours` / `unapproved_overtime_hours`. */
+                'overtime_status' => $this->overtimeStatusFromRecords($otRecords),
+                'approved_overtime_hours' => $approvedFromFiling > 0 ? round($approvedFromFiling, 2) : null,
+                'payable_overtime_hours' => $payableOtHours > 0 ? round($payableOtHours, 2) : null,
+                'ot_payable_basis' => $otPayableBasis,
+                'overtime_reduction_reason' => $otReductionReason,
+                'overtime_hours_requested' => $otRecords !== [] ? round($this->sumOvertimeHours($otRecords), 2) : null,
                 'unapproved_overtime_hours' => $unapprovedOtHours > 0.0001 ? round($unapprovedOtHours, 2) : null,
                 'payroll_impact_minutes' => $payrollImpactMinutes,
                 'payroll_impact_hours' => $payrollImpactHours,
-                'has_approved_overtime' => $approvedOtAppliedHours > 0.0001,
+                'has_approved_overtime' => $approvedFromFiling > 0.0001,
                 'presence_label' => $presenceLabel,
                 'presence_issue' => $presenceIssue,
                 'presence_filing' => null,
@@ -2722,7 +2742,7 @@ class AttendanceController extends Controller
             }
 
             $tOutPayroll = null;
-            if (! empty($day['time_out'])) {
+            if (! empty($day['time_out']) && empty($day['virtual_time_out_from_ot'])) {
                 $outDay = $dateKey;
                 if (! empty($day['time_out_next_day'])) {
                     $outDay = Carbon::parse($dateKey.' 00:00:00', $tz)->addDay()->toDateString();
@@ -2780,6 +2800,79 @@ class AttendanceController extends Controller
         }
 
         return $ot->status;
+    }
+
+    /** @param list<Overtime> $records @return list<Overtime> */
+    private function overtimeRecordsByStatus(array $records, string $status): array
+    {
+        return array_values(array_filter(
+            $records,
+            static fn (Overtime $ot): bool => strtolower((string) $ot->status) === $status
+        ));
+    }
+
+    /** @param list<Overtime> $records */
+    private function sumOvertimeHours(array $records): float
+    {
+        $hours = 0.0;
+        foreach ($records as $ot) {
+            $hours += max(0.0, (float) ($ot->computed_hours ?? 0));
+        }
+
+        return round($hours, 2);
+    }
+
+    /** @param list<Overtime> $records */
+    private function overtimeStatusFromRecords(array $records): ?string
+    {
+        $statuses = array_map(static fn (Overtime $ot): string => strtolower((string) $ot->status), $records);
+        if (in_array(Overtime::STATUS_APPROVED, $statuses, true)) {
+            return 'Approved';
+        }
+        if (in_array(Overtime::STATUS_PENDING, $statuses, true)) {
+            return 'Pending';
+        }
+        if (in_array(Overtime::STATUS_REJECTED, $statuses, true)) {
+            return 'Rejected';
+        }
+
+        return null;
+    }
+
+    /** @param list<Overtime> $records */
+    private function pickOvertimeForVirtualEnd(array $records): ?Overtime
+    {
+        $best = null;
+        foreach ($records as $ot) {
+            if ($best === null) {
+                $best = $ot;
+                continue;
+            }
+            $candidate = $ot->expected_end_time ?? $ot->time_out;
+            $current = $best->expected_end_time ?? $best->time_out;
+            if ($candidate && (! $current || $candidate->format('H:i:s') > $current->format('H:i:s'))) {
+                $best = $ot;
+            }
+        }
+
+        return $best;
+    }
+
+    private function overtimeReductionReason(string $basis, int $approvedMinutes, int $actualMinutes, int $payableMinutes): ?string
+    {
+        if ($approvedMinutes <= 0 || $payableMinutes >= $approvedMinutes) {
+            return null;
+        }
+
+        $approvedHours = number_format($approvedMinutes / 60, 2, '.', '');
+        $actualHours = number_format($actualMinutes / 60, 2, '.', '');
+        $payableHours = number_format($payableMinutes / 60, 2, '.', '');
+
+        return match ($basis) {
+            'rendered' => "Payable OT reduced to actual rendered OT ({$actualHours}h) from approved {$approvedHours}h.",
+            'min' => "Payable OT is the minimum of approved {$approvedHours}h and actual rendered {$actualHours}h ({$payableHours}h).",
+            default => null,
+        };
     }
 
     /**

@@ -32,6 +32,8 @@ import {
   resolveAdminStatusLabel,
   resolveEmployeeStatusLabel,
   tableApprovedOtHours,
+  tableActualRenderedOtHours,
+  tablePayableOtHours,
   tableOtHoursHrs,
 } from '@/components/attendance/attendanceRecordUtils'
 import { AttendanceStatusPill } from '@/components/attendance/AttendanceStatusPill'
@@ -309,6 +311,14 @@ export function AttendanceRecordDetailSheet({
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="size-3.5 text-amber-600" aria-hidden />
                 Approved OT: {tableApprovedOtHours(row)}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="size-3.5 text-amber-600" aria-hidden />
+                Actual OT: {tableActualRenderedOtHours(row)}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="size-3.5 text-amber-600" aria-hidden />
+                Payable OT: {tablePayableOtHours(row)}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="size-3.5 text-amber-600" aria-hidden />
