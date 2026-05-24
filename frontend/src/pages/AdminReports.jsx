@@ -77,22 +77,22 @@ function formatLeaveType(value) {
 }
 
 function formatDetailedReportOvertimeStatus(row) {
-  const renderedMinutes = Number(row?.overtime_minutes ?? 0)
-  const renderedHours = renderedMinutes > 0 ? renderedMinutes / 60 : 0
   const approvedHoursRaw = Number(row?.approved_overtime_hours ?? 0)
   const approvedHours = Number.isFinite(approvedHoursRaw) ? approvedHoursRaw : 0
+  const payableHoursRaw = Number(row?.payable_overtime_hours ?? 0)
+  const payableHours = Number.isFinite(payableHoursRaw) ? payableHoursRaw : 0
   const overtimeStatus = row?.overtime_status ? String(row.overtime_status).toLowerCase() : null
   const pendingHours =
     overtimeStatus === 'pending' ? Number(row?.overtime_hours_requested ?? 0) || 0 : 0
 
-  if (renderedHours <= 0 && approvedHours <= 0 && pendingHours <= 0) {
+  if (approvedHours <= 0 && payableHours <= 0 && pendingHours <= 0) {
     return row?.overtime_status || '—'
   }
 
   if (!row?.overtime_filed) return 'Not filed'
-  if (overtimeStatus === 'approved') return 'Filed (approved)'
-  if (overtimeStatus === 'pending') return 'Filed (pending)'
-  if (overtimeStatus === 'rejected') return 'Filed (rejected)'
+  if (overtimeStatus === 'approved') return 'Approved'
+  if (overtimeStatus === 'pending') return 'Pending'
+  if (overtimeStatus === 'rejected') return 'Rejected'
   return 'Filed'
 }
 
@@ -412,6 +412,19 @@ export default function AdminReports() {
         minW: 110,
         align: 'right',
       },
+      {
+        label: 'Actual Rendered OT (hrs)',
+        accessor: (row) => otHoursAcc(row, 'actual_rendered_overtime_hours'),
+        minW: 140,
+        align: 'right',
+      },
+      {
+        label: 'Payable OT (hrs)',
+        accessor: (row) => otHoursAcc(row, 'payable_overtime_hours'),
+        minW: 120,
+        align: 'right',
+      },
+      { label: 'Reduction Reason', accessor: (row) => row.overtime_reduction_reason || '—', ...txt(180) },
     ]
 
     const detailedCorePayroll = [
@@ -457,6 +470,19 @@ export default function AdminReports() {
         minW: 110,
         align: 'right',
       },
+      {
+        label: 'Actual Rendered OT (hrs)',
+        accessor: (row) => otHoursAcc(row, 'actual_rendered_overtime_hours'),
+        minW: 140,
+        align: 'right',
+      },
+      {
+        label: 'Payable OT (hrs)',
+        accessor: (row) => otHoursAcc(row, 'payable_overtime_hours'),
+        minW: 120,
+        align: 'right',
+      },
+      { label: 'Reduction Reason', accessor: (row) => row.overtime_reduction_reason || '—', ...txt(180) },
       { label: 'ND hrs', accessor: (row) => (row.night_hours != null ? Number(row.night_hours).toFixed(2) : '—'), minW: 70, align: 'right' },
     ]
 
