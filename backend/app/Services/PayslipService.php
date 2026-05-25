@@ -1096,6 +1096,213 @@ class PayslipService
     }
 
     /**
+     * Read-only totals from the stored payslip snapshot lines (no normalize/repair/cap).
+     *
+     * @return array{gross_pay: float, total_deductions: float, net_pay: float}
+     */
+    public function payslipTotalsForDisplay(Payslip $payslip): array
+    {
+        $metrics = $this->frozenPayslipLineMetrics($payslip);
+
+        return [
+            'gross_pay' => $metrics['gross_pay'],
+            'total_deductions' => $metrics['total_deductions'],
+            'net_pay' => $metrics['net_pay'],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     * @return list<array{
+     *   line_key:string,
+     *   component_code:string,
+     *   component_name:string,
+     *   schedule:string,
+     *   calculation_standard:string,
+     *   configured_amount:float,
+     *   amount:float
+     * }>
+     */
+    public function payrollDeductionLineCatalog(array $snapshot): array
+    {
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $lines = array_values(array_merge(
+            $this->rawPayslipLineList($summary['payslip_deduction_lines'] ?? []),
+            $this->rawPayslipLineList($summary['payslip_custom_deduction_lines'] ?? [])
+        ));
+
+        $catalog = [];
+        foreach ($lines as $index => $line) {
+            $componentCode = trim((string) ($line['component_code'] ?? $line['code'] ?? $line['key'] ?? ''));
+            if ($componentCode === '') {
+                $componentCode = 'line:'.$index.':'.trim((string) ($line['label'] ?? $line['name'] ?? 'deduction'));
+            }
+            $catalog[] = [
+                'line_key' => $componentCode,
+                'component_code' => $componentCode,
+                'component_name' => trim((string) ($line['label'] ?? $line['name'] ?? '')),
+                'schedule' => trim((string) ($line['resolved_schedule'] ?? $line['deduction_schedule_type'] ?? $line['earning_schedule_type'] ?? $line['schedule'] ?? '')),
+                'calculation_standard' => trim((string) ($line['resolved_calculation_standard'] ?? $line['calculation_standard'] ?? '')),
+                'configured_amount' => round((float) ($line['component_amount'] ?? $line['configured_amount'] ?? $line['amount'] ?? 0), 2),
+                'amount' => round((float) ($line['amount'] ?? 0), 2),
+            ];
+        }
+
+        return $catalog;
+    }
+
+    /**
+     * Copy the draft payslip snapshot exactly and lock summary totals before status promotion.
+     */
+    public function freezePayslipSnapshotForFinalization(Payslip $payslip): Payslip
+    {
+        $metrics = $this->frozenPayslipLineMetrics($payslip);
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot)) {
+            $snapshot = [];
+        }
+
+        $encoded = json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        $snapshot = is_string($encoded)
+            ? (json_decode($encoded, true) ?: [])
+            : $snapshot;
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $summary['gross_pay_this_period'] = $metrics['gross_pay'];
+        $summary['total_deductions_this_period'] = $metrics['total_deductions'];
+        $summary['net_pay_after_withholding_estimate'] = $metrics['net_pay'];
+        $snapshot['summary'] = $summary;
+        $snapshot['finalization_frozen_at'] = now()->toIso8601String();
+        $snapshot['finalization_source'] = 'draft_snapshot_copy';
+
+        $payslip->forceFill([
+            'gross_pay' => $metrics['gross_pay'],
+            'total_deductions' => $metrics['total_deductions'],
+            'net_pay' => $metrics['net_pay'],
+            'snapshot' => $snapshot,
+        ]);
+        $payslip->save();
+
+        return $payslip->fresh() ?? $payslip;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $draftLines
+     * @param  list<array<string, mixed>>  $finalizedLines
+     * @return list<array<string, mixed>>
+     */
+    public function deductionLineMismatches(array $draftLines, array $finalizedLines): array
+    {
+        $draftByKey = [];
+        foreach ($draftLines as $line) {
+            $draftByKey[(string) ($line['line_key'] ?? '')] = $line;
+        }
+        $finalByKey = [];
+        foreach ($finalizedLines as $line) {
+            $finalByKey[(string) ($line['line_key'] ?? '')] = $line;
+        }
+
+        $mismatches = [];
+        $keys = array_values(array_unique(array_merge(array_keys($draftByKey), array_keys($finalByKey))));
+        foreach ($keys as $key) {
+            if ($key === '') {
+                continue;
+            }
+            $draft = $draftByKey[$key] ?? null;
+            $final = $finalByKey[$key] ?? null;
+            if ($draft === null || $final === null) {
+                $mismatches[] = [
+                    'line_key' => $key,
+                    'reason' => 'missing_line',
+                    'draft' => $draft,
+                    'finalized' => $final,
+                ];
+
+                continue;
+            }
+
+            $fields = ['amount', 'calculation_standard', 'schedule'];
+            $fieldMismatch = [];
+            foreach ($fields as $field) {
+                $draftValue = $field === 'amount'
+                    ? round((float) ($draft[$field] ?? 0), 2)
+                    : trim((string) ($draft[$field] ?? ''));
+                $finalValue = $field === 'amount'
+                    ? round((float) ($final[$field] ?? 0), 2)
+                    : trim((string) ($final[$field] ?? ''));
+                if ($field === 'amount' ? abs($draftValue - $finalValue) >= 0.01 : $draftValue !== $finalValue) {
+                    $fieldMismatch[$field] = ['draft' => $draftValue, 'finalized' => $finalValue];
+                }
+            }
+
+            if ($fieldMismatch !== []) {
+                $mismatches[] = [
+                    'line_key' => $key,
+                    'component_code' => (string) ($draft['component_code'] ?? $key),
+                    'component_name' => (string) ($draft['component_name'] ?? ''),
+                    'reason' => 'field_mismatch',
+                    'fields' => $fieldMismatch,
+                    'draft_amount' => round((float) ($draft['amount'] ?? 0), 2),
+                    'finalized_amount' => round((float) ($final['amount'] ?? 0), 2),
+                ];
+            }
+        }
+
+        return $mismatches;
+    }
+
+    /**
+     * @throws \RuntimeException
+     */
+    public function assertFrozenDeductionLinesMatch(
+        Payslip $draftPayslip,
+        Payslip $finalizedPayslip,
+        int $payrollRunId,
+        ?int $companyId,
+        int $employeeId
+    ): void {
+        $draftSnapshot = is_array($draftPayslip->snapshot)
+            ? $draftPayslip->snapshot
+            : (is_string($draftPayslip->snapshot) ? json_decode($draftPayslip->snapshot, true) : []);
+        $finalSnapshot = is_array($finalizedPayslip->snapshot)
+            ? $finalizedPayslip->snapshot
+            : (is_string($finalizedPayslip->snapshot) ? json_decode($finalizedPayslip->snapshot, true) : []);
+        if (! is_array($draftSnapshot)) {
+            $draftSnapshot = [];
+        }
+        if (! is_array($finalSnapshot)) {
+            $finalSnapshot = [];
+        }
+
+        $draftLines = $this->payrollDeductionLineCatalog($draftSnapshot);
+        $finalLines = $this->payrollDeductionLineCatalog($finalSnapshot);
+        $mismatches = $this->deductionLineMismatches($draftLines, $finalLines);
+
+        foreach ($mismatches as $mismatch) {
+            Log::error('Payroll finalize deduction mismatch', [
+                'payroll_run_id' => $payrollRunId,
+                'employee_id' => $employeeId,
+                'company_id' => $companyId,
+                'component_code' => $mismatch['component_code'] ?? ($mismatch['line_key'] ?? null),
+                'component_name' => $mismatch['component_name'] ?? null,
+                'schedule' => data_get($mismatch, 'fields.schedule.draft') ?? data_get($mismatch, 'draft.schedule'),
+                'calculation_standard' => data_get($mismatch, 'fields.calculation_standard.draft') ?? data_get($mismatch, 'draft.calculation_standard'),
+                'configured_amount' => data_get($mismatch, 'draft.configured_amount'),
+                'draft_amount' => $mismatch['draft_amount'] ?? data_get($mismatch, 'fields.amount.draft'),
+                'finalized_amount' => $mismatch['finalized_amount'] ?? data_get($mismatch, 'fields.amount.finalized'),
+                'mismatch' => $mismatch,
+                'recompute_attempted' => false,
+            ]);
+        }
+
+        if ($mismatches !== []) {
+            throw new \RuntimeException('Finalization aborted. Deduction amount mismatch detected.');
+        }
+    }
+
+    /**
      * Shared computation for generate + preview — keeps one source of truth for payroll snapshot fields.
      *
      * Withholding tax (`withholding_tax_this_period_estimate`, `withholding_tax_monthly_estimate`) comes only from

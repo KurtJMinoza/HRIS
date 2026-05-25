@@ -222,7 +222,7 @@ class FinalizePayrollService
                     : [];
 
                 if ($stored instanceof Payslip) {
-                    $lineTotals = $this->payslipService->syncPayslipSummaryFromLines($stored);
+                    $lineTotals = $this->payslipService->payslipTotalsForDisplay($stored);
                     $summary = is_array($stored->snapshot['summary'] ?? null)
                         ? (array) $stored->snapshot['summary']
                         : $summary;
@@ -649,7 +649,7 @@ class FinalizePayrollService
             $summary = is_array($stored->snapshot['summary'] ?? null)
                 ? (array) $stored->snapshot['summary']
                 : [];
-            $lineTotals = $this->payslipService->syncPayslipSummaryFromLines($stored);
+            $lineTotals = $this->payslipService->payslipTotalsForDisplay($stored);
             $summary = is_array($stored->snapshot['summary'] ?? null)
                 ? (array) $stored->snapshot['summary']
                 : $summary;
@@ -1797,88 +1797,45 @@ class FinalizePayrollService
         $payslipId = 0;
         DB::transaction(function () use (
             $employee,
-            $periodInput,
             $from,
             $to,
-            $cyclePreview,
-            $cycle,
             $effectiveCompanyId,
             $employeeUserId,
             $adminUserId,
+            $companyId,
+            $branchId,
+            $departmentId,
             &$payslipId
         ) {
-            $computed = $this->payrollComputation->computeEmployeePayroll(
-                $employee,
-                $from,
-                $to,
-                null,
-                [
-                    'pay_period_start' => $from->toDateString(),
-                    'pay_period_end' => $to->toDateString(),
-                    'selected_pay_date' => is_array($cyclePreview) ? ($cyclePreview['pay_date'] ?? null) : null,
-                ]
-            );
+            $draftPayslip = $this->queryDraftPayslipsForScope(
+                [$employeeUserId],
+                $from->toDateString(),
+                $to->toDateString(),
+                $companyId ?? $effectiveCompanyId,
+                $branchId,
+                $departmentId,
+                $employeeUserId,
+                null
+            )->orderByDesc('id')->first();
 
-            $period = $this->payrollPersistService->persistComputedPayroll(
-                $employee,
-                $from,
-                $to,
-                $computed,
-                $cyclePreview,
-                $cycle
-            );
-
-            $payslipInput = $periodInput;
-            if ($period) {
-                $payslipInput['payroll_period_id'] = $period->id;
+            if (! $draftPayslip instanceof Payslip) {
+                throw new \RuntimeException('Cannot finalize: draft payslip snapshot is missing. Regenerate the payroll draft first.');
             }
 
-            try {
-                $generated = $this->generatePayslipForFinalize(
-                    $employee,
-                    $payslipInput,
-                    $computed,
-                    is_array($computed['summary'] ?? null) ? $computed['summary'] : [],
-                    $cyclePreview,
-                    $cycle
-                );
-            } catch (Throwable $e) {
-                Log::error('Finalize payroll: payslip generation failed for employee', [
-                    'user_id' => (int) $employee->id,
-                    'employee_code' => $employee->employee_code,
-                    'pay_period' => $from->toDateString().'..'.$to->toDateString(),
-                    'payslip_input' => $payslipInput,
-                    'payslip_finalize_diagnostics' => $this->buildPayslipFinalizeSendDiagnostics(
-                        $payslipInput,
-                        is_array($computed['summary'] ?? null) ? $computed['summary'] : []
-                    ),
-                    'underlying_file' => $e->getFile(),
-                    'underlying_line' => $e->getLine(),
-                    'message' => $e->getMessage(),
-                    'exception_class' => $e::class,
-                ]);
-                throw new \RuntimeException(
-                    'Payslip PDF failed for user_id='.(int) $employee->id.': '.$e->getMessage(),
-                    0,
-                    $e
-                );
+            $snapshotRaw = $draftPayslip->snapshot;
+            $snapshot = is_array($snapshotRaw)
+                ? $snapshotRaw
+                : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+            if (! is_array($snapshot) || ! is_array($snapshot['summary'] ?? null) || $snapshot['summary'] === []) {
+                throw new \RuntimeException('Draft payslip snapshot is missing summary data for user_id='.$employeeUserId);
             }
-            $payslipId = (int) $generated->id;
 
-            $generated->update([
-                'status' => Payslip::STATUS_FINALIZED,
-                'finalized_at' => now(),
-                'finalized_by_user_id' => $adminUserId,
-            ]);
+            $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($draftPayslip);
+            $this->assertDraftPayslipLinesArePersisted($draftPayslip, $draftMetrics);
+            $draftCatalog = $this->payslipService->payrollDeductionLineCatalog($snapshot);
 
-            if ($period) {
-                $this->payslipService->finalizePayrollPeriod(
-                    $effectiveCompanyId,
-                    (int) $period->id,
-                    [$employeeUserId],
-                    $adminUserId
-                );
-            }
+            $this->payslipService->freezePayslipSnapshotForFinalization($draftPayslip);
+            $payslipId = (int) $draftPayslip->id;
 
             $this->payslipService->finalizePayrollWindow(
                 $effectiveCompanyId,
@@ -1887,6 +1844,26 @@ class FinalizePayrollService
                 null,
                 [$employeeUserId],
                 $adminUserId
+            );
+
+            $finalized = Payslip::query()->findOrFail($payslipId);
+            $finalCatalog = $this->payslipService->payrollDeductionLineCatalog(
+                is_array($finalized->snapshot)
+                    ? $finalized->snapshot
+                    : (is_string($finalized->snapshot) ? json_decode($finalized->snapshot, true) : [])
+            );
+            $deductionMismatches = $this->payslipService->deductionLineMismatches($draftCatalog, $finalCatalog);
+            if ($deductionMismatches !== []) {
+                throw new \RuntimeException('Finalization aborted. Deduction amount mismatch detected.');
+            }
+
+            $this->validateDraftFinalizedFrozenMetrics(
+                (int) ($draftPayslip->payroll_batch_run_id ?? 0),
+                $effectiveCompanyId,
+                $employeeUserId,
+                $draftMetrics,
+                $this->payslipService->frozenPayslipLineMetrics($finalized),
+                false
             );
         });
 
@@ -2104,7 +2081,10 @@ class FinalizePayrollService
             ->where('period_slot', 0)
             ->whereNotNull('snapshot');
         if ($payrollBatchRunId !== null && $payrollBatchRunId > 0) {
-            $q->where('payroll_batch_run_id', $payrollBatchRunId);
+            $q->where(function ($scope) use ($payrollBatchRunId): void {
+                $scope->where('payroll_batch_run_id', $payrollBatchRunId)
+                    ->orWhereNull('payroll_batch_run_id');
+            });
         }
         if ($companyId !== null && $companyId > 0) {
             $q->where('company_id', $companyId);
@@ -2264,6 +2244,7 @@ class FinalizePayrollService
         $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
         $payslipIds = [];
         $draftMetricsByUser = [];
+        $draftDeductionCatalogByUser = [];
 
         $persistStartedAt = microtime(true);
         try {
@@ -2284,6 +2265,7 @@ class FinalizePayrollService
                 $fromDate,
                 $toDate,
                 &$draftMetricsByUser,
+                &$draftDeductionCatalogByUser,
                 &$totals,
                 &$payslipIds
             ) {
@@ -2300,14 +2282,6 @@ class FinalizePayrollService
                         throw new \RuntimeException('Missing draft payslip for user_id='.(int) $user->id);
                     }
 
-                    $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
-                    $this->assertDraftPayslipLinesArePersisted($payslip, $draftMetrics);
-                    $draftMetricsByUser[(int) $user->id] = $draftMetrics;
-                    $totals['gross'] += $draftMetrics['gross_pay'];
-                    $totals['ded'] += $draftMetrics['total_deductions'];
-                    $totals['net'] += $draftMetrics['net_pay'];
-                    $payslipIds[] = (int) $payslip->id;
-
                     $snapshotRaw = $payslip->snapshot;
                     $snapshot = is_array($snapshotRaw)
                         ? $snapshotRaw
@@ -2320,29 +2294,16 @@ class FinalizePayrollService
                         throw new \RuntimeException('Draft payslip snapshot is missing summary data for user_id='.(int) $user->id);
                     }
 
-                    $computed = $this->computedPayloadFromPayslipSnapshot($payslip, $snapshot);
-                    $preview = is_array($snapshot['pay_cycle_preview'] ?? null) ? $snapshot['pay_cycle_preview'] : [];
-                    $cycle = $payslip->pay_cycle_id ? PayCycle::query()->find((int) $payslip->pay_cycle_id) : null;
+                    $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
+                    $this->assertDraftPayslipLinesArePersisted($payslip, $draftMetrics);
+                    $draftDeductionCatalogByUser[(int) $user->id] = $this->payslipService->payrollDeductionLineCatalog($snapshot);
+                    $draftMetricsByUser[(int) $user->id] = $draftMetrics;
+                    $totals['gross'] += $draftMetrics['gross_pay'];
+                    $totals['ded'] += $draftMetrics['total_deductions'];
+                    $totals['net'] += $draftMetrics['net_pay'];
+                    $payslipIds[] = (int) $payslip->id;
 
-                    $from = Carbon::parse((string) ($computed['from_date'] !== '' ? $computed['from_date'] : $fromDate))->startOfDay();
-                    $to = Carbon::parse((string) ($computed['to_date'] !== '' ? $computed['to_date'] : $toDate))->startOfDay();
-
-                    $existingPeriodId = (int) ($payslip->payroll_period_id ?? 0);
-                    $totalPay = (float) ($computed['summary']['total_pay'] ?? 0);
-
-                    if ($existingPeriodId <= 0 && $totalPay > 0) {
-                        $period = $this->payrollPersistService->persistComputedPayroll(
-                            $user,
-                            $from,
-                            $to,
-                            $computed,
-                            $preview,
-                            $cycle
-                        );
-                        if ($period instanceof PayrollPeriod) {
-                            $this->payslipService->assignPayrollPeriodId($payslip, (int) $period->id);
-                        }
-                    }
+                    $this->payslipService->freezePayslipSnapshotForFinalization($payslip);
                 }
 
                 if ($companyId !== null) {
@@ -2366,6 +2327,35 @@ class FinalizePayrollService
                     if (! $finalized instanceof Payslip) {
                         throw new \RuntimeException('Finalized payslip row missing for user_id='.(int) $user->id);
                     }
+
+                    $draftCatalog = $draftDeductionCatalogByUser[(int) $user->id] ?? [];
+                    $finalCatalog = $this->payslipService->payrollDeductionLineCatalog(
+                        is_array($finalized->snapshot)
+                            ? $finalized->snapshot
+                            : (is_string($finalized->snapshot) ? json_decode($finalized->snapshot, true) : [])
+                    );
+                    $deductionMismatches = $this->payslipService->deductionLineMismatches($draftCatalog, $finalCatalog);
+                    if ($deductionMismatches !== []) {
+                        foreach ($deductionMismatches as $mismatch) {
+                            Log::error('Payroll finalize deduction mismatch', [
+                                'payroll_run_id' => (int) $existingBatchRunId,
+                                'employee_id' => (int) $user->id,
+                                'company_id' => $companyId,
+                                'component_code' => $mismatch['component_code'] ?? ($mismatch['line_key'] ?? null),
+                                'component_name' => $mismatch['component_name'] ?? null,
+                                'schedule' => data_get($mismatch, 'fields.schedule.draft') ?? data_get($mismatch, 'draft.schedule'),
+                                'calculation_standard' => data_get($mismatch, 'fields.calculation_standard.draft') ?? data_get($mismatch, 'draft.calculation_standard'),
+                                'configured_amount' => data_get($mismatch, 'draft.configured_amount'),
+                                'draft_amount' => $mismatch['draft_amount'] ?? data_get($mismatch, 'fields.amount.draft'),
+                                'finalized_amount' => $mismatch['finalized_amount'] ?? data_get($mismatch, 'fields.amount.finalized'),
+                                'mismatch' => $mismatch,
+                                'recompute_attempted' => false,
+                            ]);
+                        }
+
+                        throw new \RuntimeException('Finalization aborted. Deduction amount mismatch detected.');
+                    }
+
                     $this->validateDraftFinalizedFrozenMetrics(
                         (int) $existingBatchRunId,
                         $companyId,
@@ -2564,7 +2554,7 @@ class FinalizePayrollService
                 'mismatches' => $mismatches,
             ]);
 
-            throw new \RuntimeException('Cannot finalize: finalized payroll lines differ from the draft for employee_id='.$employeeId.'. Missing categories and line IDs were logged.');
+            throw new \RuntimeException('Finalization aborted. Deduction amount mismatch detected.');
         }
 
         Log::info('Payroll finalize validation passed: finalized lines match draft snapshot', $context);

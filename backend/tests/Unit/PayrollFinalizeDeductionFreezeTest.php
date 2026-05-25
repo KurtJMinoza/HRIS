@@ -1,0 +1,130 @@
+<?php
+
+namespace Tests\Unit;
+
+use App\Models\Payslip;
+use App\Services\PayslipService;
+use PHPUnit\Framework\TestCase;
+use ReflectionClass;
+
+class PayrollFinalizeDeductionFreezeTest extends TestCase
+{
+    public function test_freeze_preserves_payroll_standard_deduction_amount(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+        $snapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [
+                    ['key' => 'daily:regular_pay', 'label' => 'Regular Pay', 'amount' => 3076.92],
+                    ['key' => 'daily:ot_pay', 'label' => 'Overtime', 'amount' => 721.15],
+                    ['key' => 'daily:nd_pay', 'label' => 'Night Differential', 'amount' => 12.02],
+                ],
+                'payslip_earning_lines' => [
+                    ['key' => 'pay_component:allowance', 'label' => 'Allowance', 'amount' => 2000.00],
+                ],
+                'payslip_deduction_lines' => [],
+                'payslip_custom_deduction_lines' => [
+                    [
+                        'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+                        'label' => 'Lending Salary Deduction Every 30',
+                        'resolved_calculation_standard' => 'payroll_standard',
+                        'resolved_schedule' => 'every_30_only',
+                        'component_amount' => 1550.00,
+                        'amount' => 1550.00,
+                    ],
+                ],
+            ],
+        ];
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_GENERATED,
+            'gross_pay' => 5810.09,
+            'total_deductions' => 4821.64,
+            'net_pay' => 988.45,
+            'snapshot' => $snapshot,
+        ]);
+
+        $metrics = $service->frozenPayslipLineMetrics($payslip);
+        $catalog = $service->payrollDeductionLineCatalog($snapshot);
+
+        $this->assertSame(5810.09, $metrics['gross_pay']);
+        $this->assertSame(1550.00, $metrics['total_deductions']);
+        $this->assertSame(4260.09, $metrics['net_pay']);
+        $this->assertCount(1, $catalog);
+        $this->assertSame(1550.00, $catalog[0]['amount']);
+        $this->assertSame('payroll_standard', $catalog[0]['calculation_standard']);
+    }
+
+    public function test_deduction_line_mismatch_detects_changed_amount(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+        $draft = [[
+            'line_key' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+            'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+            'component_name' => 'Lending Salary Deduction Every 30',
+            'schedule' => 'every_30_only',
+            'calculation_standard' => 'payroll_standard',
+            'configured_amount' => 1550.00,
+            'amount' => 1550.00,
+        ]];
+        $final = [[
+            'line_key' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+            'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+            'component_name' => 'Lending Salary Deduction Every 30',
+            'schedule' => 'every_30_only',
+            'calculation_standard' => 'monthly_standard',
+            'configured_amount' => 1550.00,
+            'amount' => 266.82,
+        ]];
+
+        $mismatches = $service->deductionLineMismatches($draft, $final);
+
+        $this->assertNotEmpty($mismatches);
+        $this->assertSame(1550.00, $mismatches[0]['draft_amount']);
+        $this->assertSame(266.82, $mismatches[0]['finalized_amount']);
+    }
+
+    public function test_display_totals_do_not_mutate_snapshot(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+        $snapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [
+                    ['key' => 'daily:regular_pay', 'label' => 'Regular Pay', 'amount' => 3076.92],
+                ],
+                'payslip_earning_lines' => [],
+                'payslip_deduction_lines' => [],
+                'payslip_custom_deduction_lines' => [
+                    [
+                        'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+                        'label' => 'Lending Salary Deduction Every 30',
+                        'amount' => 1550.00,
+                    ],
+                ],
+            ],
+        ];
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_GENERATED,
+            'gross_pay' => 3076.92,
+            'total_deductions' => 1550.00,
+            'net_pay' => 1526.92,
+            'snapshot' => $snapshot,
+        ]);
+
+        $totals = $service->payslipTotalsForDisplay($payslip);
+
+        $this->assertSame(3076.92, $totals['gross_pay']);
+        $this->assertSame(1550.00, $totals['total_deductions']);
+        $this->assertSame(
+            1550.00,
+            (float) data_get($payslip->snapshot, 'summary.payslip_custom_deduction_lines.0.amount')
+        );
+    }
+
+    private function payslipServiceWithoutConstructor(): PayslipService
+    {
+        return (new ReflectionClass(PayslipService::class))->newInstanceWithoutConstructor();
+    }
+}
