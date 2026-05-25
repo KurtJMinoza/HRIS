@@ -15,6 +15,7 @@ import {
   getCompanies,
   getDepartments,
   getPayCycles,
+  getPayrollRunCompanyPayrollReportPdfBlob,
   apiOrigin,
 } from '@/api'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
@@ -176,6 +177,17 @@ function batchStatusBadge(status, statusLabel) {
   )
 }
 
+function savePdfBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 function resolveLogoUrl(logoUrl) {
   if (logoUrl == null || logoUrl === '') return null
   if (typeof logoUrl === 'string' && (logoUrl.startsWith('http://') || logoUrl.startsWith('https://'))) return logoUrl
@@ -301,6 +313,7 @@ export default function AdminGeneratePayslipsPage() {
 
   const [listLoading, setListLoading] = useState(false)
   const [bulkDownloadingBatchId, setBulkDownloadingBatchId] = useState(null)
+  const [payrollReportDownloadingBatchId, setPayrollReportDownloadingBatchId] = useState(null)
   /** @type {import('react').MutableRefObject<AbortController|null>} */
   const bulkDownloadAbortRef = useRef(null)
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
@@ -719,6 +732,30 @@ export default function AdminGeneratePayslipsPage() {
       if (bulkDownloadAbortRef.current === abort) {
         bulkDownloadAbortRef.current = null
       }
+    }
+  }
+
+  const handleDownloadPayrollReportPdf = async (row) => {
+    const id = row?.payroll_batch_run_id
+    const rowCompanyId = Number(row?.company_id || 0)
+    if (id == null || rowCompanyId <= 0 || payrollReportDownloadingBatchId != null) return
+    if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
+    if (!canBulkDownloadPayslipZip) return
+
+    setPayrollReportDownloadingBatchId(id)
+    try {
+      const blob = await getPayrollRunCompanyPayrollReportPdfBlob(id, rowCompanyId)
+      const companyName = String(row?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${id}.pdf`)
+      toast({ title: 'Payroll Report PDF downloaded', description: 'Your report download has started.' })
+    } catch (e) {
+      toast({
+        title: 'Payroll Report PDF failed',
+        description: e.message || 'Could not download Payroll Report PDF.',
+        variant: 'destructive',
+      })
+    } finally {
+      setPayrollReportDownloadingBatchId(null)
     }
   }
 
@@ -1381,6 +1418,7 @@ export default function AdminGeneratePayslipsPage() {
                       const deleteDisabled = !r.can_delete || deletingBatchId === r.payroll_batch_run_id
                       const batchFinalized = String(r.batch_run_status || '').toLowerCase() === 'finalized'
                       const showBulkPdf = batchFinalized && canBulkDownloadPayslipZip
+                      const showPayrollReportPdf = showBulkPdf && Number(r.company_id || 0) > 0
                       return (
                         <TableRow
                           key={key}
@@ -1460,6 +1498,23 @@ export default function AdminGeneratePayslipsPage() {
                                           : ''
                                       }`
                                     : 'Bulk Download PDF'}
+                                </Button>
+                              )}
+                              {showPayrollReportPdf && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-input/35"
+                                  disabled={payrollReportDownloadingBatchId === r.payroll_batch_run_id}
+                                  onClick={() => handleDownloadPayrollReportPdf(r)}
+                                >
+                                  {payrollReportDownloadingBatchId === r.payroll_batch_run_id ? (
+                                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <FileText className="mr-1.5 h-4 w-4" />
+                                  )}
+                                  Payroll Report PDF
                                 </Button>
                               )}
                               {showDelete && (

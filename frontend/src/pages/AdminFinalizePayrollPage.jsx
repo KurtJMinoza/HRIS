@@ -11,6 +11,7 @@ import {
   adminPreviewFinalizePayroll,
   companyLogoUrl,
   getCompanies,
+  getPayrollRunCompanyPayrollReportPdfBlob,
   userProfileImageSrc,
 } from '@/api'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
@@ -208,6 +209,17 @@ function statusPill(label, color = 'gray') {
   )
 }
 
+function savePdfBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 export default function AdminFinalizePayrollPage() {
   const { user } = useAuth()
   const { toast } = useToast()
@@ -316,6 +328,7 @@ export default function AdminFinalizePayrollPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deletingBatch, setDeletingBatch] = useState(false)
   const [bulkDownloadingZip, setBulkDownloadingZip] = useState(false)
+  const [payrollReportDownloading, setPayrollReportDownloading] = useState(false)
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
   const bulkDownloadAbortRef = useRef(null)
   const [sendBatchDialogOpen, setSendBatchDialogOpen] = useState(false)
@@ -832,6 +845,28 @@ export default function AdminFinalizePayrollPage() {
     }
   }
 
+  const handleDownloadPayrollReportPdf = async () => {
+    const batchRunId = Number(preview?.batch_run?.payroll_batch_run_id || 0)
+    const companyId = Number(effectivePayload.company_id || preview?.batch_run?.company_id || selectedCompany?.id || 0)
+    if (batchRunId <= 0 || companyId <= 0 || payrollReportDownloading || !batchRunStatusFinalized || !canBulkDownloadPayslipZip) return
+
+    setPayrollReportDownloading(true)
+    try {
+      const blob = await getPayrollRunCompanyPayrollReportPdfBlob(batchRunId, companyId)
+      const companyName = String(selectedCompany?.name || preview?.totals?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${batchRunId}.pdf`)
+      toastRef.current({ title: 'Payroll Report PDF downloaded', description: 'Your report download has started.' })
+    } catch (e) {
+      toastRef.current({
+        title: 'Payroll Report PDF failed',
+        description: e.message || 'Could not download Payroll Report PDF.',
+        variant: 'destructive',
+      })
+    } finally {
+      setPayrollReportDownloading(false)
+    }
+  }
+
   const togglePayslipSelected = (id) => {
     setSelectedPayslipIds((prev) => {
       const next = new Set(prev)
@@ -972,6 +1007,25 @@ export default function AdminFinalizePayrollPage() {
                           : ''
                       }`
                     : 'Bulk Download PDF'}
+                </Button>
+              )}
+            {batchRunStatusFinalized &&
+              Number(preview?.batch_run?.payroll_batch_run_id || 0) > 0 &&
+              canBulkDownloadPayslipZip && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
+                  disabled={payrollReportDownloading || loading}
+                  onClick={handleDownloadPayrollReportPdf}
+                >
+                  {payrollReportDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileText className="h-4 w-4" />
+                  )}
+                  Payroll Report PDF
                 </Button>
               )}
             <Button

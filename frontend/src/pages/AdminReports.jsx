@@ -11,10 +11,12 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   getAdminReportsDetailed,
+  getAdminPayslipsRecentByCompany,
   getEmployeeReportsDetailed,
   getEmployees,
   fetchAllAdminReportsDetailedRows,
   fetchAllEmployeeReportsDetailedRows,
+  getReportsPayrollReportPdfBlob,
   profileImageUrl,
   REPORTS_AND_ATTENDANCE_PAGE_SIZE,
   ATTENDANCE_PAGE_SIZE_OPTIONS,
@@ -55,6 +57,17 @@ function todayIso() {
 function formatNumber(value) {
   if (value == null) return '0'
   return Number(value).toLocaleString()
+}
+
+function savePdfBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 function reportClockTime(row, key) {
@@ -161,9 +174,13 @@ export default function AdminReports() {
   const [debouncedDetailedSearch, setDebouncedDetailedSearch] = useState('')
   const [exportingPdf, setExportingPdf] = useState(false)
   const [exportingExcel, setExportingExcel] = useState(false)
+  const [payrollReportCompanyId, setPayrollReportCompanyId] = useState('all')
+  const [payrollReportRunId, setPayrollReportRunId] = useState('')
+  const [downloadingPayrollReport, setDownloadingPayrollReport] = useState(false)
 
   const { user } = useAuth()
   const location = useLocation()
+  const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const viewerIsAdminHr = isAdminHrUser(user)
   const canViewAllReports = Boolean(user?.can_view_all_reports) || viewerIsAdminHr
   const canViewSubordinateReports = Boolean(user?.can_view_subordinate_reports)
@@ -177,6 +194,8 @@ export default function AdminReports() {
     readStoredReportsPerPage(reportsPerPageStorageKey),
   )
   const showPayrollReports = viewerIsAdminHr || isEmployeeSelfReport
+  const canDownloadPayrollReport =
+    !isEmployeeSelfReport && (viewerIsAdminHr || permissionSet.has('payslip.download') || permissionSet.has('payslip.finalize'))
 
   function effectiveDateRange() {
     const from = fromDate || defaultReportFromDateIso(13)
@@ -239,6 +258,16 @@ export default function AdminReports() {
     queryKey: ['reports-filter-employees', isEmployeeSelfReport, includeDeactivated],
     enabled: !isEmployeeSelfReport,
     queryFn: () => getEmployees({ per_page: 200, active_filter: includeDeactivated ? 'all' : 'active' }),
+  })
+
+  const payrollRunsQuery = useQuery({
+    queryKey: ['reports-payroll-runs', payrollReportCompanyId],
+    enabled: canDownloadPayrollReport,
+    queryFn: () =>
+      getAdminPayslipsRecentByCompany({
+        company_id: payrollReportCompanyId !== 'all' ? Number(payrollReportCompanyId) : undefined,
+        per_page: 100,
+      }),
   })
 
   useEffect(() => {
@@ -307,6 +336,24 @@ export default function AdminReports() {
       .filter((e) => e.id != null && e.name !== undefined)
       .sort(compareEmployeesByLastName)
   }, [filterEmployees, companyId])
+
+  const finalizedPayrollRunOptions = useMemo(() => {
+    const rows = Array.isArray(payrollRunsQuery.data?.data) ? payrollRunsQuery.data.data : []
+    return rows
+      .filter((row) => String(row?.batch_run_status || row?.status || '').toLowerCase() === 'finalized')
+      .filter((row) => Number(row?.payroll_batch_run_id || 0) > 0 && Number(row?.company_id || 0) > 0)
+      .map((row) => ({
+        id: String(row.payroll_batch_run_id),
+        company_id: String(row.company_id),
+        company_name: row.company_name || `Company ${row.company_id}`,
+        label: `${row.company_name || `Company ${row.company_id}`} • ${row.pay_period_start || '—'} to ${row.pay_period_end || '—'}`,
+      }))
+  }, [payrollRunsQuery.data])
+
+  useEffect(() => {
+    if (payrollReportRunId && finalizedPayrollRunOptions.some((run) => run.id === payrollReportRunId)) return
+    setPayrollReportRunId(finalizedPayrollRunOptions[0]?.id || '')
+  }, [finalizedPayrollRunOptions, payrollReportRunId])
 
   const periodLabel =
     data.from_date && data.to_date && data.from_date !== data.to_date
@@ -639,6 +686,23 @@ export default function AdminReports() {
     }
   }
 
+  async function handleDownloadPayrollReportPdf() {
+    const selectedRun = finalizedPayrollRunOptions.find((run) => run.id === payrollReportRunId)
+    if (!selectedRun || downloadingPayrollReport) return
+
+    setDownloadingPayrollReport(true)
+    try {
+      const blob = await getReportsPayrollReportPdfBlob({
+        company_id: Number(selectedRun.company_id),
+        payroll_run_id: Number(selectedRun.id),
+      })
+      const companyName = String(selectedRun.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${selectedRun.id}.pdf`)
+    } finally {
+      setDownloadingPayrollReport(false)
+    }
+  }
+
   const hasRows = Number(detailedReportMeta?.total ?? 0) > 0
   const showTableSkeleton = detailedQuery.isLoading && !detailedQuery.isPlaceholderData
 
@@ -774,6 +838,79 @@ export default function AdminReports() {
           </div>
         </CardContent>
       </Card>
+
+      {canDownloadPayrollReport && (
+        <Card className="border border-border/60 bg-card/95 shadow-sm rounded-xl">
+          <CardHeader className="flex flex-col gap-3 border-b border-border/40 bg-muted/40 py-4 @md:flex-row @md:items-center @md:justify-between">
+            <div>
+              <CardTitle className="text-base font-semibold @md:text-lg">Payroll Report / Payslip Report per Company</CardTitle>
+              <CardDescription className="text-xs @md:text-sm">
+                Download a finalized Payroll Report PDF for one company and payroll run.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={handleDownloadPayrollReportPdf}
+              disabled={!payrollReportRunId || downloadingPayrollReport || payrollRunsQuery.isFetching}
+            >
+              {downloadingPayrollReport ? (
+                <RefreshCw className="size-3.5 animate-spin" />
+              ) : (
+                <FileText className="size-3.5" />
+              )}
+              Payroll Report PDF
+            </Button>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 gap-3 pt-4 @md:grid-cols-[minmax(220px,320px)_1fr]">
+            <div className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Company</span>
+              <Select
+                value={payrollReportCompanyId}
+                onValueChange={(value) => {
+                  setPayrollReportCompanyId(value)
+                  setPayrollReportRunId('')
+                }}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="All companies" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All companies</SelectItem>
+                  {companiesOptions.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Finalized payroll run</span>
+              <Select value={payrollReportRunId} onValueChange={setPayrollReportRunId}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder={payrollRunsQuery.isFetching ? 'Loading finalized payroll runs...' : 'Select finalized payroll run'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {finalizedPayrollRunOptions.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      No finalized payroll runs found
+                    </SelectItem>
+                  ) : (
+                    finalizedPayrollRunOptions.map((run) => (
+                      <SelectItem key={run.id} value={run.id}>
+                        {run.label}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-muted-foreground">

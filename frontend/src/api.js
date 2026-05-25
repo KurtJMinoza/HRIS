@@ -2084,6 +2084,33 @@ export async function adminDownloadPayslipBulkZipFile(requestId) {
   return res.blob()
 }
 
+export async function getPayrollRunCompanyPayrollReportPdfBlob(batchRunId, companyId) {
+  const res = await authenticatedFetch(
+    `/payroll-runs/${encodeURIComponent(String(batchRunId))}/company/${encodeURIComponent(String(companyId))}/payroll-report/pdf`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Payroll Report PDF')
+  }
+  return res.blob()
+}
+
+export async function getReportsPayrollReportPdfBlob(params = {}) {
+  const q = new URLSearchParams()
+  if (params.company_id != null) q.set('company_id', String(params.company_id))
+  if (params.payroll_run_id != null) q.set('payroll_run_id', String(params.payroll_run_id))
+  if (params.pay_period_id != null) q.set('pay_period_id', String(params.pay_period_id))
+  const res = await authenticatedFetch(`/reports/payroll-report${q.toString() ? `?${q}` : ''}`, {
+    timeoutMs: 120000,
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Payroll Report PDF')
+  }
+  return res.blob()
+}
+
 const BULK_PAYSLIP_POLL_MS = 2500
 
 /**

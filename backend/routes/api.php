@@ -53,6 +53,7 @@ use App\Http\Controllers\EmployeeSkillController;
 use App\Http\Controllers\LivenessController;
 use App\Http\Controllers\MyScheduleController;
 use App\Http\Controllers\PasswordResetController;
+use App\Http\Controllers\PayrollReportController;
 use App\Http\Controllers\PayslipDownloadController;
 use App\Http\Controllers\PresenceFilingController;
 use App\Http\Controllers\PublicMediaController;
@@ -444,6 +445,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/payroll-batches/{batchId}/bulk-download-pdf', [AdminPayslipController::class, 'bulkDownloadBatchPdf'])->whereNumber('batchId');
             Route::get('/admin/payslip-bulk-downloads/{id}/status', [AdminPayslipController::class, 'bulkDownloadStatus'])->whereNumber('id');
             Route::get('/admin/payslip-bulk-downloads/{id}/download', [AdminPayslipController::class, 'downloadBulkZip'])->whereNumber('id');
+        });
+        Route::middleware('permission:payslip.download|payslip.finalize')->group(function () {
+            Route::get('/payroll-runs/{id}/company/{companyId}/payroll-report/pdf', [PayrollReportController::class, 'downloadForRunCompany'])
+                ->whereNumber('id')
+                ->whereNumber('companyId');
+            Route::get('/reports/payroll-report', [PayrollReportController::class, 'downloadFromReports']);
         });
         Route::middleware('permission:approval.workflow.manage')->group(function () {
             Route::get('/admin/approval-workflow-settings', [ApprovalWorkflowSettingsController::class, 'index']);
