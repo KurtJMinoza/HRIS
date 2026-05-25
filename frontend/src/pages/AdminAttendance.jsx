@@ -459,6 +459,17 @@ export default function AdminAttendance() {
         accessor: (r) => (r.overtime_status ? String(r.overtime_status).replace(/_/g, ' ') : '—'),
       },
       { key: 'payroll_impact', label: 'Payroll Impact (hrs)', accessor: (r) => tableOtHoursHrs(r.payroll_impact_hours) },
+      { key: 'night_hours', label: 'ND hrs', accessor: (r) => tableOtHoursHrs(r.night_hours) },
+      {
+        key: 'night_differential_pay',
+        label: 'ND pay',
+        accessor: (r) => (r.night_differential_pay != null ? Number(r.night_differential_pay).toFixed(2) : '—'),
+      },
+      {
+        key: 'total_premium_pay',
+        label: 'Total premium',
+        accessor: (r) => (r.total_premium_pay != null ? Number(r.total_premium_pay).toFixed(2) : '—'),
+      },
       { key: 'status', label: 'Status', accessor: (r) => resolveAdminStatusLabel(r) },
     ]
 

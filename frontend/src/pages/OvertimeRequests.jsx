@@ -37,7 +37,6 @@ import { cn } from '@/lib/utils'
 import {
   requestModuleActionsTdClass,
   requestModuleActionsWrapRowClass,
-  requestModuleCompactButtonClass,
   requestModuleHeadRowClass,
   requestModuleRowClass,
   overtimeAdminTableClass,
@@ -461,15 +460,18 @@ function OvertimeStatusCell({ row }) {
 }
 
 function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelete, onApprove, onReject }) {
+  const baseActionButtonClass =
+    'h-9 gap-1.5 rounded-full px-3.5 text-xs font-bold shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-offset-2'
+
   return (
     <div className={requestModuleActionsWrapRowClass}>
       {canAct ? (
         <>
           <Button
             type="button"
-            variant="outline"
+            variant="default"
             size="sm"
-            className={cn(requestModuleCompactButtonClass, 'border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 hover:text-emerald-800 dark:text-emerald-300')}
+            className={cn(baseActionButtonClass, 'bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-500 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400')}
             onClick={onApprove}
           >
             <CheckCircle2 className="size-3.5 shrink-0" />
@@ -479,7 +481,7 @@ function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelet
             type="button"
             variant="outline"
             size="sm"
-            className={cn(requestModuleCompactButtonClass, 'border-destructive/50 text-destructive hover:bg-destructive/10')}
+            className={cn(baseActionButtonClass, 'border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 focus-visible:ring-rose-500 dark:border-rose-800/80 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/45')}
             onClick={onReject}
           >
             <XCircle className="size-3.5 shrink-0" />
@@ -491,7 +493,7 @@ function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelet
         type="button"
         variant="outline"
         size="sm"
-        className={cn(requestModuleCompactButtonClass, 'border-border/80 bg-card hover:bg-brand/10 hover:text-brand')}
+        className={cn(baseActionButtonClass, 'border-border/80 bg-card text-foreground hover:bg-brand/10 hover:text-brand focus-visible:ring-brand')}
         onClick={onView}
       >
         <Eye className="size-3.5 shrink-0" />
@@ -503,7 +505,7 @@ function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelet
           type="button"
           variant="outline"
           size="sm"
-          className={cn(requestModuleCompactButtonClass, 'border-border/80 hover:bg-muted')}
+          className={cn(baseActionButtonClass, 'border-border/80 bg-muted/40 text-foreground hover:bg-muted focus-visible:ring-muted-foreground/40')}
           onClick={onEdit}
         >
           <Pencil className="size-3.5 shrink-0" />
@@ -515,7 +517,7 @@ function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelet
           type="button"
           variant="ghost"
           size="sm"
-          className={cn(requestModuleCompactButtonClass, 'text-destructive hover:bg-destructive/10 hover:text-destructive')}
+          className={cn(baseActionButtonClass, 'text-rose-700 hover:bg-rose-50 hover:text-rose-800 focus-visible:ring-rose-500 dark:text-rose-300 dark:hover:bg-rose-950/35')}
           onClick={onDelete}
         >
           <Trash2 className="size-3.5 shrink-0" />
@@ -1886,7 +1888,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               </div>
             ) : (
               <AnimatedSection delay={0.05}>
-                <div className="overflow-x-auto bg-card px-4 pb-8 pt-2 @sm:px-5 md:px-6">
+                <div className="px-4 pb-8 pt-2 @sm:px-5 md:px-6">
+                  <div className="overflow-x-auto rounded-2xl border border-border/70 bg-card shadow-sm dark:border-white/10">
                   <Table className={overtimeTableClass}>
                     <colgroup>
                       {showBulkCheckbox ? <col className="w-10" /> : null}
@@ -1902,7 +1905,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       <col className="w-[12rem]" />
                     </colgroup>
                     <TableHeader>
-                      <TableRow className={cn(requestModuleHeadRowClass, 'sticky top-0 z-10 hover:bg-muted/30 dark:hover:bg-card/80')}>
+                      <TableRow className={cn(requestModuleHeadRowClass, 'sticky top-0 z-10 backdrop-blur supports-backdrop-filter:bg-muted/80 hover:bg-muted/60 dark:supports-backdrop-filter:bg-card/90 dark:hover:bg-card/80')}>
                         {showBulkCheckbox ? (
                           <TableHead className={cn(requestModuleThClass, 'w-10 px-3')}>
                             <Checkbox
@@ -1941,7 +1944,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                         return (
                           <TableRow
                             key={row.id}
-                            className={requestModuleRowClass(rowIdx, 'text-sm leading-relaxed')}
+                            className={requestModuleRowClass(rowIdx, 'group text-sm leading-relaxed')}
                           >
                             {showBulkCheckbox ? (
                               <TableCell className={cn(requestModuleTdClass, 'w-10 px-3')}>
@@ -2004,6 +2007,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       })}
                     </TableBody>
                   </Table>
+                  </div>
                 </div>
                 {tab === 'all' && totalAllPages > 1 && (
                   <div className="flex items-center justify-between border-t border-border/40 px-4 pb-6 pt-5 @sm:px-6 md:px-8">
@@ -2485,21 +2489,23 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 Delete
               </Button>
             ) : null}
-            {detail && !detailLoading && showOvertimeActions(detail, user, canApproveOvertime) ? (
+            {detail && !detailLoading && showOvertimeActions(detail, canApproveOvertime) ? (
               <div className="flex w-full flex-wrap gap-2 @sm:w-auto @sm:justify-end">
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-12 min-w-[110px] rounded-xl border-destructive/40 px-5 text-base font-semibold text-destructive hover:bg-destructive/10 dark:border-destructive/50"
+                  className="h-12 min-w-[110px] rounded-full border-rose-300 bg-rose-50 px-5 text-base font-bold text-rose-700 shadow-sm hover:bg-rose-100 dark:border-rose-800/80 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/45"
                   onClick={() => openReject(detail)}
                 >
+                  <XCircle className="size-4" />
                   Reject
                 </Button>
                 <Button
                   type="button"
-                  className="h-12 min-w-[110px] rounded-xl bg-brand px-5 text-base font-semibold text-brand-foreground shadow-[0_12px_22px_-14px_rgba(234,88,12,0.9)] hover:bg-brand-strong"
+                  className="h-12 min-w-[110px] rounded-full bg-emerald-600 px-5 text-base font-bold text-white shadow-[0_14px_26px_-14px_rgba(5,150,105,0.9)] hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
                   onClick={() => openApprove(detail)}
                 >
+                  <CheckCircle2 className="size-4" />
                   Approve
                 </Button>
               </div>

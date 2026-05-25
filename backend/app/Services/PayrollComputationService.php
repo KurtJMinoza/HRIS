@@ -7,6 +7,7 @@ use App\Models\AttendanceLog;
 use App\Models\DeductionScheduleSetting;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeDeduction;
+use App\Models\EmployeeOrganizationAssignment;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
@@ -46,6 +47,11 @@ class PayrollComputationService
 
     private ?int $activePayrollBatchRunId = null;
 
+    private ?int $activePayrollCompanyId = null;
+
+    /** @var array<int, int|null> */
+    private array $activeAssignmentIdsByUser = [];
+
     public function __construct(
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly PayrollRulesEngineService $rulesEngine,
@@ -70,6 +76,8 @@ class PayrollComputationService
         $this->overtimeExistsCache = [];
         $this->approvedOvertimeByUserDate = [];
         $this->activePayrollBatchRunId = null;
+        $this->activePayrollCompanyId = null;
+        $this->activeAssignmentIdsByUser = [];
         $this->attendanceLogExistsCache = [];
         $this->attendanceSession->flushRuntimeCache();
         $this->policyResolver->flushRuntimeCaches();
@@ -91,8 +99,13 @@ class PayrollComputationService
      *     load_overtime_ms: float,
      * }
      */
-    public function beginBulkPayrollAttendancePrefetch(array $userIds, Carbon $from, Carbon $to): array
-    {
+    public function beginBulkPayrollAttendancePrefetch(
+        array $userIds,
+        Carbon $from,
+        Carbon $to,
+        ?int $companyId = null,
+        ?int $payrollBatchRunId = null
+    ): array {
         $out = [
             'corrections_ms' => 0.0,
             'ot_stub_ms' => 0.0,
@@ -109,6 +122,10 @@ class PayrollComputationService
         if ($ids === []) {
             return $out;
         }
+
+        $this->activePayrollCompanyId = $companyId !== null && $companyId > 0 ? $companyId : null;
+        $this->activePayrollBatchRunId = $payrollBatchRunId !== null && $payrollBatchRunId > 0 ? $payrollBatchRunId : null;
+        $this->activeAssignmentIdsByUser = $this->resolvePayrollAssignmentIdsForUsers($ids, $to);
 
         $sessionTimings = $this->attendanceSession->beginBulkPayrollSession(
             $ids,
@@ -289,8 +306,9 @@ class PayrollComputationService
             $ids,
             $from,
             $to,
-            null,
-            $this->activePayrollBatchRunId
+            $this->activePayrollCompanyId,
+            $this->activePayrollBatchRunId,
+            $this->activeAssignmentIdsByUser
         );
 
         foreach ($this->approvedOvertimeByUserDate as $key => $records) {
@@ -323,6 +341,45 @@ class PayrollComputationService
             $hk = $existsKey.'|'.Overtime::STATUS_PENDING;
             $this->overtimeHoursCache[$hk] = ($this->overtimeHoursCache[$hk] ?? 0.0) + (float) ($ot->computed_hours ?? 0);
         }
+    }
+
+    /**
+     * @param  list<int>  $userIds
+     * @return array<int, int|null>
+     */
+    private function resolvePayrollAssignmentIdsForUsers(array $userIds, Carbon $asOf): array
+    {
+        $ids = array_values(array_unique(array_map(static fn ($id) => (int) $id, $userIds)));
+        if ($ids === []) {
+            return [];
+        }
+
+        $out = array_fill_keys($ids, null);
+        if (! \Illuminate\Support\Facades\Schema::hasTable('employee_organization_assignments')) {
+            return $out;
+        }
+
+        $rows = EmployeeOrganizationAssignment::query()
+            ->whereIn('employee_id', $ids)
+            ->where('is_active', true)
+            ->where(function ($q) use ($asOf): void {
+                $q->whereNull('effective_from')->orWhereDate('effective_from', '<=', $asOf->toDateString());
+            })
+            ->where(function ($q) use ($asOf): void {
+                $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', $asOf->toDateString());
+            })
+            ->orderByDesc('is_primary')
+            ->orderByDesc('id')
+            ->get(['id', 'employee_id']);
+
+        foreach ($rows as $row) {
+            $uid = (int) $row->employee_id;
+            if (array_key_exists($uid, $out) && $out[$uid] === null) {
+                $out[$uid] = (int) $row->id;
+            }
+        }
+
+        return $out;
     }
 
     public function getTimezone(): string
@@ -670,7 +727,9 @@ class PayrollComputationService
                 $hourlyRate,
                 $policy,
                 $ruleCode,
-                0
+                0,
+                $daySchedule,
+                $tz
             );
             $noPunchApprovedOtHours = (float) ($noPunchOtComp['payable_hours'] ?? 0);
             $noPunchOtPay = (float) ($noPunchOtComp['ot_pay'] ?? 0);
@@ -678,6 +737,10 @@ class PayrollComputationService
             $noPunchHasOtRequest = $noPunchApprovedOtHours > 0.0001
                 || $this->hasOvertimeRequestForWorkday($user, $dateKey, Carbon::parse($dateKey, $tz)->startOfDay());
             $otDayMinutes = 0;
+
+            $noPunchNdPay = (float) ($noPunchOtComp['nd_pay'] ?? 0);
+            $noPunchNdMinutes = (int) ($noPunchOtComp['nd_minutes'] ?? 0);
+            $noPunchAllowNd = $noPunchApprovedOtHours > 0.0001;
 
             if ($noPunchApprovedOtHours > 0.0001 && $noPunchOtPay > 0) {
                 $totalPay += $noPunchOtPay;
@@ -700,19 +763,33 @@ class PayrollComputationService
                     ];
                 }
             }
+            if ($noPunchAllowNd && $noPunchNdPay > 0) {
+                $totalPay += $noPunchNdPay;
+                $breakdown[] = [
+                    'component' => 'nd_pay',
+                    'minutes' => $noPunchNdMinutes,
+                    'rate' => $hourlyRate,
+                    'premium' => $ndPremium,
+                    'multiplier' => $otMult,
+                    'amount' => round($noPunchNdPay, 2),
+                    'nd_premium_applied' => true,
+                    'source' => 'approved_overtime',
+                    'approved_overtime_items' => $noPunchOtComp['nd_items'] ?? $noPunchOtComp['items'] ?? [],
+                ];
+            }
 
-            $base = $this->buildDayResult($dateKey, $isRestDay, $holiday, $status, $conditions, $breakdown, $totalPay, $workedMinutes, $regularDayMinutes, $regularNightMinutes, 0, 0, $requiredMinutes, $lateDeductionMinutes, $undertimeDeductionMinutes);
+            $base = $this->buildDayResult($dateKey, $isRestDay, $holiday, $status, $conditions, $breakdown, $totalPay, $workedMinutes, $regularDayMinutes, $regularNightMinutes, 0, $noPunchNdMinutes, $requiredMinutes, $lateDeductionMinutes, $undertimeDeductionMinutes);
 
             $leaveRegularPay = ($holidayPremiumPayForLeave > 0.0001)
-                ? round($totalPay - $holidayPremiumPayForLeave - $noPunchOtPay, 2)
-                : round($totalPay - $noPunchOtPay, 2);
+                ? round($totalPay - $holidayPremiumPayForLeave - $noPunchOtPay - $noPunchNdPay, 2)
+                : round($totalPay - $noPunchOtPay - $noPunchNdPay, 2);
 
             return array_merge($base, [
                 'policy_id' => $policy?->id,
                 'policy_snapshot' => $this->policyResolver->buildPolicySnapshot($policy, $ruleCode),
                 'regular_pay' => max(0.0, $leaveRegularPay),
                 'ot_pay' => $noPunchOtPay,
-                'nd_pay' => 0.0,
+                'nd_pay' => round($noPunchNdPay, 2),
                 'holiday_premium_pay' => round($holidayPremiumPayForLeave, 2),
                 'approved_ot_hours' => $noPunchApprovedOtHours,
                 'approved_ot_requested_hours' => (float) ($noPunchOtComp['approved_hours'] ?? $noPunchApprovedOtHours),
@@ -723,9 +800,9 @@ class PayrollComputationService
                 'ot_premium_applied_hours' => round($noPunchOtApplied, 2),
                 'ot_premium_ratio' => 0.0,
                 'uncovered_ot_hours' => 0.0,
-                'nd_premium_applied' => false,
-                'ot_day_minutes' => $otDayMinutes ?? 0,
-                'ot_night_minutes' => 0,
+                'nd_premium_applied' => $noPunchAllowNd && $noPunchNdPay > 0,
+                'ot_day_minutes' => max(0, ($otDayMinutes ?? 0) - $noPunchNdMinutes),
+                'ot_night_minutes' => $noPunchNdMinutes,
             ]);
         }
 
@@ -834,7 +911,9 @@ class PayrollComputationService
             $hourlyRate,
             $policy,
             $ruleCode,
-            (int) $seg['overtime_minutes']
+            (int) $seg['overtime_minutes'],
+            $daySchedule,
+            $tz
         );
         $approvedOtHours = (float) ($approvedOtComp['approved_hours'] ?? 0);
         $approvedOtRequestedHours = $approvedOtHours;
@@ -848,7 +927,11 @@ class PayrollComputationService
             ? ($paidOtMinutes / $renderedOtMinutes)
             : ($paidOtMinutes > 0 ? 1.0 : 0.0);
         $ndOvertimeMinutesRaw = (int) ($seg['nd_overtime_minutes'] ?? 0);
-        $effectiveNdOvertimeMinutes = (int) round($ndOvertimeMinutesRaw * $otPremiumRatio);
+        $approvedOtNdMinutes = (int) ($approvedOtComp['nd_minutes'] ?? 0);
+        $approvedOtNdPay = (float) ($approvedOtComp['nd_pay'] ?? 0);
+        $effectiveNdOvertimeMinutes = $approvedOtHours > 0.0001
+            ? $approvedOtNdMinutes
+            : (int) round($ndOvertimeMinutesRaw * $otPremiumRatio);
 
         $renderedOtHoursForAudit = (float) ($seg['overtime_hours'] ?? ($renderedOtMinutes / 60.0));
         $uncoveredOtHours = max(0, $renderedOtHoursForAudit - $approvedOtHours - $pendingOtHours);
@@ -877,11 +960,11 @@ class PayrollComputationService
         $payFirst8Multiplier = $qualifiesStatutoryHolidayPremium ? $first8 : 1.0;
 
         $first8Pay = ($paidReg / 60.0) * $hourlyRate * $payFirst8Multiplier;
-        $otPay = $this->overtimePayroll->payableBasis() === 'approved'
-            ? (float) ($approvedOtComp['ot_pay'] ?? 0)
-            : ($paidOtMinutes / 60.0) * $hourlyRate * $otMult;
+        $otPay = (float) ($approvedOtComp['ot_pay'] ?? 0);
         $ndPayRegular = ($ndRegPaid / 60.0) * $hourlyRate * $ndBase * $ndPremium;
-        $ndPayOt = ($effectiveNdOvertimeMinutes / 60.0) * $hourlyRate * $otMult * $ndPremium;
+        $ndPayOt = $approvedOtHours > 0.0001
+            ? $approvedOtNdPay
+            : (($effectiveNdOvertimeMinutes / 60.0) * $hourlyRate * $otMult * $ndPremium);
         $ndPay = $allowNdPremium ? ($ndPayRegular + $ndPayOt) : 0.0;
 
         $totalPay = $first8Pay + $otPay + $ndPay;
@@ -1116,8 +1199,9 @@ class PayrollComputationService
         return $this->overtimePayroll->fetchApprovedForUserDate(
             (int) $user->id,
             $dateKey,
-            $user->getEffectiveCompanyId(),
-            $this->activePayrollBatchRunId
+            $this->activePayrollCompanyId ?? $user->getEffectiveCompanyId(),
+            $this->activePayrollBatchRunId,
+            $this->activeAssignmentIdsByUser[(int) $user->id] ?? null
         );
     }
 
@@ -1136,7 +1220,9 @@ class PayrollComputationService
         float $hourlyRate,
         ?object $policy,
         string $fallbackRuleCode,
-        int $renderedOtMinutes
+        int $renderedOtMinutes,
+        ?array $daySchedule = null,
+        ?string $tz = null
     ): array {
         return $this->overtimePayroll->computeApprovedOvertimeForDate(
             $user,
@@ -1146,7 +1232,11 @@ class PayrollComputationService
             $fallbackRuleCode,
             $renderedOtMinutes,
             $this->activePayrollBatchRunId,
-            $this->approvedOvertimeRecordsForUserDate($user, $dateKey)
+            $this->activePayrollCompanyId ?? $user->getEffectiveCompanyId(),
+            $this->activeAssignmentIdsByUser[(int) $user->id] ?? null,
+            $this->approvedOvertimeRecordsForUserDate($user, $dateKey),
+            $daySchedule,
+            $tz
         );
     }
 
@@ -1443,10 +1533,19 @@ class PayrollComputationService
         if ($this->activePayrollBatchRunId !== null && $this->activePayrollBatchRunId <= 0) {
             $this->activePayrollBatchRunId = null;
         }
+        $this->activePayrollCompanyId = isset($periodContext['company_id'])
+            ? (int) $periodContext['company_id']
+            : null;
+        if ($this->activePayrollCompanyId !== null && $this->activePayrollCompanyId <= 0) {
+            $this->activePayrollCompanyId = null;
+        }
 
         $tz = $this->getTimezone();
         $monthlyBaseForRate = $this->resolveMonthlyBaseForDailyRate($user, $to->toDateString());
         [$effectiveSchedule] = $this->resolveEffectiveScheduleForDailyComputation($user);
+        if (! array_key_exists((int) $user->id, $this->activeAssignmentIdsByUser)) {
+            $this->activeAssignmentIdsByUser[(int) $user->id] = $this->resolvePayrollAssignmentIdsForUsers([(int) $user->id], $to)[(int) $user->id] ?? null;
+        }
         $dailyRateDivisorDays = $this->resolveStableScheduleMonthlyDivisor($effectiveSchedule);
         $scheduleMetrics = $this->scheduleRateService->describeForUser(
             $user,
@@ -1480,6 +1579,8 @@ class PayrollComputationService
             if (is_object($timingSink)) {
                 $timingSink->load_schedules_ms = ($timingSink->load_schedules_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
             }
+            $this->activePayrollBatchRunId = null;
+            $this->activePayrollCompanyId = null;
 
             return [
                 'user_id' => $user->id,
@@ -1916,6 +2017,7 @@ class PayrollComputationService
         $this->overtimePayroll->logPayrollOvertimeDebug(
             (int) $user->id,
             $this->activePayrollBatchRunId,
+            $this->activePayrollCompanyId,
             $from->toDateString(),
             $to->toDateString(),
             $overtimeBreakdown,

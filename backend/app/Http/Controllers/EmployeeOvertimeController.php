@@ -225,6 +225,28 @@ class EmployeeOvertimeController extends Controller
             || $actorId === (int) $overtime->user_id;
     }
 
+    /**
+     * Keep My Filings action affordances aligned with the admin/all-filings list.
+     *
+     * @return array<string, mixed>
+     */
+    private function overtimeActorFlags(Overtime $overtime, ?User $actor): array
+    {
+        if (! $actor instanceof User) {
+            return [
+                'actor_can_approve' => false,
+                'actor_can_reject' => false,
+                'actor_can_delete' => false,
+            ];
+        }
+
+        return [
+            'actor_can_approve' => $this->overtimeApprovalService->canApprove($actor, $overtime),
+            'actor_can_reject' => $this->overtimeApprovalService->canReject($actor, $overtime),
+            'actor_can_delete' => $this->canDeleteOvertimeRequest($actor, $overtime),
+        ];
+    }
+
     private function mapOvertimeRowForEmployee(Overtime $o, ?User $actor = null): array
     {
         $o->loadMissing([
@@ -275,8 +297,7 @@ class EmployeeOvertimeController extends Controller
                     'actor_name' => $a->actor?->display_name,
                 ];
             })->values()->all(),
-            'actor_can_delete' => $actor ? $this->canDeleteOvertimeRequest($actor, $o) : false,
-        ], $requesterMeta, PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
+        ], $requesterMeta, $this->overtimeActorFlags($o, $actor), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
     }
 
     /**

@@ -524,6 +524,56 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(8.0, $result['approved_ot_requested_hours']);
     }
 
+    public function test_approved_ot_without_clock_logs_includes_night_differential(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        config(['payroll.ot_payable_basis' => 'approved']);
+
+        $user = User::factory()->create([
+            'company_id' => null,
+            'daily_rate' => 800,
+            'schedule' => [
+                'sun' => null,
+                'mon' => null,
+                'tue' => null,
+                'wed' => null,
+                'thu' => null,
+                'fri' => null,
+                'sat' => null,
+            ],
+        ]);
+
+        $dateKey = '2026-05-12';
+        Overtime::create([
+            'user_id' => $user->id,
+            'date' => $dateKey,
+            'schedule_end' => '17:00:00',
+            'expected_end_time' => '23:00:00',
+            'computed_minutes' => 360,
+            'computed_hours' => 6.00,
+            'ph_ot_rule' => 'ORD',
+            'status' => Overtime::STATUS_APPROVED,
+        ]);
+
+        $result = app(PayrollComputationService::class)->computeDayPayroll(
+            $user,
+            $dateKey,
+            null,
+            null,
+            $user->schedule ?? [],
+            800,
+            'Asia/Manila'
+        );
+
+        $this->assertSame(6.0, (float) $result['approved_ot_hours']);
+        $this->assertSame(1.0, round(((int) ($result['ot_night_minutes'] ?? 0)) / 60, 2));
+        $this->assertGreaterThan(0.0, (float) ($result['nd_pay'] ?? 0));
+        $this->assertTrue((bool) ($result['nd_premium_applied'] ?? false));
+    }
+
     public function test_multiple_approved_ot_days_sum_in_period_payroll(): void
     {
         if (! $this->tablesExist()) {

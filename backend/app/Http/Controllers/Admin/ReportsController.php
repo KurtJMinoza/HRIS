@@ -882,15 +882,16 @@ class ReportsController extends Controller
                     }
                 }
 
-                // Rest day / not scheduled: never surface punches/corrections/OT (e.g., Sundays) in detailed rows.
+                // Rest day / not scheduled: suppress incidental punches, but keep approved OT filings visible.
                 if (! (is_array($todaySchedule) && ! empty($todaySchedule['in']))) {
                     $timeIn = null;
                     $timeOut = null;
                     $workedMinutes = null;
                     $virtualClockOutFromOt = false;
-                    $approvedOtForDetailedRow = null;
-                    $otRecords = [];
-                    $approvedOvertimeRecords = [];
+                    if ($approvedOvertimeRecords === []) {
+                        $approvedOtForDetailedRow = null;
+                        $otRecords = [];
+                    }
                 }
 
                 $effectiveTimeIn = $timeIn;
@@ -1601,13 +1602,34 @@ class ReportsController extends Controller
             'total_pay' => 0.0,
             'rule_code' => $this->primaryOtRuleCode($approvedRecords) ?? 'ORD',
         ];
+        $dateKey = null;
+        $daySchedule = null;
+        $first = $approvedRecords[0] ?? null;
+        if ($first instanceof Overtime) {
+            $dateKey = $first->date instanceof Carbon
+                ? $first->date->toDateString()
+                : Carbon::parse((string) $first->date)->toDateString();
+            $effectiveSchedule = $context['effective_schedule'] ?? null;
+            if (is_array($effectiveSchedule) && $dateKey !== null) {
+                $dayKey = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][(int) Carbon::parse($dateKey, $this->attendanceTimezone())->format('w')];
+                $daySchedule = $effectiveSchedule[$dayKey] ?? null;
+            }
+        }
         $otComp = $this->overtimePayroll->computeCompensationFromRecords(
             $approvedRecords,
             (float) ($context['hourly_rate'] ?? 0.0),
             null,
             (string) ($row['rule_code'] ?? 'ORD'),
-            $actualRenderedOtMinutes
+            $actualRenderedOtMinutes,
+            $dateKey,
+            is_array($daySchedule) ? $daySchedule : null,
+            $this->attendanceTimezone()
         );
+
+        $approvedNdHours = (float) ($otComp['nd_hours'] ?? 0);
+        $approvedNdPay = (float) ($otComp['nd_pay'] ?? 0);
+        $clockNdHours = (float) ($row['night_hours'] ?? 0);
+        $clockNdPay = (float) ($row['night_differential_pay'] ?? 0);
 
         $row['approved_overtime_hours'] = (float) ($otComp['approved_hours'] ?? 0);
         $row['actual_rendered_overtime_hours'] = round($actualRenderedOtMinutes / 60, 2);
@@ -1617,12 +1639,25 @@ class ReportsController extends Controller
         $row['ot_payable_basis'] = $this->overtimePayroll->payableBasis();
         $row['ot_multiplier'] = $this->otMultiplierLabelForRecords($approvedRecords);
         $row['ot_pay_rule'] = $this->otPayRuleLabelForRecords($approvedRecords);
+        $row['night_hours'] = round($clockNdHours + $approvedNdHours, 2);
+        $row['night_differential_pay'] = round($clockNdPay + $approvedNdPay, 2);
+        $row['total_premium_pay'] = round((float) ($row['overtime_pay'] ?? 0) + (float) ($row['night_differential_pay'] ?? 0), 2);
         $row['total_pay'] = round(
             (float) ($row['regular_pay'] ?? 0)
             + (float) ($row['overtime_pay'] ?? 0)
             + (float) ($row['night_differential_pay'] ?? 0),
             2
         );
+
+        Log::debug('reports_overtime_night_differential', [
+            'approved_overtime_request_ids' => array_map(static fn (Overtime $row): int => (int) $row->id, $approvedRecords),
+            'nd_hours' => $approvedNdHours,
+            'nd_pay' => $approvedNdPay,
+            'ot_pay' => (float) ($row['overtime_pay'] ?? 0),
+            'total_premium' => (float) ($row['total_premium_pay'] ?? 0),
+            'report_nd_column_created' => $approvedNdPay > 0,
+            'payslip_nd_line_created' => $approvedNdHours > 0,
+        ]);
 
         return $row;
     }

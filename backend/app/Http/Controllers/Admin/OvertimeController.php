@@ -7,6 +7,8 @@ use App\Http\Controllers\Controller;
 use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
 use App\Models\OvertimeApprovalAudit;
+use App\Models\PayrollBatchRun;
+use App\Models\Payslip;
 use App\Models\User;
 use App\Services\BulkApproval\OvertimeBulkApprovalQuery;
 use App\Services\DataScopeService;
@@ -14,6 +16,7 @@ use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeApprovalService;
 use App\Services\PayrollPeriodMutationGuard;
+use App\Services\ReportsCacheService;
 use App\Support\HrApprovalStages;
 use App\Support\PhPayrollReference;
 use App\Support\RequestPerformanceLogger;
@@ -712,6 +715,8 @@ class OvertimeController extends Controller
         });
 
         ReviewRequestCache::forget('overtime', (int) $overtime->id);
+        ReportsCacheService::invalidateAttendanceCache((int) $overtime->user_id, $overtime->date?->toDateString());
+        $this->clearAffectedDraftPayrollSnapshots($overtime);
 
         return response()->json([
             'message' => 'Overtime approved.',
@@ -719,6 +724,44 @@ class OvertimeController extends Controller
                 'user', 'filedBy', 'firstApprover', 'secondApprover',
                 'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $actor),
+        ]);
+    }
+
+    private function clearAffectedDraftPayrollSnapshots(Overtime $overtime): void
+    {
+        $date = $overtime->date?->toDateString();
+        if ($date === null || (int) $overtime->user_id <= 0) {
+            return;
+        }
+
+        $drafts = Payslip::query()
+            ->where('user_id', (int) $overtime->user_id)
+            ->where('status', Payslip::STATUS_DRAFT)
+            ->whereDate('pay_period_start', '<=', $date)
+            ->whereDate('pay_period_end', '>=', $date)
+            ->get(['id', 'company_id', 'pay_period_start', 'pay_period_end']);
+
+        if ($drafts->isEmpty()) {
+            return;
+        }
+
+        $draftIds = $drafts->pluck('id')->map(fn ($id) => (int) $id)->all();
+        Payslip::query()->whereIn('id', $draftIds)->delete();
+
+        foreach ($drafts as $draft) {
+            PayrollBatchRun::query()
+                ->where('status', PayrollBatchRun::STATUS_DRAFT)
+                ->whereDate('pay_period_start', $draft->pay_period_start?->toDateString() ?? $date)
+                ->whereDate('pay_period_end', $draft->pay_period_end?->toDateString() ?? $date)
+                ->when($draft->company_id !== null, fn ($q) => $q->where('company_id', (int) $draft->company_id))
+                ->update(['error_message' => 'Draft needs recompute: overtime request '.$overtime->id.' was approved.']);
+        }
+
+        Log::info('payroll_draft_cache_cleared_for_overtime', [
+            'overtime_id' => (int) $overtime->id,
+            'employee_id' => (int) $overtime->user_id,
+            'date' => $date,
+            'deleted_draft_payslip_ids' => $draftIds,
         ]);
     }
 

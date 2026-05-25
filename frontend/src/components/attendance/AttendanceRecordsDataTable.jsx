@@ -52,6 +52,13 @@ function totalHoursSortValue(row) {
   return -1
 }
 
+function moneyCellText(value) {
+  if (value == null || value === '') return EMPTY_PLACEHOLDER
+  const n = Number(value)
+  if (!Number.isFinite(n)) return EMPTY_PLACEHOLDER
+  return n.toFixed(2)
+}
+
 function SortableHeader({ column, label }) {
   const sorted = column.getIsSorted()
   const Icon = !sorted ? ArrowUpDown : sorted === 'asc' ? ArrowUp : ArrowDown
@@ -343,6 +350,30 @@ export function AttendanceRecordsDataTable({
         enableSorting: false,
         cell: ({ row }) => (
           <span className="text-sm tabular-nums text-foreground">{tableOtHoursHrs(row.original.payroll_impact_hours)}</span>
+        ),
+      },
+      {
+        id: 'night_diff_hrs',
+        header: 'ND hrs',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm tabular-nums text-foreground">{tableOtHoursHrs(row.original.night_hours)}</span>
+        ),
+      },
+      {
+        id: 'night_diff_pay',
+        header: 'ND pay',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm tabular-nums text-foreground">{moneyCellText(row.original.night_differential_pay)}</span>
+        ),
+      },
+      {
+        id: 'total_premium_pay',
+        header: 'Total premium',
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-sm font-semibold tabular-nums text-foreground">{moneyCellText(row.original.total_premium_pay)}</span>
         ),
       },
       {

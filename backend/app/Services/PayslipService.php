@@ -989,7 +989,11 @@ class PayslipService
             'pay_period_start' => $from->toDateString(),
             'pay_period_end' => $to->toDateString(),
             'selected_pay_date' => $preview['pay_date'] ?? null,
+            'company_id' => $employee->getEffectiveCompanyId(),
         ];
+        if (! empty($input['payroll_batch_run_id'])) {
+            $periodCtx['payroll_batch_run_id'] = (int) $input['payroll_batch_run_id'];
+        }
         if ($timingSink !== null) {
             $periodCtx['_timing_sink'] = $timingSink;
         }
@@ -1104,6 +1108,9 @@ class PayslipService
     ): array {
         $startedAt = microtime(true);
         $this->payrollComputation->flushRuntimeCaches();
+        if ($progressRun instanceof PayrollBatchRun) {
+            $periodInput['payroll_batch_run_id'] = (int) $progressRun->id;
+        }
 
         $timingSink = null;
         if (! $withPdf) {
@@ -1167,7 +1174,9 @@ class PayslipService
             $prefetchTimings = $this->payrollComputation->beginBulkPayrollAttendancePrefetch(
                 $orderedIds,
                 Carbon::parse($fromStr)->startOfDay(),
-                Carbon::parse($toStr)->startOfDay()
+                Carbon::parse($toStr)->startOfDay(),
+                $companyId,
+                $progressRun instanceof PayrollBatchRun ? (int) $progressRun->id : null
             );
             $attendanceRowsCount = (int) (($prefetchTimings['corrections_count'] ?? 0)
                 + ($prefetchTimings['logs_count'] ?? 0)

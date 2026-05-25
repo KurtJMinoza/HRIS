@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\PayCycle;
+use App\Models\Overtime;
 use App\Models\PayrollBatchRun;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
@@ -1100,6 +1101,8 @@ class FinalizePayrollService
                             'pay_period_start' => $from->toDateString(),
                             'pay_period_end' => $to->toDateString(),
                             'selected_pay_date' => is_array($cyclePreview) ? ($cyclePreview['pay_date'] ?? null) : null,
+                            'payroll_batch_run_id' => $existingBatchRunId,
+                            'company_id' => $companyId ?? $user->getEffectiveCompanyId(),
                         ]
                     );
                     $summary = $computed['summary'] ?? [];
@@ -1588,6 +1591,15 @@ class FinalizePayrollService
                 'voided_by_user_id' => (int) $actor->id,
                 'void_reason' => $reason !== null && trim($reason) !== '' ? trim($reason) : null,
             ]);
+
+            if (\Illuminate\Support\Facades\Schema::hasColumn('overtimes', 'paid_payroll_run_id')) {
+                Overtime::query()
+                    ->where('paid_payroll_run_id', (int) $run->id)
+                    ->update([
+                        'paid_payroll_run_id' => null,
+                        'paid_at' => null,
+                    ]);
+            }
         });
 
         UserAdminActivityLog::query()->create([
@@ -2560,6 +2572,13 @@ class FinalizePayrollService
             return;
         }
 
+        $snapshotIds = $this->includedOvertimeIdsFromFinalizedPayslips($run);
+        if ($snapshotIds !== []) {
+            $this->overtimePayroll->markIncludedIdsAsPaid((int) $run->id, $snapshotIds);
+
+            return;
+        }
+
         $this->overtimePayroll->markIncludedAsPaid(
             (int) $run->id,
             $employees->pluck('id')->map(static fn ($id) => (int) $id)->all(),
@@ -2567,5 +2586,31 @@ class FinalizePayrollService
             $periodEnd,
             $companyId
         );
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function includedOvertimeIdsFromFinalizedPayslips(PayrollBatchRun $run): array
+    {
+        $ids = [];
+        $payslips = $this->payslipQueryForBatchRun($run)->get(['id', 'snapshot']);
+        foreach ($payslips as $payslip) {
+            $snapshot = $payslip->snapshot;
+            if (is_string($snapshot)) {
+                $snapshot = json_decode($snapshot, true);
+            }
+            if (! is_array($snapshot)) {
+                continue;
+            }
+            foreach ((array) data_get($snapshot, 'summary.overtime_breakdown', []) as $item) {
+                $id = (int) ($item['source_id'] ?? $item['overtime_id'] ?? 0);
+                if ($id > 0) {
+                    $ids[] = $id;
+                }
+            }
+        }
+
+        return array_values(array_unique($ids));
     }
 }

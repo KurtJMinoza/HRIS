@@ -17,6 +17,7 @@ use App\Services\DataScopeService;
 use App\Services\PayrollComputationService;
 use App\Services\HrRoleResolver;
 use App\Services\OvertimePayrollService;
+use App\Services\PremiumReportService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -35,6 +36,7 @@ class AttendanceMonitoringController extends Controller
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PayrollComputationService $payrollComputation,
         private readonly OvertimePayrollService $overtimePayroll,
+        private readonly PremiumReportService $premiumReport,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -141,7 +143,7 @@ class AttendanceMonitoringController extends Controller
         $toDate = $validated['to_date'] ?? $validated['from_date'] ?? $validated['date'] ?? $fromDate;
 
         $cacheKeyParts = [
-            'visibility_version' => 2,
+            'visibility_version' => 3,
             'company_id' => $validated['company_id'] ?? null,
             'branch_id' => $validated['branch_id'] ?? null,
             'department_id' => $validated['department_id'] ?? null,
@@ -576,6 +578,9 @@ class AttendanceMonitoringController extends Controller
             }
         }
 
+        /** @var array<int, array{effective_schedule: ?array, company_id: ?int, hourly_rate: float}> */
+        $premiumCtxCache = [];
+
         $cursor = $from->copy();
         while ($cursor->lessThanOrEqualTo($to)) {
             $dayKey = self::DAY_KEYS[(int) $cursor->format('w')];
@@ -635,7 +640,7 @@ class AttendanceMonitoringController extends Controller
                 $approvedOtRecords = $this->overtimeRecordsByStatus($otRecords, Overtime::STATUS_APPROVED);
                 $approvedOvertimeForRow = $this->pickOvertimeForVirtualEnd($approvedOtRecords);
                 $virtualClockOutFromOt = false;
-                if ($effectiveTimeOut === null && $approvedOvertimeForRow) {
+                if ($isWorkday && $effectiveTimeOut === null && $approvedOvertimeForRow) {
                     $resolvedOut = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
                         $approvedOvertimeForRow,
                         $dateKey,
@@ -830,6 +835,27 @@ class AttendanceMonitoringController extends Controller
                 }
                 $unapprovedOvertimeHours = $unapprovedOvertimeHours > 0.0001 ? round($unapprovedOvertimeHours, 2) : null;
 
+                if (! isset($premiumCtxCache[$employee->id])) {
+                    $premiumCtxCache[$employee->id] = $this->premiumReport->premiumContextForEmployee($employee);
+                }
+                $premiumDay = $this->premiumReport->computeDayPremiumFromResolvedTimes(
+                    $premiumCtxCache[$employee->id],
+                    $dateKey,
+                    $effectiveTimeIn,
+                    $virtualClockOutFromOt ? null : $effectiveTimeOut,
+                    $approvedOvertimeForRow,
+                    $tz
+                );
+                $premiumDay = $this->applyApprovedOvertimePayToMonitoringPremiumDay(
+                    $premiumDay,
+                    $premiumCtxCache[$employee->id],
+                    $approvedOtRecords,
+                    $actualRenderedOtMinutes,
+                    $dateKey,
+                    is_array($todaySchedule) ? $todaySchedule : null,
+                    $tz,
+                );
+
                 $scheduledRegularMinutes = null;
                 if (is_array($todaySchedule) && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
                     $scheduledRegularMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $tz);
@@ -910,7 +936,12 @@ class AttendanceMonitoringController extends Controller
                     'overtime_status' => $this->overtimeStatusFromRecords($otRecords),
                     'payroll_impact_minutes' => $payrollImpactMinutes,
                     'payroll_impact_hours' => $payrollImpactHours,
-                    'night_hours' => $hasClockOut ? $clockOutLog?->night_hours : null,
+                    'night_hours' => $premiumDay['night_hours'] ?? ($hasClockOut ? $clockOutLog?->night_hours : null),
+                    'night_differential_pay' => $premiumDay['night_differential_pay'] ?? null,
+                    'overtime_pay' => $premiumDay['overtime_pay'] ?? null,
+                    'total_premium_pay' => $premiumDay !== null
+                        ? (($premiumDay['overtime_pay'] ?? 0) + ($premiumDay['night_differential_pay'] ?? 0))
+                        : null,
                     'premium_type' => $hasClockOut ? $clockOutLog?->premium_type : null,
                     'premium_description' => $hasClockOut
                         ? AttendanceStatusService::getPremiumDescription(
@@ -1213,6 +1244,68 @@ class AttendanceMonitoringController extends Controller
         }
 
         return $best;
+    }
+
+    /**
+     * Attendance Monitoring must mirror Reports: approved OT contributes payable OT,
+     * ND hours/pay, and total premium even when no clock-out snapshot exists.
+     *
+     * @param  list<Overtime>  $approvedRecords
+     * @param  array{effective_schedule?: ?array, company_id?: ?int, hourly_rate?: float}  $context
+     * @param  array{in?: string, out?: string}|null  $daySchedule
+     */
+    private function applyApprovedOvertimePayToMonitoringPremiumDay(
+        ?array $premiumDay,
+        array $context,
+        array $approvedRecords,
+        int $actualRenderedOtMinutes,
+        string $dateKey,
+        ?array $daySchedule,
+        string $tz
+    ): ?array {
+        if ($premiumDay === null && $approvedRecords === []) {
+            return null;
+        }
+
+        $row = $premiumDay ?? [
+            'night_hours' => null,
+            'night_differential_pay' => null,
+            'regular_pay' => 0.0,
+            'total_pay' => 0.0,
+            'rule_code' => 'ORD',
+        ];
+
+        $otComp = $this->overtimePayroll->computeCompensationFromRecords(
+            $approvedRecords,
+            (float) ($context['hourly_rate'] ?? 0.0),
+            null,
+            (string) ($row['rule_code'] ?? 'ORD'),
+            $actualRenderedOtMinutes,
+            $dateKey,
+            $daySchedule,
+            $tz,
+        );
+
+        $approvedNdHours = (float) ($otComp['nd_hours'] ?? 0);
+        $approvedNdPay = (float) ($otComp['nd_pay'] ?? 0);
+        $clockNdHours = (float) ($row['night_hours'] ?? 0);
+        $clockNdPay = (float) ($row['night_differential_pay'] ?? 0);
+
+        $row['approved_overtime_hours'] = (float) ($otComp['approved_hours'] ?? 0);
+        $row['actual_rendered_overtime_hours'] = round($actualRenderedOtMinutes / 60, 2);
+        $row['payable_overtime_hours'] = (float) ($otComp['payable_hours'] ?? 0);
+        $row['overtime_hours'] = (float) ($otComp['payable_hours'] ?? 0);
+        $row['overtime_pay'] = (float) ($otComp['ot_pay'] ?? 0);
+        $row['night_hours'] = round($clockNdHours + $approvedNdHours, 2);
+        $row['night_differential_pay'] = round($clockNdPay + $approvedNdPay, 2);
+        $row['total_pay'] = round(
+            (float) ($row['regular_pay'] ?? 0)
+            + (float) ($row['overtime_pay'] ?? 0)
+            + (float) ($row['night_differential_pay'] ?? 0),
+            2
+        );
+
+        return $row;
     }
 
     private function overtimeReductionReason(string $basis, int $approvedMinutes, int $actualMinutes, int $payableMinutes): ?string
