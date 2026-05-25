@@ -1125,32 +1125,44 @@ class FinalizePayrollService
             );
         }
 
-        $this->payrollComputation->flushRuntimeCaches();
-
-        if (! $skipExistingBatchKeyCheck) {
-            $existingKeyRun = PayrollBatchRun::query()->where('batch_key', $batchKey)->first();
-            if ($existingKeyRun !== null) {
-                $st = (string) $existingKeyRun->status;
-                if ($st === PayrollBatchRun::STATUS_FINALIZED) {
-                    throw new \RuntimeException('This payroll batch is already finalized.');
-                }
-                if ($st === PayrollBatchRun::STATUS_VOIDED) {
-                    throw new \RuntimeException('This payroll period was voided. Regenerate a new payroll draft to continue.');
-                }
-                if ($st === PayrollBatchRun::STATUS_QUEUED || $st === PayrollBatchRun::STATUS_PROCESSING) {
-                    throw new \RuntimeException('A payroll finalize job is already queued or running for this scope.');
-                }
-                // failed / draft / other: allow retry (queued finalize uses skipExistingBatchKeyCheck=true)
+        $existingKeyRun = PayrollBatchRun::query()
+            ->where('batch_key', $batchKey)
+            ->orderByDesc('id')
+            ->first();
+        if ($existingKeyRun instanceof PayrollBatchRun) {
+            $status = (string) $existingKeyRun->status;
+            if ($status === PayrollBatchRun::STATUS_FINALIZED) {
+                throw new \RuntimeException('This payroll batch is already finalized.');
+            }
+            if ($status === PayrollBatchRun::STATUS_VOIDED) {
+                throw new \RuntimeException('This payroll period was voided. Regenerate a new payroll draft to continue.');
+            }
+            if ($status === PayrollBatchRun::STATUS_PROCESSING) {
+                throw new \RuntimeException('A payroll finalize job is already queued or running for this scope.');
             }
         }
 
-        $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
-        $payslipIds = [];
-        $fromDate = $periodStart->toDateString();
-        $toDate = $periodEnd->toDateString();
-
-        try {
-            DB::transaction(function () use (
+        $existingDraftRun = null;
+        if ($existingKeyRun instanceof PayrollBatchRun
+            && in_array((string) $existingKeyRun->status, [
+                PayrollBatchRun::STATUS_DRAFT,
+                PayrollBatchRun::STATUS_QUEUED,
+                PayrollBatchRun::STATUS_FAILED,
+            ], true)) {
+            $existingDraftRun = $existingKeyRun;
+        }
+        if ($existingDraftRun instanceof PayrollBatchRun
+            && $this->canFinalizeUsingDraftPayslipsOnly(
+                $employees,
+                $fromDate,
+                $toDate,
+                $companyId,
+                $branchId,
+                $departmentId,
+                $singleEmployeeId,
+                (int) $existingDraftRun->id
+            )) {
+            return $this->finalizeBatchUsingDraftPayslipsWithoutRecompute(
                 $employees,
                 $periodInput,
                 $companyId,
@@ -1161,219 +1173,15 @@ class FinalizePayrollService
                 $periodStart,
                 $periodEnd,
                 $adminUserId,
-                $existingBatchRunId,
-                &$payslipIds,
-                &$totals,
+                (int) $existingDraftRun->id,
                 $fromDate,
                 $toDate
-            ) {
-                $employeeIds = $employees->pluck('id')->map(fn ($id) => (int) $id)->all();
-                $this->payslipService->clearBlockingPayrollPeriodLinksForUsers($employeeIds);
-                $periodIds = [];
-                $existingPayslipsByUser = Payslip::query()
-                    ->whereIn('user_id', $employeeIds)
-                    ->whereDate('pay_period_start', $fromDate)
-                    ->whereDate('pay_period_end', $toDate)
-                    ->where('period_slot', 0)
-                    ->where('status', '!=', Payslip::STATUS_VOIDED)
-                    ->orderByDesc('id')
-                    ->get()
-                    ->unique('user_id')
-                    ->keyBy('user_id');
-
-                foreach ($employees as $user) {
-                    $existingPayslip = $existingPayslipsByUser->get((int) $user->id);
-                    if ($existingPayslip instanceof Payslip && $this->canReuseExistingPayslipForFinalize($existingPayslip)) {
-                        $lineTotals = $this->payslipService->syncPayslipSummaryFromLines($existingPayslip);
-                        $totals['gross'] += $lineTotals['gross_pay'];
-                        $totals['ded'] += $lineTotals['total_deductions'];
-                        $totals['net'] += $lineTotals['net_pay'];
-
-                        $existingPayslip->update([
-                            'status' => Payslip::STATUS_FINALIZED,
-                            'finalized_at' => now(),
-                            'finalized_by_user_id' => $adminUserId,
-                        ]);
-                        $payslipIds[] = (int) $existingPayslip->id;
-
-                        continue;
-                    }
-
-                    [$from, $to, $cyclePreview, $cycle] = $this->payslipService->resolveComputationWindow($user, $periodInput);
-                    $computed = $this->payrollComputation->computeEmployeePayroll(
-                        $user,
-                        $from,
-                        $to,
-                        null,
-                        [
-                            'pay_period_start' => $from->toDateString(),
-                            'pay_period_end' => $to->toDateString(),
-                            'selected_pay_date' => is_array($cyclePreview) ? ($cyclePreview['pay_date'] ?? null) : null,
-                            'payroll_batch_run_id' => $existingBatchRunId,
-                            'company_id' => $companyId ?? $user->getEffectiveCompanyId(),
-                        ]
-                    );
-                    $summary = $computed['summary'] ?? [];
-
-                    $period = $this->payrollPersistService->persistComputedPayroll(
-                        $user,
-                        $from,
-                        $to,
-                        $computed,
-                        $cyclePreview,
-                        $cycle
-                    );
-
-                    $payslipInput = $periodInput;
-                    if ($period) {
-                        $payslipInput['payroll_period_id'] = $period->id;
-                        $periodIds[] = (int) $period->id;
-                    }
-
-                    try {
-                        $generated = $this->generatePayslipForFinalize($user, $payslipInput, $computed, is_array($summary) ? $summary : [], $cyclePreview, $cycle);
-                    } catch (Throwable $e) {
-                        Log::error('Finalize payroll: payslip generation failed for employee', [
-                            'user_id' => (int) $user->id,
-                            'employee_code' => $user->employee_code,
-                            'batch_key' => $batchKey,
-                            'payslip_input' => $payslipInput,
-                            'payslip_finalize_diagnostics' => $this->buildPayslipFinalizeSendDiagnostics(
-                                $payslipInput,
-                                is_array($summary) ? $summary : []
-                            ),
-                            'underlying_file' => $e->getFile(),
-                            'underlying_line' => $e->getLine(),
-                            'message' => $e->getMessage(),
-                            'exception_class' => $e::class,
-                        ]);
-                        throw new \RuntimeException(
-                            'Payslip PDF failed for user_id='.(int) $user->id.': '.$e->getMessage(),
-                            0,
-                            $e
-                        );
-                    }
-                    $generated->update([
-                        'status' => Payslip::STATUS_FINALIZED,
-                        'finalized_at' => now(),
-                        'finalized_by_user_id' => $adminUserId,
-                    ]);
-                    $lineTotals = $this->payslipService->syncPayslipSummaryFromLines($generated);
-                    $totals['gross'] += $lineTotals['gross_pay'];
-                    $totals['ded'] += $lineTotals['total_deductions'];
-                    $totals['net'] += $lineTotals['net_pay'];
-                    $payslipIds[] = $generated->id;
-
-                    if ($period) {
-                        $period->refresh()->update(['status' => PayrollPeriod::STATUS_LOCKED]);
-                    }
-                }
-
-                // Ensure previously generated draft payslips for this exact scope + period
-                // are promoted to finalized and related payroll periods are locked.
-                if ($companyId !== null) {
-                    $uniquePeriodIds = array_values(array_unique(array_filter($periodIds, fn ($id) => $id > 0)));
-                    foreach ($uniquePeriodIds as $pid) {
-                        $this->payslipService->finalizePayrollPeriod(
-                            $companyId,
-                            (int) $pid,
-                            $employeeIds,
-                            $adminUserId
-                        );
-                    }
-                    $this->payslipService->finalizePayrollWindow(
-                        $companyId,
-                        $periodStart->toDateString(),
-                        $periodEnd->toDateString(),
-                        null,
-                        $employeeIds,
-                        $adminUserId
-                    );
-                }
-
-                $payload = [
-                    'batch_key' => $batchKey,
-                    'company_id' => $companyId,
-                    'branch_id' => $branchId,
-                    'department_id' => $departmentId,
-                    'employee_id' => $singleEmployeeId,
-                    'pay_period_start' => $periodStart->toDateString(),
-                    'pay_period_end' => $periodEnd->toDateString(),
-                    'pay_cycle_id' => $periodInput['pay_cycle_id'] ?? null,
-                    'payroll_period_id' => $periodInput['payroll_period_id'] ?? null,
-                    'is_final_pay' => (bool) ($periodInput['is_final_pay'] ?? false),
-                    'password_protect' => (bool) ($periodInput['password_protect'] ?? false),
-                    'reference_date' => isset($periodInput['reference_date'])
-                        ? Carbon::parse((string) $periodInput['reference_date'])->toDateString()
-                        : null,
-                    'status' => PayrollBatchRun::STATUS_FINALIZED,
-                    'error_message' => null,
-                    'total_gross' => round($totals['gross'], 2),
-                    'total_deductions' => round($totals['ded'], 2),
-                    'total_net' => round($totals['net'], 2),
-                    'employee_count' => $employees->count(),
-                    'total_employees' => $employees->count(),
-                    'processed_employees' => $employees->count(),
-                    'failed_employees' => 0,
-                    'completed_at' => now(),
-                    'finalized_by_user_id' => $adminUserId,
-                    'finalized_at' => now(),
-                ];
-                $payload = $this->filterBatchRunPayload($payload);
-                if ($existingBatchRunId !== null) {
-                    PayrollBatchRun::query()->whereKey($existingBatchRunId)->update($payload);
-                } else {
-                    PayrollBatchRun::create($payload);
-                }
-            });
-        } catch (Throwable $e) {
-            report($e);
-            $prev = $e->getPrevious();
-            throw new \RuntimeException(
-                'Finalize payroll failed: '.$e->getMessage()
-                .' at '.$e->getFile().':'.$e->getLine()
-                .($prev instanceof Throwable ? ' (caused by: '.$prev->getMessage().' @ '.$prev->getFile().':'.$prev->getLine().')' : ''),
-                0,
-                $e
             );
         }
 
-        $run = $existingBatchRunId !== null
-            ? PayrollBatchRun::query()->findOrFail($existingBatchRunId)
-            : PayrollBatchRun::query()->where('batch_key', $batchKey)->firstOrFail();
-
-        $this->payslipService->syncBatchRunTotals($run);
-        $run = $run->fresh();
-        $this->markOvertimePaidForBatch($run, $employees, $periodStart, $periodEnd, $companyId);
-
-        Log::info('Payroll FINALIZED', [
-            'batch_run_id' => (int) $run->id,
-            'batch_key' => $batchKey,
-            'company_id' => $companyId,
-            'branch_id' => $branchId,
-            'department_id' => $departmentId,
-            'employee_id' => $singleEmployeeId,
-            'pay_period_start' => $periodStart->toDateString(),
-            'pay_period_end' => $periodEnd->toDateString(),
-            'payslips_created_count' => count($payslipIds),
-            'employee_count' => (int) $run->employee_count,
-            'status' => (string) $run->status,
-        ]);
-        Log::info('Payslips created count', [
-            'batch_run_id' => (int) $run->id,
-            'count' => count($payslipIds),
-        ]);
-
-        return [
-            'payroll_batch_run_id' => $run->id,
-            'payslip_ids' => $payslipIds,
-            'totals' => [
-                'total_gross' => (float) $run->total_gross,
-                'total_deductions' => (float) $run->total_deductions,
-                'total_net' => (float) $run->total_net,
-                'employee_count' => (int) $run->employee_count,
-            ],
-        ];
+        throw new \RuntimeException(
+            'Cannot finalize: draft payslip snapshots are missing or incomplete. Regenerate the payroll draft first.'
+        );
     }
 
     /**

@@ -447,12 +447,22 @@ class DeductionScheduleService
             $basis = (float) ($line['original_amount'] ?? $line['computed_amount'] ?? $amount);
             $sched = $this->normalizeScheduleType((string) ($line['deduction_schedule_type'] ?? DeductionScheduleSetting::SCHEDULE_BOTH))
                 ?? DeductionScheduleSetting::SCHEDULE_BOTH;
-            $standard = $this->normalizeCalculationStandard($line['calculation_standard'] ?? null);
+            $standard = $this->normalizeCalculationStandard($line['resolved_calculation_standard'] ?? $line['calculation_standard'] ?? null);
+            $payComponentId = isset($line['pay_component_id']) ? (int) $line['pay_component_id'] : null;
             $out[] = [
+                'key' => $payComponentId ? 'pay_component:'.$payComponentId : 'deduction:'.md5($rawName),
                 'label' => $rawName,
                 'amount' => round(max(0.0, $amount), 2),
+                'component_code' => (string) ($line['code'] ?? ''),
+                'pay_component_id' => $payComponentId,
+                'component_amount' => round(max(0.0, $basis), 2),
+                'configured_amount' => round(max(0.0, (float) ($line['configured_value'] ?? $basis)), 2),
+                'resolved_amount' => round(max(0.0, $amount), 2),
+                'resolved_schedule' => $sched,
+                'component_schedule' => $sched,
                 'deduction_schedule_type' => $sched,
                 'calculation_standard' => $standard,
+                'resolved_calculation_standard' => $standard,
                 'priority_order' => (int) ($line['priority_order'] ?? 0),
                 'priority_bucket' => $line['priority_bucket'] ?? null,
                 'legal_warning' => $line['legal_warning'] ?? null,

@@ -1141,10 +1141,10 @@ class PayslipService
                 'line_key' => $componentCode,
                 'component_code' => $componentCode,
                 'component_name' => trim((string) ($line['label'] ?? $line['name'] ?? '')),
-                'schedule' => trim((string) ($line['resolved_schedule'] ?? $line['deduction_schedule_type'] ?? $line['earning_schedule_type'] ?? $line['schedule'] ?? '')),
+                'schedule' => trim((string) ($line['resolved_schedule'] ?? $line['component_schedule'] ?? $line['deduction_schedule_type'] ?? $line['earning_schedule_type'] ?? $line['schedule'] ?? '')),
                 'calculation_standard' => trim((string) ($line['resolved_calculation_standard'] ?? $line['calculation_standard'] ?? '')),
                 'configured_amount' => round((float) ($line['component_amount'] ?? $line['configured_amount'] ?? $line['amount'] ?? 0), 2),
-                'amount' => round((float) ($line['amount'] ?? 0), 2),
+                'amount' => round((float) ($line['amount'] ?? $line['resolved_amount'] ?? 0), 2),
             ];
         }
 
@@ -1223,7 +1223,7 @@ class PayslipService
                 continue;
             }
 
-            $fields = ['amount', 'calculation_standard', 'schedule'];
+            $fields = ['component_code', 'amount', 'calculation_standard', 'schedule'];
             $fieldMismatch = [];
             foreach ($fields as $field) {
                 $draftValue = $field === 'amount'
@@ -2336,7 +2336,7 @@ class PayslipService
         ));
 
         $gross = $this->sumPayslipLineAmounts($earningLines);
-        $deductions = min($this->sumPayslipLineAmounts($deductionLines), max(0.0, $gross));
+        $deductions = $this->sumPayslipLineAmounts($deductionLines);
 
         return [
             'gross_pay' => $gross,
@@ -2354,7 +2354,7 @@ class PayslipService
             if (! is_array($line)) {
                 continue;
             }
-            $amount = $line['amount'] ?? null;
+            $amount = $line['amount'] ?? $line['resolved_amount'] ?? null;
             if (! is_numeric($amount)) {
                 continue;
             }
@@ -2485,11 +2485,10 @@ class PayslipService
             $summary['daily_computation_earning_lines'],
             $summary['payslip_earning_lines']
         ));
-        [$summary['payslip_deduction_lines'], $summary['payslip_custom_deduction_lines']] = $this->capDeductionLineAmountsToGross(
+        $summary['deduction_lines_exceed_gross'] = $this->sumPayslipLineAmounts(array_merge(
             $summary['payslip_deduction_lines'],
-            $summary['payslip_custom_deduction_lines'],
-            $grossFromShownEarnings
-        );
+            $summary['payslip_custom_deduction_lines']
+        )) > $grossFromShownEarnings;
 
         $holiday = [];
         foreach (is_array($summary['holiday_premium_breakdown'] ?? null) ? $summary['holiday_premium_breakdown'] : [] as $item) {
@@ -2842,6 +2841,16 @@ class PayslipService
                 'units' => isset($row['units']) && (string) $row['units'] !== '' ? $this->sanitizePayslipText((string) $row['units']) : null,
                 'priority_bucket' => $bucket !== '' ? $this->sanitizePayslipText($bucket) : null,
                 'legal_warning' => $warn !== '' ? $this->sanitizePayslipText($warn) : null,
+                'component_code' => isset($row['component_code']) ? (string) $row['component_code'] : null,
+                'pay_component_id' => isset($row['pay_component_id']) && is_numeric($row['pay_component_id']) ? (int) $row['pay_component_id'] : null,
+                'component_amount' => isset($row['component_amount']) && is_numeric($row['component_amount']) ? round((float) $row['component_amount'], 2) : null,
+                'configured_amount' => isset($row['configured_amount']) && is_numeric($row['configured_amount']) ? round((float) $row['configured_amount'], 2) : null,
+                'resolved_amount' => isset($row['resolved_amount']) && is_numeric($row['resolved_amount']) ? round((float) $row['resolved_amount'], 2) : round($amt, 2),
+                'resolved_schedule' => isset($row['resolved_schedule']) ? (string) $row['resolved_schedule'] : null,
+                'component_schedule' => isset($row['component_schedule']) ? (string) $row['component_schedule'] : null,
+                'deduction_schedule_type' => isset($row['deduction_schedule_type']) ? (string) $row['deduction_schedule_type'] : null,
+                'calculation_standard' => isset($row['calculation_standard']) ? (string) $row['calculation_standard'] : null,
+                'resolved_calculation_standard' => isset($row['resolved_calculation_standard']) ? (string) $row['resolved_calculation_standard'] : null,
             ];
         }
 

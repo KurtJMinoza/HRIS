@@ -248,6 +248,7 @@ class DeductionApplicationService
             $isLegallyAllowed = (bool) ($meta['is_legally_allowed'] ?? true);
             $isGarnishment = (bool) ($meta['is_court_ordered_garnishment'] ?? false);
             $isLoanDeduction = strtolower((string) ($meta['deduction_type'] ?? '')) === DeductionType::TYPE_LOAN;
+            $isPayrollStandardDeduction = $this->isPayrollStandardDeductionLine($line);
             $isDisciplinary = Str::contains(
                 strtolower((string) ($line['name'] ?? '')),
                 ['disciplinary', 'penalty', 'sanction']
@@ -264,9 +265,9 @@ class DeductionApplicationService
 
             if ($isDisciplinary && ! $isLegallyAllowed) {
                 $warning = 'Blocked disciplinary deduction: legal permission flag is required.';
-            } elseif ($isLoanDeduction) {
-                // Loans are contractual deductions; keep scheduled installment for the payroll run
-                // (e.g. 50/50 semi-monthly split) instead of zeroing out when disposable budget is low.
+            } elseif ($isLoanDeduction || $isPayrollStandardDeduction) {
+                // Contractual and Payroll Standard component deductions are fixed for this payroll run.
+                // Keep the resolved scheduled amount instead of shrinking it by disposable-income budget.
                 $applied = $desired;
             } elseif ($isGarnishment) {
                 $allowedByCap = max(0.0, $maxGarnishment - $garnishmentUsed);
@@ -307,6 +308,27 @@ class DeductionApplicationService
             'legal_warnings' => array_values(array_unique($warnings)),
             'minimum_take_home_floor' => round($floor, 2),
         ];
+    }
+
+    /**
+     * Payroll Standard employee compensation deductions are configured as per-run amounts.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function isPayrollStandardDeductionLine(array $line): bool
+    {
+        foreach ([
+            $line['resolved_calculation_standard'] ?? null,
+            $line['calculation_standard'] ?? null,
+            data_get($line, 'pay_component_resolution.resolved_calculation_standard'),
+            data_get($line, 'pay_component_resolution.calculation_standard'),
+        ] as $standard) {
+            if ((string) $standard === PayComponent::STANDARD_PAYROLL) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function priorityOrderForRow(
