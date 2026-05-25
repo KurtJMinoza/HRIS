@@ -44,6 +44,7 @@ class FinalizePayrollService
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly DataScopeService $dataScopeService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
+        private readonly PayrollEmployeeEligibilityService $payrollEligibility,
     ) {}
 
     /**
@@ -77,6 +78,8 @@ class FinalizePayrollService
         if ($liveBatchRun !== null && in_array((string) ($liveBatchRun['status'] ?? ''), [
             PayrollBatchRun::STATUS_QUEUED,
             PayrollBatchRun::STATUS_PROCESSING,
+            PayrollBatchRun::STATUS_DRAFT,
+            PayrollBatchRun::STATUS_FINALIZED,
         ], true)) {
             return $this->processingPreviewFromStoredPayslips(
                 $liveBatchRun,
@@ -182,7 +185,7 @@ class FinalizePayrollService
 
             $employeeIds = $employees->pluck('id')->map(fn ($id) => (int) $id)->all();
             $payslipQuery = Payslip::query()
-                ->with('payCycle:id,name')
+                ->with(['payCycle:id,name', 'employee:id,employee_code'])
                 ->whereIn('user_id', $employeeIds);
             $this->applyPreviewPeriodFiltersEloquent($payslipQuery, $periodInput);
             /** @var \Illuminate\Support\Collection<int, Payslip> $payslips */
@@ -219,9 +222,13 @@ class FinalizePayrollService
                     : [];
 
                 if ($stored instanceof Payslip) {
-                    $gross = round((float) ($stored->gross_pay ?? 0), 2);
-                    $ded = round((float) ($stored->total_deductions ?? 0), 2);
-                    $net = round((float) ($stored->net_pay ?? 0), 2);
+                    $lineTotals = $this->payslipService->syncPayslipSummaryFromLines($stored);
+                    $summary = is_array($stored->snapshot['summary'] ?? null)
+                        ? (array) $stored->snapshot['summary']
+                        : $summary;
+                    $gross = $lineTotals['gross_pay'];
+                    $ded = $lineTotals['total_deductions'];
+                    $net = $lineTotals['net_pay'];
                     $dailyRate = round((float) ($summary['daily_rate'] ?? 0), 2);
                     $basicPay = round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2);
                     $baseMonthly = round((float) (data_get($summary, 'compensation_breakdown.basic_salary', 0)), 2);
@@ -263,18 +270,14 @@ class FinalizePayrollService
                         ]
                     );
                     $summary = is_array($computed['summary'] ?? null) ? $computed['summary'] : [];
-                    $gross = round(
-                        (float) ($summary['gross_pay_this_period']
-                            ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
-                        2
-                    );
-                    $ded = round(
-                        (float) ($summary['employee_statutory_this_period'] ?? 0)
-                        + (float) ($summary['custom_deductions_this_period'] ?? 0)
-                        + (float) ($summary['withholding_tax_this_period_estimate'] ?? 0),
-                        2
-                    );
-                    $net = round((float) ($summary['net_pay_after_withholding_estimate'] ?? 0), 2);
+                    $lineTotals = $this->payslipService->payslipLineTotalsFromSnapshot([
+                        'summary' => $summary,
+                        'daily_rate' => $computed['daily_rate'] ?? null,
+                        'daily_computation_days' => is_array($computed['days'] ?? null) ? $computed['days'] : [],
+                    ]);
+                    $gross = $lineTotals['gross_pay'];
+                    $ded = $lineTotals['total_deductions'];
+                    $net = $lineTotals['net_pay'];
                     $dailyRate = round((float) ($summary['daily_rate'] ?? ($computed['daily_rate'] ?? 0)), 2);
                     $basicPay = round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2);
                     $baseMonthly = round((float) ($computed['basic_salary_used'] ?? data_get($summary, 'compensation_breakdown.basic_salary', 0)), 2);
@@ -598,8 +601,23 @@ class FinalizePayrollService
             ];
         }
 
+        $this->attachMatchingPayslipsToBatchRun($run);
+
         $query = $this->payslipQueryForBatchRun($run)
             ->with(['employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id']);
+        $expectedStatuses = (string) $run->status === PayrollBatchRun::STATUS_FINALIZED
+            ? Payslip::lockingStatuses()
+            : $this->draftSnapshotStatuses();
+        $staleRowsExcluded = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->where(function ($stale) use ($run, $expectedStatuses): void {
+                $stale->whereNotNull('voided_at')
+                    ->orWhereNotIn('status', $expectedStatuses);
+                if ($run->company_id !== null) {
+                    $stale->orWhere('company_id', '!=', (int) $run->company_id);
+                }
+            })
+            ->count();
 
         if ($search !== null && trim($search) !== '') {
             $like = '%'.trim($search).'%';
@@ -609,6 +627,13 @@ class FinalizePayrollService
         }
 
         $storedCount = (clone $query)->count();
+        if ($staleRowsExcluded > 0) {
+            Log::warning('Payroll table excluded stale rows', [
+                'payroll_run_id' => (int) $run->id,
+                'selected_company_id' => $run->company_id !== null ? (int) $run->company_id : null,
+                'stale_rows_excluded_count' => $staleRowsExcluded,
+            ]);
+        }
         $payslips = $query
             ->orderBy('id')
             ->offset($offset)
@@ -624,6 +649,36 @@ class FinalizePayrollService
             $summary = is_array($stored->snapshot['summary'] ?? null)
                 ? (array) $stored->snapshot['summary']
                 : [];
+            $lineTotals = $this->payslipService->syncPayslipSummaryFromLines($stored);
+            $summary = is_array($stored->snapshot['summary'] ?? null)
+                ? (array) $stored->snapshot['summary']
+                : $summary;
+            $tableGross = $lineTotals['gross_pay'];
+            $tableDeductions = $lineTotals['total_deductions'];
+            $tableNet = $lineTotals['net_pay'];
+            $payslipGross = $tableGross;
+            $payslipDeductions = $tableDeductions;
+            $payslipNet = $tableNet;
+            $mismatch = $tableGross !== $payslipGross
+                || $tableDeductions !== $payslipDeductions
+                || $tableNet !== $payslipNet;
+            $logContext = [
+                'payroll_run_id' => (int) $run->id,
+                'selected_company_id' => $run->company_id !== null ? (int) $run->company_id : null,
+                'employee_id' => (int) $employee->id,
+                'payroll_employee_company_id' => $stored->company_id !== null ? (int) $stored->company_id : null,
+                'payslip_company_id' => $stored->company_id !== null ? (int) $stored->company_id : null,
+                'table_gross' => $tableGross,
+                'table_deductions' => $tableDeductions,
+                'table_net' => $tableNet,
+                'payslip_gross' => $payslipGross,
+                'payslip_deductions' => $payslipDeductions,
+                'payslip_net' => $payslipNet,
+                'mismatch' => $mismatch,
+            ];
+            $mismatch
+                ? Log::warning('Payroll table summary mismatch', $logContext)
+                : Log::debug('Payroll table summary matched payslip snapshot', $logContext);
             $resolvedHrRole = $this->hrRoleResolver->resolveForApprovalSubject($employee);
             $rows[] = [
                 'payslip_id' => (int) $stored->id,
@@ -653,9 +708,9 @@ class FinalizePayrollService
                         'total_regular_hours' => 0.0,
                         'total_presence_regular_hours' => 0.0,
                     ],
-                'gross_pay' => round((float) ($stored->gross_pay ?? 0), 2),
-                'total_deductions' => round((float) ($stored->total_deductions ?? 0), 2),
-                'net_pay' => round((float) ($stored->net_pay ?? 0), 2),
+                'gross_pay' => $tableGross,
+                'total_deductions' => $tableDeductions,
+                'net_pay' => $tableNet,
                 'status' => (string) ($stored->status ?? Payslip::STATUS_DRAFT),
                 'delivered_at' => $stored->delivered_at !== null ? $stored->delivered_at->toIso8601String() : null,
                 'is_sent' => (bool) ($stored->is_sent ?? false),
@@ -936,6 +991,16 @@ class FinalizePayrollService
         ?int $existingBatchRunId = null,
         bool $skipExistingBatchKeyCheck = false
     ): array {
+        if ($companyId !== null) {
+            $periodInput['company_id'] = $companyId;
+        }
+        if ($branchId !== null) {
+            $periodInput['branch_id'] = $branchId;
+        }
+        if ($departmentId !== null) {
+            $periodInput['department_id'] = $departmentId;
+        }
+
         $employees = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor)
             ->orderBy('id')
             ->get();
@@ -983,7 +1048,48 @@ class FinalizePayrollService
 
                 return $this->idempotentFinalizeResult($existingRun);
             }
+            if ($existingRun instanceof PayrollBatchRun) {
+                $this->attachMatchingPayslipsToBatchRun($existingRun);
+                $draftUserIds = $this->payslipQueryForBatchRun($existingRun)
+                    ->whereNotNull('snapshot')
+                    ->pluck('user_id')
+                    ->unique()
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ->all();
+                $expectedSavedRosterCount = (int) ($existingRun->employee_count ?? 0);
+                if ($draftUserIds !== [] && ($expectedSavedRosterCount <= 0 || count($draftUserIds) === $expectedSavedRosterCount)) {
+                    if (count($draftUserIds) !== $employees->count()) {
+                        Log::info('Payroll finalize using saved draft roster instead of changed live eligibility roster', [
+                            'payroll_run_id' => (int) $existingRun->id,
+                            'selected_company_id' => $companyId,
+                            'saved_draft_employee_count' => count($draftUserIds),
+                            'live_eligible_employee_count' => $employees->count(),
+                        ]);
+                    }
+                    $employees = User::query()
+                        ->whereIn('id', $draftUserIds)
+                        ->orderBy('id')
+                        ->get();
+                } elseif ($draftUserIds !== []) {
+                    Log::warning('Payroll finalize saved draft roster count does not match batch employee_count', [
+                        'payroll_run_id' => (int) $existingRun->id,
+                        'selected_company_id' => $companyId,
+                        'saved_draft_employee_count' => count($draftUserIds),
+                        'batch_employee_count' => $expectedSavedRosterCount,
+                        'live_eligible_employee_count' => $employees->count(),
+                    ]);
+                }
+            }
         }
+
+        $employees->loadMissing([
+            'company',
+            'branch',
+            'payCycle',
+            'governmentIds',
+            'workingSchedule',
+        ]);
 
         if ($existingBatchRunId !== null
             && $this->canFinalizeUsingDraftPayslipsOnly(
@@ -993,7 +1099,8 @@ class FinalizePayrollService
                 $companyId,
                 $branchId,
                 $departmentId,
-                $singleEmployeeId
+                $singleEmployeeId,
+                $existingBatchRunId
             )) {
             return $this->finalizeBatchUsingDraftPayslipsWithoutRecompute(
                 $employees,
@@ -1077,9 +1184,10 @@ class FinalizePayrollService
                 foreach ($employees as $user) {
                     $existingPayslip = $existingPayslipsByUser->get((int) $user->id);
                     if ($existingPayslip instanceof Payslip && $this->canReuseExistingPayslipForFinalize($existingPayslip)) {
-                        $totals['gross'] += round((float) ($existingPayslip->gross_pay ?? 0), 2);
-                        $totals['ded'] += round((float) ($existingPayslip->total_deductions ?? 0), 2);
-                        $totals['net'] += round((float) ($existingPayslip->net_pay ?? 0), 2);
+                        $lineTotals = $this->payslipService->syncPayslipSummaryFromLines($existingPayslip);
+                        $totals['gross'] += $lineTotals['gross_pay'];
+                        $totals['ded'] += $lineTotals['total_deductions'];
+                        $totals['net'] += $lineTotals['net_pay'];
 
                         $existingPayslip->update([
                             'status' => Payslip::STATUS_FINALIZED,
@@ -1106,21 +1214,6 @@ class FinalizePayrollService
                         ]
                     );
                     $summary = $computed['summary'] ?? [];
-
-                    $gross = round(
-                        (float) ($summary['gross_pay_this_period']
-                            ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
-                        2
-                    );
-                    $empStat = (float) ($summary['employee_statutory_this_period'] ?? 0);
-                    $custDed = (float) ($summary['custom_deductions_this_period'] ?? 0);
-                    $wh = (float) ($summary['withholding_tax_this_period_estimate'] ?? 0);
-                    $ded = round($empStat + $custDed + $wh, 2);
-                    $net = round((float) ($summary['net_pay_after_withholding_estimate'] ?? 0), 2);
-
-                    $totals['gross'] += $gross;
-                    $totals['ded'] += $ded;
-                    $totals['net'] += $net;
 
                     $period = $this->payrollPersistService->persistComputedPayroll(
                         $user,
@@ -1165,6 +1258,10 @@ class FinalizePayrollService
                         'finalized_at' => now(),
                         'finalized_by_user_id' => $adminUserId,
                     ]);
+                    $lineTotals = $this->payslipService->syncPayslipSummaryFromLines($generated);
+                    $totals['gross'] += $lineTotals['gross_pay'];
+                    $totals['ded'] += $lineTotals['total_deductions'];
+                    $totals['net'] += $lineTotals['net_pay'];
                     $payslipIds[] = $generated->id;
 
                     if ($period) {
@@ -1453,6 +1550,9 @@ class FinalizePayrollService
                 'to_date' => $locked->pay_period_end?->toDateString(),
                 'pay_cycle_id' => $locked->pay_cycle_id,
                 'reference_date' => $locked->reference_date?->toDateString(),
+                'company_id' => $locked->company_id ? (int) $locked->company_id : null,
+                'branch_id' => $locked->branch_id ? (int) $locked->branch_id : null,
+                'department_id' => $locked->department_id ? (int) $locked->department_id : null,
                 'payroll_period_id' => $locked->payroll_period_id,
                 'is_final_pay' => (bool) $locked->is_final_pay,
                 'password_protect' => (bool) $locked->password_protect,
@@ -1663,6 +1763,16 @@ class FinalizePayrollService
         int $adminUserId,
         ?User $actor = null
     ): array {
+        if ($companyId !== null) {
+            $periodInput['company_id'] = $companyId;
+        }
+        if ($branchId !== null) {
+            $periodInput['branch_id'] = $branchId;
+        }
+        if ($departmentId !== null) {
+            $periodInput['department_id'] = $departmentId;
+        }
+
         $employee = User::query()
             ->payrollEmployees()
             ->active()
@@ -1983,14 +2093,19 @@ class FinalizePayrollService
         ?int $branchId,
         ?int $departmentId,
         ?int $singleEmployeeId,
+        ?int $payrollBatchRunId = null,
     ): \Illuminate\Database\Eloquent\Builder {
         $q = Payslip::query()
             ->whereIn('user_id', $employeeIds)
+            ->whereNull('voided_at')
             ->whereDate('pay_period_start', $fromDate)
             ->whereDate('pay_period_end', $toDate)
-            ->where('status', Payslip::STATUS_DRAFT)
+            ->whereIn('status', $this->draftSnapshotStatuses())
             ->where('period_slot', 0)
             ->whereNotNull('snapshot');
+        if ($payrollBatchRunId !== null && $payrollBatchRunId > 0) {
+            $q->where('payroll_batch_run_id', $payrollBatchRunId);
+        }
         if ($companyId !== null && $companyId > 0) {
             $q->where('company_id', $companyId);
         }
@@ -2018,6 +2133,7 @@ class FinalizePayrollService
         ?int $branchId,
         ?int $departmentId,
         ?int $singleEmployeeId,
+        ?int $payrollBatchRunId = null,
     ): bool {
         if ($employees->isEmpty()) {
             return false;
@@ -2033,7 +2149,8 @@ class FinalizePayrollService
             $companyId,
             $branchId,
             $departmentId,
-            $singleEmployeeId
+            $singleEmployeeId,
+            $payrollBatchRunId
         )->pluck('user_id')
             ->unique()
             ->count();
@@ -2139,12 +2256,14 @@ class FinalizePayrollService
             $companyId,
             $branchId,
             $departmentId,
-            $singleEmployeeId
+            $singleEmployeeId,
+            $existingBatchRunId
         )->orderByDesc('id')->get()->unique('user_id')->keyBy(fn (Payslip $p) => (int) $p->user_id);
         $timings['load_employees_ms'] = round((microtime(true) - $t0) * 1000, 2);
 
         $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
         $payslipIds = [];
+        $draftMetricsByUser = [];
 
         $persistStartedAt = microtime(true);
         try {
@@ -2164,6 +2283,7 @@ class FinalizePayrollService
                 $periodInput,
                 $fromDate,
                 $toDate,
+                &$draftMetricsByUser,
                 &$totals,
                 &$payslipIds
             ) {
@@ -2180,9 +2300,12 @@ class FinalizePayrollService
                         throw new \RuntimeException('Missing draft payslip for user_id='.(int) $user->id);
                     }
 
-                    $totals['gross'] += round((float) ($payslip->gross_pay ?? 0), 2);
-                    $totals['ded'] += round((float) ($payslip->total_deductions ?? 0), 2);
-                    $totals['net'] += round((float) ($payslip->net_pay ?? 0), 2);
+                    $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
+                    $this->assertDraftPayslipLinesArePersisted($payslip, $draftMetrics);
+                    $draftMetricsByUser[(int) $user->id] = $draftMetrics;
+                    $totals['gross'] += $draftMetrics['gross_pay'];
+                    $totals['ded'] += $draftMetrics['total_deductions'];
+                    $totals['net'] += $draftMetrics['net_pay'];
                     $payslipIds[] = (int) $payslip->id;
 
                     $snapshotRaw = $payslip->snapshot;
@@ -2230,6 +2353,26 @@ class FinalizePayrollService
                         null,
                         $employeeIds,
                         $adminUserId
+                    );
+                }
+
+                $finalizedPayslipsByUser = Payslip::query()
+                    ->whereIn('id', $payslipIds)
+                    ->where('status', Payslip::STATUS_FINALIZED)
+                    ->get()
+                    ->keyBy(fn (Payslip $p) => (int) $p->user_id);
+                foreach ($employees as $user) {
+                    $finalized = $finalizedPayslipsByUser->get((int) $user->id);
+                    if (! $finalized instanceof Payslip) {
+                        throw new \RuntimeException('Finalized payslip row missing for user_id='.(int) $user->id);
+                    }
+                    $this->validateDraftFinalizedFrozenMetrics(
+                        (int) $existingBatchRunId,
+                        $companyId,
+                        (int) $user->id,
+                        $draftMetricsByUser[(int) $user->id] ?? [],
+                        $this->payslipService->frozenPayslipLineMetrics($finalized),
+                        false
                     );
                 }
 
@@ -2310,10 +2453,121 @@ class FinalizePayrollService
 
     private function canReuseExistingPayslipForFinalize(Payslip $payslip): bool
     {
-        // Finalize is the lock point, so it must recompute from current salary,
-        // deductions, attendance, and tax settings instead of reusing an older
-        // draft/generated snapshot.
+        // Queued finalization must use the dedicated draft-snapshot path, where
+        // validation compares draft lines to finalized lines before commit.
         return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $metrics
+     */
+    private function assertDraftPayslipLinesArePersisted(Payslip $payslip, array $metrics): void
+    {
+        if ((int) ($metrics['line_count'] ?? 0) > 0) {
+            return;
+        }
+
+        Log::error('Payroll finalize blocked: draft payslip has no persisted line items', [
+            'payroll_run_id' => $payslip->payroll_batch_run_id !== null ? (int) $payslip->payroll_batch_run_id : null,
+            'company_id' => $payslip->company_id !== null ? (int) $payslip->company_id : null,
+            'employee_id' => (int) $payslip->user_id,
+            'draft_line_ids' => [],
+            'draft_line_categories' => [],
+            'finalized_line_ids' => [],
+            'finalized_line_categories' => [],
+            'missing_categories' => [],
+            'missing_source_ids' => [],
+            'draft_gross' => (float) ($metrics['gross_pay'] ?? 0),
+            'finalized_gross' => null,
+            'draft_deductions' => (float) ($metrics['total_deductions'] ?? 0),
+            'finalized_deductions' => null,
+            'draft_net' => (float) ($metrics['net_pay'] ?? 0),
+            'finalized_net' => null,
+            'cache_cleared' => false,
+        ]);
+
+        throw new \RuntimeException('Cannot finalize: draft payslip line items are missing for user_id='.(int) $payslip->user_id.'. Regenerate the payroll draft first.');
+    }
+
+    /**
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $finalized
+     */
+    private function validateDraftFinalizedFrozenMetrics(
+        int $payrollRunId,
+        ?int $companyId,
+        int $employeeId,
+        array $draft,
+        array $finalized,
+        bool $cacheCleared
+    ): void {
+        $requiredFields = [
+            'line_count',
+            'gross_pay',
+            'total_deductions',
+            'net_pay',
+            'regular_pay',
+            'holiday_pay',
+            'overtime_pay',
+            'night_differential',
+            'paid_leave',
+            'allowances',
+            'other_deductions',
+        ];
+
+        $mismatches = [];
+        foreach ($requiredFields as $field) {
+            $draftValue = $draft[$field] ?? 0;
+            $finalValue = $finalized[$field] ?? 0;
+            if ($field === 'line_count') {
+                if ((int) $draftValue !== (int) $finalValue) {
+                    $mismatches[$field] = ['draft' => (int) $draftValue, 'finalized' => (int) $finalValue];
+                }
+
+                continue;
+            }
+
+            if (abs(round((float) $draftValue, 2) - round((float) $finalValue, 2)) >= 0.01) {
+                $mismatches[$field] = ['draft' => round((float) $draftValue, 2), 'finalized' => round((float) $finalValue, 2)];
+            }
+        }
+
+        $draftCategories = array_values(array_unique(array_map('strval', (array) ($draft['categories'] ?? []))));
+        $finalizedCategories = array_values(array_unique(array_map('strval', (array) ($finalized['categories'] ?? []))));
+        $draftLineIds = array_values(array_unique(array_map('strval', (array) ($draft['line_ids'] ?? []))));
+        $finalizedLineIds = array_values(array_unique(array_map('strval', (array) ($finalized['line_ids'] ?? []))));
+        $missingCategories = array_values(array_diff($draftCategories, $finalizedCategories));
+        $missingSourceIds = array_values(array_diff($draftLineIds, $finalizedLineIds));
+
+        $context = [
+            'payroll_run_id' => $payrollRunId,
+            'company_id' => $companyId,
+            'employee_id' => $employeeId,
+            'draft_line_ids' => $draftLineIds,
+            'draft_line_categories' => $draftCategories,
+            'finalized_line_ids' => $finalizedLineIds,
+            'finalized_line_categories' => $finalizedCategories,
+            'missing_categories' => $missingCategories,
+            'missing_source_ids' => $missingSourceIds,
+            'draft_gross' => (float) ($draft['gross_pay'] ?? 0),
+            'finalized_gross' => (float) ($finalized['gross_pay'] ?? 0),
+            'draft_deductions' => (float) ($draft['total_deductions'] ?? 0),
+            'finalized_deductions' => (float) ($finalized['total_deductions'] ?? 0),
+            'draft_net' => (float) ($draft['net_pay'] ?? 0),
+            'finalized_net' => (float) ($finalized['net_pay'] ?? 0),
+            'cache_cleared' => $cacheCleared,
+        ];
+
+        if ($mismatches !== [] || $missingCategories !== [] || $missingSourceIds !== []) {
+            Log::error('Payroll finalize validation failed: finalized lines differ from draft snapshot', [
+                ...$context,
+                'mismatches' => $mismatches,
+            ]);
+
+            throw new \RuntimeException('Cannot finalize: finalized payroll lines differ from the draft for employee_id='.$employeeId.'. Missing categories and line IDs were logged.');
+        }
+
+        Log::info('Payroll finalize validation passed: finalized lines match draft snapshot', $context);
     }
 
     /**
@@ -2405,6 +2659,9 @@ class FinalizePayrollService
     private function payslipQueryForBatchRun(PayrollBatchRun $run): \Illuminate\Database\Eloquent\Builder
     {
         $query = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->whereNull('voided_at')
+            ->where('period_slot', 0)
             ->when(
                 $run->pay_period_start !== null,
                 fn ($q) => $q->whereDate('pay_period_start', $run->pay_period_start->toDateString())
@@ -2426,8 +2683,65 @@ class FinalizePayrollService
         if ($run->employee_id !== null) {
             $query->where('user_id', (int) $run->employee_id);
         }
+        if ((string) $run->status === PayrollBatchRun::STATUS_FINALIZED) {
+            $query->whereIn('status', Payslip::lockingStatuses());
+        } else {
+            $query->whereIn('status', $this->draftSnapshotStatuses());
+        }
 
         return $query;
+    }
+
+    private function attachMatchingPayslipsToBatchRun(PayrollBatchRun $run): int
+    {
+        if ($run->pay_period_start === null || $run->pay_period_end === null || $run->company_id === null) {
+            return 0;
+        }
+
+        $expectedStatuses = (string) $run->status === PayrollBatchRun::STATUS_FINALIZED
+            ? Payslip::lockingStatuses()
+            : $this->draftSnapshotStatuses();
+
+        $query = Payslip::query()
+            ->whereNull('payroll_batch_run_id')
+            ->whereNull('voided_at')
+            ->whereIn('status', $expectedStatuses)
+            ->where('period_slot', 0)
+            ->where('company_id', (int) $run->company_id)
+            ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+
+        if ($run->branch_id !== null) {
+            $query->where('branch_id', (int) $run->branch_id);
+        }
+        if ($run->department_id !== null) {
+            $query->where('department_id', (int) $run->department_id);
+        }
+        if ($run->employee_id !== null) {
+            $query->where('user_id', (int) $run->employee_id);
+        }
+
+        $updated = (int) $query->update(['payroll_batch_run_id' => (int) $run->id]);
+        if ($updated > 0) {
+            Log::info('Payroll table attached matching saved payslips to batch run', [
+                'payroll_run_id' => (int) $run->id,
+                'selected_company_id' => (int) $run->company_id,
+                'statuses' => $expectedStatuses,
+                'attached_count' => $updated,
+            ]);
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Draft payroll snapshots have historically used both statuses before finalization.
+     *
+     * @return list<string>
+     */
+    private function draftSnapshotStatuses(): array
+    {
+        return [Payslip::STATUS_DRAFT, Payslip::STATUS_GENERATED];
     }
 
     /**
@@ -2449,6 +2763,8 @@ class FinalizePayrollService
     ): array {
         $query = Payslip::query()
             ->whereNotNull('user_id')
+            ->whereNull('voided_at')
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
             ->select('user_id');
 
         $this->applyPreviewPeriodFiltersEloquent($query, $periodInput);
@@ -2497,28 +2813,24 @@ class FinalizePayrollService
         ?int $departmentId,
         ?int $singleEmployeeId,
         ?User $actor = null,
-        ?string $search = null
+        ?string $search = null,
+        ?Carbon $periodStart = null,
+        ?Carbon $periodEnd = null
     ): \Illuminate\Database\Eloquent\Builder {
-        $q = User::query()->payrollEmployees()->active();
-
-        if ($actor !== null) {
-            $this->dataScopeService->restrictEmployeeQuery($actor, $q);
-        }
+        $q = $this->payrollEligibility->query(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $periodStart,
+            $periodEnd,
+            $actor,
+            $this->dataScopeService
+        );
 
         if ($singleEmployeeId) {
             $q->where('id', $singleEmployeeId);
 
             return $q;
-        }
-
-        if ($companyId) {
-            $q->where('company_id', $companyId);
-        }
-        if ($branchId) {
-            $q->where('branch_id', $branchId);
-        }
-        if ($departmentId) {
-            $q->where('department_id', $departmentId);
         }
         if (is_string($search) && trim($search) !== '') {
             $needle = trim($search);

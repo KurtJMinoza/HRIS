@@ -138,6 +138,7 @@ class FinalizePayrollJob implements ShouldQueue
 
             Log::info('FinalizePayrollJob completed', [
                 'batch_run_id' => $this->batchRunId,
+                'cache_cleared' => true,
                 'finalize_core_ms' => round((microtime(true) - $finalizeStartedAt) * 1000, 2),
                 'finalize_timings_ms' => $finalizeResult['timings'] ?? null,
                 'total_elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),

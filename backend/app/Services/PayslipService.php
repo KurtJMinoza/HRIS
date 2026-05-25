@@ -44,11 +44,15 @@ class PayslipService
     /** @var list<string>|null */
     private static ?array $payrollBatchRunColumns = null;
 
+    /** @var array<string, bool> */
+    private static array $orgForeignKeyExistsCache = [];
+
     public function __construct(
         private readonly BrowsershotEnvironment $browsershotEnvironment,
         private readonly PayrollComputationService $payrollComputation,
         private readonly PayCycleService $payCycleService,
         private readonly DataScopeService $dataScopeService,
+        private readonly PayrollEmployeeEligibilityService $payrollEligibility,
     ) {}
 
     /**
@@ -948,6 +952,150 @@ class PayslipService
     }
 
     /**
+     * Payslips have real foreign keys for org columns. Older/stale employee assignments can
+     * reference deleted departments/branches; keep the payroll company scope, but null any
+     * invalid optional org FK before insert/upsert so one bad assignment does not fail a batch.
+     *
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    private function sanitizePayslipOrganizationContext(array $context, User $employee): array
+    {
+        $checks = [
+            'company_id' => 'companies',
+            'branch_id' => 'branches',
+            'division_id' => 'divisions',
+            'department_id' => 'departments',
+            'section_unit_id' => 'sections_or_units',
+        ];
+
+        foreach ($checks as $key => $table) {
+            $value = $context[$key] ?? null;
+            if ($value === null || $value === '' || (int) $value <= 0) {
+                $context[$key] = null;
+
+                continue;
+            }
+
+            if ($this->orgForeignKeyExists($table, (int) $value)) {
+                $context[$key] = (int) $value;
+
+                continue;
+            }
+
+            // Company is the selected payroll scope and should be valid. If it is not, fail
+            // with a clear error instead of silently moving the payslip to no company.
+            if ($key === 'company_id') {
+                throw new \RuntimeException('Selected payroll company no longer exists.');
+            }
+
+            Log::warning('Payslip generation ignored stale organization foreign key', [
+                'user_id' => (int) $employee->id,
+                'employee_code' => $employee->employee_code,
+                'field' => $key,
+                'stale_id' => (int) $value,
+                'table' => $table,
+                'assignment_id' => isset($context['assignment_id']) ? (int) $context['assignment_id'] : null,
+                'assignment_type' => $context['assignment_type'] ?? null,
+            ]);
+            $context[$key] = null;
+        }
+
+        return $context;
+    }
+
+    private function orgForeignKeyExists(string $table, int $id): bool
+    {
+        $cacheKey = $table.':'.$id;
+        if (! array_key_exists($cacheKey, self::$orgForeignKeyExistsCache)) {
+            self::$orgForeignKeyExistsCache[$cacheKey] = Schema::hasTable($table)
+                && Schema::hasColumn($table, 'id')
+                && DB::table($table)->where('id', $id)->exists();
+        }
+
+        return self::$orgForeignKeyExistsCache[$cacheKey];
+    }
+
+    /**
+     * Derive payroll table totals from the exact line arrays rendered by the payslip.
+     *
+     * @return array{gross_pay: float, total_deductions: float, net_pay: float, earning_lines: list<array<string, mixed>>, deduction_lines: list<array<string, mixed>>}
+     */
+    public function payslipLineTotalsFromSnapshot(array $snapshot): array
+    {
+        return $this->payslipLineTotalsFromNormalizedSnapshot($this->normalizeSnapshotForPayslipPdf($snapshot));
+    }
+
+    /**
+     * Reconcile a saved payslip row with the rendered payslip line totals.
+     *
+     * @return array{gross_pay: float, total_deductions: float, net_pay: float, changed: bool}
+     */
+    public function syncPayslipSummaryFromLines(Payslip $payslip, bool $save = true): array
+    {
+        if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            $metrics = $this->frozenPayslipLineMetrics($payslip);
+
+            return [
+                'gross_pay' => $metrics['gross_pay'],
+                'total_deductions' => $metrics['total_deductions'],
+                'net_pay' => $metrics['net_pay'],
+                'changed' => false,
+            ];
+        }
+
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot)) {
+            $snapshot = [];
+        }
+
+        $normalizedSnapshot = $this->normalizeSnapshotForPayslipPdf($snapshot);
+        $lineTotals = $this->payslipLineTotalsFromNormalizedSnapshot($normalizedSnapshot);
+        $normalizedSnapshot = $this->snapshotWithPayslipLineTotals($normalizedSnapshot, $lineTotals);
+
+        $summaryGross = round((float) ($payslip->gross_pay ?? 0), 2);
+        $summaryDeductions = round((float) ($payslip->total_deductions ?? 0), 2);
+        $summaryNet = round((float) ($payslip->net_pay ?? 0), 2);
+        $changed = $summaryGross !== $lineTotals['gross_pay']
+            || $summaryDeductions !== $lineTotals['total_deductions']
+            || $summaryNet !== $lineTotals['net_pay']
+            || $normalizedSnapshot !== $snapshot;
+
+        $employee = $payslip->relationLoaded('employee') && $payslip->employee instanceof User
+            ? $payslip->employee
+            : User::query()->select(['id', 'employee_code'])->find((int) $payslip->user_id);
+        $this->logPayslipLineSummaryMismatchIfNeeded(
+            $employee,
+            $payslip,
+            $summaryGross,
+            $summaryDeductions,
+            $summaryNet,
+            $lineTotals
+        );
+
+        $payslip->forceFill([
+            'gross_pay' => $lineTotals['gross_pay'],
+            'total_deductions' => $lineTotals['total_deductions'],
+            'net_pay' => $lineTotals['net_pay'],
+            'snapshot' => $normalizedSnapshot,
+        ]);
+
+        if ($changed && $save) {
+            $payslip->save();
+        }
+
+        return [
+            'gross_pay' => $lineTotals['gross_pay'],
+            'total_deductions' => $lineTotals['total_deductions'],
+            'net_pay' => $lineTotals['net_pay'],
+            'changed' => $changed,
+        ];
+    }
+
+    /**
      * Shared computation for generate + preview — keeps one source of truth for payroll snapshot fields.
      *
      * Withholding tax (`withholding_tax_this_period_estimate`, `withholding_tax_monthly_estimate`) comes only from
@@ -985,11 +1133,26 @@ class PayslipService
             $this->assertPayrollPeriodMutableForUserWindow((int) $employee->id, $from, $to);
         }
 
+        $selectedCompanyId = ! empty($input['company_id'])
+            ? (int) $input['company_id']
+            : $employee->getEffectiveCompanyId();
+        $selectedBranchId = ! empty($input['branch_id']) ? (int) $input['branch_id'] : null;
+        $selectedDepartmentId = ! empty($input['department_id']) ? (int) $input['department_id'] : null;
+        $payrollAssignment = $this->payrollEligibility->contextForEmployee(
+            $employee,
+            $selectedCompanyId !== null && $selectedCompanyId > 0 ? $selectedCompanyId : null,
+            $selectedBranchId,
+            $selectedDepartmentId,
+            $from,
+            $to
+        );
+        $payrollAssignment = $this->sanitizePayslipOrganizationContext($payrollAssignment, $employee);
+
         $periodCtx = [
             'pay_period_start' => $from->toDateString(),
             'pay_period_end' => $to->toDateString(),
             'selected_pay_date' => $preview['pay_date'] ?? null,
-            'company_id' => $employee->getEffectiveCompanyId(),
+            'company_id' => $payrollAssignment['company_id'] ?? $selectedCompanyId,
         ];
         if (! empty($input['payroll_batch_run_id'])) {
             $periodCtx['payroll_batch_run_id'] = (int) $input['payroll_batch_run_id'];
@@ -1009,7 +1172,7 @@ class PayslipService
             );
         $summary = $computed['summary'] ?? [];
 
-        $grossPay = round(
+        $computedGrossPay = round(
             (float) ($summary['gross_pay_this_period']
                 ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
             2
@@ -1017,8 +1180,8 @@ class PayslipService
         $empStat = (float) ($summary['employee_statutory_this_period'] ?? 0);
         $custDed = (float) ($summary['custom_deductions_this_period'] ?? 0);
         $wh = (float) ($summary['withholding_tax_this_period_estimate'] ?? 0);
-        $totalDed = round($empStat + $custDed + $wh, 2);
-        $netPay = (float) ($summary['net_pay_after_withholding_estimate'] ?? 0);
+        $computedTotalDed = round($empStat + $custDed + $wh, 2);
+        $computedNetPay = (float) ($summary['net_pay_after_withholding_estimate'] ?? 0);
 
         $compBreakdown = $summary['compensation_breakdown'] ?? [];
         $taxClass = is_array($compBreakdown['tax_classification'] ?? null) ? $compBreakdown['tax_classification'] : [];
@@ -1049,10 +1212,23 @@ class PayslipService
 
         // Persist PDF table arrays as 0-based lists with no junk rows so DB + mPDF stay aligned.
         $snapshot = $this->normalizeSnapshotForPayslipPdf($snapshot);
+        $lineTotals = $this->payslipLineTotalsFromNormalizedSnapshot($snapshot);
+        $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
+        $grossPay = $lineTotals['gross_pay'];
+        $totalDed = $lineTotals['total_deductions'];
+        $netPay = $lineTotals['net_pay'];
+        $this->logPayslipLineSummaryMismatchIfNeeded(
+            $employee,
+            null,
+            $computedGrossPay,
+            $computedTotalDed,
+            round($computedNetPay, 2),
+            $lineTotals
+        );
 
         $payDate = isset($preview['pay_date']) ? Carbon::parse((string) $preview['pay_date']) : $to->copy();
 
-        $companyId = $employee->getEffectiveCompanyId();
+        $companyId = $payrollAssignment['company_id'] ?? $selectedCompanyId;
         $finalPay = (bool) ($input['is_final_pay'] ?? false)
             || EmploymentStatus::tryFromStored($employee->employment_status) === EmploymentStatus::Separated;
 
@@ -1061,21 +1237,27 @@ class PayslipService
         return [
             'unique' => [
                 'user_id' => $employee->id,
+                'company_id' => $companyId,
                 'pay_period_start' => $from->toDateString(),
                 'pay_period_end' => $to->toDateString(),
                 'period_slot' => 0,
             ],
             'attributes' => [
                 'payroll_period_id' => $input['payroll_period_id'] ?? null,
+                'payroll_batch_run_id' => ! empty($input['payroll_batch_run_id']) ? (int) $input['payroll_batch_run_id'] : null,
                 'pay_cycle_id' => $cycle?->id,
                 'company_id' => $companyId,
-                'branch_id' => $employee->branch_id,
-                'department_id' => $employee->department_id,
+                'branch_id' => $payrollAssignment['branch_id'] ?? $employee->branch_id,
+                'division_id' => $payrollAssignment['division_id'] ?? null,
+                'department_id' => $payrollAssignment['department_id'] ?? $employee->department_id,
+                'section_unit_id' => $payrollAssignment['section_unit_id'] ?? null,
+                'assignment_id' => $payrollAssignment['assignment_id'] ?? null,
+                'assignment_type' => $payrollAssignment['assignment_type'] ?? null,
                 'pay_date' => $payDate->toDateString(),
                 'cycle_label' => $preview['cycle_label'] ?? $cycle?->name,
                 'gross_pay' => $grossPay,
                 'total_deductions' => $totalDed,
-                'net_pay' => round($netPay, 2),
+                'net_pay' => $netPay,
                 'ytd_gross' => round($ytdPrior['ytd_gross'] + $grossPay, 2),
                 'ytd_deductions' => round($ytdPrior['ytd_deductions'] + $totalDed, 2),
                 'ytd_tax' => round($ytdPrior['ytd_tax'] + $wh, 2),
@@ -1111,6 +1293,15 @@ class PayslipService
         if ($progressRun instanceof PayrollBatchRun) {
             $periodInput['payroll_batch_run_id'] = (int) $progressRun->id;
         }
+        if ($companyId !== null) {
+            $periodInput['company_id'] = $companyId;
+        }
+        if ($branchId !== null) {
+            $periodInput['branch_id'] = $branchId;
+        }
+        if ($departmentId !== null) {
+            $periodInput['department_id'] = $departmentId;
+        }
 
         $timingSink = null;
         if (! $withPdf) {
@@ -1128,24 +1319,24 @@ class PayslipService
             'generation_loop_ms' => 0.0,
             'bulk_upsert_ms' => 0.0,
         ];
-        $q = User::query()->payrollEmployees()->active();
-
-        if ($actor !== null) {
-            $this->dataScopeService->restrictEmployeeQuery($actor, $q);
-        }
+        $periodStartForEligibility = ! empty($periodInput['from_date'])
+            ? Carbon::parse((string) $periodInput['from_date'])->startOfDay()
+            : null;
+        $periodEndForEligibility = ! empty($periodInput['to_date'])
+            ? Carbon::parse((string) $periodInput['to_date'])->startOfDay()
+            : null;
+        $q = $this->payrollEligibility->query(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $periodStartForEligibility,
+            $periodEndForEligibility,
+            $actor,
+            $this->dataScopeService
+        );
 
         if (is_array($employeeIds) && count($employeeIds) > 0) {
             $q->whereIn('id', $employeeIds);
-        } else {
-            if ($companyId) {
-                $q->where('company_id', $companyId);
-            }
-            if ($branchId) {
-                $q->where('branch_id', $branchId);
-            }
-            if ($departmentId) {
-                $q->where('department_id', $departmentId);
-            }
         }
 
         $orderedIds = (clone $q)->orderByLastName()->pluck('id')->map(fn ($id) => (int) $id)->all();
@@ -1325,12 +1516,17 @@ class PayslipService
 
                 Payslip::query()->upsert(
                     $upsertRows,
-                    ['user_id', 'pay_period_start', 'pay_period_end', 'period_slot'],
+                    ['user_id', 'company_id', 'pay_period_start', 'pay_period_end', 'period_slot'],
                     [
                         'pay_cycle_id',
+                        'payroll_batch_run_id',
                         'company_id',
                         'branch_id',
+                        'division_id',
                         'department_id',
+                        'section_unit_id',
+                        'assignment_id',
+                        'assignment_type',
                         'pay_date',
                         'cycle_label',
                         'gross_pay',
@@ -1352,6 +1548,7 @@ class PayslipService
                 foreach ($periodLinks as $uid => $periodId) {
                     $payslip = Payslip::query()
                         ->where('user_id', $uid)
+                        ->where('company_id', $upsertRows[0]['company_id'] ?? null)
                         ->whereDate('pay_period_start', $periodStartStr)
                         ->whereDate('pay_period_end', $periodEndStr)
                         ->where('period_slot', 0)
@@ -1384,10 +1581,13 @@ class PayslipService
             $upsertStartedAt = microtime(true);
             $ids = Payslip::query()
                 ->whereIn('user_id', $orderedIds)
+                ->when($progressRun instanceof PayrollBatchRun, fn ($q) => $q->where('payroll_batch_run_id', (int) $progressRun->id))
+                ->when($companyId !== null, fn ($q) => $q->where('company_id', $companyId))
                 ->whereDate('pay_period_start', $fromStr)
                 ->whereDate('pay_period_end', $toStr)
                 ->where('period_slot', 0)
-                ->where('status', '!=', Payslip::STATUS_VOIDED)
+                ->where('status', Payslip::STATUS_DRAFT)
+                ->whereNull('voided_at')
                 ->orderBy('user_id')
                 ->pluck('id')
                 ->map(fn ($id) => (int) $id)
@@ -1622,6 +1822,22 @@ class PayslipService
     }
 
     /**
+     * Frozen finalized snapshots must render exactly as stored. This only coerces table
+     * payloads back to JSON-list shape; it does not repair, recalculate, cap, or filter lines.
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    public function frozenSnapshotForPayslipView(array $snapshot): array
+    {
+        $out = $snapshot;
+        $summary = is_array($out['summary'] ?? null) ? $out['summary'] : [];
+        $out['summary'] = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
+
+        return $out;
+    }
+
+    /**
      * Recompute a stored payslip's snapshot for rendering when possible.
      *
      * This is intentionally used for preview/download rendering so stale generated snapshots
@@ -1634,6 +1850,10 @@ class PayslipService
     {
         $snapshotRaw = $payslip->snapshot ?? [];
         if (is_array($snapshotRaw) && $snapshotRaw !== []) {
+            if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+                return $this->frozenSnapshotForPayslipView($snapshotRaw);
+            }
+
             return $this->normalizeSnapshotForPayslipView($snapshotRaw);
         }
 
@@ -1672,12 +1892,354 @@ class PayslipService
     }
 
     /**
+     * Immutable metrics from the exact stored payslip snapshot lines. Used by finalized
+     * payroll tables, reports, validation, and cards so they all read the same frozen source.
+     *
+     * @return array{
+     *   line_count:int,
+     *   gross_pay:float,
+     *   total_deductions:float,
+     *   net_pay:float,
+     *   regular_pay:float,
+     *   holiday_pay:float,
+     *   overtime_pay:float,
+     *   night_differential:float,
+     *   paid_leave:float,
+     *   allowances:float,
+     *   other_deductions:float,
+     *   line_ids:list<string>,
+     *   categories:list<string>,
+     *   category_totals:array<string,float>
+     * }
+     */
+    public function frozenPayslipLineMetrics(Payslip $payslip): array
+    {
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot)) {
+            $snapshot = [];
+        }
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+
+        $earningLines = array_values(array_merge(
+            $this->rawPayslipLineList($summary['daily_computation_earning_lines'] ?? []),
+            $this->rawPayslipLineList($summary['payslip_earning_lines'] ?? [])
+        ));
+        $deductionLines = array_values(array_merge(
+            $this->rawPayslipLineList($summary['payslip_deduction_lines'] ?? []),
+            $this->rawPayslipLineList($summary['payslip_custom_deduction_lines'] ?? [])
+        ));
+
+        $categoryTotals = [];
+        $lineIds = [];
+        foreach ($earningLines as $idx => $line) {
+            $category = $this->payrollLineCategory($line, true);
+            $categoryTotals[$category] = round(($categoryTotals[$category] ?? 0.0) + max(0.0, (float) ($line['amount'] ?? 0)), 2);
+            $lineIds[] = $this->payrollLineIdentifier($line, 'earning', $idx);
+        }
+        foreach ($deductionLines as $idx => $line) {
+            $category = $this->payrollLineCategory($line, false);
+            $categoryTotals[$category] = round(($categoryTotals[$category] ?? 0.0) + max(0.0, (float) ($line['amount'] ?? 0)), 2);
+            $lineIds[] = $this->payrollLineIdentifier($line, 'deduction', $idx);
+        }
+
+        $grossFromLines = $this->sumPayslipLineAmounts($earningLines);
+        $deductionsFromLines = $this->sumPayslipLineAmounts($deductionLines);
+        $hasLines = count($earningLines) + count($deductionLines) > 0;
+        $gross = $hasLines ? $grossFromLines : round((float) ($payslip->gross_pay ?? 0), 2);
+        $deductions = $hasLines ? $deductionsFromLines : round((float) ($payslip->total_deductions ?? 0), 2);
+        $net = $hasLines ? round(max(0.0, $gross - $deductions), 2) : round((float) ($payslip->net_pay ?? 0), 2);
+
+        $otherDeductions = 0.0;
+        foreach (['deduction', 'loan', 'cash_advance', 'late_deduction', 'undertime_deduction', 'absence_deduction'] as $category) {
+            $otherDeductions += (float) ($categoryTotals[$category] ?? 0.0);
+        }
+
+        return [
+            'line_count' => count($earningLines) + count($deductionLines),
+            'gross_pay' => round($gross, 2),
+            'total_deductions' => round($deductions, 2),
+            'net_pay' => round($net, 2),
+            'regular_pay' => round((float) ($categoryTotals['regular_pay'] ?? 0.0), 2),
+            'holiday_pay' => round((float) ($categoryTotals['holiday_pay'] ?? 0.0), 2),
+            'overtime_pay' => round((float) ($categoryTotals['overtime_pay'] ?? 0.0), 2),
+            'night_differential' => round((float) ($categoryTotals['night_differential'] ?? 0.0), 2),
+            'paid_leave' => round((float) ($categoryTotals['paid_leave'] ?? 0.0), 2),
+            'allowances' => round((float) ($categoryTotals['allowance'] ?? 0.0), 2),
+            'other_deductions' => round($otherDeductions, 2),
+            'line_ids' => array_values(array_unique($lineIds)),
+            'categories' => array_values(array_unique(array_keys($categoryTotals))),
+            'category_totals' => $categoryTotals,
+        ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function rawPayslipLineList(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($raw as $row) {
+            if (is_array($row)) {
+                $out[] = $row;
+            }
+        }
+
+        return array_values($out);
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function payrollLineIdentifier(array $line, string $section, int $index): string
+    {
+        foreach (['source_id', 'id', 'pay_component_id', 'loan_id', 'deduction_id', 'key'] as $field) {
+            $value = $line[$field] ?? null;
+            if ($value !== null && trim((string) $value) !== '') {
+                return $section.':'.$field.':'.trim((string) $value);
+            }
+        }
+
+        $label = trim((string) ($line['label'] ?? $line['name'] ?? 'line'));
+
+        return $section.':'.$index.':'.$label;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function payrollLineCategory(array $line, bool $earning): string
+    {
+        $explicit = $this->normalizePayrollLineCategory($line['category'] ?? null);
+        if ($explicit !== null) {
+            return $explicit;
+        }
+
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? $line['name'] ?? '')));
+        $haystack = $key.' '.$label;
+
+        if ($earning) {
+            if (str_contains($haystack, 'regular_pay') || str_contains($label, 'regular pay')) {
+                return 'regular_pay';
+            }
+            if (str_contains($haystack, 'holiday_premium') || str_contains($haystack, 'holiday pay') || str_contains($haystack, 'holiday premium')) {
+                return 'holiday_pay';
+            }
+            if (str_contains($haystack, 'ot_pay') || str_contains($haystack, 'overtime')) {
+                return 'overtime_pay';
+            }
+            if (str_contains($haystack, 'nd_pay') || str_contains($haystack, 'night_diff') || str_contains($haystack, 'night differential')) {
+                return 'night_differential';
+            }
+            if (str_contains($haystack, 'paid_leave') || str_contains($haystack, 'leave adjustment') || str_contains($haystack, 'paid leave')) {
+                return 'paid_leave';
+            }
+            if (str_contains($haystack, 'allowance')) {
+                return 'allowance';
+            }
+            if (str_contains($haystack, 'late') || str_contains($haystack, 'tardy')) {
+                return 'late_deduction';
+            }
+            if (str_contains($haystack, 'undertime')) {
+                return 'undertime_deduction';
+            }
+            if (str_contains($haystack, 'absence') || str_contains($haystack, 'absent')) {
+                return 'absence_deduction';
+            }
+
+            return 'other_earning';
+        }
+
+        if (str_contains($haystack, 'sss') || str_contains($haystack, 'philhealth') || str_contains($haystack, 'pag-ibig')
+            || str_contains($haystack, 'pagibig') || str_contains($haystack, 'withholding') || str_contains($haystack, 'wht')) {
+            return 'government_deduction';
+        }
+        if (str_contains($haystack, 'loan')) {
+            return 'loan';
+        }
+        if (str_contains($haystack, 'cash advance') || str_contains($haystack, 'cash_advance')) {
+            return 'cash_advance';
+        }
+        if (str_contains($haystack, 'late') || str_contains($haystack, 'tardy')) {
+            return 'late_deduction';
+        }
+        if (str_contains($haystack, 'undertime')) {
+            return 'undertime_deduction';
+        }
+        if (str_contains($haystack, 'absence') || str_contains($haystack, 'absent')) {
+            return 'absence_deduction';
+        }
+
+        return 'deduction';
+    }
+
+    private function normalizePayrollLineCategory(mixed $category): ?string
+    {
+        if (! is_string($category) || trim($category) === '') {
+            return null;
+        }
+
+        $value = strtolower(trim($category));
+        $value = preg_replace('/[^a-z0-9]+/', '_', $value) ?? $value;
+        $value = trim($value, '_');
+
+        return match ($value) {
+            'regular', 'regular_pay', 'basic_salary', 'basic_pay' => 'regular_pay',
+            'holiday', 'holiday_pay', 'holiday_premium' => 'holiday_pay',
+            'overtime', 'ot', 'ot_pay', 'overtime_premium' => 'overtime_pay',
+            'night_diff', 'night_differential', 'night_differential_pay', 'nd_pay' => 'night_differential',
+            'leave', 'paid_leave', 'paid_leave_daily_flat' => 'paid_leave',
+            'allowance', 'fixed_allowance' => 'allowance',
+            'other_earning', 'earning' => 'other_earning',
+            'government', 'government_deduction', 'statutory', 'statutory_deduction' => 'government_deduction',
+            'loan' => 'loan',
+            'cash_advance' => 'cash_advance',
+            'late', 'late_deduction' => 'late_deduction',
+            'undertime', 'undertime_deduction' => 'undertime_deduction',
+            'absence', 'absence_deduction' => 'absence_deduction',
+            'deduction', 'other_deduction' => 'deduction',
+            default => null,
+        };
+    }
+
+    /**
      * Coerce payslip snapshot.summary line arrays for mPDF: 0-based lists, scalar fields only, no junk rows.
      * Stored DB snapshot is unchanged; this is used only when rendering the Blade PDF template.
      *
      * @param  array<string, mixed>  $snapshot
      * @return array<string, mixed>
      */
+    private function payslipLineTotalsFromNormalizedSnapshot(array $snapshot): array
+    {
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $earningLines = array_values(array_merge(
+            is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [],
+            is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : []
+        ));
+        $deductionLines = array_values(array_merge(
+            is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
+            is_array($summary['payslip_custom_deduction_lines'] ?? null) ? $summary['payslip_custom_deduction_lines'] : []
+        ));
+
+        $gross = $this->sumPayslipLineAmounts($earningLines);
+        $deductions = min($this->sumPayslipLineAmounts($deductionLines), max(0.0, $gross));
+
+        return [
+            'gross_pay' => $gross,
+            'total_deductions' => $deductions,
+            'net_pay' => round(max(0.0, $gross - $deductions), 2),
+            'earning_lines' => $earningLines,
+            'deduction_lines' => $deductionLines,
+        ];
+    }
+
+    private function sumPayslipLineAmounts(array $lines): float
+    {
+        $total = 0.0;
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $amount = $line['amount'] ?? null;
+            if (! is_numeric($amount)) {
+                continue;
+            }
+            $total += max(0.0, (float) $amount);
+        }
+
+        return round($total, 2);
+    }
+
+    /**
+     * Deductions are applied against available earnings; excess cannot become negative take-home pay.
+     *
+     * @param  list<array<string, mixed>>  $governmentLines
+     * @param  list<array<string, mixed>>  $customLines
+     * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>}
+     */
+    private function capDeductionLineAmountsToGross(array $governmentLines, array $customLines, float $gross): array
+    {
+        $remaining = max(0.0, round($gross, 2));
+        $apply = static function (array $lines) use (&$remaining): array {
+            $capped = [];
+            foreach ($lines as $line) {
+                $amount = max(0.0, (float) ($line['amount'] ?? 0));
+                $applied = min($amount, $remaining);
+                $remaining = round(max(0.0, $remaining - $applied), 2);
+                $line['amount'] = round($applied, 2);
+                $capped[] = $line;
+            }
+
+            return $capped;
+        };
+
+        return [$apply($governmentLines), $apply($customLines)];
+    }
+
+    /**
+     * @param  array{gross_pay: float, total_deductions: float, net_pay: float, earning_lines: list<array<string, mixed>>, deduction_lines: list<array<string, mixed>>}  $lineTotals
+     */
+    private function snapshotWithPayslipLineTotals(array $snapshot, array $lineTotals): array
+    {
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $summary['gross_pay_this_period'] = $lineTotals['gross_pay'];
+        $summary['total_deductions_this_period'] = $lineTotals['total_deductions'];
+        $summary['net_pay_after_withholding_estimate'] = $lineTotals['net_pay'];
+        $snapshot['summary'] = $summary;
+
+        return $snapshot;
+    }
+
+    /**
+     * @param  array{gross_pay: float, total_deductions: float, net_pay: float, earning_lines: list<array<string, mixed>>, deduction_lines: list<array<string, mixed>>}  $lineTotals
+     */
+    private function logPayslipLineSummaryMismatchIfNeeded(
+        ?User $employee,
+        ?Payslip $payslip,
+        float $summaryGross,
+        float $summaryDeductions,
+        float $summaryNet,
+        array $lineTotals
+    ): void {
+        $grossDiff = round($summaryGross - $lineTotals['gross_pay'], 2);
+        $deductionDiff = round($summaryDeductions - $lineTotals['total_deductions'], 2);
+        $netDiff = round($summaryNet - $lineTotals['net_pay'], 2);
+        $isTargetEmployee = $employee instanceof User && trim((string) $employee->employee_code) === 'EMP-1703';
+        $hasMismatch = abs($grossDiff) >= 0.01 || abs($deductionDiff) >= 0.01 || abs($netDiff) >= 0.01;
+
+        if (! $hasMismatch && ! $isTargetEmployee) {
+            return;
+        }
+
+        $logLevel = $hasMismatch ? 'error' : 'debug';
+        Log::log($logLevel, 'Payslip line totals reconciled against summary totals', [
+            'payslip_id' => $payslip?->id !== null ? (int) $payslip->id : null,
+            'payroll_employee_id' => $payslip?->id !== null ? (int) $payslip->id : null,
+            'user_id' => $employee?->id !== null ? (int) $employee->id : ($payslip?->user_id !== null ? (int) $payslip->user_id : null),
+            'employee_code' => $employee?->employee_code,
+            'gross_from_lines' => $lineTotals['gross_pay'],
+            'gross_from_summary' => $summaryGross,
+            'deductions_from_lines' => $lineTotals['total_deductions'],
+            'deductions_from_summary' => $summaryDeductions,
+            'net_from_lines' => $lineTotals['net_pay'],
+            'net_from_summary' => $summaryNet,
+            'difference' => [
+                'gross' => $grossDiff,
+                'deductions' => $deductionDiff,
+                'net' => $netDiff,
+            ],
+            'all_earning_lines' => $lineTotals['earning_lines'],
+            'all_deduction_lines' => $lineTotals['deduction_lines'],
+        ]);
+    }
+
     private function normalizeSnapshotForPayslipPdf(array $snapshot): array
     {
         $out = $snapshot;
@@ -1712,6 +2274,15 @@ class PayslipService
             true
         );
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? []);
+        $grossFromShownEarnings = $this->sumPayslipLineAmounts(array_merge(
+            $summary['daily_computation_earning_lines'],
+            $summary['payslip_earning_lines']
+        ));
+        [$summary['payslip_deduction_lines'], $summary['payslip_custom_deduction_lines']] = $this->capDeductionLineAmountsToGross(
+            $summary['payslip_deduction_lines'],
+            $summary['payslip_custom_deduction_lines'],
+            $grossFromShownEarnings
+        );
 
         $holiday = [];
         foreach (is_array($summary['holiday_premium_breakdown'] ?? null) ? $summary['holiday_premium_breakdown'] : [] as $item) {
@@ -2599,7 +3170,8 @@ class PayslipService
     {
         return $query
             ->where('period_slot', 0)
-            ->where('status', '!=', Payslip::STATUS_VOIDED);
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
+            ->whereNull('voided_at');
     }
 
     /**
@@ -2632,16 +3204,26 @@ class PayslipService
             ];
         }
 
-        $agg = Payslip::query()
+        $rows = Payslip::query()
             ->whereIn('id', $payslipIds)
-            ->selectRaw('COALESCE(SUM(gross_pay), 0) as total_gross, COALESCE(SUM(total_deductions), 0) as total_ded, COALESCE(SUM(net_pay), 0) as total_net, COUNT(*) as cnt')
-            ->first();
+            ->with(['employee:id,employee_code'])
+            ->get(['id', 'user_id', 'gross_pay', 'total_deductions', 'net_pay', 'snapshot']);
+
+        $gross = 0.0;
+        $deductions = 0.0;
+        $net = 0.0;
+        foreach ($rows as $row) {
+            $totals = $this->frozenPayslipLineMetrics($row);
+            $gross += $totals['gross_pay'];
+            $deductions += $totals['total_deductions'];
+            $net += $totals['net_pay'];
+        }
 
         return [
-            'total_gross' => round((float) ($agg->total_gross ?? 0), 2),
-            'total_deductions' => round((float) ($agg->total_ded ?? 0), 2),
-            'total_net' => round((float) ($agg->total_net ?? 0), 2),
-            'employee_count' => (int) ($agg->cnt ?? 0),
+            'total_gross' => round($gross, 2),
+            'total_deductions' => round($deductions, 2),
+            'total_net' => round($net, 2),
+            'employee_count' => $rows->count(),
         ];
     }
 
@@ -2663,9 +3245,17 @@ class PayslipService
             }
         }
 
+        $this->attachMatchingPayslipsToBatchRun($run);
+
         $q = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
             ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+        if ((string) $run->status === PayrollBatchRun::STATUS_FINALIZED) {
+            $q->whereIn('status', Payslip::lockingStatuses());
+        } else {
+            $q->whereIn('status', $this->draftSnapshotStatuses());
+        }
 
         if ($run->company_id) {
             $q->where('company_id', (int) $run->company_id);
@@ -2696,7 +3286,8 @@ class PayslipService
 
         $rows = Payslip::query()
             ->whereIn('id', $uniqueIds)
-            ->get(['id', 'user_id', 'company_id', 'gross_pay', 'total_deductions', 'net_pay', 'status', 'created_at']);
+            ->with(['employee:id,employee_code'])
+            ->get(['id', 'user_id', 'company_id', 'gross_pay', 'total_deductions', 'net_pay', 'status', 'created_at', 'snapshot']);
 
         $lockedForBatch = Payslip::lockingStatuses();
         $finalized = $rows->filter(fn ($p) => in_array((string) $p->status, $lockedForBatch, true))->count();
@@ -2832,6 +3423,58 @@ class PayslipService
         ];
     }
 
+    private function attachMatchingPayslipsToBatchRun(PayrollBatchRun $run): int
+    {
+        if ($run->pay_period_start === null || $run->pay_period_end === null || $run->company_id === null) {
+            return 0;
+        }
+
+        $expectedStatuses = (string) $run->status === PayrollBatchRun::STATUS_FINALIZED
+            ? Payslip::lockingStatuses()
+            : $this->draftSnapshotStatuses();
+
+        $query = Payslip::query()
+            ->whereNull('payroll_batch_run_id')
+            ->whereNull('voided_at')
+            ->whereIn('status', $expectedStatuses)
+            ->where('period_slot', 0)
+            ->where('company_id', (int) $run->company_id)
+            ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+
+        if ($run->branch_id !== null) {
+            $query->where('branch_id', (int) $run->branch_id);
+        }
+        if ($run->department_id !== null) {
+            $query->where('department_id', (int) $run->department_id);
+        }
+        if ($run->employee_id !== null) {
+            $query->where('user_id', (int) $run->employee_id);
+        }
+
+        $updated = (int) $query->update(['payroll_batch_run_id' => (int) $run->id]);
+        if ($updated > 0) {
+            Log::info('Payslip batch aggregate attached matching saved payslips to batch run', [
+                'payroll_run_id' => (int) $run->id,
+                'selected_company_id' => (int) $run->company_id,
+                'statuses' => $expectedStatuses,
+                'attached_count' => $updated,
+            ]);
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Draft payroll snapshots have historically used both statuses before finalization.
+     *
+     * @return list<string>
+     */
+    private function draftSnapshotStatuses(): array
+    {
+        return [Payslip::STATUS_DRAFT, Payslip::STATUS_GENERATED];
+    }
+
     /**
      * Re-aggregate and persist totals on the batch run record.
      */
@@ -2874,8 +3517,8 @@ class PayslipService
 
     /**
      * Remove draft payslips for this batch scope and delete the batch run.
-     * Allowed when status is {@see PayrollBatchRun::STATUS_DRAFT} or {@see PayrollBatchRun::STATUS_QUEUED}
-     * (queued {@see \App\Jobs\GeneratePayrollBatchJob} exits harmlessly if the run was removed first).
+     * Empty processing rows can also be deleted; these are stale "Generating" placeholders
+     * left behind when a worker is killed before it can mark the run failed.
      */
     public function deleteDraftBatchRun(PayrollBatchRun $run): void
     {
@@ -2886,11 +3529,24 @@ class PayslipService
         if ($status === PayrollBatchRun::STATUS_VOIDED) {
             throw new \RuntimeException('Voided payroll batches cannot be deleted.');
         }
-        if ($status === PayrollBatchRun::STATUS_PROCESSING) {
+        $attachedPayslips = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->count();
+        $emptyProcessingRun = $status === PayrollBatchRun::STATUS_PROCESSING
+            && $attachedPayslips === 0
+            && (int) ($run->processed_employees ?? 0) === 0;
+
+        if ($status === PayrollBatchRun::STATUS_PROCESSING && ! $emptyProcessingRun) {
             throw new \RuntimeException('Cannot delete while payslip generation is in progress.');
         }
-        if (! in_array($status, [PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_QUEUED], true)) {
-            throw new \RuntimeException('Only draft or queued batches can be deleted.');
+        if (! in_array($status, [PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_QUEUED, PayrollBatchRun::STATUS_FAILED], true) && ! $emptyProcessingRun) {
+            throw new \RuntimeException('Only draft, queued, failed, or empty stuck processing batches can be deleted.');
+        }
+
+        if ($emptyProcessingRun) {
+            $run->delete();
+
+            return;
         }
 
         $userIds = $this->employeeIdsForBatchScope($run);
@@ -2911,12 +3567,13 @@ class PayslipService
                 $base->where('company_id', (int) $run->company_id);
             }
 
-            $nonDraft = (clone $base)->where('status', '!=', Payslip::STATUS_DRAFT)->count();
+            $draftStatuses = $this->draftSnapshotStatuses();
+            $nonDraft = (clone $base)->whereNotIn('status', $draftStatuses)->count();
             if ($nonDraft > 0) {
                 throw new \RuntimeException('Cannot delete: some payslips are already finalized.');
             }
 
-            (clone $base)->where('status', Payslip::STATUS_DRAFT)->delete();
+            (clone $base)->whereIn('status', $draftStatuses)->delete();
             $run->delete();
         });
     }

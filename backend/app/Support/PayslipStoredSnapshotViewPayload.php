@@ -20,35 +20,9 @@ final class PayslipStoredSnapshotViewPayload
         PayslipService $payslipService,
         ?string $companyLogoPublicUrl
     ): array {
-        try {
-            $live = $payslipService->previewDataForEmployee($employee, $payslipService->periodInputFromPayslip($payslip));
-            if (is_array($live) && is_array($live['summary'] ?? null)) {
-                $live['payslip_id'] = (int) $payslip->id;
-                $live['batch_scope'] = [
-                    'company_id' => $payslip->company_id !== null ? (int) $payslip->company_id : null,
-                    'branch_id' => $payslip->branch_id !== null ? (int) $payslip->branch_id : null,
-                    'department_id' => $payslip->department_id !== null ? (int) $payslip->department_id : null,
-                ];
-                if (isset($live['company']) && is_array($live['company'])) {
-                    $live['company']['logo_url'] = $companyLogoPublicUrl;
-                }
-                if (isset($live['employee']) && is_array($live['employee'])) {
-                    $live['employee']['profile_image_url'] = $employee->profile_image_url;
-                }
-                if (! isset($live['payroll']) || ! is_array($live['payroll'])) {
-                    $live['payroll'] = [];
-                }
-                $live['payroll']['status'] = (string) $payslip->status;
-                $live['payroll']['cycle_label'] = $payslip->cycle_label ?: ($live['payroll']['cycle_label'] ?? null);
-
-                return $live;
-            }
-        } catch (\Throwable) {
-            // Fall back to the stored snapshot below if current attendance recomputation is unavailable.
-        }
-
         $snapshotRaw = is_array($payslip->snapshot ?? null) ? $payslip->snapshot : [];
-        $snapshot = $payslipService->normalizeSnapshotForPayslipView($snapshotRaw);
+        $snapshot = $payslipService->frozenSnapshotForPayslipView($snapshotRaw);
+        $metrics = $payslipService->frozenPayslipLineMetrics($payslip);
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
             ? array_values($summary['daily_computation_earning_lines'])
@@ -120,9 +94,9 @@ final class PayslipStoredSnapshotViewPayload
                 'daily_rate_divisor_days' => (int) ($summary['daily_rate_divisor_days'] ?? data_get($snapshot, 'daily_rate_divisor_days', 0)),
             ],
             'amounts' => [
-                'gross_pay' => (float) ($payslip->gross_pay ?? 0),
-                'total_deductions' => (float) ($payslip->total_deductions ?? 0),
-                'net_pay' => (float) ($payslip->net_pay ?? 0),
+                'gross_pay' => (float) ($metrics['gross_pay'] ?? ($payslip->gross_pay ?? 0)),
+                'total_deductions' => (float) ($metrics['total_deductions'] ?? ($payslip->total_deductions ?? 0)),
+                'net_pay' => (float) ($metrics['net_pay'] ?? ($payslip->net_pay ?? 0)),
                 'taxable_total_this_period' => (float) ($payslip->taxable_total_this_period ?? 0),
                 'non_taxable_total_this_period' => (float) ($payslip->non_taxable_total_this_period ?? 0),
                 'ytd_gross' => (float) ($payslip->ytd_gross ?? 0),
