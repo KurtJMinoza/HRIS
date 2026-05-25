@@ -139,19 +139,44 @@ class PayrollReportService
      */
     private function layoutForColumnCount(int $columnCount): array
     {
-        $employeeWidth = $columnCount >= 15 ? 12.5 : 14.0;
+        $employeeWidth = match (true) {
+            $columnCount >= 22 => 6.5,
+            $columnCount >= 18 => 7.5,
+            $columnCount >= 15 => 8.5,
+            $columnCount >= 11 => 10.0,
+            default => 12.0,
+        };
         $numericWidth = round((100.0 - $employeeWidth) / max(1, $columnCount - 1), 4);
         $paperSize = match (true) {
-            $columnCount >= 14 => 'a3',
+            $columnCount >= 22 => 'a2',
+            $columnCount >= 15 => 'a3',
             $columnCount >= 11 => 'legal',
             default => 'a4',
         };
 
         return [
             'paper_size' => $paperSize,
-            'body_font' => $columnCount >= 14 ? '6.1px' : ($columnCount >= 11 ? '6.6px' : '7px'),
-            'header_font' => $columnCount >= 14 ? '5.4px' : ($columnCount >= 11 ? '5.8px' : '6.2px'),
-            'cell_padding' => $columnCount >= 14 ? '2px 2.2px' : ($columnCount >= 11 ? '2.4px 2.6px' : '2.8px 3px'),
+            'body_font' => match (true) {
+                $columnCount >= 22 => '4.8px',
+                $columnCount >= 18 => '5.0px',
+                $columnCount >= 15 => '5.3px',
+                $columnCount >= 11 => '5.8px',
+                default => '6.4px',
+            },
+            'header_font' => match (true) {
+                $columnCount >= 22 => '4.2px',
+                $columnCount >= 18 => '4.5px',
+                $columnCount >= 15 => '4.8px',
+                $columnCount >= 11 => '5.2px',
+                default => '5.6px',
+            },
+            'cell_padding' => match (true) {
+                $columnCount >= 22 => '0.7px 0.8px',
+                $columnCount >= 18 => '0.8px 0.9px',
+                $columnCount >= 15 => '1px 1.1px',
+                $columnCount >= 11 => '1.2px 1.4px',
+                default => '1.6px 1.8px',
+            },
             'employee_width' => $employeeWidth,
             'numeric_width' => $numericWidth,
         ];
