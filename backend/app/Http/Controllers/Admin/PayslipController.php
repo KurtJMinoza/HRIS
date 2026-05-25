@@ -15,6 +15,7 @@ use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\PayslipBulkDownloadService;
 use App\Services\PayslipService;
+use App\Services\PayrollEmployeeEligibilityService;
 use App\Support\PayslipStoredSnapshotViewPayload;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -37,6 +38,7 @@ class PayslipController extends Controller
         private readonly PayslipBulkDownloadService $payslipBulkDownloadService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly DataScopeService $dataScopeService,
+        private readonly PayrollEmployeeEligibilityService $payrollEligibility,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -230,12 +232,19 @@ class PayslipController extends Controller
                 $displayLabel = 'Draft';
             }
 
-            // Delete for draft (generated) or queued (job not started); not while processing; never when any payslip is finalized.
+            $isEmptyProcessingRun = $batchStatus === PayrollBatchRun::STATUS_PROCESSING
+                && $payslipCount === 0
+                && $finalizedCount === 0
+                && $processedEmployees === 0;
+
+            // Delete for draft/queued runs, plus empty processing rows left behind by failed workers.
             $canDelete = ! $isFinalized
                 && $finalizedCount === 0
                 && (
                     $batchStatus === PayrollBatchRun::STATUS_DRAFT
                     || $batchStatus === PayrollBatchRun::STATUS_QUEUED
+                    || $batchStatus === PayrollBatchRun::STATUS_FAILED
+                    || $isEmptyProcessingRun
                 );
 
             return [
@@ -448,6 +457,9 @@ class PayslipController extends Controller
             'to_date' => $v['to_date'] ?? null,
             'pay_cycle_id' => $v['pay_cycle_id'] ?? null,
             'reference_date' => $v['reference_date'] ?? null,
+            'company_id' => isset($v['company_id']) ? (int) $v['company_id'] : null,
+            'branch_id' => isset($v['branch_id']) ? (int) $v['branch_id'] : null,
+            'department_id' => isset($v['department_id']) ? (int) $v['department_id'] : null,
             'use_company_default' => (bool) ($v['use_company_default'] ?? false),
             'payroll_period_id' => $v['payroll_period_id'] ?? null,
             'is_final_pay' => $v['is_final_pay'] ?? false,
@@ -488,22 +500,23 @@ class PayslipController extends Controller
         }
 
         // Probe the scope to resolve pay period dates (pay cycle + cut-off integration).
-        $probeQ = User::query()
-            ->payrollEmployees()
-            ->active();
-        $this->dataScopeService->restrictEmployeeQuery($actor, $probeQ);
+        $periodStartForEligibility = ! empty($periodInput['from_date'])
+            ? \Carbon\Carbon::parse((string) $periodInput['from_date'])->startOfDay()
+            : null;
+        $periodEndForEligibility = ! empty($periodInput['to_date'])
+            ? \Carbon\Carbon::parse((string) $periodInput['to_date'])->startOfDay()
+            : null;
+        $probeQ = $this->payrollEligibility->query(
+            isset($v['company_id']) ? (int) $v['company_id'] : null,
+            isset($v['branch_id']) ? (int) $v['branch_id'] : null,
+            isset($v['department_id']) ? (int) $v['department_id'] : null,
+            $periodStartForEligibility,
+            $periodEndForEligibility,
+            $actor,
+            $this->dataScopeService
+        );
         if (is_array($v['employee_ids'] ?? null) && count($v['employee_ids']) > 0) {
             $probeQ->whereIn('id', $v['employee_ids']);
-        } else {
-            if (! empty($v['company_id'])) {
-                $probeQ->where('company_id', (int) $v['company_id']);
-            }
-            if (! empty($v['branch_id'])) {
-                $probeQ->where('branch_id', (int) $v['branch_id']);
-            }
-            if (! empty($v['department_id'])) {
-                $probeQ->where('department_id', (int) $v['department_id']);
-            }
         }
         /** @var User|null $probe */
         $probe = (clone $probeQ)->orderBy('id')->first();

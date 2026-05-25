@@ -1469,7 +1469,7 @@ export default function AdminGeneratePayslipsPage() {
                                   variant="outline"
                                   title={
                                     deleteDisabled && !deletingBatchId
-                                      ? 'Only draft or queued batches can be deleted.'
+                                      ? 'Only draft, queued, failed, or empty stuck generating batches can be deleted.'
                                       : undefined
                                   }
                                   className="h-8 rounded-lg border-red-200/70 bg-background px-3 text-xs font-normal text-red-600 shadow-sm hover:bg-red-50 disabled:opacity-50 dark:border-red-900/40 dark:text-red-400 dark:hover:bg-red-950/30"
@@ -1507,7 +1507,7 @@ export default function AdminGeneratePayslipsPage() {
             <DialogHeader>
               <DialogTitle className="text-foreground">Delete this batch?</DialogTitle>
               <DialogDescription className="text-left text-muted-foreground">
-                This removes draft payslip rows (or cancels a queued generation) for{' '}
+                This removes draft payslip rows or cancels a failed, queued, or empty stuck generation for{' '}
                 <span className="font-medium text-foreground">{deleteBatchDialogRow?.company_name ?? 'this company'}</span>
                 {deleteBatchDialogRow?.pay_period_start && deleteBatchDialogRow?.pay_period_end ? (
                   <>
