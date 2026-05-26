@@ -235,9 +235,6 @@ class DeductionApplicationService
             return $pa <=> $pb;
         });
 
-        // Voluntary (non-garnishment) deductions use disposable income as their ceiling.
-        // Only court-ordered garnishments are subject to the minimum-wage floor.
-        $voluntaryBudget = $disposableIncome;
         $appliedTotal = 0.0;
         foreach ($indexed as &$row) {
             $line = $row['line'];
@@ -247,8 +244,6 @@ class DeductionApplicationService
             $warning = null;
             $isLegallyAllowed = (bool) ($meta['is_legally_allowed'] ?? true);
             $isGarnishment = (bool) ($meta['is_court_ordered_garnishment'] ?? false);
-            $isLoanDeduction = strtolower((string) ($meta['deduction_type'] ?? '')) === DeductionType::TYPE_LOAN;
-            $isPayrollStandardDeduction = $this->isPayrollStandardDeductionLine($line);
             $isDisciplinary = Str::contains(
                 strtolower((string) ($line['name'] ?? '')),
                 ['disciplinary', 'penalty', 'sanction']
@@ -265,11 +260,9 @@ class DeductionApplicationService
 
             if ($isDisciplinary && ! $isLegallyAllowed) {
                 $warning = 'Blocked disciplinary deduction: legal permission flag is required.';
-            } elseif ($isLoanDeduction || $isPayrollStandardDeduction) {
-                // Contractual and Payroll Standard component deductions are fixed for this payroll run.
-                // Keep the resolved scheduled amount instead of shrinking it by disposable-income budget.
-                $applied = $desired;
             } elseif ($isGarnishment) {
+                // Court-ordered garnishments remain subject to statutory garnishment limits.
+                // Ordinary payroll deductions are not capped to available gross/net pay.
                 $allowedByCap = max(0.0, $maxGarnishment - $garnishmentUsed);
                 $allowedByBudget = min($remainingBudget, $allowedByCap);
                 $applied = round(max(0.0, min($desired, $allowedByBudget)), 2);
@@ -277,14 +270,10 @@ class DeductionApplicationService
                     $warning = 'Reduced by legal garnishment cap / minimum-wage protection.';
                 }
             } else {
-                $applied = round(max(0.0, min($desired, $voluntaryBudget)), 2);
-                if ($applied < $desired) {
-                    $warning = 'Reduced: insufficient disposable income after statutory + withholding.';
-                }
+                $applied = $desired;
             }
 
             $remainingBudget = round(max(0.0, $remainingBudget - $applied), 2);
-            $voluntaryBudget = round(max(0.0, $voluntaryBudget - $applied), 2);
             if ($isGarnishment) {
                 $garnishmentUsed = round($garnishmentUsed + $applied, 2);
             }
@@ -308,27 +297,6 @@ class DeductionApplicationService
             'legal_warnings' => array_values(array_unique($warnings)),
             'minimum_take_home_floor' => round($floor, 2),
         ];
-    }
-
-    /**
-     * Payroll Standard employee compensation deductions are configured as per-run amounts.
-     *
-     * @param  array<string, mixed>  $line
-     */
-    private function isPayrollStandardDeductionLine(array $line): bool
-    {
-        foreach ([
-            $line['resolved_calculation_standard'] ?? null,
-            $line['calculation_standard'] ?? null,
-            data_get($line, 'pay_component_resolution.resolved_calculation_standard'),
-            data_get($line, 'pay_component_resolution.calculation_standard'),
-        ] as $standard) {
-            if ((string) $standard === PayComponent::STANDARD_PAYROLL) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function priorityOrderForRow(

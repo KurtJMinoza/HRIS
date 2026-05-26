@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\Payslip;
+use App\Services\DeductionScheduleService;
 use App\Services\PayslipService;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -229,7 +230,7 @@ class PayrollFinalizeDeductionFreezeTest extends TestCase
 
         $this->assertSame(3538.46, $totals['gross_pay']);
         $this->assertSame(4821.64, $totals['total_deductions']);
-        $this->assertSame(0.00, $totals['net_pay']);
+        $this->assertSame(-1283.18, $totals['net_pay']);
         $this->assertSame(1550.00, $catalog[3]['amount']);
         $this->assertSame('payroll_standard', $catalog[3]['calculation_standard']);
     }
@@ -270,6 +271,74 @@ class PayrollFinalizeDeductionFreezeTest extends TestCase
             1550.00,
             (float) data_get($payslip->snapshot, 'summary.payslip_custom_deduction_lines.0.amount')
         );
+    }
+
+    public function test_unscheduled_zero_custom_deductions_are_hidden_from_payslip_view(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+        $snapshot = [
+            'summary' => [
+                'deduction_schedule' => [
+                    'semi_monthly_period' => 'second',
+                ],
+                'payslip_deduction_lines' => [],
+                'payslip_custom_deduction_lines' => [
+                    [
+                        'component_code' => 'FAMES_EVERY_15',
+                        'label' => 'FAMES EVERY 15',
+                        'amount' => 0.00,
+                        'resolved_schedule' => '15th',
+                    ],
+                    [
+                        'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_15',
+                        'label' => 'LENDING SALARY DEDUCTION EVERY 15',
+                        'amount' => 0.00,
+                        'resolved_schedule' => '15th',
+                    ],
+                    [
+                        'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+                        'label' => 'LENDING SALARY DEDUCTION EVERY 30',
+                        'amount' => 1550.00,
+                        'resolved_schedule' => '30th',
+                    ],
+                ],
+            ],
+        ];
+
+        $view = $service->frozenSnapshotForPayslipView($snapshot);
+        $lines = $view['summary']['payslip_custom_deduction_lines'];
+
+        $this->assertCount(1, $lines);
+        $this->assertSame('LENDING_SALARY_DEDUCTION_EVERY_30', $lines[0]['component_code']);
+        $this->assertSame(1550.00, $lines[0]['amount']);
+    }
+
+    public function test_live_custom_deduction_display_lines_skip_off_cycle_zero_rows(): void
+    {
+        $service = (new ReflectionClass(DeductionScheduleService::class))->newInstanceWithoutConstructor();
+
+        $lines = $service->buildPayslipCustomDeductionDisplayLines([
+            [
+                'code' => 'FAMES_EVERY_15',
+                'name' => 'FAMES EVERY 15',
+                'computed_amount' => 1000.00,
+                'scheduled_this_period' => 0.00,
+                'deduction_schedule_type' => '15th',
+                'payroll_run_type' => '30th',
+            ],
+            [
+                'code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+                'name' => 'LENDING SALARY DEDUCTION EVERY 30',
+                'computed_amount' => 1550.00,
+                'scheduled_this_period' => 1550.00,
+                'deduction_schedule_type' => '30th',
+                'payroll_run_type' => '30th',
+            ],
+        ]);
+
+        $this->assertCount(1, $lines);
+        $this->assertSame('LENDING_SALARY_DEDUCTION_EVERY_30', $lines[0]['component_code']);
+        $this->assertSame(1550.00, $lines[0]['amount']);
     }
 
     private function payslipServiceWithoutConstructor(): PayslipService

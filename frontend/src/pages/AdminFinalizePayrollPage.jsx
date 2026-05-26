@@ -1635,6 +1635,36 @@ export default function AdminFinalizePayrollPage() {
                 </div>
               </div>
 
+              <div className="rounded-xl border border-border/80 bg-card">
+                <div className="border-b border-border/70 px-4 py-3">
+                  <p className="text-sm font-semibold text-foreground">Deductions</p>
+                </div>
+                <div className="divide-y divide-border/70">
+                  {[
+                    ...(Array.isArray(breakdownRow?.payslip_deduction_lines) ? breakdownRow.payslip_deduction_lines : []),
+                    ...(Array.isArray(breakdownRow?.payslip_custom_deduction_lines) ? breakdownRow.payslip_custom_deduction_lines : []),
+                  ].map((l, i) => (
+                    <div key={`bdd-${i}`} className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">{String(l?.label || 'Deduction')}</p>
+                        {l?.resolved_schedule || l?.resolved_calculation_standard ? (
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {[l?.resolved_schedule, l?.resolved_calculation_standard].filter(Boolean).join(' · ')}
+                          </p>
+                        ) : null}
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{formatPeso(Number(l?.amount || 0))}</p>
+                    </div>
+                  ))}
+                  {[
+                    ...(Array.isArray(breakdownRow?.payslip_deduction_lines) ? breakdownRow.payslip_deduction_lines : []),
+                    ...(Array.isArray(breakdownRow?.payslip_custom_deduction_lines) ? breakdownRow.payslip_custom_deduction_lines : []),
+                  ].length === 0 ? (
+                    <div className="px-4 py-10 text-center text-sm text-muted-foreground">No deduction lines available for this preview row.</div>
+                  ) : null}
+                </div>
+              </div>
+
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button
                   type="button"

@@ -1994,11 +1994,11 @@ class PayrollComputationService
         $customDeductionsThisPeriod = (float) $phase3Deduction['custom_deductions_this_period'];
 
         // Statutory (SSS/PhilHealth/Pag-IBIG) before loan/custom deductions — aligns with {@see PayrollCalculatorService::buildEmployeeCompensationSummary} net ordering.
-        $netPay = max(0, round(
+        $netPay = round(
             ($basicPayThisPeriod + $attendancePremiumPayThisPeriod) + $nonBasicEarningsThisPeriod - $employeeStatutoryThisPeriod - $customDeductionsThisPeriod,
             2
-        ));
-        $netPayAfterWithholding = max(0, round($netPay - $withholdingThisPeriod, 2));
+        );
+        $netPayAfterWithholding = round($netPay - $withholdingThisPeriod, 2);
 
         if (is_object($timingSink)) {
             $timingSink->load_deductions_ms = ($timingSink->load_deductions_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;

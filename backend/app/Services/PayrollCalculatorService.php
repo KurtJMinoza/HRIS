@@ -1724,7 +1724,7 @@ class PayrollCalculatorService
         $employeeStatutory = (float) ($statutory['totals']['employee_deduction'] ?? 0);
         $withholdingMonthly = (float) ($withholding['withholding_per_month'] ?? 0);
         // Government/statutory and withholding before employee loan & other custom deductions (typical PH net pay ordering).
-        $netPay = round(max(0.0, $earningsTotal - $employeeStatutory - $withholdingMonthly - $deductionsTotal), 2);
+        $netPay = round($earningsTotal - $employeeStatutory - $withholdingMonthly - $deductionsTotal, 2);
 
         $deductionScheduleCatalog = $includeCatalog
             ? app(DeductionScheduleService::class)->listRowsForAdmin($user->getEffectiveCompanyId())

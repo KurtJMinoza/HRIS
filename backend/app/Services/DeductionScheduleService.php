@@ -448,6 +448,11 @@ class DeductionScheduleService
             $sched = $this->normalizeScheduleType((string) ($line['deduction_schedule_type'] ?? DeductionScheduleSetting::SCHEDULE_BOTH))
                 ?? DeductionScheduleSetting::SCHEDULE_BOTH;
             $standard = $this->normalizeCalculationStandard($line['resolved_calculation_standard'] ?? $line['calculation_standard'] ?? null);
+            $payrollRunType = (string) ($line['payroll_run_type'] ?? data_get($line, 'pay_component_resolution.payroll_run_type', ''));
+            $isScheduledThisPeriod = $this->isScheduledDeductionForRun($sched, $payrollRunType);
+            if (! $isScheduledThisPeriod && abs($amount) < 0.005) {
+                continue;
+            }
             $payComponentId = isset($line['pay_component_id']) ? (int) $line['pay_component_id'] : null;
             $out[] = [
                 'key' => $payComponentId ? 'pay_component:'.$payComponentId : 'deduction:'.md5($rawName),
@@ -463,6 +468,11 @@ class DeductionScheduleService
                 'deduction_schedule_type' => $sched,
                 'calculation_standard' => $standard,
                 'resolved_calculation_standard' => $standard,
+                'payroll_run_type' => $payrollRunType !== '' ? $payrollRunType : null,
+                'is_scheduled_this_period' => $isScheduledThisPeriod,
+                'divisor_applied' => isset($line['divisor_applied']) && is_numeric($line['divisor_applied'])
+                    ? (float) $line['divisor_applied']
+                    : null,
                 'priority_order' => (int) ($line['priority_order'] ?? 0),
                 'priority_bucket' => $line['priority_bucket'] ?? null,
                 'legal_warning' => $line['legal_warning'] ?? null,
@@ -471,6 +481,25 @@ class DeductionScheduleService
         }
 
         return $out;
+    }
+
+    private function isScheduledDeductionForRun(string $schedule, string $payrollRunType): bool
+    {
+        $run = strtolower(trim($payrollRunType));
+        if ($run === '') {
+            return true;
+        }
+        if ($schedule === DeductionScheduleSetting::SCHEDULE_BOTH) {
+            return true;
+        }
+        if ($schedule === DeductionScheduleSetting::SCHEDULE_15TH) {
+            return in_array($run, ['15th', 'first'], true);
+        }
+        if ($schedule === DeductionScheduleSetting::SCHEDULE_30TH) {
+            return in_array($run, ['30th', 'second', 'end_of_month', 'eom', 'monthly', 'payroll'], true);
+        }
+
+        return true;
     }
 
     /**

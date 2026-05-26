@@ -653,6 +653,10 @@ class FinalizePayrollService
             $summary = is_array($stored->snapshot['summary'] ?? null)
                 ? (array) $stored->snapshot['summary']
                 : $summary;
+            $viewSnapshot = $this->payslipService->frozenSnapshotForPayslipView(
+                is_array($stored->snapshot) ? $stored->snapshot : []
+            );
+            $viewSummary = is_array($viewSnapshot['summary'] ?? null) ? $viewSnapshot['summary'] : [];
             $tableGross = $lineTotals['gross_pay'];
             $tableDeductions = $lineTotals['total_deductions'];
             $tableNet = $lineTotals['net_pay'];
@@ -696,8 +700,17 @@ class FinalizePayrollService
                 'daily_rate' => round((float) ($summary['daily_rate'] ?? 0), 2),
                 'basic_pay' => round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2),
                 'actual_days_worked' => round((float) ($summary['actual_days_worked'] ?? 0), 2),
-                'daily_computation_earning_lines' => is_array($summary['daily_computation_earning_lines'] ?? null)
-                    ? array_values($summary['daily_computation_earning_lines'])
+                'daily_computation_earning_lines' => is_array($viewSummary['daily_computation_earning_lines'] ?? null)
+                    ? array_values($viewSummary['daily_computation_earning_lines'])
+                    : [],
+                'payslip_earning_lines' => is_array($viewSummary['payslip_earning_lines'] ?? null)
+                    ? array_values($viewSummary['payslip_earning_lines'])
+                    : [],
+                'payslip_deduction_lines' => is_array($viewSummary['payslip_deduction_lines'] ?? null)
+                    ? array_values($viewSummary['payslip_deduction_lines'])
+                    : [],
+                'payslip_custom_deduction_lines' => is_array($viewSummary['payslip_custom_deduction_lines'] ?? null)
+                    ? array_values($viewSummary['payslip_custom_deduction_lines'])
                     : [],
                 'attendance_display_summary' => is_array($summary['attendance_display_summary'] ?? null)
                     ? $summary['attendance_display_summary']
@@ -1662,7 +1675,7 @@ class FinalizePayrollService
             );
             $deductionMismatches = $this->payslipService->deductionLineMismatches($draftCatalog, $finalCatalog);
             if ($deductionMismatches !== []) {
-                throw new \RuntimeException('Finalization aborted. Deduction amount mismatch detected.');
+                throw new \RuntimeException('Finalization failed: finalized payroll does not match draft payroll.');
             }
 
             $this->validateDraftFinalizedFrozenMetrics(
@@ -2161,7 +2174,7 @@ class FinalizePayrollService
                             ]);
                         }
 
-                        throw new \RuntimeException('Finalization aborted. Deduction amount mismatch detected.');
+                        throw new \RuntimeException('Finalization failed: finalized payroll does not match draft payroll.');
                     }
 
                     $this->validateDraftFinalizedFrozenMetrics(
@@ -2362,7 +2375,7 @@ class FinalizePayrollService
                 'mismatches' => $mismatches,
             ]);
 
-            throw new \RuntimeException('Finalization aborted. Deduction amount mismatch detected.');
+            throw new \RuntimeException('Finalization failed: finalized payroll does not match draft payroll.');
         }
 
         Log::info('Payroll finalize validation passed: finalized lines match draft snapshot', $context);

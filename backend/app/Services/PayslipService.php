@@ -1128,7 +1128,7 @@ class PayslipService
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $lines = array_values(array_merge(
             $this->rawPayslipLineList($summary['payslip_deduction_lines'] ?? []),
-            $this->rawPayslipLineList($summary['payslip_custom_deduction_lines'] ?? [])
+            $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? [], $summary)
         ));
 
         $catalog = [];
@@ -1298,7 +1298,7 @@ class PayslipService
         }
 
         if ($mismatches !== []) {
-            throw new \RuntimeException('Finalization aborted. Deduction amount mismatch detected.');
+            throw new \RuntimeException('Finalization failed: finalized payroll does not match draft payroll.');
         }
     }
 
@@ -2029,8 +2029,8 @@ class PayslipService
     }
 
     /**
-     * Frozen finalized snapshots must render exactly as stored. This only coerces table
-     * payloads back to JSON-list shape; it does not repair, recalculate, cap, or filter lines.
+     * Frozen finalized snapshots render stored line values, while hiding zero off-cycle
+     * deduction placeholders that are not scheduled for this payroll date.
      *
      * @param  array<string, mixed>  $snapshot
      * @return array<string, mixed>
@@ -2039,7 +2039,12 @@ class PayslipService
     {
         $out = $snapshot;
         $summary = is_array($out['summary'] ?? null) ? $out['summary'] : [];
-        $out['summary'] = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
+        $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
+        $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
+            $summary['payslip_custom_deduction_lines'] ?? [],
+            $summary
+        );
+        $out['summary'] = $summary;
 
         return $out;
     }
@@ -2136,7 +2141,7 @@ class PayslipService
         ));
         $deductionLines = array_values(array_merge(
             $this->rawPayslipLineList($summary['payslip_deduction_lines'] ?? []),
-            $this->rawPayslipLineList($summary['payslip_custom_deduction_lines'] ?? [])
+            $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? [], $summary)
         ));
 
         $categoryTotals = [];
@@ -2157,7 +2162,7 @@ class PayslipService
         $hasLines = count($earningLines) + count($deductionLines) > 0;
         $gross = $hasLines ? $grossFromLines : round((float) ($payslip->gross_pay ?? 0), 2);
         $deductions = $hasLines ? $deductionsFromLines : round((float) ($payslip->total_deductions ?? 0), 2);
-        $net = $hasLines ? round(max(0.0, $gross - $deductions), 2) : round((float) ($payslip->net_pay ?? 0), 2);
+        $net = $hasLines ? round($gross - $deductions, 2) : round((float) ($payslip->net_pay ?? 0), 2);
 
         $otherDeductions = 0.0;
         foreach (['deduction', 'loan', 'cash_advance', 'late_deduction', 'undertime_deduction', 'absence_deduction'] as $category) {
@@ -2332,7 +2337,7 @@ class PayslipService
         ));
         $deductionLines = array_values(array_merge(
             is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
-            is_array($summary['payslip_custom_deduction_lines'] ?? null) ? $summary['payslip_custom_deduction_lines'] : []
+            $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? [], $summary)
         ));
 
         $gross = $this->sumPayslipLineAmounts($earningLines);
@@ -2341,7 +2346,7 @@ class PayslipService
         return [
             'gross_pay' => $gross,
             'total_deductions' => $deductions,
-            'net_pay' => round(max(0.0, $gross - $deductions), 2),
+            'net_pay' => round($gross - $deductions, 2),
             'earning_lines' => $earningLines,
             'deduction_lines' => $deductionLines,
         ];
@@ -2362,32 +2367,6 @@ class PayslipService
         }
 
         return round($total, 2);
-    }
-
-    /**
-     * Deductions are applied against available earnings; excess cannot become negative take-home pay.
-     *
-     * @param  list<array<string, mixed>>  $governmentLines
-     * @param  list<array<string, mixed>>  $customLines
-     * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>}
-     */
-    private function capDeductionLineAmountsToGross(array $governmentLines, array $customLines, float $gross): array
-    {
-        $remaining = max(0.0, round($gross, 2));
-        $apply = static function (array $lines) use (&$remaining): array {
-            $capped = [];
-            foreach ($lines as $line) {
-                $amount = max(0.0, (float) ($line['amount'] ?? 0));
-                $applied = min($amount, $remaining);
-                $remaining = round(max(0.0, $remaining - $applied), 2);
-                $line['amount'] = round($applied, 2);
-                $capped[] = $line;
-            }
-
-            return $capped;
-        };
-
-        return [$apply($governmentLines), $apply($customLines)];
     }
 
     /**
@@ -2480,7 +2459,7 @@ class PayslipService
             false,
             true
         );
-        $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? []);
+        $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? [], $summary);
         $grossFromShownEarnings = $this->sumPayslipLineAmounts(array_merge(
             $summary['daily_computation_earning_lines'],
             $summary['payslip_earning_lines']
@@ -2735,7 +2714,7 @@ class PayslipService
                 continue;
             }
             $label = trim((string) ($row['label'] ?? ''));
-            $amt = (float) ($row['amount'] ?? 0);
+            $amt = (float) ($row['amount'] ?? $row['resolved_amount'] ?? 0);
             $minutesWorkedRaw = $row['minutes_worked'] ?? null;
             $minutesWorked = is_numeric($minutesWorkedRaw) ? (int) round((float) $minutesWorkedRaw) : null;
             $hourlyRateRaw = $row['hourly_rate'] ?? null;
@@ -2815,7 +2794,7 @@ class PayslipService
     /**
      * @return list<array<string, mixed>>
      */
-    private function normalizePayslipCustomDeductionLines(mixed $raw): array
+    private function normalizePayslipCustomDeductionLines(mixed $raw, array $summaryContext = []): array
     {
         $rows = is_array($raw) ? $raw : [];
         $out = [];
@@ -2824,7 +2803,10 @@ class PayslipService
                 continue;
             }
             $label = trim((string) ($row['label'] ?? ''));
-            $amt = (float) ($row['amount'] ?? 0);
+            $amt = (float) ($row['amount'] ?? $row['resolved_amount'] ?? 0);
+            if ($this->shouldHideUnscheduledZeroDeductionLine($row, $amt, $summaryContext)) {
+                continue;
+            }
             $bucket = isset($row['priority_bucket']) ? trim((string) $row['priority_bucket']) : '';
             $warn = isset($row['legal_warning']) ? trim((string) $row['legal_warning']) : '';
             if ($label === '' && abs($amt) < 1e-9 && $bucket === '' && $warn === '') {
@@ -2851,10 +2833,88 @@ class PayslipService
                 'deduction_schedule_type' => isset($row['deduction_schedule_type']) ? (string) $row['deduction_schedule_type'] : null,
                 'calculation_standard' => isset($row['calculation_standard']) ? (string) $row['calculation_standard'] : null,
                 'resolved_calculation_standard' => isset($row['resolved_calculation_standard']) ? (string) $row['resolved_calculation_standard'] : null,
+                'payroll_run_type' => isset($row['payroll_run_type']) ? (string) $row['payroll_run_type'] : null,
+                'is_scheduled_this_period' => isset($row['is_scheduled_this_period']) ? (bool) $row['is_scheduled_this_period'] : null,
+                'divisor_applied' => isset($row['divisor_applied']) && is_numeric($row['divisor_applied']) ? (float) $row['divisor_applied'] : null,
             ];
         }
 
         return array_values($out);
+    }
+
+    /**
+     * Hide off-cycle deduction rows that were included only as zero placeholders.
+     * This is display normalization only; scheduled zero rows can still be shown.
+     *
+     * @param  array<string, mixed>  $row
+     * @param  array<string, mixed>  $summaryContext
+     */
+    private function shouldHideUnscheduledZeroDeductionLine(array $row, float $amount, array $summaryContext = []): bool
+    {
+        if (abs($amount) >= 0.005) {
+            return false;
+        }
+
+        if (array_key_exists('is_scheduled_this_period', $row)) {
+            return ! (bool) $row['is_scheduled_this_period'];
+        }
+
+        $divisor = $row['divisor_applied'] ?? null;
+        if (is_numeric($divisor) && (float) $divisor > 0.0) {
+            return false;
+        }
+
+        $schedule = $this->normalizePayslipScheduleValue(
+            $row['resolved_schedule']
+                ?? $row['component_schedule']
+                ?? $row['deduction_schedule_type']
+                ?? $row['schedule']
+                ?? null
+        );
+        if ($schedule === null || $schedule === 'both') {
+            return false;
+        }
+
+        $run = $this->normalizePayslipRunType(
+            $row['payroll_run_type']
+                ?? data_get($row, 'pay_component_resolution.payroll_run_type')
+                ?? data_get($summaryContext, 'deduction_schedule.semi_monthly_period')
+                ?? data_get($summaryContext, 'semi_monthly_period')
+                ?? null
+        );
+        if ($run === null) {
+            return false;
+        }
+
+        return ($schedule === '15th' && $run !== '15th')
+            || ($schedule === '30th' && $run !== '30th');
+    }
+
+    private function normalizePayslipScheduleValue(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        return match (strtolower(trim($value))) {
+            '15th', '15', 'first', 'first_half', 'first-half', 'every_15_only' => '15th',
+            '30th', '30', 'second', 'second_half', 'second-half', 'end_of_month', 'eom', 'every_30_only' => '30th',
+            'both', '15th_and_30th', '50/50', 'half', 'split', 'semi-monthly', 'semi_monthly' => 'both',
+            default => null,
+        };
+    }
+
+    private function normalizePayslipRunType(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        return match (strtolower(trim($value))) {
+            '15th', 'first' => '15th',
+            '30th', 'second', 'end_of_month', 'eom', 'monthly', 'payroll' => '30th',
+            default => null,
+        };
     }
 
     private function sanitizePayslipText(string $text): string
@@ -3514,10 +3574,6 @@ class PayslipService
         $totalGrossPay = $sums['total_gross'];
         $totalDeductions = $sums['total_deductions'];
         $totalNetPay = $sums['total_net'];
-        if ($totalNetPay <= 0.0 && $totalGrossPay > 0.0) {
-            $totalNetPay = round((float) ($run->total_net ?? max(0.0, $totalGrossPay - $totalDeductions)), 2);
-        }
-
         return [
             'payslip_count' => $sums['employee_count'],
             'total_net_pay' => $totalNetPay,
