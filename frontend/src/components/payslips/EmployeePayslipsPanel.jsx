@@ -22,6 +22,13 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url)
 }
 
+function formatPeso(value) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return '\u20B10.00'
+  const sign = amount < 0 ? '-' : ''
+  return `${sign}\u20B1${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
 export function EmployeePayslipsPanel() {
   const { toast } = useToast()
   const { user } = useAuth()
@@ -53,7 +60,7 @@ export function EmployeePayslipsPanel() {
   const openPreview = async (row) => {
     setPreviewOpen(true)
     setPreviewLoading(true)
-    setPreviewTitle(`${row.pay_period_start} → ${row.pay_period_end}`)
+    setPreviewTitle(`${row.pay_period_start} -> ${row.pay_period_end}`)
     try {
       if (previewUrl) URL.revokeObjectURL(previewUrl)
       const blob = await getMyPayslipPdfBlob(row.id)
@@ -79,7 +86,7 @@ export function EmployeePayslipsPanel() {
         <CardContent>
           {loading ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading payslips…
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading payslips...
             </p>
           ) : rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">No payslips yet. HR will publish them after payroll runs.</p>
@@ -97,11 +104,11 @@ export function EmployeePayslipsPanel() {
                 {rows.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="text-sm">
-                      {r.pay_period_start} → {r.pay_period_end}
+                      {r.pay_period_start} -> {r.pay_period_end}
                     </TableCell>
-                    <TableCell className="text-sm">{r.pay_date || '—'}</TableCell>
+                    <TableCell className="text-sm">{r.pay_date || '-'}</TableCell>
                     <TableCell className="text-right">
-                      ₱{Number(r.net_pay).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {formatPeso(r.net_pay)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">

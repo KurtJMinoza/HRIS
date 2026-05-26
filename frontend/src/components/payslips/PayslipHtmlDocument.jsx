@@ -5,8 +5,9 @@ import { cn } from '@/lib/utils'
 
 function peso(v) {
   const n = Number(v)
-  if (!Number.isFinite(n)) return 'PHP 0.00'
-  return `PHP ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (!Number.isFinite(n)) return '\u20B10.00'
+  const sign = n < 0 ? '-' : ''
+  return `${sign}\u20B1${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 /**
@@ -400,8 +401,10 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
             <p className="mt-4 text-[14px] font-normal leading-snug text-white/60">
               For the period {payCycleRangeNumeric(data?.payroll?.pay_period_start, data?.payroll?.pay_period_end)}
             </p>
-            {netPay <= 0 ? (
-              <p className="mt-2 text-[12px] font-normal text-white/50">Zero or negative net — verify earnings and deductions.</p>
+            {netPay < 0 ? (
+              <p className="mt-2 text-[12px] font-semibold text-red-100">Negative Net Pay</p>
+            ) : netPay === 0 ? (
+              <p className="mt-2 text-[12px] font-normal text-white/50">Zero net pay</p>
             ) : null}
           </div>
         </section>

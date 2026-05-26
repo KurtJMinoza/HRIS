@@ -73,8 +73,9 @@ function isSendablePayslipStatus(status) {
 
 function formatPeso(n) {
   const v = Number(n)
-  if (!Number.isFinite(v)) return '₱0.00'
-  return `₱${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (!Number.isFinite(v)) return '\u20B10.00'
+  const sign = v < 0 ? '-' : ''
+  return `${sign}\u20B1${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatDate(value) {
@@ -502,6 +503,7 @@ export default function AdminFinalizePayrollPage() {
       title: 'Payroll draft generated successfully.',
       description: 'Employee salary rows are ready for review.',
     })
+    setRefreshToken(String(Date.now()))
   }, [draftReady, draftProcessing, periodFinalized, finalizing, loading])
 
   useEffect(() => {
@@ -1427,8 +1429,20 @@ export default function AdminFinalizePayrollPage() {
                           >
                             {formatPeso(row.total_deductions)}
                           </TableCell>
-                          <TableCell className="py-2.5 px-2 text-right text-base font-semibold tabular-nums text-foreground">
-                            {formatPeso(row.net_pay)}
+                          <TableCell
+                            className={cn(
+                              'py-2.5 px-2 text-right text-base font-semibold tabular-nums',
+                              Number(row.net_pay || 0) < 0 ? 'text-red-600 dark:text-red-300' : 'text-foreground',
+                            )}
+                          >
+                            <div className="flex flex-col items-end gap-1">
+                              <span>{formatPeso(row.net_pay)}</span>
+                              {Number(row.net_pay || 0) < 0 ? (
+                                <Badge variant="outline" className="border-red-200 bg-red-50 px-1.5 py-0 text-[10px] font-semibold text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                                  Negative Net Pay
+                                </Badge>
+                              ) : null}
+                            </div>
                           </TableCell>
                           <TableCell className="py-2.5 px-2">
                             {rowFinalized ? statusPill('Finalized', 'green') : statusPill('Draft', 'gray')}
@@ -1609,7 +1623,14 @@ export default function AdminFinalizePayrollPage() {
                   </div>
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Net pay</p>
-                    <p className="mt-1 text-lg font-bold tabular-nums text-brand">{formatPeso(breakdownRow?.net_pay)}</p>
+                    <p className={cn('mt-1 text-lg font-bold tabular-nums', Number(breakdownRow?.net_pay || 0) < 0 ? 'text-red-600 dark:text-red-300' : 'text-brand')}>
+                      {formatPeso(breakdownRow?.net_pay)}
+                    </p>
+                    {Number(breakdownRow?.net_pay || 0) < 0 ? (
+                      <Badge variant="outline" className="mt-2 border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                        Negative Net Pay
+                      </Badge>
+                    ) : null}
                   </div>
                 </div>
               </div>

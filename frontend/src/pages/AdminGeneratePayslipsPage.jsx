@@ -100,15 +100,18 @@ function formatPayPeriodRange(start, end) {
 
 function formatPeso(n) {
   const v = Number(n)
-  if (!Number.isFinite(v)) return '₱0.00'
-  return `₱${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (!Number.isFinite(v)) return '\u20B10.00'
+  const sign = v < 0 ? '-' : ''
+  return `${sign}\u20B1${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatCompactPeso(n) {
   const v = Number(n)
-  if (!Number.isFinite(v) || v === 0) return '₱0'
-  if (v >= 1_000_000) return `₱${(v / 1_000_000).toFixed(1)}M`
-  if (v >= 1_000) return `₱${(v / 1_000).toFixed(0)}K`
+  if (!Number.isFinite(v) || v === 0) return '\u20B10'
+  const sign = v < 0 ? '-' : ''
+  const abs = Math.abs(v)
+  if (abs >= 1_000_000) return `${sign}\u20B1${(abs / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `${sign}\u20B1${(abs / 1_000).toFixed(0)}K`
   return formatPeso(v)
 }
 
@@ -1275,8 +1278,8 @@ export default function AdminGeneratePayslipsPage() {
                     <MetricCard
                       icon={PhilippinePeso}
                       label="Est. Net Pay"
-                      value={scopeReady && estimatedNet > 0 ? formatCompactPeso(estimatedNet) : '—'}
-                      subtext={scopeReady && sampleNet > 0 ? `${formatPeso(sampleNet)} avg/employee` : undefined}
+                      value={scopeReady && Number.isFinite(estimatedNet) ? formatCompactPeso(estimatedNet) : '—'}
+                      subtext={scopeReady && Number.isFinite(sampleNet) ? `${formatPeso(sampleNet)} avg/employee` : undefined}
                       accent
                     />
                   </div>

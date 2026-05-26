@@ -952,6 +952,51 @@ class PayslipService
     }
 
     /**
+     * Persist the same live draft computation used by the payslip page back onto the draft row.
+     * Finalization uses this to freeze the visible draft values, not an older capped snapshot.
+     */
+    public function refreshDraftPayslipFromLiveComputation(Payslip $payslip, User $employee): Payslip
+    {
+        if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            return $payslip;
+        }
+
+        $periodInput = $this->periodInputFromPayslip($payslip);
+        $live = $this->computePayrollForEmployee(
+            $employee,
+            $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
+            'draft',
+            $periodInput
+        );
+        $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
+        $lineTotals = $this->payslipLineTotalsFromSnapshot($snapshot);
+        $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
+
+        $payslip->forceFill([
+            'gross_pay' => $lineTotals['gross_pay'],
+            'total_deductions' => $lineTotals['total_deductions'],
+            'net_pay' => $lineTotals['net_pay'],
+            'taxable_total_this_period' => (float) data_get($live, 'amounts.taxable_total_this_period', $payslip->taxable_total_this_period ?? 0),
+            'non_taxable_total_this_period' => (float) data_get($live, 'amounts.non_taxable_total_this_period', $payslip->non_taxable_total_this_period ?? 0),
+            'snapshot' => $snapshot,
+        ]);
+        $payslip->save();
+
+        $fresh = $payslip->fresh() ?? $payslip;
+        try {
+            app(PayrollLinePersistService::class)->syncDraftLinesFromPayslip($fresh);
+        } catch (Throwable $e) {
+            Log::warning('Payroll draft line sync after live refresh failed', [
+                'payslip_id' => (int) $fresh->id,
+                'employee_id' => (int) $fresh->user_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return $fresh;
+    }
+
+    /**
      * Payslips have real foreign keys for org columns. Older/stale employee assignments can
      * reference deleted departments/branches; keep the payroll company scope, but null any
      * invalid optional org FK before insert/upsert so one bad assignment does not fail a batch.

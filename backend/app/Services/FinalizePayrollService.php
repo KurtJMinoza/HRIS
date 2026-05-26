@@ -222,6 +222,17 @@ class FinalizePayrollService
                     : [];
 
                 if ($stored instanceof Payslip) {
+                    if (! in_array((string) $stored->status, Payslip::lockingStatuses(), true)) {
+                        try {
+                            $stored = $this->payslipService->refreshDraftPayslipFromLiveComputation($stored, $employee);
+                        } catch (Throwable $e) {
+                            Log::warning('Payroll preview draft live refresh failed; falling back to stored snapshot', [
+                                'payslip_id' => (int) $stored->id,
+                                'employee_id' => (int) $employee->id,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
+                    }
                     $lineTotals = $this->payslipService->payslipTotalsForDisplay($stored);
                     $summary = is_array($stored->snapshot['summary'] ?? null)
                         ? (array) $stored->snapshot['summary']
@@ -645,6 +656,19 @@ class FinalizePayrollService
             $employee = $stored->employee;
             if (! $employee instanceof User) {
                 continue;
+            }
+            if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
+                try {
+                    $stored = $this->payslipService->refreshDraftPayslipFromLiveComputation($stored, $employee);
+                    $stored->setRelation('employee', $employee);
+                } catch (Throwable $e) {
+                    Log::warning('Payroll table draft live refresh failed; falling back to stored snapshot', [
+                        'payroll_run_id' => (int) $run->id,
+                        'payslip_id' => (int) $stored->id,
+                        'employee_id' => (int) $employee->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
             }
             $summary = is_array($stored->snapshot['summary'] ?? null)
                 ? (array) $stored->snapshot['summary']
@@ -1651,6 +1675,14 @@ class FinalizePayrollService
                 throw new \RuntimeException('Draft payslip snapshot is missing summary data for user_id='.$employeeUserId);
             }
 
+            $draftPayslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($draftPayslip, $employee);
+            $snapshot = is_array($draftPayslip->snapshot)
+                ? $draftPayslip->snapshot
+                : (is_string($draftPayslip->snapshot) ? json_decode($draftPayslip->snapshot, true) : []);
+            if (! is_array($snapshot)) {
+                $snapshot = [];
+            }
+
             $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($draftPayslip);
             $this->assertDraftPayslipLinesArePersisted($draftPayslip, $draftMetrics);
             $draftCatalog = $this->payslipService->payrollDeductionLineCatalog($snapshot);
@@ -2103,6 +2135,8 @@ class FinalizePayrollService
                         throw new \RuntimeException('Missing draft payslip for user_id='.(int) $user->id);
                     }
 
+                    $payslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $user);
+
                     $snapshotRaw = $payslip->snapshot;
                     $snapshot = is_array($snapshotRaw)
                         ? $snapshotRaw
@@ -2278,6 +2312,19 @@ class FinalizePayrollService
             return;
         }
 
+        $gross = round((float) ($metrics['gross_pay'] ?? 0), 2);
+        $deductions = round((float) ($metrics['total_deductions'] ?? 0), 2);
+        $net = round((float) ($metrics['net_pay'] ?? 0), 2);
+        if (abs($gross) < 0.01 && abs($deductions) < 0.01 && abs($net) < 0.01) {
+            Log::info('Payroll finalize allowing zero-total draft payslip with no line rows', [
+                'payroll_run_id' => $payslip->payroll_batch_run_id !== null ? (int) $payslip->payroll_batch_run_id : null,
+                'company_id' => $payslip->company_id !== null ? (int) $payslip->company_id : null,
+                'employee_id' => (int) $payslip->user_id,
+            ]);
+
+            return;
+        }
+
         Log::error('Payroll finalize blocked: draft payslip has no persisted line items', [
             'payroll_run_id' => $payslip->payroll_batch_run_id !== null ? (int) $payslip->payroll_batch_run_id : null,
             'company_id' => $payslip->company_id !== null ? (int) $payslip->company_id : null,
@@ -2288,11 +2335,11 @@ class FinalizePayrollService
             'finalized_line_categories' => [],
             'missing_categories' => [],
             'missing_source_ids' => [],
-            'draft_gross' => (float) ($metrics['gross_pay'] ?? 0),
+            'draft_gross' => $gross,
             'finalized_gross' => null,
-            'draft_deductions' => (float) ($metrics['total_deductions'] ?? 0),
+            'draft_deductions' => $deductions,
             'finalized_deductions' => null,
-            'draft_net' => (float) ($metrics['net_pay'] ?? 0),
+            'draft_net' => $net,
             'finalized_net' => null,
             'cache_cleared' => false,
         ]);

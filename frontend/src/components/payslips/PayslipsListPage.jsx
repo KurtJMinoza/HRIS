@@ -14,9 +14,9 @@ import { ArrowRight, CalendarDays, CalendarRange, Download, Eye, FileText, Loade
 
 function formatPeso(n) {
   const v = Number(n)
-  const peso = '₱'
-  if (!Number.isFinite(v)) return `${peso}0.00`
-  return `${peso}${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (!Number.isFinite(v)) return '\u20B10.00'
+  const sign = v < 0 ? '-' : ''
+  return `${sign}\u20B1${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatPeriodRange(start, end) {

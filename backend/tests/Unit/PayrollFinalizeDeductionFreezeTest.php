@@ -235,6 +235,58 @@ class PayrollFinalizeDeductionFreezeTest extends TestCase
         $this->assertSame('payroll_standard', $catalog[3]['calculation_standard']);
     }
 
+    public function test_acceptance_negative_net_pay_uses_full_deduction_line_sum(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+        $snapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [
+                    ['key' => 'daily:regular_pay', 'label' => 'Regular Pay', 'amount' => 1538.46],
+                ],
+                'payslip_earning_lines' => [
+                    ['key' => 'pay_component:allowance', 'label' => 'Allowance', 'amount' => 2000.00],
+                ],
+                'payslip_deduction_lines' => [
+                    ['key' => 'government:sss', 'label' => 'SSS', 'amount' => 1000.00],
+                    ['key' => 'government:philhealth', 'label' => 'PhilHealth', 'amount' => 500.00],
+                    ['key' => 'government:pagibig', 'label' => 'Pag-IBIG', 'amount' => 200.00],
+                ],
+                'payslip_custom_deduction_lines' => [
+                    ['key' => 'pay_component:awic15and30', 'component_code' => 'AWIC_DEDUCTION_EVERY_15_AND_30', 'label' => 'AWIC DEDUCTION EVERY 15 AND 30', 'amount' => 241.66],
+                    ['key' => 'pay_component:awic30', 'component_code' => 'AWIC_DEDUCTION_EVERY_30', 'label' => 'AWIC DEDUCTION EVERY 30', 'amount' => 1329.98],
+                    [
+                        'key' => 'pay_component:lending30',
+                        'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+                        'label' => 'LENDING SALARY DEDUCTION EVERY 30',
+                        'resolved_calculation_standard' => 'payroll_standard',
+                        'resolved_schedule' => '30th',
+                        'component_amount' => 1550.00,
+                        'amount' => 1550.00,
+                    ],
+                ],
+            ],
+        ];
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_GENERATED,
+            'gross_pay' => 3538.46,
+            'total_deductions' => 3538.46,
+            'net_pay' => 0.00,
+            'snapshot' => $snapshot,
+        ]);
+
+        $totals = $service->payslipLineTotalsFromSnapshot($snapshot);
+        $metrics = $service->frozenPayslipLineMetrics($payslip);
+        $catalog = $service->payrollDeductionLineCatalog($snapshot);
+
+        $this->assertSame(3538.46, $totals['gross_pay']);
+        $this->assertSame(4821.64, $totals['total_deductions']);
+        $this->assertSame(-1283.18, $totals['net_pay']);
+        $this->assertSame(4821.64, $metrics['total_deductions']);
+        $this->assertSame(-1283.18, $metrics['net_pay']);
+        $this->assertSame(1550.00, $catalog[5]['amount']);
+    }
+
     public function test_display_totals_do_not_mutate_snapshot(): void
     {
         $service = $this->payslipServiceWithoutConstructor();
