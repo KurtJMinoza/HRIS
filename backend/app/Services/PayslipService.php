@@ -963,6 +963,33 @@ class PayslipService
             return $payslip;
         }
 
+        $requiredEmployeeColumns = [
+            'company_id',
+            'branch_id',
+            'department_id',
+            'pay_cycle_id',
+            'monthly_salary',
+            'monthly_rate',
+            'daily_rate',
+            'working_schedule_id',
+            'schedule',
+            'employment_status',
+        ];
+        $employeeAttributes = $employee->getAttributes();
+        foreach ($requiredEmployeeColumns as $column) {
+            if (! array_key_exists($column, $employeeAttributes)) {
+                $employee = User::query()->find((int) $employee->id) ?? $employee;
+                break;
+            }
+        }
+        $employee->loadMissing([
+            'company',
+            'branch',
+            'payCycle',
+            'governmentIds',
+            'workingSchedule',
+        ]);
+
         $periodInput = $this->periodInputFromPayslip($payslip);
         $live = $this->computePayrollForEmployee(
             $employee,

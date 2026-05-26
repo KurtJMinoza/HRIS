@@ -615,7 +615,7 @@ class FinalizePayrollService
         $this->attachMatchingPayslipsToBatchRun($run);
 
         $query = $this->payslipQueryForBatchRun($run)
-            ->with(['employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id']);
+            ->with(['employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id,pay_cycle_id,monthly_salary,monthly_rate,daily_rate,working_schedule_id,schedule,employment_status,is_active']);
         $expectedStatuses = (string) $run->status === PayrollBatchRun::STATUS_FINALIZED
             ? Payslip::lockingStatuses()
             : $this->draftSnapshotStatuses();
@@ -657,8 +657,16 @@ class FinalizePayrollService
             if (! $employee instanceof User) {
                 continue;
             }
-            if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
+            if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED
+                && $this->shouldRepairStoredDraftForPreview($stored)) {
                 try {
+                    $employee->loadMissing([
+                        'company',
+                        'branch',
+                        'payCycle',
+                        'governmentIds',
+                        'workingSchedule',
+                    ]);
                     $stored = $this->payslipService->refreshDraftPayslipFromLiveComputation($stored, $employee);
                     $stored->setRelation('employee', $employee);
                 } catch (Throwable $e) {
@@ -802,6 +810,36 @@ class FinalizePayrollService
                 'computed_rows' => $storedCount,
             ],
         ];
+    }
+
+    private function shouldRepairStoredDraftForPreview(Payslip $payslip): bool
+    {
+        $snapshot = is_array($payslip->snapshot)
+            ? $payslip->snapshot
+            : (is_string($payslip->snapshot) ? json_decode($payslip->snapshot, true) : []);
+        if (! is_array($snapshot)) {
+            return true;
+        }
+
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        if ($summary === []) {
+            return true;
+        }
+
+        foreach ([
+            'daily_computation_earning_lines',
+            'payslip_earning_lines',
+            'payslip_deduction_lines',
+            'payslip_custom_deduction_lines',
+        ] as $key) {
+            if (count(is_array($summary[$key] ?? null) ? $summary[$key] : []) > 0) {
+                return false;
+            }
+        }
+
+        return abs((float) ($payslip->gross_pay ?? 0)) >= 0.01
+            || abs((float) ($payslip->total_deductions ?? 0)) >= 0.01
+            || abs((float) ($payslip->net_pay ?? 0)) >= 0.01;
     }
 
     /**

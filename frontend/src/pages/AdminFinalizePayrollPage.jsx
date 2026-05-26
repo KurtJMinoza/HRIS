@@ -277,6 +277,7 @@ export default function AdminFinalizePayrollPage() {
 
   const [loading, setLoading] = useState(true)
   const [preview, setPreview] = useState(null)
+  const hasPreviewRef = useRef(false)
   const [previewError, setPreviewError] = useState('')
   const [companies, setCompanies] = useState([])
   const [search, setSearch] = useState('')
@@ -419,9 +420,10 @@ export default function AdminFinalizePayrollPage() {
     if (!canFinalizePayroll || (isAdmin && !hasScope(effectivePayload))) {
       setLoading(false)
       setPreview(null)
+      hasPreviewRef.current = false
       setPreviewError('')
     } else {
-      setLoading(true)
+      setLoading(!hasPreviewRef.current)
       setPreviewError('')
       ;(async () => {
         try {
@@ -434,13 +436,14 @@ export default function AdminFinalizePayrollPage() {
           })
           if (cancelled) return
           setPreview(data)
+          hasPreviewRef.current = true
         } catch (e) {
           if (cancelled) return
           const fallback = 'Server request timed out. Check if the backend API is running and reachable.'
           const message = String(e?.message || '').trim() || fallback
           setPreviewError(message)
           toastRef.current({ title: 'Preview failed', description: message, variant: 'destructive' })
-          setPreview(null)
+          if (!hasPreviewRef.current) setPreview(null)
         } finally {
           if (!cancelled) setLoading(false)
         }
@@ -492,6 +495,8 @@ export default function AdminFinalizePayrollPage() {
 
   useEffect(() => {
     draftToastShownRef.current = false
+    hasPreviewRef.current = false
+    setPreview(null)
   }, [finalizeScopeKey])
 
   useEffect(() => {
