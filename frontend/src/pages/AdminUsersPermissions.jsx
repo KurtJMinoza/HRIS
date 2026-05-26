@@ -250,7 +250,7 @@ function PermSwitch({ on, disabled, onToggle, title }) {
       <span
         className={cn(
           'pointer-events-none absolute left-0.5 top-1/2 size-4 -translate-y-1/2 rounded-full bg-white shadow-md ring-1 ring-black/15 transition-transform dark:shadow-sm dark:ring-white/20',
-          on ? 'translate-x-[1.375rem]' : 'translate-x-0'
+          on ? 'translate-x-5.5' : 'translate-x-0'
         )}
       />
     </button>
@@ -266,15 +266,15 @@ export default function AdminUsersPermissions() {
   const canRbacMatrix = user?.role === 'admin' || user?.role === 'super_admin' || perms.has('rbac.manage')
 
   return (
-    <div className="w-full max-w-none space-y-8 bg-white p-4 md:p-6 dark:bg-background">
+    <div className="w-full space-y-5 bg-background px-4 py-6 md:px-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex gap-4">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-muted/50 shadow-xs dark:bg-muted/30">
-            <ShieldCheck className="size-6 text-primary" aria-hidden />
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-brand/10 text-brand ring-1 ring-brand/20">
+            <ShieldCheck className="size-6" aria-hidden />
           </div>
           <div className="min-w-0 space-y-1.5">
-            <h1 className="hr-page-title">Users &amp; Permissions</h1>
-            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Users &amp; Permissions</h1>
+            <p className="max-w-3xl text-sm font-medium leading-6 text-muted-foreground">
               Manage accounts, roles, and access. Sensitive changes are audited and retained for compliance.
             </p>
           </div>
@@ -283,7 +283,7 @@ export default function AdminUsersPermissions() {
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div
-          className="inline-flex w-full flex-col gap-1 rounded-xl border border-border/60 bg-muted/30 p-1 shadow-xs sm:w-auto sm:flex-row sm:items-center"
+          className="inline-flex w-full flex-col gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm sm:w-auto sm:flex-row sm:items-center dark:bg-input/20"
           role="tablist"
           aria-label="Module sections"
         >
@@ -587,23 +587,23 @@ function UsersTab({ toast }) {
 
   return (
     <div className="space-y-6">
-      <Card className="overflow-hidden border-border/60 shadow-sm">
-        <CardHeader className="flex flex-col gap-4 space-y-0 border-b border-border/50 bg-gradient-to-b from-muted/40 to-transparent px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+      <Card className="overflow-hidden rounded-2xl border-border/80 bg-card shadow-sm shadow-black/5 dark:bg-card/95 dark:shadow-black/20">
+        <CardHeader className="flex flex-col gap-4 space-y-0 border-b border-border/70 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-lg font-semibold tracking-tight">User directory</CardTitle>
-            <CardDescription className="text-sm leading-relaxed">
+            <CardTitle className="text-lg font-extrabold tracking-tight text-foreground">User directory</CardTitle>
+            <CardDescription className="text-sm font-medium leading-6">
               Search and filter by role, department, or status. HR role controls panel access and data scope.
             </CardDescription>
           </div>
           {canManageUsers && (
-            <Button type="button" className="h-10 shrink-0 gap-2 shadow-xs" onClick={openCreate}>
+            <Button type="button" className="h-10 shrink-0 gap-2 rounded-xl bg-brand font-bold text-brand-foreground shadow-sm shadow-brand/20 hover:bg-brand-strong" onClick={openCreate}>
               <UserPlus className="size-4" />
               Add user
             </Button>
           )}
         </CardHeader>
         <CardContent className="space-y-5 px-4 pb-6 pt-5 sm:px-6">
-          <div className="rounded-xl border border-border/50 bg-muted/20 p-4 dark:bg-muted/10">
+          <div className="rounded-xl border border-border/70 bg-muted/20 p-4 dark:bg-input/20">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="sm:col-span-2 lg:col-span-1">
                 <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Search</label>
@@ -678,7 +678,7 @@ function UsersTab({ toast }) {
           </div>
 
           {canManageUsers && selected.size > 0 && (
-            <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] p-4 dark:bg-primary/10 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/4 p-4 dark:bg-primary/10 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-sm text-muted-foreground">
                 <span className="font-semibold text-foreground">{selected.size}</span> selected
               </span>
@@ -696,10 +696,10 @@ function UsersTab({ toast }) {
             </div>
           )}
 
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-xs">
+          <div className="overflow-hidden rounded-xl border border-border/70 bg-background shadow-sm dark:bg-input/15">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[960px] text-sm">
-                <thead className="border-b border-border/60 bg-muted/40 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <table className="w-full min-w-[1280px] text-sm">
+                <thead className="border-b border-border/70 bg-muted/40 text-left text-[11px] font-extrabold uppercase tracking-wider text-foreground dark:bg-input/25">
                   <tr>
                     {canManageUsers && (
                       <th className="w-11 px-3 py-3 pl-4">
@@ -711,13 +711,13 @@ function UsersTab({ toast }) {
                       </th>
                     )}
                     <th className="w-14 px-2 py-3 pl-3" aria-label="Photo" />
-                    <th className="min-w-[140px] px-3 py-3">Name</th>
-                    <th className="min-w-[100px] px-3 py-3">Employee ID</th>
-                    <th className="min-w-[180px] px-3 py-3">Email</th>
-                    <th className="min-w-[120px] px-3 py-3">Department</th>
-                    <th className="min-w-[120px] px-3 py-3">Role</th>
+                    <th className="min-w-[190px] px-3 py-3">Name</th>
+                    <th className="min-w-[120px] px-3 py-3">Employee ID</th>
+                    <th className="min-w-[240px] px-3 py-3">Email</th>
+                    <th className="min-w-[180px] px-3 py-3">Department</th>
+                    <th className="min-w-[180px] px-3 py-3">Role</th>
                     <th className="min-w-[88px] px-3 py-3">Status</th>
-                    <th className="min-w-[140px] px-3 py-3">Last login</th>
+                    <th className="min-w-[170px] px-3 py-3">Last login</th>
                     <th className="w-[1%] whitespace-nowrap px-3 py-3 pr-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -740,7 +740,7 @@ function UsersTab({ toast }) {
                         key={u.id}
                         className={cn(
                           'transition-colors hover:bg-muted/30',
-                          idx % 2 === 1 ? 'bg-muted/[0.35] dark:bg-muted/10' : ''
+                          idx % 2 === 1 ? 'bg-muted/35 dark:bg-muted/10' : ''
                         )}
                       >
                         {canManageUsers && (
@@ -1364,10 +1364,10 @@ function RolesTab({ toast }) {
 
   return (
     <div className="space-y-6">
-      <Card className="overflow-hidden border-border/60 shadow-sm">
-        <CardHeader className="space-y-1 border-b border-border/50 bg-gradient-to-b from-muted/40 to-transparent px-6 py-5">
-          <CardTitle className="text-lg font-semibold tracking-tight">Roles &amp; permissions</CardTitle>
-          <CardDescription className="text-sm leading-relaxed">
+      <Card className="overflow-hidden rounded-2xl border-border/80 bg-card shadow-sm shadow-black/5 dark:bg-card/95 dark:shadow-black/20">
+        <CardHeader className="space-y-1 border-b border-border/70 px-6 py-5">
+          <CardTitle className="text-lg font-extrabold tracking-tight text-foreground">Roles &amp; permissions</CardTitle>
+          <CardDescription className="text-sm font-medium leading-6">
             ADMIN (HR) has full access and is locked here. Use <strong>Reset to default</strong> at the bottom of a role’s
             panel to restore grants from{' '}
             <code className="rounded bg-muted px-1 py-0.5 text-xs">config/rbac.php</code>. Saving or restoring writes to
@@ -1393,8 +1393,8 @@ function RolesTab({ toast }) {
               <Loader2 className="size-8 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
-              <aside className="w-full shrink-0 space-y-2 rounded-xl border border-border/60 bg-card p-2 shadow-xs lg:w-64">
+            <div className="flex flex-col gap-6 xl:flex-row xl:gap-8">
+              <aside className="w-full shrink-0 space-y-2 rounded-xl border border-border/70 bg-background p-2 shadow-sm dark:bg-input/15 xl:w-72">
                 <p className="px-2 pb-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Roles
                 </p>
@@ -1445,14 +1445,14 @@ function RolesTab({ toast }) {
                   </p>
                 </div>
 
-                <div className="rounded-xl border border-border/60 bg-card shadow-xs">
-                  <div className="max-h-[min(70vh,640px)] overflow-auto overscroll-contain">
-                    <table className="w-full min-w-[800px] border-separate border-spacing-0 text-sm">
+                <div className="rounded-xl border border-border/70 bg-background shadow-sm dark:bg-input/15">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
                       <thead>
                         <tr className="border-b border-border/60">
                           <th
                             scope="col"
-                            className="sticky left-0 top-0 z-30 min-w-[220px] border-b border-border/60 bg-muted/95 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground shadow-[2px_0_8px_-2px_rgba(0,0,0,0.08)] backdrop-blur supports-[backdrop-filter]:bg-muted/90 dark:shadow-[2px_0_12px_-2px_rgba(0,0,0,0.35)]"
+                            className="sticky left-0 z-20 min-w-[320px] border-b border-border/70 bg-muted/95 px-4 py-3 text-left text-xs font-extrabold uppercase tracking-wide text-foreground shadow-[2px_0_8px_-2px_rgba(0,0,0,0.08)] backdrop-blur supports-backdrop-filter:bg-muted/90 dark:bg-card dark:shadow-[2px_0_12px_-2px_rgba(0,0,0,0.35)]"
                           >
                             Permission
                           </th>
@@ -1460,10 +1460,10 @@ function RolesTab({ toast }) {
                             <th
                               key={k}
                               scope="col"
-                              className="sticky top-0 z-20 min-w-[52px] max-w-[64px] border-b border-border/60 bg-muted/95 px-1 py-2 text-center align-bottom text-[10px] font-semibold uppercase leading-tight text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/90"
+                              className="min-w-[76px] border-b border-border/70 bg-muted/95 px-2 py-3 text-center align-bottom text-[10px] font-extrabold uppercase leading-tight text-foreground backdrop-blur supports-backdrop-filter:bg-muted/90 dark:bg-card"
                               title={`${ACTION_LABELS[k]} — ${ACTION_TOOLTIPS[k]}`}
                             >
-                              <span className="block hyphens-auto break-words">
+                              <span className="block hyphens-auto wrap-break-word">
                                 {k === 'sensitive' ? 'Sens.' : ACTION_LABELS[k]}
                               </span>
                             </th>
