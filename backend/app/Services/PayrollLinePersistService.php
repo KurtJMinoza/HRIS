@@ -88,6 +88,21 @@ class PayrollLinePersistService
             ->get();
 
         if ($draftLines->isEmpty()) {
+            $gross = round((float) $draftEmployee->gross_pay, 2);
+            $deductions = round((float) $draftEmployee->total_deductions, 2);
+            $net = round((float) $draftEmployee->net_pay, 2);
+            if (abs($gross) < 0.01 && abs($deductions) < 0.01 && abs($net) < 0.01) {
+                $finalEmployee = $this->upsertPayrollEmployee($payslip, PayrollEmployee::STATUS_FINALIZED);
+                $finalEmployee->forceFill([
+                    'gross_pay' => 0.0,
+                    'total_deductions' => 0.0,
+                    'net_pay' => 0.0,
+                ]);
+                $finalEmployee->save();
+
+                return $finalEmployee->fresh() ?? $finalEmployee;
+            }
+
             throw new \RuntimeException('Cannot finalize: draft payroll lines are missing for payslip_id='.(int) $payslip->id);
         }
 

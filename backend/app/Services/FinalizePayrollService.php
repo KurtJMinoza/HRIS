@@ -2308,7 +2308,12 @@ class FinalizePayrollService
      */
     private function assertDraftPayslipLinesArePersisted(Payslip $payslip, array $metrics): void
     {
-        if ((int) ($metrics['line_count'] ?? 0) > 0) {
+        $payslip = $this->payslipService->ensureDraftPayrollLinesSynced($payslip);
+        $metrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
+
+        $snapshotLineCount = (int) ($metrics['line_count'] ?? 0);
+        $persistedLineCount = $this->payslipService->draftPayrollLineRowCount($payslip);
+        if ($snapshotLineCount > 0 || $persistedLineCount > 0) {
             return;
         }
 
@@ -2341,6 +2346,8 @@ class FinalizePayrollService
             'finalized_deductions' => null,
             'draft_net' => $net,
             'finalized_net' => null,
+            'snapshot_line_count' => $snapshotLineCount,
+            'persisted_line_count' => $persistedLineCount,
             'cache_cleared' => false,
         ]);
 

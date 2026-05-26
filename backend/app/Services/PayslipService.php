@@ -8,6 +8,8 @@ use App\Models\Company;
 use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\PayCycle;
 use App\Models\PayrollBatchRun;
+use App\Models\PayrollEmployee;
+use App\Models\PayrollLine;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
 use App\Models\User;
@@ -982,18 +984,59 @@ class PayslipService
         ]);
         $payslip->save();
 
+        return $this->ensureDraftPayrollLinesSynced($payslip->fresh() ?? $payslip);
+    }
+
+    /**
+     * Align payslip summary columns and payroll_lines draft rows with the stored snapshot.
+     */
+    public function ensureDraftPayrollLinesSynced(Payslip $payslip, bool $save = true): Payslip
+    {
+        if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            return $payslip;
+        }
+
+        $this->syncPayslipSummaryFromLines($payslip, $save);
         $fresh = $payslip->fresh() ?? $payslip;
+
+        $persist = app(PayrollLinePersistService::class);
+        if (! $persist->tablesReady()) {
+            return $fresh;
+        }
+
         try {
-            app(PayrollLinePersistService::class)->syncDraftLinesFromPayslip($fresh);
+            $persist->syncDraftLinesFromPayslip($fresh);
         } catch (Throwable $e) {
-            Log::warning('Payroll draft line sync after live refresh failed', [
+            Log::warning('Payroll draft line sync failed', [
                 'payslip_id' => (int) $fresh->id,
                 'employee_id' => (int) $fresh->user_id,
                 'error' => $e->getMessage(),
             ]);
         }
 
-        return $fresh;
+        return $fresh->fresh() ?? $fresh;
+    }
+
+    public function draftPayrollLineRowCount(Payslip $payslip): int
+    {
+        $persist = app(PayrollLinePersistService::class);
+        if (! $persist->tablesReady()) {
+            return 0;
+        }
+
+        $payrollEmployee = PayrollEmployee::query()
+            ->where('payslip_id', (int) $payslip->id)
+            ->where('status', PayrollEmployee::STATUS_DRAFT)
+            ->first();
+
+        if (! $payrollEmployee instanceof PayrollEmployee) {
+            return 0;
+        }
+
+        return (int) PayrollLine::query()
+            ->where('payroll_employee_id', (int) $payrollEmployee->id)
+            ->where('status', PayrollLine::STATUS_DRAFT)
+            ->count();
     }
 
     /**
@@ -1808,7 +1851,10 @@ class PayslipService
                         ->orderByDesc('id')
                         ->first();
                     if ($payslip instanceof Payslip) {
-                        $this->assignPayrollPeriodId($payslip, $periodId);
+                        if ($periodId > 0) {
+                            $this->assignPayrollPeriodId($payslip, $periodId);
+                        }
+                        $this->ensureDraftPayrollLinesSynced($payslip);
                     }
                 }
             });

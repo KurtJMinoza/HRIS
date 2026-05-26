@@ -393,6 +393,31 @@ class PayrollFinalizeDeductionFreezeTest extends TestCase
         $this->assertSame(1550.00, $lines[0]['amount']);
     }
 
+    public function test_zero_total_draft_without_lines_reports_zero_metrics(): void
+    {
+        $payslip = new Payslip([
+            'gross_pay' => 0.00,
+            'total_deductions' => 0.00,
+            'net_pay' => 0.00,
+            'status' => Payslip::STATUS_DRAFT,
+            'snapshot' => [
+                'summary' => [
+                    'payslip_earning_lines' => [],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                    'daily_computation_earning_lines' => [],
+                ],
+            ],
+        ]);
+
+        $metrics = $this->payslipServiceWithoutConstructor()->frozenPayslipLineMetrics($payslip);
+
+        $this->assertSame(0, $metrics['line_count']);
+        $this->assertSame(0.00, $metrics['gross_pay']);
+        $this->assertSame(0.00, $metrics['total_deductions']);
+        $this->assertSame(0.00, $metrics['net_pay']);
+    }
+
     private function payslipServiceWithoutConstructor(): PayslipService
     {
         return (new ReflectionClass(PayslipService::class))->newInstanceWithoutConstructor();
