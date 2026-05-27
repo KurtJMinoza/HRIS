@@ -60,6 +60,7 @@ class ReportsController extends Controller
      */
     private function employmentFieldsForReport(User $employee, User $viewer): array
     {
+        $employee = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus($employee);
         $enum = EmploymentStatus::tryFrom((string) ($employee->employment_status ?? ''));
         $useCanonical = ! $viewer->isAdmin();
 
@@ -76,6 +77,8 @@ class ReportsController extends Controller
             'employment_status_label' => $label,
             'hire_date' => $employee->hire_date?->toDateString(),
             'employment_status_effective_date' => $employee->employment_status_effective_date?->toDateString(),
+            'regularization_date' => $employee->regularization_date?->toDateString(),
+            'status_override' => (bool) ($employee->status_override ?? false),
             'contract_start_date' => $employee->contract_start_date?->toDateString(),
             'contract_end_date' => $employee->contract_end_date?->toDateString(),
         ];

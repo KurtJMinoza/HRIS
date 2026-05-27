@@ -335,6 +335,8 @@ class User extends Authenticatable
         'employment_type',
         'employment_status',
         'employment_status_effective_date',
+        'regularization_date',
+        'status_override',
         'hire_date',
         'contract_start_date',
         'contract_end_date',
@@ -351,6 +353,7 @@ class User extends Authenticatable
         'salary_effectivity_date',
         'leave_credits',
         'leave_credits_reset_date',
+        'leave_credits_initialized_at',
         'last_login_at',
         'employee_import_batch_id',
     ];
@@ -378,6 +381,7 @@ class User extends Authenticatable
             'hire_date' => 'date',
             'pending_schedule_effective_from' => 'date',
             'employment_status_effective_date' => 'date',
+            'regularization_date' => 'date',
             'contract_start_date' => 'date',
             'contract_end_date' => 'date',
             'password' => 'hashed',
@@ -387,6 +391,7 @@ class User extends Authenticatable
             'is_super_admin' => 'boolean',
             'is_system_user' => 'boolean',
             'is_hidden' => 'boolean',
+            'status_override' => 'boolean',
             'exclude_from_reports' => 'boolean',
             'exclude_from_payroll' => 'boolean',
             'exclude_from_attendance' => 'boolean',
@@ -405,6 +410,7 @@ class User extends Authenticatable
             'salary_effectivity_date' => 'date',
             'leave_credits' => 'integer',
             'leave_credits_reset_date' => 'date',
+            'leave_credits_initialized_at' => 'datetime',
         ];
     }
 

@@ -259,6 +259,7 @@ class EmployeeProfileController extends Controller
      */
     private function profilePayload(User $user, array $flags = [], array $timingContext = []): array
     {
+        $user = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus($user);
         $totalPayloadStart = microtime(true);
         $sectionStart = microtime(true);
         $lite = (bool) ($flags['lite'] ?? false);
@@ -530,6 +531,8 @@ class EmployeeProfileController extends Controller
             'employment_type' => $user->employment_type,
             'employment_status' => $user->employment_status,
             'employment_status_effective_date' => $user->employment_status_effective_date?->toDateString(),
+            'regularization_date' => $user->regularization_date?->toDateString(),
+            'status_override' => (bool) ($user->status_override ?? false),
             'hire_date' => $user->hire_date?->toDateString(),
             'contract_start_date' => $user->contract_start_date?->toDateString(),
             'contract_end_date' => $user->contract_end_date?->toDateString(),
@@ -636,6 +639,8 @@ class EmployeeProfileController extends Controller
             'employment_type' => $user->employment_type,
             'employment_status' => $user->employment_status,
             'employment_status_effective_date' => $user->employment_status_effective_date?->toDateString(),
+            'regularization_date' => $user->regularization_date?->toDateString(),
+            'status_override' => (bool) ($user->status_override ?? false),
             'hire_date' => $user->hire_date?->toDateString(),
             'contract_start_date' => $user->contract_start_date?->toDateString(),
             'contract_end_date' => $user->contract_end_date?->toDateString(),

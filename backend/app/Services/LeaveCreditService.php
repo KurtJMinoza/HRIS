@@ -10,6 +10,7 @@ use App\Support\LeaveScheduleSupport;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -18,8 +19,8 @@ use Illuminate\Validation\ValidationException;
  * Eligibility for paid leave / credit pool:
  *
  * 1. **Employment status = Regular**.
- * 2. **One full year of service** completed, measured from the employee's current
- *    **employment_status_effective_date** while the employee is in **Regular** status.
+ * 2. **One full year of service** completed, measured from the employee's hire date
+ *    while the employee is in **Regular** status.
  *
  * Until both apply: **available_credits = 0**; employees may still file leave, but credit-consuming
  * types are **unpaid** (no deduction from pool; payroll excludes pay for those days).
@@ -85,7 +86,7 @@ class LeaveCreditService
     }
 
     /**
-     * Paid annual pool: **Regular** status **and** one full year from Status Effective Date.
+     * Paid annual pool: **Regular** status **and** one full year from hire date.
      * Others get 0 pool credits.
      */
     public function eligibleForPaidLeavePool(User $user): bool
@@ -107,11 +108,8 @@ class LeaveCreditService
 
     /**
      * Date from which "one year of service" is measured for leave-credit eligibility.
-     *
-     * QA note:
-     * - Use the current Status Effective Date from Employment Details for Regular employees.
-     * - Do not fall back to Hire Date for paid-leave eligibility.
-     * - Date-only comparison avoids timezone or time-of-day off-by-one issues.
+     * Uses hire date first so imported long-tenured employees receive the paid pool after
+     * automatic six-month regularization.
      */
     public function leaveCreditsServiceAnchorDate(User $user): ?Carbon
     {
@@ -119,6 +117,10 @@ class LeaveCreditService
 
         if (! $this->isRegularEmployment($user)) {
             return null;
+        }
+
+        if ($user->hire_date) {
+            return Carbon::parse($user->hire_date, $tz)->startOfDay();
         }
 
         if ($user->employment_status_effective_date) {
@@ -533,7 +535,7 @@ class LeaveCreditService
             $messageDetail = 'Undertime and non-credit types are not paid from the annual leave pool.';
         } elseif (! $eligible) {
             $message = 'This leave will be unpaid (not eligible for paid leave credits).';
-            $messageDetail = 'Paid leave credits apply only to Regular employees with one full year of service from the status effective date.';
+            $messageDetail = 'Paid leave credits apply only to Regular employees with one full year of service from the hire date.';
         } elseif ($paidDays >= $billable && $billable > 0) {
             $message = 'This leave will be paid using your leave credits.';
             $messageDetail =
@@ -625,6 +627,67 @@ class LeaveCreditService
                 'leave_type_context' => 'regularization',
             ]);
         });
+        $this->forgetSummaryCacheForUser((int) $employee->id);
+    }
+
+    public function initializeLeaveCreditsForRegularEmployeeIfEligible(User $employee, ?User $actor = null, string $context = 'import'): void
+    {
+        DB::transaction(function () use ($employee, $actor, $context): void {
+            /** @var User $locked */
+            $locked = User::query()->whereKey($employee->id)->lockForUpdate()->firstOrFail();
+            if (! $this->eligibleForPaidLeavePool($locked)) {
+                return;
+            }
+
+            if (Schema::hasColumn('users', 'leave_credits_initialized_at') && $locked->leave_credits_initialized_at !== null) {
+                return;
+            }
+
+            $alreadyInitialized = LeaveCreditTransaction::query()
+                ->where('user_id', (int) $locked->id)
+                ->where('leave_type_context', 'auto_regularization_'.$context)
+                ->exists();
+            if ($alreadyInitialized) {
+                if (Schema::hasColumn('users', 'leave_credits_initialized_at')) {
+                    $locked->leave_credits_initialized_at = now();
+                    $locked->save();
+                }
+
+                return;
+            }
+
+            $allocation = self::annualAllocation();
+            $current = (int) $locked->leave_credits;
+            if ($current >= $allocation) {
+                if (Schema::hasColumn('users', 'leave_credits_initialized_at')) {
+                    $locked->leave_credits_initialized_at = now();
+                    $locked->save();
+                }
+
+                return;
+            }
+
+            $locked->leave_credits = $allocation;
+            if (Schema::hasColumn('users', 'leave_credits_reset_date') && $locked->leave_credits_reset_date === null) {
+                $locked->leave_credits_reset_date = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->startOfYear()->toDateString();
+            }
+            if (Schema::hasColumn('users', 'leave_credits_initialized_at')) {
+                $locked->leave_credits_initialized_at = now();
+            }
+            $locked->save();
+
+            LeaveCreditTransaction::create([
+                'user_id' => $locked->id,
+                'change_type' => LeaveCreditTransaction::TYPE_ADDITION,
+                'delta' => $allocation - $current,
+                'balance_after' => $allocation,
+                'reason' => 'Auto-regularization: eligible imported employee receives default annual paid-leave pool.',
+                'leave_request_id' => null,
+                'actor_id' => $actor?->id,
+                'leave_type_context' => 'auto_regularization_'.$context,
+            ]);
+        });
+
         $this->forgetSummaryCacheForUser((int) $employee->id);
     }
 
@@ -947,12 +1010,18 @@ class LeaveCreditService
             self::summaryCacheKey($userId),
             now()->addMinutes(self::SUMMARY_CACHE_TTL_MINUTES),
             function () use ($userId, $includePendingReservedDays): array {
+                $baseUser = User::query()->find($userId);
+                if ($baseUser instanceof User) {
+                    app(EmployeeStatusService::class)->syncAutomaticEmploymentStatus($baseUser);
+                }
                 $this->ensureAnnualRechargeForUserId($userId);
                 $user = User::query()
                     ->select([
                         'id',
                         'employment_status',
                         'employment_status_effective_date',
+                        'hire_date',
+                        'regularization_date',
                         'leave_credits',
                         'leave_credits_reset_date',
                     ])

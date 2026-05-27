@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Enums\EmploymentStatus;
+use App\Models\LeaveCreditTransaction;
 use App\Models\RegularizationRecommendation;
 use App\Models\User;
 use App\Services\EmployeeStatusService;
@@ -93,7 +94,7 @@ class EmployeeStatusServiceTest extends TestCase
     {
         $employee = User::factory()->create([
             'employment_status' => EmploymentStatus::Probationary->value,
-            'hire_date' => Carbon::now()->subMonths(2)->subDays(29),
+            'hire_date' => Carbon::now()->subMonths(2),
             'is_active' => true,
         ]);
 
@@ -176,7 +177,7 @@ class EmployeeStatusServiceTest extends TestCase
         // Employee 5 days before 3-month milestone
         $employee = User::factory()->create([
             'employment_status' => EmploymentStatus::Probationary->value,
-            'hire_date' => Carbon::now()->subMonths(3)->addDays(5),
+            'hire_date' => Carbon::now()->subMonths(3)->addDays(2),
             'is_active' => true,
         ]);
 
@@ -194,5 +195,91 @@ class EmployeeStatusServiceTest extends TestCase
 
         $this->assertFalse($this->service->isEligibleForSixMonthRegularization($employee));
         $this->assertFalse($this->service->isEligibleForThreeMonthRegularization($employee));
+    }
+
+    public function test_auto_status_resolver_marks_july_2023_hire_as_regular(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-05-27'));
+
+        $employee = User::factory()->create([
+            'employment_status' => EmploymentStatus::Probationary->value,
+            'hire_date' => '2023-07-03',
+            'is_active' => true,
+            'status_override' => false,
+        ]);
+
+        $resolved = $this->service->syncAutomaticEmploymentStatus($employee);
+
+        $this->assertSame(EmploymentStatus::Regular->value, $resolved->employment_status);
+        $this->assertSame('2024-01-03', $resolved->regularization_date?->toDateString());
+        $this->assertSame('2024-01-03', $resolved->employment_status_effective_date?->toDateString());
+
+        Carbon::setTestNow();
+    }
+
+    public function test_auto_status_resolver_keeps_recent_hire_probationary(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-05-27'));
+
+        $employee = User::factory()->create([
+            'employment_status' => EmploymentStatus::Regular->value,
+            'hire_date' => '2026-02-01',
+            'is_active' => true,
+            'status_override' => false,
+        ]);
+
+        $resolved = $this->service->syncAutomaticEmploymentStatus($employee);
+
+        $this->assertSame(EmploymentStatus::Probationary->value, $resolved->employment_status);
+        $this->assertSame('2026-08-01', $resolved->regularization_date?->toDateString());
+
+        Carbon::setTestNow();
+    }
+
+    public function test_auto_status_resolver_respects_status_override(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-05-27'));
+
+        $employee = User::factory()->create([
+            'employment_status' => EmploymentStatus::Probationary->value,
+            'hire_date' => '2023-07-03',
+            'is_active' => true,
+            'status_override' => true,
+        ]);
+
+        $resolved = $this->service->syncAutomaticEmploymentStatus($employee);
+
+        $this->assertSame(EmploymentStatus::Probationary->value, $resolved->employment_status);
+        $this->assertNull($resolved->regularization_date);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_imported_one_year_employee_gets_regular_status_and_leave_credits_once(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-05-27'));
+
+        $employee = User::factory()->create([
+            'employment_status' => EmploymentStatus::Probationary->value,
+            'hire_date' => '2025-05-01',
+            'is_active' => true,
+            'leave_credits' => 0,
+            'leave_credits_reset_date' => null,
+            'leave_credits_initialized_at' => null,
+            'status_override' => false,
+        ]);
+
+        $resolved = $this->service->syncAutomaticEmploymentStatus($employee, initializeLeaveCredits: true);
+        $resolvedAgain = $this->service->syncAutomaticEmploymentStatus($resolved->fresh(), initializeLeaveCredits: true);
+
+        $this->assertSame(EmploymentStatus::Regular->value, $resolvedAgain->employment_status);
+        $this->assertSame(7, (int) $resolvedAgain->leave_credits);
+        $this->assertNotNull($resolvedAgain->leave_credits_initialized_at);
+        $this->assertSame(1, LeaveCreditTransaction::query()
+            ->where('user_id', $employee->id)
+            ->where('leave_type_context', 'auto_regularization_import')
+            ->count());
+
+        Carbon::setTestNow();
     }
 }

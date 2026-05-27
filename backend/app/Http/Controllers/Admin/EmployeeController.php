@@ -838,6 +838,7 @@ class EmployeeController extends Controller
             'branch_office_location' => ['nullable', 'string', 'max:255'],
             'employment_type' => ['nullable', 'string', 'in:full_time,part_time,contract,probationary'],
             'employment_status' => ['nullable', 'string', Rule::in(array_column(EmploymentStatus::cases(), 'value'))],
+            'status_override' => ['nullable', 'boolean'],
             'hire_date' => ['nullable', 'date'],
             'supervisor_id' => ['nullable', 'integer', 'exists:users,id'],
             'working_schedule_id' => ['nullable', 'integer', 'exists:working_schedules,id'],
@@ -971,6 +972,7 @@ class EmployeeController extends Controller
             'employment_status' => isset($validated['employment_status'])
                 ? EmploymentStatus::from((string) $validated['employment_status'])->value
                 : EmploymentStatus::Probationary->value,
+            'status_override' => (bool) ($validated['status_override'] ?? $request->filled('employment_status')),
             'hire_date' => $validated['hire_date'] ?? null,
             'supervisor_id' => $validated['supervisor_id'] ?? null,
             'working_schedule_id' => $validated['working_schedule_id'] ?? null,
@@ -980,6 +982,11 @@ class EmployeeController extends Controller
 
         $user->employee_code = $this->generateEmployeeCode($user->id);
         $user->save();
+        $user = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus(
+            $user->fresh() ?? $user,
+            $request->user(),
+            initializeLeaveCredits: true
+        );
 
         if ($user->company_id) {
             $company = Company::query()->find($user->company_id);
@@ -1222,6 +1229,7 @@ class EmployeeController extends Controller
                 'employment_type' => ['sometimes', 'nullable', 'string', 'in:full_time,part_time,contract,probationary'],
                 'employment_status' => ['sometimes', 'nullable', 'string', Rule::in(array_column(EmploymentStatus::cases(), 'value'))],
                 'employment_status_effective_date' => ['sometimes', 'nullable', 'date'],
+                'status_override' => ['sometimes', 'boolean'],
                 'hire_date' => ['sometimes', 'nullable', 'date'],
                 'contract_start_date' => ['sometimes', 'nullable', 'date'],
                 'contract_end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:contract_start_date'],
@@ -1467,8 +1475,14 @@ class EmployeeController extends Controller
 
             $employmentFieldsTouched = false;
 
+            if ($this->requestHasInput($request, 'status_override')) {
+                $employmentFieldsTouched = true;
+                $employee->status_override = (bool) $request->boolean('status_override');
+            }
+
             if ($this->requestHasInput($request, 'employment_status') && $request->filled('employment_status')) {
                 $employmentFieldsTouched = true;
+                $employee->status_override = true;
                 $newStatus = EmploymentStatus::from((string) $request->input('employment_status'));
                 $effRaw = $request->input('employment_status_effective_date');
                 $effDate = is_string($effRaw) && trim($effRaw) !== '' ? \Carbon\Carbon::parse($effRaw) : null;
@@ -1513,6 +1527,11 @@ class EmployeeController extends Controller
             $salaryAuditDirty = array_intersect_key($employee->getDirty(), array_flip($salaryAuditFieldKeys));
 
             $employee->save();
+            $employee = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus(
+                $employee->fresh() ?? $employee,
+                $request->user(),
+                initializeLeaveCredits: true
+            );
 
             if ($salaryAuditDirty !== [] || $salaryProfileBaseRemoved || $salaryProfileBaseChanged) {
                 $this->forgetPayrollSalaryCaches((int) $employee->id);
@@ -2330,6 +2349,7 @@ class EmployeeController extends Controller
      */
     private function employeeResponse(User $user, bool $includeSensitive = true, bool $includeComputed = true, bool $includePayCyclePreviewAndLeaveSnapshot = true, bool $includeLeaveCreditsWhenPayCyclePreviewSkipped = false): array
     {
+        $user = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus($user);
         $includePayCyclePreview = $includeComputed && $includePayCyclePreviewAndLeaveSnapshot;
         $includeLeaveCreditsSnapshot = $includeComputed && ($includePayCyclePreviewAndLeaveSnapshot || $includeLeaveCreditsWhenPayCyclePreviewSkipped);
 
@@ -2490,6 +2510,8 @@ class EmployeeController extends Controller
                     ? ucfirst(str_replace('_', ' ', (string) $user->employment_status))
                     : null),
             'employment_status_effective_date' => $user->employment_status_effective_date?->toDateString(),
+            'regularization_date' => $user->regularization_date?->toDateString(),
+            'status_override' => (bool) ($user->status_override ?? false),
             'hire_date' => $user->hire_date?->toDateString(),
             'contract_start_date' => $user->contract_start_date?->toDateString(),
             'contract_end_date' => $user->contract_end_date?->toDateString(),

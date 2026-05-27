@@ -20,6 +20,89 @@ class EmployeeStatusService
         private readonly LeaveCreditService $leaveCreditService,
     ) {}
 
+    public function regularizationDateFromHireDate(mixed $hireDate): ?Carbon
+    {
+        if ($hireDate === null || trim((string) $hireDate) === '') {
+            return null;
+        }
+
+        return Carbon::parse($hireDate, config('attendance.timezone', 'Asia/Manila'))
+            ->startOfDay()
+            ->addMonths($this->getAutomationSettings()['auto_regularization_months']);
+    }
+
+    public function resolveAutomaticStatusFromHireDate(mixed $hireDate, ?Carbon $asOfDate = null): ?EmploymentStatus
+    {
+        $regularizationDate = $this->regularizationDateFromHireDate($hireDate);
+        if ($regularizationDate === null) {
+            return null;
+        }
+
+        $asOfDate = ($asOfDate ?? Carbon::now(config('attendance.timezone', 'Asia/Manila')))->startOfDay();
+
+        return $regularizationDate->lessThanOrEqualTo($asOfDate)
+            ? EmploymentStatus::Regular
+            : EmploymentStatus::Probationary;
+    }
+
+    public function syncAutomaticEmploymentStatus(
+        User $employee,
+        ?User $actor = null,
+        bool $initializeLeaveCredits = false,
+        ?Carbon $asOfDate = null
+    ): User {
+        if (! $employee->hire_date || (bool) ($employee->status_override ?? false)) {
+            return $employee;
+        }
+
+        $resolved = $this->resolveAutomaticStatusFromHireDate($employee->hire_date, $asOfDate);
+        $regularizationDate = $this->regularizationDateFromHireDate($employee->hire_date);
+        if ($resolved === null || $regularizationDate === null) {
+            return $employee;
+        }
+
+        $previousStatus = $employee->employment_status;
+        $changedStatus = EmploymentStatus::tryFromStored((string) $previousStatus) !== $resolved;
+        $payload = [
+            'employment_status' => $resolved->value,
+        ];
+
+        if (Schema::hasColumn('users', 'regularization_date')) {
+            $payload['regularization_date'] = $regularizationDate->toDateString();
+        }
+
+        if ($resolved === EmploymentStatus::Regular) {
+            $payload['employment_status_effective_date'] = $regularizationDate->toDateString();
+        } elseif (! $employee->employment_status_effective_date) {
+            $payload['employment_status_effective_date'] = Carbon::parse($employee->hire_date)->toDateString();
+        }
+
+        $employee->forceFill($payload);
+        if ($employee->isDirty(array_keys($payload))) {
+            $employee->save();
+        }
+
+        if ($changedStatus && Schema::hasTable('employee_status_histories')) {
+            EmployeeStatusHistory::query()->create([
+                'user_id' => $employee->id,
+                'previous_status' => $previousStatus,
+                'new_status' => $resolved->value,
+                'effective_date' => $payload['employment_status_effective_date'] ?? null,
+                'trigger_type' => 'system_auto_regularization',
+                'actor_id' => $actor?->id,
+                'remarks' => 'Automatic status resolver based on hire date plus six months.',
+            ]);
+        }
+
+        if ($initializeLeaveCredits && $resolved === EmploymentStatus::Regular) {
+            $this->leaveCreditService->initializeLeaveCreditsForRegularEmployeeIfEligible($employee->fresh() ?? $employee, $actor, 'import');
+        } else {
+            $this->leaveCreditService->forgetSummaryCacheForUser((int) $employee->id);
+        }
+
+        return $employee->fresh() ?? $employee;
+    }
+
     /**
      * Probationary employees who have completed 4 months of service (reference for regularization queue).
      * Does not imply automatic status change — 6-month regularization is an HR decision, not automated.
@@ -39,7 +122,7 @@ class EmployeeStatusService
         $months = $this->getAutomationSettings()['auto_regularization_months'];
         $sixMonthsDate = Carbon::parse($employee->hire_date)->addMonths($months);
 
-        return $asOfDate->greaterThanOrEqualTo($sixMonthsDate) && $this->hasCompletedRequiredActions($employee);
+        return $asOfDate->greaterThanOrEqualTo($sixMonthsDate);
     }
 
     /**
@@ -64,8 +147,7 @@ class EmployeeStatusService
             return false;
         }
 
-        // Must have approved recommendation and completed required actions.
-        return $this->hasApprovedRecommendation($employee) && $this->hasCompletedRequiredActions($employee);
+        return $this->hasApprovedRecommendation($employee);
     }
 
     /**
@@ -108,11 +190,6 @@ class EmployeeStatusService
         ?Carbon $effectiveDate = null
     ): EmployeeStatusHistory {
         $effectiveDate = $effectiveDate ?? Carbon::now(config('attendance.timezone', 'Asia/Manila'));
-        if (! $this->hasCompletedRequiredActions($employee)) {
-            throw ValidationException::withMessages([
-                'required_actions' => ['Performance review and checklist must be completed before regularization.'],
-            ]);
-        }
 
         return DB::transaction(function () use ($employee, $triggerType, $actor, $remarks, $effectiveDate) {
             $previousStatus = $employee->employment_status;
@@ -375,7 +452,7 @@ class EmployeeStatusService
             return null;
         }
 
-        return EmploymentStatus::tryFrom($status);
+        return EmploymentStatus::tryFromStored($status);
     }
 
     /**

@@ -744,6 +744,7 @@ class DashboardController extends Controller
             ->map(fn ($rows) => $rows->first());
 
         $rows = $employees->map(function (User $employee) use ($today, $recommendationsByUser, $isHrAdmin, $earlyMonths, $autoMonths, $greenWindowDays) {
+            $employee = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus($employee);
             $hireDate = $employee->hire_date?->copy()->startOfDay();
             if (! $hireDate) {
                 return null;

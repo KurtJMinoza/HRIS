@@ -13,6 +13,7 @@ use App\Models\PayCycle;
 use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Services\DataScopeService;
+use App\Services\EmployeeStatusService;
 use App\Services\GovernmentIdFormatter;
 use Carbon\Carbon;
 use DateTimeInterface;
@@ -153,6 +154,14 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 });
                 if ($createdUserId !== null) {
                     $this->createdUserIds[] = $createdUserId;
+                    $created = User::query()->find($createdUserId);
+                    if ($created instanceof User) {
+                        app(EmployeeStatusService::class)->syncAutomaticEmploymentStatus(
+                            $created,
+                            $this->actor,
+                            initializeLeaveCredits: true
+                        );
+                    }
                 }
                 $this->rememberImportIdentifiers($basePayload, $excelRowNumber);
                 $this->imported++;

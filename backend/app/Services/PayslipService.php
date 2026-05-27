@@ -888,6 +888,7 @@ class PayslipService
     {
         $started = microtime(true);
         $user = $employee instanceof User ? $employee : User::query()->findOrFail((int) $employee);
+        $user = app(EmployeeStatusService::class)->syncAutomaticEmploymentStatus($user);
         $period = null;
 
         if ($payrollPeriodId !== null) {
