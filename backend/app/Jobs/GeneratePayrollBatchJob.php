@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\PayrollBatchRun;
+use App\Models\Payslip;
 use App\Models\User;
 use App\Services\PayslipService;
 use Illuminate\Bus\Queueable;
@@ -135,6 +136,23 @@ class GeneratePayrollBatchJob implements ShouldQueue
             $sectionTimings = $bulk['timings'] ?? [];
             $sectionTimings['total_job_ms'] = round((microtime(true) - $jobStartedAt) * 1000, 2);
             $sectionTimings['query_count'] = $queryCount;
+
+            $currentRun = PayrollBatchRun::query()->find((int) $run->id);
+            if (! $currentRun || (string) $currentRun->status === PayrollBatchRun::STATUS_VOIDED) {
+                if ($currentRun && (string) $currentRun->status === PayrollBatchRun::STATUS_VOIDED) {
+                    Payslip::query()
+                        ->where('payroll_batch_run_id', (int) $currentRun->id)
+                        ->whereIn('status', [Payslip::STATUS_DRAFT, Payslip::STATUS_GENERATED])
+                        ->delete();
+                }
+                Log::info('GeneratePayrollBatchJob stopped: payroll batch run was deleted or voided', [
+                    'batch_run_id' => $this->batchRunId,
+                    'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
+                ]);
+
+                return;
+            }
+            $run = $currentRun;
 
             PayrollBatchRun::query()->whereKey($run->id)->update($this->filterBatchRunPayload([
                 'status' => PayrollBatchRun::STATUS_DRAFT,

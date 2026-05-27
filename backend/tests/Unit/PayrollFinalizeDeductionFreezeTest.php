@@ -393,6 +393,82 @@ class PayrollFinalizeDeductionFreezeTest extends TestCase
         $this->assertSame(1550.00, $lines[0]['amount']);
     }
 
+    public function test_frozen_metrics_treat_pay_component_id_and_key_as_same_line(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+
+        $draftSnapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [
+                    ['key' => 'daily:regular_pay', 'label' => 'Regular Pay', 'amount' => 3076.92],
+                ],
+                'payslip_earning_lines' => [
+                    ['key' => 'pay_component:21', 'label' => 'Allowance', 'amount' => 2000.00],
+                ],
+                'payslip_deduction_lines' => [
+                    ['key' => 'government:SSS', 'label' => 'SSS', 'amount' => 1000.00],
+                ],
+                'payslip_custom_deduction_lines' => [
+                    [
+                        'key' => 'pay_component:27',
+                        'pay_component_id' => 27,
+                        'label' => 'AWIC',
+                        'amount' => 241.66,
+                    ],
+                    [
+                        'key' => 'pay_component:33',
+                        'pay_component_id' => 33,
+                        'label' => 'AWIC 30',
+                        'amount' => 1329.98,
+                    ],
+                ],
+            ],
+        ];
+
+        $finalizedSnapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [
+                    ['key' => 'daily:regular_pay', 'label' => 'Regular Pay', 'amount' => 3076.92],
+                ],
+                'payslip_earning_lines' => [
+                    ['key' => 'pay_component:21', 'label' => 'Allowance', 'amount' => 2000.00],
+                ],
+                'payslip_deduction_lines' => [
+                    ['key' => 'government:SSS', 'label' => 'SSS', 'amount' => 1000.00],
+                ],
+                'payslip_custom_deduction_lines' => [
+                    ['key' => 'pay_component:27', 'label' => 'AWIC', 'amount' => 241.66],
+                    ['key' => 'pay_component:33', 'label' => 'AWIC 30', 'amount' => 1329.98],
+                ],
+            ],
+        ];
+
+        $draftPayslip = new Payslip;
+        $draftPayslip->forceFill([
+            'status' => Payslip::STATUS_GENERATED,
+            'gross_pay' => 5076.92,
+            'total_deductions' => 2571.64,
+            'net_pay' => 2505.28,
+            'snapshot' => $draftSnapshot,
+        ]);
+
+        $finalizedPayslip = new Payslip;
+        $finalizedPayslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => 5076.92,
+            'total_deductions' => 2571.64,
+            'net_pay' => 2505.28,
+            'snapshot' => $finalizedSnapshot,
+        ]);
+
+        $draftMetrics = $service->frozenPayslipLineMetrics($draftPayslip);
+        $finalizedMetrics = $service->frozenPayslipLineMetrics($finalizedPayslip);
+
+        $this->assertSame($draftMetrics['line_ids'], $finalizedMetrics['line_ids']);
+        $this->assertContains('deduction:key:pay_component:27', $draftMetrics['line_ids']);
+        $this->assertNotContains('deduction:pay_component_id:27', $draftMetrics['line_ids']);
+    }
+
     public function test_zero_total_draft_without_lines_reports_zero_metrics(): void
     {
         $payslip = new Payslip([

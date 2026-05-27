@@ -4,6 +4,7 @@ import {
   adminQueueBulkPayslipDownload,
   adminPollAndDownloadBulkPayslipZip,
   adminBulkSendFinalizedBatchPayslips,
+  adminDeletePayslipBatch,
   adminDeleteFinalizedPayrollBatch,
   adminDeliverFinalizePayslips,
   adminExecuteFinalizePayroll,
@@ -149,14 +150,6 @@ function roleBadgeMeta(roleRaw) {
   return { label: 'Employee', className: 'bg-muted text-muted-foreground ring-1 ring-border/60' }
 }
 
-function roleRank(roleRaw) {
-  const role = String(roleRaw || '').trim().toLowerCase()
-  if (role === 'company_head' || role === 'company head') return 0
-  if (role === 'branch_head' || role === 'branch head') return 1
-  if (role === 'department_head' || role === 'department head') return 2
-  return 3
-}
-
 function employeeAvatarSrc(row) {
   if (!row || typeof row !== 'object') return undefined
   const candidate =
@@ -167,34 +160,6 @@ function employeeAvatarSrc(row) {
       profile_image: row.profile_image ?? row.avatar ?? row.photo ?? null,
     }
   return userProfileImageSrc(candidate)
-}
-
-function dailyEarningHighlights(row) {
-  const lines = Array.isArray(row?.daily_computation_earning_lines) ? row.daily_computation_earning_lines : []
-  return lines
-    .map((line) => ({
-      label: String(line?.label || '').trim(),
-      amount: Number(line?.amount || 0),
-    }))
-    .filter((line) => line.label && Number.isFinite(line.amount) && Math.abs(line.amount) > 0.004)
-    .slice(0, 3)
-}
-
-function attendanceSummaryLine(row) {
-  const summary = row?.attendance_display_summary
-  const count = Number(summary?.working_days_count || 0)
-  if (!Number.isFinite(count) || count <= 0) return null
-  const presence = Number(summary?.presence_days_count || 0)
-  const firstShift = Array.isArray(summary?.lines) && summary.lines.length > 0
-    ? String(summary.lines[0]?.shift || '').trim()
-    : ''
-  const base = firstShift
-    ? `${count} regular-rate days (${firstShift}, Sun excluded)`
-    : `${count} regular-rate days (Sun excluded)`
-  if (Number.isFinite(presence) && presence > count) {
-    return `${base} — ${presence} calendar day(s) with paid attendance (premium holidays count under Holiday premium).`
-  }
-  return base
 }
 
 function statusPill(label, color = 'gray') {
@@ -330,6 +295,8 @@ export default function AdminFinalizePayrollPage() {
   const [deliveringPayslipId, setDeliveringPayslipId] = useState(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deletingBatch, setDeletingBatch] = useState(false)
+  const [deleteDraftDialogOpen, setDeleteDraftDialogOpen] = useState(false)
+  const [deletingDraftBatch, setDeletingDraftBatch] = useState(false)
   const [bulkDownloadingZip, setBulkDownloadingZip] = useState(false)
   const [payrollReportDownloading, setPayrollReportDownloading] = useState(false)
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
@@ -488,9 +455,16 @@ export default function AdminFinalizePayrollPage() {
   const totals = preview?.totals ?? { total_gross: 0, total_deductions: 0, total_net: 0, employee_count: 0 }
   const periodPreview = preview?.period_preview ?? null
   const batchRun = preview?.batch_run ?? null
+  const currentBatchRunId = Number(batchRun?.payroll_batch_run_id || 0)
   const batchRunStatus = String(batchRun?.status || '').toLowerCase()
   const draftProcessing = batchRunStatus === 'queued' || batchRunStatus === 'processing'
   const draftReady = batchRunStatus === 'draft'
+  const canDeleteDraftPayroll = isAdmin && permissionSet.has('payslip.generate')
+  const canDeleteCurrentDraftPayroll =
+    canDeleteDraftPayroll &&
+    currentBatchRunId > 0 &&
+    !periodFinalized &&
+    ['queued', 'processing', 'draft', 'failed'].includes(batchRunStatus)
   const draftToastShownRef = useRef(false)
 
   useEffect(() => {
@@ -805,6 +779,38 @@ export default function AdminFinalizePayrollPage() {
     }
   }
 
+  const handleDeleteDraftBatch = async () => {
+    if (currentBatchRunId <= 0 || deletingDraftBatch || !canDeleteCurrentDraftPayroll) return
+    setDeletingDraftBatch(true)
+    try {
+      await adminDeletePayslipBatch(currentBatchRunId)
+      if (tickRef.current) clearInterval(tickRef.current)
+      if (pollRef.current) clearInterval(pollRef.current)
+      setDeleteDraftDialogOpen(false)
+      setSelectedPayslipIds(new Set())
+      setQueuedRunId(null)
+      setFinalizing(false)
+      setShowFinalizeModal(false)
+      setRefreshToken(String(Date.now()))
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('hr:payroll-batch-deleted', { detail: { payroll_batch_run_id: currentBatchRunId } }))
+      }
+      toastRef.current({
+        title: draftProcessing ? 'Payroll generation cancelled' : 'Payroll draft deleted',
+        description: 'The draft payroll batch and any generated draft payslip rows were removed.',
+      })
+      navigate(`${hrBase}/compensation/generate-payslips`)
+    } catch (e) {
+      toastRef.current({
+        title: 'Delete failed',
+        description: e.message || 'Could not delete payroll draft.',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingDraftBatch(false)
+    }
+  }
+
   const handleBulkDownloadFinalizedZip = async () => {
     const batchRunId = Number(preview?.batch_run?.payroll_batch_run_id || 0)
     if (batchRunId <= 0 || bulkDownloadingZip || !batchRunStatusFinalized || !canBulkDownloadPayslipZip) return
@@ -1036,6 +1042,19 @@ export default function AdminFinalizePayrollPage() {
                   Payroll Report PDF
                 </Button>
               )}
+            {canDeleteCurrentDraftPayroll ? (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                className="h-10 gap-2 rounded-xl font-semibold shadow-sm"
+                disabled={deletingDraftBatch || loading}
+                onClick={() => setDeleteDraftDialogOpen(true)}
+              >
+                {deletingDraftBatch ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Delete Payroll
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -1761,6 +1780,34 @@ export default function AdminFinalizePayrollPage() {
               <Button type="button" variant="destructive" onClick={() => handleDeleteFinalizedBatch()} disabled={deletingBatch}>
                 {deletingBatch ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Void Finalized Batch
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={deleteDraftDialogOpen}
+          onOpenChange={(open) => {
+            if (!deletingDraftBatch) setDeleteDraftDialogOpen(open)
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className={cn('text-xl font-bold', TEXT)}>Delete payroll?</DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                {draftProcessing
+                  ? 'This will cancel the queued or generating payroll draft and remove any draft payslip rows already created.'
+                  : 'This will remove the current draft payroll batch and its draft payslip rows.'}{' '}
+                Finalized payroll cannot be deleted here.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setDeleteDraftDialogOpen(false)} disabled={deletingDraftBatch}>
+                Cancel
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => handleDeleteDraftBatch()} disabled={deletingDraftBatch}>
+                {deletingDraftBatch ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Delete Payroll
               </Button>
             </div>
           </DialogContent>

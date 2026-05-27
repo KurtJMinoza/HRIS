@@ -12,6 +12,7 @@ use App\Services\OrganizationLeadershipService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class BranchController extends Controller
 {
@@ -53,6 +54,8 @@ class BranchController extends Controller
             'address' => ['nullable', 'string', 'max:500'],
             'branch_manager_id' => ['nullable', 'integer', 'exists:users,id'],
         ]);
+        $validated['name'] = trim((string) $validated['name']);
+        $this->assertBranchNameIsUnique($validated['name'], (int) $validated['company_id']);
 
         $company = Company::findOrFail($validated['company_id']);
         if (! $company->logo || trim((string) $company->logo) === '') {
@@ -140,6 +143,14 @@ class BranchController extends Controller
             'address' => ['nullable', 'string', 'max:500'],
             'branch_manager_id' => ['nullable', 'integer', 'exists:users,id'],
         ]);
+        if (array_key_exists('name', $validated)) {
+            $validated['name'] = trim((string) $validated['name']);
+        }
+        $this->assertBranchNameIsUnique(
+            (string) ($validated['name'] ?? $branch->name),
+            (int) ($validated['company_id'] ?? $branch->company_id),
+            (int) $branch->id
+        );
 
         if (array_key_exists('company_id', $validated)) {
             $company = Company::findOrFail($validated['company_id']);
@@ -204,6 +215,30 @@ class BranchController extends Controller
         $branch->delete();
 
         return response()->json(['message' => 'Branch deleted successfully.']);
+    }
+
+    private function assertBranchNameIsUnique(string $name, int $companyId, ?int $ignoreBranchId = null): void
+    {
+        if ($name === '') {
+            throw ValidationException::withMessages([
+                'name' => ['Branch name is required.'],
+            ]);
+        }
+
+        $normalized = mb_strtolower(trim($name));
+        $query = Branch::query()
+            ->where('company_id', $companyId)
+            ->whereRaw('LOWER(TRIM(name)) = ?', [$normalized]);
+
+        if ($ignoreBranchId !== null) {
+            $query->whereKeyNot($ignoreBranchId);
+        }
+
+        if ($query->exists()) {
+            throw ValidationException::withMessages([
+                'name' => ['A branch with this name already exists for the selected company.'],
+            ]);
+        }
     }
 
     private function branchResponse(Branch $b): array

@@ -59,6 +59,9 @@ class EmployeeImport implements ToCollection, WithHeadingRow
     /** @var list<int> */
     private array $createdUserIds = [];
 
+    /** @var array<string, array<string, int>> */
+    private array $seenDuplicateIdentifiers = [];
+
     /**
      * Lazy cache: normalized schedule name key → id (built once per import for fast exact lookups).
      *
@@ -102,6 +105,27 @@ class EmployeeImport implements ToCollection, WithHeadingRow
      */
     private function importOneRowWithRecoveries(array $data, int $excelRowNumber): void
     {
+        try {
+            $basePayload = $this->applyImportOrgFallbacks($this->mapRow($data, $excelRowNumber));
+            $basePayload['phone_number'] = $this->nullIfBlank($basePayload['phone_number'] ?? null);
+            $basePayload['email'] = $this->nullIfBlank($basePayload['email'] ?? null);
+            $this->assertNoDuplicateImportIdentifiers($basePayload, $excelRowNumber);
+        } catch (\Throwable $e) {
+            $this->failed++;
+            $this->errors[] = [
+                'row' => $excelRowNumber,
+                'email' => (string) ($this->value($data, ['email']) ?? ''),
+                'name' => (string) ($this->value($data, ['last_name', 'full_name', 'first_name']) ?? ''),
+                'message' => $e->getMessage(),
+            ];
+            Log::warning('Employee import row skipped', [
+                'row' => $excelRowNumber,
+                'error' => $e->getMessage(),
+            ]);
+
+            return;
+        }
+
         $plans = [
             [],
             ['phone' => null],
@@ -112,8 +136,8 @@ class EmployeeImport implements ToCollection, WithHeadingRow
         foreach ($plans as $idx => $plan) {
             try {
                 $createdUserId = null;
-                DB::transaction(function () use ($data, $excelRowNumber, $plan, &$createdUserId): void {
-                    $payload = $this->applyImportOrgFallbacks($this->mapRow($data, $excelRowNumber));
+                DB::transaction(function () use ($basePayload, $plan, &$createdUserId): void {
+                    $payload = $basePayload;
                     if (array_key_exists('phone', $plan)) {
                         $payload['phone_number'] = $plan['phone'];
                     }
@@ -130,6 +154,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 if ($createdUserId !== null) {
                     $this->createdUserIds[] = $createdUserId;
                 }
+                $this->rememberImportIdentifiers($basePayload, $excelRowNumber);
                 $this->imported++;
                 if ($plan !== []) {
                     Log::warning('Employee import row recovered with relaxed contact/org', [
@@ -289,10 +314,8 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'nationality' => $this->normalizeImportedNationality($this->importNationalityFromRow($row)),
             'email' => $this->nullIfBlank($email),
             'phone_number' => $this->nullIfBlank(
-                $this->resolveUniquePhoneOrNull(
-                    $this->normalizePhoneNumber(
-                        $this->cleanContactImportCell($this->value($row, ['phone_number', 'phone', 'mobile']))
-                    )
+                $this->normalizePhoneNumber(
+                    $this->cleanContactImportCell($this->value($row, ['phone_number', 'phone', 'mobile']))
                 )
             ),
             'home_address' => $homeAddress,
@@ -471,6 +494,103 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             $payload['branch_id'] ? (int) $payload['branch_id'] : null,
             $payload['department_id'] ? (int) $payload['department_id'] : null
         );
+    }
+
+    private function assertNoDuplicateImportIdentifiers(array $payload, int $excelRowNumber): void
+    {
+        $errors = [];
+        foreach ($this->duplicateIdentifiersForPayload($payload) as $field => $value) {
+            $label = $this->duplicateFieldLabel($field);
+            $firstRow = $this->seenDuplicateIdentifiers[$field][$value] ?? null;
+            if ($firstRow !== null) {
+                $errors[] = sprintf('%s duplicates row %d in this file', $label, $firstRow);
+            }
+
+            $existing = $this->existingDuplicateOwnerLabel($field, $value);
+            if ($existing !== null) {
+                $errors[] = sprintf('%s already exists for %s', $label, $existing);
+            }
+        }
+
+        if ($errors !== []) {
+            throw new \RuntimeException('Duplicate employee detected: '.implode('; ', array_values(array_unique($errors))).'.');
+        }
+    }
+
+    private function rememberImportIdentifiers(array $payload, int $excelRowNumber): void
+    {
+        foreach ($this->duplicateIdentifiersForPayload($payload) as $field => $value) {
+            $this->seenDuplicateIdentifiers[$field][$value] ??= $excelRowNumber;
+        }
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function duplicateIdentifiersForPayload(array $payload): array
+    {
+        return array_filter([
+            'email' => isset($payload['email']) ? Str::lower(trim((string) $payload['email'])) : null,
+            'phone_number' => isset($payload['phone_number']) ? trim((string) $payload['phone_number']) : null,
+            'sss_number' => isset($payload['sss_number']) ? trim((string) $payload['sss_number']) : null,
+            'philhealth_number' => isset($payload['philhealth_number']) ? trim((string) $payload['philhealth_number']) : null,
+            'pagibig_number' => isset($payload['pagibig_number']) ? trim((string) $payload['pagibig_number']) : null,
+            'tin_number' => isset($payload['tin_number']) ? trim((string) $payload['tin_number']) : null,
+        ], fn ($value) => is_string($value) && $value !== '');
+    }
+
+    private function existingDuplicateOwnerLabel(string $field, string $value): ?string
+    {
+        if ($field === 'email') {
+            $user = User::query()
+                ->whereRaw('LOWER(email)=?', [Str::lower($value)])
+                ->first(['id', 'name']);
+
+            return $user instanceof User ? $this->employeeLabel($user) : null;
+        }
+
+        if ($field === 'phone_number') {
+            $user = User::query()
+                ->where('phone_number', $value)
+                ->first(['id', 'name']);
+
+            return $user instanceof User ? $this->employeeLabel($user) : null;
+        }
+
+        if (in_array($field, ['sss_number', 'philhealth_number', 'pagibig_number', 'tin_number'], true)) {
+            $governmentId = EmployeeGovernmentId::query()
+                ->with(['user:id,name'])
+                ->where($field, $value)
+                ->first(['user_id', $field]);
+
+            if ($governmentId instanceof EmployeeGovernmentId) {
+                return $governmentId->user instanceof User
+                    ? $this->employeeLabel($governmentId->user)
+                    : 'an existing employee';
+            }
+        }
+
+        return null;
+    }
+
+    private function employeeLabel(User $user): string
+    {
+        $name = trim((string) $user->name);
+
+        return $name !== '' ? $name : 'employee #'.((int) $user->id);
+    }
+
+    private function duplicateFieldLabel(string $field): string
+    {
+        return match ($field) {
+            'email' => 'Email',
+            'phone_number' => 'Phone number',
+            'sss_number' => 'SSS number',
+            'philhealth_number' => 'PhilHealth number',
+            'pagibig_number' => 'Pag-IBIG number',
+            'tin_number' => 'TIN number',
+            default => Str::headline($field),
+        };
     }
 
     private function createUser(array $payload): User

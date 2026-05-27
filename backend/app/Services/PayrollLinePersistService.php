@@ -230,12 +230,21 @@ class PayrollLinePersistService
         $customDeductions = [];
 
         foreach ($lines as $line) {
+            $lineKey = (string) ($line->line_key ?? '');
+            $payComponentId = null;
+            if ($line->source_type === 'pay_component' && $line->source_id !== null) {
+                $payComponentId = (int) $line->source_id;
+            } elseif (preg_match('/^pay_component:(\d+)$/i', $lineKey, $matches)) {
+                $payComponentId = (int) $matches[1];
+            }
+
             $row = [
-                'key' => (string) ($line->line_key ?? ''),
+                'key' => $lineKey,
                 'label' => (string) ($line->component_name ?? $line->description ?? 'Line'),
                 'amount' => round((float) $line->amount, 2),
                 'category' => $line->category,
                 'component_code' => $line->component_code,
+                'pay_component_id' => $payComponentId > 0 ? $payComponentId : null,
                 'units' => $line->units,
                 'component_schedule' => $line->schedule,
                 'resolved_schedule' => $line->schedule,

@@ -68,7 +68,7 @@ const PAYSLIP_PREVIEW_DIALOG =
   '!max-w-[min(88rem,calc(100vw-1.5rem))] w-full overflow-hidden border-slate-200/90 bg-white p-0 shadow-xl shadow-slate-900/[0.07] sm:!max-w-[min(88rem,calc(100vw-2rem))] dark:border-border dark:bg-card dark:shadow-black/40'
 
 const CARD_SHELL =
-  'rounded-2xl border border-border/80 bg-card text-card-foreground shadow-sm shadow-slate-900/[0.03] transition-shadow duration-200 hover:shadow-md dark:shadow-black/25 dark:hover:shadow-lg'
+  'rounded-2xl border border-border/80 bg-card text-card-foreground shadow-sm shadow-slate-900/3 transition-shadow duration-200 hover:shadow-md dark:shadow-black/25 dark:hover:shadow-lg'
 const SELECT_TRIGGER =
   'h-11 rounded-xl border-border/80 bg-background text-sm font-semibold text-foreground shadow-sm dark:bg-input/45'
 const DEMO_ORG_NAME_PATTERN = /^(company\s+[ab]|acme\s+(corp|group))$/i
@@ -883,7 +883,7 @@ export default function AdminGeneratePayslipsPage() {
     <TooltipProvider>
       <div className={cn(PAYSLIP_MODULE_SHELL, PAYSLIP_STACK)}>
         {/* ── Hero Header ── */}
-        <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm shadow-slate-900/[0.03] dark:shadow-black/25">
+        <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm shadow-slate-900/3 dark:shadow-black/25">
           <div className="relative grid min-h-[220px] gap-6 p-6 md:grid-cols-[1fr_290px] md:p-8">
             <div className="relative z-10 max-w-3xl space-y-3 self-center">
               <Badge
@@ -902,7 +902,7 @@ export default function AdminGeneratePayslipsPage() {
               </p>
             </div>
             <div className="pointer-events-none relative hidden min-h-[150px] items-center justify-center md:flex" aria-hidden>
-              <div className="absolute inset-y-8 right-0 w-full opacity-70 [background-image:radial-gradient(circle,#fb923c_1.4px,transparent_1.4px)] [background-size:18px_18px] dark:opacity-25" />
+              <div className="absolute inset-y-8 right-0 w-full bg-[radial-gradient(circle,#fb923c_1.4px,transparent_1.4px)] bg-size-[18px_18px] opacity-70 dark:opacity-25" />
               <div className="relative h-[150px] w-[122px] rounded-xl border border-brand/25 bg-background shadow-md shadow-slate-900/10 dark:bg-card dark:shadow-black/30">
                 <div className="absolute right-0 top-0 h-9 w-9 rounded-bl-xl bg-muted" />
                 <div className="mx-auto mt-9 h-1.5 w-12 rounded-full bg-brand" />
@@ -1146,7 +1146,7 @@ export default function AdminGeneratePayslipsPage() {
             {/* ── Action Area ── */}
             <div
               className={cn(
-                'overflow-hidden rounded-2xl border bg-card shadow-sm shadow-slate-900/[0.03] dark:shadow-black/25',
+                'overflow-hidden rounded-2xl border bg-card shadow-sm shadow-slate-900/3 dark:shadow-black/25',
                 scopeReady
                   ? 'border-brand/35 ring-1 ring-brand/10'
                   : 'border-border/80',
@@ -1527,7 +1527,7 @@ export default function AdminGeneratePayslipsPage() {
                                   variant="outline"
                                   title={
                                     deleteDisabled && !deletingBatchId
-                                      ? 'Only draft, queued, failed, or empty stuck generating batches can be deleted.'
+                                      ? 'Only draft, queued, generating, or failed batches can be deleted.'
                                       : undefined
                                   }
                                   className="h-8 rounded-lg border-red-200/70 bg-background px-3 text-xs font-normal text-red-600 shadow-sm hover:bg-red-50 disabled:opacity-50 dark:border-red-900/40 dark:text-red-400 dark:hover:bg-red-950/30"
@@ -1565,7 +1565,7 @@ export default function AdminGeneratePayslipsPage() {
             <DialogHeader>
               <DialogTitle className="text-foreground">Delete this batch?</DialogTitle>
               <DialogDescription className="text-left text-muted-foreground">
-                This removes draft payslip rows or cancels a failed, queued, or empty stuck generation for{' '}
+                This removes draft payslip rows or cancels a failed, queued, or generating payroll for{' '}
                 <span className="font-medium text-foreground">{deleteBatchDialogRow?.company_name ?? 'this company'}</span>
                 {deleteBatchDialogRow?.pay_period_start && deleteBatchDialogRow?.pay_period_end ? (
                   <>

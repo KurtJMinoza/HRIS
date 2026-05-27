@@ -1667,6 +1667,7 @@ class PayslipService
 
         $ids = [];
         $processedEmployees = 0;
+        $generationCancelled = false;
         if ($progressRun instanceof PayrollBatchRun) {
             $this->updateBatchRunProgress($progressRun, [
                 'total_employees' => $employeeCount,
@@ -1748,41 +1749,45 @@ class PayslipService
             }
 
             foreach (array_chunk($orderedIds, self::DRAFT_GENERATION_CHUNK_SIZE) as $chunkIds) {
-            if ($chunkIds === []) {
-                continue;
-            }
-
-            if ($withPdf) {
-                $users = User::query()
-                    ->whereIn('id', $chunkIds)
-                    ->get()
-                    ->sortBy(fn (User $u) => array_search($u->id, $chunkIds, true))
-                    ->values();
-                $employeeQueryStartedAt = microtime(true);
-                $users->loadMissing([
-                    'company',
-                    'branch',
-                    'departmentRelation',
-                    'governmentIds',
-                    'payCycle',
-                    'workingSchedule',
-                ]);
-                $timings['load_employees_ms'] += (microtime(true) - $employeeQueryStartedAt) * 1000;
-                $loopStartedAt = microtime(true);
-                foreach ($users as $user) {
-                    $ids[] = $this->generatePayslip($user, $periodInput, $withPdf)['payslip']->id;
+                if ($this->draftGenerationWasCancelled($progressRun)) {
+                    $generationCancelled = true;
+                    break;
                 }
-                $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
+                if ($chunkIds === []) {
+                    continue;
+                }
 
-                continue;
-            }
+                if ($withPdf) {
+                    $users = User::query()
+                        ->whereIn('id', $chunkIds)
+                        ->get()
+                        ->sortBy(fn (User $u) => array_search($u->id, $chunkIds, true))
+                        ->values();
+                    $employeeQueryStartedAt = microtime(true);
+                    $users->loadMissing([
+                        'company',
+                        'branch',
+                        'departmentRelation',
+                        'governmentIds',
+                        'payCycle',
+                        'workingSchedule',
+                    ]);
+                    $timings['load_employees_ms'] += (microtime(true) - $employeeQueryStartedAt) * 1000;
+                    $loopStartedAt = microtime(true);
+                    foreach ($users as $user) {
+                        $ids[] = $this->generatePayslip($user, $periodInput, $withPdf)['payslip']->id;
+                    }
+                    $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
 
-            $users = collect($chunkIds)
-                ->map(fn (int $id) => $allUsersById->get($id))
-                ->filter(fn ($user) => $user instanceof User)
-                ->values();
+                    continue;
+                }
 
-            $ytdChunk = $this->bulkYtdPriorBalances($chunkIds, $periodStartForYtd);
+                $users = collect($chunkIds)
+                    ->map(fn (int $id) => $allUsersById->get($id))
+                    ->filter(fn ($user) => $user instanceof User)
+                    ->values();
+
+                $ytdChunk = $this->bulkYtdPriorBalances($chunkIds, $periodStartForYtd);
 
             $now = now();
             $rows = [];
@@ -1819,6 +1824,11 @@ class PayslipService
 
             if ($rows === [] || $periodStartStr === null || $periodEndStr === null) {
                 continue;
+            }
+
+            if ($this->draftGenerationWasCancelled($progressRun)) {
+                $generationCancelled = true;
+                break;
             }
 
             $upsertStartedAt = microtime(true);
@@ -1902,7 +1912,7 @@ class PayslipService
             }
         }
 
-        if (! $withPdf && $orderedIds !== [] && $fromStr !== '' && $toStr !== '') {
+        if (! $generationCancelled && ! $withPdf && $orderedIds !== [] && $fromStr !== '' && $toStr !== '') {
             $upsertStartedAt = microtime(true);
             $ids = Payslip::query()
                 ->whereIn('user_id', $orderedIds)
@@ -1961,6 +1971,19 @@ class PayslipService
             'payslip_ids' => $ids,
             'timings' => $payloadTimings,
         ];
+    }
+
+    private function draftGenerationWasCancelled(?PayrollBatchRun $progressRun): bool
+    {
+        if (! $progressRun instanceof PayrollBatchRun) {
+            return false;
+        }
+
+        $status = PayrollBatchRun::query()
+            ->whereKey((int) $progressRun->id)
+            ->value('status');
+
+        return $status === null || (string) $status === PayrollBatchRun::STATUS_VOIDED;
     }
 
     public function generatePdf(Payslip $payslip, User $employee, ?string $plainPassword = null, ?string $relativeOverride = null): string
@@ -2329,7 +2352,12 @@ class PayslipService
      */
     private function payrollLineIdentifier(array $line, string $section, int $index): string
     {
-        foreach (['source_id', 'id', 'pay_component_id', 'loan_id', 'deduction_id', 'key'] as $field) {
+        $payComponentId = $this->resolvePayComponentIdFromLine($line);
+        if ($payComponentId !== null) {
+            return $section.':key:pay_component:'.$payComponentId;
+        }
+
+        foreach (['source_id', 'id', 'loan_id', 'deduction_id', 'key'] as $field) {
             $value = $line[$field] ?? null;
             if ($value !== null && trim((string) $value) !== '') {
                 return $section.':'.$field.':'.trim((string) $value);
@@ -2339,6 +2367,27 @@ class PayslipService
         $label = trim((string) ($line['label'] ?? $line['name'] ?? 'line'));
 
         return $section.':'.$index.':'.$label;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function resolvePayComponentIdFromLine(array $line): ?int
+    {
+        if (isset($line['pay_component_id']) && is_numeric($line['pay_component_id'])) {
+            $id = (int) $line['pay_component_id'];
+
+            return $id > 0 ? $id : null;
+        }
+
+        $key = trim((string) ($line['key'] ?? ''));
+        if (preg_match('/^pay_component:(\d+)$/i', $key, $matches)) {
+            $id = (int) $matches[1];
+
+            return $id > 0 ? $id : null;
+        }
+
+        return null;
     }
 
     /**
@@ -3907,8 +3956,7 @@ class PayslipService
 
     /**
      * Remove draft payslips for this batch scope and delete the batch run.
-     * Empty processing rows can also be deleted; these are stale "Generating" placeholders
-     * left behind when a worker is killed before it can mark the run failed.
+     * Queued or processing jobs no-op once the run is deleted.
      */
     public function deleteDraftBatchRun(PayrollBatchRun $run): void
     {
@@ -3922,28 +3970,40 @@ class PayslipService
         $attachedPayslips = Payslip::query()
             ->where('payroll_batch_run_id', (int) $run->id)
             ->count();
-        $emptyProcessingRun = $status === PayrollBatchRun::STATUS_PROCESSING
-            && $attachedPayslips === 0
-            && (int) ($run->processed_employees ?? 0) === 0;
-
-        if ($status === PayrollBatchRun::STATUS_PROCESSING && ! $emptyProcessingRun) {
-            throw new \RuntimeException('Cannot delete while payslip generation is in progress.');
+        $keepCancelledRun = $status === PayrollBatchRun::STATUS_PROCESSING;
+        if (! in_array($status, [
+            PayrollBatchRun::STATUS_DRAFT,
+            PayrollBatchRun::STATUS_QUEUED,
+            PayrollBatchRun::STATUS_PROCESSING,
+            PayrollBatchRun::STATUS_FAILED,
+        ], true)) {
+            throw new \RuntimeException('Only draft, queued, processing, or failed batches can be deleted.');
         }
-        if (! in_array($status, [PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_QUEUED, PayrollBatchRun::STATUS_FAILED], true) && ! $emptyProcessingRun) {
-            throw new \RuntimeException('Only draft, queued, failed, or empty stuck processing batches can be deleted.');
+
+        if ($keepCancelledRun) {
+            $this->updateBatchRunProgress($run, [
+                'status' => PayrollBatchRun::STATUS_VOIDED,
+                'voided_at' => now(),
+                'void_reason' => 'Cancelled during draft payroll generation.',
+                'completed_at' => now(),
+            ]);
         }
 
-        if ($emptyProcessingRun) {
-            $run->delete();
+        if ($attachedPayslips === 0 && (int) ($run->processed_employees ?? 0) === 0) {
+            if (! $keepCancelledRun) {
+                $run->delete();
+            }
 
             return;
         }
 
         $userIds = $this->employeeIdsForBatchScope($run);
 
-        DB::transaction(function () use ($run, $userIds) {
+        DB::transaction(function () use ($run, $userIds, $keepCancelledRun) {
             if (count($userIds) === 0) {
-                $run->delete();
+                if (! $keepCancelledRun) {
+                    $run->delete();
+                }
 
                 return;
             }
@@ -3964,7 +4024,9 @@ class PayslipService
             }
 
             (clone $base)->whereIn('status', $draftStatuses)->delete();
-            $run->delete();
+            if (! $keepCancelledRun) {
+                $run->delete();
+            }
         });
     }
 }

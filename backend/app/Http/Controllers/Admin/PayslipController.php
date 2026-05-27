@@ -232,19 +232,14 @@ class PayslipController extends Controller
                 $displayLabel = 'Draft';
             }
 
-            $isEmptyProcessingRun = $batchStatus === PayrollBatchRun::STATUS_PROCESSING
-                && $payslipCount === 0
-                && $finalizedCount === 0
-                && $processedEmployees === 0;
-
-            // Delete for draft/queued runs, plus empty processing rows left behind by failed workers.
+            // Delete/cancel is allowed until any payslip in the run has been finalized.
             $canDelete = ! $isFinalized
                 && $finalizedCount === 0
                 && (
                     $batchStatus === PayrollBatchRun::STATUS_DRAFT
                     || $batchStatus === PayrollBatchRun::STATUS_QUEUED
+                    || $batchStatus === PayrollBatchRun::STATUS_PROCESSING
                     || $batchStatus === PayrollBatchRun::STATUS_FAILED
-                    || $isEmptyProcessingRun
                 );
 
             return [

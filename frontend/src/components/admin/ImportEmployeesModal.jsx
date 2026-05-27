@@ -297,6 +297,9 @@ function validatePreviewRows(rows) {
     const displayName = formatPreviewEmployeeName({ first, middle, last, suffix, legacy: legacyName })
 
     const hints = []
+    if (Array.isArray(raw.__import_duplicate_issues)) {
+      hints.push(...raw.__import_duplicate_issues.map((issue) => String(issue)).filter(Boolean))
+    }
     if (!first && !last) {
       hints.push(`No name columns — will import as Unknown / Employee-${index + 1}`)
     } else {
@@ -313,7 +316,7 @@ function validatePreviewRows(rows) {
         hints.push('Invalid email text — stored as blank on import')
       } else {
         if (emailSet.has(email)) {
-          hints.push('Duplicate email in file — import may clear contact fields on some rows')
+          hints.push('Duplicate email in file — duplicate rows will be skipped')
         }
         emailSet.add(email)
       }
