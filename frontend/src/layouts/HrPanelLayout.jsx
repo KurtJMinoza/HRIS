@@ -2,7 +2,7 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { HrAppPathProvider } from '@/contexts/HrAppPathContext'
 import { buildAdminNav, buildManagerNav } from '@/config/rbacNav'
-import { resolvePostLoginPath, isAdminHrUser, hasManagementPanelAccess } from '@/lib/hrRoutes'
+import { resolvePostLoginPath, isAdminHrUser } from '@/lib/hrRoutes'
 import { DashboardLayout } from '@/layouts/DashboardLayout'
 
 const PANEL_SCOPES = new Set(['admin', 'company', 'branch', 'department', 'division', 'section-unit'])
@@ -16,7 +16,7 @@ const SCOPE_TO_ROLE = {
 }
 
 /**
- * Shared layout for `/admin`, `/company`, `/branch`, `/department` (org heads use scoped panels, not `/employee/*`).
+ * Shared layout for `/admin`; legacy scoped head URLs redirect back to the employee shell.
  * Scope is taken from the first URL segment (after basename).
  */
 export function HrPanelLayout() {
@@ -52,6 +52,12 @@ export function HrPanelLayout() {
     return <Navigate to={`/admin${suffix}`} replace />
   }
 
+  if (scope !== 'admin') {
+    const stripped = location.pathname.replace(/^\/(company|branch|department|division|section-unit)/, '')
+    const suffix = stripped === '' || stripped === '/' ? '/dashboard' : (stripped.startsWith('/') ? stripped : `/${stripped}`)
+    return <Navigate to={`/employee${suffix}`} replace />
+  }
+
   if (scope === 'admin') {
     if (!isAdminHrUser(user)) {
       try {
@@ -59,14 +65,6 @@ export function HrPanelLayout() {
       } catch {
         // ignore
       }
-      return <Navigate to={resolvePostLoginPath(user)} replace />
-    }
-  } else {
-    if (!hasManagementPanelAccess(user)) {
-      return <Navigate to="/employee/dashboard" replace />
-    }
-    const expected = SCOPE_TO_ROLE[scope]
-    if (String(user.hr_role || '').trim().toLowerCase() !== expected) {
       return <Navigate to={resolvePostLoginPath(user)} replace />
     }
   }

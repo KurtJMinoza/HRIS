@@ -1,6 +1,5 @@
-import { FileText } from 'lucide-react'
 import { adminNavItems, employeeNavItems } from '@/config/dashboardNav'
-import { hasManagementPanelAccess, isAdminHrUser } from '@/lib/hrRoutes'
+import { isAdminHrUser } from '@/lib/hrRoutes'
 
 /**
  * Routes only for ADMIN (HR) — non-admin HR panel roles never see these, even if a permission slug matches.
@@ -90,25 +89,9 @@ function permissionsForPath(path) {
   return ['dashboard.view']
 }
 
-/** HR panel base path for users who also use the employee app (org heads / admin). */
-function hrPanelBasePathForUser(user) {
-  if (!user) return null
-  const role = String(user.role || '').trim().toLowerCase()
-  if (role === 'admin' || role === 'super_admin') return '/admin'
-  if (!hasManagementPanelAccess(user)) return null
-  const hr = String(user.hr_role || '').trim()
-  if (hr === 'admin_hr') return '/admin'
-  if (hr === 'company_head') return '/company'
-  if (hr === 'branch_head') return '/branch'
-  if (hr === 'department_head') return '/department'
-  if (hr === 'division_head') return '/division'
-  if (hr === 'section_unit_head') return '/section-unit'
-  return null
-}
-
 /**
  * Employee app sidebar (`/employee/*`).
- * When the user has an HR panel path + permissions, adds **Payslips** (own delivered payslips only; same API as My Payslips).
+ * All non-admin roles, including organization heads, use this same module set.
  */
 function navItemVisibleForUser(user, item) {
   const flags = item.requiredFlags
@@ -131,23 +114,9 @@ function navItemVisibleForUser(user, item) {
 }
 
 export function buildEmployeeNav(user = null) {
-  const base = employeeNavItems
+  return employeeNavItems
     .filter((item) => navItemVisibleForUser(user, item))
     .map((item) => ({ ...item }))
-  if (String(user?.role || '').trim().toLowerCase() === 'admin') {
-    return base
-  }
-  const prefix = hrPanelBasePathForUser(user)
-  const payslipsTo = prefix ? `${prefix}/compensation/payslips` : null
-  if (payslipsTo && user && canSee(user, [permissionsForPath(payslipsTo)])) {
-    base.push({
-      to: payslipsTo,
-      end: false,
-      label: 'Payslips',
-      icon: FileText,
-    })
-  }
-  return base
 }
 
 /**

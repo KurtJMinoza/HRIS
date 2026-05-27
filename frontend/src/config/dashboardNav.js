@@ -156,7 +156,14 @@ export const employeeNavItems = [
     end: false,
     label: 'Reports',
     icon: FileText,
-    requiredFlags: ['can_access_reports_module', 'can_view_own_reports'],
+    requiredPermissions: [
+      'can_access_reports_module',
+      'can_view_own_reports',
+      'can_view_subordinate_reports',
+      'reports.view',
+      'reports.view_team',
+      'reports.view_division',
+    ],
   },
   { to: '/employee/profile', end: false, label: 'Profile', icon: User },
 ]

@@ -2,12 +2,6 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdminHrUser, isManagerialHrRole, resolvePostLoginPath } from '@/lib/hrRoutes'
 
-const ROLE_EMPLOYEE = 'employee'
-
-function normalizeRole(role) {
-  return String(role || '').trim().toLowerCase()
-}
-
 /**
  * Protects routes by authentication and role variant.
  *
@@ -25,7 +19,6 @@ export function ProtectedRoute({ children, variant, role, permissions = [] }) {
     'employee'
   const { user, loading } = useAuth()
   const location = useLocation()
-  const userRole = normalizeRole(user?.role)
 
   if (loading) {
     return (
@@ -87,25 +80,13 @@ export function ProtectedRoute({ children, variant, role, permissions = [] }) {
     if (isAdminHrUser(user)) {
       return <Navigate to="/admin/dashboard" replace />
     }
-    /** Org heads (company / branch / department assignments) use scoped panels, not `/employee/*`. */
-    if (isManagerialHrRole(user)) {
-      try {
-        sessionStorage.setItem('employee_route_denied', '1')
-      } catch {
-        // ignore
+    if (permissions.length) {
+      const userPermissions = new Set(user.permissions ?? [])
+      if (!permissions.some((permission) => userPermissions.has(permission))) {
+        return <Navigate to={resolvePostLoginPath(user)} replace />
       }
-      return <Navigate to={resolvePostLoginPath(user)} replace />
     }
-    if (userRole === ROLE_EMPLOYEE) {
-      if (permissions.length) {
-        const userPermissions = new Set(user.permissions ?? [])
-        if (!permissions.some((permission) => userPermissions.has(permission))) {
-          return <Navigate to={resolvePostLoginPath(user)} replace />
-        }
-      }
-      return children
-    }
-    return <Navigate to={resolvePostLoginPath(user)} replace />
+    return children
   }
 
   return children

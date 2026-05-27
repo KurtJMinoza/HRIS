@@ -1,7 +1,6 @@
 /**
  * HR panel routing (must stay aligned with `ProtectedRoute` and `HrPanelLayout`):
  * - `/admin/*` — ADMIN (HR)
- * - `/company/*`, `/branch/*`, `/department/*` — explicitly granted scoped management UI
  * - `/employee/*` — normal employees and org heads by default
  */
 
@@ -25,7 +24,7 @@ export function hasManagementPanelAccess(userLike) {
 }
 
 /**
- * Org-head accounts that must use `/company`, `/branch`, or `/department` (not the `/employee/*` shell).
+ * Org-head accounts are recognized for scoped data/labels, but they still use the employee shell.
  *
  * Prefer `is_assigned_organization_head` from the API (DB-backed org assignments). Some cached or
  * secondary payloads only expose `management_role`; use that before `hr_role` so badge / display
@@ -49,13 +48,6 @@ export function isManagerialHrRole(userLike) {
 export function getHrPanelBasePath(userLike) {
   if (!userLike) return '/employee'
   if (isAdminHrUser(userLike)) return '/admin'
-  if (!hasManagementPanelAccess(userLike)) return '/employee'
-  const hr = String(userLike.hr_role || '').trim().toLowerCase()
-  if (hr === 'company_head') return '/company'
-  if (hr === 'branch_head') return '/branch'
-  if (hr === 'department_head') return '/department'
-  if (hr === 'division_head') return '/division'
-  if (hr === 'section_unit_head') return '/section-unit'
   return '/employee'
 }
 
@@ -65,15 +57,7 @@ export function getHrPanelBasePath(userLike) {
 export function resolvePostLoginPath(userLike) {
   if (!userLike) return '/login'
   if (isAdminHrUser(userLike)) return '/admin/dashboard'
-  if (!hasManagementPanelAccess(userLike)) return '/employee/dashboard'
-  const hr = String(userLike.hr_role || '').trim().toLowerCase()
-  if (hr === 'company_head') return '/company/dashboard'
-  if (hr === 'branch_head') return '/branch/dashboard'
-  if (hr === 'department_head') return '/department/dashboard'
-  if (hr === 'division_head') return '/division/dashboard'
-  if (hr === 'section_unit_head') return '/section-unit/dashboard'
-  if (String(userLike.role || '').trim().toLowerCase() === 'employee') return '/employee/dashboard'
-  return '/login'
+  return '/employee/dashboard'
 }
 
 /**
