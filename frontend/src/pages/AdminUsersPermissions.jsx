@@ -57,7 +57,9 @@ const HR_ROLE_OPTIONS = [
   { value: 'admin_hr', label: 'ADMIN (HR) only (no head assignment)' },
   { value: 'company_head', label: 'COMPANY HEAD' },
   { value: 'branch_head', label: 'BRANCH HEAD' },
+  { value: 'division_head', label: 'DIVISION HEAD' },
   { value: 'department_head', label: 'DEPARTMENT HEAD' },
+  { value: 'section_unit_head', label: 'SECTION / UNIT HEAD' },
   { value: 'employee', label: 'EMPLOYEE' },
 ]
 
@@ -88,7 +90,7 @@ const PERMISSION_SECTIONS = [
   },
   { id: 'overtime', label: 'Overtime Management', modules: ['overtime'] },
   { id: 'leave', label: 'Leave Management', modules: ['leave'] },
-  { id: 'holiday_schedule', label: 'Holiday & Schedule', modules: ['holiday', 'schedule'] },
+  { id: 'holiday_schedule', label: 'Holiday & Schedule', modules: ['holiday', 'holidays', 'schedule'] },
   { id: 'reports', label: 'Reports', modules: ['reports'] },
   { id: 'payroll', label: 'Payroll Core', modules: ['payroll'] },
   {
@@ -106,14 +108,17 @@ const PERMISSION_SECTIONS = [
   { id: 'profile', label: 'Profile', modules: ['profile'], hint: 'Personal/contact/employment details and profile picture.' },
   { id: 'users_rbac', label: 'Users & Permissions', modules: ['users', 'rbac'] },
   { id: 'organization', label: 'Company & Branch Settings', modules: ['organization'] },
+  { id: 'settings', label: 'Settings', modules: ['settings'] },
+  { id: 'audit_logs', label: 'Audit Logs', modules: ['audit_logs'] },
+  { id: 'execom', label: 'EXECOM', modules: ['execom'] },
 ]
 
-const ACTION_KEYS = ['view', 'create', 'edit', 'delete', 'manage', 'assign', 'approve', 'audit', 'export', 'import', 'sensitive']
+const ACTION_KEYS = ['view', 'create', 'update', 'delete', 'approve', 'export', 'import', 'manage']
 
 const ACTION_LABELS = {
   view: 'View',
   create: 'Create',
-  edit: 'Edit',
+  update: 'Update',
   delete: 'Delete',
   manage: 'Manage',
   assign: 'Assign',
@@ -127,7 +132,7 @@ const ACTION_LABELS = {
 const ACTION_TOOLTIPS = {
   view: 'Read-only access to lists and screens in this area.',
   create: 'Create new records.',
-  edit: 'Modify existing records or operational settings.',
+  update: 'Modify existing records or operational settings.',
   delete: 'Remove records permanently.',
   manage: 'Full administrative control for the module or resource.',
   assign: 'Assign or override records for specific employees or scopes.',
@@ -149,17 +154,33 @@ function tabClass(active) {
   )
 }
 
+const FALLBACK_ROLE_KEYS = ['admin_hr', 'company_head', 'branch_head', 'department_head', 'employee']
+
+const PREFERRED_ROLE_ORDER = [
+  'super_admin',
+  'admin',
+  'admin_hr',
+  'payroll_admin',
+  'company_head',
+  'branch_head',
+  'division_head',
+  'department_head',
+  'section_unit_head',
+  'team_lead',
+  'employee',
+]
+
 function inferActionKey(slug) {
   if (slug === 'view-my-schedule') return 'view'
   if (slug === 'request-schedule') return 'create'
   if (slug === 'approve-schedule') return 'approve'
   if (slug === 'manage-schedules') return 'manage'
   const last = slug.split('.').pop() || ''
-  if (['view', 'list'].includes(last)) return 'view'
+  if (['view', 'list'].includes(last) || last.startsWith('view_')) return 'view'
   if (last === 'create') return 'create'
   if (last === 'manage') return 'manage'
-  if (last === 'assign') return 'assign'
-  if (['audit', 'prorate'].includes(last)) return last === 'audit' ? 'audit' : 'manage'
+  if (last === 'assign') return 'manage'
+  if (['audit', 'prorate', 'sensitive'].includes(last)) return 'manage'
   if (
     [
       'edit',
@@ -176,13 +197,12 @@ function inferActionKey(slug) {
     ].includes(last) ||
     last.endsWith('_hours')
   ) {
-    return 'edit'
+    return 'update'
   }
   if (last === 'delete') return 'delete'
   if (['approve', 'review'].includes(last)) return 'approve'
   if (last === 'export') return 'export'
   if (last === 'import') return 'import'
-  if (last === 'sensitive') return 'sensitive'
   if (last === 'audit') return 'view'
   if (last === 'payroll') return 'view'
   return 'view'
@@ -1221,6 +1241,7 @@ function RolesTab({ toast }) {
   const { refreshUser } = useAuth()
   const [loading, setLoading] = useState(true)
   const [permissions, setPermissions] = useState([])
+  const [serverRoleKeys, setServerRoleKeys] = useState([])
   const [draftByRole, setDraftByRole] = useState({})
   const [baselineByRole, setBaselineByRole] = useState({})
   const [selectedRole, setSelectedRole] = useState('company_head')
@@ -1232,9 +1253,17 @@ function RolesTab({ toast }) {
   const [resetDefaultTarget, setResetDefaultTarget] = useState(null)
   const [resettingRole, setResettingRole] = useState(null)
 
-  const roleKeys = useMemo(() => ['admin_hr', 'company_head', 'branch_head', 'department_head', 'employee'], [])
+  const roleKeys = useMemo(() => {
+    const supported = serverRoleKeys.length ? serverRoleKeys : FALLBACK_ROLE_KEYS
+
+    return [
+      ...PREFERRED_ROLE_ORDER.filter((key) => supported.includes(key)),
+      ...supported.filter((key) => !PREFERRED_ROLE_ORDER.includes(key)),
+    ]
+  }, [serverRoleKeys])
 
   const roleLabel = (rk) => {
+    if (rk === 'team_lead') return 'TEAM LEAD PRESET'
     if (rk === 'admin_hr') return 'ADMIN (HR)'
     return rk.replace(/_/g, ' ').toUpperCase()
   }
@@ -1244,9 +1273,12 @@ function RolesTab({ toast }) {
     try {
       const data = await getRbacMatrix()
       setPermissions(data.permissions ?? [])
+      const loadedRoleKeys = data.roles?.map((role) => (typeof role === 'string' ? role : role.key)).filter(Boolean) ?? []
+      const effectiveRoleKeys = loadedRoleKeys.length ? loadedRoleKeys : FALLBACK_ROLE_KEYS
+      setServerRoleKeys(loadedRoleKeys)
       const next = {}
       const base = {}
-      roleKeys.forEach((rk) => {
+      effectiveRoleKeys.forEach((rk) => {
         const slugs = data.matrix?.[rk] ?? []
         next[rk] = new Set(slugs)
         base[rk] = serializeSet(new Set(slugs))
@@ -1258,7 +1290,7 @@ function RolesTab({ toast }) {
     } finally {
       setLoading(false)
     }
-  }, [roleKeys, toast])
+  }, [toast])
 
   useEffect(() => {
     load()

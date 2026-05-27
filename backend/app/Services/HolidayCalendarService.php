@@ -105,10 +105,19 @@ class HolidayCalendarService
                 'company:id,name,logo',
                 'branch:id,name,company_id',
                 'branch.company:id,name,logo',
-                'department:id,name,branch_id',
+                'division:id,name,company_id,branch_id',
+                'division.branch:id,name,company_id',
+                'division.company:id,name,logo',
+                'department:id,name,branch_id,division_id',
+                'department.division:id,name,company_id,branch_id',
                 'department.branch:id,name,company_id',
                 'department.branch.company:id,name,logo',
-                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
+                'sectionUnit:id,name,company_id,branch_id,division_id,department_id',
+                'sectionUnit.company:id,name,logo',
+                'sectionUnit.branch:id,name,company_id',
+                'sectionUnit.division:id,name,company_id,branch_id',
+                'sectionUnit.department:id,name,branch_id,division_id',
+                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,division_id,department_id,section_unit_id',
                 'employee.companyHeadships:id,name,logo,company_head_id',
                 'employee.company:id,name,logo',
                 'employee.branch:id,name,company_id',
@@ -188,9 +197,15 @@ class HolidayCalendarService
                 'name' => $r['name'],
                 'type' => $r['type'],
                 'scope' => 'nationwide',
+                'scope_type' => 'nationwide',
+                'scope_label' => 'Nationwide',
+                'scope_target' => 'All employees',
+                'scope_path' => 'Nationwide',
                 'company_id' => null,
                 'branch_id' => null,
+                'division_id' => null,
                 'department_id' => null,
+                'section_unit_id' => null,
                 'employee_id' => null,
                 'description' => null,
                 'regions' => null,
@@ -215,10 +230,19 @@ class HolidayCalendarService
                 'company:id,name,logo',
                 'branch:id,name,company_id',
                 'branch.company:id,name,logo',
-                'department:id,name,branch_id',
+                'division:id,name,company_id,branch_id',
+                'division.branch:id,name,company_id',
+                'division.company:id,name,logo',
+                'department:id,name,branch_id,division_id',
+                'department.division:id,name,company_id,branch_id',
                 'department.branch:id,name,company_id',
                 'department.branch.company:id,name,logo',
-                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
+                'sectionUnit:id,name,company_id,branch_id,division_id,department_id',
+                'sectionUnit.company:id,name,logo',
+                'sectionUnit.branch:id,name,company_id',
+                'sectionUnit.division:id,name,company_id,branch_id',
+                'sectionUnit.department:id,name,branch_id,division_id',
+                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,division_id,department_id,section_unit_id',
                 'employee.companyHeadships:id,name,logo,company_head_id',
                 'employee.company:id,name,logo',
                 'employee.branch:id,name,company_id',
@@ -265,21 +289,28 @@ class HolidayCalendarService
         $d = $h->date instanceof Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
         $company = $h->company
             ?? $h->branch?->company
+            ?? $h->division?->company
+            ?? $h->division?->branch?->company
             ?? $h->department?->branch?->company
+            ?? $h->sectionUnit?->company
+            ?? $h->sectionUnit?->branch?->company
             ?? $h->employee?->companyHeadships?->first()
             ?? $h->employee?->company
             ?? $h->employee?->branch?->company
             ?? $h->employee?->departmentRelation?->branch?->company;
 
-        return [
+        $row = [
             'id' => $h->id,
             'date' => $d,
             'name' => TextSanitizer::clean($h->name, $h->name) ?? $h->name,
             'type' => $h->type,
             'scope' => $h->scope,
+            'scope_type' => $h->scope,
             'company_id' => $h->company_id,
             'branch_id' => $h->branch_id,
+            'division_id' => $h->division_id,
             'department_id' => $h->department_id,
+            'section_unit_id' => $h->section_unit_id,
             'employee_id' => $h->employee_id,
             'coverage_type' => $h->coverage_type,
             'coverage_ids' => is_array($h->coverage_ids) ? $h->coverage_ids : [],
@@ -290,7 +321,9 @@ class HolidayCalendarService
             'company_name' => $company?->name,
             'company_logo_url' => $this->publicMediaUrl($company?->logo),
             'branch_name' => $h->branch?->name ?? $h->employee?->branch?->name,
+            'division_name' => $h->division?->name ?? $h->sectionUnit?->division?->name,
             'department_name' => $h->department?->name ?? $h->employee?->departmentRelation?->name,
+            'section_unit_name' => $h->sectionUnit?->name ?? $h->employee?->sectionUnit?->name,
             'employee_name' => $h->employee?->display_name,
             'employee_formatted_name' => $h->employee?->formatted_name,
             'employee_code' => $h->employee?->employee_code,
@@ -300,6 +333,12 @@ class HolidayCalendarService
             'status' => $h->status ?? 'active',
             'source' => 'custom',
         ];
+
+        return array_merge($row, [
+            'scope_label' => $this->scopeLabel((string) ($row['scope'] ?? 'nationwide')),
+            'scope_target' => $this->scopeTargetLabel($row),
+            'scope_path' => $this->scopePathLabel($row),
+        ]);
     }
 
     /**
@@ -312,7 +351,9 @@ class HolidayCalendarService
         ?int $companyId = null,
         ?int $branchId = null,
         ?int $departmentId = null,
-        ?int $employeeId = null
+        ?int $employeeId = null,
+        ?int $divisionId = null,
+        ?int $sectionUnitId = null
     ): ?array {
         $year = (int) substr($dateKey, 0, 4);
         if ($year < 2000) {
@@ -322,7 +363,7 @@ class HolidayCalendarService
         $matches = array_values(array_filter(
             $this->holidaysForYear($year),
             fn (array $row) => ($row['date'] ?? null) === $dateKey
-                && $this->rowAppliesToTarget($row, $companyId, $branchId, $departmentId, $employeeId)
+                && $this->rowAppliesToTarget($row, $companyId, $branchId, $departmentId, $employeeId, $divisionId, $sectionUnitId)
         ));
 
         usort($matches, function (array $a, array $b) {
@@ -341,6 +382,15 @@ class HolidayCalendarService
                     'name' => (string) $row['name'],
                     'type' => (string) $row['type'],
                     'scope' => (string) ($row['scope'] ?? 'nationwide'),
+                    'scope_type' => (string) ($row['scope'] ?? 'nationwide'),
+                    'scope_label' => $this->scopeLabel((string) ($row['scope'] ?? 'nationwide')),
+                    'scope_target' => $this->scopeTargetLabel($row),
+                    'company_id' => $row['company_id'] ?? null,
+                    'branch_id' => $row['branch_id'] ?? null,
+                    'division_id' => $row['division_id'] ?? null,
+                    'department_id' => $row['department_id'] ?? null,
+                    'section_unit_id' => $row['section_unit_id'] ?? null,
+                    'employee_id' => $row['employee_id'] ?? null,
                     'description' => $row['description'] ?? null,
                 ];
             }
@@ -362,7 +412,9 @@ class HolidayCalendarService
             $user->getEffectiveCompanyId() !== null ? (int) $user->getEffectiveCompanyId() : null,
             $user->branch_id !== null ? (int) $user->branch_id : null,
             $user->department_id !== null ? (int) $user->department_id : null,
-            (int) $user->id
+            (int) $user->id,
+            $user->division_id !== null ? (int) $user->division_id : null,
+            $user->section_unit_id !== null ? (int) $user->section_unit_id : null
         );
     }
 
@@ -371,25 +423,42 @@ class HolidayCalendarService
         ?int $companyId,
         ?int $branchId,
         ?int $departmentId,
-        ?int $employeeId
+        ?int $employeeId,
+        ?int $divisionId = null,
+        ?int $sectionUnitId = null
     ): bool {
         $coverageType = $row['coverage_type'] ?? null;
         $coverageIds = $row['coverage_ids'] ?? [];
         if ($coverageType !== null && is_array($coverageIds) && ! empty($coverageIds)) {
-            return $this->coverageAppliesToTarget($coverageType, $coverageIds, $companyId, $branchId, $departmentId, $employeeId);
+            return $this->coverageAppliesToTarget($coverageType, $coverageIds, $companyId, $branchId, $departmentId, $employeeId, $divisionId, $sectionUnitId);
         }
 
         $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
         $rowCompany = isset($row['company_id']) ? (int) $row['company_id'] : 0;
         $rowBranch = isset($row['branch_id']) ? (int) $row['branch_id'] : 0;
+        $rowDivision = isset($row['division_id']) ? (int) $row['division_id'] : 0;
         $rowDepartment = isset($row['department_id']) ? (int) $row['department_id'] : 0;
+        $rowSectionUnit = isset($row['section_unit_id']) ? (int) $row['section_unit_id'] : 0;
         $rowEmployee = isset($row['employee_id']) ? (int) $row['employee_id'] : 0;
 
         return match ($scope) {
             'employee' => $rowEmployee > 0 && $employeeId !== null && $rowEmployee === (int) $employeeId,
+            'section_unit' => $rowSectionUnit > 0
+                && $sectionUnitId !== null
+                && $rowSectionUnit === (int) $sectionUnitId
+                && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId))
+                && ($rowBranch <= 0 || ($branchId !== null && $rowBranch === (int) $branchId))
+                && ($rowDivision <= 0 || ($divisionId !== null && $rowDivision === (int) $divisionId))
+                && ($rowDepartment <= 0 || ($departmentId !== null && $rowDepartment === (int) $departmentId)),
             'department' => $rowDepartment > 0
                 && $departmentId !== null
                 && $rowDepartment === (int) $departmentId
+                && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId))
+                && ($rowBranch <= 0 || ($branchId !== null && $rowBranch === (int) $branchId))
+                && ($rowDivision <= 0 || ($divisionId !== null && $rowDivision === (int) $divisionId)),
+            'division' => $rowDivision > 0
+                && $divisionId !== null
+                && $rowDivision === (int) $divisionId
                 && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId))
                 && ($rowBranch <= 0 || ($branchId !== null && $rowBranch === (int) $branchId)),
             'branch' => $rowBranch > 0
@@ -411,14 +480,18 @@ class HolidayCalendarService
         ?int $companyId,
         ?int $branchId,
         ?int $departmentId,
-        ?int $employeeId
+        ?int $employeeId,
+        ?int $divisionId = null,
+        ?int $sectionUnitId = null
     ): bool {
         $coverageIds = array_map('intval', $coverageIds);
 
         return match ($coverageType) {
             'company' => $companyId !== null && in_array($companyId, $coverageIds, true),
             'branches' => $branchId !== null && in_array($branchId, $coverageIds, true),
+            'divisions' => $divisionId !== null && in_array($divisionId, $coverageIds, true),
             'departments' => $departmentId !== null && in_array($departmentId, $coverageIds, true),
+            'section_units' => $sectionUnitId !== null && in_array($sectionUnitId, $coverageIds, true),
             'employees' => $employeeId !== null && in_array($employeeId, $coverageIds, true),
             default => false,
         };
@@ -428,7 +501,9 @@ class HolidayCalendarService
     {
         return match (strtolower((string) ($row['scope'] ?? 'nationwide'))) {
             'employee' => 60,
+            'section_unit' => 55,
             'department' => 50,
+            'division' => 45,
             'branch' => 40,
             'company' => 30,
             'regional' => 20,
@@ -452,9 +527,55 @@ class HolidayCalendarService
             strtolower((string) ($row['scope'] ?? 'nationwide')),
             (string) ((int) ($row['company_id'] ?? 0)),
             (string) ((int) ($row['branch_id'] ?? 0)),
+            (string) ((int) ($row['division_id'] ?? 0)),
             (string) ((int) ($row['department_id'] ?? 0)),
+            (string) ((int) ($row['section_unit_id'] ?? 0)),
             (string) ((int) ($row['employee_id'] ?? 0)),
         ]);
+    }
+
+    private function scopeLabel(string $scope): string
+    {
+        return match (strtolower($scope)) {
+            'employee' => 'Specific Employee',
+            'section_unit' => 'Section / Unit',
+            'department' => 'Department',
+            'division' => 'Division',
+            'branch' => 'Branch',
+            'company' => 'Company',
+            default => 'Nationwide',
+        };
+    }
+
+    private function scopeTargetLabel(array $row): string
+    {
+        return match (strtolower((string) ($row['scope'] ?? 'nationwide'))) {
+            'employee' => (string) ($row['employee_name'] ?? 'Specific employee'),
+            'section_unit' => (string) ($row['section_unit_name'] ?? 'Section / Unit'),
+            'department' => (string) ($row['department_name'] ?? 'Department'),
+            'division' => (string) ($row['division_name'] ?? 'Division'),
+            'branch' => (string) ($row['branch_name'] ?? 'Branch'),
+            'company' => (string) ($row['company_name'] ?? 'Company'),
+            default => 'Nationwide',
+        };
+    }
+
+    private function scopePathLabel(array $row): string
+    {
+        $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
+        $parts = array_values(array_filter([
+            $row['company_name'] ?? null,
+            $row['branch_name'] ?? null,
+            $row['division_name'] ?? null,
+            $row['department_name'] ?? null,
+            $row['section_unit_name'] ?? null,
+        ], fn ($part) => is_string($part) && trim($part) !== ''));
+
+        if ($scope === 'nationwide' || $scope === 'regional') {
+            return 'Nationwide';
+        }
+
+        return $parts !== [] ? implode(' / ', $parts) : $this->scopeTargetLabel($row);
     }
 
     private function encodeStoragePath(string $path): string

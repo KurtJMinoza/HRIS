@@ -29,7 +29,15 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
-import { createAdminHoliday, getAdminHolidays, deleteAdminHoliday, swapAdminHoliday, swapSeededAdminHoliday, companyLogoUrl } from '@/api'
+import {
+  createAdminHoliday,
+  getAdminHolidays,
+  getMyHolidays,
+  deleteAdminHoliday,
+  swapAdminHoliday,
+  swapSeededAdminHoliday,
+  companyLogoUrl,
+} from '@/api'
 import { HolidayFormModal } from '@/components/holidays/HolidayFormModal'
 import { SwapHolidayModal } from '@/components/holidays/SwapHolidayModal'
 
@@ -577,8 +585,8 @@ function CalendarCell({ cell, todayKey, onSelect, typeFilter, isSelected }) {
   )
 }
 
-export default function AdminHoliday() {
-  useAuth()
+export default function AdminHoliday({ mode = 'admin' }) {
+  const { user } = useAuth()
   const [year, setYear] = useState(new Date().getFullYear())
   const [month, setMonth] = useState(new Date().getMonth())
   const [activeView, setActiveView] = useState('calendar') // 'calendar' | 'list'
@@ -604,18 +612,23 @@ export default function AdminHoliday() {
   const [loading, setLoading] = useState(true)
 
   const todayKey = useMemo(() => new Date().toISOString().slice(0, 10), [])
+  const isEmployeeScoped = mode === 'employee'
+  const permissions = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
+  const canCreateHoliday = permissions.has('holidays.create') || permissions.has('holidays.manage') || permissions.has('holiday.manage')
+  const canUpdateHoliday = permissions.has('holidays.update') || permissions.has('holidays.manage') || permissions.has('holiday.manage')
+  const canDeleteHoliday = permissions.has('holidays.delete') || permissions.has('holidays.manage') || permissions.has('holiday.manage')
 
   const refetchHolidays = useCallback(async (opts = {}) => {
     if (!opts.silent) setLoading(true)
     try {
-      const res = await getAdminHolidays({ year })
+      const res = isEmployeeScoped ? await getMyHolidays({ year }) : await getAdminHolidays({ year })
       setHolidays(res.holidays || [])
     } catch {
       setHolidays([])
     } finally {
       if (!opts.silent) setLoading(false)
     }
-  }, [year])
+  }, [isEmployeeScoped, year])
 
   // Fetch holidays from API when year changes
   useEffect(() => {
@@ -740,6 +753,10 @@ export default function AdminHoliday() {
   }), [selectedCell?.dateStr])
 
   const handleDeleteHoliday = async (holidayOrId) => {
+    if (!canDeleteHoliday) {
+      toast.error('Permission denied', { description: 'You do not have permission to delete holidays.' })
+      return
+    }
     try {
       if (typeof holidayOrId === 'number') {
         await deleteAdminHoliday(holidayOrId)
@@ -762,6 +779,10 @@ export default function AdminHoliday() {
   }
 
   const handleSwapHoliday = async (holiday) => {
+    if (!canUpdateHoliday) {
+      toast.error('Permission denied', { description: 'You do not have permission to update holidays.' })
+      return
+    }
     if (!holiday) return
     const nextDate = swapDate
     if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate || '')) {
@@ -799,20 +820,28 @@ export default function AdminHoliday() {
   }, [selectedCell?.dateStr])
 
   const openHolidayCreate = useCallback((prefill = {}) => {
+    if (!canCreateHoliday) {
+      toast.error('Permission denied', { description: 'You do not have permission to create holidays.' })
+      return
+    }
     setHolidayModalMode('create')
     setHolidayModalId(null)
     setHolidayModalInitial(Object.keys(prefill).length ? prefill : null)
     setHolidayModalOpen(true)
-  }, [])
+  }, [canCreateHoliday])
 
   const openHolidayEdit = useCallback((holiday) => {
+    if (!canUpdateHoliday) {
+      toast.error('Permission denied', { description: 'You do not have permission to update holidays.' })
+      return
+    }
     if (!holiday?.id || typeof holiday.id !== 'number') return
     setHolidayModalMode('edit')
     setHolidayModalId(holiday.id)
     setHolidayModalInitial(holiday)
     setHolidayModalOpen(true)
     setSelectedCell(null)
-  }, [])
+  }, [canUpdateHoliday])
 
   const clearFilters = () => {
     setTypeFilter('')
@@ -835,7 +864,9 @@ export default function AdminHoliday() {
         <div>
           <h2 className="text-3xl font-black tracking-tight text-foreground">Holidays</h2>
           <CardDescription className="mt-1 text-sm text-muted-foreground">
-            Company, branch, department, and employee observances. Premium pay follows DOLE rules and your payroll policy.
+            {isEmployeeScoped
+              ? 'Your applicable company, branch, division, department, section/unit, and employee observances.'
+              : 'Company, branch, department, and employee observances. Premium pay follows DOLE rules and your payroll policy.'}
           </CardDescription>
         </div>
       </div>
@@ -1038,13 +1069,15 @@ export default function AdminHoliday() {
                               </div>
                             </PopoverContent>
                           </Popover>
-                          <Button
-                            onClick={() => openHolidayCreate()}
-                            className="h-11 min-w-0 shrink-0 gap-2 rounded-xl bg-brand px-3 font-bold text-brand-foreground shadow-sm hover:bg-brand-strong @sm:px-4"
-                          >
-                            <Plus className="size-4 shrink-0" />
-                            <span className="truncate">Add Holiday</span>
-                          </Button>
+                          {canCreateHoliday && (
+                            <Button
+                              onClick={() => openHolidayCreate()}
+                              className="h-11 min-w-0 shrink-0 gap-2 rounded-xl bg-brand px-3 font-bold text-brand-foreground shadow-sm hover:bg-brand-strong @sm:px-4"
+                            >
+                              <Plus className="size-4 shrink-0" />
+                              <span className="truncate">Add Holiday</span>
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1459,7 +1492,7 @@ export default function AdminHoliday() {
               <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-950/10 bg-white/95 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur supports-backdrop-filter:bg-white/90 dark:border-orange-500/15 dark:bg-slate-950/95">
                 {selectedCell.holiday && (
                   <div className="grid grid-cols-3 gap-3">
-                    {typeof selectedCell.holiday.id === 'number' && (
+                    {canUpdateHoliday && typeof selectedCell.holiday.id === 'number' && (
                       <Button
                         size="sm"
                         className="h-11 gap-2 rounded-xl bg-orange-600 px-3 text-sm font-black text-white shadow-sm hover:bg-orange-700"
@@ -1469,24 +1502,28 @@ export default function AdminHoliday() {
                         Edit
                       </Button>
                     )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-11 gap-2 rounded-xl border-slate-950/30 px-3 text-sm font-black text-slate-950 hover:border-orange-500/40 hover:bg-orange-50 dark:border-white/30 dark:text-white dark:hover:bg-orange-500/10"
-                      onClick={() => openSwapDialog({ ...selectedCell.holiday, date: selectedCell.dateStr })}
-                    >
-                      <RotateCcw className="size-4" />
-                      Swap
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-11 gap-2 rounded-xl border-rose-300 px-3 text-sm font-black text-rose-600 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                      onClick={() => handleDeleteHoliday({ ...selectedCell.holiday, date: selectedCell.dateStr })}
-                    >
-                      <Trash2 className="size-4" />
-                      Delete
-                    </Button>
+                    {canUpdateHoliday && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-11 gap-2 rounded-xl border-slate-950/30 px-3 text-sm font-black text-slate-950 hover:border-orange-500/40 hover:bg-orange-50 dark:border-white/30 dark:text-white dark:hover:bg-orange-500/10"
+                        onClick={() => openSwapDialog({ ...selectedCell.holiday, date: selectedCell.dateStr })}
+                      >
+                        <RotateCcw className="size-4" />
+                        Swap
+                      </Button>
+                    )}
+                    {canDeleteHoliday && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-11 gap-2 rounded-xl border-rose-300 px-3 text-sm font-black text-rose-600 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                        onClick={() => handleDeleteHoliday({ ...selectedCell.holiday, date: selectedCell.dateStr })}
+                      >
+                        <Trash2 className="size-4" />
+                        Delete
+                      </Button>
+                    )}
                   </div>
                 )}
                 <Button
@@ -1524,18 +1561,22 @@ export default function AdminHoliday() {
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
                 <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 py-5 dark:border-border/50 dark:bg-muted/15">
-                  <p className="mb-3 px-2 text-center text-xs text-muted-foreground">Add a holiday on this date</p>
-                  <Button
-                    size="sm"
-                    className="mx-auto flex h-8 gap-1.5 text-xs"
-                    onClick={() => {
-                      openHolidayCreate({ date: selectedCell.dateStr })
-                      setSelectedCell(null)
-                    }}
-                  >
-                    <Plus className="size-3.5" />
-                    Add Holiday
-                  </Button>
+                  <p className="mb-3 px-2 text-center text-xs text-muted-foreground">
+                    {canCreateHoliday ? 'Add a holiday on this date' : 'No holiday on this date'}
+                  </p>
+                  {canCreateHoliday && (
+                    <Button
+                      size="sm"
+                      className="mx-auto flex h-8 gap-1.5 text-xs"
+                      onClick={() => {
+                        openHolidayCreate({ date: selectedCell.dateStr })
+                        setSelectedCell(null)
+                      }}
+                    >
+                      <Plus className="size-3.5" />
+                      Add Holiday
+                    </Button>
+                  )}
                 </div>
               </div>
               <div className="sticky bottom-0 z-10 shrink-0 border-t border-border/60 bg-card/95 px-3 py-2.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur supports-backdrop-filter:bg-card/90">

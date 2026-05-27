@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Models\Branch;
 use App\Models\Department;
+use App\Models\EmployeeOrganizationAssignment;
 use App\Models\Holiday;
+use App\Models\SectionUnit;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -43,6 +45,7 @@ class HolidayService
                     'name' => $holiday['name'],
                     'type' => $holiday['type'],
                     'scope' => $holiday['scope'] ?? 'company',
+                    'scope_type' => $holiday['scope'] ?? 'company',
                     'is_swap' => true,
                     'original_date' => $holiday['original_date'] ?? null,
                     'coverage_type' => $holiday['coverage_type'],
@@ -108,7 +111,9 @@ class HolidayService
         return match ($coverageType) {
             'company' => $this->employeeBelongsToCompanies($user, $coverageIds),
             'branches' => $this->employeeBelongsToBranches($user, $coverageIds),
+            'divisions' => $this->employeeBelongsToDivisions($user, $coverageIds),
             'departments' => $this->employeeBelongsToDepartments($user, $coverageIds),
+            'section_units' => $this->employeeBelongsToSectionUnits($user, $coverageIds),
             'employees' => in_array((int) $user->id, $coverageIds, true),
             default => false,
         };
@@ -122,11 +127,15 @@ class HolidayService
         $scope = strtolower($holiday['scope'] ?? 'nationwide');
         $companyId = $user->getEffectiveCompanyId();
         $branchId = $user->branch_id ? (int) $user->branch_id : null;
+        $divisionId = $user->division_id ? (int) $user->division_id : null;
         $departmentId = $user->department_id ? (int) $user->department_id : null;
+        $sectionUnitId = $user->section_unit_id ? (int) $user->section_unit_id : null;
 
         return match ($scope) {
             'employee' => isset($holiday['employee_id']) && (int) $holiday['employee_id'] === (int) $user->id,
+            'section_unit' => isset($holiday['section_unit_id']) && $sectionUnitId !== null && (int) $holiday['section_unit_id'] === $sectionUnitId,
             'department' => isset($holiday['department_id']) && $departmentId !== null && (int) $holiday['department_id'] === $departmentId,
+            'division' => isset($holiday['division_id']) && $divisionId !== null && (int) $holiday['division_id'] === $divisionId,
             'branch' => isset($holiday['branch_id']) && $branchId !== null && (int) $holiday['branch_id'] === $branchId,
             'company' => ! isset($holiday['company_id']) || ($companyId !== null && (int) $holiday['company_id'] === $companyId),
             'nationwide', 'regional' => true,
@@ -167,6 +176,16 @@ class HolidayService
         }
 
         return false;
+    }
+
+    private function employeeBelongsToDivisions(User $user, array $divisionIds): bool
+    {
+        return $user->division_id !== null && in_array((int) $user->division_id, $divisionIds, true);
+    }
+
+    private function employeeBelongsToSectionUnits(User $user, array $sectionUnitIds): bool
+    {
+        return $user->section_unit_id !== null && in_array((int) $user->section_unit_id, $sectionUnitIds, true);
     }
 
     /**
@@ -229,7 +248,9 @@ class HolidayService
                 $q->whereIn('branch_id', $coverageIds)
                     ->orWhereHas('departmentRelation', fn ($sub) => $sub->whereIn('branch_id', $coverageIds));
             })->count(),
+            'divisions' => (clone $query)->whereIn('division_id', $coverageIds)->count(),
             'departments' => (clone $query)->whereIn('department_id', $coverageIds)->count(),
+            'section_units' => (clone $query)->whereIn('section_unit_id', $coverageIds)->count(),
             'employees' => (clone $query)->whereIn('id', $coverageIds)->count(),
             default => 0,
         };
@@ -262,9 +283,26 @@ class HolidayService
         string $dateKey,
         ?int $companyId = null,
         ?int $branchId = null,
-        ?int $departmentId = null
+        ?int $departmentId = null,
+        ?int $divisionId = null,
+        ?int $sectionUnitId = null
     ): ?array {
-        $cacheKey = (int) $user->id.'|'.$dateKey;
+        $companyId = $companyId ?? ($user->getEffectiveCompanyId() !== null ? (int) $user->getEffectiveCompanyId() : null);
+        $branchId = $branchId ?? ($user->branch_id !== null ? (int) $user->branch_id : null);
+        $divisionId = $divisionId ?? ($user->division_id !== null ? (int) $user->division_id : null);
+        $departmentId = $departmentId ?? ($user->department_id !== null ? (int) $user->department_id : null);
+        $sectionUnitId = $sectionUnitId ?? ($user->section_unit_id !== null ? (int) $user->section_unit_id : null);
+        $sectionUnitId = $this->activeSectionContextForEmployee($user, $dateKey, $sectionUnitId);
+
+        $cacheKey = implode('|', [
+            (int) $user->id,
+            $dateKey,
+            (int) ($companyId ?? 0),
+            (int) ($branchId ?? 0),
+            (int) ($divisionId ?? 0),
+            (int) ($departmentId ?? 0),
+            (int) ($sectionUnitId ?? 0),
+        ]);
         if (array_key_exists($cacheKey, $this->resolvedHolidayCache)) {
             return $this->resolvedHolidayCache[$cacheKey];
         }
@@ -276,11 +314,43 @@ class HolidayService
 
         return $this->resolvedHolidayCache[$cacheKey] = $this->holidayCalendar->holidayForDate(
             $dateKey,
-            $companyId ?? ($user->getEffectiveCompanyId() !== null ? (int) $user->getEffectiveCompanyId() : null),
-            $branchId ?? ($user->branch_id !== null ? (int) $user->branch_id : null),
-            $departmentId ?? ($user->department_id !== null ? (int) $user->department_id : null),
-            (int) $user->id
+            $companyId,
+            $branchId,
+            $departmentId,
+            (int) $user->id,
+            $divisionId,
+            $sectionUnitId
         );
+    }
+
+    private function activeSectionContextForEmployee(User $user, string $dateKey, ?int $sectionUnitId): ?int
+    {
+        if ($sectionUnitId === null) {
+            return null;
+        }
+        if ($user->section_unit_id !== null && (int) $user->section_unit_id === $sectionUnitId) {
+            return $sectionUnitId;
+        }
+
+        $activeShared = EmployeeOrganizationAssignment::query()
+            ->where('employee_id', (int) $user->id)
+            ->where('section_unit_id', $sectionUnitId)
+            ->where('is_active', true)
+            ->where(function ($q) use ($dateKey): void {
+                $q->whereNull('effective_from')->orWhereDate('effective_from', '<=', $dateKey);
+            })
+            ->where(function ($q) use ($dateKey): void {
+                $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', $dateKey);
+            })
+            ->whereIn('assignment_type', [
+                EmployeeOrganizationAssignment::TYPE_SHARED,
+                EmployeeOrganizationAssignment::TYPE_TEMPORARY,
+                EmployeeOrganizationAssignment::TYPE_ACTING,
+                EmployeeOrganizationAssignment::TYPE_PRIMARY,
+            ])
+            ->exists();
+
+        return $activeShared ? $sectionUnitId : ($user->section_unit_id !== null ? (int) $user->section_unit_id : null);
     }
 
     /**
@@ -319,6 +389,7 @@ class HolidayService
                     'name' => $holiday['name'],
                     'type' => $holiday['type'],
                     'scope' => $holiday['scope'] ?? 'company',
+                    'scope_type' => $holiday['scope'] ?? 'company',
                     'is_swap' => true,
                     'original_date' => $holiday['original_date'] ?? null,
                     'coverage_type' => $holiday['coverage_type'],
@@ -337,10 +408,13 @@ class HolidayService
             'name' => $h->name,
             'type' => $h->type,
             'scope' => $h->scope,
+            'scope_type' => $h->scope,
             'date' => $h->date instanceof Carbon ? $h->date->format('Y-m-d') : (string) $h->date,
             'company_id' => $h->company_id,
             'branch_id' => $h->branch_id,
+            'division_id' => $h->division_id,
             'department_id' => $h->department_id,
+            'section_unit_id' => $h->section_unit_id,
             'employee_id' => $h->employee_id,
             'coverage_type' => $h->coverage_type,
             'coverage_ids' => $h->getCoverageIds(),

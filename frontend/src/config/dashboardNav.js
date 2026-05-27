@@ -136,6 +136,13 @@ export const adminNavItems = [
 
 export const employeeNavItems = [
   { to: '/employee/dashboard', end: true, label: 'Dashboard', icon: LayoutDashboard },
+  {
+    to: '/employee/holidays',
+    end: false,
+    label: 'Holidays',
+    icon: Calendar,
+    requiredPermissions: ['holidays.view', 'holiday.view'],
+  },
   { to: '/employee/attendance', end: false, label: 'My Attendance', icon: CalendarCheck },
   { to: '/employee/correction-requests', end: false, label: 'Correction Requests', icon: ClipboardList },
   { to: '/employee/schedule', end: false, label: 'My Schedule', icon: CalendarClock },

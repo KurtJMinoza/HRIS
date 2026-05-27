@@ -10,6 +10,16 @@ use Illuminate\Support\Facades\DB;
 
 class RbacService
 {
+    private const PERMISSION_ALIASES = [
+        'holiday.view' => ['holidays.view'],
+        'holiday.manage' => ['holidays.manage', 'holidays.create', 'holidays.update', 'holidays.delete'],
+        'holidays.view' => ['holiday.view'],
+        'holidays.manage' => ['holiday.manage'],
+        'holidays.create' => ['holiday.manage'],
+        'holidays.update' => ['holiday.manage'],
+        'holidays.delete' => ['holiday.manage'],
+    ];
+
     private const MANAGEMENT_PERMISSION_FLAGS = [
         'dashboard.view' => 'can_view_admin_dashboard',
         'employees.view' => 'can_view_employee_module',
@@ -67,7 +77,18 @@ class RbacService
             return $this->rawPermissionsForUser($user)->contains(self::MANAGEMENT_PERMISSION_FLAGS[$permissionSlug]);
         }
 
-        return $this->getPermissionsForUser($user)->contains($permissionSlug);
+        $permissions = $this->getPermissionsForUser($user);
+        if ($permissions->contains($permissionSlug)) {
+            return true;
+        }
+
+        foreach (self::PERMISSION_ALIASES[$permissionSlug] ?? [] as $alias) {
+            if ($permissions->contains($alias)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function canAccessReportsModule(User $user): bool
@@ -159,13 +180,21 @@ class RbacService
         $raw = $this->rawPermissionsForUser($user);
         $managementSlugs = array_keys(self::MANAGEMENT_PERMISSION_FLAGS);
 
-        return $raw->reject(function (string $slug) use ($raw, $managementSlugs): bool {
+        $effective = $raw->reject(function (string $slug) use ($raw, $managementSlugs): bool {
             if (! in_array($slug, $managementSlugs, true)) {
                 return false;
             }
 
             return ! $raw->contains(self::MANAGEMENT_PERMISSION_FLAGS[$slug]);
         })->values();
+
+        foreach ($effective->all() as $slug) {
+            foreach (self::PERMISSION_ALIASES[$slug] ?? [] as $alias) {
+                $effective->push($alias);
+            }
+        }
+
+        return $effective->unique()->values();
     }
 
     public function accessFlagsForUser(User $user): array

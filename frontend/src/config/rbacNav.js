@@ -23,7 +23,7 @@ const pathToPermissions = {
   '/admin/departments': ['org.department.view'],
   '/admin/divisions': ['org.division.view'],
   '/admin/sections-units': ['org.section_unit.view'],
-  '/admin/holiday': ['holiday.view'],
+  '/admin/holiday': ['holidays.view', 'holiday.view'],
   '/admin/leave': ['leave.view'],
   '/admin/attendance': ['can_view_subordinate_attendance'],
   /** Show nav if user can approve corrections OR at least view attendance (API still enforces approve on actions). */
@@ -112,13 +112,22 @@ function hrPanelBasePathForUser(user) {
  */
 function navItemVisibleForUser(user, item) {
   const flags = item.requiredFlags
-  if (!flags?.length || !user) {
+  const requiredPermissions = item.requiredPermissions
+  if (!user) {
+    return !flags?.length && !requiredPermissions?.length
+  }
+  if (!flags?.length && !requiredPermissions?.length) {
     return true
   }
   if (user.is_super_admin || isAdminHrUser(user)) {
     return true
   }
-  return flags.some((flag) => Boolean(user[flag]))
+  const permissionSet = new Set(user.permissions ?? [])
+  const flagOk = flags?.length ? flags.some((flag) => Boolean(user[flag])) : true
+  const permissionOk = requiredPermissions?.length
+    ? requiredPermissions.some((permission) => permissionSet.has(permission))
+    : true
+  return flagOk && permissionOk
 }
 
 export function buildEmployeeNav(user = null) {

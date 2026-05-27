@@ -47,8 +47,13 @@ return [
         ['slug' => 'can_view_team_filings', 'module' => 'filings', 'label' => 'View team filings', 'description' => 'View request filings in approval scope without granting employee data visibility'],
 
         // 6. Holidays
-        ['slug' => 'holiday.view', 'module' => 'holiday', 'label' => 'View holidays', 'description' => 'View holiday calendar'],
-        ['slug' => 'holiday.manage', 'module' => 'holiday', 'label' => 'Manage holidays', 'description' => 'Create/update/delete holidays'],
+        ['slug' => 'holidays.view', 'module' => 'holidays', 'label' => 'View holidays', 'description' => 'View holiday calendar'],
+        ['slug' => 'holidays.create', 'module' => 'holidays', 'label' => 'Create holidays', 'description' => 'Create scoped holidays'],
+        ['slug' => 'holidays.update', 'module' => 'holidays', 'label' => 'Update holidays', 'description' => 'Edit scoped holidays'],
+        ['slug' => 'holidays.delete', 'module' => 'holidays', 'label' => 'Delete holidays', 'description' => 'Delete holidays'],
+        ['slug' => 'holidays.manage', 'module' => 'holidays', 'label' => 'Manage holidays', 'description' => 'Full holiday module management'],
+        ['slug' => 'holiday.view', 'module' => 'holidays', 'label' => 'View holidays (legacy)', 'description' => 'Legacy alias for holidays.view'],
+        ['slug' => 'holiday.manage', 'module' => 'holidays', 'label' => 'Manage holidays (legacy)', 'description' => 'Legacy alias for holiday management'],
 
         // 7. Schedules & work calendar
         ['slug' => 'schedule.view', 'module' => 'schedule', 'label' => 'View schedules', 'description' => 'View work schedules and assignments'],
@@ -65,6 +70,8 @@ return [
         ['slug' => 'can_view_subordinate_reports', 'module' => 'reports', 'label' => 'View subordinate reports', 'description' => 'Explicitly allow non-admin roles to view report data for employees in scope'],
         ['slug' => 'can_view_all_reports', 'module' => 'reports', 'label' => 'View all reports', 'description' => 'View all report data within Admin HR scope'],
         ['slug' => 'reports.view', 'module' => 'reports', 'label' => 'View reports', 'description' => 'Attendance, detailed, premium summaries'],
+        ['slug' => 'reports.view_team', 'module' => 'reports', 'label' => 'View team reports', 'description' => 'View reports scoped to assigned team or section/unit'],
+        ['slug' => 'reports.view_division', 'module' => 'reports', 'label' => 'View division reports', 'description' => 'View reports scoped to assigned division'],
         ['slug' => 'reports.export', 'module' => 'reports', 'label' => 'Export reports', 'description' => 'Download report extracts'],
         ['slug' => 'reports.payroll', 'module' => 'reports', 'label' => 'Payroll-related reports', 'description' => 'Reports tied to compensation'],
 
@@ -112,6 +119,8 @@ return [
         ['slug' => 'users.manage', 'module' => 'users', 'label' => 'Manage users', 'description' => 'Create, edit, assign roles, activate/deactivate, reset passwords'],
         ['slug' => 'rbac.manage', 'module' => 'rbac', 'label' => 'Manage RBAC', 'description' => 'Change role-permission mappings'],
         ['slug' => 'rbac.audit', 'module' => 'rbac', 'label' => 'View RBAC audit', 'description' => 'Read permission change history'],
+        ['slug' => 'audit_logs.view', 'module' => 'audit_logs', 'label' => 'View audit logs', 'description' => 'Read system audit logs'],
+        ['slug' => 'audit_logs.export', 'module' => 'audit_logs', 'label' => 'Export audit logs', 'description' => 'Export audit log records'],
 
         // 13. Company & branch settings
         ['slug' => 'org.company.view', 'module' => 'organization', 'label' => 'View companies', 'description' => 'List companies'],
@@ -142,13 +151,40 @@ return [
         ['slug' => 'profile.edit', 'module' => 'profile', 'label' => 'Edit profile details', 'description' => 'Edit personal/contact/employment profile details'],
         ['slug' => 'profile.picture.edit', 'module' => 'profile', 'label' => 'Edit profile picture', 'description' => 'Upload/remove profile picture only'],
         ['slug' => 'profile.salary.edit', 'module' => 'profile', 'label' => 'Edit salary details', 'description' => 'Edit compensation and salary fields on employee profile (Admin/HR)'],
+
+        // 18. Settings
+        ['slug' => 'settings.view', 'module' => 'settings', 'label' => 'View settings', 'description' => 'Open system settings pages'],
+        ['slug' => 'settings.manage', 'module' => 'settings', 'label' => 'Manage settings', 'description' => 'Update system settings'],
+
+        // 19. EXECOM
+        ['slug' => 'execom.view', 'module' => 'execom', 'label' => 'View EXECOM', 'description' => 'Open EXECOM payroll and management pages'],
+        ['slug' => 'execom.manage', 'module' => 'execom', 'label' => 'Manage EXECOM', 'description' => 'Manage EXECOM employees, payroll settings, and payroll runs'],
     ],
 
     /**
      * Default grants per HrRole value. Use '*' for all registered permissions (ADMIN HR).
      */
     'default_role_permissions' => [
+        'super_admin' => ['*'],
+        'admin' => ['*'],
         'admin_hr' => ['*'],
+        'payroll_admin' => [
+            'dashboard.view',
+            'payroll.view',
+            'payroll.compute',
+            'payroll.policies',
+            'payroll.export',
+            'payroll.generate_payslips',
+            'payroll.finalize',
+            'payslip.view',
+            'payslip.generate',
+            'payslip.finalize',
+            'payslip.download',
+            'reports.view',
+            'reports.payroll',
+            'reports.export',
+            'holidays.view',
+        ],
         /**
          * Org heads use the same Employee app UI as staff. Scoped data via DataScopeService.
          * No admin-only modules (org CRUD, payroll, users, holiday manage, etc.).
@@ -183,6 +219,7 @@ return [
             'government_deductions.remittances.manage',
             'payslip.view',
             'payslip.download',
+            'holidays.view',
             'can_access_reports_module',
             'can_view_own_reports',
         ],
@@ -212,6 +249,7 @@ return [
             'government_deductions.rates.view',
             'payslip.view',
             'payslip.download',
+            'holidays.view',
             'can_access_reports_module',
             'can_view_own_reports',
         ],
@@ -240,6 +278,7 @@ return [
             'government_deductions.rates.view',
             'payslip.view',
             'payslip.download',
+            'holidays.view',
             'can_access_reports_module',
             'can_view_own_reports',
         ],
@@ -268,6 +307,10 @@ return [
             'government_deductions.rates.view',
             'payslip.view',
             'payslip.download',
+            'holidays.view',
+            'reports.view',
+            'reports.view_division',
+            'can_view_subordinate_reports',
             'can_access_reports_module',
             'can_view_own_reports',
         ],
@@ -296,6 +339,10 @@ return [
             'government_deductions.rates.view',
             'payslip.view',
             'payslip.download',
+            'holidays.view',
+            'reports.view',
+            'reports.view_team',
+            'can_view_subordinate_reports',
             'can_access_reports_module',
             'can_view_own_reports',
         ],
@@ -314,6 +361,29 @@ return [
             'request-loan',
             'loans.request',
             'payslip.view',
+            'holidays.view',
+        ],
+        'team_lead' => [
+            'profile.view',
+            'profile.picture.edit',
+            'view-my-schedule',
+            'request-schedule',
+            'approve-schedule',
+            'attendance.corrections.create',
+            'attendance.corrections.approve',
+            'can_view_my_filings',
+            'can_view_assigned_approvals',
+            'can_view_team_filings',
+            'leave.view',
+            'leave.approve',
+            'overtime.view',
+            'overtime.approve',
+            'holidays.view',
+            'reports.view',
+            'reports.view_team',
+            'can_access_reports_module',
+            'can_view_own_reports',
+            'can_view_subordinate_reports',
         ],
     ],
 ];

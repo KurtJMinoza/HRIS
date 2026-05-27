@@ -153,6 +153,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('permission:request-schedule')->post('/my-schedule/requests', [MyScheduleController::class, 'store']);
     Route::middleware('permission:request-schedule')->delete('/my-schedule/requests/{id}', [MyScheduleController::class, 'destroy']);
     Route::get('/employee/contributions', [EmployeeContributionController::class, 'mine']);
+    Route::middleware('permission:holidays.view|holiday.view')->get('/employee/holidays', [HolidayController::class, 'employeeIndex']);
+    Route::middleware('permission:holidays.view|holiday.view')->get('/holidays', [HolidayController::class, 'employeeIndex']);
+    Route::middleware('permission:holidays.create|holidays.manage|holiday.manage')->post('/holidays', [HolidayController::class, 'store']);
+    Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->put('/holidays/{id}', [HolidayController::class, 'update']);
+    Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->patch('/holidays/{id}', [HolidayController::class, 'update']);
+    Route::middleware('permission:holidays.delete|holidays.manage|holiday.manage')->delete('/holidays/{id}', [HolidayController::class, 'destroy']);
 
     /** Payslips (self-service; own records only — {@see EmployeePayslipController}). */
     Route::middleware('permission:payslip.view')->group(function () {
@@ -221,14 +227,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/admin/presence-filings/{id}', [PresenceFilingController::class, 'destroy']);
         });
 
-        Route::middleware('permission:holiday.view')->get('/admin/holidays', [HolidayController::class, 'index']);
-        Route::middleware('permission:holiday.manage')->post('/admin/holidays', [HolidayController::class, 'store']);
-        Route::middleware('permission:holiday.manage')->post('/admin/holidays/swap', [HolidayController::class, 'storeSwap']);
-        Route::middleware('permission:holiday.manage')->post('/admin/holidays/seeded/swap', [HolidayController::class, 'swapSeeded']);
-        Route::middleware('permission:holiday.manage')->post('/admin/holidays/{id}/swap', [HolidayController::class, 'swap']);
-        Route::middleware('permission:holiday.manage')->patch('/admin/holidays/{id}/swap', [HolidayController::class, 'updateSwap']);
-        Route::middleware('permission:holiday.manage')->patch('/admin/holidays/{id}', [HolidayController::class, 'update']);
-        Route::middleware('permission:holiday.manage')->delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
+        Route::middleware('permission:holidays.view|holiday.view')->get('/admin/holidays', [HolidayController::class, 'index']);
+        Route::middleware('permission:holidays.create|holidays.manage|holiday.manage')->post('/admin/holidays', [HolidayController::class, 'store']);
+        Route::middleware('permission:holidays.create|holidays.manage|holiday.manage')->post('/admin/holidays/swap', [HolidayController::class, 'storeSwap']);
+        Route::middleware('permission:holidays.create|holidays.manage|holiday.manage')->post('/admin/holidays/seeded/swap', [HolidayController::class, 'swapSeeded']);
+        Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->post('/admin/holidays/{id}/swap', [HolidayController::class, 'swap']);
+        Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->patch('/admin/holidays/{id}/swap', [HolidayController::class, 'updateSwap']);
+        Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->patch('/admin/holidays/{id}', [HolidayController::class, 'update']);
+        Route::middleware('permission:holidays.delete|holidays.manage|holiday.manage')->delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
 
         Route::middleware('permission:can_access_reports_module|can_view_own_reports|can_view_subordinate_reports|can_view_all_reports|reports.view')->group(function () {
             Route::get('/admin/reports/detailed', [ReportsController::class, 'detailed']);

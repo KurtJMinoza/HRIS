@@ -18,7 +18,7 @@ function normalizeRole(role) {
  *
  * Legacy: `role="admin"` → adminHr, `role="employee"` → employee.
  */
-export function ProtectedRoute({ children, variant, role }) {
+export function ProtectedRoute({ children, variant, role, permissions = [] }) {
   const resolvedVariant =
     variant ??
     (role === 'admin' ? 'adminHr' : role === 'employee' ? 'employee' : undefined) ??
@@ -61,12 +61,24 @@ export function ProtectedRoute({ children, variant, role }) {
     } catch {
       // ignore
     }
+    if (permissions.length) {
+      const userPermissions = new Set(user.permissions ?? [])
+      if (!permissions.some((permission) => userPermissions.has(permission))) {
+        return <Navigate to={resolvePostLoginPath(user)} replace />
+      }
+    }
     return children
   }
 
   if (resolvedVariant === 'manager') {
     if (!isManagerialHrRole(user)) {
       return <Navigate to={resolvePostLoginPath(user)} replace />
+    }
+    if (permissions.length) {
+      const userPermissions = new Set(user.permissions ?? [])
+      if (!permissions.some((permission) => userPermissions.has(permission))) {
+        return <Navigate to={resolvePostLoginPath(user)} replace />
+      }
     }
     return children
   }
@@ -85,6 +97,12 @@ export function ProtectedRoute({ children, variant, role }) {
       return <Navigate to={resolvePostLoginPath(user)} replace />
     }
     if (userRole === ROLE_EMPLOYEE) {
+      if (permissions.length) {
+        const userPermissions = new Set(user.permissions ?? [])
+        if (!permissions.some((permission) => userPermissions.has(permission))) {
+          return <Navigate to={resolvePostLoginPath(user)} replace />
+        }
+      }
       return children
     }
     return <Navigate to={resolvePostLoginPath(user)} replace />

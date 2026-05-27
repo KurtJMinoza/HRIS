@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\HolidayService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -35,6 +36,20 @@ class EmployeeOrganizationAssignment extends Model
         'is_active',
         'remarks',
     ];
+
+    protected static function booted(): void
+    {
+        $flush = static function (): void {
+            try {
+                app(HolidayService::class)->flushRuntimeCaches();
+            } catch (\Throwable) {
+                // Cache invalidation should never block assignment maintenance.
+            }
+        };
+
+        static::saved($flush);
+        static::deleted($flush);
+    }
 
     protected function casts(): array
     {

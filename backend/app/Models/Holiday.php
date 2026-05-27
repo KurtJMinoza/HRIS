@@ -27,7 +27,9 @@ class Holiday extends Model
         'scope',
         'company_id',
         'branch_id',
+        'division_id',
         'department_id',
+        'section_unit_id',
         'employee_id',
         'coverage_type',
         'coverage_ids',
@@ -48,7 +50,9 @@ class Holiday extends Model
         'is_swap' => 'boolean',
         'company_id' => 'integer',
         'branch_id' => 'integer',
+        'division_id' => 'integer',
         'department_id' => 'integer',
+        'section_unit_id' => 'integer',
         'employee_id' => 'integer',
     ];
 
@@ -65,6 +69,16 @@ class Holiday extends Model
     public function department(): BelongsTo
     {
         return $this->belongsTo(Department::class);
+    }
+
+    public function division(): BelongsTo
+    {
+        return $this->belongsTo(Division::class);
+    }
+
+    public function sectionUnit(): BelongsTo
+    {
+        return $this->belongsTo(SectionUnit::class, 'section_unit_id');
     }
 
     public function employee(): BelongsTo

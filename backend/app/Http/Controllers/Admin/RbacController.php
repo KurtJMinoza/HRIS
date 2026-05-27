@@ -12,11 +12,26 @@ use App\Services\RbacService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class RbacController extends Controller
 {
+    private const EXTRA_ROLE_KEYS = ['super_admin', 'admin', 'payroll_admin', 'team_lead'];
+
+    private const HIDDEN_PERMISSION_SLUGS = ['holiday.view', 'holiday.manage'];
+
+    private const MATRIX_PERMISSION_ALIASES = [
+        'holiday.view' => ['holidays.view'],
+        'holiday.manage' => ['holidays.manage', 'holidays.create', 'holidays.update', 'holidays.delete'],
+        'holidays.view' => ['holiday.view'],
+        'holidays.manage' => ['holiday.manage'],
+        'holidays.create' => ['holiday.manage'],
+        'holidays.update' => ['holiday.manage'],
+        'holidays.delete' => ['holiday.manage'],
+    ];
+
     public function __construct(
         private readonly PermissionAuditService $auditService,
         private readonly RbacService $rbacService,
@@ -36,17 +51,25 @@ class RbacController extends Controller
         // even when a deployment has not re-run the RBAC seeder yet.
         $this->ensureConfiguredPermissionsAndDefaultGrants();
 
-        $permissions = Permission::query()->orderBy('module')->orderBy('slug')->get();
-        $roleKeys = array_map(fn (HrRole $r) => $r->value, HrRole::cases());
+        $permissions = Permission::query()
+            ->whereNotIn('slug', self::HIDDEN_PERMISSION_SLUGS)
+            ->orderBy('module')
+            ->orderBy('slug')
+            ->get();
+        $roleKeys = array_values(array_unique(array_merge(
+            array_map(fn (HrRole $r) => $r->value, HrRole::cases()),
+            self::EXTRA_ROLE_KEYS,
+        )));
 
         $matrix = [];
         foreach ($roleKeys as $rk) {
-            $matrix[$rk] = DB::table('role_permissions')
+            $slugs = DB::table('role_permissions')
                 ->join('permissions', 'permissions.id', '=', 'role_permissions.permission_id')
                 ->where('role_permissions.role_key', $rk)
                 ->pluck('permissions.slug')
                 ->values()
                 ->all();
+            $matrix[$rk] = $this->expandPermissionAliases($slugs);
         }
 
         return response()->json([
@@ -142,7 +165,10 @@ class RbacController extends Controller
 
         // Clear cached effective permissions so UI/API reflects any newly inserted grants.
         foreach (HrRole::cases() as $case) {
-            RbacService::forgetRoleCache($case->value);
+            $this->forgetRoleCaches($case->value);
+        }
+        foreach (self::EXTRA_ROLE_KEYS as $roleKey) {
+            $this->forgetRoleCaches($roleKey);
         }
     }
 
@@ -179,7 +205,7 @@ class RbacController extends Controller
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
-        if (! collect(HrRole::cases())->contains(fn (HrRole $r) => $r->value === $roleKey)) {
+        if (! $this->isKnownRoleKey($roleKey)) {
             return response()->json(['message' => 'Invalid role.'], 422);
         }
 
@@ -200,7 +226,7 @@ class RbacController extends Controller
 
         $this->applyRolePermissionSlugs($user, $roleKey, $wanted, 'rbac.sync');
 
-        RbacService::forgetRoleCache($roleKey);
+        $this->forgetRoleCaches($roleKey);
 
         return response()->json(['message' => 'Role permissions updated.', 'role_key' => $roleKey]);
     }
@@ -219,7 +245,7 @@ class RbacController extends Controller
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
-        if (! collect(HrRole::cases())->contains(fn (HrRole $r) => $r->value === $roleKey)) {
+        if (! $this->isKnownRoleKey($roleKey)) {
             return response()->json(['message' => 'Invalid role.'], 422);
         }
 
@@ -246,7 +272,7 @@ class RbacController extends Controller
 
         $this->applyRolePermissionSlugs($user, $roleKey, $wanted, 'rbac.reset_defaults');
 
-        RbacService::forgetRoleCache($roleKey);
+        $this->forgetRoleCaches($roleKey);
 
         return response()->json([
             'message' => 'Role permissions restored to defaults.',
@@ -299,5 +325,38 @@ class RbacController extends Controller
                 ]);
             }
         });
+    }
+
+    /**
+     * @param  list<string>  $slugs
+     * @return list<string>
+     */
+    private function expandPermissionAliases(array $slugs): array
+    {
+        $expanded = collect($slugs);
+        foreach ($slugs as $slug) {
+            foreach (self::MATRIX_PERMISSION_ALIASES[$slug] ?? [] as $alias) {
+                $expanded->push($alias);
+            }
+        }
+
+        return $expanded
+            ->reject(fn (string $slug) => in_array($slug, self::HIDDEN_PERMISSION_SLUGS, true))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function isKnownRoleKey(string $roleKey): bool
+    {
+        return collect(HrRole::cases())->contains(fn (HrRole $r) => $r->value === $roleKey)
+            || in_array($roleKey, self::EXTRA_ROLE_KEYS, true);
+    }
+
+    private function forgetRoleCaches(string $roleKey): void
+    {
+        RbacService::forgetRoleCache($roleKey);
+        Cache::forget('permissions:role:'.$roleKey);
+        Cache::forget('permissions:role:{'.$roleKey.'}');
     }
 }

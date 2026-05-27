@@ -39,7 +39,9 @@ import {
   getBranchDepartments,
   getCompanies,
   getCompanyBranches,
+  getDivisions,
   getEmployees,
+  getSectionsOrUnits,
   updateAdminHoliday,
   userProfileImageSrc,
 } from '@/api'
@@ -50,23 +52,31 @@ const formSchema = z
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a valid date'),
     type: z.enum(['regular', 'special', 'special_working', 'company']),
     description: z.string().max(1000).optional().or(z.literal('')),
-    scope: z.enum(['company', 'branch', 'department', 'employee']),
+    scope: z.enum(['nationwide', 'company', 'branch', 'division', 'department', 'section_unit', 'employee']),
     companyIds: z.array(z.string()).default([]),
     branchIds: z.array(z.string()).default([]),
+    divisionIds: z.array(z.string()).default([]),
     departmentIds: z.array(z.string()).default([]),
+    sectionUnitIds: z.array(z.string()).default([]),
     employeeIds: z.array(z.string()).default([]),
     isRecurring: z.boolean(),
     status: z.enum(['active', 'inactive', 'draft']),
   })
   .superRefine((data, ctx) => {
-    if (data.companyIds.length === 0) {
+    if (data.scope !== 'nationwide' && data.companyIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one company', path: ['companyIds'] })
     }
     if (data.scope === 'branch' && data.branchIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one branch', path: ['branchIds'] })
     }
-    if (data.scope === 'department' && data.departmentIds.length === 0) {
+    if (data.scope === 'division' && data.divisionIds.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one division', path: ['divisionIds'] })
+    }
+    if (['department', 'section_unit'].includes(data.scope) && data.departmentIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one department', path: ['departmentIds'] })
+    }
+    if (data.scope === 'section_unit' && data.sectionUnitIds.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one section/unit', path: ['sectionUnitIds'] })
     }
     if (data.scope === 'employee' && data.employeeIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one employee', path: ['employeeIds'] })
@@ -82,7 +92,9 @@ function emptyForm() {
     scope: 'company',
     companyIds: [],
     branchIds: [],
+    divisionIds: [],
     departmentIds: [],
+    sectionUnitIds: [],
     employeeIds: [],
     isRecurring: false,
     status: 'active',
@@ -99,7 +111,8 @@ function orgSubtitle(item, fallback) {
   return item?.company_name || item?.branch_name || item?.employee_code || item?.office_location || fallback
 }
 
-function OrganizationLogo({ item, icon: Icon = Building2 }) {
+function OrganizationLogo({ item, icon = Building2 }) {
+  const IconComponent = icon
   const profile = userProfileImageSrc(item)
   const logo = profile || item?.logo_url || item?.company_logo_url || companyLogoUrl(item)
   return logo ? (
@@ -114,7 +127,7 @@ function OrganizationLogo({ item, icon: Icon = Building2 }) {
     />
   ) : (
     <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-brand/15 bg-brand/10 text-brand dark:bg-brand/15">
-      <Icon className="size-5" aria-hidden />
+      <IconComponent className="size-5" aria-hidden />
     </span>
   )
 }
@@ -137,7 +150,9 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
   const [calOpen, setCalOpen] = useState(false)
   const [companies, setCompanies] = useState([])
   const [branches, setBranches] = useState([])
+  const [divisions, setDivisions] = useState([])
   const [departments, setDepartments] = useState([])
+  const [sectionsOrUnits, setSectionsOrUnits] = useState([])
   const [employees, setEmployees] = useState([])
   const [organizationsLoading, setOrganizationsLoading] = useState(false)
 
@@ -156,7 +171,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
     setSubmitError('')
     setFieldErrors({})
     if (initial && (mode === 'edit' || Object.keys(initial).length)) {
-      const scope = ['company', 'branch', 'department', 'employee'].includes(initial.scope) ? initial.scope : 'company'
+      const scope = ['nationwide', 'company', 'branch', 'division', 'department', 'section_unit', 'employee'].includes(initial.scope) ? initial.scope : 'company'
       setValues({
         name: initial.name ?? '',
         date: typeof initial.date === 'string' ? initial.date.slice(0, 10) : '',
@@ -169,9 +184,15 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
         branchIds: Array.isArray(initial.branch_ids)
           ? initial.branch_ids.map(String)
           : initial.branch_id != null ? [String(initial.branch_id)] : [],
+        divisionIds: Array.isArray(initial.division_ids)
+          ? initial.division_ids.map(String)
+          : initial.division_id != null ? [String(initial.division_id)] : [],
         departmentIds: Array.isArray(initial.department_ids)
           ? initial.department_ids.map(String)
           : initial.department_id != null ? [String(initial.department_id)] : [],
+        sectionUnitIds: Array.isArray(initial.section_unit_ids)
+          ? initial.section_unit_ids.map(String)
+          : initial.section_unit_id != null ? [String(initial.section_unit_id)] : [],
         employeeIds: Array.isArray(initial.employee_ids)
           ? initial.employee_ids.map(String)
           : initial.employee_id != null ? [String(initial.employee_id)] : [],
@@ -203,7 +224,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
         setValues((current) => {
           const companyIds = current.companyIds.filter((id) => liveIds.has(String(id)))
           if (companyIds.length === current.companyIds.length) return current
-          return { ...current, companyIds, branchIds: [], departmentIds: [], employeeIds: [] }
+          return { ...current, companyIds, branchIds: [], divisionIds: [], departmentIds: [], sectionUnitIds: [], employeeIds: [] }
         })
       }
     } catch {
@@ -260,10 +281,23 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
 
   useEffect(() => {
     if (!open || values.branchIds.length === 0) {
+      setDivisions([])
       setDepartments([])
       return
     }
     let cancelled = false
+    Promise.all(values.branchIds.map((branchId) => getDivisions({ branch_id: branchId, fresh: true }).catch(() => ({ divisions: [] }))))
+      .then((results) => {
+        if (cancelled) return
+        const map = new Map()
+        results.flatMap((data) => toList(data, 'divisions')).forEach((division) => {
+          if (division?.id != null) map.set(String(division.id), division)
+        })
+        setDivisions(Array.from(map.values()))
+      })
+      .catch(() => {
+        if (!cancelled) setDivisions([])
+      })
     Promise.all(values.branchIds.map((branchId) => getBranchDepartments(branchId).catch(() => ({ departments: [] }))))
       .then((results) => {
         if (cancelled) return
@@ -280,6 +314,29 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
       cancelled = true
     }
   }, [open, values.branchIds, toList])
+
+  useEffect(() => {
+    if (!open || values.departmentIds.length === 0) {
+      setSectionsOrUnits([])
+      return
+    }
+    let cancelled = false
+    Promise.all(values.departmentIds.map((departmentId) => getSectionsOrUnits({ department_id: departmentId, status: 'active', fresh: true }).catch(() => ({ sections_or_units: [] }))))
+      .then((results) => {
+        if (cancelled) return
+        const map = new Map()
+        results.flatMap((data) => toList(data, 'sections_or_units')).forEach((section) => {
+          if (section?.id != null) map.set(String(section.id), section)
+        })
+        setSectionsOrUnits(Array.from(map.values()))
+      })
+      .catch(() => {
+        if (!cancelled) setSectionsOrUnits([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, values.departmentIds, toList])
 
   const set = useCallback((patch) => {
     setValues((v) => ({ ...v, ...patch }))
@@ -301,20 +358,28 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
   const impact = holidayImpactPreview(values.type)
   const selectedCompanies = companies.filter((company) => values.companyIds.includes(String(company.id)))
   const selectedBranches = branches.filter((branch) => values.branchIds.includes(String(branch.id)))
+  const selectedDivisions = divisions.filter((division) => values.divisionIds.includes(String(division.id)))
   const selectedDepartments = departments.filter((department) => values.departmentIds.includes(String(department.id)))
+  const selectedSectionsOrUnits = sectionsOrUnits.filter((section) => values.sectionUnitIds.includes(String(section.id)))
   const selectedEmployees = employees.filter((employee) => values.employeeIds.includes(String(employee.id)))
   const selectedCoverage =
     values.scope === 'employee'
       ? selectedEmployees
-      : values.scope === 'department'
+      : values.scope === 'section_unit'
+        ? selectedSectionsOrUnits
+        : values.scope === 'department'
         ? selectedDepartments
+        : values.scope === 'division'
+          ? selectedDivisions
         : values.scope === 'branch'
           ? selectedBranches
           : selectedCompanies
   const selectedCoverageLabel = {
     company: 'companies',
     branch: 'branches',
+    division: 'divisions',
     department: 'departments',
+    section_unit: 'sections/units',
     employee: 'employees',
   }[values.scope]
 
@@ -347,11 +412,15 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
       scope: parsed.data.scope,
       company_ids: parsed.data.companyIds.map(Number),
       branch_ids: parsed.data.branchIds.map(Number),
+      division_ids: parsed.data.divisionIds.map(Number),
       department_ids: parsed.data.departmentIds.map(Number),
+      section_unit_ids: parsed.data.sectionUnitIds.map(Number),
       employee_ids: parsed.data.employeeIds.map(Number),
       company_id: parsed.data.companyIds[0] ? Number(parsed.data.companyIds[0]) : undefined,
       branch_id: parsed.data.branchIds[0] ? Number(parsed.data.branchIds[0]) : undefined,
+      division_id: parsed.data.divisionIds[0] ? Number(parsed.data.divisionIds[0]) : undefined,
       department_id: parsed.data.departmentIds[0] ? Number(parsed.data.departmentIds[0]) : undefined,
+      section_unit_id: parsed.data.sectionUnitIds[0] ? Number(parsed.data.sectionUnitIds[0]) : undefined,
       employee_id: parsed.data.employeeIds[0] ? Number(parsed.data.employeeIds[0]) : undefined,
       is_recurring: parsed.data.isRecurring,
       status: parsed.data.status,
@@ -565,8 +634,10 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                       onValueChange={(v) =>
                         set({
                           scope: v,
-                          branchIds: ['branch', 'department'].includes(v) ? values.branchIds : [],
-                          departmentIds: v === 'department' ? values.departmentIds : [],
+                          branchIds: ['branch', 'division', 'department', 'section_unit'].includes(v) ? values.branchIds : [],
+                          divisionIds: ['division', 'department', 'section_unit'].includes(v) ? values.divisionIds : [],
+                          departmentIds: ['department', 'section_unit'].includes(v) ? values.departmentIds : [],
+                          sectionUnitIds: v === 'section_unit' ? values.sectionUnitIds : [],
                           employeeIds: v === 'employee' ? values.employeeIds : [],
                         })
                       }
@@ -574,8 +645,11 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                     >
                       {[
                         { value: 'company', label: 'Company - all selected companies' },
+                        { value: 'nationwide', label: 'Nationwide - all employees' },
                         { value: 'branch', label: 'Selected branches' },
+                        { value: 'division', label: 'Selected divisions' },
                         { value: 'department', label: 'Selected departments' },
+                        { value: 'section_unit', label: 'Selected sections / units' },
                         { value: 'employee', label: 'Selected employees only' },
                       ].map((scope) => (
                         <label key={scope.value} className="flex w-fit cursor-pointer items-center gap-2 text-sm">
@@ -592,7 +666,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-xs font-bold text-muted-foreground">
-                            Select {values.scope === 'company' ? 'companies' : values.scope === 'branch' ? 'companies and branches' : values.scope === 'department' ? 'companies, branches, and departments' : 'companies and employees'}
+                            Select {values.scope === 'nationwide' ? 'no organization target' : values.scope === 'company' ? 'companies' : values.scope === 'branch' ? 'companies and branches' : values.scope === 'division' ? 'companies, branches, and divisions' : values.scope === 'department' ? 'companies, branches, and departments' : values.scope === 'section_unit' ? 'companies, branches, departments, and sections/units' : 'companies and employees'}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
                             Live from Organizations module{companies.length > 0 ? ` · ${companies.length} companies loaded` : ''}
@@ -642,7 +716,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                                   checked={values.companyIds.includes(String(company.id))}
                                   onCheckedChange={() => {
                                     toggleId('companyIds', company.id)
-                                    set({ branchIds: [], departmentIds: [], employeeIds: [] })
+                                    set({ branchIds: [], divisionIds: [], departmentIds: [], sectionUnitIds: [], employeeIds: [] })
                                   }}
                                   className="data-[state=checked]:border-brand data-[state=checked]:bg-brand"
                                 />
@@ -660,7 +734,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                           {fieldErrors.companyIds?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.companyIds[0]}</p>}
                         </div>
 
-                        {['branch', 'department'].includes(values.scope) && (
+                        {['branch', 'division', 'department', 'section_unit'].includes(values.scope) && (
                           <div className="space-y-2">
                             <Label className="text-xs font-bold text-muted-foreground">Branches</Label>
                             <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.branchIds && 'border-red-500')}>
@@ -676,7 +750,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                                     checked={values.branchIds.includes(String(branch.id))}
                                     onCheckedChange={() => {
                                       toggleId('branchIds', branch.id)
-                                      set({ departmentIds: [], employeeIds: [] })
+                                      set({ divisionIds: [], departmentIds: [], sectionUnitIds: [], employeeIds: [] })
                                     }}
                                     disabled={values.companyIds.length === 0}
                                     className="data-[state=checked]:border-brand data-[state=checked]:bg-brand"
@@ -696,7 +770,41 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                           </div>
                         )}
 
-                        {values.scope === 'department' && (
+                        {['division', 'department', 'section_unit'].includes(values.scope) && (
+                          <div className="space-y-2">
+                            <Label className="text-xs font-bold text-muted-foreground">Divisions</Label>
+                            <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.divisionIds && 'border-red-500')}>
+                              {divisions.map((division) => (
+                                <label
+                                  key={division.id}
+                                  className={cn(
+                                    'flex cursor-pointer items-center gap-3 rounded-2xl border border-border/60 bg-card p-3 text-xs shadow-sm transition-colors hover:border-brand/30 hover:bg-brand/5 dark:bg-card/80',
+                                    values.divisionIds.includes(String(division.id)) && 'border-brand/50 bg-brand/8 ring-2 ring-brand/10'
+                                  )}
+                                >
+                                  <Checkbox
+                                    checked={values.divisionIds.includes(String(division.id))}
+                                    onCheckedChange={() => {
+                                      toggleId('divisionIds', division.id)
+                                      set({ departmentIds: [], sectionUnitIds: [] })
+                                    }}
+                                    disabled={values.branchIds.length === 0}
+                                    className="data-[state=checked]:border-brand data-[state=checked]:bg-brand"
+                                  />
+                                  <OrganizationLogo item={division} icon={Building2} />
+                                  <span className="min-w-0 leading-snug">
+                                    <span className="block truncate font-bold text-foreground">{division.name}</span>
+                                    <span className="block truncate text-[10px] text-muted-foreground">{division.branch_name || 'Division'}</span>
+                                  </span>
+                                </label>
+                              ))}
+                              {divisions.length === 0 && <p className="text-xs text-muted-foreground">Select branches to load divisions.</p>}
+                            </div>
+                            {fieldErrors.divisionIds?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.divisionIds[0]}</p>}
+                          </div>
+                        )}
+
+                        {['department', 'section_unit'].includes(values.scope) && (
                           <div className="space-y-2">
                             <Label className="text-xs font-bold text-muted-foreground">Departments</Label>
                             <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.departmentIds && 'border-red-500')}>
@@ -710,7 +818,10 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                                 >
                                   <Checkbox
                                     checked={values.departmentIds.includes(String(department.id))}
-                                    onCheckedChange={() => toggleId('departmentIds', department.id)}
+                                    onCheckedChange={() => {
+                                      toggleId('departmentIds', department.id)
+                                      set({ sectionUnitIds: [] })
+                                    }}
                                     disabled={values.branchIds.length === 0}
                                     className="data-[state=checked]:border-brand data-[state=checked]:bg-brand"
                                   />
@@ -726,6 +837,37 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                               {departments.length === 0 && <p className="text-xs text-muted-foreground">Select branches to load departments.</p>}
                             </div>
                             {fieldErrors.departmentIds?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.departmentIds[0]}</p>}
+                          </div>
+                        )}
+
+                        {values.scope === 'section_unit' && (
+                          <div className="space-y-2">
+                            <Label className="text-xs font-bold text-muted-foreground">Sections / Units</Label>
+                            <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.sectionUnitIds && 'border-red-500')}>
+                              {sectionsOrUnits.map((section) => (
+                                <label
+                                  key={section.id}
+                                  className={cn(
+                                    'flex cursor-pointer items-center gap-3 rounded-2xl border border-border/60 bg-card p-3 text-xs shadow-sm transition-colors hover:border-brand/30 hover:bg-brand/5 dark:bg-card/80',
+                                    values.sectionUnitIds.includes(String(section.id)) && 'border-brand/50 bg-brand/8 ring-2 ring-brand/10'
+                                  )}
+                                >
+                                  <Checkbox
+                                    checked={values.sectionUnitIds.includes(String(section.id))}
+                                    onCheckedChange={() => toggleId('sectionUnitIds', section.id)}
+                                    disabled={values.departmentIds.length === 0}
+                                    className="data-[state=checked]:border-brand data-[state=checked]:bg-brand"
+                                  />
+                                  <OrganizationLogo item={section} icon={Users} />
+                                  <span className="min-w-0 leading-snug">
+                                    <span className="block truncate font-bold text-foreground">{section.name}</span>
+                                    <span className="block truncate text-[10px] text-muted-foreground">{section.department_name || 'Section / Unit'}</span>
+                                  </span>
+                                </label>
+                              ))}
+                              {sectionsOrUnits.length === 0 && <p className="text-xs text-muted-foreground">Select departments to load sections/units.</p>}
+                            </div>
+                            {fieldErrors.sectionUnitIds?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.sectionUnitIds[0]}</p>}
                           </div>
                         )}
 

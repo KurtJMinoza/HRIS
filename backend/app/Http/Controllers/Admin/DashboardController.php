@@ -9,9 +9,11 @@ use App\Models\AttendanceLog;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
+use App\Models\Division;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\RegularizationRecommendation;
+use App\Models\SectionUnit;
 use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Services\AttendanceCorrectionApprovalService;
@@ -1420,6 +1422,9 @@ class DashboardController extends Controller
      */
     private function holidayScopeContextFromUserAssignment(User $actor): array
     {
+        if ($actor->section_unit_id !== null) {
+            return $this->holidayScopeContextForSectionUnitIds([(int) $actor->section_unit_id]);
+        }
         if ($actor->department_id !== null) {
             return $this->holidayScopeContextForDepartmentIds([(int) $actor->department_id]);
         }
@@ -1437,7 +1442,35 @@ class DashboardController extends Controller
         return [
             'company_ids' => [],
             'branch_ids' => [],
+            'division_ids' => [],
             'department_ids' => [],
+            'section_unit_ids' => [],
+        ];
+    }
+
+    private function holidayScopeContextForSectionUnitIds(array $sectionUnitIds): array
+    {
+        $sectionUnitIds = array_values(array_unique(array_filter($sectionUnitIds, fn ($id) => $id > 0)));
+        if ($sectionUnitIds === []) {
+            return [
+                'company_ids' => [],
+                'branch_ids' => [],
+                'division_ids' => [],
+                'department_ids' => [],
+                'section_unit_ids' => [],
+            ];
+        }
+
+        $sections = SectionUnit::query()
+            ->whereIn('id', $sectionUnitIds)
+            ->get(['id', 'company_id', 'branch_id', 'division_id', 'department_id']);
+
+        return [
+            'company_ids' => $sections->pluck('company_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
+            'branch_ids' => $sections->pluck('branch_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
+            'division_ids' => $sections->pluck('division_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
+            'department_ids' => $sections->pluck('department_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
+            'section_unit_ids' => $sectionUnitIds,
         ];
     }
 
@@ -1452,21 +1485,27 @@ class DashboardController extends Controller
             return [
                 'company_ids' => [],
                 'branch_ids' => [],
+                'division_ids' => [],
                 'department_ids' => [],
+                'section_unit_ids' => [],
             ];
         }
 
         $branchIds = Branch::query()->whereIn('company_id', $companyIds)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $divisionIds = Division::query()->whereIn('company_id', $companyIds)->pluck('id')->map(fn ($id) => (int) $id)->all();
         $departmentIds = Department::query()
             ->whereHas('branch', fn ($q) => $q->whereIn('company_id', $companyIds))
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->all();
+        $sectionUnitIds = SectionUnit::query()->whereIn('company_id', $companyIds)->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         return [
             'company_ids' => $companyIds,
             'branch_ids' => $branchIds,
+            'division_ids' => $divisionIds,
             'department_ids' => $departmentIds,
+            'section_unit_ids' => $sectionUnitIds,
         ];
     }
 
@@ -1479,7 +1518,9 @@ class DashboardController extends Controller
             return [
                 'company_ids' => [],
                 'branch_ids' => [],
+                'division_ids' => [],
                 'department_ids' => [],
+                'section_unit_ids' => [],
             ];
         }
 
@@ -1490,11 +1531,15 @@ class DashboardController extends Controller
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->all();
+        $divisionIds = Division::query()->where('branch_id', $branchId)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $sectionUnitIds = SectionUnit::query()->where('branch_id', $branchId)->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         return [
             'company_ids' => $companyIds,
             'branch_ids' => [$branchId],
+            'division_ids' => $divisionIds,
             'department_ids' => $departmentIds,
+            'section_unit_ids' => $sectionUnitIds,
         ];
     }
 
@@ -1509,23 +1554,29 @@ class DashboardController extends Controller
             return [
                 'company_ids' => [],
                 'branch_ids' => [],
+                'division_ids' => [],
                 'department_ids' => [],
+                'section_unit_ids' => [],
             ];
         }
 
         $departments = Department::query()
             ->whereIn('id', $departmentIds)
-            ->get(['id', 'branch_id']);
+            ->get(['id', 'branch_id', 'division_id']);
 
         $branchIds = $departments->pluck('branch_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
         $companyIds = $branchIds === []
             ? []
             : Branch::query()->whereIn('id', $branchIds)->pluck('company_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $divisionIds = $departments->pluck('division_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $sectionUnitIds = SectionUnit::query()->whereIn('department_id', $departmentIds)->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         return [
             'company_ids' => $companyIds,
             'branch_ids' => $branchIds,
+            'division_ids' => $divisionIds,
             'department_ids' => $departmentIds,
+            'section_unit_ids' => $sectionUnitIds,
         ];
     }
 
@@ -1548,7 +1599,9 @@ class DashboardController extends Controller
 
         $companyIds = array_values(array_unique(array_map('intval', $context['company_ids'] ?? [])));
         $branchIds = array_values(array_unique(array_map('intval', $context['branch_ids'] ?? [])));
+        $divisionIds = array_values(array_unique(array_map('intval', $context['division_ids'] ?? [])));
         $departmentIds = array_values(array_unique(array_map('intval', $context['department_ids'] ?? [])));
+        $sectionUnitIds = array_values(array_unique(array_map('intval', $context['section_unit_ids'] ?? [])));
 
         foreach ($companyIds as $companyId) {
             if ($companyId > 0 && $this->holidayCalendar->rowAppliesToTarget($row, $companyId, null, null, null)) {
@@ -1567,17 +1620,30 @@ class DashboardController extends Controller
                 return true;
             }
         }
+        foreach ($sectionUnitIds as $sectionUnitId) {
+            if ($sectionUnitId > 0 && $this->holidayCalendar->rowAppliesToTarget($row, null, null, null, null, null, $sectionUnitId)) {
+                return true;
+            }
+        }
 
         $rowCompanyId = isset($row['company_id']) ? (int) $row['company_id'] : 0;
         $rowBranchId = isset($row['branch_id']) ? (int) $row['branch_id'] : 0;
+        $rowDivisionId = isset($row['division_id']) ? (int) $row['division_id'] : 0;
         $rowDepartmentId = isset($row['department_id']) ? (int) $row['department_id'] : 0;
+        $rowSectionUnitId = isset($row['section_unit_id']) ? (int) $row['section_unit_id'] : 0;
         if ($rowCompanyId > 0 && in_array($rowCompanyId, $companyIds, true)) {
             return true;
         }
         if ($rowBranchId > 0 && in_array($rowBranchId, $branchIds, true)) {
             return true;
         }
+        if ($rowDivisionId > 0 && in_array($rowDivisionId, $divisionIds, true)) {
+            return true;
+        }
         if ($rowDepartmentId > 0 && in_array($rowDepartmentId, $departmentIds, true)) {
+            return true;
+        }
+        if ($rowSectionUnitId > 0 && in_array($rowSectionUnitId, $sectionUnitIds, true)) {
             return true;
         }
 
@@ -1589,7 +1655,9 @@ class DashboardController extends Controller
             return match ($coverageType) {
                 'company' => (bool) array_intersect($coverageIds, $companyIds),
                 'branches' => (bool) array_intersect($coverageIds, $branchIds),
+                'divisions' => (bool) array_intersect($coverageIds, $divisionIds),
                 'departments' => (bool) array_intersect($coverageIds, $departmentIds),
+                'section_units' => (bool) array_intersect($coverageIds, $sectionUnitIds),
                 'employees' => $this->holidayCoverageIncludesScopedEmployee($coverageIds, $context),
                 default => false,
             };

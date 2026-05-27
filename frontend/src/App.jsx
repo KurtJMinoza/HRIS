@@ -40,6 +40,7 @@ import { HR_PANEL_CHILD_ROUTES } from '@/routes/hrPanelChildRoutes'
 import { resolvePostLoginPath } from '@/lib/hrRoutes'
 import EmployeeDashboard from '@/pages/EmployeeDashboard'
 import EmployeeAttendance from '@/pages/EmployeeAttendance'
+import EmployeeHolidaysPage from '@/pages/EmployeeHolidaysPage'
 import EmployeeCorrectionRequests from '@/pages/EmployeeCorrectionRequests'
 import EmployeeProfile from '@/pages/EmployeeProfile'
 import EmployeeMyPayslipsPage from '@/pages/EmployeeMyPayslipsPage'
@@ -1864,6 +1865,14 @@ export default function App() {
               >
                 <Route index element={<Navigate to="dashboard" replace />} />
                 <Route path="dashboard" element={<EmployeeDashboard />} />
+                <Route
+                  path="holidays"
+                  element={
+                    <ProtectedRoute role="employee" permissions={['holidays.view', 'holiday.view']}>
+                      <EmployeeHolidaysPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route path="attendance" element={<EmployeeAttendance />} />
                 <Route path="correction-requests" element={<EmployeeCorrectionRequests />} />
                 <Route

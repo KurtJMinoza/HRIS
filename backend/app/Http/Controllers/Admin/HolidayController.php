@@ -6,8 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
+use App\Models\Division;
+use App\Models\EmployeeOrganizationAssignment;
 use App\Models\Holiday;
 use App\Models\PayrollDailyRecord;
+use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\HolidayCalendarService;
 use App\Services\HolidayService;
@@ -55,6 +58,49 @@ class HolidayController extends Controller
                 'first_8_hour_by_condition' => PhPayrollReference::firstEightHourMatrix(),
                 'ot_multiplier_by_day_type' => PhPayrollReference::otMultiplierTable(),
             ],
+        ]);
+    }
+
+    public function employeeIndex(Request $request): JsonResponse
+    {
+        $year = (int) $request->get('year', now()->year);
+        $year = max(2020, min(2030, $year));
+        $employee = $request->user();
+
+        $rows = array_values(array_filter(
+            $this->holidayCalendar->holidaysForYear($year),
+            fn (array $row) => $this->holidayAppliesToEmployee($row, $employee)
+        ));
+
+        $rows = $this->dedupeEmployeeHolidayRows($rows);
+
+        $summary = [
+            'regular' => 0,
+            'special' => 0,
+            'local' => 0,
+            'total' => count($rows),
+        ];
+
+        foreach ($rows as $row) {
+            $type = strtolower((string) ($row['type'] ?? ''));
+            $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
+            if ($type === 'regular') {
+                $summary['regular']++;
+            } elseif (in_array($type, ['special', 'special_non_working'], true)) {
+                $summary['special']++;
+            }
+            if (! in_array($scope, ['nationwide', 'regional'], true)) {
+                $summary['local']++;
+            }
+        }
+
+        return response()->json([
+            'year' => $year,
+            'holidays' => array_map(fn (array $row) => array_merge($row, [
+                'payroll_hints' => PhPayrollReference::hintsForHolidayType(strtolower((string) ($row['type'] ?? 'special'))),
+                'impact' => $this->holidayImpact($row),
+            ]), $rows),
+            'summary' => $summary,
         ]);
     }
 
@@ -151,10 +197,12 @@ class HolidayController extends Controller
             'date' => ['required', 'date_format:Y-m-d'],
             'new_date' => ['required', 'date_format:Y-m-d'],
             'type' => ['required', Rule::in(['regular', 'special', 'special_non_working', 'special_working', 'company'])],
-            'scope' => ['required', Rule::in(['nationwide', 'regional', 'company', 'branch', 'department', 'employee'])],
+            'scope' => ['required', Rule::in(['nationwide', 'regional', 'company', 'branch', 'division', 'department', 'section_unit', 'employee'])],
             'company_id' => ['nullable', 'integer', Rule::exists('companies', 'id')],
             'branch_id' => ['nullable', 'integer', Rule::exists('branches', 'id')],
+            'division_id' => ['nullable', 'integer', Rule::exists('divisions', 'id')],
             'department_id' => ['nullable', 'integer', Rule::exists('departments', 'id')],
+            'section_unit_id' => ['nullable', 'integer', Rule::exists('sections_or_units', 'id')],
             'employee_id' => ['nullable', 'integer', Rule::exists('users', 'id')],
             'regions' => ['nullable', 'array', 'max:50'],
             'regions.*' => ['string', 'max:120'],
@@ -187,7 +235,9 @@ class HolidayController extends Controller
                 'scope' => $old['scope'],
                 'company_id' => $old['company_id'] ?? null,
                 'branch_id' => $old['branch_id'] ?? null,
+                'division_id' => $old['division_id'] ?? null,
                 'department_id' => $old['department_id'] ?? null,
+                'section_unit_id' => $old['section_unit_id'] ?? null,
                 'employee_id' => $old['employee_id'] ?? null,
             ],
             $this->payloadForWrite($old)
@@ -210,7 +260,7 @@ class HolidayController extends Controller
             'date' => ['required', 'date_format:Y-m-d'],
             'original_date' => ['nullable', 'date_format:Y-m-d'],
             'type' => ['required', Rule::in(['regular', 'special', 'special_non_working', 'special_working', 'company'])],
-            'coverage_type' => ['required', Rule::in(['company', 'branches', 'departments', 'employees'])],
+            'coverage_type' => ['required', Rule::in(['company', 'branches', 'divisions', 'departments', 'section_units', 'employees'])],
             'coverage_ids' => ['required', 'array', 'min:1', 'max:500'],
             'coverage_ids.*' => ['integer'],
             'description' => ['nullable', 'string', 'max:1000'],
@@ -231,7 +281,9 @@ class HolidayController extends Controller
         $scope = match ($valid['coverage_type']) {
             'company' => 'company',
             'branches' => 'branch',
+            'divisions' => 'division',
             'departments' => 'department',
+            'section_units' => 'section_unit',
             'employees' => 'employee',
         };
 
@@ -250,7 +302,9 @@ class HolidayController extends Controller
             'status' => $valid['status'] ?? 'active',
             'company_id' => null,
             'branch_id' => null,
+            'division_id' => null,
             'department_id' => null,
+            'section_unit_id' => null,
             'employee_id' => null,
         ];
 
@@ -260,17 +314,32 @@ class HolidayController extends Controller
             $branch = Branch::query()->find($coverageIds[0], ['id', 'company_id']);
             $payload['branch_id'] = $coverageIds[0];
             $payload['company_id'] = $branch?->company_id;
+        } elseif ($valid['coverage_type'] === 'divisions' && count($coverageIds) === 1) {
+            $division = Division::query()->find($coverageIds[0], ['id', 'company_id', 'branch_id']);
+            $payload['division_id'] = $coverageIds[0];
+            $payload['branch_id'] = $division?->branch_id;
+            $payload['company_id'] = $division?->company_id;
         } elseif ($valid['coverage_type'] === 'departments' && count($coverageIds) === 1) {
             $dept = Department::query()->with('branch:id,company_id')->find($coverageIds[0]);
             $payload['department_id'] = $coverageIds[0];
+            $payload['division_id'] = $dept?->division_id;
             $payload['branch_id'] = $dept?->branch_id;
             $payload['company_id'] = $dept?->branch?->company_id;
+        } elseif ($valid['coverage_type'] === 'section_units' && count($coverageIds) === 1) {
+            $section = SectionUnit::query()->find($coverageIds[0], ['id', 'company_id', 'branch_id', 'division_id', 'department_id']);
+            $payload['section_unit_id'] = $coverageIds[0];
+            $payload['department_id'] = $section?->department_id;
+            $payload['division_id'] = $section?->division_id;
+            $payload['branch_id'] = $section?->branch_id;
+            $payload['company_id'] = $section?->company_id;
         } elseif ($valid['coverage_type'] === 'employees' && count($coverageIds) === 1) {
             $user = User::query()->find($coverageIds[0]);
             $payload['employee_id'] = $coverageIds[0];
             $payload['company_id'] = $user?->getEffectiveCompanyId();
             $payload['branch_id'] = $user?->branch_id;
+            $payload['division_id'] = $user?->division_id;
             $payload['department_id'] = $user?->department_id;
+            $payload['section_unit_id'] = $user?->section_unit_id;
         }
 
         $holiday = $this->holiday->newQuery()->create($payload);
@@ -295,7 +364,7 @@ class HolidayController extends Controller
             'date' => ['sometimes', 'date_format:Y-m-d'],
             'original_date' => ['nullable', 'date_format:Y-m-d'],
             'type' => ['sometimes', Rule::in(['regular', 'special', 'special_non_working', 'special_working', 'company'])],
-            'coverage_type' => ['sometimes', Rule::in(['company', 'branches', 'departments', 'employees'])],
+            'coverage_type' => ['sometimes', Rule::in(['company', 'branches', 'divisions', 'departments', 'section_units', 'employees'])],
             'coverage_ids' => ['sometimes', 'array', 'min:1', 'max:500'],
             'coverage_ids.*' => ['integer'],
             'description' => ['nullable', 'string', 'max:1000'],
@@ -342,7 +411,9 @@ class HolidayController extends Controller
             $updateData['scope'] = match ($valid['coverage_type']) {
                 'company' => 'company',
                 'branches' => 'branch',
+                'divisions' => 'division',
                 'departments' => 'department',
+                'section_units' => 'section_unit',
                 'employees' => 'employee',
             };
         }
@@ -384,21 +455,32 @@ class HolidayController extends Controller
      */
     private function validateHolidayPayload(Request $request): array
     {
+        if (! $request->filled('scope') && $request->filled('scope_type')) {
+            $request->merge(['scope' => $request->input('scope_type')]);
+        }
+
         $valid = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'date' => ['required', 'date_format:Y-m-d'],
             'type' => ['required', Rule::in(['regular', 'special', 'special_non_working', 'special_working', 'company'])],
-            'scope' => ['required', Rule::in(['nationwide', 'regional', 'company', 'branch', 'department', 'employee'])],
+            'scope' => ['required', Rule::in(['nationwide', 'regional', 'company', 'branch', 'division', 'department', 'section_unit', 'employee'])],
+            'scope_type' => ['nullable', Rule::in(['nationwide', 'regional', 'company', 'branch', 'division', 'department', 'section_unit', 'employee'])],
             'company_id' => ['nullable', 'integer', Rule::exists('companies', 'id')],
             'branch_id' => ['nullable', 'integer', Rule::exists('branches', 'id')],
+            'division_id' => ['nullable', 'integer', Rule::exists('divisions', 'id')],
             'department_id' => ['nullable', 'integer', Rule::exists('departments', 'id')],
+            'section_unit_id' => ['nullable', 'integer', Rule::exists('sections_or_units', 'id')],
             'employee_id' => ['nullable', 'integer', Rule::exists('users', 'id')],
             'company_ids' => ['nullable', 'array', 'max:100'],
             'company_ids.*' => ['integer', Rule::exists('companies', 'id')],
             'branch_ids' => ['nullable', 'array', 'max:200'],
             'branch_ids.*' => ['integer', Rule::exists('branches', 'id')],
+            'division_ids' => ['nullable', 'array', 'max:250'],
+            'division_ids.*' => ['integer', Rule::exists('divisions', 'id')],
             'department_ids' => ['nullable', 'array', 'max:300'],
             'department_ids.*' => ['integer', Rule::exists('departments', 'id')],
+            'section_unit_ids' => ['nullable', 'array', 'max:300'],
+            'section_unit_ids.*' => ['integer', Rule::exists('sections_or_units', 'id')],
             'employee_ids' => ['nullable', 'array', 'max:500'],
             'employee_ids.*' => ['integer', Rule::exists('users', 'id')],
             'description' => ['nullable', 'string', 'max:1000'],
@@ -414,21 +496,29 @@ class HolidayController extends Controller
 
         $valid['company_ids'] = $this->normalizedIdList($valid['company_ids'] ?? null, $valid['company_id'] ?? null);
         $valid['branch_ids'] = $this->normalizedIdList($valid['branch_ids'] ?? null, $valid['branch_id'] ?? null);
+        $valid['division_ids'] = $this->normalizedIdList($valid['division_ids'] ?? null, $valid['division_id'] ?? null);
         $valid['department_ids'] = $this->normalizedIdList($valid['department_ids'] ?? null, $valid['department_id'] ?? null);
+        $valid['section_unit_ids'] = $this->normalizedIdList($valid['section_unit_ids'] ?? null, $valid['section_unit_id'] ?? null);
         $valid['employee_ids'] = $this->normalizedIdList($valid['employee_ids'] ?? null, $valid['employee_id'] ?? null);
 
         $scope = (string) ($valid['scope'] ?? 'nationwide');
         if ($scope === 'regional' && empty($valid['regions'])) {
             abort(response()->json(['message' => 'Select at least one region for a regional holiday'], 422));
         }
-        if (in_array($scope, ['company', 'branch', 'department', 'employee'], true) && empty($valid['company_ids'])) {
+        if (in_array($scope, ['company', 'branch', 'division', 'department', 'section_unit', 'employee'], true) && empty($valid['company_ids'])) {
             abort(response()->json(['message' => 'Select at least one company for this holiday scope'], 422));
         }
-        if ($scope === 'branch' && empty($valid['branch_ids'])) {
+        if (in_array($scope, ['branch', 'division', 'department', 'section_unit'], true) && empty($valid['branch_ids'])) {
             abort(response()->json(['message' => 'Select at least one branch for this holiday scope'], 422));
         }
-        if ($scope === 'department' && empty($valid['department_ids'])) {
+        if (in_array($scope, ['department', 'section_unit'], true) && empty($valid['department_ids'])) {
             abort(response()->json(['message' => 'Select at least one department for this holiday scope'], 422));
+        }
+        if ($scope === 'division' && empty($valid['division_ids'])) {
+            abort(response()->json(['message' => 'Select at least one division for this holiday scope'], 422));
+        }
+        if ($scope === 'section_unit' && empty($valid['section_unit_ids'])) {
+            abort(response()->json(['message' => 'Select at least one section/unit for this holiday scope'], 422));
         }
         if ($scope === 'employee' && empty($valid['employee_ids'])) {
             abort(response()->json(['message' => 'Select at least one employee for this holiday scope'], 422));
@@ -436,30 +526,126 @@ class HolidayController extends Controller
 
         $this->validateScopeHierarchy($valid);
 
-        if (! in_array($scope, ['company', 'branch', 'department', 'employee'], true)) {
+        if (! in_array($scope, ['company', 'branch', 'division', 'department', 'section_unit', 'employee'], true)) {
             $valid['company_id'] = null;
             $valid['branch_id'] = null;
+            $valid['division_id'] = null;
             $valid['department_id'] = null;
+            $valid['section_unit_id'] = null;
             $valid['employee_id'] = null;
         } elseif ($scope === 'company') {
             $valid['branch_id'] = null;
+            $valid['division_id'] = null;
             $valid['department_id'] = null;
+            $valid['section_unit_id'] = null;
             $valid['employee_id'] = null;
         } elseif ($scope === 'branch') {
+            $valid['division_id'] = null;
             $valid['department_id'] = null;
+            $valid['section_unit_id'] = null;
+            $valid['employee_id'] = null;
+        } elseif ($scope === 'division') {
+            $valid['department_id'] = null;
+            $valid['section_unit_id'] = null;
             $valid['employee_id'] = null;
         } elseif ($scope === 'department') {
+            $valid['section_unit_id'] = null;
+            $valid['employee_id'] = null;
+        } elseif ($scope === 'section_unit') {
             $valid['employee_id'] = null;
         }
 
-        if (in_array($scope, ['company', 'branch', 'department', 'employee'], true)) {
+        if (in_array($scope, ['company', 'branch', 'division', 'department', 'section_unit', 'employee'], true)) {
             $valid['company_id'] = $valid['company_ids'][0] ?? null;
             $valid['branch_id'] = $valid['branch_ids'][0] ?? null;
+            $valid['division_id'] = $valid['division_ids'][0] ?? null;
             $valid['department_id'] = $valid['department_ids'][0] ?? null;
+            $valid['section_unit_id'] = $valid['section_unit_ids'][0] ?? null;
             $valid['employee_id'] = $valid['employee_ids'][0] ?? null;
         }
 
         return $valid;
+    }
+
+    private function holidayAppliesToEmployee(array $row, User $employee): bool
+    {
+        $date = (string) ($row['date'] ?? '');
+        $sectionUnitId = $employee->section_unit_id !== null ? (int) $employee->section_unit_id : null;
+
+        if (
+            strtolower((string) ($row['scope'] ?? '')) === 'section_unit'
+            && isset($row['section_unit_id'])
+            && (int) $row['section_unit_id'] > 0
+            && $sectionUnitId !== (int) $row['section_unit_id']
+            && $this->employeeHasActiveSectionAssignment($employee, (int) $row['section_unit_id'], $date)
+        ) {
+            $sectionUnitId = (int) $row['section_unit_id'];
+        }
+
+        return $this->holidayCalendar->rowAppliesToTarget(
+            $row,
+            $employee->getEffectiveCompanyId() !== null ? (int) $employee->getEffectiveCompanyId() : null,
+            $employee->branch_id !== null ? (int) $employee->branch_id : null,
+            $employee->department_id !== null ? (int) $employee->department_id : null,
+            (int) $employee->id,
+            $employee->division_id !== null ? (int) $employee->division_id : null,
+            $sectionUnitId,
+        );
+    }
+
+    private function employeeHasActiveSectionAssignment(User $employee, int $sectionUnitId, string $date): bool
+    {
+        if ($date === '') {
+            return false;
+        }
+
+        return EmployeeOrganizationAssignment::query()
+            ->where('employee_id', (int) $employee->id)
+            ->where('section_unit_id', $sectionUnitId)
+            ->where('is_active', true)
+            ->where(function ($query) use ($date): void {
+                $query->whereNull('effective_from')->orWhereDate('effective_from', '<=', $date);
+            })
+            ->where(function ($query) use ($date): void {
+                $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $date);
+            })
+            ->exists();
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<array<string, mixed>>
+     */
+    private function dedupeEmployeeHolidayRows(array $rows): array
+    {
+        $deduped = [];
+        foreach ($rows as $row) {
+            $key = strtolower(trim((string) ($row['date'] ?? '')).'|'.trim((string) ($row['name'] ?? '')));
+            if ($key === '|') {
+                continue;
+            }
+            if (! isset($deduped[$key]) || $this->holidayScopeRank($row) > $this->holidayScopeRank($deduped[$key])) {
+                $deduped[$key] = $row;
+            }
+        }
+
+        usort($deduped, fn (array $a, array $b) => strcmp((string) ($a['date'] ?? ''), (string) ($b['date'] ?? '')));
+
+        return array_values($deduped);
+    }
+
+    private function holidayScopeRank(array $row): int
+    {
+        return match (strtolower((string) ($row['scope'] ?? 'nationwide'))) {
+            'employee' => 70,
+            'section_unit' => 60,
+            'department' => 50,
+            'division' => 45,
+            'branch' => 40,
+            'company' => 30,
+            'regional' => 20,
+            default => 10,
+        };
     }
 
     /**
@@ -504,7 +690,9 @@ class HolidayController extends Controller
     {
         $companyIds = $this->normalizedIdList($valid['company_ids'] ?? null, $valid['company_id'] ?? null);
         $branchIds = $this->normalizedIdList($valid['branch_ids'] ?? null, $valid['branch_id'] ?? null);
+        $divisionIds = $this->normalizedIdList($valid['division_ids'] ?? null, $valid['division_id'] ?? null);
         $departmentIds = $this->normalizedIdList($valid['department_ids'] ?? null, $valid['department_id'] ?? null);
+        $sectionUnitIds = $this->normalizedIdList($valid['section_unit_ids'] ?? null, $valid['section_unit_id'] ?? null);
         $employeeIds = $this->normalizedIdList($valid['employee_ids'] ?? null, $valid['employee_id'] ?? null);
 
         if (! empty($companyIds)) {
@@ -527,10 +715,35 @@ class HolidayController extends Controller
             }
         }
 
+        if (! empty($divisionIds)) {
+            $divisions = Division::query()->whereIn('id', $divisionIds)->get(['id', 'company_id', 'branch_id']);
+            if ($divisions->count() !== count($divisionIds)) {
+                abort(response()->json(['message' => 'One or more selected divisions were not found'], 422));
+            }
+            if (! empty($branchIds)) {
+                $invalid = $divisions->contains(fn (Division $division) => ! in_array((int) $division->branch_id, $branchIds, true));
+                if ($invalid) {
+                    abort(response()->json(['message' => 'One or more selected divisions do not belong to the selected branches'], 422));
+                }
+            }
+            if (! empty($companyIds)) {
+                $invalid = $divisions->contains(fn (Division $division) => ! in_array((int) $division->company_id, $companyIds, true));
+                if ($invalid) {
+                    abort(response()->json(['message' => 'One or more selected divisions do not belong to the selected companies'], 422));
+                }
+            }
+        }
+
         if (! empty($departmentIds)) {
             $departments = Department::query()->with('branch:id,company_id')->whereIn('id', $departmentIds)->get();
             if ($departments->count() !== count($departmentIds)) {
                 abort(response()->json(['message' => 'One or more selected departments were not found'], 422));
+            }
+            if (! empty($divisionIds)) {
+                $invalid = $departments->contains(fn (Department $department) => ! in_array((int) ($department->division_id ?? 0), $divisionIds, true));
+                if ($invalid) {
+                    abort(response()->json(['message' => 'One or more selected departments do not belong to the selected divisions'], 422));
+                }
             }
             if (! empty($branchIds)) {
                 $invalid = $departments->contains(fn (Department $department) => ! in_array((int) $department->branch_id, $branchIds, true));
@@ -542,6 +755,37 @@ class HolidayController extends Controller
                 $invalid = $departments->contains(fn (Department $department) => ! in_array((int) ($department->branch?->company_id ?? 0), $companyIds, true));
                 if ($invalid) {
                     abort(response()->json(['message' => 'One or more selected departments do not belong to the selected companies'], 422));
+                }
+            }
+        }
+
+        if (! empty($sectionUnitIds)) {
+            $sections = SectionUnit::query()->whereIn('id', $sectionUnitIds)->get(['id', 'company_id', 'branch_id', 'division_id', 'department_id']);
+            if ($sections->count() !== count($sectionUnitIds)) {
+                abort(response()->json(['message' => 'One or more selected sections/units were not found'], 422));
+            }
+            if (! empty($departmentIds)) {
+                $invalid = $sections->contains(fn (SectionUnit $section) => ! in_array((int) $section->department_id, $departmentIds, true));
+                if ($invalid) {
+                    abort(response()->json(['message' => 'One or more selected sections/units do not belong to the selected departments'], 422));
+                }
+            }
+            if (! empty($divisionIds)) {
+                $invalid = $sections->contains(fn (SectionUnit $section) => ! in_array((int) ($section->division_id ?? 0), $divisionIds, true));
+                if ($invalid) {
+                    abort(response()->json(['message' => 'One or more selected sections/units do not belong to the selected divisions'], 422));
+                }
+            }
+            if (! empty($branchIds)) {
+                $invalid = $sections->contains(fn (SectionUnit $section) => ! in_array((int) $section->branch_id, $branchIds, true));
+                if ($invalid) {
+                    abort(response()->json(['message' => 'One or more selected sections/units do not belong to the selected branches'], 422));
+                }
+            }
+            if (! empty($companyIds)) {
+                $invalid = $sections->contains(fn (SectionUnit $section) => ! in_array((int) $section->company_id, $companyIds, true));
+                if ($invalid) {
+                    abort(response()->json(['message' => 'One or more selected sections/units do not belong to the selected companies'], 422));
                 }
             }
         }
@@ -569,6 +813,12 @@ class HolidayController extends Controller
                     abort(response()->json(['message' => 'One or more selected employees do not belong to the selected departments'], 422));
                 }
             }
+            if (! empty($sectionUnitIds)) {
+                $invalid = $employees->contains(fn (User $employee) => ! in_array((int) ($employee->section_unit_id ?? 0), $sectionUnitIds, true));
+                if ($invalid) {
+                    abort(response()->json(['message' => 'One or more selected employees do not belong to the selected sections/units'], 422));
+                }
+            }
         }
     }
 
@@ -582,7 +832,9 @@ class HolidayController extends Controller
             ->where('scope', $valid['scope'] ?? 'nationwide')
             ->where('company_id', $valid['company_id'] ?? null)
             ->where('branch_id', $valid['branch_id'] ?? null)
+            ->where('division_id', $valid['division_id'] ?? null)
             ->where('department_id', $valid['department_id'] ?? null)
+            ->where('section_unit_id', $valid['section_unit_id'] ?? null)
             ->where('employee_id', $valid['employee_id'] ?? null);
 
         if ($ignoreId !== null) {
@@ -636,7 +888,9 @@ class HolidayController extends Controller
             'scope' => $holiday->scope ?? 'nationwide',
             'company_id' => $holiday->company_id !== null ? (int) $holiday->company_id : null,
             'branch_id' => $holiday->branch_id !== null ? (int) $holiday->branch_id : null,
+            'division_id' => $holiday->division_id !== null ? (int) $holiday->division_id : null,
             'department_id' => $holiday->department_id !== null ? (int) $holiday->department_id : null,
+            'section_unit_id' => $holiday->section_unit_id !== null ? (int) $holiday->section_unit_id : null,
             'employee_id' => $holiday->employee_id !== null ? (int) $holiday->employee_id : null,
         ];
     }
@@ -659,7 +913,9 @@ class HolidayController extends Controller
             'scope' => $valid['scope'],
             'company_id' => $valid['company_id'] ?? null,
             'branch_id' => $valid['branch_id'] ?? null,
+            'division_id' => $valid['division_id'] ?? null,
             'department_id' => $valid['department_id'] ?? null,
+            'section_unit_id' => $valid['section_unit_id'] ?? null,
             'employee_id' => $valid['employee_id'] ?? null,
             'description' => $description,
             'regions' => ($valid['scope'] === 'regional') ? array_values($valid['regions'] ?? []) : null,
@@ -683,7 +939,9 @@ class HolidayController extends Controller
             return array_map(fn (int $companyId) => array_merge($base, [
                 'company_id' => $companyId,
                 'branch_id' => null,
+                'division_id' => null,
                 'department_id' => null,
+                'section_unit_id' => null,
                 'employee_id' => null,
                 'regions' => null,
             ]), $this->normalizedIdList($valid['company_ids'] ?? null, $valid['company_id'] ?? null));
@@ -698,7 +956,26 @@ class HolidayController extends Controller
             return $branches->map(fn (Branch $branch) => array_merge($base, [
                 'company_id' => (int) $branch->company_id,
                 'branch_id' => (int) $branch->id,
+                'division_id' => null,
                 'department_id' => null,
+                'section_unit_id' => null,
+                'employee_id' => null,
+                'regions' => null,
+            ]))->values()->all();
+        }
+
+        if ($scope === 'division') {
+            $divisions = Division::query()
+                ->whereIn('id', $this->normalizedIdList($valid['division_ids'] ?? null, $valid['division_id'] ?? null))
+                ->get(['id', 'company_id', 'branch_id'])
+                ->keyBy('id');
+
+            return $divisions->map(fn (Division $division) => array_merge($base, [
+                'company_id' => (int) $division->company_id,
+                'branch_id' => (int) $division->branch_id,
+                'division_id' => (int) $division->id,
+                'department_id' => null,
+                'section_unit_id' => null,
                 'employee_id' => null,
                 'regions' => null,
             ]))->values()->all();
@@ -714,7 +991,26 @@ class HolidayController extends Controller
             return $departments->map(fn (Department $department) => array_merge($base, [
                 'company_id' => (int) ($department->branch?->company_id ?? $valid['company_id'] ?? 0) ?: null,
                 'branch_id' => (int) $department->branch_id,
+                'division_id' => $department->division_id !== null ? (int) $department->division_id : null,
                 'department_id' => (int) $department->id,
+                'section_unit_id' => null,
+                'employee_id' => null,
+                'regions' => null,
+            ]))->values()->all();
+        }
+
+        if ($scope === 'section_unit') {
+            $sections = SectionUnit::query()
+                ->whereIn('id', $this->normalizedIdList($valid['section_unit_ids'] ?? null, $valid['section_unit_id'] ?? null))
+                ->get(['id', 'company_id', 'branch_id', 'division_id', 'department_id'])
+                ->keyBy('id');
+
+            return $sections->map(fn (SectionUnit $section) => array_merge($base, [
+                'company_id' => (int) $section->company_id,
+                'branch_id' => (int) $section->branch_id,
+                'division_id' => $section->division_id !== null ? (int) $section->division_id : null,
+                'department_id' => (int) $section->department_id,
+                'section_unit_id' => (int) $section->id,
                 'employee_id' => null,
                 'regions' => null,
             ]))->values()->all();
@@ -730,7 +1026,9 @@ class HolidayController extends Controller
             return $employees->map(fn (User $employee) => array_merge($base, [
                 'company_id' => $employee->getEffectiveCompanyId() !== null ? (int) $employee->getEffectiveCompanyId() : ($valid['company_id'] ?? null),
                 'branch_id' => $employee->branch_id !== null ? (int) $employee->branch_id : null,
+                'division_id' => $employee->division_id !== null ? (int) $employee->division_id : null,
                 'department_id' => $employee->department_id !== null ? (int) $employee->department_id : null,
+                'section_unit_id' => $employee->section_unit_id !== null ? (int) $employee->section_unit_id : null,
                 'employee_id' => (int) $employee->id,
                 'regions' => null,
             ]))->values()->all();
@@ -751,7 +1049,9 @@ class HolidayController extends Controller
         $count = match ($coverageType) {
             'company' => Company::query()->whereIn('id', $coverageIds)->count(),
             'branches' => Branch::query()->whereIn('id', $coverageIds)->count(),
+            'divisions' => Division::query()->whereIn('id', $coverageIds)->count(),
             'departments' => Department::query()->whereIn('id', $coverageIds)->count(),
+            'section_units' => SectionUnit::query()->whereIn('id', $coverageIds)->count(),
             'employees' => User::query()->whereIn('id', $coverageIds)->count(),
             default => 0,
         };
@@ -760,7 +1060,9 @@ class HolidayController extends Controller
             $entityName = match ($coverageType) {
                 'company' => 'companies',
                 'branches' => 'branches',
+                'divisions' => 'divisions',
                 'departments' => 'departments',
+                'section_units' => 'sections/units',
                 'employees' => 'employees',
                 default => 'entities',
             };
@@ -779,9 +1081,12 @@ class HolidayController extends Controller
             'name' => $holiday->name,
             'type' => $holiday->type,
             'scope' => $holiday->scope,
+            'scope_type' => $holiday->scope,
             'company_id' => $holiday->company_id,
             'branch_id' => $holiday->branch_id,
+            'division_id' => $holiday->division_id,
             'department_id' => $holiday->department_id,
+            'section_unit_id' => $holiday->section_unit_id,
             'employee_id' => $holiday->employee_id,
             'coverage_type' => $holiday->coverage_type,
             'coverage_ids' => $holiday->getCoverageIds(),
@@ -866,7 +1171,9 @@ class HolidayController extends Controller
                     $q->whereIn('branch_id', $coverageIds)
                         ->orWhereHas('departmentRelation', fn ($sub) => $sub->whereIn('branch_id', $coverageIds));
                 }),
+                'divisions' => $query->whereIn('division_id', $coverageIds),
                 'departments' => $query->whereIn('department_id', $coverageIds),
+                'section_units' => $query->whereIn('section_unit_id', $coverageIds),
                 'employees' => $query->whereIn('id', $coverageIds),
                 default => $query,
             };
@@ -880,6 +1187,14 @@ class HolidayController extends Controller
 
         if ($scope === 'department' && ! empty($holiday['department_id'])) {
             return $query->where('department_id', (int) $holiday['department_id']);
+        }
+
+        if ($scope === 'section_unit' && ! empty($holiday['section_unit_id'])) {
+            return $query->where('section_unit_id', (int) $holiday['section_unit_id']);
+        }
+
+        if ($scope === 'division' && ! empty($holiday['division_id'])) {
+            return $query->where('division_id', (int) $holiday['division_id']);
         }
 
         if ($scope === 'branch' && ! empty($holiday['branch_id'])) {

@@ -523,7 +523,7 @@ export default function AdminDashboard() {
   const { user, loading: authLoading } = useAuth()
   const perms = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canViewCompanyDirectory = useMemo(() => perms.has('org.company.view'), [perms])
-  const canViewHolidays = useMemo(() => perms.has('holiday.view'), [perms])
+  const canViewHolidays = useMemo(() => perms.has('holidays.view') || perms.has('holiday.view'), [perms])
   const canViewOvertime = useMemo(() => perms.has('overtime.view'), [perms])
   const canViewLeave = useMemo(() => perms.has('leave.view'), [perms])
   const canApproveAttendanceCorrections = useMemo(() => perms.has('attendance.corrections.approve'), [perms])

@@ -3813,6 +3813,14 @@ export async function getAdminHolidays(params = {}) {
   return data
 }
 
+export async function getMyHolidays(params = {}) {
+  const year = params.year ?? new Date().getFullYear()
+  const res = await authenticatedFetch(`/employee/holidays?year=${year}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load holidays')
+  return data
+}
+
 /**
  * Create a custom holiday/event.
  * @param {{ name: string, date: string, type: string, scope: string }} payload

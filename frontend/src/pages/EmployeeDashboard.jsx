@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
-import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, QrCode, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap } from 'lucide-react'
+import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, QrCode, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useAuth } from '@/contexts/AuthContext'
-import { getMyAttendanceSummary, getMyLeaveSummary, getAllMyOvertimeRequestsInRange } from '@/api'
+import { getMyAttendanceSummary, getMyLeaveSummary, getAllMyOvertimeRequestsInRange, getMyHolidays } from '@/api'
 import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
 import { cn } from '@/lib/utils'
 import { formatEmployeeName } from '@/lib/employeeSort'
@@ -151,6 +151,30 @@ function formatYmdShort(dateStr) {
   } catch {
     return String(dateStr)
   }
+}
+
+function formatHolidayCardDate(dateStr) {
+  if (!dateStr) return { month: '—', day: '—', weekday: '—' }
+  try {
+    const d = new Date(`${dateStr}T12:00:00`)
+    if (Number.isNaN(d.getTime())) return { month: '—', day: String(dateStr).slice(-2) || '—', weekday: '—' }
+    return {
+      month: d.toLocaleDateString('en-PH', { month: 'short' }).toUpperCase(),
+      day: String(d.getDate()).padStart(2, '0'),
+      weekday: d.toLocaleDateString('en-PH', { weekday: 'long' }),
+    }
+  } catch {
+    return { month: '—', day: String(dateStr).slice(-2) || '—', weekday: '—' }
+  }
+}
+
+function holidayTypeDisplay(type) {
+  const key = String(type || '').toLowerCase()
+  if (key === 'regular') return 'Regular Holiday'
+  if (key === 'special' || key === 'special_non_working') return 'Special (Non-working) Day'
+  if (key === 'special_working') return 'Special Working Day'
+  if (key === 'company') return 'Local Holiday'
+  return 'Holiday'
 }
 
 /**
@@ -398,6 +422,9 @@ export default function EmployeeDashboard() {
   const [days, setDays] = useState([])
   const [leaveSummary, setLeaveSummary] = useState(null)
   const [leaveRequests, setLeaveRequests] = useState([])
+  const [holidayRows, setHolidayRows] = useState([])
+  const [holidaySummary, setHolidaySummary] = useState(null)
+  const [holidayLoading, setHolidayLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [calendarLoading, setCalendarLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -496,6 +523,29 @@ export default function EmployeeDashboard() {
       window.clearInterval(id)
     }
   }, [loadDashboard])
+
+  useEffect(() => {
+    let cancelled = false
+    setHolidayLoading(true)
+    getMyHolidays({ year: calendarYear })
+      .then((data) => {
+        if (cancelled) return
+        setHolidayRows(Array.isArray(data?.holidays) ? data.holidays : [])
+        setHolidaySummary(data?.summary || null)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setHolidayRows([])
+        setHolidaySummary(null)
+      })
+      .finally(() => {
+        if (!cancelled) setHolidayLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [calendarYear])
 
   useEffect(() => {
     const onSchedulesChanged = () => {
@@ -747,6 +797,22 @@ export default function EmployeeDashboard() {
     const t = new Date()
     return calendarYear === t.getFullYear() && calendarMonth === t.getMonth()
   }, [calendarYear, calendarMonth])
+
+  const upcomingHolidays = useMemo(() => {
+    const today = formatLocalDateKey(new Date())
+    return holidayRows
+      .filter((holiday) => String(holiday?.status || 'active').toLowerCase() === 'active')
+      .filter((holiday) => String(holiday?.date || holiday?.holiday_date || '') >= today)
+      .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
+      .slice(0, 3)
+  }, [holidayRows])
+
+  const currentHolidaySummary = useMemo(() => ({
+    regular: holidaySummary?.regular ?? holidayRows.filter((h) => String(h?.type || '').toLowerCase() === 'regular').length,
+    special: holidaySummary?.special ?? holidayRows.filter((h) => ['special', 'special_non_working'].includes(String(h?.type || '').toLowerCase())).length,
+    local: holidaySummary?.local ?? holidayRows.filter((h) => !['nationwide', 'regional'].includes(String(h?.scope || '').toLowerCase())).length,
+    total: holidaySummary?.total ?? holidayRows.length,
+  }), [holidayRows, holidaySummary])
 
   function goPrevCalendarMonth() {
     if (calendarMonth === 0) {
@@ -1649,7 +1715,7 @@ export default function EmployeeDashboard() {
 
       {/* Attendance calendar */}
       <Motion.div
-        className="flex flex-col gap-6"
+        className="grid gap-6 @xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1786,6 +1852,99 @@ export default function EmployeeDashboard() {
                     })}
                   </div>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Motion.div>
+        <Motion.div variants={itemVariants}>
+          <Card className="h-full overflow-hidden rounded-xl border-border bg-card shadow-[0_14px_36px_-26px_rgba(15,23,42,0.8)] dark:bg-card/85">
+            <CardHeader className="space-y-1.5 pb-3">
+              <CardTitle className="flex items-center gap-3 text-lg font-extrabold tracking-tight text-foreground">
+                <span className="flex size-7 items-center justify-center rounded-lg bg-orange-50 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
+                  <CalendarDays className="size-4" />
+                </span>
+                Holiday calendar
+              </CardTitle>
+              <CardDescription className="text-sm text-muted-foreground">Upcoming holidays</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                {holidayLoading ? (
+                  Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="h-[4.6rem] animate-pulse rounded-xl border border-border/60 bg-muted/35" />
+                  ))
+                ) : upcomingHolidays.length > 0 ? (
+                  upcomingHolidays.map((holiday) => {
+                    const dateParts = formatHolidayCardDate(holiday.date || holiday.holiday_date)
+                    return (
+                      <div
+                        key={`${holiday.date}-${holiday.name}-${holiday.scope || 'nationwide'}`}
+                        className="flex items-center gap-3 rounded-xl border border-border/70 bg-card px-3 py-3 shadow-sm dark:bg-card/70"
+                      >
+                        <div className="flex w-12 shrink-0 flex-col items-center justify-center rounded-lg bg-orange-50 px-2 py-1.5 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wide">{dateParts.month}</span>
+                          <span className="text-xl font-black leading-none tabular-nums">{dateParts.day}</span>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-extrabold text-foreground">{holiday.name || 'Holiday'}</p>
+                          <p className="mt-0.5 truncate text-xs font-medium text-muted-foreground">{dateParts.weekday}</p>
+                          <p className="mt-1 truncate text-[11px] font-semibold text-orange-700 dark:text-orange-300">
+                            {holidayTypeDisplay(holiday.type)}
+                          </p>
+                          <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                            Scope: {holiday.scope_label || 'Nationwide'}
+                            {holiday.scope_target ? ` · ${holiday.scope_target}` : ''}
+                          </p>
+                          {holiday.scope_path && holiday.scope_path !== holiday.scope_target ? (
+                            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{holiday.scope_path}</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    )
+                  })
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border bg-muted/25 px-4 py-6 text-center">
+                    <p className="text-sm font-semibold text-foreground">No upcoming holidays found.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Applicable holidays will appear here.</p>
+                  </div>
+                )}
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 w-full gap-2 rounded-lg border-orange-500/40 text-sm font-bold text-orange-700 hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-500/10"
+                onClick={() => navigate('/employee/holidays')}
+              >
+                <CalendarDays className="size-4" />
+                View full holiday calendar
+              </Button>
+
+              <div className="space-y-3 border-t border-border/60 pt-4">
+                <p className="text-sm font-extrabold text-foreground">Holiday summary ({calendarYear})</p>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Regular Holidays</span>
+                    <span className="font-semibold tabular-nums text-foreground">{holidayLoading ? '—' : currentHolidaySummary.regular}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Special (Non-working) Days</span>
+                    <span className="font-semibold tabular-nums text-foreground">{holidayLoading ? '—' : currentHolidaySummary.special}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Local Holidays</span>
+                    <span className="font-semibold tabular-nums text-foreground">{holidayLoading ? '—' : currentHolidaySummary.local}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-2">
+                    <span className="font-semibold text-muted-foreground">Total Holidays</span>
+                    <span className="font-extrabold tabular-nums text-foreground">{holidayLoading ? '—' : currentHolidaySummary.total}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2 rounded-xl border border-border/70 bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
+                <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <p>Dates may change based on official government announcements.</p>
               </div>
             </CardContent>
           </Card>
