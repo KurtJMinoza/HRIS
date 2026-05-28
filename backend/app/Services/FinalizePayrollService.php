@@ -129,7 +129,8 @@ class FinalizePayrollService
             $limit = max(1, min(100, $perPage));
             $offset = ($currentPage - 1) * $limit;
             $employeesQuery = User::query()
-                ->whereIn('id', $scopedEmployeeIds);
+                ->whereIn('id', $scopedEmployeeIds)
+                ->with(['departmentRelation:id,name']);
             $employees = $employeesQuery
                 // IMPORTANT: do not under-select here. Payroll computation and deduction schedules rely on
                 // core employee columns (company_id, pay_cycle_id, etc). Missing columns can silently zero out
@@ -315,7 +316,7 @@ class FinalizePayrollService
                         'user_id' => (int) $employee->id,
                         ...$this->employeePreviewIdentityFields($employee),
                         'employee_code' => $employee->employee_code,
-                        'department' => $employee->department,
+                        'department' => $this->employeeDepartmentName($employee),
                         'position' => $employee->position,
                         'profile_image_url' => $employee->profile_image_url,
                         'employee_hr_role' => $resolvedHrRole->value,
@@ -348,7 +349,7 @@ class FinalizePayrollService
                         'user_id' => (int) $employee->id,
                         ...$this->employeePreviewIdentityFields($employee),
                         'employee_code' => $employee->employee_code,
-                        'department' => $employee->department,
+                        'department' => $this->employeeDepartmentName($employee),
                         'position' => $employee->position,
                         'profile_image_url' => $employee->profile_image_url,
                         'employee_hr_role' => $resolvedHrRole->value,
@@ -615,7 +616,10 @@ class FinalizePayrollService
         $this->attachMatchingPayslipsToBatchRun($run);
 
         $query = $this->payslipQueryForBatchRun($run)
-            ->with(['employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id,pay_cycle_id,monthly_salary,monthly_rate,daily_rate,working_schedule_id,schedule,employment_status,is_active']);
+            ->with([
+                'employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id,pay_cycle_id,monthly_salary,monthly_rate,daily_rate,working_schedule_id,schedule,employment_status,is_active',
+                'employee.departmentRelation:id,name',
+            ]);
         $expectedStatuses = (string) $run->status === PayrollBatchRun::STATUS_FINALIZED
             ? Payslip::lockingStatuses()
             : $this->draftSnapshotStatuses();
@@ -720,7 +724,7 @@ class FinalizePayrollService
                 'user_id' => (int) $employee->id,
                 ...$this->employeePreviewIdentityFields($employee),
                 'employee_code' => $employee->employee_code,
-                'department' => $employee->department,
+                'department' => $this->employeeDepartmentName($employee),
                 'position' => $employee->position,
                 'profile_image_url' => $employee->profile_image_url,
                 'employee_hr_role' => $resolvedHrRole->value,
@@ -2802,6 +2806,20 @@ class FinalizePayrollService
             'suffix' => $employee->suffix,
             'employee_sort_key' => $employee->employeeListingSortKey(),
         ];
+    }
+
+    private function employeeDepartmentName(User $employee): ?string
+    {
+        $departmentName = $employee->departmentRelation?->name;
+        if (is_string($departmentName) && trim($departmentName) !== '') {
+            return $departmentName;
+        }
+
+        $legacyDepartment = $employee->department;
+
+        return is_string($legacyDepartment) && trim($legacyDepartment) !== ''
+            ? $legacyDepartment
+            : null;
     }
 
     private function applyEmployeeNameSearch(\Illuminate\Database\Eloquent\Builder $query, string $like): void
