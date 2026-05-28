@@ -48,13 +48,13 @@
       margin: 0;
       color: #1f2937;
       font-family: DejaVu Sans, Arial, sans-serif;
-      font-size: var(--report-body-font, 6.2px);
-      line-height: 1.05;
+      font-size: var(--report-body-font, 12.2px);
+      line-height: 1.1;
       background: #ffffff;
     }
-    body.report-compact { font-size: var(--report-body-font, 5.5px); }
-    body.report-wide { font-size: var(--report-body-font, 5.0px); }
-    body.report-ultra { font-size: var(--report-body-font, 4.6px); }
+    body.report-compact { font-size: var(--report-body-font, 11.4px); }
+    body.report-wide { font-size: var(--report-body-font, 10.0px); }
+    body.report-ultra { font-size: var(--report-body-font, 9.4px); }
     .report-shell {
       width: 100%;
       margin: 0 auto;
@@ -102,20 +102,20 @@
     }
     .company-name {
       margin: 0 0 2px;
-      font-size: 9.8px;
+      font-size: 13px;
       font-weight: 800;
       color: #111827;
     }
     .company-address {
       margin: 0;
       color: #4b5563;
-      font-size: 5.8px;
-      line-height: 1.08;
+      font-size: 7.4px;
+      line-height: 1.15;
     }
     .report-title {
       margin: 0 0 2px;
       color: #111827;
-      font-size: 10px;
+      font-size: 14px;
       font-weight: 800;
       letter-spacing: 0.04em;
       text-transform: uppercase;
@@ -123,7 +123,7 @@
     .report-subtitle {
       margin: 0;
       color: #4b5563;
-      font-size: 5.5px;
+      font-size: 7.4px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.08em;
@@ -148,7 +148,7 @@
       display: block;
       margin-bottom: 1px;
       color: #6b7280;
-      font-size: 5.1px;
+      font-size: 6.8px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
@@ -156,7 +156,7 @@
     .meta-value {
       display: block;
       color: #111827;
-      font-size: 5.8px;
+      font-size: 7.6px;
       font-weight: 700;
       line-height: 1.18;
     }
@@ -182,7 +182,7 @@
       display: block;
       margin-bottom: 2px;
       color: #6b7280;
-      font-size: 5.1px;
+      font-size: 6.8px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
@@ -190,7 +190,7 @@
     .summary-value {
       display: block;
       color: #111827;
-      font-size: 6.8px;
+      font-size: 9px;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
     }
@@ -198,7 +198,7 @@
     .section-title {
       margin: 1px 0 3px;
       color: #111827;
-      font-size: 5.9px;
+      font-size: 8px;
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.06em;
@@ -215,7 +215,7 @@
     tr { page-break-inside: avoid; }
     th, td {
       border: 0.5px solid #d1d5db;
-      padding: var(--report-cell-padding, 1.4px 1.6px);
+      padding: var(--report-cell-padding, 1.5px 1.7px);
       vertical-align: middle;
       overflow-wrap: anywhere;
       word-break: break-word;
@@ -226,7 +226,7 @@
     th {
       background: #f3f4f6;
       color: #111827;
-      font-size: var(--report-header-font, 5.5px);
+      font-size: var(--report-header-font, 10.5px);
       font-weight: 800;
       line-height: 1.02;
       text-align: center;
@@ -236,22 +236,22 @@
     body.report-standard th,
     body.report-compact th,
     body.report-wide th,
-    body.report-ultra th { font-size: var(--report-header-font, 5.5px); }
+    body.report-ultra th { font-size: var(--report-header-font, 10.5px); }
     .group th {
       background: #e5e7eb;
       color: #111827;
       border-color: #cbd5e1;
-      font-size: var(--report-header-font, 5.4px);
+      font-size: var(--report-header-font, 10.2px);
       letter-spacing: 0.02em;
     }
     body.report-compact .group th,
     body.report-wide .group th,
-    body.report-ultra .group th { font-size: var(--report-header-font, 5.4px); }
+    body.report-ultra .group th { font-size: var(--report-header-font, 10.2px); }
     td.employee {
       font-weight: 700;
       text-align: left;
       color: #111827;
-      line-height: 1.08;
+      line-height: 1.16;
     }
     td.num {
       text-align: right;
@@ -274,7 +274,7 @@
     .note {
       margin-top: 5px;
       color: #6b7280;
-      font-size: 5.1px;
+      font-size: 6.8px;
       line-height: 1.15;
     }
     .footer {
@@ -287,7 +287,7 @@
       padding-top: 3px;
       border-top: 0.5px solid #e5e7eb;
       color: #6b7280;
-      font-size: 5.1px;
+      font-size: 6.8px;
     }
     .footer-left, .footer-right {
       display: table-cell;
