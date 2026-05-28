@@ -9,6 +9,7 @@ import {
 // Standard bond/paper sizes in pt (portrait: width x height). 72pt = 1 inch.
 const PAGE_DIMENSIONS = {
   A4: [595.28, 841.89],
+  A3: [841.89, 1190.55],
   LETTER: [612, 792],
   LEGAL: [612, 1008],
 }
@@ -23,14 +24,28 @@ function getPageDimensions(pageSize, orientation) {
   return orientation === 'landscape' ? { width: h, height: w } : { width: w, height: h }
 }
 
-function getRowsPerPage(pageHeight, paddingPt) {
+function getRowsPerPage(pageHeight, paddingPt, rowHeight = ROW_HEIGHT_PT) {
   const contentHeight = pageHeight - paddingPt * 2 - HEADER_BLOCK_PT - FOOTER_PT
-  return Math.max(1, Math.floor(contentHeight / ROW_HEIGHT_PT))
+  return Math.max(1, Math.floor(contentHeight / rowHeight))
 }
 
 function getPaddingForSize(width, height) {
   const minSide = Math.min(width, height)
   return Math.min(28, Math.max(18, Math.round(minSide * 0.035)))
+}
+
+function getTableDensity(colCount, orientation) {
+  const portrait = orientation !== 'landscape'
+  if (colCount >= 26) {
+    return { cellFont: portrait ? 4.6 : 5.2, headerFont: portrait ? 4.4 : 5, paddingV: 2, paddingH: 2.2, rowHeight: 13 }
+  }
+  if (colCount >= 20) {
+    return { cellFont: portrait ? 5.1 : 5.8, headerFont: portrait ? 4.8 : 5.4, paddingV: 2.2, paddingH: 2.5, rowHeight: 14 }
+  }
+  if (colCount >= 15) {
+    return { cellFont: portrait ? 5.8 : 6.5, headerFont: portrait ? 5.3 : 6, paddingV: 2.5, paddingH: 3, rowHeight: 16 }
+  }
+  return { cellFont: 7.2, headerFont: 7, paddingV: 3.5, paddingH: 4, rowHeight: ROW_HEIGHT_PT }
 }
 
 const styles = StyleSheet.create({
@@ -315,8 +330,11 @@ function getHeaderBackgroundForLabel(label) {
   return '#f3f4f6'
 }
 
-function getColumnFlex(label, col) {
-  if (col && typeof col.minW === 'number') return col.minW / 100
+function getColumnFlex(label, col, colCount = 0) {
+  if (col && typeof col.minW === 'number') {
+    const densityDivisor = colCount >= 24 ? 150 : colCount >= 18 ? 135 : colCount >= 14 ? 118 : 100
+    return col.minW / densityDivisor
+  }
   return columnFlexByLabel[label] || 1
 }
 
@@ -376,7 +394,7 @@ function TableHeader({ columns, colCount, styles: s }) {
           style={[
             s.tableHeaderCell,
             {
-              flex: getColumnFlex(col.label, col),
+              flex: getColumnFlex(col.label, col, colCount),
               textAlign: getCellAlign(col.label, col),
               backgroundColor: getHeaderBackgroundForLabel(col.label),
             },
@@ -419,7 +437,7 @@ function TableBodyRows({ rows, columns, colCount, styles: s, isLastChunk, chunkS
           const cellStyle = [
             s.tableCell,
             {
-              flex: getColumnFlex(col.label, col),
+              flex: getColumnFlex(col.label, col, colCount),
               textAlign: align,
               backgroundColor,
               ...(align === 'right' && { fontVariant: ['tabular-nums'] }),
@@ -453,7 +471,7 @@ function TableBodyRows({ rows, columns, colCount, styles: s, isLastChunk, chunkS
 
 /**
  * PDF document for report export. Layout adapts to page size (A4, Letter, Legal, or custom).
- * For Detailed tab, pass orientation="landscape" so all columns fit; header repeats on every page.
+ * For detailed reports, use a larger portrait page size for dense payroll columns; header repeats on every page.
  * @param {{
  *   title: string,
  *   period: string,
@@ -491,10 +509,32 @@ export default function ReportPdfDocument({
   const effectiveSubtitle = subtitle || 'HR Attendance Summary'
   const { width: pageWidth, height: pageHeight } = getPageDimensions(pageSize, orientation)
   const paddingPt = getPaddingForSize(pageWidth, pageHeight)
-  const rowsPerPage = getRowsPerPage(pageHeight, paddingPt)
+  const density = getTableDensity(colCount, orientation)
+  const rowsPerPage = getRowsPerPage(pageHeight, paddingPt, density.rowHeight)
 
   const pageStyle = [styles.page, { padding: paddingPt }]
   const footerStyle = [styles.footer, { left: paddingPt, right: paddingPt }]
+  const tableStyles = {
+    ...styles,
+    tableRow: [styles.tableRow, { minHeight: density.rowHeight }],
+    tableHeaderRow: [styles.tableHeaderRow, { minHeight: density.rowHeight + 1 }],
+    tableCell: [
+      styles.tableCell,
+      {
+        fontSize: density.cellFont,
+        paddingVertical: density.paddingV,
+        paddingHorizontal: density.paddingH,
+      },
+    ],
+    tableHeaderCell: [
+      styles.tableHeaderCell,
+      {
+        fontSize: density.headerFont,
+        paddingVertical: density.paddingV,
+        paddingHorizontal: density.paddingH,
+      },
+    ],
+  }
 
   const sizeProp = typeof pageSize === 'string' && PAGE_DIMENSIONS[pageSize]
     ? pageSize
@@ -537,7 +577,7 @@ export default function ReportPdfDocument({
           </View>
 
           <View style={styles.table}>
-            <TableHeader columns={columns} colCount={colCount} styles={styles} />
+            <TableHeader columns={columns} colCount={colCount} styles={tableStyles} />
             {!hasRows ? (
               <View style={styles.tableRow} wrap={false}>
                 <Text style={[styles.tableCell, { flex: colCount, textAlign: 'center' }]}>
@@ -549,7 +589,7 @@ export default function ReportPdfDocument({
                 rows={chunk}
                 columns={columns}
                 colCount={colCount}
-                styles={styles}
+                styles={tableStyles}
                 isLastChunk={pageIndex === pageChunks.length - 1}
                 chunkStartIndex={pageIndex * rowsPerPage}
               />

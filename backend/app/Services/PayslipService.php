@@ -1249,12 +1249,16 @@ class PayslipService
 
         $catalog = [];
         foreach ($lines as $index => $line) {
-            $componentCode = trim((string) ($line['component_code'] ?? $line['code'] ?? $line['key'] ?? ''));
+            $lineKey = $this->deductionCatalogLineKey($line, $index);
+            $componentCode = trim((string) ($line['component_code'] ?? $line['code'] ?? ''));
+            if ($componentCode === '' && preg_match('/^pay_component:(\d+)$/i', $lineKey, $matches)) {
+                $componentCode = 'pay_component:'.$matches[1];
+            }
             if ($componentCode === '') {
-                $componentCode = 'line:'.$index.':'.trim((string) ($line['label'] ?? $line['name'] ?? 'deduction'));
+                $componentCode = $lineKey;
             }
             $catalog[] = [
-                'line_key' => $componentCode,
+                'line_key' => $lineKey,
                 'component_code' => $componentCode,
                 'component_name' => trim((string) ($line['label'] ?? $line['name'] ?? '')),
                 'schedule' => trim((string) ($line['resolved_schedule'] ?? $line['component_schedule'] ?? $line['deduction_schedule_type'] ?? $line['earning_schedule_type'] ?? $line['schedule'] ?? '')),
@@ -2389,6 +2393,31 @@ class PayslipService
         }
 
         return null;
+    }
+
+    /**
+     * Stable deduction catalog key — aligned with payroll line identity (pay_component:id first).
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function deductionCatalogLineKey(array $line, int $index): string
+    {
+        $key = trim((string) ($line['key'] ?? ''));
+        if ($key !== '') {
+            return $key;
+        }
+
+        $payComponentId = $this->resolvePayComponentIdFromLine($line);
+        if ($payComponentId !== null) {
+            return 'pay_component:'.$payComponentId;
+        }
+
+        $componentCode = trim((string) ($line['component_code'] ?? $line['code'] ?? ''));
+        if ($componentCode !== '') {
+            return $componentCode;
+        }
+
+        return 'line:'.$index.':'.trim((string) ($line['label'] ?? $line['name'] ?? 'deduction'));
     }
 
     /**

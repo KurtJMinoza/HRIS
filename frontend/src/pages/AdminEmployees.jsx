@@ -1342,12 +1342,12 @@ export default function AdminEmployees() {
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = filename || `employees_export_${new Date().toISOString().slice(0, 10)}.csv`
+      anchor.download = filename || `employees_by_company_${new Date().toISOString().slice(0, 10)}.xlsx`
       anchor.click()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
-      toast({ title: 'Export started', description: 'Employee CSV has been downloaded.' })
+      toast({ title: 'Export started', description: 'Employee workbook has been downloaded.' })
     } catch (e) {
-      const message = e?.message || 'Failed to export employee CSV.'
+      const message = e?.message || 'Failed to export employee workbook.'
       setError(message)
       toast({ title: 'Export failed', description: message, variant: 'destructive' })
     } finally {
@@ -1492,10 +1492,10 @@ export default function AdminEmployees() {
                   className="h-10 rounded-md border-brand/70 px-4 text-xs font-bold text-brand hover:bg-brand/8 hover:text-brand"
                   onClick={handleExportAllCsv}
                   disabled={!canExportEmployees || exportingCsv}
-                  title={canExportEmployees ? 'Export all employees to CSV' : 'No export permission'}
+                  title={canExportEmployees ? 'Export employees by company workbook' : 'No export permission'}
                 >
                   {exportingCsv ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Download className="mr-1.5 size-4" />}
-                  Export All to CSV
+                  Export by Company
                 </Button>
                 </div>
                 {/* Density toggle */}

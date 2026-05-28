@@ -17,6 +17,7 @@
       'cell_padding' => '2.8px 3px',
       'employee_width' => 16,
       'numeric_width' => 6,
+      'orientation' => 'portrait',
   ];
   $groupSpans = [];
   foreach ($columns as $column) {
@@ -38,19 +39,19 @@
 <head>
   <meta charset="utf-8">
   <style>
-    @page { margin: 5mm 4mm 8mm; }
+    @page { margin: 4mm 3.5mm 7mm; }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       color: #1f2937;
       font-family: DejaVu Sans, Arial, sans-serif;
-      font-size: 6.4px;
-      line-height: 1.08;
+      font-size: var(--report-body-font, 6.2px);
+      line-height: 1.05;
       background: #ffffff;
     }
-    body.report-compact { font-size: 5.8px; }
-    body.report-wide { font-size: 5.3px; }
-    body.report-ultra { font-size: 4.8px; }
+    body.report-compact { font-size: var(--report-body-font, 5.5px); }
+    body.report-wide { font-size: var(--report-body-font, 5.0px); }
+    body.report-ultra { font-size: var(--report-body-font, 4.6px); }
     .report-shell {
       width: 100%;
       margin: 0 auto;
@@ -61,8 +62,8 @@
     .hero {
       display: table;
       width: 100%;
-      padding-bottom: 5px;
-      margin-bottom: 5px;
+      padding-bottom: 4px;
+      margin-bottom: 4px;
       border-bottom: 1.2px solid #111827;
       color: #111827;
     }
@@ -73,9 +74,8 @@
     }
     .hero-right { text-align: right; }
     .logo {
-      width: 28px;
-      height: 28px;
-      object-fit: contain;
+      width: 24px;
+      height: 24px;
       display: inline-block;
       vertical-align: top;
       margin-right: 8px;
@@ -84,8 +84,8 @@
       padding: 1px;
     }
     .logo-fallback {
-      width: 28px;
-      height: 28px;
+      width: 24px;
+      height: 24px;
       display: inline-block;
       vertical-align: top;
       margin-right: 8px;
@@ -99,7 +99,7 @@
     }
     .company-name {
       margin: 0 0 2px;
-      font-size: 10.5px;
+      font-size: 9.8px;
       font-weight: 800;
       color: #111827;
     }
@@ -112,7 +112,7 @@
     .report-title {
       margin: 0 0 2px;
       color: #111827;
-      font-size: 10.8px;
+      font-size: 10px;
       font-weight: 800;
       letter-spacing: 0.04em;
       text-transform: uppercase;
@@ -128,7 +128,7 @@
     .meta-panel {
       display: table;
       width: 100%;
-      margin-bottom: 5px;
+      margin-bottom: 4px;
       border-top: 0.5px solid #d1d5db;
       border-bottom: 0.5px solid #d1d5db;
       background: #ffffff;
@@ -136,7 +136,7 @@
     .meta-block {
       display: table-cell;
       width: 20%;
-      padding: 3px 5px 3px 0;
+      padding: 2.5px 4px 2.5px 0;
       border-right: 0;
       vertical-align: top;
     }
@@ -160,7 +160,7 @@
     .summary {
       display: table;
       width: 100%;
-      margin-bottom: 5px;
+      margin-bottom: 4px;
       border: 0.5px solid #cbd5e1;
       border-collapse: collapse;
     }
@@ -172,7 +172,7 @@
     }
     .summary-card:last-child { border-right: 0; }
     .summary-inner {
-      padding: 3px 5px;
+      padding: 2.5px 4px;
       background: #f8fafc;
     }
     .summary-label {
@@ -187,7 +187,7 @@
     .summary-value {
       display: block;
       color: #111827;
-      font-size: 7.1px;
+      font-size: 6.8px;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
     }
@@ -205,56 +205,57 @@
       margin: 0 auto;
       border-collapse: collapse;
       table-layout: fixed;
-      border: 1px solid #cbd5e1;
+      border: 0.8px solid #cbd5e1;
     }
     thead { display: table-header-group; }
     tfoot { display: table-row-group; }
     tr { page-break-inside: avoid; }
     th, td {
       border: 0.5px solid #d1d5db;
-      padding: 1.6px 1.8px;
+      padding: var(--report-cell-padding, 1.4px 1.6px);
       vertical-align: middle;
       overflow-wrap: anywhere;
       word-break: break-word;
     }
-    body.report-compact th, body.report-compact td { padding: 1.2px 1.4px; }
-    body.report-wide th, body.report-wide td { padding: 1px 1.1px; }
-    body.report-ultra th, body.report-ultra td { padding: 0.7px 0.8px; }
+    body.report-compact th, body.report-compact td,
+    body.report-wide th, body.report-wide td,
+    body.report-ultra th, body.report-ultra td { padding: var(--report-cell-padding, 1px 1.1px); }
     th {
       background: #f3f4f6;
       color: #111827;
-      font-size: 5.6px;
+      font-size: var(--report-header-font, 5.5px);
       font-weight: 800;
       line-height: 1.02;
       text-align: center;
       text-transform: uppercase;
       letter-spacing: 0;
     }
-    body.report-standard th { font-size: 5.6px; }
-    body.report-compact th { font-size: 5.2px; }
-    body.report-wide th { font-size: 4.8px; }
-    body.report-ultra th { font-size: 4.2px; }
+    body.report-standard th,
+    body.report-compact th,
+    body.report-wide th,
+    body.report-ultra th { font-size: var(--report-header-font, 5.5px); }
     .group th {
       background: #e5e7eb;
       color: #111827;
       border-color: #cbd5e1;
-      font-size: 5.4px;
+      font-size: var(--report-header-font, 5.4px);
       letter-spacing: 0.02em;
     }
-    body.report-compact .group th { font-size: 5.3px; }
-    body.report-wide .group th { font-size: 4.9px; }
-    body.report-ultra .group th { font-size: 4.3px; }
+    body.report-compact .group th,
+    body.report-wide .group th,
+    body.report-ultra .group th { font-size: var(--report-header-font, 5.4px); }
     td.employee {
       font-weight: 700;
       text-align: left;
       color: #111827;
+      line-height: 1.08;
     }
     td.num {
       text-align: right;
-      white-space: normal;
+      white-space: nowrap;
       word-break: normal;
       font-variant-numeric: tabular-nums;
-      letter-spacing: -0.04em;
+      letter-spacing: -0.05em;
     }
     tbody tr:nth-child(even) td { background: #fafafa; }
     tbody tr:nth-child(odd) td { background: #ffffff; }
@@ -293,7 +294,10 @@
     .page-number:after { content: "Page " counter(page) " of " counter(pages); }
   </style>
 </head>
-<body class="{{ $layoutClass }}">
+<body
+  class="{{ $layoutClass }}"
+  style="--report-body-font: {{ $layout['body_font'] ?? '6.2px' }}; --report-header-font: {{ $layout['header_font'] ?? '5.5px' }}; --report-cell-padding: {{ $layout['cell_padding'] ?? '1.4px 1.6px' }};"
+>
   <div class="report-shell">
     <div class="hero">
       <div class="hero-left">

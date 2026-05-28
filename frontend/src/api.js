@@ -2646,7 +2646,7 @@ export async function getMyOrganizationAssignments(params = {}) {
 }
 
 /**
- * Download full employee roster CSV.
+ * Download full employee roster workbook (one sheet per company).
  * @returns {Promise<{ blob: Blob, filename: string }>}
  */
 export async function exportAllEmployeesCsv() {
@@ -2660,7 +2660,7 @@ export async function exportAllEmployeesCsv() {
   const blob = await res.blob()
   const header = res.headers.get('content-disposition') || ''
   const filenameMatch = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(header)
-  const filename = filenameMatch?.[1] ? decodeURIComponent(filenameMatch[1].replace(/"/g, '')) : 'employees_export.csv'
+  const filename = filenameMatch?.[1] ? decodeURIComponent(filenameMatch[1].replace(/"/g, '')) : 'employees_by_company.xlsx'
 
   return { blob, filename }
 }

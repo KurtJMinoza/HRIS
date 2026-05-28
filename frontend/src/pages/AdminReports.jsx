@@ -630,7 +630,8 @@ export default function AdminReports() {
           generatedAt={generatedAt}
           filtersSummary={filtersSummary}
           subtitle="Detailed per-day attendance records"
-          orientation="landscape"
+          orientation="portrait"
+          pageSize="A3"
           totalHoursRendered={exportTotalHours.toFixed(2)}
           totalAbsences={exportTotalAbsences}
           totalLates={exportTotalLates}

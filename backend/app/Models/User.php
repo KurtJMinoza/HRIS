@@ -298,6 +298,7 @@ class User extends Authenticatable
         'province',
         'postal_code',
         'password',
+        'account_export_password',
         'role',
         'is_super_admin',
         'is_system_user',
@@ -365,6 +366,7 @@ class User extends Authenticatable
      */
     protected $hidden = [
         'password',
+        'account_export_password',
         'remember_token',
     ];
 
@@ -385,6 +387,7 @@ class User extends Authenticatable
             'contract_start_date' => 'date',
             'contract_end_date' => 'date',
             'password' => 'hashed',
+            'account_export_password' => 'encrypted',
             'qr_token_generated_at' => 'datetime',
             'face_registered_at' => 'datetime',
             'last_login_at' => 'datetime',

@@ -469,6 +469,76 @@ class PayrollFinalizeDeductionFreezeTest extends TestCase
         $this->assertNotContains('deduction:pay_component_id:27', $draftMetrics['line_ids']);
     }
 
+    public function test_deduction_catalog_uses_pay_component_key_when_present(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+        $catalog = $service->payrollDeductionLineCatalog([
+            'summary' => [
+                'payslip_deduction_lines' => [],
+                'payslip_custom_deduction_lines' => [
+                    [
+                        'key' => 'pay_component:38',
+                        'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+                        'label' => 'Lending Salary Deduction Every 30',
+                        'amount' => 1550.00,
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('pay_component:38', $catalog[0]['line_key']);
+        $this->assertSame('LENDING_SALARY_DEDUCTION_EVERY_30', $catalog[0]['component_code']);
+    }
+
+    public function test_deduction_catalog_after_line_sync_matches_fresh_snapshot(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+        $snapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [
+                    ['key' => 'daily:regular_pay', 'label' => 'Regular Pay', 'amount' => 1538.46],
+                ],
+                'payslip_earning_lines' => [],
+                'payslip_deduction_lines' => [
+                    ['key' => 'government:combined', 'label' => 'Government Deductions', 'amount' => 1700.00],
+                ],
+                'payslip_custom_deduction_lines' => [
+                    [
+                        'component_code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+                        'label' => 'Lending Salary Deduction Every 30',
+                        'resolved_calculation_standard' => 'payroll_standard',
+                        'component_amount' => 1550.00,
+                        'amount' => 1550.00,
+                    ],
+                ],
+            ],
+        ];
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_GENERATED,
+            'gross_pay' => 1538.46,
+            'total_deductions' => 3250.00,
+            'net_pay' => -1711.54,
+            'snapshot' => $snapshot,
+        ]);
+
+        $staleCatalog = $service->payrollDeductionLineCatalog($snapshot);
+        $service->syncPayslipSummaryFromLines($payslip, false);
+        $freshSnapshot = is_array($payslip->snapshot) ? $payslip->snapshot : [];
+        $freshCatalog = $service->payrollDeductionLineCatalog($freshSnapshot);
+
+        $lending = collect($freshCatalog)->firstWhere('component_code', 'LENDING_SALARY_DEDUCTION_EVERY_30');
+        $this->assertIsArray($lending);
+        $this->assertSame('LENDING_SALARY_DEDUCTION_EVERY_30', $lending['line_key']);
+        $this->assertSame(1550.00, $lending['amount']);
+        $this->assertSame([], $service->deductionLineMismatches($freshCatalog, $freshCatalog));
+
+        if ($staleCatalog !== $freshCatalog) {
+            $this->assertNotSame([], $service->deductionLineMismatches($staleCatalog, $freshCatalog));
+        }
+    }
+
     public function test_zero_total_draft_without_lines_reports_zero_metrics(): void
     {
         $payslip = new Payslip([

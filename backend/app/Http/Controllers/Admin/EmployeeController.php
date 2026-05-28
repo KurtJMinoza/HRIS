@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\EmploymentStatus;
 use App\Enums\HrRole;
 use App\Http\Controllers\Controller;
+use App\Imports\EmployeeImport;
 use App\Jobs\ComputeCompensationSummaryJob;
 use App\Jobs\ProcessFaceRegistrationJob;
 use App\Jobs\UpdateEmployeeProfileJob;
@@ -50,6 +51,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class EmployeeController extends Controller
 {
@@ -503,11 +507,10 @@ class EmployeeController extends Controller
     }
 
     /**
-     * Export the full employee roster as CSV (one row per employee).
+     * Export the full employee roster as an Excel workbook (one worksheet per company).
      *
-     * Includes Personal, Employment, Salary, compensation components, deductions/loans,
-     * government IDs, tax profile hints, and schedule metadata.
-     * Streamed + chunked for large datasets.
+     * CSV cannot represent multiple tabs, so this legacy CSV endpoint now returns XLSX while
+     * keeping the route stable for the existing Employee Directory button.
      */
     public function exportAllCsv(Request $request)
     {
@@ -516,12 +519,67 @@ class EmployeeController extends Controller
             abort(401);
         }
 
-        $fileName = 'employees_export_'.now()->format('Ymd_His').'.csv';
+        $fileName = 'employees_by_company_'.now()->format('Ymd_His').'.xlsx';
+        $header = $this->employeeExportHeader();
 
-        $header = [
+        return response()->streamDownload(function () use ($viewer, $header) {
+            $spreadsheet = new Spreadsheet;
+            $spreadsheet->getProperties()
+                ->setCreator((string) config('app.name', 'HR'))
+                ->setTitle('Employees by Company');
+
+            $sheets = [];
+            $usedTitles = [];
+            $employeeCount = 0;
+
+            $query = $this->employeeExportQuery($viewer);
+            $query->chunk(250, function (Collection $users) use ($spreadsheet, $header, &$sheets, &$usedTitles, &$employeeCount) {
+                foreach ($users as $user) {
+                    $company = $this->employeeExportCompany($user);
+                    $sheetKey = $company['key'];
+                    if (! isset($sheets[$sheetKey])) {
+                        $sheets[$sheetKey] = [
+                            'sheet' => $this->createEmployeeExportSheet(
+                                $spreadsheet,
+                                $this->uniqueWorksheetTitle($company['name'], $usedTitles),
+                                $header,
+                                count($sheets)
+                            ),
+                            'row' => 2,
+                        ];
+                    }
+
+                    /** @var Worksheet $sheet */
+                    $sheet = $sheets[$sheetKey]['sheet'];
+                    $sheet->fromArray($this->employeeExportRow($user), null, 'A'.$sheets[$sheetKey]['row']);
+                    $sheets[$sheetKey]['row']++;
+                    $employeeCount++;
+                }
+            }, 'id');
+
+            if ($employeeCount === 0) {
+                $this->createEmployeeExportSheet($spreadsheet, 'Employees', $header, 0);
+            }
+
+            $spreadsheet->setActiveSheetIndex(0);
+            (new Xlsx($spreadsheet))->save('php://output');
+            $spreadsheet->disconnectWorksheets();
+        }, $fileName, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+        ]);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function employeeExportHeader(): array
+    {
+        return [
             'Employee ID',
             'Full Name',
             'Username',
+            'Account Password',
             'First Name',
             'Middle Name',
             'Last Name',
@@ -576,221 +634,277 @@ class EmployeeController extends Controller
             'Created Date',
             'Updated Date',
         ];
+    }
 
-        return response()->streamDownload(function () use ($viewer, $header) {
-            $out = fopen('php://output', 'w');
-            if ($out === false) {
-                return;
-            }
+    private function employeeExportQuery(User $viewer)
+    {
+        $query = User::query()
+            ->reportableEmployees()
+            ->select([
+                'id',
+                'employee_code',
+                'name',
+                'username',
+                'first_name',
+                'middle_name',
+                'last_name',
+                'suffix',
+                'date_of_birth',
+                'gender',
+                'civil_status',
+                'nationality',
+                'email',
+                'phone_number',
+                'home_address',
+                'street_address',
+                'barangay',
+                'city',
+                'province',
+                'postal_code',
+                'employment_type',
+                'employment_status',
+                'employment_status_effective_date',
+                'hire_date',
+                'contract_start_date',
+                'contract_end_date',
+                'position',
+                'department',
+                'department_id',
+                'company_id',
+                'branch_id',
+                'supervisor_id',
+                'working_schedule_id',
+                'pay_cycle_id',
+                'monthly_salary',
+                'monthly_rate',
+                'daily_rate',
+                'hourly_rate',
+                'salary_effectivity_date',
+                'is_active',
+                'employee_import_batch_id',
+                'account_export_password',
+                'created_at',
+                'updated_at',
+            ])
+            ->with([
+                'company:id,name',
+                'branch:id,name,company_id',
+                'branch.company:id,name',
+                'departmentRelation:id,name,branch_id',
+                'departmentRelation.branch:id,name,company_id',
+                'departmentRelation.branch.company:id,name',
+                'supervisor:id,name,first_name,middle_name,last_name,suffix',
+                'workingSchedule:id,name,time_in,time_out,rest_days',
+                'payCycle:id,name,code',
+                'compensationComponents:id,user_id,pay_component_id,name,type,value,is_active',
+                'compensationComponents.payComponent:id,name,code',
+                'employeeDeductions:id,user_id,deduction_type_id,pay_component_id,amount,remaining_balance,is_active',
+                'employeeDeductions.deductionType:id,name',
+                'employeeDeductions.payComponent:id,name,code',
+                'governmentIds:id,user_id,sss_number,philhealth_number,pagibig_number,tin_number',
+                'taxInfo:id,user_id,tax_regime,withholding_method,dependents',
+            ])
+            ->orderByLastName();
 
-            fwrite($out, "\xEF\xBB\xBF");
-            fputcsv($out, $header);
+        $this->dataScopeService->restrictEmployeeQuery($viewer, $query);
 
-            $query = User::query()
-                ->reportableEmployees()
-                ->select([
-                    'id',
-                    'employee_code',
-                    'name',
-                    'username',
-                    'first_name',
-                    'middle_name',
-                    'last_name',
-                    'suffix',
-                    'date_of_birth',
-                    'gender',
-                    'civil_status',
-                    'nationality',
-                    'email',
-                    'phone_number',
-                    'home_address',
-                    'street_address',
-                    'barangay',
-                    'city',
-                    'province',
-                    'postal_code',
-                    'employment_type',
-                    'employment_status',
-                    'employment_status_effective_date',
-                    'hire_date',
-                    'contract_start_date',
-                    'contract_end_date',
-                    'position',
-                    'department',
-                    'department_id',
-                    'company_id',
-                    'branch_id',
-                    'supervisor_id',
-                    'working_schedule_id',
-                    'pay_cycle_id',
-                    'monthly_salary',
-                    'monthly_rate',
-                    'daily_rate',
-                    'hourly_rate',
-                    'salary_effectivity_date',
-                    'is_active',
-                    'created_at',
-                    'updated_at',
-                ])
-                ->with([
-                    'company:id,name',
-                    'branch:id,name,company_id',
-                    'branch.company:id,name',
-                    'departmentRelation:id,name,branch_id',
-                    'departmentRelation.branch:id,name,company_id',
-                    'departmentRelation.branch.company:id,name',
-                    'supervisor:id,name,first_name,middle_name,last_name,suffix',
-                    'workingSchedule:id,name,time_in,time_out,rest_days',
-                    'payCycle:id,name,code',
-                    'compensationComponents:id,user_id,pay_component_id,name,type,value,is_active',
-                    'compensationComponents.payComponent:id,name,code',
-                    'employeeDeductions:id,user_id,deduction_type_id,pay_component_id,amount,remaining_balance,is_active',
-                    'employeeDeductions.deductionType:id,name',
-                    'employeeDeductions.payComponent:id,name,code',
-                    'governmentIds:id,user_id,sss_number,philhealth_number,pagibig_number,tin_number',
-                    'taxInfo:id,user_id,tax_regime,withholding_method,dependents',
-                ])
-                ->orderByLastName();
+        return $query;
+    }
 
-            $this->dataScopeService->restrictEmployeeQuery($viewer, $query);
+    /**
+     * @return array{key:string,name:string}
+     */
+    private function employeeExportCompany(User $user): array
+    {
+        $companyId = $user->company_id
+            ?? $user->branch?->company_id
+            ?? $user->departmentRelation?->branch?->company_id;
+        $companyName = trim((string) (
+            $user->company?->name
+            ?? $user->branch?->company?->name
+            ?? $user->departmentRelation?->branch?->company?->name
+            ?? ''
+        ));
+        if ($companyName === '') {
+            $companyName = 'Unassigned Company';
+        }
 
-            $query->chunk(250, function (Collection $users) use ($out) {
-                foreach ($users as $user) {
-                    $departmentName = $user->departmentRelation?->name ?? $user->department;
-                    $branchName = $user->branch?->name ?? $user->departmentRelation?->branch?->name;
-                    $companyName = $user->company?->name ?? $user->branch?->company?->name ?? $user->departmentRelation?->branch?->company?->name;
-                    $restDays = is_array($user->workingSchedule?->rest_days)
-                        ? implode('|', array_map(fn ($d) => (string) $d, $user->workingSchedule->rest_days))
-                        : '';
+        return [
+            'key' => $companyId !== null ? 'company:'.(int) $companyId : 'company-name:'.$companyName,
+            'name' => $companyName,
+        ];
+    }
 
-                    $allowances = $user->compensationComponents
-                        ->filter(fn ($c) => $c->is_active && $c->type === 'earning')
-                        ->map(function ($c) {
-                            $name = trim((string) ($c->name ?: $c->payComponent?->name ?: $c->payComponent?->code ?: 'Allowance'));
-                            $amount = $this->csvDecimal($c->value);
+    private function createEmployeeExportSheet(Spreadsheet $spreadsheet, string $title, array $header, int $index): Worksheet
+    {
+        $sheet = $index === 0
+            ? $spreadsheet->getActiveSheet()
+            : $spreadsheet->createSheet($index);
 
-                            return $amount !== '' ? "{$name}:{$amount}" : $name;
-                        })->values()->all();
+        $sheet->setTitle($title);
+        $sheet->fromArray($header, null, 'A1');
+        $sheet->freezePane('A2');
+        $sheet->setAutoFilter($sheet->calculateWorksheetDimension());
+        $sheet->getStyle('1:1')->getFont()->setBold(true);
 
-                    $activePayComponents = $user->compensationComponents
-                        ->filter(fn ($c) => $c->is_active)
-                        ->map(function ($c) {
-                            $name = trim((string) ($c->name ?: $c->payComponent?->name ?: $c->payComponent?->code ?: 'Component'));
-                            $amount = $this->csvDecimal($c->value);
+        return $sheet;
+    }
 
-                            return [
-                                'name' => $name,
-                                'amount' => $amount,
-                                'label' => $amount !== '' ? "{$name}:{$amount}" : $name,
-                            ];
-                        })
-                        ->values();
+    /**
+     * @param  array<string, true>  $usedTitles
+     */
+    private function uniqueWorksheetTitle(string $companyName, array &$usedTitles): string
+    {
+        $title = trim((string) preg_replace('/[\[\]\:\*\?\/\\\\]+/', ' ', $companyName));
+        $title = $title !== '' ? $title : 'Company';
+        $title = substr($title, 0, 31);
 
-                    $riceAllowance = $activePayComponents
-                        ->first(fn ($c) => $this->isPayComponentNamed($c['name'], ['rice allowance', 'rice subsidy']));
-                    $transportAllowance = $activePayComponents
-                        ->first(fn ($c) => $this->isPayComponentNamed($c['name'], ['transportation allowance', 'transport allowance', 'travel allowance']));
-                    $otherPayComponents = $activePayComponents
-                        ->filter(function ($c) use ($riceAllowance, $transportAllowance) {
-                            if ($riceAllowance && $c['name'] === $riceAllowance['name']) {
-                                return false;
-                            }
-                            if ($transportAllowance && $c['name'] === $transportAllowance['name']) {
-                                return false;
-                            }
+        $candidate = $title;
+        $suffix = 2;
+        while (isset($usedTitles[$candidate])) {
+            $tail = ' '.$suffix;
+            $candidate = substr($title, 0, 31 - strlen($tail)).$tail;
+            $suffix++;
+        }
 
-                            return true;
-                        })
-                        ->pluck('label')
-                        ->all();
+        $usedTitles[$candidate] = true;
 
-                    $compensationDeductions = $user->compensationComponents
-                        ->filter(fn ($c) => $c->is_active && $c->type === 'deduction')
-                        ->map(function ($c) {
-                            $name = trim((string) ($c->name ?: $c->payComponent?->name ?: $c->payComponent?->code ?: 'Deduction'));
-                            $amount = $this->csvDecimal($c->value);
+        return $candidate;
+    }
 
-                            return $amount !== '' ? "{$name}:{$amount}" : $name;
-                        })->values()->all();
+    /**
+     * @return list<string>
+     */
+    private function employeeExportRow(User $user): array
+    {
+        $departmentName = $user->departmentRelation?->name ?? $user->department;
+        $branchName = $user->branch?->name ?? $user->departmentRelation?->branch?->name;
+        $companyName = $this->employeeExportCompany($user)['name'];
+        $restDays = is_array($user->workingSchedule?->rest_days)
+            ? implode('|', array_map(fn ($d) => (string) $d, $user->workingSchedule->rest_days))
+            : '';
 
-                    $automatedDeductions = $user->employeeDeductions
-                        ->filter(fn ($d) => (bool) $d->is_active)
-                        ->map(function ($d) {
-                            $name = trim((string) ($d->deductionType?->name ?: $d->payComponent?->name ?: 'Deduction/Loan'));
-                            $amount = $this->csvDecimal($d->amount);
-                            $remaining = $this->csvDecimal($d->remaining_balance);
+        $allowances = $user->compensationComponents
+            ->filter(fn ($c) => $c->is_active && $c->type === 'earning')
+            ->map(function ($c) {
+                $name = trim((string) ($c->name ?: $c->payComponent?->name ?: $c->payComponent?->code ?: 'Allowance'));
+                $amount = $this->csvDecimal($c->value);
 
-                            return $remaining !== ''
-                                ? "{$name}:{$amount} (remaining {$remaining})"
-                                : ($amount !== '' ? "{$name}:{$amount}" : $name);
-                        })->values()->all();
+                return $amount !== '' ? "{$name}:{$amount}" : $name;
+            })->values()->all();
 
-                    fputcsv($out, [
-                        (string) ($user->employee_code ?? ''),
-                        (string) ($user->display_name ?? ''),
-                        (string) ($user->username ?? ''),
-                        (string) ($user->first_name ?? ''),
-                        (string) ($user->middle_name ?? ''),
-                        (string) ($user->last_name ?? ''),
-                        (string) ($user->suffix ?? ''),
-                        $this->csvDate($user->date_of_birth),
-                        (string) ($user->gender ?? ''),
-                        (string) ($user->civil_status ?? ''),
-                        (string) ($user->nationality ?? ''),
-                        (string) ($user->email ?? ''),
-                        $this->csvPhone($user->phone_number),
-                        (string) ($user->home_address ?? ''),
-                        (string) ($user->street_address ?? ''),
-                        (string) ($user->barangay ?? ''),
-                        (string) ($user->city ?? ''),
-                        (string) ($user->province ?? ''),
-                        (string) ($user->postal_code ?? ''),
-                        (string) ($user->employment_type ?? ''),
-                        (string) ($user->employment_status ?? ''),
-                        $this->csvDate($user->employment_status_effective_date),
-                        $this->csvDate($user->hire_date),
-                        $this->csvDate($user->contract_start_date),
-                        $this->csvDate($user->contract_end_date),
-                        (string) ($user->position ?? ''),
-                        (string) ($departmentName ?? ''),
-                        (string) ($branchName ?? ''),
-                        (string) ($companyName ?? ''),
-                        (string) ($user->supervisor?->display_name ?? ''),
-                        (string) ($user->workingSchedule?->name ?? ''),
-                        (string) ($user->workingSchedule?->time_in ?? ''),
-                        (string) ($user->workingSchedule?->time_out ?? ''),
-                        $restDays,
-                        $this->csvPayScheduleLabel($user->payCycle?->code, $user->payCycle?->name),
-                        $this->csvDecimal($user->monthly_salary),
-                        $this->csvDecimal($user->monthly_rate),
-                        $this->csvDecimal($user->daily_rate),
-                        $this->csvDecimal($user->hourly_rate),
-                        $this->csvDate($user->salary_effectivity_date),
-                        $riceAllowance['amount'] ?? '',
-                        $transportAllowance['amount'] ?? '',
-                        implode(' | ', $otherPayComponents),
-                        implode(' | ', $allowances),
-                        implode(' | ', $compensationDeductions),
-                        implode(' | ', $automatedDeductions),
-                        (string) ($user->governmentIds?->sss_number ?? ''),
-                        (string) ($user->governmentIds?->philhealth_number ?? ''),
-                        (string) ($user->governmentIds?->pagibig_number ?? ''),
-                        (string) ($user->governmentIds?->tin_number ?? ''),
-                        (string) ($user->taxInfo?->tax_regime ?? ''),
-                        (string) ($user->taxInfo?->withholding_method ?? ''),
-                        $user->taxInfo?->dependents !== null ? (string) $user->taxInfo->dependents : '',
-                        $user->is_active ? '1' : '0',
-                        $this->csvDate($user->created_at),
-                        $this->csvDate($user->updated_at),
-                    ]);
+        $activePayComponents = $user->compensationComponents
+            ->filter(fn ($c) => $c->is_active)
+            ->map(function ($c) {
+                $name = trim((string) ($c->name ?: $c->payComponent?->name ?: $c->payComponent?->code ?: 'Component'));
+                $amount = $this->csvDecimal($c->value);
+
+                return [
+                    'name' => $name,
+                    'amount' => $amount,
+                    'label' => $amount !== '' ? "{$name}:{$amount}" : $name,
+                ];
+            })
+            ->values();
+
+        $riceAllowance = $activePayComponents
+            ->first(fn ($c) => $this->isPayComponentNamed($c['name'], ['rice allowance', 'rice subsidy']));
+        $transportAllowance = $activePayComponents
+            ->first(fn ($c) => $this->isPayComponentNamed($c['name'], ['transportation allowance', 'transport allowance', 'travel allowance']));
+        $otherPayComponents = $activePayComponents
+            ->filter(function ($c) use ($riceAllowance, $transportAllowance) {
+                if ($riceAllowance && $c['name'] === $riceAllowance['name']) {
+                    return false;
                 }
-            }, 'id');
+                if ($transportAllowance && $c['name'] === $transportAllowance['name']) {
+                    return false;
+                }
 
-            fclose($out);
-        }, $fileName, [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
-        ]);
+                return true;
+            })
+            ->pluck('label')
+            ->all();
+
+        $compensationDeductions = $user->compensationComponents
+            ->filter(fn ($c) => $c->is_active && $c->type === 'deduction')
+            ->map(function ($c) {
+                $name = trim((string) ($c->name ?: $c->payComponent?->name ?: $c->payComponent?->code ?: 'Deduction'));
+                $amount = $this->csvDecimal($c->value);
+
+                return $amount !== '' ? "{$name}:{$amount}" : $name;
+            })->values()->all();
+
+        $automatedDeductions = $user->employeeDeductions
+            ->filter(fn ($d) => (bool) $d->is_active)
+            ->map(function ($d) {
+                $name = trim((string) ($d->deductionType?->name ?: $d->payComponent?->name ?: 'Deduction/Loan'));
+                $amount = $this->csvDecimal($d->amount);
+                $remaining = $this->csvDecimal($d->remaining_balance);
+
+                return $remaining !== ''
+                    ? "{$name}:{$amount} (remaining {$remaining})"
+                    : ($amount !== '' ? "{$name}:{$amount}" : $name);
+            })->values()->all();
+
+        return [
+            (string) ($user->employee_code ?? ''),
+            (string) ($user->display_name ?? ''),
+            (string) ($user->username ?? ''),
+            $this->employeeExportPassword($user),
+            (string) ($user->first_name ?? ''),
+            (string) ($user->middle_name ?? ''),
+            (string) ($user->last_name ?? ''),
+            (string) ($user->suffix ?? ''),
+            $this->csvDate($user->date_of_birth),
+            (string) ($user->gender ?? ''),
+            (string) ($user->civil_status ?? ''),
+            (string) ($user->nationality ?? ''),
+            (string) ($user->email ?? ''),
+            $this->csvPhone($user->phone_number),
+            (string) ($user->home_address ?? ''),
+            (string) ($user->street_address ?? ''),
+            (string) ($user->barangay ?? ''),
+            (string) ($user->city ?? ''),
+            (string) ($user->province ?? ''),
+            (string) ($user->postal_code ?? ''),
+            (string) ($user->employment_type ?? ''),
+            (string) ($user->employment_status ?? ''),
+            $this->csvDate($user->employment_status_effective_date),
+            $this->csvDate($user->hire_date),
+            $this->csvDate($user->contract_start_date),
+            $this->csvDate($user->contract_end_date),
+            (string) ($user->position ?? ''),
+            (string) ($departmentName ?? ''),
+            (string) ($branchName ?? ''),
+            (string) $companyName,
+            (string) ($user->supervisor?->display_name ?? ''),
+            (string) ($user->workingSchedule?->name ?? ''),
+            (string) ($user->workingSchedule?->time_in ?? ''),
+            (string) ($user->workingSchedule?->time_out ?? ''),
+            $restDays,
+            $this->csvPayScheduleLabel($user->payCycle?->code, $user->payCycle?->name),
+            $this->csvDecimal($user->monthly_salary),
+            $this->csvDecimal($user->monthly_rate),
+            $this->csvDecimal($user->daily_rate),
+            $this->csvDecimal($user->hourly_rate),
+            $this->csvDate($user->salary_effectivity_date),
+            $riceAllowance['amount'] ?? '',
+            $transportAllowance['amount'] ?? '',
+            implode(' | ', $otherPayComponents),
+            implode(' | ', $allowances),
+            implode(' | ', $compensationDeductions),
+            implode(' | ', $automatedDeductions),
+            (string) ($user->governmentIds?->sss_number ?? ''),
+            (string) ($user->governmentIds?->philhealth_number ?? ''),
+            (string) ($user->governmentIds?->pagibig_number ?? ''),
+            (string) ($user->governmentIds?->tin_number ?? ''),
+            (string) ($user->taxInfo?->tax_regime ?? ''),
+            (string) ($user->taxInfo?->withholding_method ?? ''),
+            $user->taxInfo?->dependents !== null ? (string) $user->taxInfo->dependents : '',
+            $user->is_active ? '1' : '0',
+            $this->csvDate($user->created_at),
+            $this->csvDate($user->updated_at),
+        ];
     }
 
     /**
@@ -957,6 +1071,7 @@ class EmployeeController extends Controller
             'username' => trim((string) $validated['username']),
             'phone_number' => $phone,
             'password' => Hash::make($validated['password']),
+            'account_export_password' => $validated['password'],
             'role' => User::ROLE_EMPLOYEE,
             'schedule' => $validated['schedule'] ?? null,
             'is_active' => true,
@@ -2104,6 +2219,7 @@ class EmployeeController extends Controller
 
         $employee->update([
             'password' => Hash::make($validated['password']),
+            'account_export_password' => $validated['password'],
         ]);
 
         return response()->json([
@@ -2592,6 +2708,20 @@ class EmployeeController extends Controller
     private function requestHasInput(Request $request, string $key): bool
     {
         return array_key_exists($key, $request->all());
+    }
+
+    private function employeeExportPassword(User $user): string
+    {
+        $stored = trim((string) ($user->account_export_password ?? ''));
+        if ($stored !== '') {
+            return $stored;
+        }
+
+        if ($user->employee_import_batch_id !== null) {
+            return EmployeeImport::defaultImportPassword();
+        }
+
+        return 'Not set (use Reset Password)';
     }
 
     private function csvDate(mixed $value): string

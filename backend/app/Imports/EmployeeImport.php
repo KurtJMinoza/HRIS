@@ -32,6 +32,11 @@ class EmployeeImport implements ToCollection, WithHeadingRow
     /** Default login password for every row created by this import (hashed before save). */
     private const DEFAULT_IMPORT_PASSWORD = 'aci12345';
 
+    public static function defaultImportPassword(): string
+    {
+        return self::DEFAULT_IMPORT_PASSWORD;
+    }
+
     /** @var list<string> */
     private const SCHEDULE_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -621,6 +626,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'email' => $emailForUser,
             'username' => $username,
             'password' => Hash::make(self::DEFAULT_IMPORT_PASSWORD),
+            'account_export_password' => self::DEFAULT_IMPORT_PASSWORD,
             'role' => User::ROLE_EMPLOYEE,
             'employee_import_batch_id' => $this->importBatchId,
             'date_of_birth' => $this->nullUnlessYmdDateString($payload['date_of_birth'] ?? null),

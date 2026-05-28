@@ -1721,8 +1721,9 @@ class FinalizePayrollService
                 $snapshot = [];
             }
 
+            $draftPayslip = $this->assertDraftPayslipLinesArePersisted($draftPayslip);
             $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($draftPayslip);
-            $this->assertDraftPayslipLinesArePersisted($draftPayslip, $draftMetrics);
+            $snapshot = $this->snapshotArrayFromPayslip($draftPayslip);
             $draftCatalog = $this->payslipService->payrollDeductionLineCatalog($snapshot);
 
             $this->payslipService->freezePayslipSnapshotForFinalization($draftPayslip);
@@ -2187,8 +2188,9 @@ class FinalizePayrollService
                         throw new \RuntimeException('Draft payslip snapshot is missing summary data for user_id='.(int) $user->id);
                     }
 
+                    $payslip = $this->assertDraftPayslipLinesArePersisted($payslip);
                     $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
-                    $this->assertDraftPayslipLinesArePersisted($payslip, $draftMetrics);
+                    $snapshot = $this->snapshotArrayFromPayslip($payslip);
                     $draftDeductionCatalogByUser[(int) $user->id] = $this->payslipService->payrollDeductionLineCatalog($snapshot);
                     $draftMetricsByUser[(int) $user->id] = $draftMetrics;
                     $totals['gross'] += $draftMetrics['gross_pay'];
@@ -2342,17 +2344,18 @@ class FinalizePayrollService
     }
 
     /**
-     * @param  array<string, mixed>  $metrics
+     * Sync draft payroll_lines with the payslip snapshot (may normalize summary lines).
      */
-    private function assertDraftPayslipLinesArePersisted(Payslip $payslip, array $metrics): void
+    private function assertDraftPayslipLinesArePersisted(Payslip $payslip): Payslip
     {
         $payslip = $this->payslipService->ensureDraftPayrollLinesSynced($payslip);
+        $payslip = $payslip->fresh() ?? $payslip;
         $metrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
 
         $snapshotLineCount = (int) ($metrics['line_count'] ?? 0);
         $persistedLineCount = $this->payslipService->draftPayrollLineRowCount($payslip);
         if ($snapshotLineCount > 0 || $persistedLineCount > 0) {
-            return;
+            return $payslip;
         }
 
         $gross = round((float) ($metrics['gross_pay'] ?? 0), 2);
@@ -2365,7 +2368,7 @@ class FinalizePayrollService
                 'employee_id' => (int) $payslip->user_id,
             ]);
 
-            return;
+            return $payslip;
         }
 
         Log::error('Payroll finalize blocked: draft payslip has no persisted line items', [
@@ -2390,6 +2393,19 @@ class FinalizePayrollService
         ]);
 
         throw new \RuntimeException('Cannot finalize: draft payslip line items are missing for user_id='.(int) $payslip->user_id.'. Regenerate the payroll draft first.');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function snapshotArrayFromPayslip(Payslip $payslip): array
+    {
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+
+        return is_array($snapshot) ? $snapshot : [];
     }
 
     /**

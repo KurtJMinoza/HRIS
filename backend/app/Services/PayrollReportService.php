@@ -23,7 +23,7 @@ class PayrollReportService
     {
         $payload = $this->buildReportPayload($run, $company, $actor);
         $pdf = Pdf::loadView('reports.payroll_report_pdf', $payload)
-            ->setPaper($payload['layout']['paper_size'], 'landscape');
+            ->setPaper($payload['layout']['paper_size'], $payload['layout']['orientation']);
 
         return [
             'pdf' => $pdf,
@@ -135,47 +135,45 @@ class PayrollReportService
     }
 
     /**
-     * @return array{paper_size:string,body_font:string,header_font:string,cell_padding:string,employee_width:float,numeric_width:float}
+     * @return array{paper_size:string,orientation:string,body_font:string,header_font:string,cell_padding:string,employee_width:float,numeric_width:float}
      */
     private function layoutForColumnCount(int $columnCount): array
     {
+        // Keep the payroll register in portrait while scaling paper/font density by column count.
         $employeeWidth = match (true) {
-            $columnCount >= 22 => 6.5,
-            $columnCount >= 18 => 7.5,
-            $columnCount >= 15 => 8.5,
-            $columnCount >= 11 => 10.0,
-            default => 12.0,
+            $columnCount >= 18 => 10.0,
+            $columnCount >= 15 => 11.5,
+            $columnCount >= 12 => 13.0,
+            default => 16.0,
         };
         $numericWidth = round((100.0 - $employeeWidth) / max(1, $columnCount - 1), 4);
         $paperSize = match (true) {
-            $columnCount >= 22 => 'a2',
-            $columnCount >= 15 => 'a3',
-            $columnCount >= 11 => 'legal',
+            $columnCount >= 18 => 'a2',
+            $columnCount >= 13 => 'a3',
+            $columnCount >= 10 => 'legal',
             default => 'a4',
         };
 
         return [
             'paper_size' => $paperSize,
+            'orientation' => 'portrait',
             'body_font' => match (true) {
-                $columnCount >= 22 => '4.8px',
-                $columnCount >= 18 => '5.0px',
-                $columnCount >= 15 => '5.3px',
-                $columnCount >= 11 => '5.8px',
-                default => '6.4px',
+                $columnCount >= 18 => '4.6px',
+                $columnCount >= 15 => '5.0px',
+                $columnCount >= 12 => '5.5px',
+                default => '6.2px',
             },
             'header_font' => match (true) {
-                $columnCount >= 22 => '4.2px',
-                $columnCount >= 18 => '4.5px',
-                $columnCount >= 15 => '4.8px',
-                $columnCount >= 11 => '5.2px',
-                default => '5.6px',
+                $columnCount >= 18 => '4.0px',
+                $columnCount >= 15 => '4.4px',
+                $columnCount >= 12 => '4.9px',
+                default => '5.5px',
             },
             'cell_padding' => match (true) {
-                $columnCount >= 22 => '0.7px 0.8px',
-                $columnCount >= 18 => '0.8px 0.9px',
-                $columnCount >= 15 => '1px 1.1px',
-                $columnCount >= 11 => '1.2px 1.4px',
-                default => '1.6px 1.8px',
+                $columnCount >= 18 => '0.6px 0.7px',
+                $columnCount >= 15 => '0.8px 0.9px',
+                $columnCount >= 12 => '1px 1.1px',
+                default => '1.4px 1.6px',
             },
             'employee_width' => $employeeWidth,
             'numeric_width' => $numericWidth,

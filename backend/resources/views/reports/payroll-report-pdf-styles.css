@@ -1,6 +1,6 @@
 @page {
-  size: __PAGE_SIZE__ landscape;
-  margin: 8mm 6mm 10mm 6mm;
+  size: __PAGE_SIZE__ portrait;
+  margin: 4mm 3.5mm 7mm 3.5mm;
 }
 :root {
   --pdf-body-font-size: __BODY_FONT_SIZE__;

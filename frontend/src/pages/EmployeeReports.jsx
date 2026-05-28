@@ -248,7 +248,8 @@ export default function EmployeeReports() {
           period={period}
           rows={dailyBreakdownRows}
           columns={columns}
-          orientation="landscape"
+          orientation="portrait"
+          pageSize="A3"
         />
       )
       const blob = await pdf(doc).toBlob()
