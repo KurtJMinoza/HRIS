@@ -585,6 +585,8 @@ class PresenceFilingController extends Controller
             $q->whereDate('date', '<=', $validated['to_date']);
         }
 
+        $summary = $this->presenceFilingStatusCounts(clone $q);
+
         $paginator = $q->paginate($perPage)->withQueryString();
         $items = $paginator->getCollection()->map(fn (AttendanceCorrection $c) => $this->correctionFormatter->format($c, $tz, includeEmployee: true, actor: $user, includeDisplayFields: true));
 
@@ -602,6 +604,7 @@ class PresenceFilingController extends Controller
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
             ],
+            'summary' => $summary,
         ]);
     }
 
@@ -700,16 +703,6 @@ class PresenceFilingController extends Controller
             $query->whereKey((int) $requestId);
         }
 
-        if ($statusFilter === 'pending') {
-            $query->where('pending_approval', true)
-                ->where('approved', false)
-                ->whereNull('rejected_at');
-        } elseif ($statusFilter === 'approved') {
-            $query->where('approved', true);
-        } elseif ($statusFilter === 'rejected') {
-            $query->whereNotNull('rejected_at');
-        }
-
         $fromDate = $request->query('from_date');
         $toDate = $request->query('to_date');
         if (is_string($fromDate) && $fromDate !== '') {
@@ -762,6 +755,18 @@ class PresenceFilingController extends Controller
 
         $this->applyPresenceFilingApprovalVisibility($actor, $query, $request);
 
+        $summary = $this->presenceFilingStatusCounts(clone $query);
+
+        if ($statusFilter === 'pending') {
+            $query->where('pending_approval', true)
+                ->where('approved', false)
+                ->whereNull('rejected_at');
+        } elseif ($statusFilter === 'approved') {
+            $query->where('approved', true);
+        } elseif ($statusFilter === 'rejected') {
+            $query->whereNotNull('rejected_at');
+        }
+
         $tz = $this->presenceFilingService->attendanceTimezone();
 
         $paginator = $query->paginate($perPage)->withQueryString();
@@ -788,7 +793,28 @@ class PresenceFilingController extends Controller
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
             ],
+            'summary' => $summary,
         ]);
+    }
+
+    /**
+     * Count each review status for the same filtered/visible result set before pagination.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<AttendanceCorrection>  $query
+     * @return array{total:int,pending:int,approved:int,rejected:int}
+     */
+    private function presenceFilingStatusCounts($query): array
+    {
+        return [
+            'total' => (clone $query)->count(),
+            'pending' => (clone $query)
+                ->where('pending_approval', true)
+                ->where('approved', false)
+                ->whereNull('rejected_at')
+                ->count(),
+            'approved' => (clone $query)->where('approved', true)->count(),
+            'rejected' => (clone $query)->whereNotNull('rejected_at')->count(),
+        ];
     }
 
     /**

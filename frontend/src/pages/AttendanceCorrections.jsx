@@ -638,7 +638,7 @@ export default function AttendanceCorrections() {
     try {
       const res = await getMyPresenceFilings({ page: currentPage, per_page: itemsPerPage })
       setMineItems(res?.presence_filings ?? [])
-      setMinePagination(res?.pagination ?? null)
+      setMinePagination(res?.pagination ? { ...res.pagination, summary: res?.summary ?? null } : null)
     } catch (e) {
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
       setMineItems([])
@@ -660,7 +660,7 @@ export default function AttendanceCorrections() {
         per_page: itemsPerPage,
       })
       setAllItems(res?.presence_filings ?? [])
-      setAllPagination(res?.pagination ?? null)
+      setAllPagination(res?.pagination ? { ...res.pagination, summary: res?.summary ?? null } : null)
     } catch (e) {
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
       setAllItems([])
@@ -757,8 +757,18 @@ export default function AttendanceCorrections() {
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine' ? loadingMine : loadingAll
   const activePagination = tab === 'mine' ? minePagination : allPagination
+  const activeSummary = tab === 'mine' ? minePagination?.summary : allPagination?.summary
 
   const requestStats = useMemo(() => {
+    if (activeSummary && typeof activeSummary === 'object') {
+      return {
+        total: Number(activeSummary.total ?? activePagination?.total ?? 0) || 0,
+        pending: Number(activeSummary.pending ?? 0) || 0,
+        approved: Number(activeSummary.approved ?? 0) || 0,
+        rejected: Number(activeSummary.rejected ?? 0) || 0,
+      }
+    }
+
     const out = { total: activeItems.length, pending: 0, approved: 0, rejected: 0 }
     for (const item of activeItems) {
       const label = String(item.display_status || reviewStatusLabel(item) || '').toLowerCase()
@@ -767,7 +777,7 @@ export default function AttendanceCorrections() {
       else out.pending += 1
     }
     return out
-  }, [activeItems])
+  }, [activeItems, activePagination?.total, activeSummary])
 
   const filteredSorted = useMemo(() => {
     let list = [...activeItems]

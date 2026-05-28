@@ -631,7 +631,7 @@ export default function AdminDashboard() {
 
   const attendanceCorrectionsPendingQuery = useQuery({
     queryKey: ['admin-dashboard-attendance-corrections-pending'],
-    queryFn: () => getAdminPresenceFilings({ status: 'pending' }),
+    queryFn: () => getAdminPresenceFilings({ status: 'pending', page: 1, per_page: 5 }),
     enabled: !authLoading && canApproveAttendanceCorrections,
     refetchInterval: 15000,
     refetchOnMount: 'always',
@@ -1072,7 +1072,7 @@ export default function AdminDashboard() {
   const expiringContracts = Array.isArray(data?.expiring_contracts) ? data.expiring_contracts : []
   const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
     ? Number(
-        attendanceCorrectionsPendingQuery.data?.presence_filings?.length
+        attendanceCorrectionsPendingQuery.data?.pagination?.total
           ?? data?.pending_attendance_corrections
           ?? 0
       ) || 0
