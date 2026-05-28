@@ -1079,7 +1079,31 @@ class FinalizePayrollService
             $periodInput['department_id'] = $departmentId;
         }
 
-        $employees = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor)
+        $payrollModule = PayrollBatchRun::MODULE_STANDARD;
+        $eligibilityPeriodStart = null;
+        $eligibilityPeriodEnd = null;
+        if ($existingBatchRunId !== null) {
+            $existingRunForModule = PayrollBatchRun::query()->find($existingBatchRunId);
+            if ($existingRunForModule instanceof PayrollBatchRun) {
+                $payrollModule = $this->normalizePayrollModule((string) ($existingRunForModule->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+                $eligibilityPeriodStart = $existingRunForModule->pay_period_start;
+                $eligibilityPeriodEnd = $existingRunForModule->pay_period_end;
+                $this->assertFinalizeModuleGuards($existingRunForModule);
+                $this->payslipService->cleanupStaleBatchModulePayslips($existingRunForModule);
+            }
+        }
+
+        $employees = $this->scopedEmployees(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $singleEmployeeId,
+            $actor,
+            null,
+            $eligibilityPeriodStart,
+            $eligibilityPeriodEnd,
+            $payrollModule
+        )
             ->orderByLastName()
             ->get();
 
@@ -2170,6 +2194,9 @@ class FinalizePayrollService
                 }
 
                 $this->payslipService->clearBlockingPayrollPeriodLinksForUsers($employeeIds);
+                $this->assertFinalizeModuleGuards($lockedRun);
+                $this->payslipService->cleanupStaleBatchModulePayslips($lockedRun);
+                $isExecomBatch = $this->normalizePayrollModule((string) ($lockedRun->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)) === PayrollBatchRun::MODULE_EXECOM;
 
                 foreach ($employees as $user) {
                     $payslip = $draftPayslips->get((int) $user->id);
@@ -2177,7 +2204,9 @@ class FinalizePayrollService
                         throw new \RuntimeException('Missing draft payslip for user_id='.(int) $user->id);
                     }
 
-                    $payslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $user);
+                    if (! $isExecomBatch) {
+                        $payslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $user);
+                    }
 
                     $snapshotRaw = $payslip->snapshot;
                     $snapshot = is_array($snapshotRaw)
@@ -2204,25 +2233,45 @@ class FinalizePayrollService
                     $this->payslipService->freezePayslipSnapshotForFinalization($payslip);
                 }
 
-                if ($companyId !== null) {
-                    $this->payslipService->finalizePayrollWindow(
-                        $companyId,
-                        $periodStart->toDateString(),
-                        $periodEnd->toDateString(),
-                        null,
-                        $employeeIds,
-                        $adminUserId
-                    );
+                $payrollModule = $this->normalizePayrollModule((string) ($lockedRun->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+                $finalizedCount = $this->payslipService->finalizePayslipsByIds(
+                    $payslipIds,
+                    $adminUserId,
+                    (int) $existingBatchRunId
+                );
+                if ($finalizedCount < count($payslipIds)) {
+                    Log::warning('Payroll finalize: not all draft payslip ids were promoted by id', [
+                        'payroll_run_id' => (int) $existingBatchRunId,
+                        'expected' => count($payslipIds),
+                        'updated' => $finalizedCount,
+                        'payroll_module' => $payrollModule,
+                    ]);
                 }
+
+                $this->payslipService->finalizePayrollWindow(
+                    $companyId,
+                    $periodStart->toDateString(),
+                    $periodEnd->toDateString(),
+                    null,
+                    $employeeIds,
+                    $adminUserId,
+                    $payrollModule
+                );
 
                 $finalizedPayslipsByUser = Payslip::query()
                     ->whereIn('id', $payslipIds)
-                    ->where('status', Payslip::STATUS_FINALIZED)
                     ->get()
                     ->keyBy(fn (Payslip $p) => (int) $p->user_id);
                 foreach ($employees as $user) {
                     $finalized = $finalizedPayslipsByUser->get((int) $user->id);
                     if (! $finalized instanceof Payslip) {
+                        throw new \RuntimeException('Finalized payslip row missing for user_id='.(int) $user->id);
+                    }
+                    if ((string) $finalized->status !== Payslip::STATUS_FINALIZED) {
+                        $this->payslipService->finalizePayslipsByIds([(int) $finalized->id], $adminUserId, (int) $existingBatchRunId);
+                        $finalized = $finalized->fresh();
+                    }
+                    if (! $finalized instanceof Payslip || (string) $finalized->status !== Payslip::STATUS_FINALIZED) {
                         throw new \RuntimeException('Finalized payslip row missing for user_id='.(int) $user->id);
                     }
 
@@ -2580,8 +2629,11 @@ class FinalizePayrollService
 
     private function payslipQueryForBatchRun(PayrollBatchRun $run): \Illuminate\Database\Eloquent\Builder
     {
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+
         $query = Payslip::query()
             ->where('payroll_batch_run_id', (int) $run->id)
+            ->where('payroll_module', $expectedModule)
             ->whereNull('voided_at')
             ->where('period_slot', 0)
             ->when(
@@ -2762,7 +2814,8 @@ class FinalizePayrollService
         ?User $actor = null,
         ?string $search = null,
         ?Carbon $periodStart = null,
-        ?Carbon $periodEnd = null
+        ?Carbon $periodEnd = null,
+        string $payrollModule = PayrollBatchRun::MODULE_STANDARD,
     ): \Illuminate\Database\Eloquent\Builder {
         $q = $this->payrollEligibility->query(
             $companyId,
@@ -2771,7 +2824,8 @@ class FinalizePayrollService
             $periodStart,
             $periodEnd,
             $actor,
-            $this->dataScopeService
+            $this->dataScopeService,
+            $payrollModule
         );
 
         if ($singleEmployeeId) {
@@ -2820,6 +2874,48 @@ class FinalizePayrollService
         return is_string($legacyDepartment) && trim($legacyDepartment) !== ''
             ? $legacyDepartment
             : null;
+    }
+
+    private function normalizePayrollModule(string $module): string
+    {
+        return strtolower(trim($module)) === PayrollBatchRun::MODULE_EXECOM
+            ? PayrollBatchRun::MODULE_EXECOM
+            : PayrollBatchRun::MODULE_STANDARD;
+    }
+
+    private function assertFinalizeModuleGuards(PayrollBatchRun $run): void
+    {
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        $draftUserIds = $this->payslipQueryForBatchRun($run)
+            ->pluck('user_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($expectedModule === PayrollBatchRun::MODULE_EXECOM) {
+            if ($draftUserIds === []) {
+                throw new \RuntimeException('Cannot finalize: no execom draft payslips are linked to this batch.');
+            }
+
+            return;
+        }
+
+        if ($draftUserIds === []) {
+            return;
+        }
+
+        $execomEligibleIds = $this->payrollEligibility->getExecomPayrollEligibleEmployeeIds(
+            $run->company_id ? (int) $run->company_id : null,
+            $run->branch_id ? (int) $run->branch_id : null,
+            $run->department_id ? (int) $run->department_id : null,
+            $run->pay_period_start,
+            $run->pay_period_end
+        );
+        $execomInDraft = array_values(array_intersect($draftUserIds, $execomEligibleIds));
+        if ($execomInDraft !== []) {
+            throw new \RuntimeException('Regular payroll contains EXECOM employees. Please regenerate Regular Payroll.');
+        }
     }
 
     private function applyEmployeeNameSearch(\Illuminate\Database\Eloquent\Builder $query, string $like): void

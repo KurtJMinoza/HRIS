@@ -2096,6 +2096,144 @@ export async function getPayrollRunCompanyPayrollReportPdfBlob(batchRunId, compa
   return res.blob()
 }
 
+// ——— EXECOM payroll & employee management ———
+
+function execomQueryString(params = {}) {
+  const q = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') q.set(key, String(value))
+  })
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+export async function getExecomEmployees(params = {}) {
+  const res = await authenticatedFetch(`/admin/execom/employees${execomQueryString(params)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load EXECOM employees')
+  return data
+}
+
+export async function createExecomEmployee(payload) {
+  const res = await authenticatedFetch('/admin/execom/employees', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to add EXECOM employee')
+  return data
+}
+
+export async function updateExecomEmployee(id, payload) {
+  const res = await authenticatedFetch(`/admin/execom/employees/${encodeURIComponent(String(id))}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update EXECOM employee')
+  return data
+}
+
+export async function deleteExecomEmployee(id) {
+  const res = await authenticatedFetch(`/admin/execom/employees/${encodeURIComponent(String(id))}`, {
+    method: 'DELETE',
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to remove EXECOM employee')
+  return data
+}
+
+export async function getExecomPayrollSettings() {
+  const res = await authenticatedFetch('/admin/execom/payroll-settings')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load EXECOM payroll settings')
+  return data
+}
+
+export async function updateExecomPayrollSettings(payload) {
+  const res = await authenticatedFetch('/admin/execom/payroll-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update EXECOM payroll settings')
+  return data
+}
+
+export async function adminGenerateExecomPayroll(payload) {
+  const res = await authenticatedFetch('/admin/execom/payroll/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    timeoutMs: 30000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to generate EXECOM payroll draft')
+  return data
+}
+
+export async function adminRecomputeExecomPayroll(batchRunId) {
+  const res = await authenticatedFetch(
+    `/admin/execom/payroll/batches/${encodeURIComponent(String(batchRunId))}/recompute`,
+    { method: 'POST', timeoutMs: 30000 }
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to recompute EXECOM payroll draft')
+  return data
+}
+
+export async function adminFinalizeExecomPayroll(batchRunId) {
+  const res = await authenticatedFetch(
+    `/admin/execom/payroll/batches/${encodeURIComponent(String(batchRunId))}/finalize`,
+    { method: 'POST', timeoutMs: 30000 }
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to finalize EXECOM payroll')
+  return data
+}
+
+export async function getExecomPayrollBatchStatus(batchRunId) {
+  const res = await authenticatedFetch(
+    `/admin/execom/payroll/batches/${encodeURIComponent(String(batchRunId))}/status`
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load EXECOM batch status')
+  return data
+}
+
+export async function getExecomPayrollBatches(params = {}) {
+  const res = await authenticatedFetch(`/admin/execom/payroll/batches${execomQueryString(params)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load EXECOM payroll batches')
+  return data
+}
+
+export async function getExecomPayrollPayslips(params = {}) {
+  const status = String(params.status || 'draft').toLowerCase() === 'finalized' ? 'finalized' : 'draft'
+  const path = status === 'finalized' ? '/admin/execom/payroll/finalized' : '/admin/execom/payroll/draft'
+  const q = { ...params }
+  delete q.status
+  const res = await authenticatedFetch(`${path}${execomQueryString(q)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load EXECOM payslips')
+  return data
+}
+
+export async function getExecomPayrollReportPdfBlob(batchRunId) {
+  const res = await authenticatedFetch(
+    `/admin/execom/payroll/batches/${encodeURIComponent(String(batchRunId))}/report/pdf`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download EXECOM payroll report PDF')
+  }
+  return res.blob()
+}
+
 export async function getReportsPayrollReportPdfBlob(params = {}) {
   const q = new URLSearchParams()
   if (params.company_id != null) q.set('company_id', String(params.company_id))

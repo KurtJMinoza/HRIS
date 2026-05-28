@@ -124,7 +124,13 @@ export default function AdminPayslipViewPage() {
       navigate(`${hrBase}/payslips`)
       return
     }
-    const rt = String(searchParams.get('return_to') || '').toLowerCase()
+    const returnToRaw = String(searchParams.get('return_to') || '').trim()
+    if (returnToRaw.startsWith(`${hrBase}/`) || (returnToRaw.startsWith('/') && !returnToRaw.startsWith('//'))) {
+      navigate(returnToRaw)
+      return
+    }
+
+    const rt = returnToRaw.toLowerCase()
     if (rt === 'payslips' || rt === 'list') {
       navigate(`${hrBase}/compensation/payslips`)
       return

@@ -133,6 +133,8 @@ class GeneratePayrollBatchJob implements ShouldQueue
                 progressRun: $run,
             );
             $ids = $bulk['payslip_ids'];
+            $failedEmployees = max(0, (int) ($bulk['failed_employees'] ?? 0));
+            $employeeErrors = is_array($bulk['employee_errors'] ?? null) ? $bulk['employee_errors'] : [];
             $sectionTimings = $bulk['timings'] ?? [];
             $sectionTimings['total_job_ms'] = round((microtime(true) - $jobStartedAt) * 1000, 2);
             $sectionTimings['query_count'] = $queryCount;
@@ -154,14 +156,19 @@ class GeneratePayrollBatchJob implements ShouldQueue
             }
             $run = $currentRun;
 
+            $batchStatus = $failedEmployees > 0 && count($ids) === 0
+                ? PayrollBatchRun::STATUS_FAILED
+                : PayrollBatchRun::STATUS_DRAFT;
             PayrollBatchRun::query()->whereKey($run->id)->update($this->filterBatchRunPayload([
-                'status' => PayrollBatchRun::STATUS_DRAFT,
+                'status' => $batchStatus,
                 'completed_at' => now(),
                 'employee_count' => count($ids),
-                'total_employees' => count($ids),
+                'total_employees' => max($expectedTotal, count($ids) + $failedEmployees),
                 'processed_employees' => count($ids),
-                'failed_employees' => 0,
-                'error_message' => null,
+                'failed_employees' => $failedEmployees,
+                'error_message' => $employeeErrors !== []
+                    ? Str::limit(implode(' | ', $employeeErrors), 2000, '...')
+                    : null,
             ]));
 
             $run->refresh();

@@ -37,7 +37,15 @@ class ExecomPayrollComputationServiceTest extends TestCase
         $schedule->method('summarizeForPayrollComputation')->willReturn([
             'government' => [],
             'custom_lines' => [],
-            'earning_lines' => [],
+            'earning_lines' => [
+                [
+                    'code' => 'BASIC_SALARY',
+                    'name' => 'Basic Pay',
+                    'is_basic_salary_line' => true,
+                    'scheduled_this_period' => 125000.00,
+                    'earning_schedule_type' => 'both',
+                ],
+            ],
             'employee_statutory_this_period' => 0.0,
             'withholding_this_period' => 0.0,
             'custom_deductions_this_period' => 0.0,
@@ -84,7 +92,7 @@ class ExecomPayrollComputationServiceTest extends TestCase
         $this->assertSame(125000.00, $summary['basic_salary_period']);
         $this->assertSame(125000.00, $summary['basic_salary']);
         $this->assertSame(125000.00, data_get($summary, 'compensation_breakdown.basic_salary'));
-        $this->assertSame('Basic Salary', $summary['payslip_earning_lines'][0]['label']);
+        $this->assertSame('Basic Pay', $summary['payslip_earning_lines'][0]['label']);
         $this->assertSame(125000.00, $summary['gross_pay_this_period']);
         $this->assertSame(125000.00, $summary['net_pay_after_withholding_estimate']);
         $this->assertSame(4807.69, $computed['daily_rate']);
@@ -143,7 +151,7 @@ class ExecomPayrollComputationServiceTest extends TestCase
                 ['name' => 'FAMES EVERY 30', 'scheduled_this_period' => 0.00, 'deduction_schedule_type' => '30th', 'payroll_run_type' => '15th'],
             ],
             'earning_lines' => [
-                ['code' => 'BASIC_SALARY', 'name' => 'Basic Salary', 'scheduled_this_period' => 10000.00],
+                ['code' => 'BASIC_SALARY', 'name' => 'Basic Pay', 'is_basic_salary_line' => true, 'scheduled_this_period' => 10000.00],
                 ['name' => 'Allowance', 'scheduled_this_period' => 2000.00],
             ],
             'employee_statutory_this_period' => 1100.00,
@@ -216,7 +224,7 @@ class ExecomPayrollComputationServiceTest extends TestCase
         $this->assertSame(1, count($summary['payslip_custom_deduction_lines']));
         $this->assertSame('Allowance', $summary['payslip_earning_lines'][1]['label']);
         $this->assertCount(2, $summary['payslip_earning_lines']);
-        $this->assertSame('Basic Salary', $summary['payslip_earning_lines'][0]['label']);
+        $this->assertSame('Basic Pay', $summary['payslip_earning_lines'][0]['label']);
         $this->assertSame('FAMES EVERY 15', $summary['payslip_custom_deduction_lines'][0]['label']);
     }
 
@@ -244,7 +252,15 @@ class ExecomPayrollComputationServiceTest extends TestCase
         $schedule->method('summarizeForPayrollComputation')->willReturn([
             'government' => [],
             'custom_lines' => [],
-            'earning_lines' => [],
+            'earning_lines' => [
+                [
+                    'code' => 'BASIC_SALARY',
+                    'name' => 'Basic Pay',
+                    'is_basic_salary_line' => true,
+                    'scheduled_this_period' => 30000.00,
+                    'earning_schedule_type' => 'both',
+                ],
+            ],
             'employee_statutory_this_period' => 0.0,
             'withholding_this_period' => 0.0,
             'custom_deductions_this_period' => 0.0,
@@ -294,7 +310,7 @@ class ExecomPayrollComputationServiceTest extends TestCase
         $summary = $computed['summary'];
         $this->assertSame(30000.00, $summary['basic_salary_period']);
         $this->assertSame(30000.00, $summary['gross_pay_this_period']);
-        $this->assertSame('Basic Salary', $summary['payslip_earning_lines'][0]['label']);
+        $this->assertSame('Basic Pay', $summary['payslip_earning_lines'][0]['label']);
         $this->assertSame(1153.85, $summary['daily_rate']);
     }
 
@@ -346,7 +362,15 @@ class ExecomPayrollComputationServiceTest extends TestCase
             ->willReturn([
                 'government' => [],
                 'custom_lines' => [],
-                'earning_lines' => [],
+                'earning_lines' => [
+                    [
+                        'code' => 'BASIC_SALARY',
+                        'name' => 'Basic Pay',
+                        'is_basic_salary_line' => true,
+                        'scheduled_this_period' => 50208.00,
+                        'earning_schedule_type' => 'both',
+                    ],
+                ],
                 'employee_statutory_this_period' => 0.0,
                 'withholding_this_period' => 0.0,
                 'custom_deductions_this_period' => 0.0,
@@ -384,6 +408,120 @@ class ExecomPayrollComputationServiceTest extends TestCase
         );
 
         $this->assertSame(3862.15, $computed['daily_rate']);
-        $this->assertSame(100416.00, $computed['summary']['basic_salary_period']);
+        $this->assertSame(50208.00, $computed['summary']['basic_salary_period']);
+    }
+
+    public function test_execom_prefers_employee_compensation_salary_when_fixed_salary_is_empty(): void
+    {
+        $calculator = $this->createMock(PayrollCalculatorService::class);
+        $calculator->method('buildEmployeeCompensationSummary')->willReturn([
+            'basic_salary' => 45000.00,
+            'earnings' => [
+                ['code' => 'BASIC_SALARY', 'name' => 'Basic Pay', 'computed_amount' => 45000.00],
+            ],
+            'deductions' => [],
+            'totals' => [],
+        ]);
+        $calculator->method('calculateAllStatutoryContributions')->willReturn([
+            'totals' => ['employee_deduction' => 0.0, 'employer_liability' => 0.0],
+        ]);
+        $calculator->method('monthlyTaxableCompensationForWithholding')->willReturn(45000.00);
+        $calculator->method('mergeEmployeeTaxProfileIntoWithholdingParams')->willReturnArgument(1);
+        $calculator->method('calculateWithholdingTax')->willReturn(['withholding_per_month' => 0.0]);
+
+        $schedule = $this->createMock(DeductionScheduleService::class);
+        $schedule->method('summarizeForPayrollComputation')->willReturn([
+            'government' => [],
+            'custom_lines' => [],
+            'earning_lines' => [
+                [
+                    'code' => 'BASIC_SALARY',
+                    'name' => 'Basic Pay',
+                    'is_basic_salary_line' => true,
+                    'scheduled_this_period' => 22500.00,
+                    'earning_schedule_type' => 'both',
+                ],
+            ],
+            'employee_statutory_this_period' => 0.0,
+            'withholding_this_period' => 0.0,
+            'custom_deductions_this_period' => 0.0,
+            'custom_deductions_full_monthly' => 0.0,
+        ]);
+        $schedule->method('buildPayslipEarningDisplayLines')->willReturn([]);
+        $schedule->method('buildPayslipDeductionDisplayLines')->willReturn([]);
+        $schedule->method('buildPayslipCustomDeductionDisplayLines')->willReturn([]);
+
+        $deductionApplication = $this->createMock(DeductionApplicationService::class);
+        $deductionApplication->method('enforcePriorityAndLegalLimitsForPayrollPeriod')->willReturn([
+            'custom_lines' => [],
+            'custom_deductions_this_period' => 0.0,
+            'legal_warnings' => [],
+            'minimum_take_home_floor' => 0.0,
+        ]);
+
+        $service = new ExecomPayrollComputationService($calculator, $schedule, $deductionApplication);
+        $employee = (new User)->forceFill(['id' => 1004, 'name' => 'EXECOM Compensation Employee']);
+        $profile = (new ExecomEmployeeProfile)->forceFill([
+            'id' => 13,
+            'employee_id' => 1004,
+            'company_id' => 1,
+            'fixed_salary' => 0.00,
+            'is_active' => true,
+        ]);
+
+        $computed = $service->computeExecomPayroll(
+            $employee,
+            Carbon::parse('2026-05-01'),
+            Carbon::parse('2026-05-15'),
+            $profile,
+            new ExecomPayrollSetting([
+                ...ExecomPayrollSetting::defaults(1),
+                'apply_government_deductions' => false,
+                'apply_custom_deductions' => false,
+                'apply_allowances' => false,
+            ]),
+            ['company_working_days' => 26]
+        );
+
+        $summary = $computed['summary'];
+        $this->assertSame('employee_compensation_basic_salary', $summary['execom_salary_source_used']);
+        $this->assertSame(45000.00, $summary['fixed_salary']);
+        $this->assertSame(22500.00, $summary['basic_salary_period']);
+        $this->assertSame('Basic Pay', $summary['payslip_earning_lines'][0]['label']);
+    }
+
+    public function test_execom_throws_when_all_salary_sources_are_empty(): void
+    {
+        $calculator = $this->createMock(PayrollCalculatorService::class);
+        $calculator->method('buildEmployeeCompensationSummary')->willReturn([
+            'basic_salary' => 0.0,
+            'earnings' => [],
+            'deductions' => [],
+            'totals' => [],
+        ]);
+
+        $schedule = $this->createMock(DeductionScheduleService::class);
+        $deductionApplication = $this->createMock(DeductionApplicationService::class);
+        $service = new ExecomPayrollComputationService($calculator, $schedule, $deductionApplication);
+
+        $employee = (new User)->forceFill(['id' => 1005, 'name' => 'No Salary EXECOM']);
+        $profile = (new ExecomEmployeeProfile)->forceFill([
+            'id' => 14,
+            'employee_id' => 1005,
+            'company_id' => 1,
+            'fixed_salary' => 0.00,
+            'is_active' => true,
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('no salary source');
+
+        $service->computeExecomPayroll(
+            $employee,
+            Carbon::parse('2026-05-01'),
+            Carbon::parse('2026-05-15'),
+            $profile,
+            new ExecomPayrollSetting(ExecomPayrollSetting::defaults(1))
+        );
     }
 }

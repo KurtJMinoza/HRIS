@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\EmployeeOrganizationAssignment;
+use App\Models\ExecomEmployeeProfile;
+use App\Models\PayrollBatchRun;
 use App\Models\User;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -19,11 +21,26 @@ class PayrollEmployeeEligibilityService
         ?CarbonInterface $periodEnd = null,
         ?User $actor = null,
         ?DataScopeService $dataScopeService = null,
+        string $payrollModule = PayrollBatchRun::MODULE_STANDARD,
     ): Builder {
+        if ($payrollModule === PayrollBatchRun::MODULE_EXECOM) {
+            return $this->execomPayrollQuery(
+                $companyId,
+                $branchId,
+                $departmentId,
+                $periodStart,
+                $periodEnd,
+                $actor,
+                $dataScopeService
+            );
+        }
+
         $query = User::query()->payrollEmployees()->active();
         if ($actor instanceof User && $dataScopeService instanceof DataScopeService) {
             $dataScopeService->restrictEmployeeQuery($actor, $query);
         }
+
+        $this->excludeExecomEmployeesFromRegularQuery($query, $periodStart, $periodEnd);
 
         if ($companyId !== null && $companyId > 0) {
             $query->where(function (Builder $scope) use ($companyId, $branchId, $departmentId, $periodStart, $periodEnd): void {
@@ -52,10 +69,92 @@ class PayrollEmployeeEligibilityService
         ?CarbonInterface $periodEnd = null,
         ?User $actor = null,
         ?DataScopeService $dataScopeService = null,
+        string $payrollModule = PayrollBatchRun::MODULE_STANDARD,
     ): int {
-        return (int) $this->query($companyId, $branchId, $departmentId, $periodStart, $periodEnd, $actor, $dataScopeService)
+        return (int) $this->query($companyId, $branchId, $departmentId, $periodStart, $periodEnd, $actor, $dataScopeService, $payrollModule)
             ->distinct('users.id')
             ->count('users.id');
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function getExecomPayrollEligibleEmployeeIds(
+        ?int $companyId,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        ?CarbonInterface $periodStart = null,
+        ?CarbonInterface $periodEnd = null,
+        ?User $actor = null,
+        ?DataScopeService $dataScopeService = null,
+    ): array {
+        return $this->execomPayrollQuery($companyId, $branchId, $departmentId, $periodStart, $periodEnd, $actor, $dataScopeService)
+            ->pluck('users.id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return \Illuminate\Database\Eloquent\Collection<int, User>
+     */
+    public function getExecomPayrollEligibleEmployees(
+        ?int $companyId,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        ?CarbonInterface $periodStart = null,
+        ?CarbonInterface $periodEnd = null,
+        ?User $actor = null,
+        ?DataScopeService $dataScopeService = null,
+    ) {
+        return $this->execomPayrollQuery($companyId, $branchId, $departmentId, $periodStart, $periodEnd, $actor, $dataScopeService)
+            ->orderByLastName()
+            ->get();
+    }
+
+    private function execomPayrollQuery(
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?CarbonInterface $periodStart,
+        ?CarbonInterface $periodEnd,
+        ?User $actor,
+        ?DataScopeService $dataScopeService,
+    ): Builder {
+        $query = User::query()
+            ->payrollEmployees()
+            ->active()
+            ->whereHas('execomProfiles', function (Builder $profile) use ($companyId, $branchId, $departmentId, $periodStart, $periodEnd): void {
+                $profile->activeForPeriod($periodStart, $periodEnd);
+                if ($companyId !== null && $companyId > 0) {
+                    $profile->where('company_id', $companyId);
+                }
+                if ($branchId !== null && $branchId > 0) {
+                    $profile->where('branch_id', $branchId);
+                }
+                if ($departmentId !== null && $departmentId > 0) {
+                    $profile->where('department_id', $departmentId);
+                }
+            });
+
+        if ($actor instanceof User && $dataScopeService instanceof DataScopeService) {
+            $dataScopeService->restrictEmployeeQuery($actor, $query);
+        }
+
+        return $query;
+    }
+
+    private function excludeExecomEmployeesFromRegularQuery(Builder $query, ?CarbonInterface $periodStart, ?CarbonInterface $periodEnd): void
+    {
+        if (Schema::hasColumn('users', 'is_execom')) {
+            $query->where(function (Builder $scope): void {
+                $scope->where('users.is_execom', false)->orWhereNull('users.is_execom');
+            });
+        }
+
+        $query->whereDoesntHave('execomProfiles', function (Builder $profile) use ($periodStart, $periodEnd): void {
+            $profile->activeForPeriod($periodStart, $periodEnd);
+        });
     }
 
     /**

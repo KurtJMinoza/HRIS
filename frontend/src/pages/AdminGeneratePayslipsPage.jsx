@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { bulkPayslipDownloadStatusLabel, saveBulkPayslipZipBlob } from '../lib/bulkPayslipDownload'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  adminGenerateExecomPayroll,
   adminGeneratePayslips,
   adminQueueBulkPayslipDownload,
   adminPollAndDownloadBulkPayslipZip,
@@ -285,11 +286,16 @@ export default function AdminGeneratePayslipsPage() {
   const { user } = useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const hrBase = useHrBasePath()
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin'
   const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
-  const canManagePayslips = permissionSet.has('payslip.generate')
+  const isExecomModule = searchParams.get('module') === 'execom'
+  const canManageRegularPayslips = permissionSet.has('payslip.generate')
+  const canManageExecomPayroll = permissionSet.has('execom.payroll.generate')
+  const canManagePayslips = isExecomModule ? canManageExecomPayroll : canManageRegularPayslips
   const canBulkDownloadPayslipZip = permissionSet.has('payslip.download')
+  const canViewExecom = permissionSet.has('execom.view') || canManageExecomPayroll
 
   const [companies, setCompanies] = useState([])
   const [branches, setBranches] = useState([])
@@ -327,6 +333,7 @@ export default function AdminGeneratePayslipsPage() {
   const [samplePreviewData, setSamplePreviewData] = useState(null)
   const [samplePdfDownloading, setSamplePdfDownloading] = useState(false)
   const [companyRows, setCompanyRows] = useState([])
+  const [recentModuleFilter, setRecentModuleFilter] = useState('all')
   const [batchEstimateData, setBatchEstimateData] = useState(null)
   const [batchEstimateLoading, setBatchEstimateLoading] = useState(false)
 
@@ -419,7 +426,10 @@ export default function AdminGeneratePayslipsPage() {
   }, [departments, departmentId])
 
   const scopeReady = Boolean(companyId || branchId || departmentId)
-  const finalizeReady = !isAdmin || scopeReady || Boolean(String(employeeId || '').trim())
+  const execomReady = Boolean(fromDate && toDate)
+  const finalizeReady = isExecomModule
+    ? execomReady
+    : (!isAdmin || scopeReady || Boolean(String(employeeId || '').trim()))
 
   const bulkPayload = useMemo(
     () => ({
@@ -440,8 +450,46 @@ export default function AdminGeneratePayslipsPage() {
     [fromDate, toDate, payCycleId, referenceDate, useCompanyDefaultDates, passwordProtect, companyId, branchId, departmentId, employeeId],
   )
 
+  const execomBulkPayload = useMemo(
+    () => ({
+      from_date: fromDate || null,
+      to_date: toDate || null,
+      pay_cycle_id: payCycleId ? Number(payCycleId) : null,
+      reference_date: referenceDate || null,
+      password_protect: passwordProtect,
+      company_id: companyId ? Number(companyId) : null,
+      branch_id: branchId ? Number(branchId) : null,
+      department_id: departmentId ? Number(departmentId) : null,
+      employee_id: String(employeeId || '').trim() ? Number(employeeId) : null,
+    }),
+    [fromDate, toDate, payCycleId, referenceDate, passwordProtect, companyId, branchId, departmentId, employeeId],
+  )
+
+  const setPayrollModule = useCallback(
+    (module) => {
+      const next = new URLSearchParams(searchParams)
+      if (module === 'execom') next.set('module', 'execom')
+      else next.delete('module')
+      setSearchParams(next, { replace: true })
+    },
+    [searchParams, setSearchParams],
+  )
+
   useEffect(() => {
-    if (!canManagePayslips || (isAdmin && !scopeReady)) {
+    if (!canManageRegularPayslips && canManageExecomPayroll && !isExecomModule) {
+      setPayrollModule('execom')
+    }
+  }, [canManageRegularPayslips, canManageExecomPayroll, isExecomModule, setPayrollModule])
+
+  useEffect(() => {
+    if (!isExecomModule) return
+    setCompanyId('')
+    setBranchId('')
+    setDepartmentId('')
+  }, [isExecomModule])
+
+  useEffect(() => {
+    if (isExecomModule || !canManagePayslips || (isAdmin && !scopeReady)) {
       setPreview(null)
       return
     }
@@ -465,10 +513,10 @@ export default function AdminGeneratePayslipsPage() {
       cancelled = true
       clearTimeout(t)
     }
-  }, [canManagePayslips, isAdmin, companyId, branchId, departmentId, scopeReady])
+  }, [canManagePayslips, isAdmin, companyId, branchId, departmentId, scopeReady, isExecomModule])
 
   useEffect(() => {
-    if (!canManagePayslips || !scopeReady) {
+    if (isExecomModule || !canManagePayslips || !scopeReady) {
       setBatchEstimateData(null)
       return
     }
@@ -488,7 +536,7 @@ export default function AdminGeneratePayslipsPage() {
       cancelled = true
       clearTimeout(t)
     }
-  }, [canManagePayslips, scopeReady, bulkPayload])
+  }, [canManagePayslips, scopeReady, bulkPayload, isExecomModule])
 
   const loadCompanySummary = useCallback(async () => {
     setListLoading(true)
@@ -497,6 +545,7 @@ export default function AdminGeneratePayslipsPage() {
         company_id: companyId || undefined,
         branch_id: branchId || undefined,
         department_id: departmentId || undefined,
+        payroll_module: recentModuleFilter,
         per_page: 15,
       })
       setCompanyRows(Array.isArray(res?.data) ? res.data : [])
@@ -506,7 +555,7 @@ export default function AdminGeneratePayslipsPage() {
     } finally {
       setListLoading(false)
     }
-  }, [companyId, branchId, departmentId, toast])
+  }, [companyId, branchId, departmentId, recentModuleFilter, toast])
 
   useEffect(() => {
     if (canManagePayslips) loadCompanySummary()
@@ -644,33 +693,44 @@ export default function AdminGeneratePayslipsPage() {
     if (!canManagePayslips) return
     if (!finalizeReady) {
       toast({
-        title: 'Select scope or employee',
-        description: 'Choose company, branch, or department — or enter a single employee user ID.',
+        title: isExecomModule ? 'Select pay dates' : 'Select scope or employee',
+        description: isExecomModule
+          ? 'Choose a pay period before generating EXECOM payroll.'
+          : 'Choose company, branch, or department — or enter a single employee user ID.',
         variant: 'destructive',
       })
       return
     }
     setGenerating(true)
     try {
-      const res = await adminGeneratePayslips(bulkPayload)
+      const res = isExecomModule
+        ? await adminGenerateExecomPayroll(execomBulkPayload)
+        : await adminGeneratePayslips(bulkPayload)
       toast({
-        title: res?.queued === false ? 'Payslips generated' : 'Payroll draft queued',
+        title: res?.queued === false ? 'Payslips generated' : isExecomModule ? 'EXECOM payroll draft queued' : 'Payroll draft queued',
         description:
           res?.queued === false
             ? `${Number(res?.generated_count ?? res?.employee_count ?? 0)} draft payslip${Number(res?.generated_count ?? res?.employee_count ?? 0) === 1 ? '' : 's'} are ready.`
-            : 'Finalize Payroll will open now while Redis computes employee rows in the background.',
+            : isExecomModule
+              ? 'The EXECOM review page will open while Redis computes fixed Basic Pay rows in the background.'
+              : 'Finalize Payroll will open now while Redis computes employee rows in the background.',
       })
       loadCompanySummary()
       const q = new URLSearchParams(buildFinalizeQuery().toString())
       if (res?.pay_period_start) q.set('from_date', String(res.pay_period_start))
       if (res?.pay_period_end) q.set('to_date', String(res.pay_period_end))
-      navigate(`${hrBase}/compensation/finalize-payroll?${q.toString()}`)
+      if (res?.payroll_batch_run_id) q.set('batch_run_id', String(res.payroll_batch_run_id))
+      navigate(
+        isExecomModule
+          ? `${hrBase}/execom/payroll/finalize?${q.toString()}`
+          : `${hrBase}/compensation/finalize-payroll?${q.toString()}`,
+      )
     } catch (e) {
       toast({ title: 'Generate failed', description: e.message || 'Failed to queue payslip generation', variant: 'destructive' })
     } finally {
       setGenerating(false)
     }
-  }, [canManagePayslips, finalizeReady, toast, bulkPayload, loadCompanySummary, buildFinalizeQuery, navigate, hrBase])
+  }, [canManagePayslips, finalizeReady, toast, bulkPayload, execomBulkPayload, isExecomModule, loadCompanySummary, buildFinalizeQuery, navigate, hrBase])
 
   const handleViewBatch = (row) => {
     const q = new URLSearchParams()
@@ -682,7 +742,14 @@ export default function AdminGeneratePayslipsPage() {
     if (row?.pay_period_end) q.set('to_date', String(row.pay_period_end))
     if (row?.pay_cycle_id != null) q.set('pay_cycle_id', String(row.pay_cycle_id))
     else if (row?.pay_cycle_source === 'company_default') q.set('use_company_default', 'true')
-    navigate(`${hrBase}/compensation/finalize-payroll?${q.toString()}`)
+    if (row?.payroll_batch_run_id != null) q.set('batch_run_id', String(row.payroll_batch_run_id))
+    const isExecomRow =
+      row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
+    navigate(
+      isExecomRow
+        ? `${hrBase}/execom/payroll/finalize?${q.toString()}`
+        : `${hrBase}/compensation/finalize-payroll?${q.toString()}`,
+    )
   }
 
   const openDeleteBatchDialog = (row) => {
@@ -862,7 +929,7 @@ export default function AdminGeneratePayslipsPage() {
     }
   }
 
-  if (!canManagePayslips) {
+  if (!canManagePayslips && !(canManageRegularPayslips || canViewExecom)) {
     return (
       <TooltipProvider>
         <div className={cn(PAYSLIP_MODULE_SHELL, PAYSLIP_STACK)}>
@@ -870,7 +937,28 @@ export default function AdminGeneratePayslipsPage() {
             <CardHeader>
               <CardTitle className="text-foreground">Bulk payslip generation</CardTitle>
               <CardDescription>
-                You do not have permission to generate payslips.
+                You do not have permission to generate payslips or EXECOM payroll.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      </TooltipProvider>
+    )
+  }
+
+  if (!canManagePayslips) {
+    return (
+      <TooltipProvider>
+        <div className={cn(PAYSLIP_MODULE_SHELL, PAYSLIP_STACK)}>
+          <Card className={cn('mx-auto max-w-lg', CARD_SHELL)}>
+            <CardHeader>
+              <CardTitle className="text-foreground">
+                {isExecomModule ? 'EXECOM payroll generation' : 'Bulk payslip generation'}
+              </CardTitle>
+              <CardDescription>
+                {isExecomModule
+                  ? 'You do not have permission to generate EXECOM payroll drafts.'
+                  : 'You do not have permission to generate regular payslips.'}
               </CardDescription>
             </CardHeader>
           </Card>
@@ -894,12 +982,39 @@ export default function AdminGeneratePayslipsPage() {
                 Payroll · Compensation
               </Badge>
               <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-foreground md:text-[34px]">
-                Bulk Payslip Generation
+                {isExecomModule ? 'EXECOM Payroll Generation' : 'Bulk Payslip Generation'}
               </h1>
               <p className="max-w-2xl text-[15px] font-medium leading-7 text-muted-foreground">
-                Generate official PDF payslips for active employees in the selected scope using the same payroll engine as your
-                previews — pay components, statutory deductions, loans, pay cycles, and daily computation.
+                {isExecomModule
+                  ? 'Generate EXECOM payroll drafts using fixed Basic Pay (Auto Present). Allowances, deductions, schedules, and pay cycles follow the same rules as regular payroll.'
+                  : 'Generate official PDF payslips for active employees in the selected scope using the same payroll engine as your previews — pay components, statutory deductions, loans, pay cycles, and daily computation.'}
               </p>
+              {(canManageRegularPayslips || canManageExecomPayroll) && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {canManageRegularPayslips && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={isExecomModule ? 'outline' : 'default'}
+                      className={cn(!isExecomModule && 'bg-brand text-brand-foreground hover:bg-brand-strong')}
+                      onClick={() => setPayrollModule('regular')}
+                    >
+                      Regular Payroll
+                    </Button>
+                  )}
+                  {canManageExecomPayroll && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={isExecomModule ? 'default' : 'outline'}
+                      className={cn(isExecomModule && 'bg-brand text-brand-foreground hover:bg-brand-strong')}
+                      onClick={() => setPayrollModule('execom')}
+                    >
+                      EXECOM Payroll
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
             <div className="pointer-events-none relative hidden min-h-[150px] items-center justify-center md:flex" aria-hidden>
               <div className="absolute inset-y-8 right-0 w-full bg-[radial-gradient(circle,#fb923c_1.4px,transparent_1.4px)] bg-size-[18px_18px] opacity-70 dark:opacity-25" />
@@ -918,8 +1033,11 @@ export default function AdminGeneratePayslipsPage() {
           </div>
         </div>
 
-        {/* ── Two-Column Layout ── */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px] lg:items-start">
+        {/* ── Generation Layout ── */}
+        <div className={cn(
+          'grid grid-cols-1 gap-6 lg:items-start',
+          isExecomModule ? 'lg:grid-cols-1' : 'lg:grid-cols-[1fr_400px]',
+        )}>
           {/* ── LEFT: Generation Parameters (70%) ── */}
           <div className="space-y-6">
             <Card className={CARD_SHELL}>
@@ -931,100 +1049,106 @@ export default function AdminGeneratePayslipsPage() {
                   <div>
                     <CardTitle className="text-lg font-bold text-foreground @md:text-xl">Generation Parameters</CardTitle>
                     <CardDescription className="text-sm font-normal text-muted-foreground">
-                      Narrow the batch by company, branch, and department. Choose a pay cycle or use company defaults.
+                      {isExecomModule
+                        ? 'Choose the pay period and PDF options for all active EXECOM profiles.'
+                        : 'Narrow the batch by company, branch, and department. Choose a pay cycle or use company defaults.'}
                     </CardDescription>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-8 pt-6">
-                {/* Company Entity — full width with logo */}
-                <div className="space-y-3">
-                  <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
-                    <Building2 className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
-                    Company Entity
-                  </Label>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                    <div
-                      className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm transition-all duration-200 dark:bg-input/35"
-                      aria-hidden
-                    >
-                      {selectedCompanyLogo ? (
-                        <img src={selectedCompanyLogo} alt="" className="max-h-14 max-w-14 object-contain" />
-                      ) : (
-                        <Building2 className="h-7 w-7 text-muted-foreground/50" />
-                      )}
+                {!isExecomModule && (
+                  <>
+                    {/* Company Entity — full width with logo */}
+                    <div className="space-y-3">
+                      <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
+                        <Building2 className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
+                        Company Entity
+                      </Label>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                        <div
+                          className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm transition-all duration-200 dark:bg-input/35"
+                          aria-hidden
+                        >
+                          {selectedCompanyLogo ? (
+                            <img src={selectedCompanyLogo} alt="" className="max-h-14 max-w-14 object-contain" />
+                          ) : (
+                            <Building2 className="h-7 w-7 text-muted-foreground/50" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <Select value={companyId || '__none__'} onValueChange={(v) => setCompanyId(v === '__none__' ? '' : v)}>
+                            <SelectTrigger className={`${SELECT_TRIGGER} h-12 w-full`}>
+                              <SelectValue placeholder="Select company" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">Select company…</SelectItem>
+                              {companies.map((c) => (
+                                <SelectItem key={c.id} value={String(c.id)}>
+                                  {c.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="mt-1.5 text-xs text-muted-foreground">
+                            Choose a company to filter branches and see its logo.
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <Select value={companyId || '__none__'} onValueChange={(v) => setCompanyId(v === '__none__' ? '' : v)}>
-                        <SelectTrigger className={`${SELECT_TRIGGER} h-12 w-full`}>
-                          <SelectValue placeholder="Select company" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Select company…</SelectItem>
-                          {companies.map((c) => (
-                            <SelectItem key={c.id} value={String(c.id)}>
-                              {c.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="mt-1.5 text-xs text-muted-foreground">
-                        Choose a company to filter branches and see its logo.
-                      </p>
+
+                    {/* Branch + Department — two columns */}
+                    <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
+                          <MapPin className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
+                          Branch Location
+                        </Label>
+                        <Select
+                          value={branchId || '__none__'}
+                          onValueChange={(v) => setBranchId(v === '__none__' ? '' : v)}
+                          disabled={!companyId}
+                        >
+                          <SelectTrigger className={SELECT_TRIGGER}>
+                            <SelectValue placeholder={companyId ? 'All branches in company' : 'Select company first'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">All branches (company scope)</SelectItem>
+                            {branches.map((b) => (
+                              <SelectItem key={b.id} value={String(b.id)}>
+                                {b.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
+                          <Users className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
+                          Department
+                        </Label>
+                        <Select
+                          value={departmentId || '__none__'}
+                          onValueChange={(v) => setDepartmentId(v === '__none__' ? '' : v)}
+                          disabled={!branchId}
+                        >
+                          <SelectTrigger className={SELECT_TRIGGER}>
+                            <SelectValue placeholder={branchId ? 'All departments in branch' : 'Select branch first'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">All departments (branch scope)</SelectItem>
+                            {departments.map((d) => (
+                              <SelectItem key={d.id} value={String(d.id)}>
+                                {d.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
-                  </div>
-                </div>
-
-                {/* Branch + Department — two columns */}
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
-                      <MapPin className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
-                      Branch Location
-                    </Label>
-                    <Select
-                      value={branchId || '__none__'}
-                      onValueChange={(v) => setBranchId(v === '__none__' ? '' : v)}
-                      disabled={!companyId}
-                    >
-                      <SelectTrigger className={SELECT_TRIGGER}>
-                        <SelectValue placeholder={companyId ? 'All branches in company' : 'Select company first'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">All branches (company scope)</SelectItem>
-                        {branches.map((b) => (
-                          <SelectItem key={b.id} value={String(b.id)}>
-                            {b.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
-                      <Users className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
-                      Department
-                    </Label>
-                    <Select
-                      value={departmentId || '__none__'}
-                      onValueChange={(v) => setDepartmentId(v === '__none__' ? '' : v)}
-                      disabled={!branchId}
-                    >
-                      <SelectTrigger className={SELECT_TRIGGER}>
-                        <SelectValue placeholder={branchId ? 'All departments in branch' : 'Select branch first'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">All departments (branch scope)</SelectItem>
-                        {departments.map((d) => (
-                          <SelectItem key={d.id} value={String(d.id)}>
-                            {d.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+                  </>
+                )}
 
                 {/* Pay Cycle — full width */}
                 <div className="space-y-2">
@@ -1147,13 +1271,13 @@ export default function AdminGeneratePayslipsPage() {
             <div
               className={cn(
                 'overflow-hidden rounded-2xl border bg-card shadow-sm shadow-slate-900/3 dark:shadow-black/25',
-                scopeReady
+                (isExecomModule ? execomReady : scopeReady)
                   ? 'border-brand/35 ring-1 ring-brand/10'
                   : 'border-border/80',
               )}
             >
               <div className="p-5 md:p-6">
-                {scopeReady && (
+                {!isExecomModule && scopeReady && (
                   <div className="mb-4 overflow-hidden rounded-full">
                     <Progress value={scopeReadiness} className="h-1.5" indicatorClassName="bg-brand" />
                   </div>
@@ -1161,11 +1285,17 @@ export default function AdminGeneratePayslipsPage() {
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                   <div className="max-w-2xl space-y-2">
                     <p className="text-[17px] font-semibold leading-snug text-foreground">
-                      {scopeReady
+                      {isExecomModule
+                        ? (execomReady ? 'Ready to generate EXECOM payroll' : 'Choose pay dates for EXECOM payroll')
+                        : scopeReady
                         ? `Ready to generate · ${activeEmployees} employee${activeEmployees === 1 ? '' : 's'} in scope`
                         : 'Choose filters to estimate your batch'}
                     </p>
-                    {scopeReady ? (
+                    {isExecomModule ? (
+                      <p className="text-sm font-normal text-muted-foreground">
+                        All active EXECOM profiles will be included. Fixed Basic Pay is used with Auto Present attendance.
+                      </p>
+                    ) : scopeReady ? (
                       recentListNetTotal != null && companyRows.length > 0 ? (
                         <p className="text-sm font-normal leading-relaxed text-muted-foreground">
                           <span className="text-xl font-semibold tabular-nums text-brand">
@@ -1185,21 +1315,23 @@ export default function AdminGeneratePayslipsPage() {
                     )}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="default"
-                      disabled={!scopeReady || samplePreviewLoading}
-                      className="h-10 min-w-[168px] rounded-xl border-border/80 bg-background text-sm font-semibold text-foreground shadow-sm hover:bg-muted disabled:opacity-60 dark:bg-input/35"
-                      onClick={handleViewSamplePreview}
-                    >
-                      {samplePreviewLoading ? (
-                        <Loader2 className="mr-2 h-4 w-4 shrink-0 animate-spin" />
-                      ) : (
-                        <FileText className="mr-2 h-4 w-4 shrink-0" />
-                      )}
-                      View Sample Preview
-                    </Button>
+                    {!isExecomModule && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="default"
+                        disabled={!scopeReady || samplePreviewLoading}
+                        className="h-10 min-w-[168px] rounded-xl border-border/80 bg-background text-sm font-semibold text-foreground shadow-sm hover:bg-muted disabled:opacity-60 dark:bg-input/35"
+                        onClick={handleViewSamplePreview}
+                      >
+                        {samplePreviewLoading ? (
+                          <Loader2 className="mr-2 h-4 w-4 shrink-0 animate-spin" />
+                        ) : (
+                          <FileText className="mr-2 h-4 w-4 shrink-0" />
+                        )}
+                        View Sample Preview
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       size="lg"
@@ -1212,7 +1344,7 @@ export default function AdminGeneratePayslipsPage() {
                       )}
                     >
                       {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                      {generating ? 'Queuing…' : 'Generate Payslips'}
+                      {generating ? 'Queuing…' : isExecomModule ? 'Generate EXECOM Draft' : 'Generate Payslips'}
                     </Button>
                   </div>
                 </div>
@@ -1221,21 +1353,22 @@ export default function AdminGeneratePayslipsPage() {
           </div>
 
           {/* ── RIGHT: Live Processing Summary (30%) ── */}
-          <div className="lg:sticky lg:top-6">
-            <Card className={cn(CARD_SHELL, 'overflow-hidden')}>
-              <div className="bg-linear-to-br from-transparent via-transparent to-brand/5 dark:to-brand/10">
-                <CardHeader className="pb-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="text-lg font-bold text-foreground">Processing Summary</CardTitle>
-                      <CardDescription className="text-xs font-normal text-muted-foreground">
-                        Live estimate for current filters
-                      </CardDescription>
+          {!isExecomModule && (
+            <div className="lg:sticky lg:top-6">
+              <Card className={cn(CARD_SHELL, 'overflow-hidden')}>
+                <div className="bg-linear-to-br from-transparent via-transparent to-brand/5 dark:to-brand/10">
+                  <CardHeader className="pb-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-lg font-bold text-foreground">Processing Summary</CardTitle>
+                        <CardDescription className="text-xs font-normal text-muted-foreground">
+                          Live estimate for current filters
+                        </CardDescription>
+                      </div>
+                      {previewLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                     </div>
-                    {previewLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-5 pt-5">
+                  </CardHeader>
+                  <CardContent className="space-y-5 pt-5">
                   {/* Circular Progress Ring */}
                   <div className="flex justify-center py-2">
                     <CircularProgress value={scopeReady ? scopeReadiness : 0} size={160} strokeWidth={10}>
@@ -1334,6 +1467,7 @@ export default function AdminGeneratePayslipsPage() {
               </div>
             </Card>
           </div>
+          )}
         </div>
 
         {/* ── Recent Payslips Table ── */}
@@ -1350,17 +1484,28 @@ export default function AdminGeneratePayslipsPage() {
                 </CardDescription>
               </div>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={loadCompanySummary}
-              disabled={listLoading}
-              className="shrink-0 rounded-lg"
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${listLoading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              <select
+                value={recentModuleFilter}
+                onChange={(event) => setRecentModuleFilter(event.target.value)}
+                className="h-9 rounded-lg border border-border/80 bg-background px-2.5 text-xs font-semibold text-foreground shadow-sm dark:bg-input/35"
+              >
+                <option value="all">All Modules</option>
+                <option value="regular">Regular</option>
+                <option value="execom">EXECOM</option>
+              </select>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={loadCompanySummary}
+                disabled={listLoading}
+                className="shrink-0 rounded-lg"
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${listLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="pt-6">
             {listLoading ? (
@@ -1392,6 +1537,9 @@ export default function AdminGeneratePayslipsPage() {
                 <Table className="w-full min-w-[880px] border-0 border-collapse-separate [border-spacing:0] [&_td]:border-0 [&_th]:border-0 [&_tr]:border-0">
                   <TableHeader className="[&_tr]:border-0">
                     <TableRow className="border-0 bg-background hover:bg-background dark:bg-input/25 dark:hover:bg-input/25">
+                      <TableHead className="w-[110px] text-[13px] font-bold tracking-normal text-foreground">
+                        Module
+                      </TableHead>
                       <TableHead className="min-w-[200px] text-[13px] font-bold tracking-normal text-foreground">
                         Company
                       </TableHead>
@@ -1416,7 +1564,9 @@ export default function AdminGeneratePayslipsPage() {
                   <TableBody className="[&_tr]:border-0 [&_tr]:transition-colors divide-y divide-border/70">
                     {companyRows.map((r) => {
                       const key = rowGroupKey(r)
-                      const logo = resolveLogoUrl(r.company_logo_url)
+                      const isExecomRow = r.payroll_module === 'execom' || String(r.module_label || '').toLowerCase().includes('execom')
+                      const logo = isExecomRow ? null : resolveLogoUrl(r.company_logo_url)
+                      const displayCompanyName = isExecomRow ? 'Execom' : (r.company_name ?? '—')
                       const showDelete = Boolean(r.can_delete)
                       const deleteDisabled = !r.can_delete || deletingBatchId === r.payroll_batch_run_id
                       const batchFinalized = String(r.batch_run_status || '').toLowerCase() === 'finalized'
@@ -1428,6 +1578,19 @@ export default function AdminGeneratePayslipsPage() {
                           className="group border-0 transition-colors hover:bg-muted/35"
                         >
                           <TableCell className="py-4">
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'rounded-full text-[11px] font-semibold',
+                                isExecomRow
+                                  ? 'border-violet-300 bg-violet-50 text-violet-900 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200'
+                                  : 'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200',
+                              )}
+                            >
+                              {r.module_label || (isExecomRow ? 'EXECOM' : 'Regular')}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-4">
                             <div className="flex items-center gap-3">
                               <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/80 bg-background transition-shadow group-hover:shadow-sm dark:bg-input/35">
                                 {logo ? (
@@ -1436,7 +1599,7 @@ export default function AdminGeneratePayslipsPage() {
                                   <Building2 className="h-4 w-4 text-muted-foreground" />
                                 )}
                               </div>
-                              <span className="text-base font-bold text-foreground">{r.company_name ?? '—'}</span>
+                              <span className="text-base font-bold text-foreground">{displayCompanyName}</span>
                             </div>
                           </TableCell>
                           <TableCell className="py-4">

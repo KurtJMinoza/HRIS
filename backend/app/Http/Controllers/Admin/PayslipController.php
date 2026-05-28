@@ -107,6 +107,7 @@ class PayslipController extends Controller
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date'],
+            'payroll_module' => ['nullable', 'string', 'in:all,regular,execom'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
@@ -178,6 +179,10 @@ class PayslipController extends Controller
         if (! empty($v['to_date'])) {
             $q->whereDate('pay_period_start', '<=', $v['to_date']);
         }
+        $requestedModule = strtolower(trim((string) ($v['payroll_module'] ?? 'all')));
+        if (in_array($requestedModule, [PayrollBatchRun::MODULE_STANDARD, PayrollBatchRun::MODULE_EXECOM], true)) {
+            $q->where('payroll_module', $requestedModule);
+        }
 
         $paginatedRuns = $q->paginate($perPage, ['*'], 'page', $page);
         $rows = $paginatedRuns->getCollection()->map(function (PayrollBatchRun $run) {
@@ -203,18 +208,13 @@ class PayslipController extends Controller
             $processedEmployees = max((int) ($run->processed_employees ?? 0), $payslipCount);
             $failedEmployees = (int) ($run->failed_employees ?? 0);
 
-            $allPayslipsFinalized = $payslipCount > 0 && $finalizedCount >= $payslipCount;
             $runFinalized = $batchStatus === PayrollBatchRun::STATUS_FINALIZED;
-            $isFinalized = $runFinalized || $allPayslipsFinalized;
-            $partiallyFinalized = $finalizedCount > 0 && ! $allPayslipsFinalized && ! $runFinalized;
+            $isFinalized = $runFinalized;
 
-            // UI status must match batch run state so "Draft" is not shown while queued/processing.
-            if ($isFinalized) {
+            // Single source of truth for status: payroll_batch_runs.status.
+            if ($batchStatus === PayrollBatchRun::STATUS_FINALIZED) {
                 $displayStatus = Payslip::STATUS_FINALIZED;
                 $displayLabel = 'Finalized';
-            } elseif ($partiallyFinalized) {
-                $displayStatus = 'partial';
-                $displayLabel = 'Partially finalized';
             } elseif ($batchStatus === PayrollBatchRun::STATUS_QUEUED) {
                 $displayStatus = 'queued';
                 $displayLabel = 'Queued';
@@ -232,18 +232,21 @@ class PayslipController extends Controller
                 $displayLabel = 'Draft';
             }
 
-            // Delete/cancel is allowed until any payslip in the run has been finalized.
-            $canDelete = ! $isFinalized
-                && $finalizedCount === 0
-                && (
-                    $batchStatus === PayrollBatchRun::STATUS_DRAFT
-                    || $batchStatus === PayrollBatchRun::STATUS_QUEUED
-                    || $batchStatus === PayrollBatchRun::STATUS_PROCESSING
-                    || $batchStatus === PayrollBatchRun::STATUS_FAILED
-                );
+            $canDelete = in_array($batchStatus, [
+                PayrollBatchRun::STATUS_DRAFT,
+                PayrollBatchRun::STATUS_QUEUED,
+                PayrollBatchRun::STATUS_PROCESSING,
+                PayrollBatchRun::STATUS_FAILED,
+            ], true);
+
+            $payrollModule = strtolower(trim((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD))) === PayrollBatchRun::MODULE_EXECOM
+                ? PayrollBatchRun::MODULE_EXECOM
+                : PayrollBatchRun::MODULE_STANDARD;
 
             return [
                 'payroll_batch_run_id' => (int) $run->id,
+                'payroll_module' => $payrollModule,
+                'module_label' => $payrollModule === PayrollBatchRun::MODULE_EXECOM ? 'EXECOM' : 'Regular',
                 'company_id' => $resolvedCompanyId,
                 'company_name' => $resolvedCompanyName,
                 'company_logo_url' => $this->publicCompanyLogoUrl($resolvedCompanyLogo),
@@ -302,8 +305,9 @@ class PayslipController extends Controller
         $companyPart = $company !== null ? (string) $company : 'run:'.((int) ($row['payroll_batch_run_id'] ?? 0));
         $start = (string) ($row['pay_period_start'] ?? '');
         $end = (string) ($row['pay_period_end'] ?? '');
+        $module = strtolower(trim((string) ($row['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)));
 
-        return $companyPart.'|'.$start.'|'.$end;
+        return $companyPart.'|'.$start.'|'.$end.'|'.$module;
     }
 
     /**
@@ -472,6 +476,25 @@ class PayslipController extends Controller
         if (! empty($v['employee_id'])) {
             $user = User::query()->payrollEmployees()->active()->findOrFail((int) $v['employee_id']);
             $this->dataScopeService->ensureEmployeeAccessible($request->user(), $user);
+            $periodStartForEligibility = ! empty($periodInput['from_date'])
+                ? \Carbon\Carbon::parse((string) $periodInput['from_date'])->startOfDay()
+                : null;
+            $periodEndForEligibility = ! empty($periodInput['to_date'])
+                ? \Carbon\Carbon::parse((string) $periodInput['to_date'])->startOfDay()
+                : null;
+            $regularEligible = $this->payrollEligibility->query(
+                isset($v['company_id']) ? (int) $v['company_id'] : null,
+                isset($v['branch_id']) ? (int) $v['branch_id'] : null,
+                isset($v['department_id']) ? (int) $v['department_id'] : null,
+                $periodStartForEligibility,
+                $periodEndForEligibility,
+                $request->user(),
+                $this->dataScopeService,
+                PayrollBatchRun::MODULE_STANDARD
+            )->whereKey((int) $user->id)->exists();
+            if (! $regularEligible) {
+                abort(422, 'Selected employee is EXECOM-active for this period and cannot be generated in Regular Payroll.');
+            }
             // Single-employee generation should be quick and usable for preview immediately.
             // PDFs are not generated here to keep the endpoint responsive.
             $result = $this->payslipService->generatePayslip($user, $periodInput, withPdf: false);
@@ -508,7 +531,8 @@ class PayslipController extends Controller
             $periodStartForEligibility,
             $periodEndForEligibility,
             $actor,
-            $this->dataScopeService
+            $this->dataScopeService,
+            PayrollBatchRun::MODULE_STANDARD
         );
         if (is_array($v['employee_ids'] ?? null) && count($v['employee_ids']) > 0) {
             $probeQ->whereIn('id', $v['employee_ids']);
@@ -556,6 +580,7 @@ class PayslipController extends Controller
 
         $employeeCount = (int) (clone $probeQ)->count();
         $runPayload = [
+            'payroll_module' => PayrollBatchRun::MODULE_STANDARD,
             'batch_key' => $batchKey,
             'company_id' => $resolvedCompanyId,
             'branch_id' => isset($v['branch_id']) ? (int) $v['branch_id'] : null,
@@ -623,6 +648,15 @@ class PayslipController extends Controller
         $status = strtolower(trim((string) ($payslip->status ?? '')));
         $immutableStatuses = Payslip::lockingStatuses();
         $isFinalized = in_array($status, $immutableStatuses, true);
+
+        if ((string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM) {
+            return response()->json(PayslipStoredSnapshotViewPayload::fromStoredPayslip(
+                $payslip,
+                $employee,
+                $this->payslipService,
+                null
+            ));
+        }
 
         if (! $isFinalized) {
             $periodInput = [

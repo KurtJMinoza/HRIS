@@ -4242,6 +4242,11 @@ export default function AdminEmployeeProfile() {
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                   <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
                   <RoleBadge user={employee} />
+                  {employee.is_execom || employee.execom_badge ? (
+                    <Badge className="border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-200">
+                      EXECOM
+                    </Badge>
+                  ) : null}
                   <span className="inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-0.5 text-xs font-medium text-muted-foreground dark:border-white/10">
                     <CreditCard className="size-3 shrink-0" />
                     {employee.employee_code || employee.employee_id || `EMP-${employee.id}`}

@@ -12,7 +12,12 @@ class PayrollEmployee extends Model
 
     public const STATUS_FINALIZED = 'finalized';
 
+    public const MODULE_STANDARD = 'standard';
+
+    public const MODULE_EXECOM = 'execom';
+
     protected $fillable = [
+        'payroll_module',
         'payslip_id',
         'payroll_batch_run_id',
         'user_id',

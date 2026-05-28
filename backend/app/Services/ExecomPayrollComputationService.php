@@ -6,6 +6,8 @@ use App\Models\ExecomEmployeeProfile;
 use App\Models\ExecomPayrollSetting;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
+use RuntimeException;
 
 class ExecomPayrollComputationService
 {
@@ -31,11 +33,7 @@ class ExecomPayrollComputationService
         array $periodContext = [],
     ): array {
         $settings ??= ExecomPayrollSetting::forCompany($profile->company_id ? (int) $profile->company_id : null);
-        $salaryBasis = $this->resolvePeriodFixedSalary($profile, $employee, $from, $to);
-        $fixedSalary = (float) $salaryBasis['amount'];
-        $monthlyFixedSalary = (float) $salaryBasis['monthly_fixed_salary'];
-        $workingDays = $this->resolveCompanyWorkingDays($periodContext);
-        $dailyRate = $workingDays > 0 ? round($monthlyFixedSalary / $workingDays, 2) : 0.0;
+
         $compensation = $this->calculator->buildEmployeeCompensationSummary($employee, [
             'as_of_date' => $to->toDateString(),
             'proration_factor' => 1.0,
@@ -43,6 +41,20 @@ class ExecomPayrollComputationService
             'include_deduction_schedule_catalog' => false,
             'cache' => false,
         ]);
+
+        $salarySources = $this->resolveExecomSalarySources($profile, $employee, $compensation);
+        if ($salarySources['resolved_monthly'] <= 0.0) {
+            throw new RuntimeException(sprintf(
+                'EXECOM payroll cannot proceed: no salary source for %s (user_id=%d). Set EXECOM fixed salary, Employee Compensation basic salary, or employee monthly salary.',
+                trim((string) ($employee->display_name ?? $employee->name ?? 'employee')),
+                (int) $employee->id
+            ));
+        }
+
+        $monthlyFixedSalary = (float) $salarySources['resolved_monthly'];
+        $workingDays = $this->resolveCompanyWorkingDays($periodContext);
+        $dailyRate = $workingDays > 0 ? round($monthlyFixedSalary / $workingDays, 2) : 0.0;
+
         $statutoryMonthly = $this->calculator->calculateAllStatutoryContributions($monthlyFixedSalary, [
             'sss' => $monthlyFixedSalary,
             'philhealth' => $monthlyFixedSalary,
@@ -68,6 +80,7 @@ class ExecomPayrollComputationService
         $withholdingMonthly = (bool) $settings->apply_government_deductions
             ? round((float) ($withholding['withholding_per_month'] ?? 0), 2)
             : 0.0;
+
         $compensationForSchedule = $this->compensationSummaryWithExecomSalary(
             $compensation,
             $monthlyFixedSalary,
@@ -78,25 +91,43 @@ class ExecomPayrollComputationService
             $from,
             $to
         );
+
+        $scheduleReferenceDate = ! empty($periodContext['selected_pay_date'])
+            ? Carbon::parse((string) $periodContext['selected_pay_date'])->startOfDay()
+            : $to->copy()->startOfDay();
         $deductionSchedule = $this->deductionScheduleService->summarizeForPayrollComputation(
             $employee,
-            $this->resolveScheduleReferenceDate($periodContext, $to),
+            $scheduleReferenceDate,
             $compensationForSchedule
         );
 
+        $periodBasic = $this->resolveExecomPeriodBasicPay($employee, $compensationForSchedule, $deductionSchedule, $periodContext, $from, $to);
+        $fixedSalary = (float) $periodBasic['amount'];
+        if ($fixedSalary <= 0.0) {
+            throw new RuntimeException(sprintf(
+                'EXECOM payroll cannot proceed: resolved Basic Pay is zero for %s (user_id=%d) on pay date %s. Verify basic salary schedule and compensation setup.',
+                trim((string) ($employee->display_name ?? $employee->name ?? 'employee')),
+                (int) $employee->id,
+                (string) ($periodContext['selected_pay_date'] ?? $to->toDateString())
+            ));
+        }
+
+        $this->logExecomPayrollResolution($employee, $profile, $periodContext, $salarySources, $periodBasic, $deductionSchedule);
+
         $earningLines = [[
-            'key' => 'execom_fixed_salary',
-            'label' => 'Basic Salary',
-            'name' => 'Basic Salary',
-            'category' => 'basic_salary',
+            'key' => 'execom_basic_pay',
+            'label' => 'Basic Pay',
+            'name' => 'Basic Pay',
+            'category' => 'basic_pay',
             'component_code' => 'BASIC_SALARY',
             'amount' => $fixedSalary,
             'resolved_amount' => $fixedSalary,
             'full_monthly' => $monthlyFixedSalary,
-            'schedule_type' => (string) $salaryBasis['basis'],
+            'schedule_type' => (string) $periodBasic['schedule_type'],
             'metadata' => [
                 'payroll_module' => 'execom',
-                'source' => 'execom_fixed_salary',
+                'source' => (string) $salarySources['salary_source_used'],
+                'salary_source_used' => (string) $salarySources['salary_source_used'],
             ],
         ]];
 
@@ -168,12 +199,6 @@ class ExecomPayrollComputationService
                 is_array($deductionSchedule['custom_lines'] ?? null) ? $deductionSchedule['custom_lines'] : []
             )
             : [];
-        if ((bool) $settings->apply_custom_deductions) {
-            foreach ($customDeductionLines as &$line) {
-                $line['category'] = (string) ($line['category'] ?? 'deduction');
-            }
-            unset($line);
-        }
 
         $totalDeductions = round($employeeStatutory + $withholdingThisPeriod + $customDeductions, 2);
         $netPay = round($grossPay - $totalDeductions, 2);
@@ -195,11 +220,16 @@ class ExecomPayrollComputationService
                 'fixed_salary' => $monthlyFixedSalary,
                 'basic_salary' => $fixedSalary,
                 'basic_salary_period' => $fixedSalary,
-                'total_pay' => $fixedSalary,
+                'basic_pay' => $fixedSalary,
                 'basic_pay_this_period' => $fixedSalary,
-                'basic_salary_schedule_type' => 'execom_'.$salaryBasis['basis'],
-                'basic_salary_schedule_factor' => (float) $salaryBasis['factor'],
-                'execom_salary_basis' => (string) $salaryBasis['basis'],
+                'total_pay' => $fixedSalary,
+                'basic_salary_schedule_type' => (string) $periodBasic['schedule_type'],
+                'basic_salary_schedule_factor' => (float) $periodBasic['factor'],
+                'execom_salary_basis' => (string) $salarySources['salary_source_used'],
+                'execom_salary_source_used' => (string) $salarySources['salary_source_used'],
+                'execom_fixed_salary' => (float) $salarySources['execom_fixed_salary'],
+                'employee_compensation_salary' => (float) $salarySources['employee_compensation_salary'],
+                'employee_monthly_salary' => (float) $salarySources['employee_monthly_salary'],
                 'attendance_status' => 'Auto Present',
                 'absent_days' => 0,
                 'late_minutes' => 0,
@@ -230,6 +260,8 @@ class ExecomPayrollComputationService
                 'compensation_breakdown' => array_merge($compensation, [
                     'basic_salary' => $fixedSalary,
                     'basic_salary_period' => $fixedSalary,
+                    'basic_pay' => $fixedSalary,
+                    'basic_pay_this_period' => $fixedSalary,
                     'monthly_salary' => $monthlyFixedSalary,
                     'fixed_salary' => $monthlyFixedSalary,
                     'payroll_module' => 'execom',
@@ -263,7 +295,7 @@ class ExecomPayrollComputationService
                     'unpaid_leave_days_count' => 0,
                     'payroll_impact' => 0.0,
                     'payroll_impact_deduction' => 0.0,
-                    'payroll_note' => 'EXECOM employees are treated as present for payroll; fixed salary is independent from attendance logs.',
+                    'payroll_note' => 'EXECOM employees are treated as present for payroll; fixed Basic Pay is independent from attendance logs.',
                 ],
                 'holiday_premium_breakdown' => [],
                 'total_worked_minutes' => 0,
@@ -276,7 +308,7 @@ class ExecomPayrollComputationService
                 'overtime_total_amount' => 0.0,
                 'attendance_proration' => [
                     'factor' => 1.0,
-                    'source' => 'execom_fixed_salary',
+                    'source' => 'execom_fixed_basic_pay',
                 ],
                 'execom_settings' => [
                     'apply_government_deductions' => (bool) $settings->apply_government_deductions,
@@ -288,6 +320,214 @@ class ExecomPayrollComputationService
                 ],
             ],
         ];
+    }
+
+    /**
+     * @return array{
+     *     execom_fixed_salary: float,
+     *     employee_compensation_salary: float,
+     *     employee_monthly_salary: float,
+     *     resolved_monthly: float,
+     *     salary_source_used: ?string
+     * }
+     */
+    private function resolveExecomSalarySources(ExecomEmployeeProfile $profile, User $employee, array $compensation): array
+    {
+        $profileFixed = round(max(0.0, (float) $profile->fixed_salary), 2);
+        $compensationBasic = round(max(0.0, (float) ($compensation['basic_salary'] ?? 0)), 2);
+        $employeeMonthly = round(max(0.0, (float) ($employee->monthly_salary ?? $employee->monthly_rate ?? 0)), 2);
+
+        $source = null;
+        $resolvedMonthly = 0.0;
+        if ($profileFixed > 0.0) {
+            $source = 'execom_fixed_salary';
+            $resolvedMonthly = $profileFixed;
+        } elseif ($compensationBasic > 0.0) {
+            $source = 'employee_compensation_basic_salary';
+            $resolvedMonthly = $compensationBasic;
+        } elseif ($employeeMonthly > 0.0) {
+            $source = 'employee_monthly_salary';
+            $resolvedMonthly = $employeeMonthly;
+        }
+
+        return [
+            'execom_fixed_salary' => $profileFixed,
+            'employee_compensation_salary' => $compensationBasic,
+            'employee_monthly_salary' => $employeeMonthly,
+            'resolved_monthly' => $resolvedMonthly,
+            'salary_source_used' => $source,
+        ];
+    }
+
+    /**
+     * Resolve period Basic Pay using the same pay-component schedule resolver as Regular Payroll.
+     *
+     * @param  array<string, mixed>  $compensationForSchedule
+     * @param  array<string, mixed>  $deductionSchedule
+     * @param  array<string, mixed>  $periodContext
+     * @return array{amount: float, factor: float, schedule_type: string}
+     */
+    private function resolveExecomPeriodBasicPay(
+        User $employee,
+        array $compensationForSchedule,
+        array $deductionSchedule,
+        array $periodContext,
+        Carbon $from,
+        Carbon $to,
+    ): array {
+        foreach (is_array($deductionSchedule['earning_lines'] ?? null) ? $deductionSchedule['earning_lines'] : [] as $line) {
+            if (! is_array($line) || empty($line['is_basic_salary_line'])) {
+                continue;
+            }
+
+            $amount = round(max(0.0, (float) ($line['scheduled_this_period'] ?? 0)), 2);
+            $resolution = is_array($line['pay_component_resolution'] ?? null) ? $line['pay_component_resolution'] : [];
+
+            return [
+                'amount' => $amount,
+                'factor' => (float) ($resolution['divisor_applied'] ?? ($amount > 0 && (float) ($compensationForSchedule['basic_salary'] ?? 0) > 0
+                    ? round($amount / (float) $compensationForSchedule['basic_salary'], 6)
+                    : 0.0)),
+                'schedule_type' => (string) ($line['earning_schedule_type'] ?? $resolution['resolved_schedule'] ?? 'both'),
+            ];
+        }
+
+        $selectedPayDate = ! empty($periodContext['selected_pay_date'])
+            ? Carbon::parse((string) $periodContext['selected_pay_date'])->startOfDay()
+            : $to->copy()->startOfDay();
+        $basicLine = collect($compensationForSchedule['earnings'] ?? [])->first(
+            fn ($row) => is_array($row) && strtoupper(trim((string) ($row['code'] ?? ''))) === 'BASIC_SALARY'
+        );
+        if (! is_array($basicLine)) {
+            $basicLine = [
+                'code' => 'BASIC_SALARY',
+                'name' => 'Basic Pay',
+                'computed_amount' => (float) ($compensationForSchedule['basic_salary'] ?? 0),
+                'configured_value' => (float) ($compensationForSchedule['basic_salary'] ?? 0),
+                'is_basic_salary_line' => true,
+            ];
+        }
+
+        $payrollRun = [
+            'user' => $employee,
+            'reference_date' => $to->copy()->startOfDay(),
+            'selected_pay_date' => $selectedPayDate,
+            'segment' => data_get($periodContext, 'pay_cycle_preview.semi_month_segment')
+                ?? data_get($periodContext, 'semi_month_segment'),
+            'pay_cycle_preview' => is_array($periodContext['pay_cycle_preview'] ?? null) ? $periodContext['pay_cycle_preview'] : null,
+            'pay_cycle_code' => (string) ($periodContext['pay_cycle_code'] ?? ''),
+            'pay_period_start' => (string) ($periodContext['pay_period_start'] ?? $from->toDateString()),
+            'pay_period_end' => (string) ($periodContext['pay_period_end'] ?? $to->toDateString()),
+            'period_start' => (string) ($periodContext['pay_period_start'] ?? $from->toDateString()),
+            'period_end' => (string) ($periodContext['pay_period_end'] ?? $to->toDateString()),
+        ];
+        $resolution = $this->deductionScheduleService->resolvePayComponentAmount($basicLine, $payrollRun);
+        $amount = round(max(0.0, (float) ($resolution['applied_amount'] ?? 0)), 2);
+
+        return [
+            'amount' => $amount,
+            'factor' => (float) ($resolution['divisor_applied'] ?? 0.0),
+            'schedule_type' => (string) ($resolution['resolved_schedule'] ?? 'both'),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $salarySources
+     * @param  array{amount: float, factor: float, schedule_type: string}  $periodBasic
+     * @param  array<string, mixed>  $deductionSchedule
+     */
+    private function logExecomPayrollResolution(
+        User $employee,
+        ExecomEmployeeProfile $profile,
+        array $periodContext,
+        array $salarySources,
+        array $periodBasic,
+        array $deductionSchedule,
+    ): void {
+        $payDate = (string) ($periodContext['selected_pay_date'] ?? '');
+        $batchRunId = isset($periodContext['payroll_batch_run_id']) ? (int) $periodContext['payroll_batch_run_id'] : null;
+
+        if (! $this->canWriteExecomPayrollLogs()) {
+            return;
+        }
+
+        Log::info('execom.payroll.resolution', [
+            'payroll_run_id' => $batchRunId,
+            'payroll_batch_run_id' => $batchRunId,
+            'payroll_type' => 'execom',
+            'employee_id' => (int) $employee->id,
+            'employee_name' => trim((string) ($employee->display_name ?? $employee->name ?? '')),
+            'execom_fixed_salary' => (float) $salarySources['execom_fixed_salary'],
+            'employee_compensation_salary' => (float) $salarySources['employee_compensation_salary'],
+            'employee_monthly_salary' => (float) $salarySources['employee_monthly_salary'],
+            'resolved_basic_salary' => (float) $periodBasic['amount'],
+            'resolved_monthly_salary' => (float) $salarySources['resolved_monthly'],
+            'salary_source_used' => (string) ($salarySources['salary_source_used'] ?? ''),
+            'pay_date' => $payDate,
+            'basic_pay_schedule' => (string) $periodBasic['schedule_type'],
+            'basic_pay_schedule_factor' => (float) $periodBasic['factor'],
+        ]);
+
+        foreach (is_array($deductionSchedule['earning_lines'] ?? null) ? $deductionSchedule['earning_lines'] : [] as $line) {
+            if (! is_array($line) || ! empty($line['is_basic_salary_line'])) {
+                continue;
+            }
+            $this->logExecomComponentScheduleLine($employee, $batchRunId, $payDate, $line, 'earning');
+        }
+
+        foreach (is_array($deductionSchedule['custom_lines'] ?? null) ? $deductionSchedule['custom_lines'] : [] as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $this->logExecomComponentScheduleLine($employee, $batchRunId, $payDate, $line, 'deduction');
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function logExecomComponentScheduleLine(
+        User $employee,
+        ?int $batchRunId,
+        string $payDate,
+        array $line,
+        string $componentType,
+    ): void {
+        $scheduled = round((float) ($line['scheduled_this_period'] ?? 0), 2);
+        $applied = round((float) ($line['applied_this_period'] ?? $scheduled), 2);
+        $payrollRunType = (string) ($line['payroll_run_type'] ?? data_get($line, 'pay_component_resolution.payroll_run_type', ''));
+        $schedule = (string) ($line['deduction_schedule_type'] ?? $line['earning_schedule_type'] ?? '');
+        $scheduleApplies = $scheduled > 0.0 || $applied > 0.0;
+
+        if (! $this->canWriteExecomPayrollLogs()) {
+            return;
+        }
+
+        Log::debug('execom.payroll.component_schedule', [
+            'payroll_run_id' => $batchRunId,
+            'payroll_batch_run_id' => $batchRunId,
+            'payroll_type' => 'execom',
+            'employee_id' => (int) $employee->id,
+            'employee_name' => trim((string) ($employee->display_name ?? $employee->name ?? '')),
+            'pay_date' => $payDate,
+            'component_type' => $componentType,
+            'component_code' => (string) ($line['code'] ?? ''),
+            'component_name' => (string) ($line['name'] ?? ''),
+            'component_schedule' => $schedule,
+            'payroll_run_type' => $payrollRunType,
+            'schedule_applies' => $scheduleApplies,
+            'amount' => $applied > 0.0 ? $applied : $scheduled,
+            'skipped_reason' => $scheduleApplies ? null : 'schedule_not_applicable_for_pay_date',
+        ]);
+    }
+
+    private function canWriteExecomPayrollLogs(): bool
+    {
+        try {
+            return function_exists('app') && app()->bound('log');
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /**
@@ -306,15 +546,6 @@ class ExecomPayrollComputationService
         } catch (\Throwable) {
             return 26;
         }
-    }
-
-    private function resolveScheduleReferenceDate(array $periodContext, Carbon $fallback): Carbon
-    {
-        if (! empty($periodContext['selected_pay_date'])) {
-            return Carbon::parse((string) $periodContext['selected_pay_date'])->startOfDay();
-        }
-
-        return $fallback->copy()->startOfDay();
     }
 
     /**
@@ -345,7 +576,8 @@ class ExecomPayrollComputationService
                 $hasBasic = true;
                 $line['computed_amount'] = $monthlyFixedSalary;
                 $line['configured_value'] = $monthlyFixedSalary;
-                $line['name'] = $line['name'] ?? 'Basic Salary';
+                $line['name'] = $line['name'] ?? 'Basic Pay';
+                $line['is_basic_salary_line'] = true;
             }
             $earnings[] = $line;
         }
@@ -354,7 +586,7 @@ class ExecomPayrollComputationService
                 'id' => null,
                 'pay_component_id' => null,
                 'code' => 'BASIC_SALARY',
-                'name' => 'Basic Salary',
+                'name' => 'Basic Pay',
                 'computed_amount' => $monthlyFixedSalary,
                 'configured_value' => $monthlyFixedSalary,
                 'is_basic_salary_line' => true,
@@ -365,9 +597,11 @@ class ExecomPayrollComputationService
         $grossEarnings = collect($earnings)->sum(function ($line): float {
             return is_array($line) ? max(0.0, (float) ($line['computed_amount'] ?? 0)) : 0.0;
         });
+        $preview = is_array($periodContext['pay_cycle_preview'] ?? null) ? $periodContext['pay_cycle_preview'] : null;
 
         return array_merge($compensation, [
             'basic_salary' => $monthlyFixedSalary,
+            'basic_pay' => $monthlyFixedSalary,
             'monthly_salary' => $monthlyFixedSalary,
             'fixed_salary' => $monthlyFixedSalary,
             'earnings' => $earnings,
@@ -383,13 +617,14 @@ class ExecomPayrollComputationService
             'pay_period_start' => (string) ($periodContext['pay_period_start'] ?? $from->toDateString()),
             'pay_period_end' => (string) ($periodContext['pay_period_end'] ?? $to->toDateString()),
             'selected_pay_date' => (string) ($periodContext['selected_pay_date'] ?? $to->toDateString()),
-            'pay_cycle_preview' => is_array($periodContext['pay_cycle_preview'] ?? null) ? $periodContext['pay_cycle_preview'] : null,
-            'pay_cycle_code' => (string) ($periodContext['pay_cycle_code'] ?? ''),
+            'pay_cycle_preview' => $preview,
+            'pay_cycle_code' => (string) ($periodContext['pay_cycle_code'] ?? data_get($preview, 'pay_cycle_code', data_get($preview, 'code', ''))),
+            'semi_month_segment' => data_get($periodContext, 'semi_month_segment', data_get($preview, 'semi_month_segment')),
             '_attendance_proration' => [
                 'factor' => 1.0,
                 'scheduled_workdays' => 0.0,
                 'credited_day_units' => 0.0,
-                'source' => 'execom_fixed_salary',
+                'source' => 'execom_fixed_basic_pay',
             ],
         ]);
     }
@@ -405,35 +640,9 @@ class ExecomPayrollComputationService
         return $code === 'BASIC_SALARY'
             || str_contains($code, 'BASIC_SALARY')
             || $label === 'basic salary'
+            || $label === 'basic pay'
             || $label === 'regular pay / fixed salary'
             || $label === 'regular pay';
-    }
-
-    /**
-     * @return array{amount: float, factor: float, basis: string, monthly_fixed_salary: float}
-     */
-    private function resolvePeriodFixedSalary(ExecomEmployeeProfile $profile, User $employee, Carbon $from, Carbon $to): array
-    {
-        $profileFixed = round(max(0.0, (float) $profile->fixed_salary), 2);
-        $employeeMonthly = round(max(0.0, (float) ($employee->monthly_salary ?? $employee->monthly_rate ?? 0)), 2);
-        $monthlyFixed = $profileFixed > 0.0 ? $profileFixed : $employeeMonthly;
-        $schedule = strtolower(trim((string) ($profile->pay_schedule ?? ExecomEmployeeProfile::PAY_SCHEDULE_PER_PERIOD)));
-
-        if (in_array($schedule, [ExecomEmployeeProfile::PAY_SCHEDULE_MONTHLY_SPLIT, 'monthly_split', 'semi_monthly'], true)) {
-            return [
-                'amount' => round($monthlyFixed / 2, 2),
-                'factor' => 0.5,
-                'basis' => 'monthly_split',
-                'monthly_fixed_salary' => $monthlyFixed,
-            ];
-        }
-
-        return [
-            'amount' => $monthlyFixed,
-            'factor' => 1.0,
-            'basis' => 'fixed_per_period',
-            'monthly_fixed_salary' => $monthlyFixed,
-        ];
     }
 
     /**

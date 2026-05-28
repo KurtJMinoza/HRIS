@@ -39,7 +39,12 @@ class Payslip extends Model
         ];
     }
 
+    public const MODULE_STANDARD = 'standard';
+
+    public const MODULE_EXECOM = 'execom';
+
     protected $fillable = [
+        'payroll_module',
         'user_id',
         'payroll_period_id',
         'payroll_batch_run_id',

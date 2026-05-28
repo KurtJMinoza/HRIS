@@ -645,9 +645,9 @@ class DeductionApplicationService
         }
 
         return match ($raw) {
-            DeductionScheduleSetting::SCHEDULE_15TH, '15', 'first', 'first_half', 'first-half' => DeductionScheduleSetting::SCHEDULE_15TH,
-            DeductionScheduleSetting::SCHEDULE_30TH, '30', 'second', 'second_half', 'second-half', 'end_of_month', 'eom' => DeductionScheduleSetting::SCHEDULE_30TH,
-            DeductionScheduleSetting::SCHEDULE_BOTH, '50/50', 'half', 'split', 'semi-monthly', 'semi_monthly' => DeductionScheduleSetting::SCHEDULE_BOTH,
+            DeductionScheduleSetting::SCHEDULE_15TH, '15', '15th_only', '15_only', 'every_15_only', 'every_15', 'first', 'first_half', 'first-half' => DeductionScheduleSetting::SCHEDULE_15TH,
+            DeductionScheduleSetting::SCHEDULE_30TH, '30', '30th_only', '30_only', 'every_30_only', 'every_30', 'second', 'second_half', 'second-half', 'end_of_month', 'end-of-month', 'eom' => DeductionScheduleSetting::SCHEDULE_30TH,
+            DeductionScheduleSetting::SCHEDULE_BOTH, 'every_payroll', 'every-payroll', 'every_15_and_30', '15_and_30', '15/30', '50/50', 'half', 'split', 'semi-monthly', 'semi_monthly' => DeductionScheduleSetting::SCHEDULE_BOTH,
             default => null,
         };
     }

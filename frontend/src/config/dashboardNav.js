@@ -81,6 +81,12 @@ export const adminNavItems = [
         label: 'Generate Payslips',
         icon: Receipt,
       },
+      {
+        to: '/admin/execom/employees',
+        end: false,
+        label: 'EXECOM Employees',
+        icon: UserCog,
+      },
     ],
   },
 

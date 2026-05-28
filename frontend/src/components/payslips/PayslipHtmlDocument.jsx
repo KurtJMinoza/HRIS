@@ -83,6 +83,14 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
   const summary = data?.summary
   const hasPositiveAmount = (line) => Number(line?.amount || 0) > 0
 
+  const isExecomPayroll = useMemo(() => {
+    const moduleValue = String(data?.payroll?.payroll_module || data?.payroll_module || summary?.payroll_module || '').toLowerCase()
+    if (moduleValue === 'execom') return true
+    if (summary?.execom_badge || summary?.execom_profile_id || summary?.execom_salary_source_used) return true
+    const earnings = Array.isArray(summary?.payslip_earning_lines) ? summary.payslip_earning_lines : []
+    return earnings.some((line) => String(line?.label || '').trim().toLowerCase() === 'basic pay')
+  }, [data, summary])
+
   const earnings = useMemo(() => {
     const rows = Array.isArray(summary?.payslip_earning_lines) ? summary.payslip_earning_lines : []
     return rows.filter(hasPositiveAmount)
@@ -94,16 +102,41 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
   }, [summary])
 
   const displayEarnings = useMemo(() => {
-    if (dailyComputationEarnings.length > 0) return dailyComputationEarnings
+    const uniqueLines = (rows) => {
+      const seen = new Set()
+      return rows.filter((line) => {
+        const key = [
+          String(line?.component_code || line?.code || '').trim().toLowerCase(),
+          String(line?.pay_component_id || '').trim().toLowerCase(),
+          String(line?.label || line?.name || '').trim().toLowerCase(),
+          Number(line?.amount || 0).toFixed(2),
+        ].join('|')
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    }
+    if (isExecomPayroll) {
+      return uniqueLines(earnings)
+    }
+    if (dailyComputationEarnings.length > 0 || earnings.length > 0) {
+      return uniqueLines([...dailyComputationEarnings, ...earnings])
+    }
     const fallback = []
-    const regular = Number(summary?.basic_pay || 0)
+    const basic = Number(summary?.basic_pay || summary?.basic_pay_this_period || 0)
     const premium = Number(summary?.attendance_premium_pay_this_period || 0)
-    if (regular > 0) fallback.push({ key: 'fallback:regular_pay', label: 'Regular pay', amount: regular })
-    if (premium > 0) {
+    if (basic > 0) {
+      fallback.push({
+        key: isExecomPayroll ? 'fallback:basic_pay' : 'fallback:regular_pay',
+        label: isExecomPayroll ? 'Basic Pay' : 'Regular pay',
+        amount: basic,
+      })
+    }
+    if (!isExecomPayroll && premium > 0) {
       fallback.push({ key: 'fallback:attendance_premium', label: 'Attendance premiums (OT/ND/Holiday)', amount: premium })
     }
     return fallback
-  }, [dailyComputationEarnings, summary])
+  }, [dailyComputationEarnings, earnings, isExecomPayroll, summary])
 
   const holidayPremiumDetails = useMemo(() => {
     const rows = Array.isArray(summary?.holiday_premium_breakdown) ? summary.holiday_premium_breakdown : []
@@ -160,7 +193,8 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
     return 'Draft'
   }, [data, isPreviewMode, isSentFinalizedLike, payrollStatusRaw])
 
-  const companyLogoSrc = companyLogoUrl(data?.company ?? null)
+  const companyLogoSrc = isExecomPayroll ? null : companyLogoUrl(data?.company ?? null)
+  const companyDisplayName = isExecomPayroll ? 'Execom' : (data?.company?.name || 'Company')
 
   const generatedFooter = useMemo(
     () =>
@@ -194,25 +228,36 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
             ) : null}
             <div className="min-w-0 flex-1 space-y-1">
               <h1 className="text-[1.65rem] font-bold leading-[1.15] tracking-tight text-[#0A0A0A] print:text-xl @md:text-[1.75rem] @2xl:text-[2rem]">
-                {data?.company?.name || 'Company'}
+                {companyDisplayName}
               </h1>
-              <div className="leading-snug text-[#0A0A0A]">
-                <span className="text-[13px] font-normal uppercase tracking-wide text-muted-foreground">Company address</span>
-                <span className="mt-0.5 block text-sm font-normal text-[#0A0A0A]/85 print:text-[10px]">
-                  {displayCompanyAddress(data?.company?.address)}
-                </span>
-              </div>
-              <p className="leading-snug text-[#0A0A0A]">
-                <span className="text-[13px] font-normal uppercase tracking-wide text-muted-foreground">Company TIN </span>
-                <span className="text-sm font-medium tabular-nums text-[#0A0A0A] print:text-[10px]">{displayCompanyTin(data?.company?.tin)}</span>
-              </p>
+              {!isExecomPayroll ? (
+                <>
+                  <div className="leading-snug text-[#0A0A0A]">
+                    <span className="text-[13px] font-normal uppercase tracking-wide text-muted-foreground">Company address</span>
+                    <span className="mt-0.5 block text-sm font-normal text-[#0A0A0A]/85 print:text-[10px]">
+                      {displayCompanyAddress(data?.company?.address)}
+                    </span>
+                  </div>
+                  <p className="leading-snug text-[#0A0A0A]">
+                    <span className="text-[13px] font-normal uppercase tracking-wide text-muted-foreground">Company TIN </span>
+                    <span className="text-sm font-medium tabular-nums text-[#0A0A0A] print:text-[10px]">{displayCompanyTin(data?.company?.tin)}</span>
+                  </p>
+                </>
+              ) : null}
             </div>
           </div>
 
           <div className="flex w-full shrink-0 flex-col items-start gap-3 lg:w-auto lg:items-end">
-            <span className="inline-flex items-center rounded-full border border-sky-200/80 bg-sky-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.22em] text-sky-950 print:border-sky-200 print:bg-sky-50">
-              Official payslip
-            </span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {isExecomPayroll ? (
+                <span className="inline-flex items-center rounded-full border border-violet-200/80 bg-violet-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-violet-950 print:border-violet-200 print:bg-violet-50">
+                  EXECOM
+                </span>
+              ) : null}
+              <span className="inline-flex items-center rounded-full border border-sky-200/80 bg-sky-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.22em] text-sky-950 print:border-sky-200 print:bg-sky-50">
+                Official payslip
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -320,20 +365,6 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                       </tr>
                     )
                   })}
-                  {earnings.map((line, idx) => (
-                    <tr
-                      key={`e-${idx}`}
-                      className="border-b border-slate-100/90 transition-colors last:border-b-0 bg-white hover:bg-white"
-                    >
-                      <td className="py-2.5 pl-3 pr-2 font-normal text-[#0A0A0A]/88">{line?.label || 'Earning'}</td>
-                      <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">
-                        {formatUnits(line?.minutes_worked, line?.units) || '-'}
-                      </td>
-                      <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-medium tabular-nums text-[#0A0A0A]">
-                        {Number(line?.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                  ))}
                   <tr className="border-t border-emerald-100 bg-white text-[#0A0A0A]">
                     <td className="py-3 pl-3 pr-2 text-[15px] font-bold">Total Gross Earnings</td>
                     <td className="px-2 py-3 text-center text-[13px] font-bold text-[#0A0A0A]/70" />

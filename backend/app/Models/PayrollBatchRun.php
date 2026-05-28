@@ -24,7 +24,12 @@ class PayrollBatchRun extends Model
     /** Finalized batch voided/cancelled; snapshots preserved, not editable as draft. */
     public const STATUS_VOIDED = 'voided';
 
+    public const MODULE_STANDARD = 'standard';
+
+    public const MODULE_EXECOM = 'execom';
+
     protected $fillable = [
+        'payroll_module',
         'batch_key',
         'company_id',
         'branch_id',

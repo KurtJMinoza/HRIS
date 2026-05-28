@@ -2575,6 +2575,11 @@ export default function EmployeeProfile() {
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-2xl font-bold tracking-tight text-foreground">{displayUser?.name || 'Employee'}</h3>
                 <RoleBadge user={displayUser} size="sm" />
+                {displayUser?.is_execom || displayUser?.execom_badge ? (
+                  <Badge className="border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-200">
+                    EXECOM
+                  </Badge>
+                ) : null}
               </div>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 {[displayUser?.position, displayUser?.department].filter(Boolean).join(' · ') || 'No position assigned'}

@@ -104,6 +104,7 @@ class ExecomManagementController extends Controller
             'effective_from' => $profile->effective_from?->toDateString(),
             'effective_to' => $profile->effective_to?->toDateString(),
         ]);
+        $this->syncEmployeeExecomFlag((int) $profile->employee_id);
 
         return response()->json([
             'message' => 'EXECOM employee added.',
@@ -129,6 +130,10 @@ class ExecomManagementController extends Controller
                 'effective_to' => $profile->effective_to?->toDateString(),
             ]);
         }
+        $this->syncEmployeeExecomFlag((int) $profile->employee_id);
+        if ((int) $original->employee_id !== (int) $profile->employee_id) {
+            $this->syncEmployeeExecomFlag((int) $original->employee_id);
+        }
 
         return response()->json([
             'message' => 'EXECOM employee updated.',
@@ -150,6 +155,7 @@ class ExecomManagementController extends Controller
             'effective_from' => $profile->effective_from?->toDateString(),
             'effective_to' => $profile->effective_to?->toDateString(),
         ]);
+        $this->syncEmployeeExecomFlag((int) $profile->employee_id);
 
         return response()->json(['message' => 'EXECOM employee deactivated.']);
     }
@@ -230,6 +236,16 @@ class ExecomManagementController extends Controller
             'effective_to' => $profile->effective_to?->toDateString(),
             'remarks' => $profile->remarks,
         ];
+    }
+
+    private function syncEmployeeExecomFlag(int $employeeId): void
+    {
+        $hasActiveProfile = ExecomEmployeeProfile::query()
+            ->where('employee_id', $employeeId)
+            ->where('is_active', true)
+            ->exists();
+
+        User::query()->whereKey($employeeId)->update(['is_execom' => $hasActiveProfile]);
     }
 
     /**

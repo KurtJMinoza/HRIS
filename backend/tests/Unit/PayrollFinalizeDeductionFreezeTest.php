@@ -393,6 +393,34 @@ class PayrollFinalizeDeductionFreezeTest extends TestCase
         $this->assertSame(1550.00, $lines[0]['amount']);
     }
 
+    public function test_live_custom_deduction_display_lines_skip_30th_only_on_15th_even_with_computed_amount(): void
+    {
+        $service = (new ReflectionClass(DeductionScheduleService::class))->newInstanceWithoutConstructor();
+
+        $lines = $service->buildPayslipCustomDeductionDisplayLines([
+            [
+                'code' => 'LENDING_SALARY_DEDUCTION_EVERY_30',
+                'name' => 'LENDING SALARY DEDUCTION EVERY 30',
+                'computed_amount' => 1550.00,
+                'scheduled_this_period' => 0.00,
+                'deduction_schedule_type' => '30th',
+                'payroll_run_type' => '15th',
+            ],
+            [
+                'code' => 'FAMES_EVERY_15',
+                'name' => 'FAMES EVERY 15',
+                'computed_amount' => 779.10,
+                'scheduled_this_period' => 779.10,
+                'deduction_schedule_type' => '15th',
+                'payroll_run_type' => '15th',
+            ],
+        ]);
+
+        $this->assertCount(1, $lines);
+        $this->assertSame('FAMES_EVERY_15', $lines[0]['component_code']);
+        $this->assertSame(779.10, $lines[0]['amount']);
+    }
+
     public function test_frozen_metrics_treat_pay_component_id_and_key_as_same_line(): void
     {
         $service = $this->payslipServiceWithoutConstructor();

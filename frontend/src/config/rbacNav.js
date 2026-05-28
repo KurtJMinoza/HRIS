@@ -42,6 +42,8 @@ const pathToPermissions = {
   '/admin/compensation/deductions-loans': ['compensation.view'],
   '/admin/compensation/generate-payslips': ['payslip.generate'],
   '/admin/compensation/finalize-payroll': ['payslip.finalize'],
+  '/admin/execom/employees': ['execom.view', 'execom.manage'],
+  '/admin/execom/payroll/finalize': ['execom.payroll.generate', 'execom.payroll.finalize', 'execom.view'],
   /** Any of these — org heads may lack `payroll.view` but have `employees.view` / org scope. */
   '/admin/compensation/payslips': ['payslip.view'],
   '/admin/government-contributions': ['government_deductions.view', 'government_deductions.rates.view'],

@@ -20,14 +20,19 @@ final class PayslipStoredSnapshotViewPayload
         PayslipService $payslipService,
         ?string $companyLogoPublicUrl
     ): array {
-        $snapshotRaw = is_array($payslip->snapshot ?? null) ? $payslip->snapshot : [];
-        $snapshot = $payslipService->frozenSnapshotForPayslipView($snapshotRaw);
-        $metrics = $payslipService->frozenPayslipLineMetrics($payslip);
+        $snapshot = $payslipService->snapshotForPayslipRender($payslip, $employee);
+        $metrics = $payslipService->payslipLineTotalsFromSnapshot($snapshot);
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $isExecom = strtolower(trim((string) ($payslip->payroll_module ?? $summary['payroll_module'] ?? ''))) === 'execom'
+            || ! empty($summary['execom_badge'])
+            || ! empty($summary['execom_profile_id'])
+            || ! empty($summary['execom_salary_source_used']);
         $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
             ? array_values($summary['daily_computation_earning_lines'])
             : [];
-        if (count($dailyEarningLines) === 0) {
+        if ($isExecom) {
+            $dailyEarningLines = [];
+        } elseif (count($dailyEarningLines) === 0) {
             $regularPay = (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
             $attendancePremium = (float) ($summary['attendance_premium_pay_this_period'] ?? 0);
             if ($regularPay > 0) {
@@ -54,12 +59,12 @@ final class PayslipStoredSnapshotViewPayload
             'payslip_id' => (int) $payslip->id,
             'company' => [
                 'id' => $company?->id !== null ? (int) $company->id : null,
-                'name' => $company?->name,
-                'tin' => $company?->tin,
-                'address' => $company?->address,
+                'name' => $isExecom ? 'Execom' : $company?->name,
+                'tin' => $isExecom ? null : $company?->tin,
+                'address' => $isExecom ? null : $company?->address,
                 'email' => $company?->email,
                 'phone' => $company?->phone,
-                'logo_url' => $companyLogoPublicUrl,
+                'logo_url' => $isExecom ? null : $companyLogoPublicUrl,
             ],
             'batch_scope' => [
                 'company_id' => $payslip->company_id !== null ? (int) $payslip->company_id : null,
@@ -87,6 +92,7 @@ final class PayslipStoredSnapshotViewPayload
                 'pay_date' => $payslip->pay_date?->toDateString(),
                 'pay_cycle_id' => $payslip->pay_cycle_id !== null ? (int) $payslip->pay_cycle_id : null,
                 'payroll_period_id' => $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
+                'payroll_module' => (string) ($payslip->payroll_module ?? $summary['payroll_module'] ?? ''),
                 'cycle_label' => $payslip->cycle_label,
                 'is_final_pay' => (bool) $payslip->is_final_pay,
                 'status' => (string) $payslip->status,

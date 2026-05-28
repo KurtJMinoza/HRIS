@@ -33,6 +33,9 @@
       default => 'report-standard',
   };
   $employeeCount = is_countable($rows ?? []) ? count($rows) : 0;
+  $reportCompanyName = (string) ($reportCompanyName ?? ($company->name ?? 'Company'));
+  $reportCompanyAddress = $reportCompanyAddress ?? ($company->address ?? null);
+  $isExecomPayroll = (bool) ($isExecomPayroll ?? false);
 @endphp
 <!DOCTYPE html>
 <html lang="en">
@@ -303,17 +306,19 @@
       <div class="hero-left">
         @if($logoLocalPath)
           <img class="logo" src="{{ $logoLocalPath }}" alt="">
-        @else
+        @elseif(! $isExecomPayroll)
           <span class="logo-fallback"></span>
         @endif
         <div class="company">
-          <h1 class="company-name">{{ $company->name }}</h1>
-          <p class="company-address">{{ $company->address ?: 'Company address not set' }}</p>
+          <h1 class="company-name">{{ $reportCompanyName }}</h1>
+          @if(! $isExecomPayroll)
+            <p class="company-address">{{ $reportCompanyAddress ?: 'Company address not set' }}</p>
+          @endif
         </div>
       </div>
       <div class="hero-right">
-        <h2 class="report-title">Payroll Report</h2>
-        <p class="report-subtitle">Finalized Payroll Register</p>
+        <h2 class="report-title">{{ $isExecomPayroll ? 'EXECOM Payroll Report' : 'Payroll Report' }}</h2>
+        <p class="report-subtitle">{{ $isExecomPayroll ? 'Finalized EXECOM Payroll Register' : 'Finalized Payroll Register' }}</p>
       </div>
     </div>
 
@@ -419,7 +424,7 @@
   </div>
 
   <div class="footer">
-    <div class="footer-left">Payroll Report • {{ $company->name }} • Run #{{ $run->id }}</div>
+    <div class="footer-left">{{ $isExecomPayroll ? 'EXECOM Payroll Report' : 'Payroll Report' }} • {{ $reportCompanyName }} • Run #{{ $run->id }}</div>
     <div class="footer-right"><span class="page-number"></span></div>
   </div>
 </body>

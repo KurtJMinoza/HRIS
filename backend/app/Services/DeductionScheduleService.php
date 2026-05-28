@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\Log;
  */
 class DeductionScheduleService
 {
-    private const CACHE_PREFIX = 'payroll.deduction_schedule.';
+    private const CACHE_PREFIX = 'payroll.deduction_schedule.v2.';
 
     public function __construct(
         private readonly PayCycleService $payCycleService,
@@ -84,8 +84,55 @@ class DeductionScheduleService
                 return $row->schedule_type;
             }
 
+            $inferred = $this->inferScheduleTypeFromPayComponentKey($deductionKey);
+            if ($inferred !== null) {
+                return $inferred;
+            }
+
             return DeductionScheduleSetting::SCHEDULE_BOTH;
         });
+    }
+
+    private function inferScheduleTypeFromPayComponentKey(string $deductionKey): ?string
+    {
+        if (! preg_match('/^pay_component:(\d+)$/', trim($deductionKey), $matches)) {
+            return null;
+        }
+
+        $component = PayComponent::query()
+            ->whereKey((int) $matches[1])
+            ->first(['id', 'code', 'name']);
+        if (! $component) {
+            return null;
+        }
+
+        return $this->inferScheduleTypeFromText(
+            trim((string) $component->code).' '.trim((string) $component->name)
+        );
+    }
+
+    private function inferScheduleTypeFromText(string $text): ?string
+    {
+        $normalized = strtolower(preg_replace('/[^a-z0-9]+/', '_', $text) ?? '');
+        $normalized = trim($normalized, '_');
+        if ($normalized === '') {
+            return null;
+        }
+
+        $has15 = (bool) preg_match('/(^|_)every_?15(_|$)|(^|_)15(th)?(_|$)/', $normalized);
+        $has30 = (bool) preg_match('/(^|_)every_?30(_|$)|(^|_)30(th)?(_|$)|end_?of_?month|(^|_)eom(_|$)/', $normalized);
+
+        if ($has15 && $has30) {
+            return DeductionScheduleSetting::SCHEDULE_BOTH;
+        }
+        if ($has15) {
+            return DeductionScheduleSetting::SCHEDULE_15TH;
+        }
+        if ($has30) {
+            return DeductionScheduleSetting::SCHEDULE_30TH;
+        }
+
+        return null;
     }
 
     /**
@@ -443,14 +490,20 @@ class DeductionScheduleService
             if ($short === '') {
                 $short = $rawName;
             }
-            $amount = (float) ($line['applied_this_period'] ?? $line['scheduled_this_period'] ?? $line['computed_amount'] ?? 0);
-            $basis = (float) ($line['original_amount'] ?? $line['computed_amount'] ?? $amount);
             $sched = $this->normalizeScheduleType((string) ($line['deduction_schedule_type'] ?? DeductionScheduleSetting::SCHEDULE_BOTH))
                 ?? DeductionScheduleSetting::SCHEDULE_BOTH;
             $standard = $this->normalizeCalculationStandard($line['resolved_calculation_standard'] ?? $line['calculation_standard'] ?? null);
             $payrollRunType = (string) ($line['payroll_run_type'] ?? data_get($line, 'pay_component_resolution.payroll_run_type', ''));
             $isScheduledThisPeriod = $this->isScheduledDeductionForRun($sched, $payrollRunType);
-            if (! $isScheduledThisPeriod && abs($amount) < 0.005) {
+            if (! $isScheduledThisPeriod) {
+                continue;
+            }
+
+            $amount = array_key_exists('applied_this_period', $line)
+                ? (float) $line['applied_this_period']
+                : (float) ($line['scheduled_this_period'] ?? 0);
+            $basis = (float) ($line['original_amount'] ?? $line['computed_amount'] ?? $amount);
+            if (abs($amount) < 0.005) {
                 continue;
             }
             $payComponentId = isset($line['pay_component_id']) ? (int) $line['pay_component_id'] : null;
@@ -607,9 +660,9 @@ class DeductionScheduleService
         }
 
         return match ($raw) {
-            DeductionScheduleSetting::SCHEDULE_15TH, '15', 'first', 'first_half', 'first-half' => DeductionScheduleSetting::SCHEDULE_15TH,
-            DeductionScheduleSetting::SCHEDULE_30TH, '30', 'second', 'second_half', 'second-half', 'end_of_month', 'eom' => DeductionScheduleSetting::SCHEDULE_30TH,
-            DeductionScheduleSetting::SCHEDULE_BOTH, '50/50', 'half', 'split', 'semi-monthly', 'semi_monthly' => DeductionScheduleSetting::SCHEDULE_BOTH,
+            DeductionScheduleSetting::SCHEDULE_15TH, '15', '15th_only', '15_only', 'every_15_only', 'every_15', 'first', 'first_half', 'first-half' => DeductionScheduleSetting::SCHEDULE_15TH,
+            DeductionScheduleSetting::SCHEDULE_30TH, '30', '30th_only', '30_only', 'every_30_only', 'every_30', 'second', 'second_half', 'second-half', 'end_of_month', 'end-of-month', 'eom' => DeductionScheduleSetting::SCHEDULE_30TH,
+            DeductionScheduleSetting::SCHEDULE_BOTH, 'every_payroll', 'every-payroll', 'every_15_and_30', '15_and_30', '15/30', '50/50', 'half', 'split', 'semi-monthly', 'semi_monthly' => DeductionScheduleSetting::SCHEDULE_BOTH,
             default => null,
         };
     }
@@ -921,6 +974,7 @@ class DeductionScheduleService
             'pay_period_start' => $periodStartRaw,
             'pay_period_end' => $periodEndRaw,
             'pay_cycle_preview' => $payCyclePreview,
+            'pay_cycle_code' => $compensationSummary['pay_cycle_code'] ?? data_get($payCyclePreview, 'pay_cycle_code', data_get($payCyclePreview, 'code')),
         ];
 
         $attendanceProration = $compensationSummary['_attendance_proration'] ?? null;
@@ -953,14 +1007,14 @@ class DeductionScheduleService
                 $periodEndRaw
             );
             if ($amortizedInstallment !== null) {
-                $thisAmt = $amortizedInstallment;
-                $resolvedAmount = [
-                    'original_amount' => $amt,
-                    'calculation_standard' => $this->normalizeCalculationStandard($d['calculation_standard'] ?? null),
+                $resolvedAmount = $this->resolvePayComponentAmount(array_merge($d, [
+                    'computed_amount' => $amt,
                     'resolved_schedule' => $sched,
-                    'payroll_run_type' => $segment === 'first' ? '15th' : ($segment === 'second' ? '30th' : 'payroll'),
-                    'applied_amount' => $thisAmt,
-                ];
+                ]), $payrollRun);
+                $scheduleApplies = (float) ($resolvedAmount['divisor_applied'] ?? 0.0) > 0.0;
+                $thisAmt = $scheduleApplies ? $amortizedInstallment : 0.0;
+                $resolvedAmount['applied_amount'] = $thisAmt;
+                $resolvedAmount['schedule_applies'] = $scheduleApplies;
             } else {
                 $resolvedAmount = $this->resolvePayComponentAmount(array_merge($d, [
                     'computed_amount' => $amt,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Banknote, Loader2, Plus, RefreshCw, Save, Search, Trash2, UserPlus } from 'lucide-react'
+import { Banknote, Filter, Loader2, Pencil, Plus, RefreshCw, Save, Search, Trash2, UserPlus } from 'lucide-react'
 import {
   createExecomEmployee,
   deleteExecomEmployee,
@@ -21,11 +21,12 @@ import { Label } from '@/components/ui/label'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
-const PAGE_SHELL = 'w-full min-w-0 bg-background px-3 py-4 text-foreground sm:px-4 md:px-6'
-const CARD_SHELL = 'rounded-2xl border border-border/80 bg-card text-card-foreground shadow-sm shadow-slate-900/3 dark:shadow-black/25'
+const PAGE_SHELL = 'w-full min-w-0 bg-background px-3 py-4 text-foreground sm:px-4 md:px-6 lg:px-8'
+const CARD_SHELL = 'rounded-[1.35rem] border border-border/70 bg-card text-card-foreground shadow-[0_14px_40px_rgba(15,23,42,0.06)] dark:shadow-black/25'
 const CONTROL =
-  'h-11 rounded-xl border border-border/80 bg-background px-3 text-sm text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/15 dark:bg-input/45'
+  'h-11 rounded-xl border border-border/80 bg-background px-3 text-sm font-medium text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/15 dark:bg-input/45'
 const ORANGE_BUTTON = 'bg-brand text-brand-foreground shadow-sm shadow-brand/20 hover:bg-brand-strong'
+const TABLE_HEAD = 'bg-[#fff8f1] text-[11px] font-extrabold uppercase tracking-[0.04em] text-muted-foreground dark:bg-input/25'
 
 function initialsFor(employee) {
   const name = String(employee?.name || employee?.display_name || employee?.formatted_name || '').trim()
@@ -273,15 +274,15 @@ export default function AdminExecomManagementPage() {
   }
 
   return (
-    <div className={cn(PAGE_SHELL, 'space-y-4 md:space-y-5')}>
+    <div className={cn(PAGE_SHELL, 'space-y-5 md:space-y-6')}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand/20 bg-brand/10 text-brand">
+          <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-brand/20 bg-brand/10 text-brand shadow-sm">
             <Banknote className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-2xl font-extrabold tracking-tight text-foreground md:text-[28px]">EXECOM Management</h1>
-            <p className="mt-1 text-sm font-medium text-muted-foreground">
+            <h1 className="text-[26px] font-extrabold tracking-tight text-foreground md:text-[30px]">EXECOM Management</h1>
+            <p className="mt-1 max-w-4xl text-sm font-medium leading-6 text-muted-foreground">
               Fixed-salary payroll independent from attendance, leave, holiday, overtime, late, undertime, and absence rules.
             </p>
           </div>
@@ -291,23 +292,26 @@ export default function AdminExecomManagementPage() {
             <Plus className="mr-2 size-4" /> Quick Setup
           </Button>
           <Button onClick={() => loadRows()} disabled={loading} variant="outline" className="h-10 rounded-xl border-border/80 bg-card px-4 font-semibold shadow-sm">
-            <RefreshCw className="mr-2 size-4" /> Refresh
+            <RefreshCw className={cn('mr-2 size-4', loading ? 'animate-spin' : '')} /> Refresh
           </Button>
         </div>
       </div>
 
       <Card className={CARD_SHELL}>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-extrabold">EXECOM Employees</CardTitle>
-          <CardDescription>Only active EXECOM employees appear in EXECOM payroll batches.</CardDescription>
+        <CardHeader className="px-4 pb-3 pt-5 sm:px-5">
+          <CardTitle className="text-[17px] font-extrabold">EXECOM Employees</CardTitle>
+          <CardDescription className="text-sm">Only active EXECOM employees appear in EXECOM payroll batches.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <select className={cn(CONTROL, 'w-full')} value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value, page: 1 }))}>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="all">All</option>
-            </select>
+        <CardContent className="space-y-4 px-4 pb-5 sm:px-5">
+          <div className="grid gap-3 lg:grid-cols-[240px_minmax(260px,1fr)_220px]">
+            <div className="relative">
+              <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand" />
+              <select className={cn(CONTROL, 'w-full pl-9')} value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value, page: 1 }))}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="all">All</option>
+              </select>
+            </div>
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input className="h-11 rounded-xl border-border/80 bg-background pl-9 shadow-sm dark:bg-input/45" placeholder="Search employee" value={filters.q} onChange={(e) => setFilters((prev) => ({ ...prev, q: e.target.value }))} />
@@ -317,47 +321,53 @@ export default function AdminExecomManagementPage() {
             </Button>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-border/80 bg-background dark:bg-input/15">
+          <div className="overflow-hidden rounded-2xl border border-border/70 bg-white dark:bg-input/15">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1120px] text-sm">
-                <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground dark:bg-card">
+                <thead className={TABLE_HEAD}>
                   <tr>
-                    <th className="px-4 py-3">Employee</th>
-                    <th className="px-4 py-3">Company</th>
-                    <th className="px-4 py-3">Context</th>
-                    <th className="px-4 py-3 text-right">Fixed Salary</th>
-                    <th className="px-4 py-3 text-right">Other allowance</th>
-                    <th className="px-4 py-3 text-right">Other deductions</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
+                    <th className="px-4 py-3.5 text-left">Employee</th>
+                    <th className="px-4 py-3.5 text-left">Company</th>
+                    <th className="px-4 py-3.5 text-left">Context</th>
+                    <th className="px-4 py-3.5 text-right">Fixed Salary</th>
+                    <th className="px-4 py-3.5 text-right">Other Allowance</th>
+                    <th className="px-4 py-3.5 text-right">Other Deductions</th>
+                    <th className="px-4 py-3.5 text-left">Status</th>
+                    <th className="px-4 py-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-border/60">
                   {rows.map((row) => (
-                    <tr key={row.id} className="border-t border-border/70 transition hover:bg-muted/40">
-                      <td className="px-4 py-3 font-bold text-foreground">
-                        {row.employee_name || `#${row.employee_id}`}
-                        <div className="text-xs font-medium text-muted-foreground">{row.employee_code || ''}</div>
+                    <tr key={row.id} className="transition hover:bg-[#fff8f1]/60 dark:hover:bg-input/20">
+                      <td className="px-4 py-4">
+                        <div className="font-extrabold leading-tight text-foreground">{row.employee_name || `#${row.employee_id}`}</div>
+                        <div className="mt-1 text-xs font-medium text-muted-foreground">{row.employee_code || '—'}</div>
                       </td>
-                      <td className="px-4 py-3">{row.company_name || '—'}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{[row.branch_name, row.department_name].filter(Boolean).join(' / ') || '—'}</td>
-                      <td className="px-4 py-3 text-right font-mono font-bold text-foreground">
+                      <td className="px-4 py-4 font-semibold text-foreground">{row.company_name || '—'}</td>
+                      <td className="max-w-[220px] px-4 py-4 text-xs font-medium uppercase leading-5 tracking-[0.02em] text-muted-foreground">
+                        {[row.branch_name, row.department_name].filter(Boolean).join(' / ') || '—'}
+                      </td>
+                      <td className="px-4 py-4 text-right font-mono font-extrabold text-foreground">
                         {formatMoney(row.fixed_salary)}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold text-emerald-700 dark:text-emerald-300">
+                      <td className="px-4 py-4 text-right font-mono font-extrabold text-emerald-600 dark:text-emerald-300">
                         {formatMoney(row.other_allowance_total)}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold text-red-600 dark:text-red-300">
+                      <td className="px-4 py-4 text-right font-mono font-extrabold text-red-600 dark:text-red-300">
                         {formatMoney(row.other_deduction_total)}
                       </td>
-                      <td className="px-4 py-3">
-                        <Badge variant={row.is_active ? 'default' : 'outline'} className={row.is_active ? 'bg-brand text-brand-foreground' : ''}>
+                      <td className="px-4 py-4">
+                        <Badge variant={row.is_active ? 'default' : 'outline'} className={cn('rounded-lg px-2.5 py-1 text-[11px] font-extrabold', row.is_active ? 'bg-brand text-brand-foreground hover:bg-brand' : '')}>
                           {row.is_active ? 'Active' : 'Inactive'}
                         </Badge>
                       </td>
-                      <td className="space-x-2 px-4 py-3 text-right">
-                        <Button size="sm" variant="outline" className="rounded-lg border-border/80" onClick={() => openSalaryDialog(row)}>Edit Salary</Button>
-                        <Button size="sm" variant="destructive" className="rounded-lg" onClick={() => removeRow(row)}><Trash2 className="size-4" /></Button>
+                      <td className="px-4 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button size="sm" variant="outline" className="h-8 rounded-lg border-border/80 bg-white px-3 font-semibold shadow-sm hover:bg-muted dark:bg-input/35" onClick={() => openSalaryDialog(row)}>
+                            <Pencil className="mr-1.5 size-3.5" /> Edit Salary
+                          </Button>
+                          <Button size="icon" variant="destructive" className="size-8 rounded-lg shadow-sm" onClick={() => removeRow(row)}><Trash2 className="size-4" /></Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -376,7 +386,40 @@ export default function AdminExecomManagementPage() {
               </table>
             </div>
           </div>
-          {pagination ? <p className="text-xs text-muted-foreground">Page {pagination.current_page} of {pagination.last_page}. Total {pagination.total}.</p> : null}
+          {pagination ? (
+            <div className="flex flex-col gap-3 pt-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Showing {rows.length > 0 ? ((Number(pagination.current_page || 1) - 1) * Number(filters.per_page || 25)) + 1 : 0}
+                {' '}to {Math.min(Number(pagination.total || 0), (Number(pagination.current_page || 1) - 1) * Number(filters.per_page || 25) + rows.length)}
+                {' '}of {pagination.total} employees
+              </span>
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-8 rounded-lg border-border/80 bg-card shadow-sm"
+                  disabled={Number(pagination.current_page || 1) <= 1}
+                  onClick={() => setFilters((prev) => ({ ...prev, page: Math.max(1, Number(prev.page || 1) - 1) }))}
+                >
+                  ‹
+                </Button>
+                <span className="flex size-8 items-center justify-center rounded-lg border border-brand/30 bg-brand/10 font-bold text-brand">
+                  {pagination.current_page}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-8 rounded-lg border-border/80 bg-card shadow-sm"
+                  disabled={Number(pagination.current_page || 1) >= Number(pagination.last_page || 1)}
+                  onClick={() => setFilters((prev) => ({ ...prev, page: Math.min(Number(pagination.last_page || 1), Number(prev.page || 1) + 1) }))}
+                >
+                  ›
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

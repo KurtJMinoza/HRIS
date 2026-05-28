@@ -307,6 +307,7 @@ class User extends Authenticatable
         'exclude_from_payroll',
         'exclude_from_attendance',
         'exclude_from_approvals',
+        'is_execom',
         'qr_token',
         'qr_token_generated_at',
         'face_descriptor',
@@ -399,6 +400,7 @@ class User extends Authenticatable
             'exclude_from_payroll' => 'boolean',
             'exclude_from_attendance' => 'boolean',
             'exclude_from_approvals' => 'boolean',
+            'is_execom' => 'boolean',
             'schedule' => 'array',
             'face_descriptor' => 'encrypted',
             'face_embedding' => 'encrypted',
@@ -850,6 +852,19 @@ class User extends Authenticatable
     public function departmentRelation(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(Department::class, 'department_id');
+    }
+
+    public function execomProfiles(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ExecomEmployeeProfile::class, 'employee_id');
+    }
+
+    public function activeExecomProfileForPeriod(?\Carbon\CarbonInterface $periodStart = null, ?\Carbon\CarbonInterface $periodEnd = null): ?ExecomEmployeeProfile
+    {
+        return $this->execomProfiles()
+            ->activeForPeriod($periodStart, $periodEnd)
+            ->orderByDesc('id')
+            ->first();
     }
 
     public function division(): \Illuminate\Database\Eloquent\Relations\BelongsTo

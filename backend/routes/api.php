@@ -13,6 +13,9 @@ use App\Http\Controllers\Admin\DepartmentController;
 use App\Http\Controllers\Admin\DivisionController;
 use App\Http\Controllers\Admin\EmployeeBenefitController;
 use App\Http\Controllers\Admin\EmployeeCompensationController;
+use App\Http\Controllers\Admin\ExecomManagementController;
+use App\Http\Controllers\Admin\ExecomPayrollController;
+use App\Http\Controllers\Admin\ExecomPayrollSettingsController;
 use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\EmployeeDeductionController;
 use App\Http\Controllers\Admin\EmployeeSkillController as AdminEmployeeSkillController;
@@ -444,6 +447,31 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:payslip.generate')->group(function () {
             Route::post('/admin/payslips/generate', [AdminPayslipController::class, 'generate']);
             Route::delete('/admin/payslips/batch/{id}', [AdminPayslipController::class, 'destroyDraftBatch'])->whereNumber('id');
+        });
+        Route::middleware('permission:execom.view')->group(function () {
+            Route::get('/admin/execom/employees', [ExecomManagementController::class, 'index']);
+            Route::get('/admin/execom/employees/{id}/history', [ExecomManagementController::class, 'history'])->whereNumber('id');
+            Route::get('/admin/execom/payroll-settings', [ExecomPayrollSettingsController::class, 'show']);
+            Route::get('/admin/execom/payroll/batches', [ExecomPayrollController::class, 'recentBatches']);
+            Route::get('/admin/execom/payroll/batches/{id}/status', [ExecomPayrollController::class, 'batchStatus'])->whereNumber('id');
+            Route::get('/admin/execom/payroll/draft', [ExecomPayrollController::class, 'viewDraft']);
+            Route::get('/admin/execom/payroll/finalized', [ExecomPayrollController::class, 'viewFinalized']);
+        });
+        Route::middleware('permission:execom.manage')->group(function () {
+            Route::post('/admin/execom/employees', [ExecomManagementController::class, 'store']);
+            Route::patch('/admin/execom/employees/{id}', [ExecomManagementController::class, 'update'])->whereNumber('id');
+            Route::delete('/admin/execom/employees/{id}', [ExecomManagementController::class, 'destroy'])->whereNumber('id');
+            Route::put('/admin/execom/payroll-settings', [ExecomPayrollSettingsController::class, 'update']);
+        });
+        Route::middleware('permission:execom.payroll.generate')->group(function () {
+            Route::post('/admin/execom/payroll/generate', [ExecomPayrollController::class, 'generateDraft']);
+            Route::post('/admin/execom/payroll/batches/{id}/recompute', [ExecomPayrollController::class, 'recomputeDraft'])->whereNumber('id');
+        });
+        Route::middleware('permission:execom.payroll.finalize')->group(function () {
+            Route::post('/admin/execom/payroll/batches/{id}/finalize', [ExecomPayrollController::class, 'finalize'])->whereNumber('id');
+        });
+        Route::middleware('permission:execom.reports')->group(function () {
+            Route::get('/admin/execom/payroll/batches/{id}/report/pdf', [ExecomPayrollController::class, 'downloadReport'])->whereNumber('id');
         });
         Route::middleware('permission:payslip.download')->group(function () {
             Route::get('/admin/payslips/{id}/pdf', [AdminPayslipController::class, 'download'])->whereNumber('id');

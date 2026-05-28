@@ -42,8 +42,15 @@
   $payDate = $payslip->pay_date ?? $payslip->reference_date ?? null;
   $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
   $statusLabel = strtolower(trim((string) ($payslip->status ?? ''))) === 'finalized' ? 'Finalized' : 'Draft';
+  $compBreakdown = is_array($summary['compensation_breakdown'] ?? null) ? $summary['compensation_breakdown'] : [];
+  $payrollModule = strtolower(trim((string) (
+    $compBreakdown['payroll_module']
+    ?? $summary['payroll_module']
+    ?? ($snapshot['payroll_module'] ?? '')
+  )));
+  $isExecomPayroll = $payrollModule === 'execom';
 
-  if (count($dailyEarnLines) === 0) {
+  if (! $isExecomPayroll && count($dailyEarnLines) === 0) {
     $fallback = [];
     $regularPay = (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
     $attendancePremium = (float) ($summary['attendance_premium_pay_this_period'] ?? 0);
@@ -58,7 +65,7 @@
 
   $logoLocalPath = null;
   $logoRaw = is_string($company?->logo ?? null) ? trim((string) $company->logo) : '';
-  if ($logoRaw !== '') {
+  if (! $isExecomPayroll && $logoRaw !== '') {
     $normalized = ltrim($logoRaw, '/');
     if (str_starts_with($normalized, 'storage/')) {
       $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
@@ -319,9 +326,11 @@
               <span class="logo-wrap"><img src="{{ $logoLocalPath }}" class="logo" alt=""></span>
             @endif
             <div class="company">
-              <h1>{{ $company?->name ?? 'Company' }}</h1>
-              <div class="muted">{{ trim((string) ($company?->address ?? '')) !== '' ? trim((string) $company->address) : '—' }}</div>
-              <div class="muted">TIN: {{ trim((string) ($company?->tin ?? '')) !== '' ? trim((string) $company->tin) : '—' }}</div>
+              <h1>{{ $isExecomPayroll ? 'Execom' : ($company?->name ?? 'Company') }}</h1>
+              @if(! $isExecomPayroll)
+                <div class="muted">{{ trim((string) ($company?->address ?? '')) !== '' ? trim((string) $company->address) : '—' }}</div>
+                <div class="muted">TIN: {{ trim((string) ($company?->tin ?? '')) !== '' ? trim((string) $company->tin) : '—' }}</div>
+              @endif
             </div>
           </td>
           <td class="right">
@@ -397,20 +406,30 @@
               </tr>
             </thead>
             <tbody>
-              @foreach($dailyEarnLines as $line)
-                <tr>
-                  <td>{{ strtolower(trim((string) ($line['label'] ?? ''))) === 'holiday premium' ? 'Holiday premium' : ($line['label'] ?? 'Daily computation earning') }}</td>
-                  <td class="units">{{ $formatUnits($line) }}</td>
-                  <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
-                </tr>
-              @endforeach
-              @foreach($earnLines as $line)
-                <tr>
-                  <td>{{ $line['label'] ?? 'Earning' }}</td>
-                  <td class="units">{{ $formatUnits($line) }}</td>
-                  <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
-                </tr>
-              @endforeach
+              @if($isExecomPayroll)
+                @foreach($earnLines as $line)
+                  <tr>
+                    <td>{{ $line['label'] ?? 'Earning' }}</td>
+                    <td class="units">{{ $formatUnits($line) }}</td>
+                    <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
+                  </tr>
+                @endforeach
+              @else
+                @foreach($dailyEarnLines as $line)
+                  <tr>
+                    <td>{{ strtolower(trim((string) ($line['label'] ?? ''))) === 'holiday premium' ? 'Holiday premium' : ($line['label'] ?? 'Daily computation earning') }}</td>
+                    <td class="units">{{ $formatUnits($line) }}</td>
+                    <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
+                  </tr>
+                @endforeach
+                @foreach($earnLines as $line)
+                  <tr>
+                    <td>{{ $line['label'] ?? 'Earning' }}</td>
+                    <td class="units">{{ $formatUnits($line) }}</td>
+                    <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
+                  </tr>
+                @endforeach
+              @endif
               @if(count($dailyEarnLines) === 0 && count($earnLines) === 0)
                 <tr><td>No earnings computed.</td><td class="units">—</td><td class="num">—</td></tr>
               @endif

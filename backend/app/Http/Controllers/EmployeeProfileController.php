@@ -272,7 +272,7 @@ class EmployeeProfileController extends Controller
         $includePayCyclePreview = (bool) ($flags['include_pay_cycle_preview'] ?? false);
 
         $cacheDescriptor = [
-            'version' => 3,
+            'version' => 4,
             'lite' => $lite,
             'include_government_ids' => $includeGov,
             'include_emergency_contacts' => $includeEmergency,
@@ -469,6 +469,8 @@ class EmployeeProfileController extends Controller
             || (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false)
             || (bool) ($accessFlags['can_view_subordinate_reports'] ?? false);
         $ws = $user->workingSchedule;
+        $execomProfile = $user->activeExecomProfileForPeriod();
+        $isExecom = (bool) ($user->is_execom ?? false) || $execomProfile !== null;
         $monthlyBase = (float) ($user->monthly_salary ?? $user->monthly_rate ?? 0);
         $scheduleRates = $this->scheduleRateService->describeForUser(
             $user,
@@ -524,6 +526,9 @@ class EmployeeProfileController extends Controller
             'section_unit_name' => $user->sectionUnit?->name,
             'company_id' => $user->company_id,
             'company_name' => $user->company?->name,
+            'is_execom' => $isExecom,
+            'execom_badge' => $isExecom ? 'EXECOM' : null,
+            'execom_profile_id' => $execomProfile?->id ? (int) $execomProfile->id : null,
             'branch_id' => $user->branch_id,
             'branch_name' => $user->branch?->name,
             'position' => $user->position,
@@ -584,6 +589,8 @@ class EmployeeProfileController extends Controller
             || (bool) ($accessFlags['can_view_employee_module'] ?? false)
             || (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false)
             || (bool) ($accessFlags['can_view_subordinate_reports'] ?? false);
+        $execomProfile = $user->activeExecomProfileForPeriod();
+        $isExecom = (bool) ($user->is_execom ?? false) || $execomProfile !== null;
 
         return [
             'id' => $user->id,
@@ -633,6 +640,9 @@ class EmployeeProfileController extends Controller
             'section_unit_id' => $user->section_unit_id,
             'section_unit_name' => $user->sectionUnit?->name,
             'company_id' => $user->company_id,
+            'is_execom' => $isExecom,
+            'execom_badge' => $isExecom ? 'EXECOM' : null,
+            'execom_profile_id' => $execomProfile?->id ? (int) $execomProfile->id : null,
             'branch_id' => $user->branch_id,
             'position' => $user->position,
             'branch_office_location' => $user->branch_office_location,

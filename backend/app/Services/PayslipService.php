@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Enums\EmploymentStatus;
 use App\Support\BulkPayrollDraftContext;
 use App\Models\Company;
+use App\Models\ExecomEmployeeProfile;
+use App\Models\ExecomPayrollSetting;
 use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\PayCycle;
 use App\Models\PayrollBatchRun;
@@ -52,6 +54,7 @@ class PayslipService
     public function __construct(
         private readonly BrowsershotEnvironment $browsershotEnvironment,
         private readonly PayrollComputationService $payrollComputation,
+        private readonly ExecomPayrollComputationService $execomPayrollComputation,
         private readonly PayCycleService $payCycleService,
         private readonly DataScopeService $dataScopeService,
         private readonly PayrollEmployeeEligibilityService $payrollEligibility,
@@ -527,33 +530,73 @@ class PayslipService
     }
 
     /**
+     * Promote explicit draft payslip rows to finalized (batch-safe; does not rely on company scope).
+     *
+     * @param  list<int>  $payslipIds
+     */
+    public function finalizePayslipsByIds(array $payslipIds, ?int $finalizedByUserId = null, ?int $payrollBatchRunId = null): int
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $payslipIds), static fn (int $id): bool => $id > 0)));
+        if ($ids === []) {
+            return 0;
+        }
+
+        $query = Payslip::query()
+            ->whereIn('id', $ids)
+            ->whereNull('voided_at')
+            ->whereNotIn('status', Payslip::lockingStatuses());
+
+        if ($payrollBatchRunId !== null && $payrollBatchRunId > 0) {
+            $query->where('payroll_batch_run_id', $payrollBatchRunId);
+        }
+
+        return (int) $query->update([
+            'status' => Payslip::STATUS_FINALIZED,
+            'finalized_at' => now(),
+            'finalized_by_user_id' => $finalizedByUserId,
+        ]);
+    }
+
+    /**
      * Finalize all payslips in a company period window and lock related payroll periods.
      *
      * @param  int[]|null  $employeeIds  Optional employee scope (company/branch/department filtered list).
      * @return int Updated payslip rows
      */
     public function finalizePayrollWindow(
-        int $companyId,
+        ?int $companyId,
         Carbon|string $periodStart,
         Carbon|string $periodEnd,
         ?int $periodId = null,
         ?array $employeeIds = null,
-        ?int $finalizedByUserId = null
+        ?int $finalizedByUserId = null,
+        ?string $payrollModule = null
     ): int {
         $start = $periodStart instanceof Carbon ? $periodStart->toDateString() : Carbon::parse((string) $periodStart)->toDateString();
         $end = $periodEnd instanceof Carbon ? $periodEnd->toDateString() : Carbon::parse((string) $periodEnd)->toDateString();
         $scopedEmployeeIds = is_array($employeeIds) ? array_values(array_unique(array_map('intval', $employeeIds))) : null;
+        $hasEmployeeScope = is_array($scopedEmployeeIds) && count($scopedEmployeeIds) > 0;
+        $hasCompanyScope = $companyId !== null && $companyId > 0;
+
+        if (! $hasEmployeeScope && ! $hasCompanyScope) {
+            return 0;
+        }
 
         $payslips = Payslip::query()
             ->whereDate('pay_period_start', $start)
-            ->whereDate('pay_period_end', $end);
+            ->whereDate('pay_period_end', $end)
+            ->whereNull('voided_at')
+            ->whereNotIn('status', Payslip::lockingStatuses());
         if ($periodId !== null) {
             $payslips->where('payroll_period_id', $periodId);
         }
-        if (is_array($scopedEmployeeIds) && count($scopedEmployeeIds) > 0) {
+        if ($payrollModule !== null && trim($payrollModule) !== '') {
+            $payslips->where('payroll_module', $this->normalizePayrollModule($payrollModule));
+        }
+        if ($hasEmployeeScope) {
             $payslips->whereIn('user_id', $scopedEmployeeIds);
         } else {
-            $payslips->where('company_id', $companyId);
+            $payslips->where('company_id', (int) $companyId);
         }
 
         $updated = $payslips->update([
@@ -568,8 +611,10 @@ class PayslipService
         if ($periodId !== null) {
             $periods->where('id', $periodId);
         }
-        if (is_array($scopedEmployeeIds) && count($scopedEmployeeIds) > 0) {
+        if ($hasEmployeeScope) {
             $periods->whereIn('user_id', $scopedEmployeeIds);
+        } elseif ($hasCompanyScope) {
+            $periods->whereHas('user', fn ($q) => $q->where('company_id', (int) $companyId));
         }
         $periods->update(['status' => PayrollPeriod::STATUS_LOCKED]);
 
@@ -765,7 +810,10 @@ class PayslipService
         $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
             ? array_values($summary['daily_computation_earning_lines'])
             : [];
-        if (count($dailyEarningLines) === 0) {
+        $isExecomPreview = $this->isExecomSnapshot($snapshot, $summary);
+        if ($isExecomPreview) {
+            $dailyEarningLines = [];
+        } elseif (count($dailyEarningLines) === 0) {
             $regularPay = (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
             $attendancePremium = (float) ($summary['attendance_premium_pay_this_period'] ?? 0);
             if ($regularPay > 0) {
@@ -826,6 +874,7 @@ class PayslipService
                 'pay_date' => $attrs['pay_date'] ?? null,
                 'pay_cycle_id' => isset($attrs['pay_cycle_id']) ? (int) $attrs['pay_cycle_id'] : (isset($periodInput['pay_cycle_id']) ? (int) $periodInput['pay_cycle_id'] : null),
                 'payroll_period_id' => isset($attrs['payroll_period_id']) ? (int) $attrs['payroll_period_id'] : (isset($periodInput['payroll_period_id']) ? (int) $periodInput['payroll_period_id'] : null),
+                'payroll_module' => (string) ($attrs['payroll_module'] ?? ($summary['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)),
                 'cycle_label' => $attrs['cycle_label'] ?? null,
                 'is_final_pay' => (bool) ($attrs['is_final_pay'] ?? false),
                 /** Live preview only — immutable payslips use {@see PayslipStoredSnapshotViewPayload}. */
@@ -1479,6 +1528,9 @@ class PayslipService
             'pay_period_start' => $from->toDateString(),
             'pay_period_end' => $to->toDateString(),
             'selected_pay_date' => $preview['pay_date'] ?? null,
+            'pay_cycle_preview' => $preview,
+            'pay_cycle_code' => $cycle?->code ?? data_get($preview, 'pay_cycle_code', data_get($preview, 'code')),
+            'semi_month_segment' => data_get($preview, 'semi_month_segment'),
             'company_id' => $payrollAssignment['company_id'] ?? $selectedCompanyId,
         ];
         if (! empty($input['payroll_batch_run_id'])) {
@@ -1488,14 +1540,16 @@ class PayslipService
             $periodCtx['_timing_sink'] = $timingSink;
         }
 
+        $payrollModule = $this->resolvePayrollModule($input);
         $computed = is_array($precomputed)
             ? $precomputed
-            : $this->payrollComputation->computeEmployeePayroll(
+            : $this->computePayrollForModule(
                 $employee,
                 $from,
                 $to,
-                null,
-                $periodCtx
+                $payrollModule,
+                $periodCtx,
+                $preview
             );
         $summary = $computed['summary'] ?? [];
 
@@ -1565,11 +1619,13 @@ class PayslipService
             'unique' => [
                 'user_id' => $employee->id,
                 'company_id' => $companyId,
+                'payroll_module' => $payrollModule,
                 'pay_period_start' => $from->toDateString(),
                 'pay_period_end' => $to->toDateString(),
                 'period_slot' => 0,
             ],
             'attributes' => [
+                'payroll_module' => $payrollModule,
                 'payroll_period_id' => $input['payroll_period_id'] ?? null,
                 'payroll_batch_run_id' => ! empty($input['payroll_batch_run_id']) ? (int) $input['payroll_batch_run_id'] : null,
                 'pay_cycle_id' => $cycle?->id,
@@ -1652,6 +1708,11 @@ class PayslipService
         $periodEndForEligibility = ! empty($periodInput['to_date'])
             ? Carbon::parse((string) $periodInput['to_date'])->startOfDay()
             : null;
+        $payrollModule = $progressRun instanceof PayrollBatchRun
+            ? $this->normalizePayrollModule((string) ($progressRun->payroll_module ?? PayrollBatchRun::MODULE_STANDARD))
+            : $this->resolvePayrollModule($periodInput);
+        $periodInput['payroll_module'] = $payrollModule;
+
         $q = $this->payrollEligibility->query(
             $companyId,
             $branchId,
@@ -1659,7 +1720,8 @@ class PayslipService
             $periodStartForEligibility,
             $periodEndForEligibility,
             $actor,
-            $this->dataScopeService
+            $this->dataScopeService,
+            $payrollModule
         );
 
         if (is_array($employeeIds) && count($employeeIds) > 0) {
@@ -1672,6 +1734,8 @@ class PayslipService
 
         $ids = [];
         $processedEmployees = 0;
+        $failedEmployees = 0;
+        $employeeFailureMessages = [];
         $generationCancelled = false;
         if ($progressRun instanceof PayrollBatchRun) {
             $this->updateBatchRunProgress($progressRun, [
@@ -1684,7 +1748,11 @@ class PayslipService
         $fromStr = (string) ($periodInput['from_date'] ?? '');
         $toStr = (string) ($periodInput['to_date'] ?? '');
         $prefetchTimings = [];
-        $prefetchAttendance = ! $withPdf && $fromStr !== '' && $toStr !== '' && $employeeCount > 0;
+        $prefetchAttendance = $payrollModule !== PayrollBatchRun::MODULE_EXECOM
+            && ! $withPdf
+            && $fromStr !== ''
+            && $toStr !== ''
+            && $employeeCount > 0;
         $sharedComputationContext = null;
         $attendanceRowsCount = 0;
         $payComponentRowsCount = 0;
@@ -1801,18 +1869,41 @@ class PayslipService
             $loopStartedAt = microtime(true);
             foreach ($users as $user) {
                 $uid = (int) $user->id;
-                $gen = $this->computePayslipGenerationData(
-                    $user,
-                    $periodInput,
-                    true,
-                    null,
-                    null,
-                    null,
-                    $ytdChunk[$uid] ?? ['ytd_gross' => 0.0, 'ytd_deductions' => 0.0, 'ytd_tax' => 0.0],
-                    $timingSink,
-                    $sharedComputationContext,
-                    skipMutableCheck: true,
-                );
+                try {
+                    $gen = $this->computePayslipGenerationData(
+                        $user,
+                        $periodInput,
+                        true,
+                        null,
+                        null,
+                        null,
+                        $ytdChunk[$uid] ?? ['ytd_gross' => 0.0, 'ytd_deductions' => 0.0, 'ytd_tax' => 0.0],
+                        $timingSink,
+                        $sharedComputationContext,
+                        skipMutableCheck: true,
+                    );
+                } catch (\Throwable $e) {
+                    $failedEmployees++;
+                    $employeeName = trim((string) ($user->display_name ?? $user->name ?? ''));
+                    $message = sprintf(
+                        'Employee %s (user_id=%d): %s',
+                        $employeeName !== '' ? $employeeName : 'unknown',
+                        $uid,
+                        $e->getMessage()
+                    );
+                    $employeeFailureMessages[] = $message;
+                    Log::error('payroll.batch.employee_failed', [
+                        'payroll_batch_run_id' => $progressRun instanceof PayrollBatchRun ? (int) $progressRun->id : null,
+                        'payroll_module' => $payrollModule,
+                        'employee_id' => $uid,
+                        'employee_name' => $employeeName,
+                        'message' => $e->getMessage(),
+                    ]);
+                    report($e);
+
+                    continue;
+                }
+
                 $row = array_merge($gen['unique'], $gen['attributes']);
                 $row['period_slot'] = 0;
                 $periodStartStr ??= (string) $gen['unique']['pay_period_start'];
@@ -1901,13 +1992,18 @@ class PayslipService
                 }
             });
             $timings['bulk_upsert_ms'] += (microtime(true) - $upsertStartedAt) * 1000;
-            $processedEmployees += count($chunkIds);
+            $processedEmployees += count($rows);
             if ($progressRun instanceof PayrollBatchRun) {
-                $this->updateBatchRunProgress($progressRun, [
+                $progressPayload = [
                     'processed_employees' => $processedEmployees,
                     'employee_count' => $processedEmployees,
                     'total_employees' => $employeeCount,
-                ]);
+                    'failed_employees' => $failedEmployees,
+                ];
+                if ($employeeFailureMessages !== []) {
+                    $progressPayload['error_message'] = Str::limit(implode(' | ', $employeeFailureMessages), 2000, '...');
+                }
+                $this->updateBatchRunProgress($progressRun, $progressPayload);
             }
             }
         } finally {
@@ -1975,6 +2071,8 @@ class PayslipService
         return [
             'payslip_ids' => $ids,
             'timings' => $payloadTimings,
+            'failed_employees' => $failedEmployees,
+            'employee_errors' => $employeeFailureMessages,
         ];
     }
 
@@ -2186,6 +2284,9 @@ class PayslipService
         $out = $snapshot;
         $summary = is_array($out['summary'] ?? null) ? $out['summary'] : [];
         $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
+        if ($this->isExecomSnapshot($out, $summary)) {
+            $summary = $this->sanitizeExecomPayslipSummary($summary, $out);
+        }
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
             $summary
@@ -2207,7 +2308,27 @@ class PayslipService
     public function snapshotForPayslipRender(Payslip $payslip, User $employee): array
     {
         $snapshotRaw = $payslip->snapshot ?? [];
+        $isExecomPayslip = (string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM;
+        if ($isExecomPayslip && ! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            try {
+                $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
+                $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
+                if ($snapshot !== []) {
+                    return $this->normalizeSnapshotForPayslipView(
+                        $this->snapshotWithPayrollModule($snapshot, PayrollBatchRun::MODULE_EXECOM)
+                    );
+                }
+            } catch (Throwable $e) {
+                Log::warning('EXECOM payslip render: live fixed-pay recomputation failed, falling back to stored snapshot', [
+                    'payslip_id' => (int) $payslip->id,
+                    'user_id' => (int) $employee->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         if (is_array($snapshotRaw) && $snapshotRaw !== []) {
+            $snapshotRaw = $this->snapshotWithPayrollModule($snapshotRaw, (string) ($payslip->payroll_module ?? ''));
             if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
                 return $this->frozenSnapshotForPayslipView($snapshotRaw);
             }
@@ -2229,7 +2350,28 @@ class PayslipService
             ]);
         }
 
-        return $this->normalizeSnapshotForPayslipView(is_array($snapshotRaw) ? $snapshotRaw : []);
+        return $this->normalizeSnapshotForPayslipView(
+            $this->snapshotWithPayrollModule(is_array($snapshotRaw) ? $snapshotRaw : [], (string) ($payslip->payroll_module ?? ''))
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    private function snapshotWithPayrollModule(array $snapshot, string $payrollModule): array
+    {
+        $module = $this->normalizePayrollModule($payrollModule);
+        if ($module === '') {
+            return $snapshot;
+        }
+
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $summary['payroll_module'] = $module;
+        $snapshot['summary'] = $summary;
+        $snapshot['payroll_module'] = $module;
+
+        return $snapshot;
     }
 
     /**
@@ -2242,6 +2384,11 @@ class PayslipService
             'to_date' => $payslip->pay_period_end?->toDateString(),
             'pay_cycle_id' => $payslip->pay_cycle_id !== null ? (int) $payslip->pay_cycle_id : null,
             'reference_date' => $payslip->pay_date?->toDateString(),
+            'payroll_module' => $this->normalizePayrollModule((string) ($payslip->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)),
+            'payroll_batch_run_id' => $payslip->payroll_batch_run_id !== null ? (int) $payslip->payroll_batch_run_id : null,
+            'company_id' => $payslip->company_id !== null ? (int) $payslip->company_id : null,
+            'branch_id' => $payslip->branch_id !== null ? (int) $payslip->branch_id : null,
+            'department_id' => $payslip->department_id !== null ? (int) $payslip->department_id : null,
             'use_company_default' => $payslip->pay_cycle_id === null,
             'payroll_period_id' => $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
             'is_final_pay' => (bool) $payslip->is_final_pay,
@@ -2281,10 +2428,18 @@ class PayslipService
         }
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
 
-        $earningLines = array_values(array_merge(
-            $this->rawPayslipLineList($summary['daily_computation_earning_lines'] ?? []),
-            $this->rawPayslipLineList($summary['payslip_earning_lines'] ?? [])
-        ));
+        $isExecom = (string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM
+            || $this->isExecomSnapshot($snapshot, $summary);
+        if ($isExecom) {
+            $summary = $this->sanitizeExecomPayslipSummary($summary, $snapshot);
+        }
+
+        $earningLines = $isExecom
+            ? $this->rawPayslipLineList($summary['payslip_earning_lines'] ?? [])
+            : array_values(array_merge(
+                $this->rawPayslipLineList($summary['daily_computation_earning_lines'] ?? []),
+                $this->rawPayslipLineList($summary['payslip_earning_lines'] ?? [])
+            ));
         $deductionLines = array_values(array_merge(
             $this->rawPayslipLineList($summary['payslip_deduction_lines'] ?? []),
             $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? [], $summary)
@@ -2528,10 +2683,17 @@ class PayslipService
     private function payslipLineTotalsFromNormalizedSnapshot(array $snapshot): array
     {
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
-        $earningLines = array_values(array_merge(
-            is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [],
-            is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : []
-        ));
+        $isExecom = $this->isExecomSnapshot($snapshot, $summary);
+        if ($isExecom) {
+            $summary = $this->sanitizeExecomPayslipSummary($summary, $snapshot);
+        }
+
+        $earningLines = $isExecom
+            ? (is_array($summary['payslip_earning_lines'] ?? null) ? array_values($summary['payslip_earning_lines']) : [])
+            : array_values(array_merge(
+                is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [],
+                is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : []
+            ));
         $deductionLines = array_values(array_merge(
             is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
             $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? [], $summary)
@@ -2627,13 +2789,16 @@ class PayslipService
     {
         $out = $snapshot;
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $isExecomSnapshot = $this->isExecomSnapshot($snapshot, $summary);
 
         $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
         $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
         $dailyComputationDays = $this->cleanDailyComputationDays($snapshot['daily_computation_days'] ?? null);
-        if ($dailyComputationDays !== []) {
+        if ($dailyComputationDays !== [] && ! $isExecomSnapshot) {
             $out['daily_computation_days'] = $dailyComputationDays;
             $summary = $this->repairRegularPayLineFromDailyComputationDays($summary, $dailyComputationDays, $regularHourlyRate);
+        } elseif ($isExecomSnapshot) {
+            $out['daily_computation_days'] = [];
         }
 
         $summary['payslip_earning_lines'] = $this->normalizePayslipLineList(
@@ -2650,6 +2815,9 @@ class PayslipService
             false,
             $regularHourlyRate
         );
+        if ($isExecomSnapshot) {
+            $summary = $this->sanitizeExecomPayslipSummary($summary);
+        }
         $summary['payslip_deduction_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_deduction_lines'] ?? [],
             'Deduction',
@@ -2707,6 +2875,317 @@ class PayslipService
         $out['summary'] = $summary;
 
         return $out;
+    }
+
+    /**
+     * EXECOM payslips use a fixed Basic Pay. They must never render attendance-derived
+     * daily computation earnings such as "Regular pay".
+     *
+     * @param  array<string, mixed>  $summary
+     * @return array<string, mixed>
+     */
+    private function sanitizeExecomPayslipSummary(array $summary, array $snapshot = []): array
+    {
+        $lines = [];
+        $basicAmount = $this->resolveExecomBasicPayDisplayAmount($summary);
+
+        if ($basicAmount > 0.0) {
+            $lines[] = [
+                'key' => 'execom_basic_pay',
+                'label' => 'Basic Pay',
+                'name' => 'Basic Pay',
+                'category' => 'basic_pay',
+                'component_code' => 'BASIC_SALARY',
+                'amount' => $basicAmount,
+                'resolved_amount' => $basicAmount,
+            ];
+        }
+
+        foreach (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [] as $line) {
+            if (! is_array($line) || $this->isExecomAttendanceBasedEarningLine($line) || $this->isExecomBasicPayLine($line)) {
+                continue;
+            }
+            if (! $this->execomPayslipLineScheduleApplies($line, $summary, $snapshot, true)) {
+                continue;
+            }
+
+            $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+            if ($amount <= 0.0) {
+                continue;
+            }
+
+            $line['amount'] = $amount;
+            $lines[] = $line;
+        }
+
+        $lines = $this->deduplicatePayslipLines($lines);
+        $summary['daily_computation_earning_lines'] = [];
+        $summary['daily_computation_days'] = [];
+        $summary['payslip_earning_lines'] = array_values($lines);
+        $summary['payslip_custom_deduction_lines'] = $this->filterExecomScheduledDeductionLines(
+            $summary['payslip_custom_deduction_lines'] ?? [],
+            $summary,
+            $snapshot
+        );
+        $summary['basic_pay'] = $basicAmount;
+        $summary['basic_pay_this_period'] = $basicAmount;
+        $summary['basic_salary_period'] = $basicAmount;
+        $summary['basic_salary'] = $basicAmount;
+        $summary['total_pay'] = $basicAmount;
+        $summary['attendance_premium_pay_this_period'] = 0.0;
+        $summary['attendance_deduction'] = 0.0;
+        $summary['leave_deduction'] = 0.0;
+        $summary['late_minutes'] = 0;
+        $summary['undertime_minutes'] = 0;
+        $summary['absent_days'] = 0;
+
+        return $summary;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $lines
+     * @return list<array<string, mixed>>
+     */
+    private function deduplicatePayslipLines(array $lines): array
+    {
+        $seen = [];
+        $out = [];
+        foreach ($lines as $line) {
+            $key = implode('|', [
+                strtolower(trim((string) ($line['component_code'] ?? $line['code'] ?? ''))),
+                strtolower(trim((string) ($line['pay_component_id'] ?? ''))),
+                strtolower(trim((string) ($line['label'] ?? $line['name'] ?? ''))),
+                number_format(round((float) ($line['amount'] ?? $line['resolved_amount'] ?? 0), 2), 2, '.', ''),
+            ]);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $out[] = $line;
+        }
+
+        return array_values($out);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function filterExecomScheduledDeductionLines(mixed $raw, array $summary, array $snapshot): array
+    {
+        $rows = is_array($raw) ? $raw : [];
+        $run = $this->resolveExecomPayslipRunType($summary, $snapshot);
+        $out = [];
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            if (! $this->execomPayslipLineScheduleApplies($row, $summary, $snapshot, false, $run)) {
+                continue;
+            }
+
+            $out[] = $row;
+        }
+
+        return array_values($out);
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function execomPayslipLineScheduleApplies(
+        array $line,
+        array $summary,
+        array $snapshot,
+        bool $earning,
+        ?string $resolvedRun = null
+    ): bool {
+        $schedule = $this->normalizePayslipScheduleValue(
+            $line['resolved_schedule']
+                ?? $line['component_schedule']
+                ?? ($earning ? ($line['earning_schedule_type'] ?? null) : ($line['deduction_schedule_type'] ?? null))
+                ?? $line['schedule']
+                ?? null
+        );
+        $inferredSchedule = $this->inferPayslipScheduleFromLineText($line);
+        if (($schedule === null || $schedule === 'both') && $inferredSchedule !== null) {
+            $schedule = $inferredSchedule;
+        }
+        if ($schedule === null || $schedule === 'both') {
+            return true;
+        }
+
+        $rowRun = $this->normalizePayslipRunType(
+            $line['payroll_run_type']
+                ?? data_get($line, 'pay_component_resolution.payroll_run_type')
+                ?? null
+        ) ?? $resolvedRun ?? $this->resolveExecomPayslipRunType($summary, $snapshot);
+
+        if ($rowRun === null) {
+            return true;
+        }
+
+        return ($schedule === '15th' && $rowRun === '15th')
+            || ($schedule === '30th' && $rowRun === '30th');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function inferPayslipScheduleFromLineText(array $line): ?string
+    {
+        $text = strtolower(preg_replace(
+            '/[^a-z0-9]+/',
+            '_',
+            implode(' ', [
+                (string) ($line['component_code'] ?? ''),
+                (string) ($line['code'] ?? ''),
+                (string) ($line['label'] ?? ''),
+                (string) ($line['name'] ?? ''),
+            ])
+        ) ?? '');
+        $text = trim($text, '_');
+        if ($text === '') {
+            return null;
+        }
+
+        $has15 = (bool) preg_match('/(^|_)every_?15(_|$)|(^|_)15(th)?(_|$)/', $text);
+        $has30 = (bool) preg_match('/(^|_)every_?30(_|$)|(^|_)30(th)?(_|$)|end_?of_?month|(^|_)eom(_|$)/', $text);
+
+        if ($has15 && $has30) {
+            return 'both';
+        }
+        if ($has15) {
+            return '15th';
+        }
+        if ($has30) {
+            return '30th';
+        }
+
+        return null;
+    }
+
+    private function resolveExecomPayslipRunType(array $summary, array $snapshot): ?string
+    {
+        $candidate = data_get($summary, 'deduction_schedule.current_payroll_run_type')
+            ?? data_get($summary, 'deduction_schedule.payroll_run_type')
+            ?? data_get($summary, 'deduction_schedule.semi_monthly_period')
+            ?? data_get($summary, 'semi_monthly_period');
+        $run = $this->normalizePayslipRunType($candidate);
+        if ($run !== null) {
+            return $run;
+        }
+
+        $payDate = data_get($snapshot, 'pay_cycle_preview.pay_date')
+            ?? data_get($summary, 'pay_date')
+            ?? data_get($snapshot, 'pay_date')
+            ?? data_get($snapshot, 'selected_pay_date');
+        if (is_string($payDate) && trim($payDate) !== '') {
+            try {
+                return Carbon::parse($payDate)->day <= 15 ? '15th' : '30th';
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     * @param  array<string, mixed>  $summary
+     */
+    private function isExecomSnapshot(array $snapshot, array $summary): bool
+    {
+        $module = strtolower(trim((string) ($summary['payroll_module'] ?? $snapshot['payroll_module'] ?? '')));
+        if ($module === PayrollBatchRun::MODULE_EXECOM) {
+            return true;
+        }
+
+        if (! empty($summary['execom_badge']) || ! empty($summary['execom_profile_id']) || ! empty($summary['execom_salary_source_used'])) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function resolveExecomBasicPayDisplayAmount(array $summary): float
+    {
+        foreach (is_array(data_get($summary, 'deduction_schedule.earning_lines')) ? data_get($summary, 'deduction_schedule.earning_lines') : [] as $line) {
+            if (! is_array($line) || empty($line['is_basic_salary_line'])) {
+                continue;
+            }
+
+            $amount = round(max(0.0, (float) (
+                $line['scheduled_this_period']
+                ?? data_get($line, 'pay_component_resolution.applied_amount')
+                ?? 0
+            )), 2);
+            if ($amount > 0.0) {
+                return $amount;
+            }
+        }
+
+        foreach (['basic_pay_this_period', 'basic_salary_period'] as $key) {
+            $amount = round(max(0.0, (float) ($summary[$key] ?? 0)), 2);
+            if ($amount > 0.0) {
+                return $amount;
+            }
+        }
+
+        foreach (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [] as $line) {
+            if (is_array($line) && $this->isExecomBasicPayLine($line)) {
+                $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+                if ($amount > 0.0) {
+                    return $amount;
+                }
+            }
+        }
+
+        foreach (['basic_pay', 'total_pay', 'basic_salary'] as $key) {
+            $amount = round(max(0.0, (float) ($summary[$key] ?? 0)), 2);
+            if ($amount > 0.0) {
+                return $amount;
+            }
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isExecomBasicPayLine(array $line): bool
+    {
+        $code = strtoupper(trim((string) ($line['component_code'] ?? $line['code'] ?? $line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? $line['name'] ?? '')));
+
+        return $code === 'BASIC_SALARY'
+            || str_contains($code, 'BASIC_SALARY')
+            || $label === 'basic pay'
+            || $label === 'basic salary';
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isExecomAttendanceBasedEarningLine(array $line): bool
+    {
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? $line['name'] ?? '')));
+        $category = strtolower(trim((string) ($line['category'] ?? '')));
+
+        return str_contains($key, 'regular_pay')
+            || $label === 'regular pay'
+            || $category === 'regular_pay'
+            || str_contains($key, 'attendance_premium')
+            || str_contains($key, 'holiday_premium')
+            || str_contains($key, 'ot_pay')
+            || str_contains($key, 'nd_pay');
     }
 
     /**
@@ -3094,9 +3573,9 @@ class PayslipService
         }
 
         return match (strtolower(trim($value))) {
-            '15th', '15', 'first', 'first_half', 'first-half', 'every_15_only' => '15th',
-            '30th', '30', 'second', 'second_half', 'second-half', 'end_of_month', 'eom', 'every_30_only' => '30th',
-            'both', '15th_and_30th', '50/50', 'half', 'split', 'semi-monthly', 'semi_monthly' => 'both',
+            '15th', '15', '15th_only', '15_only', 'first', 'first_half', 'first-half', 'every_15_only', 'every_15' => '15th',
+            '30th', '30', '30th_only', '30_only', 'second', 'second_half', 'second-half', 'end_of_month', 'end-of-month', 'eom', 'every_30_only', 'every_30' => '30th',
+            'both', 'every_payroll', 'every-payroll', '15th_and_30th', 'every_15_and_30', '15_and_30', '15/30', '50/50', 'half', 'split', 'semi-monthly', 'semi_monthly' => 'both',
             default => null,
         };
     }
@@ -3619,21 +4098,22 @@ class PayslipService
      */
     public function employeeIdsForBatchScope(PayrollBatchRun $run): array
     {
-        $q = User::query()->payrollEmployees()->active();
-        if ($run->company_id) {
-            $q->where('company_id', (int) $run->company_id);
-        }
-        if ($run->branch_id) {
-            $q->where('branch_id', (int) $run->branch_id);
-        }
-        if ($run->department_id) {
-            $q->where('department_id', (int) $run->department_id);
-        }
+        $payrollModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        $q = $this->payrollEligibility->query(
+            $run->company_id ? (int) $run->company_id : null,
+            $run->branch_id ? (int) $run->branch_id : null,
+            $run->department_id ? (int) $run->department_id : null,
+            $run->pay_period_start,
+            $run->pay_period_end,
+            null,
+            $this->dataScopeService,
+            $payrollModule
+        );
         if ($run->employee_id) {
-            $q->where('id', (int) $run->employee_id);
+            $q->where('users.id', (int) $run->employee_id);
         }
 
-        return $q->orderByLastName()->pluck('id')->map(fn ($id) => (int) $id)->all();
+        return $q->orderByLastName()->pluck('users.id')->map(fn ($id) => (int) $id)->all();
     }
 
     /**
@@ -3718,12 +4198,22 @@ class PayslipService
             }
         }
 
+        $this->cleanupStaleBatchModulePayslips($run);
         $this->attachMatchingPayslipsToBatchRun($run);
+
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        $eligibleEmployeeIds = $this->employeeIdsForBatchScope($run);
 
         $q = Payslip::query()
             ->where('payroll_batch_run_id', (int) $run->id)
+            ->where('payroll_module', $expectedModule)
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
             ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+        if ($eligibleEmployeeIds !== []) {
+            $q->whereIn('user_id', $eligibleEmployeeIds);
+        } else {
+            $q->whereRaw('1 = 0');
+        }
         if ((string) $run->status === PayrollBatchRun::STATUS_FINALIZED) {
             $q->whereIn('status', Payslip::lockingStatuses());
         } else {
@@ -3902,11 +4392,14 @@ class PayslipService
             ? Payslip::lockingStatuses()
             : $this->draftSnapshotStatuses();
 
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+
         $query = Payslip::query()
             ->whereNull('payroll_batch_run_id')
             ->whereNull('voided_at')
             ->whereIn('status', $expectedStatuses)
             ->where('period_slot', 0)
+            ->where('payroll_module', $expectedModule)
             ->where('company_id', (int) $run->company_id)
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
             ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
@@ -4042,6 +4535,7 @@ class PayslipService
                 ->whereIn('user_id', $userIds)
                 ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
                 ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
+                ->where('payroll_module', $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)))
                 ->where('period_slot', 0);
             if ($run->company_id) {
                 $base->where('company_id', (int) $run->company_id);
@@ -4058,5 +4552,158 @@ class PayslipService
                 $run->delete();
             }
         });
+    }
+
+    private function resolvePayrollModule(array $input): string
+    {
+        if (! empty($input['payroll_module'])) {
+            return $this->normalizePayrollModule((string) $input['payroll_module']);
+        }
+        if (! empty($input['payroll_batch_run_id'])) {
+            $module = PayrollBatchRun::query()
+                ->whereKey((int) $input['payroll_batch_run_id'])
+                ->value('payroll_module');
+            if (is_string($module) && trim($module) !== '') {
+                return $this->normalizePayrollModule($module);
+            }
+        }
+
+        return PayrollBatchRun::MODULE_STANDARD;
+    }
+
+    private function normalizePayrollModule(string $module): string
+    {
+        return strtolower(trim($module)) === PayrollBatchRun::MODULE_EXECOM
+            ? PayrollBatchRun::MODULE_EXECOM
+            : PayrollBatchRun::MODULE_STANDARD;
+    }
+
+    /**
+     * @param  array<string, mixed>  $periodCtx
+     * @param  array<string, mixed>|null  $preview
+     * @return array<string, mixed>
+     */
+    private function computePayrollForModule(
+        User $employee,
+        Carbon $from,
+        Carbon $to,
+        string $payrollModule,
+        array $periodCtx,
+        ?array $preview,
+    ): array {
+        if ($payrollModule !== PayrollBatchRun::MODULE_EXECOM) {
+            return $this->payrollComputation->computeEmployeePayroll(
+                $employee,
+                $from,
+                $to,
+                null,
+                $periodCtx
+            );
+        }
+
+        $profile = $employee->activeExecomProfileForPeriod($from, $to);
+        if (! $profile instanceof ExecomEmployeeProfile) {
+            throw new \RuntimeException('Active EXECOM profile is required for EXECOM payroll (user_id='.(int) $employee->id.').');
+        }
+
+        $settings = ExecomPayrollSetting::forCompany($profile->company_id ? (int) $profile->company_id : null);
+        $periodContext = array_merge($periodCtx, [
+            'pay_cycle_preview' => $preview ?? $periodCtx['pay_cycle_preview'] ?? null,
+            'pay_cycle_code' => $periodCtx['pay_cycle_code'] ?? data_get($preview, 'pay_cycle_code', data_get($preview, 'code')),
+            'semi_month_segment' => $periodCtx['semi_month_segment'] ?? data_get($preview, 'semi_month_segment'),
+            'selected_pay_date' => $preview['pay_date'] ?? $periodCtx['selected_pay_date'] ?? null,
+            'company_working_days' => $this->resolveCompanyWorkingDaysForExecom($employee, $profile),
+        ]);
+
+        return $this->execomPayrollComputation->computeExecomPayroll(
+            $employee,
+            $from,
+            $to,
+            $profile,
+            $settings,
+            $periodContext
+        );
+    }
+
+    private function resolveCompanyWorkingDaysForExecom(User $employee, ExecomEmployeeProfile $profile): int
+    {
+        $companyId = $profile->company_id ? (int) $profile->company_id : ($employee->getEffectiveCompanyId() ?? 0);
+        if ($companyId > 0) {
+            $company = Company::query()->find($companyId);
+            if ($company && isset($company->working_days_per_month) && (int) $company->working_days_per_month > 0) {
+                return max(1, (int) $company->working_days_per_month);
+            }
+        }
+
+        try {
+            return max(1, (int) config('payroll.execom_working_days_per_month', 26));
+        } catch (\Throwable) {
+            return 26;
+        }
+    }
+
+    public function cleanupStaleBatchModulePayslips(PayrollBatchRun $run): void
+    {
+        if ($run->pay_period_start === null || $run->pay_period_end === null) {
+            return;
+        }
+
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        $wrongModule = $expectedModule === PayrollBatchRun::MODULE_EXECOM
+            ? PayrollBatchRun::MODULE_STANDARD
+            : PayrollBatchRun::MODULE_EXECOM;
+        $eligibleEmployeeIds = $this->employeeIdsForBatchScope($run);
+
+        $staleQuery = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->whereIn('status', $this->draftSnapshotStatuses())
+            ->where(function ($query) use ($wrongModule, $eligibleEmployeeIds) {
+                $query->where('payroll_module', $wrongModule);
+                if ($eligibleEmployeeIds === []) {
+                    $query->orWhereNotNull('user_id');
+                } else {
+                    $query->orWhereNotIn('user_id', $eligibleEmployeeIds);
+                }
+            });
+
+        $stalePayslipIds = $staleQuery
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if ($stalePayslipIds === []) {
+            return;
+        }
+
+        $this->deletePayslipsAndPayrollLines($stalePayslipIds);
+
+        Log::info('Payroll batch removed stale payslips from wrong payroll module or membership', [
+            'payroll_batch_run_id' => (int) $run->id,
+            'expected_module' => $expectedModule,
+            'removed_count' => count($stalePayslipIds),
+        ]);
+    }
+
+    /**
+     * @param  list<int>  $payslipIds
+     */
+    private function deletePayslipsAndPayrollLines(array $payslipIds): void
+    {
+        if ($payslipIds === []) {
+            return;
+        }
+
+        $payrollEmployeeIds = PayrollEmployee::query()
+            ->whereIn('payslip_id', $payslipIds)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if ($payrollEmployeeIds !== []) {
+            PayrollLine::query()->whereIn('payroll_employee_id', $payrollEmployeeIds)->delete();
+            PayrollEmployee::query()->whereIn('id', $payrollEmployeeIds)->delete();
+        }
+
+        Payslip::query()->whereIn('id', $payslipIds)->delete();
     }
 }

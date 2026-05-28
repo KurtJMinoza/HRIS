@@ -83,8 +83,13 @@ class PayrollReportService
         $columns = $this->reportColumns($dynamicColumns);
         $layout = $this->layoutForColumnCount(count($columns));
 
+        $isExecom = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_EXECOM;
+
         return [
             'company' => $company,
+            'reportCompanyName' => $isExecom ? 'Execom' : $company->name,
+            'reportCompanyAddress' => $isExecom ? null : $company->address,
+            'isExecomPayroll' => $isExecom,
             'run' => $run,
             'rows' => $rows,
             'columns' => $columns,
@@ -94,7 +99,7 @@ class PayrollReportService
             'reportPayDate' => $payslips->first()?->pay_date ?? $run->reference_date,
             'generatedAt' => now(),
             'generatedBy' => $actor->name ?? $actor->email ?? 'System',
-            'logoLocalPath' => $this->logoLocalPath($company),
+            'logoLocalPath' => $isExecom ? null : $this->logoLocalPath($company),
         ];
     }
 
