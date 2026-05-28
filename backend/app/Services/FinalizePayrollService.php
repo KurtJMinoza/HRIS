@@ -645,8 +645,7 @@ class FinalizePayrollService
                 'stale_rows_excluded_count' => $staleRowsExcluded,
             ]);
         }
-        $payslips = $query
-            ->orderBy('id')
+        $payslips = $this->orderPayslipQueryByEmployeeName($query)
             ->offset($offset)
             ->limit($limit)
             ->get();
@@ -860,7 +859,7 @@ class FinalizePayrollService
         if (! (clone $scopedEmployeesQuery)->exists()) {
             return null;
         }
-        $probe = (clone $scopedEmployeesQuery)->orderBy('id')->first();
+        $probe = (clone $scopedEmployeesQuery)->orderByLastName()->first();
         if ($probe === null) {
             return null;
         }
@@ -941,7 +940,7 @@ class FinalizePayrollService
             return $rows;
         }
         $probe = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor)
-            ->orderBy('id')
+            ->orderByLastName()
             ->first();
         if ($probe === null) {
             return $rows;
@@ -1077,7 +1076,7 @@ class FinalizePayrollService
         }
 
         $employees = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor)
-            ->orderBy('id')
+            ->orderByLastName()
             ->get();
 
         if ($employees->isEmpty()) {
@@ -1144,7 +1143,7 @@ class FinalizePayrollService
                     }
                     $employees = User::query()
                         ->whereIn('id', $draftUserIds)
-                        ->orderBy('id')
+                        ->orderByLastName()
                         ->get();
                 } elseif ($draftUserIds !== []) {
                     Log::warning('Payroll finalize saved draft roster count does not match batch employee_count', [
@@ -1272,7 +1271,7 @@ class FinalizePayrollService
         ?User $actor = null
     ): array {
         $employees = $this->scopedEmployees($companyId, $branchId, $departmentId, $singleEmployeeId, $actor)
-            ->orderBy('id')
+            ->orderByLastName()
             ->get();
         if ($employees->isEmpty()) {
             throw new \RuntimeException('No active employees in scope.');
@@ -2609,6 +2608,31 @@ class FinalizePayrollService
         }
 
         return $query;
+    }
+
+    private function orderPayslipQueryByEmployeeName(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query
+            ->orderBy(
+                User::query()
+                    ->select('last_name')
+                    ->whereColumn('users.id', 'payslips.user_id')
+                    ->limit(1)
+            )
+            ->orderBy(
+                User::query()
+                    ->select('first_name')
+                    ->whereColumn('users.id', 'payslips.user_id')
+                    ->limit(1)
+            )
+            ->orderBy(
+                User::query()
+                    ->select('middle_name')
+                    ->whereColumn('users.id', 'payslips.user_id')
+                    ->limit(1)
+            )
+            ->orderBy('user_id')
+            ->orderBy('id');
     }
 
     private function attachMatchingPayslipsToBatchRun(PayrollBatchRun $run): int
