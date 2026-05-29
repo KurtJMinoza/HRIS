@@ -42,32 +42,37 @@
 <head>
   <meta charset="utf-8">
   <style>
-    @page { margin: 4mm 3.5mm 7mm; }
+    @page { size: A4 landscape; margin: 4mm 6mm 7mm 4mm; }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      color: #1f2937;
+      color: #111827;
       font-family: DejaVu Sans, Arial, sans-serif;
       font-size: var(--report-body-font, 12.2px);
-      line-height: 1.1;
+      line-height: 1.12;
       background: #ffffff;
     }
     body.report-compact { font-size: var(--report-body-font, 11.4px); }
     body.report-wide { font-size: var(--report-body-font, 10.0px); }
     body.report-ultra { font-size: var(--report-body-font, 9.4px); }
     .report-shell {
-      width: 100%;
+      width: 80%;
+      max-width: 80%;
       margin: 0 auto;
+      padding: 0;
     }
     body.report-compact .report-shell,
     body.report-wide .report-shell,
-    body.report-ultra .report-shell { width: 100%; }
+    body.report-ultra .report-shell {
+      width: 80%;
+      max-width: 80%;
+    }
     .hero {
       display: table;
       width: 100%;
-      padding-bottom: 4px;
-      margin-bottom: 4px;
-      border-bottom: 1.2px solid #111827;
+      padding: 0 0 5px;
+      margin-bottom: 5px;
+      border-bottom: 1.4px solid #111827;
       color: #111827;
     }
     .hero-left, .hero-right {
@@ -77,8 +82,8 @@
     }
     .hero-right { text-align: right; }
     .logo {
-      width: 24px;
-      height: 24px;
+      width: 30px;
+      height: 30px;
       display: inline-block;
       vertical-align: top;
       margin-right: 8px;
@@ -87,8 +92,8 @@
       padding: 1px;
     }
     .logo-fallback {
-      width: 24px;
-      height: 24px;
+      width: 30px;
+      height: 30px;
       display: inline-block;
       vertical-align: top;
       margin-right: 8px;
@@ -97,25 +102,25 @@
     }
     .company {
       display: inline-block;
-      max-width: 440px;
+      max-width: 62%;
       vertical-align: top;
     }
     .company-name {
       margin: 0 0 2px;
-      font-size: 13px;
+      font-size: 12.5px;
       font-weight: 800;
       color: #111827;
     }
     .company-address {
       margin: 0;
       color: #4b5563;
-      font-size: 7.4px;
-      line-height: 1.15;
+      font-size: 6.8px;
+      line-height: 1.18;
     }
     .report-title {
       margin: 0 0 2px;
       color: #111827;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
       letter-spacing: 0.04em;
       text-transform: uppercase;
@@ -123,7 +128,7 @@
     .report-subtitle {
       margin: 0;
       color: #4b5563;
-      font-size: 7.4px;
+      font-size: 6.8px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.08em;
@@ -131,16 +136,15 @@
     .meta-panel {
       display: table;
       width: 100%;
-      margin-bottom: 4px;
-      border-top: 0.5px solid #d1d5db;
-      border-bottom: 0.5px solid #d1d5db;
-      background: #ffffff;
+      margin-bottom: 5px;
+      border: 0.5px solid #cbd5e1;
+      background: #f8fafc;
     }
     .meta-block {
       display: table-cell;
       width: 20%;
-      padding: 2.5px 4px 2.5px 0;
-      border-right: 0;
+      padding: 3px 5px;
+      border-right: 0.5px solid #e5e7eb;
       vertical-align: top;
     }
     .meta-block:last-child { border-right: 0; }
@@ -163,7 +167,7 @@
     .summary {
       display: table;
       width: 100%;
-      margin-bottom: 4px;
+      margin-bottom: 5px;
       border: 0.5px solid #cbd5e1;
       border-collapse: collapse;
     }
@@ -175,7 +179,7 @@
     }
     .summary-card:last-child { border-right: 0; }
     .summary-inner {
-      padding: 2.5px 4px;
+      padding: 3px 5px;
       background: #f8fafc;
     }
     .summary-label {
@@ -196,7 +200,7 @@
     }
     .summary-value.net { color: #111827; }
     .section-title {
-      margin: 1px 0 3px;
+      margin: 2px 0 4px;
       color: #111827;
       font-size: 8px;
       font-weight: 800;
@@ -205,30 +209,35 @@
     }
     table.payroll-table {
       width: 100%;
+      max-width: 100%;
       margin: 0 auto;
       border-collapse: collapse;
       table-layout: fixed;
-      border: 0.8px solid #cbd5e1;
+      border: 0.7px solid #94a3b8;
+      font-size: inherit;
     }
+    table.payroll-table col.col-employee { width: var(--employee-col-width, 30%); }
+    table.payroll-table col.col-numeric { width: var(--numeric-col-width, 7%); }
     thead { display: table-header-group; }
     tfoot { display: table-row-group; }
     tr { page-break-inside: avoid; }
     th, td {
-      border: 0.5px solid #d1d5db;
+      border: 0.45px solid #d1d5db;
       padding: var(--report-cell-padding, 1.5px 1.7px);
       vertical-align: middle;
       overflow-wrap: anywhere;
       word-break: break-word;
+      overflow: hidden;
     }
     body.report-compact th, body.report-compact td,
     body.report-wide th, body.report-wide td,
     body.report-ultra th, body.report-ultra td { padding: var(--report-cell-padding, 1px 1.1px); }
     th {
-      background: #f3f4f6;
+      background: #f8fafc;
       color: #111827;
       font-size: var(--report-header-font, 10.5px);
       font-weight: 800;
-      line-height: 1.02;
+      line-height: 1.04;
       text-align: center;
       text-transform: uppercase;
       letter-spacing: 0;
@@ -238,9 +247,9 @@
     body.report-wide th,
     body.report-ultra th { font-size: var(--report-header-font, 10.5px); }
     .group th {
-      background: #e5e7eb;
-      color: #111827;
-      border-color: #cbd5e1;
+      background: #111827;
+      color: #ffffff;
+      border-color: #111827;
       font-size: var(--report-header-font, 10.2px);
       letter-spacing: 0.02em;
     }
@@ -252,13 +261,18 @@
       text-align: left;
       color: #111827;
       line-height: 1.16;
+      overflow-wrap: anywhere;
+      font-size: 1.02em;
     }
     td.num {
       text-align: right;
-      white-space: nowrap;
-      word-break: normal;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
       font-variant-numeric: tabular-nums;
-      letter-spacing: -0.05em;
+      letter-spacing: -0.045em;
+      font-size: 1em;
+      line-height: 1.14;
     }
     tbody tr:nth-child(even) td { background: #fafafa; }
     tbody tr:nth-child(odd) td { background: #ffffff; }
@@ -266,7 +280,7 @@
     .deductions { color: #111827; font-weight: 700; }
     .net { color: #111827; font-weight: 800; }
     tfoot td {
-      background: #f3f4f6;
+      background: #eef2f7;
       border-top: 1px solid #111827;
       font-weight: 800;
       color: #111827;
@@ -279,11 +293,12 @@
     }
     .footer {
       position: fixed;
-      bottom: -5mm;
-      left: 0;
-      right: 0;
+      bottom: -7mm;
+      left: 10%;
+      right: auto;
       display: table;
-      width: 100%;
+      width: 80%;
+      margin: 0 auto;
       padding-top: 3px;
       border-top: 0.5px solid #e5e7eb;
       color: #6b7280;
@@ -299,7 +314,7 @@
 </head>
 <body
   class="{{ $layoutClass }}"
-  style="--report-body-font: {{ $layout['body_font'] ?? '6.2px' }}; --report-header-font: {{ $layout['header_font'] ?? '5.5px' }}; --report-cell-padding: {{ $layout['cell_padding'] ?? '1.4px 1.6px' }};"
+  style="--report-body-font: {{ $layout['body_font'] ?? '6.2px' }}; --report-header-font: {{ $layout['header_font'] ?? '5.5px' }}; --report-cell-padding: {{ $layout['cell_padding'] ?? '1.4px 1.6px' }}; --employee-col-width: {{ $layout['employee_width'] ?? 30 }}%; --numeric-col-width: {{ $layout['numeric_width'] ?? 7 }}%;"
 >
   <div class="report-shell">
     <div class="hero">
@@ -377,7 +392,10 @@
     <table class="payroll-table">
       <colgroup>
         @foreach($columns as $column)
-          <col width="{{ $column['key'] === 'employee_name' ? $layout['employee_width'] : $layout['numeric_width'] }}%">
+          <col
+            class="{{ $column['key'] === 'employee_name' ? 'col-employee' : 'col-numeric' }}"
+            width="{{ $column['key'] === 'employee_name' ? $layout['employee_width'] : $layout['numeric_width'] }}%"
+          >
         @endforeach
       </colgroup>
       <thead>

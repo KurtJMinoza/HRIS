@@ -214,15 +214,15 @@ class PayrollReportService
     {
         $columns = [
             ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
-            ['key' => 'regular_basic_pay', 'label' => 'Regular / Basic', 'group' => 'Earnings', 'class' => 'num'],
+            ['key' => 'regular_basic_pay', 'label' => 'Basic Pay', 'group' => 'Earnings', 'class' => 'num'],
         ];
 
         foreach ([
-            'holiday_pay' => 'Holiday Pay',
-            'overtime_pay' => 'Overtime',
-            'night_differential' => 'Night Diff.',
-            'paid_leave' => 'Paid Leave',
-            'other_earnings' => 'Other Earn.',
+            'holiday_pay' => 'Holiday',
+            'overtime_pay' => 'OT',
+            'night_differential' => 'Night Diff',
+            'paid_leave' => 'Leave',
+            'other_earnings' => 'Other Earn',
         ] as $key => $label) {
             if ($dynamicColumns[$key] ?? false) {
                 $columns[] = ['key' => $key, 'label' => $label, 'group' => 'Earnings', 'class' => 'num'];
@@ -231,14 +231,14 @@ class PayrollReportService
 
         return array_merge($columns, [
             ['key' => 'allowance', 'label' => 'Allowance', 'group' => 'Allowance', 'class' => 'num'],
-            ['key' => 'sss', 'label' => 'SSS', 'group' => 'Government Deductions', 'class' => 'num'],
-            ['key' => 'philhealth', 'label' => 'PhilHealth', 'group' => 'Government Deductions', 'class' => 'num'],
-            ['key' => 'pagibig', 'label' => 'Pag-IBIG', 'group' => 'Government Deductions', 'class' => 'num'],
-            ['key' => 'withholding_tax', 'label' => 'WHT', 'group' => 'Government Deductions', 'class' => 'num'],
-            ['key' => 'other_deductions', 'label' => 'Other Ded.', 'group' => 'Other Deductions', 'class' => 'num deductions'],
+            ['key' => 'sss', 'label' => 'SSS', 'group' => 'Govt. Deductions', 'class' => 'num'],
+            ['key' => 'philhealth', 'label' => 'PHIC', 'group' => 'Govt. Deductions', 'class' => 'num'],
+            ['key' => 'pagibig', 'label' => 'HDMF', 'group' => 'Govt. Deductions', 'class' => 'num'],
+            ['key' => 'withholding_tax', 'label' => 'WHT', 'group' => 'Govt. Deductions', 'class' => 'num'],
+            ['key' => 'other_deductions', 'label' => 'Other Ded.', 'group' => 'Other Ded.', 'class' => 'num deductions'],
             ['key' => 'gross_earnings', 'label' => 'Gross', 'group' => 'Totals', 'class' => 'num gross'],
-            ['key' => 'total_deductions', 'label' => 'Deductions', 'group' => 'Totals', 'class' => 'num deductions'],
-            ['key' => 'net_pay', 'label' => 'Net Pay', 'group' => 'Totals', 'class' => 'num net'],
+            ['key' => 'total_deductions', 'label' => 'Deduct.', 'group' => 'Totals', 'class' => 'num deductions'],
+            ['key' => 'net_pay', 'label' => 'Net', 'group' => 'Totals', 'class' => 'num net'],
         ]);
     }
 
@@ -247,41 +247,40 @@ class PayrollReportService
      */
     private function layoutForColumnCount(int $columnCount): array
     {
-        // Use wider paper for payroll registers so text can be larger without cramping columns.
+        // Payroll registers are column-heavy; landscape gives enough width to show
+        // every column while keeping the text readable.
         $employeeWidth = match (true) {
-            $columnCount >= 18 => 15.0,
-            $columnCount >= 15 => 16.0,
-            $columnCount >= 10 => 19.0,
-            default => 22.0,
+            $columnCount >= 21 => 22.0,
+            $columnCount >= 17 => 24.0,
+            $columnCount >= 13 => 26.0,
+            $columnCount >= 10 => 30.0,
+            default => 34.0,
         };
         $numericWidth = round((100.0 - $employeeWidth) / max(1, $columnCount - 1), 4);
-        $paperSize = match (true) {
-            $columnCount >= 18 => 'a2',
-            $columnCount >= 13 => 'a3',
-            $columnCount >= 10 => 'a3',
-            default => 'a4',
-        };
 
         return [
-            'paper_size' => $paperSize,
-            'orientation' => $columnCount >= 10 ? 'landscape' : 'portrait',
+            'paper_size' => 'a4',
+            'orientation' => 'landscape',
             'body_font' => match (true) {
-                $columnCount >= 18 => '9.4px',
-                $columnCount >= 15 => '10.0px',
-                $columnCount >= 10 => '11.4px',
-                default => '12.2px',
+                $columnCount >= 21 => '6.2px',
+                $columnCount >= 17 => '7.0px',
+                $columnCount >= 13 => '8.2px',
+                $columnCount >= 10 => '8.8px',
+                default => '11.2px',
             },
             'header_font' => match (true) {
-                $columnCount >= 18 => '8.2px',
-                $columnCount >= 15 => '8.8px',
-                $columnCount >= 10 => '9.8px',
-                default => '10.5px',
+                $columnCount >= 21 => '4.5px',
+                $columnCount >= 17 => '5.2px',
+                $columnCount >= 13 => '6.2px',
+                $columnCount >= 10 => '6.4px',
+                default => '8.6px',
             },
             'cell_padding' => match (true) {
-                $columnCount >= 18 => '1.2px 1.4px',
-                $columnCount >= 15 => '1.3px 1.5px',
-                $columnCount >= 10 => '1.5px 1.7px',
-                default => '1.8px 2px',
+                $columnCount >= 21 => '0.6px 0.7px',
+                $columnCount >= 17 => '0.7px 0.8px',
+                $columnCount >= 13 => '0.9px 1px',
+                $columnCount >= 10 => '2px 1.8px',
+                default => '2.2px 2px',
             },
             'employee_width' => $employeeWidth,
             'numeric_width' => $numericWidth,

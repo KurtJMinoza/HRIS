@@ -368,6 +368,8 @@ class PayslipController extends Controller
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
+            'from_date' => ['nullable', 'date'],
+            'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
         ]);
 
         if ($request->user()?->isAdmin()) {
@@ -378,22 +380,43 @@ class PayslipController extends Controller
             );
         }
 
-        $q = User::query()
-            ->payrollEmployees()
-            ->active();
-        $this->dataScopeService->restrictEmployeeQuery($request->user(), $q);
+        $periodStart = ! empty($v['from_date'])
+            ? \Carbon\Carbon::parse((string) $v['from_date'])->startOfDay()
+            : null;
+        $periodEnd = ! empty($v['to_date'])
+            ? \Carbon\Carbon::parse((string) $v['to_date'])->startOfDay()
+            : null;
+        $companyId = isset($v['company_id']) ? (int) $v['company_id'] : null;
+        $branchId = isset($v['branch_id']) ? (int) $v['branch_id'] : null;
+        $departmentId = isset($v['department_id']) ? (int) $v['department_id'] : null;
 
-        if (! empty($v['company_id'])) {
-            $q->where('company_id', (int) $v['company_id']);
-        }
-        if (! empty($v['branch_id'])) {
-            $q->where('branch_id', (int) $v['branch_id']);
-        }
-        if (! empty($v['department_id'])) {
-            $q->where('department_id', (int) $v['department_id']);
-        }
+        $q = $this->payrollEligibility->query(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $periodStart,
+            $periodEnd,
+            $request->user(),
+            $this->dataScopeService,
+            PayrollBatchRun::MODULE_STANDARD
+        );
 
-        $total = (clone $q)->count();
+        $execomQ = $this->payrollEligibility->query(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $periodStart,
+            $periodEnd,
+            $request->user(),
+            $this->dataScopeService,
+            PayrollBatchRun::MODULE_EXECOM
+        );
+
+        $standardEmployeeIds = (clone $q)->pluck('users.id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $execomEmployeeIds = (clone $execomQ)->pluck('users.id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $total = count($standardEmployeeIds);
+        $execomExcluded = count($execomEmployeeIds);
+        $payrollScopeTotal = count(array_unique(array_merge($standardEmployeeIds, $execomEmployeeIds)));
 
         if (! empty($v['branch_id'])) {
             $branchesFiltered = 1;
@@ -420,6 +443,9 @@ class PayslipController extends Controller
 
         return response()->json([
             'total_employees' => $total,
+            'regular_payroll_employees' => $total,
+            'execom_excluded_employees' => $execomExcluded,
+            'payroll_scope_total_employees' => $payrollScopeTotal,
             'regular' => $regular,
             'contractual_or_project' => $contractualProject,
             'other' => $other,

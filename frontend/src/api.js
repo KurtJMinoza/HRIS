@@ -1784,13 +1784,15 @@ export async function adminDeletePayslipBatch(batchRunId) {
 
 /**
  * Bulk scope preview (same filters as bulk generate). Admin only.
- * @param {{ company_id?: number, branch_id?: number, department_id?: number }} params
+ * @param {{ company_id?: number, branch_id?: number, department_id?: number, from_date?: string, to_date?: string }} params
  */
 export async function getAdminPayslipPreviewScope(params = {}) {
   const q = new URLSearchParams()
   if (params.company_id != null && params.company_id !== '') q.set('company_id', String(params.company_id))
   if (params.branch_id != null && params.branch_id !== '') q.set('branch_id', String(params.branch_id))
   if (params.department_id != null && params.department_id !== '') q.set('department_id', String(params.department_id))
+  if (params.from_date) q.set('from_date', params.from_date)
+  if (params.to_date) q.set('to_date', params.to_date)
   const res = await authenticatedFetch(`/admin/payslips/preview-scope${q.toString() ? `?${q}` : ''}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load scope preview')

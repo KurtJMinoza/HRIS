@@ -501,6 +501,8 @@ export default function AdminGeneratePayslipsPage() {
           company_id: companyId ? Number(companyId) : undefined,
           branch_id: branchId ? Number(branchId) : undefined,
           department_id: departmentId ? Number(departmentId) : undefined,
+          from_date: fromDate || undefined,
+          to_date: toDate || undefined,
         })
         if (!cancelled) setPreview(data)
       } catch {
@@ -513,7 +515,7 @@ export default function AdminGeneratePayslipsPage() {
       cancelled = true
       clearTimeout(t)
     }
-  }, [canManagePayslips, isAdmin, companyId, branchId, departmentId, scopeReady, isExecomModule])
+  }, [canManagePayslips, isAdmin, companyId, branchId, departmentId, fromDate, toDate, scopeReady, isExecomModule])
 
   useEffect(() => {
     if (isExecomModule || !canManagePayslips || !scopeReady) {
@@ -589,7 +591,8 @@ export default function AdminGeneratePayslipsPage() {
   const selectedCompanyLogo = resolveLogoUrl(selectedCompany?.logo_url)
 
   const activeEmployees = Number(preview?.total_employees ?? 0)
-  const regularEmployees = Number(preview?.regular ?? 0)
+  const payrollScopeTotalEmployees = Number(preview?.payroll_scope_total_employees ?? activeEmployees)
+  const execomExcludedEmployees = Number(preview?.execom_excluded_employees ?? 0)
   const contractualEmployees = Number(preview?.contractual_or_project ?? 0)
   const otherEmployees = Number(preview?.other ?? 0)
 
@@ -1288,7 +1291,7 @@ export default function AdminGeneratePayslipsPage() {
                       {isExecomModule
                         ? (execomReady ? 'Ready to generate EXECOM payroll' : 'Choose pay dates for EXECOM payroll')
                         : scopeReady
-                        ? `Ready to generate · ${activeEmployees} employee${activeEmployees === 1 ? '' : 's'} in scope`
+                        ? `Ready to generate · ${activeEmployees} Regular Payroll employee${activeEmployees === 1 ? '' : 's'} in scope`
                         : 'Choose filters to estimate your batch'}
                     </p>
                     {isExecomModule ? (
@@ -1305,7 +1308,9 @@ export default function AdminGeneratePayslipsPage() {
                         </p>
                       ) : (
                         <p className="text-sm font-normal text-muted-foreground">
-                          Continue to Finalize Payroll to review totals and generate PDF payslips.
+                          {execomExcludedEmployees > 0
+                            ? `${execomExcludedEmployees} EXECOM employee${execomExcludedEmployees === 1 ? '' : 's'} in this scope ${execomExcludedEmployees === 1 ? 'is' : 'are'} handled in EXECOM Payroll.`
+                            : 'Continue to Finalize Payroll to review totals and generate PDF payslips.'}
                         </p>
                       )
                     ) : (
@@ -1377,7 +1382,7 @@ export default function AdminGeneratePayslipsPage() {
                           {scopeReady ? activeEmployees : '—'}
                         </p>
                         <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                          Employees
+                          Regular Payroll
                         </p>
                       </div>
                     </CircularProgress>
@@ -1386,7 +1391,9 @@ export default function AdminGeneratePayslipsPage() {
                   {/* Breakdown pills */}
                   {scopeReady && (
                     <div className="flex flex-wrap justify-center gap-2">
-                      {regularEmployees > 0 && <BreakdownPill label="Regular" count={regularEmployees} />}
+                      {activeEmployees > 0 && <BreakdownPill label="Regular Payroll" count={activeEmployees} />}
+                      {execomExcludedEmployees > 0 && <BreakdownPill label="EXECOM separate" count={execomExcludedEmployees} />}
+                      {payrollScopeTotalEmployees > activeEmployees && <BreakdownPill label="Combined payroll scope" count={payrollScopeTotalEmployees} />}
                       {contractualEmployees > 0 && <BreakdownPill label="Contractual" count={contractualEmployees} />}
                       {otherEmployees > 0 && <BreakdownPill label="Other" count={otherEmployees} />}
                     </div>
