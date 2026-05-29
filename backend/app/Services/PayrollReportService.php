@@ -153,6 +153,11 @@ class PayrollReportService
             ->map(fn (Payslip $payslip): array => $this->rowForPayslip($payslip))
             ->sortBy('employee_sort_key')
             ->values()
+            ->map(function (array $row, int $index): array {
+                $row['row_number'] = $index + 1;
+
+                return $row;
+            })
             ->all();
 
         $dynamicColumns = [
@@ -213,6 +218,7 @@ class PayrollReportService
     private function reportColumns(array $dynamicColumns): array
     {
         $columns = [
+            ['key' => 'row_number', 'label' => 'No.', 'group' => '#', 'class' => 'num row-number'],
             ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
             ['key' => 'regular_basic_pay', 'label' => 'Basic Pay', 'group' => 'Earnings', 'class' => 'num'],
         ];
@@ -243,12 +249,13 @@ class PayrollReportService
     }
 
     /**
-     * @return array{paper_size:string,orientation:string,body_font:string,header_font:string,cell_padding:string,employee_width:float,numeric_width:float}
+     * @return array{paper_size:string,orientation:string,body_font:string,header_font:string,cell_padding:string,row_number_width:float,employee_width:float,numeric_width:float}
      */
     private function layoutForColumnCount(int $columnCount): array
     {
         // Payroll registers are column-heavy; landscape gives enough width to show
         // every column while keeping the text readable.
+        $rowNumberWidth = 4.0;
         $employeeWidth = match (true) {
             $columnCount >= 21 => 22.0,
             $columnCount >= 17 => 24.0,
@@ -256,7 +263,7 @@ class PayrollReportService
             $columnCount >= 10 => 30.0,
             default => 34.0,
         };
-        $numericWidth = round((100.0 - $employeeWidth) / max(1, $columnCount - 1), 4);
+        $numericWidth = round((100.0 - $rowNumberWidth - $employeeWidth) / max(1, $columnCount - 2), 4);
 
         return [
             'paper_size' => 'a4',
@@ -282,6 +289,7 @@ class PayrollReportService
                 $columnCount >= 10 => '2px 1.8px',
                 default => '2.2px 2px',
             },
+            'row_number_width' => $rowNumberWidth,
             'employee_width' => $employeeWidth,
             'numeric_width' => $numericWidth,
         ];

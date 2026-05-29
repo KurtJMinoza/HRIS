@@ -293,26 +293,11 @@ class ExecomPayrollController extends Controller
         $actor = $request->user();
         abort_unless($actor instanceof User, 403);
 
-        if (empty($validated['company_id'])) {
-            try {
-                $result = $this->payrollReportService->pdfForRun($run, $actor);
-            } catch (\RuntimeException $e) {
-                abort(422, $e->getMessage());
-            }
-
-            return $result['pdf']->download('EXECOM_'.$result['filename']);
-        }
-
         try {
-            $company = $this->payrollReportService->resolveReportCompany(
-                $run,
-                (int) $validated['company_id'],
-            );
+            $result = $this->payrollReportService->pdfForRun($run, $actor);
         } catch (\RuntimeException $e) {
             abort(422, $e->getMessage());
         }
-
-        $result = $this->payrollReportService->pdfForRunCompany($run, $company, $actor);
 
         return $result['pdf']->download('EXECOM_'.$result['filename']);
     }

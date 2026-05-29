@@ -216,6 +216,7 @@
       border: 0.7px solid #94a3b8;
       font-size: inherit;
     }
+    table.payroll-table col.col-number { width: var(--number-col-width, 4%); }
     table.payroll-table col.col-employee { width: var(--employee-col-width, 30%); }
     table.payroll-table col.col-numeric { width: var(--numeric-col-width, 7%); }
     thead { display: table-header-group; }
@@ -274,6 +275,12 @@
       font-size: 1em;
       line-height: 1.14;
     }
+    td.num.row-number {
+      text-align: center;
+      font-weight: 700;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
     tbody tr:nth-child(even) td { background: #fafafa; }
     tbody tr:nth-child(odd) td { background: #ffffff; }
     .gross { font-weight: 700; }
@@ -314,7 +321,7 @@
 </head>
 <body
   class="{{ $layoutClass }}"
-  style="--report-body-font: {{ $layout['body_font'] ?? '6.2px' }}; --report-header-font: {{ $layout['header_font'] ?? '5.5px' }}; --report-cell-padding: {{ $layout['cell_padding'] ?? '1.4px 1.6px' }}; --employee-col-width: {{ $layout['employee_width'] ?? 30 }}%; --numeric-col-width: {{ $layout['numeric_width'] ?? 7 }}%;"
+  style="--report-body-font: {{ $layout['body_font'] ?? '6.2px' }}; --report-header-font: {{ $layout['header_font'] ?? '5.5px' }}; --report-cell-padding: {{ $layout['cell_padding'] ?? '1.4px 1.6px' }}; --number-col-width: {{ $layout['row_number_width'] ?? 4 }}%; --employee-col-width: {{ $layout['employee_width'] ?? 30 }}%; --numeric-col-width: {{ $layout['numeric_width'] ?? 7 }}%;"
 >
   <div class="report-shell">
     <div class="hero">
@@ -393,8 +400,8 @@
       <colgroup>
         @foreach($columns as $column)
           <col
-            class="{{ $column['key'] === 'employee_name' ? 'col-employee' : 'col-numeric' }}"
-            width="{{ $column['key'] === 'employee_name' ? $layout['employee_width'] : $layout['numeric_width'] }}%"
+            class="{{ $column['key'] === 'row_number' ? 'col-number' : ($column['key'] === 'employee_name' ? 'col-employee' : 'col-numeric') }}"
+            width="{{ $column['key'] === 'row_number' ? ($layout['row_number_width'] ?? 4) : ($column['key'] === 'employee_name' ? $layout['employee_width'] : $layout['numeric_width']) }}%"
           >
         @endforeach
       </colgroup>
@@ -414,7 +421,9 @@
         @foreach($rows as $row)
           <tr>
             @foreach($columns as $column)
-              @if($column['key'] === 'employee_name')
+              @if($column['key'] === 'row_number')
+                <td class="{{ $column['class'] }}">{{ $row[$column['key']] }}</td>
+              @elseif($column['key'] === 'employee_name')
                 <td class="{{ $column['class'] }}">{{ $row[$column['key']] }}</td>
               @else
                 <td class="{{ $column['class'] }}">{{ $money($row[$column['key']] ?? 0) }}</td>
@@ -426,7 +435,9 @@
       <tfoot>
         <tr>
           @foreach($columns as $column)
-            @if($column['key'] === 'employee_name')
+            @if($column['key'] === 'row_number')
+              <td></td>
+            @elseif($column['key'] === 'employee_name')
               <td>Total</td>
             @else
               <td class="{{ $column['class'] }}">{{ $money($totals[$column['key']] ?? 0) }}</td>
