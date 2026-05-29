@@ -42,7 +42,7 @@
 <head>
   <meta charset="utf-8">
   <style>
-    @page { size: A4 landscape; margin: 4mm 6mm 7mm 4mm; }
+    @page { size: A4 portrait; margin: 5mm 5mm 8mm; }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -56,16 +56,16 @@
     body.report-wide { font-size: var(--report-body-font, 10.0px); }
     body.report-ultra { font-size: var(--report-body-font, 9.4px); }
     .report-shell {
-      width: 80%;
-      max-width: 80%;
+      width: 100%;
+      max-width: 100%;
       margin: 0 auto;
       padding: 0;
     }
     body.report-compact .report-shell,
     body.report-wide .report-shell,
     body.report-ultra .report-shell {
-      width: 80%;
-      max-width: 80%;
+      width: 100%;
+      max-width: 100%;
     }
     .hero {
       display: table;
@@ -301,10 +301,10 @@
     .footer {
       position: fixed;
       bottom: -7mm;
-      left: 10%;
+      left: 0;
       right: auto;
       display: table;
-      width: 80%;
+      width: 100%;
       margin: 0 auto;
       padding-top: 3px;
       border-top: 0.5px solid #e5e7eb;

@@ -253,41 +253,41 @@ class PayrollReportService
      */
     private function layoutForColumnCount(int $columnCount): array
     {
-        // Payroll registers are column-heavy; landscape gives enough width to show
-        // every column while keeping the text readable.
+        // Portrait keeps the register print-friendly; scale text by column count
+        // so finalized reports still fit when optional payroll columns are present.
         $rowNumberWidth = 4.0;
         $employeeWidth = match (true) {
-            $columnCount >= 21 => 22.0,
-            $columnCount >= 17 => 24.0,
-            $columnCount >= 13 => 26.0,
-            $columnCount >= 10 => 30.0,
-            default => 34.0,
+            $columnCount >= 21 => 18.0,
+            $columnCount >= 17 => 20.0,
+            $columnCount >= 13 => 22.0,
+            $columnCount >= 10 => 24.0,
+            default => 30.0,
         };
         $numericWidth = round((100.0 - $rowNumberWidth - $employeeWidth) / max(1, $columnCount - 2), 4);
 
         return [
             'paper_size' => 'a4',
-            'orientation' => 'landscape',
+            'orientation' => 'portrait',
             'body_font' => match (true) {
-                $columnCount >= 21 => '6.2px',
-                $columnCount >= 17 => '7.0px',
-                $columnCount >= 13 => '8.2px',
-                $columnCount >= 10 => '8.8px',
-                default => '11.2px',
+                $columnCount >= 21 => '4.7px',
+                $columnCount >= 17 => '5.2px',
+                $columnCount >= 13 => '5.9px',
+                $columnCount >= 10 => '6.6px',
+                default => '9.4px',
             },
             'header_font' => match (true) {
-                $columnCount >= 21 => '4.5px',
-                $columnCount >= 17 => '5.2px',
-                $columnCount >= 13 => '6.2px',
-                $columnCount >= 10 => '6.4px',
-                default => '8.6px',
+                $columnCount >= 21 => '3.9px',
+                $columnCount >= 17 => '4.2px',
+                $columnCount >= 13 => '4.8px',
+                $columnCount >= 10 => '5.1px',
+                default => '7.4px',
             },
             'cell_padding' => match (true) {
-                $columnCount >= 21 => '0.6px 0.7px',
-                $columnCount >= 17 => '0.7px 0.8px',
-                $columnCount >= 13 => '0.9px 1px',
-                $columnCount >= 10 => '2px 1.8px',
-                default => '2.2px 2px',
+                $columnCount >= 21 => '0.4px 0.45px',
+                $columnCount >= 17 => '0.45px 0.5px',
+                $columnCount >= 13 => '0.6px 0.65px',
+                $columnCount >= 10 => '0.8px 0.9px',
+                default => '1.8px 1.6px',
             },
             'row_number_width' => $rowNumberWidth,
             'employee_width' => $employeeWidth,
