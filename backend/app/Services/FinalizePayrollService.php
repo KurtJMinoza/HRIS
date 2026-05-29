@@ -2916,7 +2916,9 @@ class FinalizePayrollService
 
         if ($expectedModule === PayrollBatchRun::MODULE_EXECOM) {
             if ($draftUserIds === []) {
-                throw new \RuntimeException('Cannot finalize: no execom draft payslips are linked to this batch.');
+                throw new \RuntimeException(
+                    'Cannot finalize: no EXECOM draft payslips are linked to this batch. Regenerate the EXECOM payroll draft first, then finalize again.'
+                );
             }
 
             return;

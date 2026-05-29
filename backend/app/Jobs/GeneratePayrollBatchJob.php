@@ -117,6 +117,8 @@ class GeneratePayrollBatchJob implements ShouldQueue
                 'pay_cycle_id' => $run->pay_cycle_id,
                 'reference_date' => $run->reference_date?->toDateString(),
                 'payroll_period_id' => $run->payroll_period_id,
+                'payroll_batch_run_id' => (int) $run->id,
+                'payroll_module' => (string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD),
                 'is_final_pay' => (bool) $run->is_final_pay,
                 'password_protect' => (bool) $run->password_protect,
             ];

@@ -861,7 +861,8 @@ class User extends Authenticatable
 
     public function activeExecomProfileForPeriod(?\Carbon\CarbonInterface $periodStart = null, ?\Carbon\CarbonInterface $periodEnd = null): ?ExecomEmployeeProfile
     {
-        return $this->execomProfiles()
+        return ExecomEmployeeProfile::query()
+            ->where('employee_id', (int) $this->id)
             ->activeForPeriod($periodStart, $periodEnd)
             ->orderByDesc('id')
             ->first();

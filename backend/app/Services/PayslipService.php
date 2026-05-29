@@ -4671,13 +4671,32 @@ class PayslipService
     public function syncBatchRunTotals(PayrollBatchRun $run): void
     {
         $agg = $this->aggregateForBatchRun($run);
-        $this->updateBatchRunProgress($run, [
+        $payload = [
             'employee_count' => $agg['payslip_count'],
             'total_employees' => max((int) ($run->total_employees ?? 0), (int) $agg['payslip_count']),
             'total_gross' => $agg['total_gross_pay'],
             'total_deductions' => $agg['total_deductions'],
             'total_net' => $agg['total_net_pay'],
-        ]);
+        ];
+
+        if ($run->company_id === null && (int) $agg['payslip_count'] > 0) {
+            $companyQuery = Payslip::query()
+                ->where('payroll_batch_run_id', (int) $run->id)
+                ->whereNull('voided_at')
+                ->whereNotNull('company_id');
+
+            $module = trim((string) ($run->payroll_module ?? ''));
+            if ($module !== '') {
+                $companyQuery->where('payroll_module', $module);
+            }
+
+            $companyIds = $companyQuery->distinct()->pluck('company_id');
+            if ($companyIds->count() === 1) {
+                $payload['company_id'] = (int) $companyIds->first();
+            }
+        }
+
+        $this->updateBatchRunProgress($run, $payload);
     }
 
     /**

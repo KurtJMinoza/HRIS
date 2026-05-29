@@ -11,6 +11,7 @@ use App\Models\Payslip;
 use App\Models\User;
 use App\Services\FinalizePayrollService;
 use App\Services\PayrollEmployeeEligibilityService;
+use App\Services\PayrollReportService;
 use App\Services\PayslipService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -330,6 +331,59 @@ class ExecomPayrollSeparationTest extends TestCase
             'pay_period_end' => '2026-05-25',
             'status' => $status,
         ]);
+    }
+
+    public function test_execom_report_resolves_company_from_payslips_when_batch_has_no_company(): void
+    {
+        $company = Company::query()->create(['name' => 'ACI']);
+        $execom = $this->employee($company, 'EXE-007');
+
+        $run = PayrollBatchRun::query()->create([
+            'batch_key' => 'execom-report-'.uniqid('', true),
+            'payroll_module' => PayrollBatchRun::MODULE_EXECOM,
+            'company_id' => null,
+            'pay_period_start' => '2026-05-26',
+            'pay_period_end' => '2026-06-10',
+            'status' => PayrollBatchRun::STATUS_FINALIZED,
+        ]);
+        $this->payslip($run, $execom, PayrollBatchRun::MODULE_EXECOM, 50000);
+
+        $resolved = app(PayrollReportService::class)->resolveReportCompany($run);
+
+        $this->assertSame((int) $company->id, (int) $resolved->id);
+        $this->assertSame((int) $company->id, (int) $run->fresh()->company_id);
+    }
+
+    public function test_execom_report_can_render_batch_that_spans_multiple_companies(): void
+    {
+        $aci = Company::query()->create(['name' => 'ACI']);
+        $cjm = Company::query()->create(['name' => 'CJM']);
+        $firstExecom = $this->employee($aci, 'EXE-008');
+        $secondExecom = $this->employee($cjm, 'EXE-009');
+        $admin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+            'is_system_user' => false,
+            'is_hidden' => false,
+        ]);
+
+        $run = PayrollBatchRun::query()->create([
+            'batch_key' => 'execom-report-all-'.uniqid('', true),
+            'payroll_module' => PayrollBatchRun::MODULE_EXECOM,
+            'company_id' => null,
+            'pay_period_start' => '2026-05-26',
+            'pay_period_end' => '2026-06-10',
+            'status' => PayrollBatchRun::STATUS_FINALIZED,
+        ]);
+        $this->payslip($run, $firstExecom, PayrollBatchRun::MODULE_EXECOM, 50000);
+        $this->payslip($run, $secondExecom, PayrollBatchRun::MODULE_EXECOM, 60000);
+
+        $payload = app(PayrollReportService::class)->buildReportPayloadForRun($run, $admin);
+
+        $this->assertTrue($payload['isExecomPayroll']);
+        $this->assertNull($payload['company']);
+        $this->assertSame('Execom', $payload['reportCompanyName']);
+        $this->assertCount(2, $payload['rows']);
     }
 
     private function payslip(

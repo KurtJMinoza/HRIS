@@ -283,12 +283,36 @@ class ExecomPayrollController extends Controller
 
     public function downloadReport(Request $request, int $batchRunId): mixed
     {
+        $validated = $request->validate([
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
+        ]);
+
         $run = $this->execomRun($batchRunId);
         abort_if((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED, 422, 'Payroll report is only available for finalized EXECOM batches.');
-        abort_if(! $run->company_id, 422, 'Company not found for this EXECOM batch.');
 
-        $company = Company::query()->findOrFail((int) $run->company_id);
-        $result = $this->payrollReportService->pdfForRunCompany($run, $company, $request->user());
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        if (empty($validated['company_id'])) {
+            try {
+                $result = $this->payrollReportService->pdfForRun($run, $actor);
+            } catch (\RuntimeException $e) {
+                abort(422, $e->getMessage());
+            }
+
+            return $result['pdf']->download('EXECOM_'.$result['filename']);
+        }
+
+        try {
+            $company = $this->payrollReportService->resolveReportCompany(
+                $run,
+                (int) $validated['company_id'],
+            );
+        } catch (\RuntimeException $e) {
+            abort(422, $e->getMessage());
+        }
+
+        $result = $this->payrollReportService->pdfForRunCompany($run, $company, $actor);
 
         return $result['pdf']->download('EXECOM_'.$result['filename']);
     }

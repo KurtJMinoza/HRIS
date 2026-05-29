@@ -123,19 +123,8 @@ class PayrollEmployeeEligibilityService
     ): Builder {
         $query = User::query()
             ->payrollEmployees()
-            ->active()
-            ->whereHas('execomProfiles', function (Builder $profile) use ($companyId, $branchId, $departmentId, $periodStart, $periodEnd): void {
-                $profile->activeForPeriod($periodStart, $periodEnd);
-                if ($companyId !== null && $companyId > 0) {
-                    $profile->where('company_id', $companyId);
-                }
-                if ($branchId !== null && $branchId > 0) {
-                    $profile->where('branch_id', $branchId);
-                }
-                if ($departmentId !== null && $departmentId > 0) {
-                    $profile->where('department_id', $departmentId);
-                }
-            });
+            ->active();
+        $this->applyActiveExecomProfileScope($query, $companyId, $branchId, $departmentId, $periodStart, $periodEnd, true);
 
         if ($actor instanceof User && $dataScopeService instanceof DataScopeService) {
             $dataScopeService->restrictEmployeeQuery($actor, $query);
@@ -152,8 +141,55 @@ class PayrollEmployeeEligibilityService
             });
         }
 
-        $query->whereDoesntHave('execomProfiles', function (Builder $profile) use ($periodStart, $periodEnd): void {
-            $profile->activeForPeriod($periodStart, $periodEnd);
+        if (Schema::hasTable('execom_employee_profiles')) {
+            $this->applyActiveExecomProfileScope($query, null, null, null, $periodStart, $periodEnd, false);
+        }
+    }
+
+    private function applyActiveExecomProfileScope(
+        Builder $query,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?CarbonInterface $periodStart,
+        ?CarbonInterface $periodEnd,
+        bool $mustHaveProfile,
+    ): void {
+        if (! Schema::hasTable('execom_employee_profiles')) {
+            if ($mustHaveProfile) {
+                $query->whereRaw('1 = 0');
+            }
+
+            return;
+        }
+
+        $start = $periodStart?->toDateString() ?? now()->toDateString();
+        $end = $periodEnd?->toDateString() ?? $start;
+        $existsMethod = $mustHaveProfile ? 'whereExists' : 'whereNotExists';
+
+        $query->{$existsMethod}(function ($sub) use ($companyId, $branchId, $departmentId, $start, $end): void {
+            $sub->selectRaw('1')
+                ->from('execom_employee_profiles')
+                ->whereColumn('execom_employee_profiles.employee_id', 'users.id')
+                ->where('execom_employee_profiles.is_active', true)
+                ->where(function ($dateQuery) use ($end): void {
+                    $dateQuery->whereNull('execom_employee_profiles.effective_from')
+                        ->orWhereDate('execom_employee_profiles.effective_from', '<=', $end);
+                })
+                ->where(function ($dateQuery) use ($start): void {
+                    $dateQuery->whereNull('execom_employee_profiles.effective_to')
+                        ->orWhereDate('execom_employee_profiles.effective_to', '>=', $start);
+                });
+
+            if ($companyId !== null && $companyId > 0) {
+                $sub->where('execom_employee_profiles.company_id', $companyId);
+            }
+            if ($branchId !== null && $branchId > 0) {
+                $sub->where('execom_employee_profiles.branch_id', $branchId);
+            }
+            if ($departmentId !== null && $departmentId > 0) {
+                $sub->where('execom_employee_profiles.department_id', $departmentId);
+            }
         });
     }
 

@@ -2222,9 +2222,14 @@ export async function getExecomPayrollPayslips(params = {}) {
   return data
 }
 
-export async function getExecomPayrollReportPdfBlob(batchRunId) {
+export async function getExecomPayrollReportPdfBlob(batchRunId, companyId = null) {
+  const params = new URLSearchParams()
+  if (companyId != null && companyId !== '') {
+    params.set('company_id', String(companyId))
+  }
+  const query = params.toString()
   const res = await authenticatedFetch(
-    `/admin/execom/payroll/batches/${encodeURIComponent(String(batchRunId))}/report/pdf`,
+    `/admin/execom/payroll/batches/${encodeURIComponent(String(batchRunId))}/report/pdf${query ? `?${query}` : ''}`,
     { timeoutMs: 120000 }
   )
   if (!res.ok) {

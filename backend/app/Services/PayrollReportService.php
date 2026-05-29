@@ -17,6 +17,67 @@ class PayrollReportService
     ) {}
 
     /**
+     * Resolve which company a payroll report belongs to when the batch run has no company_id
+     * (e.g. EXECOM generated for all companies).
+     */
+    public function resolveReportCompany(PayrollBatchRun $run, ?int $requestedCompanyId = null): Company
+    {
+        if ($requestedCompanyId !== null) {
+            $company = Company::query()->find($requestedCompanyId);
+            if (! $company) {
+                throw new \RuntimeException('Company not found.');
+            }
+            if ($run->company_id !== null && (int) $run->company_id !== (int) $company->id) {
+                throw new \RuntimeException('Company does not match this payroll batch.');
+            }
+
+            return $company;
+        }
+
+        if ($run->company_id !== null) {
+            return Company::query()->findOrFail((int) $run->company_id);
+        }
+
+        $companyIds = $this->distinctPayslipCompanyIdsForRun($run);
+        if ($companyIds->count() === 1) {
+            $companyId = (int) $companyIds->first();
+            PayrollBatchRun::query()
+                ->whereKey($run->id)
+                ->whereNull('company_id')
+                ->update(['company_id' => $companyId]);
+
+            return Company::query()->findOrFail($companyId);
+        }
+
+        if ($companyIds->count() > 1) {
+            throw new \RuntimeException(
+                'This EXECOM batch spans multiple companies. Pass company_id when downloading the report, or regenerate the batch with a company filter.'
+            );
+        }
+
+        throw new \RuntimeException('Company not found for this EXECOM batch.');
+    }
+
+    /**
+     * @return Collection<int, int>
+     */
+    private function distinctPayslipCompanyIdsForRun(PayrollBatchRun $run): Collection
+    {
+        $query = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->whereNull('voided_at')
+            ->whereNotNull('company_id')
+            ->whereIn('status', Payslip::lockingStatuses());
+
+        $module = trim((string) ($run->payroll_module ?? ''));
+        if ($module !== '') {
+            $query->where('payroll_module', $module);
+        }
+
+        return $query->distinct()->pluck('company_id')->map(fn ($id): int => (int) $id)->values();
+    }
+
+    /**
      * @return array{pdf:\Barryvdh\DomPDF\PDF, filename:string, employee_count:int}
      */
     public function pdfForRunCompany(PayrollBatchRun $run, Company $company, User $actor): array
@@ -28,6 +89,22 @@ class PayrollReportService
         return [
             'pdf' => $pdf,
             'filename' => $this->filename($company, $run),
+            'employee_count' => count($payload['rows']),
+        ];
+    }
+
+    /**
+     * @return array{pdf:\Barryvdh\DomPDF\PDF, filename:string, employee_count:int}
+     */
+    public function pdfForRun(PayrollBatchRun $run, User $actor): array
+    {
+        $payload = $this->buildReportPayloadForRun($run, $actor);
+        $pdf = Pdf::loadView('reports.payroll_report_pdf', $payload)
+            ->setPaper($payload['layout']['paper_size'], $payload['layout']['orientation']);
+
+        return [
+            'pdf' => $pdf,
+            'filename' => $this->runFilename($run),
             'employee_count' => count($payload['rows']),
         ];
     }
@@ -46,6 +123,32 @@ class PayrollReportService
             throw new \RuntimeException('No finalized payslips were found for this company and payroll run.');
         }
 
+        return $this->buildReportPayloadFromPayslips($run, $company, $actor, $payslips);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function buildReportPayloadForRun(PayrollBatchRun $run, User $actor): array
+    {
+        if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
+            throw new \RuntimeException('Payroll Report PDF is only available for finalized payroll runs.');
+        }
+
+        $payslips = $this->finalizedPayslipsForRun($run);
+        if ($payslips->isEmpty()) {
+            throw new \RuntimeException('No finalized payslips were found for this payroll run.');
+        }
+
+        return $this->buildReportPayloadFromPayslips($run, null, $actor, $payslips);
+    }
+
+    /**
+     * @param  Collection<int, Payslip>  $payslips
+     * @return array<string, mixed>
+     */
+    private function buildReportPayloadFromPayslips(PayrollBatchRun $run, ?Company $company, User $actor, Collection $payslips): array
+    {
         $rows = $payslips
             ->map(fn (Payslip $payslip): array => $this->rowForPayslip($payslip))
             ->sortBy('employee_sort_key')
@@ -87,8 +190,8 @@ class PayrollReportService
 
         return [
             'company' => $company,
-            'reportCompanyName' => $isExecom ? 'Execom' : $company->name,
-            'reportCompanyAddress' => $isExecom ? null : $company->address,
+            'reportCompanyName' => $isExecom ? 'Execom' : ($company?->name ?? 'Company'),
+            'reportCompanyAddress' => $isExecom ? null : $company?->address,
             'isExecomPayroll' => $isExecom,
             'run' => $run,
             'rows' => $rows,
@@ -99,7 +202,7 @@ class PayrollReportService
             'reportPayDate' => $payslips->first()?->pay_date ?? $run->reference_date,
             'generatedAt' => now(),
             'generatedBy' => $actor->name ?? $actor->email ?? 'System',
-            'logoLocalPath' => $isExecom ? null : $this->logoLocalPath($company),
+            'logoLocalPath' => $isExecom || ! $company ? null : $this->logoLocalPath($company),
         ];
     }
 
@@ -201,6 +304,30 @@ class PayrollReportService
             ->when($run->pay_period_end !== null, fn ($q) => $q->whereDate('pay_period_end', $run->pay_period_end->toDateString()))
             ->orderBy('user_id')
             ->orderByDesc('id');
+
+        return $query->get()->unique('user_id')->values();
+    }
+
+    /**
+     * @return Collection<int, Payslip>
+     */
+    private function finalizedPayslipsForRun(PayrollBatchRun $run): Collection
+    {
+        $query = Payslip::query()
+            ->with(['employee:id,name,first_name,middle_name,last_name,suffix,employee_code'])
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->whereNull('voided_at')
+            ->where('period_slot', 0)
+            ->whereIn('status', Payslip::lockingStatuses())
+            ->when($run->pay_period_start !== null, fn ($q) => $q->whereDate('pay_period_start', $run->pay_period_start->toDateString()))
+            ->when($run->pay_period_end !== null, fn ($q) => $q->whereDate('pay_period_end', $run->pay_period_end->toDateString()))
+            ->orderBy('user_id')
+            ->orderByDesc('id');
+
+        $module = trim((string) ($run->payroll_module ?? ''));
+        if ($module !== '') {
+            $query->where('payroll_module', $module);
+        }
 
         return $query->get()->unique('user_id')->values();
     }
@@ -406,5 +533,16 @@ class PayrollReportService
         $end = $run->pay_period_end?->format('Ymd') ?? 'end';
 
         return "Payroll_Report_{$companyName}_{$start}_{$end}_Run_{$run->id}.pdf";
+    }
+
+    private function runFilename(PayrollBatchRun $run): string
+    {
+        $module = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_EXECOM
+            ? 'EXECOM'
+            : 'Payroll';
+        $start = $run->pay_period_start?->format('Ymd') ?? 'period';
+        $end = $run->pay_period_end?->format('Ymd') ?? 'end';
+
+        return "Payroll_Report_{$module}_All_Companies_{$start}_{$end}_Run_{$run->id}.pdf";
     }
 }

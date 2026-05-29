@@ -356,7 +356,10 @@ export default function AdminExecomFinalizePayrollPage() {
   async function downloadReport() {
     if (!selectedId) return
     try {
-      const blob = await getExecomPayrollReportPdfBlob(selectedId)
+      const blob = await getExecomPayrollReportPdfBlob(
+        selectedId,
+        selectedBatch?.company_id ?? null,
+      )
       saveBlob(blob, `EXECOM-payroll-report-${selectedId}.pdf`)
     } catch (error) {
       toast({ title: 'Report download failed', description: error.message, variant: 'error' })
