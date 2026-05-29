@@ -7,6 +7,7 @@ const CANONICAL_BY_KEY = {
   regular: 'Regular',
   contractual: 'Contractual',
   project_based: 'Project-based',
+  consultant: 'Consultant',
   separated: 'Separated',
 }
 
@@ -17,6 +18,7 @@ const ALIAS_TO_KEY = {
   contract: 'contractual',
   project: 'project_based',
   projectbased: 'project_based',
+  consultancy: 'consultant',
   inactive: 'separated',
   resigned: 'separated',
   terminated: 'separated',
@@ -76,6 +78,8 @@ export function employmentStatusBadgeClassName(raw) {
       return `${base} border-sky-500/40 bg-sky-500/12 text-sky-900 dark:border-sky-500/35 dark:bg-sky-500/14 dark:text-sky-200`
     case 'project_based':
       return `${base} border-violet-500/40 bg-violet-500/12 text-violet-900 dark:border-violet-500/35 dark:bg-violet-500/14 dark:text-violet-200`
+    case 'consultant':
+      return `${base} border-amber-500/45 bg-amber-500/12 text-amber-900 dark:border-amber-500/35 dark:bg-amber-500/14 dark:text-amber-200`
     case 'separated':
       return `${base} border-rose-500/40 bg-rose-500/10 text-rose-950 dark:border-rose-500/35 dark:bg-rose-500/12 dark:text-rose-100`
     default:

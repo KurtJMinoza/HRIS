@@ -255,6 +255,8 @@ function normalizeEmploymentStatusValue(raw) {
     project: 'project_based',
     project_based: 'project_based',
     projectbased: 'project_based',
+    consultant: 'consultant',
+    consultancy: 'consultant',
     separated: 'separated',
     inactive: 'separated',
     resigned: 'separated',
@@ -1270,11 +1272,9 @@ export default function AdminEmployeeProfile() {
     setCompensationSummary(d?.compensation_summary ?? null)
     if (found) {
           const [firstName, ...restNames] = String(found.name || '').trim().split(/\s+/)
-          const normalizedEmploymentType = ['full_time', 'part_time', 'contract'].includes(found.employment_type)
+          const normalizedEmploymentType = ['full_time', 'part_time', 'contract', 'probationary'].includes(found.employment_type)
             ? found.employment_type
-            : found.employment_type === 'probationary'
-              ? 'full_time'
-              : ''
+            : ''
           let nextSkills = []
           let nextGovIds = createEmptyGovIdsState()
           let nextSecondaryIds = createDefaultSecondaryIdsState()
@@ -4247,6 +4247,16 @@ export default function AdminEmployeeProfile() {
                       EXECOM
                     </Badge>
                   ) : null}
+                  {String(employee.employment_status || '').toLowerCase() === 'consultant' ? (
+                    <>
+                      <Badge className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+                        Consultant
+                      </Badge>
+                      <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+                        Fixed Salary Payroll
+                      </Badge>
+                    </>
+                  ) : null}
                   <span className="inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-0.5 text-xs font-medium text-muted-foreground dark:border-white/10">
                     <CreditCard className="size-3 shrink-0" />
                     {employee.employee_code || employee.employee_id || `EMP-${employee.id}`}
@@ -5063,9 +5073,16 @@ export default function AdminEmployeeProfile() {
                       <SelectItem value="regular">Regular</SelectItem>
                       <SelectItem value="contractual">Contractual</SelectItem>
                       <SelectItem value="project_based">Project-based</SelectItem>
+                      <SelectItem value="consultant">Consultant</SelectItem>
                       <SelectItem value="separated">Separated</SelectItem>
                     </SelectContent>
                   </Select>
+                  {form.employment_status === 'consultant' ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">Consultant</Badge>
+                      <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">Fixed Salary Payroll</Badge>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="space-y-3">
                   <Label className="flex items-center gap-2 text-base text-muted-foreground">
@@ -5101,6 +5118,7 @@ export default function AdminEmployeeProfile() {
                       <SelectItem value="full_time">Full-time</SelectItem>
                       <SelectItem value="part_time">Part-time</SelectItem>
                       <SelectItem value="contract">Contract (hours)</SelectItem>
+                      <SelectItem value="probationary">Probationary</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

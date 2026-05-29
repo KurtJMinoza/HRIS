@@ -82,7 +82,7 @@ class PayrollPersistService
         }
 
         foreach ($computed['days'] as $day) {
-            if ($day['total_pay'] > 0 || $day['worked_minutes'] > 0) {
+            if (($day['total_pay'] ?? 0) > 0 || ($day['worked_minutes'] ?? 0) > 0) {
                 $holiday = $day['holiday'] ?? null;
                 $approvedOtHours = $day['approved_ot_hours'] ?? 0;
                 $unapprovedOtHours = $day['unapproved_ot_hours'] ?? 0;
@@ -94,14 +94,14 @@ class PayrollPersistService
                     'holiday_type' => $holiday ? ($holiday['type'] ?? null) : null,
                     'holiday_name' => $holiday ? ($holiday['name'] ?? null) : null,
                     'rule_code' => $day['conditions']['rule_code'] ?? null,
-                    'worked_minutes' => $day['worked_minutes'],
-                    'required_minutes' => $day['required_minutes'],
-                    'regular_day_minutes' => $day['regular_day_minutes'],
-                    'regular_night_minutes' => $day['regular_night_minutes'],
-                    'ot_day_minutes' => $day['ot_day_minutes'],
-                    'ot_night_minutes' => $day['ot_night_minutes'],
-                    'late_deduction_minutes' => $day['late_deduction_minutes'],
-                    'undertime_deduction_minutes' => $day['undertime_deduction_minutes'],
+                    'worked_minutes' => (int) ($day['worked_minutes'] ?? 0),
+                    'required_minutes' => (int) ($day['required_minutes'] ?? 0),
+                    'regular_day_minutes' => (int) ($day['regular_day_minutes'] ?? 0),
+                    'regular_night_minutes' => (int) ($day['regular_night_minutes'] ?? 0),
+                    'ot_day_minutes' => (int) ($day['ot_day_minutes'] ?? 0),
+                    'ot_night_minutes' => (int) ($day['ot_night_minutes'] ?? 0),
+                    'late_deduction_minutes' => (int) ($day['late_deduction_minutes'] ?? 0),
+                    'undertime_deduction_minutes' => (int) ($day['undertime_deduction_minutes'] ?? 0),
                     'regular_pay' => $day['regular_pay'] ?? 0,
                     'ot_pay' => $day['ot_pay'] ?? 0,
                     'nd_pay' => $day['nd_pay'] ?? 0,

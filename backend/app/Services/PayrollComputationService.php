@@ -1541,12 +1541,28 @@ class PayrollComputationService
         }
 
         $tz = $this->getTimezone();
-        $monthlyBaseForRate = $this->resolveMonthlyBaseForDailyRate($user, $to->toDateString());
+        $isConsultant = $this->isConsultantEmployee($user);
+        $precomputedCompensationSummary = null;
+        $consultantSalarySources = null;
+        if ($isConsultant) {
+            $precomputedCompensationSummary = $this->payrollCalculator->buildEmployeeCompensationSummary($user, [
+                'as_of_date' => $to->toDateString(),
+                'proration_factor' => 1,
+                'include_deduction_schedule_catalog' => false,
+                'cache' => false,
+            ]);
+            $consultantSalarySources = $this->resolveConsultantSalarySources($user, $precomputedCompensationSummary);
+            $monthlyBaseForRate = (float) $consultantSalarySources['resolved_monthly'];
+        } else {
+            $monthlyBaseForRate = $this->resolveMonthlyBaseForDailyRate($user, $to->toDateString());
+        }
         [$effectiveSchedule] = $this->resolveEffectiveScheduleForDailyComputation($user);
         if (! array_key_exists((int) $user->id, $this->activeAssignmentIdsByUser)) {
             $this->activeAssignmentIdsByUser[(int) $user->id] = $this->resolvePayrollAssignmentIdsForUsers([(int) $user->id], $to)[(int) $user->id] ?? null;
         }
-        $dailyRateDivisorDays = $this->resolveStableScheduleMonthlyDivisor($effectiveSchedule);
+        $dailyRateDivisorDays = $isConsultant
+            ? $this->resolveConsultantWorkingDays($periodContext)
+            : $this->resolveStableScheduleMonthlyDivisor($effectiveSchedule);
         $scheduleMetrics = $this->scheduleRateService->describeForUser(
             $user,
             $monthlyBaseForRate > 0 ? $monthlyBaseForRate : null,
@@ -1566,15 +1582,17 @@ class PayrollComputationService
             )
             : 0.0;
         $dailyRate = $overrideDailyRate
-            ?? ($resolvedScheduleDailyRate > 0
-                ? $resolvedScheduleDailyRate
-                : $this->resolvePayrollDailyRateForPeriod(
-                    $user,
-                    $from,
-                    $to,
-                    $monthlyBaseForRate,
-                    $effectiveSchedule
-                ));
+            ?? ($isConsultant && $monthlyBaseForRate > 0
+                ? round($monthlyBaseForRate / max(1, $dailyRateDivisorDays), 2)
+                : ($resolvedScheduleDailyRate > 0
+                    ? $resolvedScheduleDailyRate
+                    : $this->resolvePayrollDailyRateForPeriod(
+                        $user,
+                        $from,
+                        $to,
+                        $monthlyBaseForRate,
+                        $effectiveSchedule
+                    )));
         if ($dailyRate <= 0) {
             if (is_object($timingSink)) {
                 $timingSink->load_schedules_ms = ($timingSink->load_schedules_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
@@ -1614,26 +1632,30 @@ class PayrollComputationService
         $__segStart = microtime(true);
 
         $days = [];
-        $cursor = $from->copy();
-        while ($cursor->lessThanOrEqualTo($to)) {
-            $dateKey = $cursor->toDateString();
-            [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey, $tz);
-            $dayPayroll = $this->computeDayPayroll(
-                $user,
-                $dateKey,
-                $timeIn,
-                $timeOut,
-                $effectiveSchedule,
-                $dailyRate,
-                $tz
-            );
-            $allowanceAttendance = $this->resolveAllowanceDayForProration($user, $dateKey, $timeIn, $timeOut, $dayPayroll, $tz);
-            $dayPayroll['allowance_attendance_valid'] = $allowanceAttendance['valid'];
-            $dayPayroll['allowance_attendance_reason'] = $allowanceAttendance['reason'];
-            $dayPayroll['allowance_attendance_sources'] = $allowanceAttendance['sources'];
-            $dayPayroll['allowance_proration_day'] = $allowanceAttendance;
-            $days[] = $dayPayroll;
-            $cursor->addDay();
+        if ($isConsultant) {
+            $days = $this->consultantAutoPresentDays($from, $to);
+        } else {
+            $cursor = $from->copy();
+            while ($cursor->lessThanOrEqualTo($to)) {
+                $dateKey = $cursor->toDateString();
+                [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey, $tz);
+                $dayPayroll = $this->computeDayPayroll(
+                    $user,
+                    $dateKey,
+                    $timeIn,
+                    $timeOut,
+                    $effectiveSchedule,
+                    $dailyRate,
+                    $tz
+                );
+                $allowanceAttendance = $this->resolveAllowanceDayForProration($user, $dateKey, $timeIn, $timeOut, $dayPayroll, $tz);
+                $dayPayroll['allowance_attendance_valid'] = $allowanceAttendance['valid'];
+                $dayPayroll['allowance_attendance_reason'] = $allowanceAttendance['reason'];
+                $dayPayroll['allowance_attendance_sources'] = $allowanceAttendance['sources'];
+                $dayPayroll['allowance_proration_day'] = $allowanceAttendance;
+                $days[] = $dayPayroll;
+                $cursor->addDay();
+            }
         }
 
         if (is_object($timingSink)) {
@@ -1687,11 +1709,11 @@ class PayrollComputationService
             $totalPay += $dayTotalPay;
             $basicPayThisPeriod += $netRegularBasePay;
             $attendancePremiumPayThisPeriod += $dayPremium;
-            $totalWorkedMinutes += $d['worked_minutes'];
-            $totalRegularDay += $d['regular_day_minutes'];
-            $totalRegularNight += $d['regular_night_minutes'];
-            $totalOtDay += $d['ot_day_minutes'];
-            $totalOtNight += $d['ot_night_minutes'];
+            $totalWorkedMinutes += (int) ($d['worked_minutes'] ?? 0);
+            $totalRegularDay += (int) ($d['regular_day_minutes'] ?? 0);
+            $totalRegularNight += (int) ($d['regular_night_minutes'] ?? 0);
+            $totalOtDay += (int) ($d['ot_day_minutes'] ?? 0);
+            $totalOtNight += (int) ($d['ot_night_minutes'] ?? 0);
             if ($requiredMinutes > 0 && $dayStatus === 'worked' && ! $dayIsRest) {
                 $actualWorkedDayUnits += min(1.0, $regularPaidMinutes / $requiredMinutes);
             }
@@ -1718,7 +1740,9 @@ class PayrollComputationService
 
         // Needed before daily earning lines so "Regular pay" units match regular-rate attendance days
         // (premium holidays excluded — same filter as buildAttendanceDisplaySummary()).
-        $attendanceDisplaySummary = $this->buildAttendanceDisplaySummary($days, $effectiveSchedule, $tz);
+        $attendanceDisplaySummary = $isConsultant
+            ? $this->consultantAttendanceDisplaySummary($days)
+            : $this->buildAttendanceDisplaySummary($days, $effectiveSchedule, $tz);
 
         $componentLabelMap = [
             // Daily Computation is the source of truth for attendance-driven earning add-ons.
@@ -1855,26 +1879,43 @@ class PayrollComputationService
             ];
         }
 
-        $attendanceProration = $this->computeScheduleAttendanceProrationForPeriod(
-            $days,
-            $dailyRateDivisorDays,
-            $scheduledDailyHours > 0.0 ? $scheduledDailyHours : 8.0
-        );
+        $attendanceProration = $isConsultant
+            ? $this->consultantAttendanceProration(count($days))
+            : $this->computeScheduleAttendanceProrationForPeriod(
+                $days,
+                $dailyRateDivisorDays,
+                $scheduledDailyHours > 0.0 ? $scheduledDailyHours : 8.0
+            );
 
         if (is_object($timingSink)) {
             $timingSink->compute_loop_ms = ($timingSink->compute_loop_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
         }
         $__segStart = microtime(true);
 
-        $compensationSummary = $this->payrollCalculator->buildEmployeeCompensationSummary($user, [
+        $compensationSummary = $precomputedCompensationSummary ?? $this->payrollCalculator->buildEmployeeCompensationSummary($user, [
             'as_of_date' => $to->toDateString(),
             'proration_factor' => 1,
             'include_deduction_schedule_catalog' => false,
             // Payroll must read fresh calculation-standard metadata (override + pay component default).
             'cache' => false,
         ]);
+        if ($isConsultant && $consultantSalarySources !== null) {
+            $compensationSummary = $this->compensationSummaryWithConsultantSalary(
+                $compensationSummary,
+                (float) $consultantSalarySources['resolved_monthly'],
+                $periodContext,
+                $from,
+                $to
+            );
+        }
         $basicSalary = (float) ($compensationSummary['basic_salary'] ?? 0);
-        $statutory = $compensationSummary['statutory'] ?? $this->payrollCalculator->calculateAllStatutoryContributions($basicSalary);
+        $statutory = $isConsultant
+            ? $this->payrollCalculator->calculateAllStatutoryContributions($basicSalary, [
+                'sss' => $basicSalary,
+                'philhealth' => $basicSalary,
+                'pagibig' => $basicSalary,
+            ])
+            : ($compensationSummary['statutory'] ?? $this->payrollCalculator->calculateAllStatutoryContributions($basicSalary));
         $employeeStatutoryFullMonthly = (float) ($statutory['totals']['employee_deduction'] ?? 0);
         $employerStatutoryTotal = (float) ($statutory['totals']['employer_liability'] ?? 0);
         $customDeductionsFullMonthly = (float) ($compensationSummary['totals']['custom_deductions'] ?? 0);
@@ -1966,6 +2007,52 @@ class PayrollComputationService
                 'selected_pay_date' => $selectedPayDate?->toDateString(),
             ])
         );
+        if ($isConsultant) {
+            $deductionSchedule = $this->deductionScheduleWithoutConsultantSuppressedEarnings($deductionSchedule);
+        }
+
+        if ($isConsultant) {
+            $consultantPeriodBasic = $this->resolveConsultantPeriodBasicPay(
+                $user,
+                $compensationSummary,
+                $deductionSchedule,
+                $periodContext,
+                $from,
+                $to
+            );
+            $basicPayThisPeriod = (float) $consultantPeriodBasic['amount'];
+            $attendancePremiumPayThisPeriod = 0.0;
+            $actualWorkedDayUnits = (float) count($days);
+            $totalWorkedMinutes = 0;
+            $totalRegularDay = 0;
+            $totalRegularNight = 0;
+            $totalOtDay = 0;
+            $totalOtNight = 0;
+            $basicScheduleType = (string) $consultantPeriodBasic['schedule_type'];
+            $basicFactor = (float) $consultantPeriodBasic['factor'];
+            $dailyComputationEarningLines = [[
+                'key' => 'consultant:basic_pay',
+                'label' => 'Basic Pay',
+                'name' => 'Basic Pay',
+                'category' => 'basic_pay',
+                'component_code' => 'BASIC_SALARY',
+                'amount' => round($basicPayThisPeriod, 2),
+                'resolved_amount' => round($basicPayThisPeriod, 2),
+                'full_monthly' => round($basicSalary, 2),
+                'schedule_type' => $basicScheduleType,
+                'units' => null,
+                'minutes_worked' => null,
+                'hourly_rate' => null,
+                'fixed_payroll' => true,
+                'attendance_based' => false,
+                'metadata' => [
+                    'employment_status' => 'consultant',
+                    'consultant_fixed_payroll' => true,
+                    'source' => (string) ($consultantSalarySources['salary_source_used'] ?? 'consultant_fixed_salary'),
+                    'salary_source_used' => (string) ($consultantSalarySources['salary_source_used'] ?? 'consultant_fixed_salary'),
+                ],
+            ]];
+        }
 
         $employeeStatutoryThisPeriod = (float) ($deductionSchedule['employee_statutory_this_period'] ?? $employeeStatutoryFullMonthly);
         $withholdingThisPeriod = (float) ($deductionSchedule['withholding_this_period'] ?? $withholdingMonthlyFull);
@@ -2027,6 +2114,16 @@ class PayrollComputationService
 
         $this->activePayrollBatchRunId = null;
 
+        $payslipEarningLines = $this->deductionScheduleService->buildPayslipEarningDisplayLines(
+            $deductionSchedule['earning_lines'] ?? []
+        );
+        if ($isConsultant) {
+            $payslipEarningLines = array_values(array_filter(
+                $payslipEarningLines,
+                fn ($line): bool => ! is_array($line) || ! $this->isBasicSalaryLine($line)
+            ));
+        }
+
         return [
             'user_id' => $user->id,
             'from_date' => $from->toDateString(),
@@ -2038,6 +2135,17 @@ class PayrollComputationService
             'summary' => [
                 'total_pay' => round($basicPayThisPeriod + $attendancePremiumPayThisPeriod, 2),
                 'basic_pay_this_period' => round($basicPayThisPeriod, 2),
+                'employment_type' => (string) ($user->employment_type ?? ''),
+                'employment_status' => $isConsultant ? 'consultant' : (string) ($user->employment_status ?? ''),
+                'consultant_fixed_payroll' => $isConsultant,
+                'consultant_salary_basis' => $isConsultant ? (string) ($consultantSalarySources['salary_source_used'] ?? '') : null,
+                'consultant_fixed_salary' => $isConsultant ? round((float) ($consultantSalarySources['resolved_monthly'] ?? 0), 2) : null,
+                'attendance_status' => $isConsultant ? 'Auto Present' : null,
+                'absent_days' => $isConsultant ? 0 : null,
+                'late_minutes' => $isConsultant ? 0 : null,
+                'undertime_minutes' => $isConsultant ? 0 : null,
+                'attendance_deduction' => $isConsultant ? 0.0 : null,
+                'leave_deduction' => $isConsultant ? 0.0 : null,
                 'basic_salary_schedule_type' => $basicScheduleType,
                 'basic_salary_schedule_factor' => round($basicFactor, 4),
                 'attendance_premium_pay_this_period' => round($attendancePremiumPayThisPeriod, 2),
@@ -2069,9 +2177,7 @@ class PayrollComputationService
                 'payslip_custom_deduction_lines' => $this->deductionScheduleService->buildPayslipCustomDeductionDisplayLines(
                     $deductionSchedule['custom_lines'] ?? []
                 ),
-                'payslip_earning_lines' => $this->deductionScheduleService->buildPayslipEarningDisplayLines(
-                    $deductionSchedule['earning_lines'] ?? []
-                ),
+                'payslip_earning_lines' => $payslipEarningLines,
                 'daily_computation_earning_lines' => $dailyComputationEarningLines,
                 'attendance_display_summary' => $attendanceDisplaySummary,
                 'holiday_premium_breakdown' => $holidayPremiumBreakdown,
@@ -2418,6 +2524,386 @@ class PayrollComputationService
         }
 
         return 0.0;
+    }
+
+    private function isConsultantEmployee(User $user): bool
+    {
+        $status = Str::of((string) ($user->employment_status ?? ''))
+            ->lower()
+            ->replace(['-', ' '], '_')
+            ->trim()
+            ->toString();
+        $type = Str::of((string) ($user->employment_type ?? ''))
+            ->lower()
+            ->replace(['-', ' '], '_')
+            ->trim()
+            ->toString();
+
+        return $status === 'consultant' || $type === 'consultant';
+    }
+
+    /**
+     * @return array{employee_compensation_salary:float,employee_monthly_salary:float,consultant_fixed_salary:float,resolved_monthly:float,salary_source_used:?string}
+     */
+    private function resolveConsultantSalarySources(User $employee, array $compensation): array
+    {
+        $compensationBasic = round(max(0.0, (float) ($compensation['basic_salary'] ?? 0)), 2);
+        $employeeMonthly = round(max(0.0, (float) ($employee->monthly_salary ?? $employee->monthly_rate ?? 0)), 2);
+        $consultantFixed = round(max(0.0, (float) ($employee->consultant_fixed_salary ?? 0)), 2);
+
+        $source = null;
+        $resolvedMonthly = 0.0;
+        if ($compensationBasic > 0.0) {
+            $source = 'employee_compensation_basic_salary';
+            $resolvedMonthly = $compensationBasic;
+        } elseif ($employeeMonthly > 0.0) {
+            $source = 'employee_monthly_salary';
+            $resolvedMonthly = $employeeMonthly;
+        } elseif ($consultantFixed > 0.0) {
+            $source = 'consultant_fixed_salary';
+            $resolvedMonthly = $consultantFixed;
+        }
+
+        return [
+            'employee_compensation_salary' => $compensationBasic,
+            'employee_monthly_salary' => $employeeMonthly,
+            'consultant_fixed_salary' => $consultantFixed,
+            'resolved_monthly' => $resolvedMonthly,
+            'salary_source_used' => $source,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $compensation
+     * @param  array<string, mixed>  $periodContext
+     * @return array<string, mixed>
+     */
+    private function compensationSummaryWithConsultantSalary(
+        array $compensation,
+        float $monthlyFixedSalary,
+        array $periodContext,
+        Carbon $from,
+        Carbon $to
+    ): array {
+        $earnings = [];
+        $hasBasic = false;
+        foreach ((array) ($compensation['earnings'] ?? []) as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $code = strtoupper(trim((string) ($line['code'] ?? '')));
+            if ($code === 'BASIC_SALARY') {
+                $hasBasic = true;
+                $line['computed_amount'] = $monthlyFixedSalary;
+                $line['configured_value'] = $monthlyFixedSalary;
+                $line['name'] = $line['name'] ?? 'Basic Pay';
+                $line['is_basic_salary_line'] = true;
+            }
+            $earnings[] = $line;
+        }
+        if (! $hasBasic) {
+            $earnings[] = [
+                'id' => null,
+                'pay_component_id' => null,
+                'code' => 'BASIC_SALARY',
+                'name' => 'Basic Pay',
+                'computed_amount' => $monthlyFixedSalary,
+                'configured_value' => $monthlyFixedSalary,
+                'is_basic_salary_line' => true,
+            ];
+        }
+
+        $totals = is_array($compensation['totals'] ?? null) ? $compensation['totals'] : [];
+        $grossEarnings = collect($earnings)->sum(function ($line): float {
+            return is_array($line) ? max(0.0, (float) ($line['computed_amount'] ?? 0)) : 0.0;
+        });
+        $preview = is_array($periodContext['pay_cycle_preview'] ?? null) ? $periodContext['pay_cycle_preview'] : null;
+
+        return array_merge($compensation, [
+            'basic_salary' => $monthlyFixedSalary,
+            'basic_pay' => $monthlyFixedSalary,
+            'monthly_salary' => $monthlyFixedSalary,
+            'fixed_salary' => $monthlyFixedSalary,
+            'earnings' => $earnings,
+            'totals' => array_merge($totals, [
+                'gross_earnings' => round($grossEarnings, 2),
+            ]),
+            'pay_period_start' => (string) ($periodContext['pay_period_start'] ?? $from->toDateString()),
+            'pay_period_end' => (string) ($periodContext['pay_period_end'] ?? $to->toDateString()),
+            'selected_pay_date' => (string) ($periodContext['selected_pay_date'] ?? $to->toDateString()),
+            'pay_cycle_preview' => $preview,
+            'pay_cycle_code' => (string) ($periodContext['pay_cycle_code'] ?? data_get($preview, 'pay_cycle_code', data_get($preview, 'code', ''))),
+            'semi_month_segment' => data_get($periodContext, 'semi_month_segment', data_get($preview, 'semi_month_segment')),
+            '_attendance_proration' => $this->consultantAttendanceProration(0),
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $deductionSchedule
+     * @return array<string, mixed>
+     */
+    private function deductionScheduleWithoutConsultantSuppressedEarnings(array $deductionSchedule): array
+    {
+        $lines = [];
+        $nonBasicThisPeriod = 0.0;
+        foreach ((array) ($deductionSchedule['earning_lines'] ?? []) as $line) {
+            if (! is_array($line) || $this->isConsultantSuppressedEarningLine($line)) {
+                continue;
+            }
+
+            $lines[] = $line;
+            if (empty($line['is_basic_salary_line'])) {
+                $nonBasicThisPeriod += max(0.0, (float) ($line['scheduled_this_period'] ?? 0));
+            }
+        }
+
+        $deductionSchedule['earning_lines'] = array_values($lines);
+        $deductionSchedule['non_basic_earnings_this_period'] = round($nonBasicThisPeriod, 2);
+
+        return $deductionSchedule;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isConsultantSuppressedEarningLine(array $line): bool
+    {
+        if (! empty($line['is_basic_salary_line'])) {
+            return false;
+        }
+
+        $code = strtolower(trim((string) ($line['code'] ?? $line['component_code'] ?? $line['key'] ?? '')));
+        $name = strtolower(trim((string) ($line['name'] ?? $line['label'] ?? '')));
+        $category = strtolower(trim((string) ($line['category'] ?? '')));
+        $haystack = str_replace(['-', ' '], '_', $code.' '.$name.' '.$category);
+
+        return str_contains($haystack, 'holiday')
+            || str_contains($haystack, 'overtime')
+            || str_contains($haystack, 'ot_pay')
+            || str_contains($haystack, 'night_diff')
+            || str_contains($haystack, 'night_differential')
+            || str_contains($haystack, 'paid_leave')
+            || str_contains($haystack, 'unpaid_leave')
+            || str_contains($haystack, 'leave_adjustment');
+    }
+
+    /**
+     * @return array{amount:float,factor:float,schedule_type:string}
+     */
+    private function resolveConsultantPeriodBasicPay(
+        User $employee,
+        array $compensationForSchedule,
+        array $deductionSchedule,
+        array $periodContext,
+        Carbon $from,
+        Carbon $to
+    ): array {
+        foreach (is_array($deductionSchedule['earning_lines'] ?? null) ? $deductionSchedule['earning_lines'] : [] as $line) {
+            if (! is_array($line) || ! $this->isBasicSalaryLine($line)) {
+                continue;
+            }
+
+            $amount = round(max(0.0, (float) ($line['scheduled_this_period'] ?? $line['amount'] ?? 0)), 2);
+            $resolution = is_array($line['pay_component_resolution'] ?? null) ? $line['pay_component_resolution'] : [];
+
+            return [
+                'amount' => $amount,
+                'factor' => (float) ($resolution['divisor_applied'] ?? ($amount > 0 && (float) ($compensationForSchedule['basic_salary'] ?? 0) > 0
+                    ? round($amount / (float) $compensationForSchedule['basic_salary'], 6)
+                    : 0.0)),
+                'schedule_type' => (string) ($line['earning_schedule_type'] ?? $resolution['resolved_schedule'] ?? 'both'),
+            ];
+        }
+
+        $selectedPayDate = ! empty($periodContext['selected_pay_date'])
+            ? Carbon::parse((string) $periodContext['selected_pay_date'])->startOfDay()
+            : $to->copy()->startOfDay();
+        $basicLine = collect($compensationForSchedule['earnings'] ?? [])->first(
+            fn ($row) => is_array($row) && strtoupper(trim((string) ($row['code'] ?? ''))) === 'BASIC_SALARY'
+        );
+        if (! is_array($basicLine)) {
+            $basicLine = [
+                'code' => 'BASIC_SALARY',
+                'name' => 'Basic Pay',
+                'computed_amount' => (float) ($compensationForSchedule['basic_salary'] ?? 0),
+                'configured_value' => (float) ($compensationForSchedule['basic_salary'] ?? 0),
+                'is_basic_salary_line' => true,
+            ];
+        }
+
+        $resolution = $this->deductionScheduleService->resolvePayComponentAmount($basicLine, [
+            'user' => $employee,
+            'reference_date' => $to->copy()->startOfDay(),
+            'selected_pay_date' => $selectedPayDate,
+            'segment' => data_get($periodContext, 'pay_cycle_preview.semi_month_segment')
+                ?? data_get($periodContext, 'semi_month_segment'),
+            'pay_cycle_preview' => is_array($periodContext['pay_cycle_preview'] ?? null) ? $periodContext['pay_cycle_preview'] : null,
+            'pay_cycle_code' => (string) ($periodContext['pay_cycle_code'] ?? ''),
+            'pay_period_start' => (string) ($periodContext['pay_period_start'] ?? $from->toDateString()),
+            'pay_period_end' => (string) ($periodContext['pay_period_end'] ?? $to->toDateString()),
+            'period_start' => (string) ($periodContext['pay_period_start'] ?? $from->toDateString()),
+            'period_end' => (string) ($periodContext['pay_period_end'] ?? $to->toDateString()),
+        ]);
+        $amount = round(max(0.0, (float) ($resolution['applied_amount'] ?? 0)), 2);
+
+        return [
+            'amount' => $amount,
+            'factor' => (float) ($resolution['divisor_applied'] ?? 0.0),
+            'schedule_type' => (string) ($resolution['resolved_schedule'] ?? 'both'),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isBasicSalaryLine(array $line): bool
+    {
+        $code = strtoupper(trim((string) ($line['component_code'] ?? $line['code'] ?? $line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? $line['name'] ?? '')));
+
+        return $code === 'BASIC_SALARY'
+            || str_contains($code, 'BASIC_SALARY')
+            || $label === 'basic salary'
+            || $label === 'basic pay'
+            || $label === 'regular pay / fixed salary'
+            || $label === 'regular pay';
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function consultantAutoPresentDays(Carbon $from, Carbon $to): array
+    {
+        $days = [];
+        $cursor = $from->copy()->startOfDay();
+        $end = $to->copy()->startOfDay();
+        while ($cursor->lte($end)) {
+            $days[] = [
+                'date' => $cursor->toDateString(),
+                'is_rest_day' => false,
+                'holiday' => null,
+                'status' => 'auto_present',
+                'conditions' => ['rule_code' => 'consultant_auto_present'],
+                'breakdown' => [],
+                'total_pay' => 0.0,
+                'worked_minutes' => 0,
+                'required_minutes' => 0,
+                'regular_day_minutes' => 0,
+                'regular_night_minutes' => 0,
+                'ot_day_minutes' => 0,
+                'ot_night_minutes' => 0,
+                'late_deduction_minutes' => 0,
+                'undertime_deduction_minutes' => 0,
+                'regular_pay' => 0.0,
+                'ot_pay' => 0.0,
+                'nd_pay' => 0.0,
+                'holiday_premium_pay' => 0.0,
+                'approved_ot_hours' => 0.0,
+                'unapproved_ot_hours' => 0.0,
+                'allowance_attendance_valid' => true,
+                'allowance_attendance_reason' => 'consultant_auto_present',
+                'allowance_attendance_sources' => ['consultant_auto_present' => true],
+                'allowance_proration_day' => [
+                    'valid' => true,
+                    'reason' => 'consultant_auto_present',
+                    'sources' => ['consultant_auto_present' => true],
+                    'scheduled_deductible_day' => false,
+                    'unpaid_absent_day' => false,
+                ],
+                'attendance_status' => 'Consultant Auto Present',
+                'status_label' => 'Consultant Auto Present',
+                'source' => 'consultant_auto_present',
+                'late_deduction' => 0.0,
+                'undertime_deduction' => 0.0,
+                'absence_deduction' => 0.0,
+                'leave_deduction' => 0.0,
+                'payroll_impact' => 0.0,
+                'payroll_impact_deduction' => 0.0,
+                'overtime_pay' => 0.0,
+                'holiday_pay' => 0.0,
+                'night_differential' => 0.0,
+            ];
+            $cursor->addDay();
+        }
+
+        return $days;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $days
+     * @return array<string, mixed>
+     */
+    private function consultantAttendanceDisplaySummary(array $days): array
+    {
+        $count = count($days);
+
+        return [
+            'attendance_status' => 'Consultant Auto Present',
+            'status_label' => 'Consultant Auto Present',
+            'working_days_count' => $count,
+            'presence_days_count' => $count,
+            'lines' => array_values(array_map(static fn (array $day): array => [
+                'date' => (string) ($day['date'] ?? ''),
+                'attendance_status' => 'Consultant Auto Present',
+                'status' => 'auto_present',
+                'status_label' => 'Consultant Auto Present',
+                'source' => 'consultant_auto_present',
+                'payroll_impact' => 0.0,
+                'payroll_impact_deduction' => 0.0,
+            ], $days)),
+            'total_regular_hours' => 0.0,
+            'total_presence_regular_hours' => 0.0,
+            'absent_days' => 0,
+            'absent_days_count' => 0,
+            'late_minutes' => 0,
+            'undertime_minutes' => 0,
+            'leave_deduction' => 0.0,
+            'unpaid_leave_days_count' => 0,
+            'payroll_impact' => 0.0,
+            'payroll_impact_deduction' => 0.0,
+            'payroll_note' => 'Consultants are treated as present for Regular Payroll; fixed Basic Pay is independent from attendance logs.',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function consultantAttendanceProration(int $dayCount): array
+    {
+        return [
+            'factor' => 1.0,
+            'scheduled_workdays' => (float) $dayCount,
+            'credited_day_units' => (float) $dayCount,
+            'source' => 'consultant_fixed_basic_pay',
+            'allowance' => [
+                'factor' => 1.0,
+                'scheduled_deductible_days' => (float) $dayCount,
+                'payable_days' => (float) $dayCount,
+                'unpaid_absent_days' => 0.0,
+                'proration_basis' => 'consultant_auto_present',
+                'attendance_counted' => [],
+                'attendance_excluded' => [],
+                'unpaid_absences' => [],
+            ],
+        ];
+    }
+
+    /**
+     * @return int<1, max>
+     */
+    private function resolveConsultantWorkingDays(array $periodContext): int
+    {
+        foreach (['company_working_days', 'working_days_per_month', 'daily_rate_divisor_days'] as $key) {
+            if (isset($periodContext[$key]) && is_numeric($periodContext[$key])) {
+                return max(1, (int) round((float) $periodContext[$key]));
+            }
+        }
+
+        try {
+            return max(1, (int) config('payroll.working_days_per_month', 22));
+        } catch (\Throwable) {
+            return 22;
+        }
     }
 
     /**

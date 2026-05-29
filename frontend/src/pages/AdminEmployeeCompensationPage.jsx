@@ -995,6 +995,16 @@ export default function AdminEmployeeCompensationPage() {
                             .filter(Boolean)
                             .join(' · ') || '—'}
                         </p>
+                        {String(employee.employment_status || '').toLowerCase() === 'consultant' ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <Badge variant="outline" className="h-5 border-amber-300 bg-amber-50 px-1.5 text-[10px] font-semibold text-amber-700">
+                              Consultant
+                            </Badge>
+                            <Badge variant="outline" className="h-5 border-emerald-300 bg-emerald-50 px-1.5 text-[10px] font-semibold text-emerald-700">
+                              Fixed Salary Payroll
+                            </Badge>
+                          </div>
+                        ) : null}
                       </div>
                       {active ? (
                         <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-sm">

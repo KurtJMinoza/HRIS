@@ -27,10 +27,15 @@ final class PayslipStoredSnapshotViewPayload
             || ! empty($summary['execom_badge'])
             || ! empty($summary['execom_profile_id'])
             || ! empty($summary['execom_salary_source_used']);
+        $isConsultant = ! empty($summary['consultant_fixed_payroll'])
+            || strtolower(trim(str_replace(['-', ' '], '_', (string) ($summary['employment_status'] ?? $employee->employment_status ?? '')))) === 'consultant'
+            || strtolower(trim(str_replace(['-', ' '], '_', (string) ($summary['employment_type'] ?? $employee->employment_type ?? '')))) === 'consultant';
         $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
             ? array_values($summary['daily_computation_earning_lines'])
             : [];
         if ($isExecom) {
+            $dailyEarningLines = [];
+        } elseif ($isConsultant) {
             $dailyEarningLines = [];
         } elseif (count($dailyEarningLines) === 0) {
             $regularPay = (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
@@ -54,6 +59,7 @@ final class PayslipStoredSnapshotViewPayload
 
         $gov = $payslipService->governmentIdFieldsForPayslip($employee);
         $employmentLabel = $payslipService->employmentStatusLabelForPayslip($employee);
+        $employmentTypeLabel = $payslipService->employmentTypeLabelForPayslip($employee);
 
         return [
             'payslip_id' => (int) $payslip->id,
@@ -78,6 +84,8 @@ final class PayslipStoredSnapshotViewPayload
                 'employee_code' => $employee->employee_code,
                 'department' => $employee->departmentRelation?->name ?? $employee->department,
                 'position' => $employee->position,
+                'employment_type' => $employee->employment_type,
+                'employment_type_label' => $employmentTypeLabel,
                 'employment_status' => $employee->employment_status,
                 'employment_status_label' => $employmentLabel,
                 'profile_image_url' => $employee->profile_image_url,

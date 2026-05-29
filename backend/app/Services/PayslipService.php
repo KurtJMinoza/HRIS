@@ -798,6 +798,20 @@ class PayslipService
         return null;
     }
 
+    public function employmentTypeLabelForPayslip(User $employee): ?string
+    {
+        $value = strtolower(trim(str_replace(['-', ' '], '_', (string) ($employee->employment_type ?? ''))));
+
+        return match ($value) {
+            'consultant' => 'Consultant',
+            'full_time' => 'Full-time',
+            'part_time' => 'Part-time',
+            'contract' => 'Contract',
+            'probationary' => 'Probationary',
+            default => $value !== '' ? Str::headline(str_replace('_', ' ', $value)) : null,
+        };
+    }
+
     public function previewDataForEmployee(User $employee, array $periodInput): array
     {
         $gen = $this->computePayslipGenerationData($employee, $periodInput);
@@ -811,7 +825,10 @@ class PayslipService
             ? array_values($summary['daily_computation_earning_lines'])
             : [];
         $isExecomPreview = $this->isExecomSnapshot($snapshot, $summary);
+        $isConsultantPreview = $this->isConsultantSnapshot($snapshot, $summary);
         if ($isExecomPreview) {
+            $dailyEarningLines = [];
+        } elseif ($isConsultantPreview) {
             $dailyEarningLines = [];
         } elseif (count($dailyEarningLines) === 0) {
             $regularPay = (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
@@ -837,6 +854,7 @@ class PayslipService
 
         $gov = $this->governmentIdFieldsForPayslip($employee);
         $employmentLabel = $this->employmentStatusLabelForPayslip($employee);
+        $employmentTypeLabel = $this->employmentTypeLabelForPayslip($employee);
 
         return [
             'company' => [
@@ -861,6 +879,8 @@ class PayslipService
                 'employee_code' => $employee->employee_code,
                 'department' => $employee->departmentRelation?->name ?? $employee->department,
                 'position' => $employee->position,
+                'employment_type' => $employee->employment_type,
+                'employment_type_label' => $employmentTypeLabel,
                 'employment_status' => $employee->employment_status,
                 'employment_status_label' => $employmentLabel,
                 'tin_number' => $gov['tin_number'],
@@ -1024,6 +1044,7 @@ class PayslipService
             'working_schedule_id',
             'schedule',
             'employment_status',
+            'employment_type',
         ];
         $employeeAttributes = $employee->getAttributes();
         foreach ($requiredEmployeeColumns as $column) {
@@ -1057,6 +1078,45 @@ class PayslipService
             'net_pay' => $lineTotals['net_pay'],
             'taxable_total_this_period' => (float) data_get($live, 'amounts.taxable_total_this_period', $payslip->taxable_total_this_period ?? 0),
             'non_taxable_total_this_period' => (float) data_get($live, 'amounts.non_taxable_total_this_period', $payslip->non_taxable_total_this_period ?? 0),
+            'snapshot' => $snapshot,
+        ]);
+        $payslip->save();
+
+        return $this->ensureDraftPayrollLinesSynced($payslip->fresh() ?? $payslip);
+    }
+
+    /**
+     * Repair consultant draft snapshots (fixed Basic Pay, no units) without rerunning attendance payroll.
+     */
+    public function refreshConsultantDraftPayslipSnapshot(Payslip $payslip, User $employee): Payslip
+    {
+        if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            return $payslip;
+        }
+
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot)) {
+            $snapshot = [];
+        }
+
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $summary['consultant_fixed_payroll'] = true;
+        if (trim((string) ($summary['employment_status'] ?? '')) === '') {
+            $summary['employment_status'] = (string) ($employee->employment_status ?? 'consultant');
+        }
+        $snapshot['summary'] = $summary;
+
+        $snapshot = $this->normalizeSnapshotForPayslipPdf($snapshot);
+        $lineTotals = $this->payslipLineTotalsFromNormalizedSnapshot($snapshot);
+        $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
+
+        $payslip->forceFill([
+            'gross_pay' => $lineTotals['gross_pay'],
+            'total_deductions' => $lineTotals['total_deductions'],
+            'net_pay' => $lineTotals['net_pay'],
             'snapshot' => $snapshot,
         ]);
         $payslip->save();
@@ -2106,6 +2166,7 @@ class PayslipService
             'printMode' => false,
             'govIds' => (object) $this->governmentIdFieldsForPayslip($employee),
             'employmentStatusLabel' => $this->employmentStatusLabelForPayslip($employee),
+            'employmentTypeLabel' => $this->employmentTypeLabelForPayslip($employee),
         ])->render();
         $sanitized = $this->sanitizeHtmlForPdfRenderer($html);
         $this->logPayslipTableArraysBeforeWriteHtml($payslip, $employee, $snapshotForView, 'generatePdf', strlen($sanitized));
@@ -2168,6 +2229,7 @@ class PayslipService
             'printMode' => true,
             'govIds' => (object) $this->governmentIdFieldsForPayslip($employee),
             'employmentStatusLabel' => $this->employmentStatusLabelForPayslip($employee),
+            'employmentTypeLabel' => $this->employmentTypeLabelForPayslip($employee),
         ])->render();
         $sanitized = $this->sanitizeHtmlForPdfRenderer($html);
         $this->logPayslipTableArraysBeforeWriteHtml($payslip, $employee, $snapshotForView, 'generatePrintPdf', strlen($sanitized));
@@ -2286,6 +2348,8 @@ class PayslipService
         $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
         if ($this->isExecomSnapshot($out, $summary)) {
             $summary = $this->sanitizeExecomPayslipSummary($summary, $out);
+        } elseif ($this->isConsultantSnapshot($out, $summary)) {
+            $summary = $this->sanitizeConsultantPayslipSummary($summary, $out);
         }
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
@@ -2430,11 +2494,14 @@ class PayslipService
 
         $isExecom = (string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM
             || $this->isExecomSnapshot($snapshot, $summary);
+        $isConsultant = $this->isConsultantSnapshot($snapshot, $summary);
         if ($isExecom) {
             $summary = $this->sanitizeExecomPayslipSummary($summary, $snapshot);
+        } elseif ($isConsultant) {
+            $summary = $this->sanitizeConsultantPayslipSummary($summary, $snapshot);
         }
 
-        $earningLines = $isExecom
+        $earningLines = ($isExecom || $isConsultant)
             ? $this->rawPayslipLineList($summary['payslip_earning_lines'] ?? [])
             : array_values(array_merge(
                 $this->rawPayslipLineList($summary['daily_computation_earning_lines'] ?? []),
@@ -2684,11 +2751,14 @@ class PayslipService
     {
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $isExecom = $this->isExecomSnapshot($snapshot, $summary);
+        $isConsultant = $this->isConsultantSnapshot($snapshot, $summary);
         if ($isExecom) {
             $summary = $this->sanitizeExecomPayslipSummary($summary, $snapshot);
+        } elseif ($isConsultant) {
+            $summary = $this->sanitizeConsultantPayslipSummary($summary, $snapshot);
         }
 
-        $earningLines = $isExecom
+        $earningLines = ($isExecom || $isConsultant)
             ? (is_array($summary['payslip_earning_lines'] ?? null) ? array_values($summary['payslip_earning_lines']) : [])
             : array_values(array_merge(
                 is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [],
@@ -2790,14 +2860,15 @@ class PayslipService
         $out = $snapshot;
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $isExecomSnapshot = $this->isExecomSnapshot($snapshot, $summary);
+        $isConsultantSnapshot = $this->isConsultantSnapshot($snapshot, $summary);
 
         $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
         $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
         $dailyComputationDays = $this->cleanDailyComputationDays($snapshot['daily_computation_days'] ?? null);
-        if ($dailyComputationDays !== [] && ! $isExecomSnapshot) {
+        if ($dailyComputationDays !== [] && ! $isExecomSnapshot && ! $isConsultantSnapshot) {
             $out['daily_computation_days'] = $dailyComputationDays;
             $summary = $this->repairRegularPayLineFromDailyComputationDays($summary, $dailyComputationDays, $regularHourlyRate);
-        } elseif ($isExecomSnapshot) {
+        } elseif ($isExecomSnapshot || $isConsultantSnapshot) {
             $out['daily_computation_days'] = [];
         }
 
@@ -2817,6 +2888,8 @@ class PayslipService
         );
         if ($isExecomSnapshot) {
             $summary = $this->sanitizeExecomPayslipSummary($summary);
+        } elseif ($isConsultantSnapshot) {
+            $summary = $this->sanitizeConsultantPayslipSummary($summary, $out);
         }
         $summary['payslip_deduction_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_deduction_lines'] ?? [],
@@ -2938,6 +3011,87 @@ class PayslipService
         $summary['late_minutes'] = 0;
         $summary['undertime_minutes'] = 0;
         $summary['absent_days'] = 0;
+
+        return $summary;
+    }
+
+    /**
+     * Consultants stay in Regular Payroll, but their salary line is fixed-pay like EXECOM:
+     * no attendance units, no daily Regular pay, and no holiday/OT/ND/leave earning lines.
+     *
+     * @param  array<string, mixed>  $summary
+     * @return array<string, mixed>
+     */
+    private function sanitizeConsultantPayslipSummary(array $summary, array $snapshot = []): array
+    {
+        $lines = [];
+        $basicAmount = $this->resolveConsultantBasicPayDisplayAmount($summary);
+
+        if ($basicAmount > 0.0) {
+            $lines[] = [
+                'key' => 'consultant_basic_pay',
+                'label' => 'Basic Pay',
+                'name' => 'Basic Pay',
+                'category' => 'basic_pay',
+                'component_code' => 'BASIC_SALARY',
+                'amount' => $basicAmount,
+                'resolved_amount' => $basicAmount,
+                'units' => null,
+                'minutes_worked' => null,
+                'hourly_rate' => null,
+                'fixed_payroll' => true,
+                'attendance_based' => false,
+                'metadata' => [
+                    'employment_status' => 'consultant',
+                    'consultant_fixed_payroll' => true,
+                    'salary_source_used' => (string) ($summary['consultant_salary_basis'] ?? ''),
+                ],
+            ];
+        }
+
+        foreach (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [] as $line) {
+            if (
+                ! is_array($line)
+                || $this->isExecomBasicPayLine($line)
+                || $this->isConsultantSuppressedEarningLine($line)
+            ) {
+                continue;
+            }
+
+            $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+            if ($amount <= 0.0) {
+                continue;
+            }
+
+            $line['amount'] = $amount;
+            $lines[] = $line;
+        }
+
+        $lines = $this->deduplicatePayslipLines($lines);
+        $summary['daily_computation_earning_lines'] = [];
+        $summary['daily_computation_days'] = [];
+        $summary['holiday_premium_breakdown'] = [];
+        $summary['payslip_earning_lines'] = array_values($lines);
+        $summary['basic_pay'] = $basicAmount;
+        $summary['basic_pay_this_period'] = $basicAmount;
+        $summary['basic_salary_period'] = $basicAmount;
+        $summary['basic_salary'] = $basicAmount;
+        $summary['total_pay'] = $basicAmount;
+        $summary['attendance_premium_pay_this_period'] = 0.0;
+        $summary['attendance_status'] = 'Auto Present';
+        $summary['attendance_deduction'] = 0.0;
+        $summary['attendance_salary_deduction'] = 0.0;
+        $summary['leave_deduction'] = 0.0;
+        $summary['late_minutes'] = 0;
+        $summary['undertime_minutes'] = 0;
+        $summary['absent_days'] = 0;
+        $summary['total_worked_minutes'] = 0;
+        $summary['total_regular_day_minutes'] = 0;
+        $summary['total_regular_night_minutes'] = 0;
+        $summary['total_ot_day_minutes'] = 0;
+        $summary['total_ot_night_minutes'] = 0;
+        $summary['overtime_total_hours'] = 0.0;
+        $summary['overtime_total_amount'] = 0.0;
 
         return $summary;
     }
@@ -3111,6 +3265,59 @@ class PayslipService
     }
 
     /**
+     * @param  array<string, mixed>  $snapshot
+     * @param  array<string, mixed>  $summary
+     */
+    private function isConsultantSnapshot(array $snapshot, array $summary): bool
+    {
+        if (! empty($summary['consultant_fixed_payroll'])) {
+            return true;
+        }
+
+        foreach (['employment_status', 'employment_type'] as $key) {
+            $value = strtolower(trim(str_replace(['-', ' '], '_', (string) ($summary[$key] ?? $snapshot[$key] ?? ''))));
+            if ($value === 'consultant') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function resolveConsultantBasicPayDisplayAmount(array $summary): float
+    {
+        foreach (['basic_pay_this_period', 'basic_salary_period', 'basic_pay', 'total_pay'] as $key) {
+            $amount = round(max(0.0, (float) ($summary[$key] ?? 0)), 2);
+            if ($amount > 0.0) {
+                return $amount;
+            }
+        }
+
+        foreach (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [] as $line) {
+            if (is_array($line) && $this->isExecomBasicPayLine($line)) {
+                $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+                if ($amount > 0.0) {
+                    return $amount;
+                }
+            }
+        }
+
+        foreach (is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [] as $line) {
+            if (is_array($line) && $this->isExecomBasicPayLine($line)) {
+                $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+                if ($amount > 0.0) {
+                    return $amount;
+                }
+            }
+        }
+
+        return round(max(0.0, (float) ($summary['consultant_fixed_salary'] ?? 0)), 2);
+    }
+
+    /**
      * @param  array<string, mixed>  $summary
      */
     private function resolveExecomBasicPayDisplayAmount(array $summary): float
@@ -3186,6 +3393,27 @@ class PayslipService
             || str_contains($key, 'holiday_premium')
             || str_contains($key, 'ot_pay')
             || str_contains($key, 'nd_pay');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isConsultantSuppressedEarningLine(array $line): bool
+    {
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? $line['name'] ?? '')));
+        $category = strtolower(trim((string) ($line['category'] ?? '')));
+        $haystack = $key.' '.$label.' '.$category;
+
+        return $this->isExecomAttendanceBasedEarningLine($line)
+            || str_contains($haystack, 'holiday')
+            || str_contains($haystack, 'overtime')
+            || str_contains($haystack, ' ot')
+            || str_contains($haystack, 'night_diff')
+            || str_contains($haystack, 'night differential')
+            || str_contains($haystack, 'leave adjustment')
+            || str_contains($haystack, 'paid_leave')
+            || str_contains($haystack, 'unpaid_leave');
     }
 
     /**

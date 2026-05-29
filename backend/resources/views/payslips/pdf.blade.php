@@ -372,7 +372,8 @@
         </tr>
         <tr>
           <td><div class="k">Employment Status</div><div class="v">{{ (isset($employmentStatusLabel) && trim((string) $employmentStatusLabel) !== '') ? trim((string) $employmentStatusLabel) : '—' }}</div></td>
-          <td colspan="3">
+          <td><div class="k">Employment Type</div><div class="v">{{ (isset($employmentTypeLabel) && trim((string) $employmentTypeLabel) !== '') ? trim((string) $employmentTypeLabel) : '—' }}</div></td>
+          <td colspan="2">
             <div class="k">Government IDs</div>
             <table class="gov-grid" role="presentation">
               <tr>

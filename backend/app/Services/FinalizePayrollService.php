@@ -155,6 +155,7 @@ class FinalizePayrollService
                     'daily_rate',
                     'working_schedule_id',
                     'schedule',
+                    'employment_type',
                     'employment_status',
                     'is_active',
                     'role',
@@ -617,7 +618,7 @@ class FinalizePayrollService
 
         $query = $this->payslipQueryForBatchRun($run)
             ->with([
-                'employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id,pay_cycle_id,monthly_salary,monthly_rate,daily_rate,working_schedule_id,schedule,employment_status,is_active',
+                'employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id,pay_cycle_id,monthly_salary,monthly_rate,daily_rate,working_schedule_id,schedule,employment_type,employment_status,is_active',
                 'employee.departmentRelation:id,name',
             ]);
         $expectedStatuses = (string) $run->status === PayrollBatchRun::STATUS_FINALIZED
@@ -1740,7 +1741,11 @@ class FinalizePayrollService
                 throw new \RuntimeException('Draft payslip snapshot is missing summary data for user_id='.$employeeUserId);
             }
 
-            $draftPayslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($draftPayslip, $employee);
+            if ($this->isConsultantEmployee($employee)) {
+                $draftPayslip = $this->payslipService->refreshConsultantDraftPayslipSnapshot($draftPayslip, $employee);
+            } else {
+                $draftPayslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($draftPayslip, $employee);
+            }
             $snapshot = is_array($draftPayslip->snapshot)
                 ? $draftPayslip->snapshot
                 : (is_string($draftPayslip->snapshot) ? json_decode($draftPayslip->snapshot, true) : []);
@@ -2205,7 +2210,11 @@ class FinalizePayrollService
                     }
 
                     if (! $isExecomBatch) {
-                        $payslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $user);
+                        if ($this->isConsultantEmployee($user)) {
+                            $payslip = $this->payslipService->refreshConsultantDraftPayslipSnapshot($payslip, $user);
+                        } else {
+                            $payslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $user);
+                        }
                     }
 
                     $snapshotRaw = $payslip->snapshot;
@@ -2858,6 +2867,10 @@ class FinalizePayrollService
             'middle_name' => $employee->middle_name,
             'last_name' => $employee->last_name,
             'suffix' => $employee->suffix,
+            'employment_type' => $employee->employment_type,
+            'employment_status' => $employee->employment_status,
+            'employment_status_label' => $this->isConsultantEmployee($employee) ? 'Consultant' : null,
+            'consultant_fixed_payroll' => $this->isConsultantEmployee($employee),
             'employee_sort_key' => $employee->employeeListingSortKey(),
         ];
     }
@@ -2881,6 +2894,14 @@ class FinalizePayrollService
         return strtolower(trim($module)) === PayrollBatchRun::MODULE_EXECOM
             ? PayrollBatchRun::MODULE_EXECOM
             : PayrollBatchRun::MODULE_STANDARD;
+    }
+
+    private function isConsultantEmployee(User $user): bool
+    {
+        $status = strtolower(trim(str_replace(['-', ' '], '_', (string) ($user->employment_status ?? ''))));
+        $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($user->employment_type ?? ''))));
+
+        return $status === 'consultant' || $type === 'consultant';
     }
 
     private function assertFinalizeModuleGuards(PayrollBatchRun $run): void

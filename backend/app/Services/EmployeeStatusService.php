@@ -51,7 +51,12 @@ class EmployeeStatusService
         bool $initializeLeaveCredits = false,
         ?Carbon $asOfDate = null
     ): User {
-        if (! $employee->hire_date || (bool) ($employee->status_override ?? false)) {
+        $currentStatus = EmploymentStatus::tryFromStored((string) $employee->employment_status);
+        if (! $employee->hire_date
+            || (bool) ($employee->status_override ?? false)
+            || $this->storedStatusIsConsultant($currentStatus, (string) $employee->employment_status)
+            || $currentStatus === EmploymentStatus::Separated
+        ) {
             return $employee;
         }
 
@@ -62,7 +67,7 @@ class EmployeeStatusService
         }
 
         $previousStatus = $employee->employment_status;
-        $changedStatus = EmploymentStatus::tryFromStored((string) $previousStatus) !== $resolved;
+        $changedStatus = $currentStatus !== $resolved;
         $payload = [
             'employment_status' => $resolved->value,
         ];
@@ -566,6 +571,7 @@ class EmployeeStatusService
             EmploymentStatus::Regular->value,
             EmploymentStatus::Contractual->value,
             EmploymentStatus::ProjectBased->value,
+            'consultant',
             EmploymentStatus::Separated->value,
         ]);
         $db = EmploymentStatusSetting::getValue('status_options');
@@ -582,5 +588,16 @@ class EmployeeStatusService
         }
 
         return array_values(array_unique($parsed));
+    }
+
+    private function storedStatusIsConsultant(?EmploymentStatus $currentStatus, ?string $rawEmploymentStatus = null): bool
+    {
+        if ($currentStatus !== null && $currentStatus->value === 'consultant') {
+            return true;
+        }
+
+        $raw = strtolower(str_replace(['-', ' '], '_', trim((string) ($rawEmploymentStatus ?? ''))));
+
+        return in_array($raw, ['consultant', 'consultancy'], true);
     }
 }

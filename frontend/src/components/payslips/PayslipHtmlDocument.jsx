@@ -87,8 +87,22 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
     const moduleValue = String(data?.payroll?.payroll_module || data?.payroll_module || summary?.payroll_module || '').toLowerCase()
     if (moduleValue === 'execom') return true
     if (summary?.execom_badge || summary?.execom_profile_id || summary?.execom_salary_source_used) return true
-    const earnings = Array.isArray(summary?.payslip_earning_lines) ? summary.payslip_earning_lines : []
-    return earnings.some((line) => String(line?.label || '').trim().toLowerCase() === 'basic pay')
+    return false
+  }, [data, summary])
+
+  const isConsultantPayroll = useMemo(() => {
+    if (summary?.consultant_fixed_payroll) return true
+    const statusValue = String(
+      summary?.employment_status ||
+        data?.employee?.employment_status ||
+        '',
+    ).toLowerCase().replace(/[-\s]+/g, '_')
+    const typeValue = String(
+      summary?.employment_type ||
+        data?.employee?.employment_type ||
+        '',
+    ).toLowerCase().replace(/[-\s]+/g, '_')
+    return statusValue === 'consultant' || typeValue === 'consultant'
   }, [data, summary])
 
   const earnings = useMemo(() => {
@@ -119,6 +133,9 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
     if (isExecomPayroll) {
       return uniqueLines(earnings)
     }
+    if (isConsultantPayroll) {
+      return uniqueLines(earnings)
+    }
     if (dailyComputationEarnings.length > 0 || earnings.length > 0) {
       return uniqueLines([...dailyComputationEarnings, ...earnings])
     }
@@ -127,16 +144,16 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
     const premium = Number(summary?.attendance_premium_pay_this_period || 0)
     if (basic > 0) {
       fallback.push({
-        key: isExecomPayroll ? 'fallback:basic_pay' : 'fallback:regular_pay',
-        label: isExecomPayroll ? 'Basic Pay' : 'Regular pay',
+        key: isExecomPayroll || isConsultantPayroll ? 'fallback:basic_pay' : 'fallback:regular_pay',
+        label: isExecomPayroll || isConsultantPayroll ? 'Basic Pay' : 'Regular pay',
         amount: basic,
       })
     }
-    if (!isExecomPayroll && premium > 0) {
+    if (!isExecomPayroll && !isConsultantPayroll && premium > 0) {
       fallback.push({ key: 'fallback:attendance_premium', label: 'Attendance premiums (OT/ND/Holiday)', amount: premium })
     }
     return fallback
-  }, [dailyComputationEarnings, earnings, isExecomPayroll, summary])
+  }, [dailyComputationEarnings, earnings, isConsultantPayroll, isExecomPayroll, summary])
 
   const holidayPremiumDetails = useMemo(() => {
     const rows = Array.isArray(summary?.holiday_premium_breakdown) ? summary.holiday_premium_breakdown : []
@@ -299,6 +316,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
               <Field label="Employee ID">{data?.employee?.employee_code || '—'}</Field>
               <Field label="Department">{data?.employee?.department || '—'}</Field>
               <Field label="Employment Status">{maskId(data?.employee?.employment_status_label)}</Field>
+              <Field label="Employment Type">{maskId(data?.employee?.employment_type_label)}</Field>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Field label="TIN" mutedValue>

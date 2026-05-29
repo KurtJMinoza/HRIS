@@ -116,7 +116,7 @@ function formatWorkArrangement(value) {
       full_time: 'Full-time',
       part_time: 'Part-time',
       contract: 'Contract (hours)',
-      probationary: 'Probationary (legacy)',
+      probationary: 'Probationary',
     }[value] || value
   )
 }
@@ -2580,6 +2580,11 @@ export default function EmployeeProfile() {
                     EXECOM
                   </Badge>
                 ) : null}
+                {String(displayUser?.employment_status || '').toLowerCase() === 'consultant' ? (
+                  <Badge className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+                    Consultant
+                  </Badge>
+                ) : null}
               </div>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 {[displayUser?.position, displayUser?.department].filter(Boolean).join(' · ') || 'No position assigned'}
@@ -2594,6 +2599,11 @@ export default function EmployeeProfile() {
                 >
                   {displayUser?.is_active ? 'Active' : 'Inactive'}
                 </Badge>
+                {String(displayUser?.employment_status || '').toLowerCase() === 'consultant' ? (
+                  <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+                    Fixed Salary Payroll
+                  </Badge>
+                ) : null}
                 <span className="inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-0.5 text-xs font-medium text-muted-foreground dark:border-white/10">
                   <IdCard className="size-3 shrink-0" />{displayUser?.employee_code || `ID-${displayUser?.id ?? '—'}`}
                 </span>

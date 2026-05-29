@@ -13,6 +13,7 @@ return [
         'regular',
         'contractual',
         'project_based',
+        'consultant',
         'separated',
     ],
 

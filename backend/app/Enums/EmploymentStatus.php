@@ -8,6 +8,7 @@ enum EmploymentStatus: string
     case Regular = 'regular';
     case Contractual = 'contractual';
     case ProjectBased = 'project_based';
+    case Consultant = 'consultant';
     case Separated = 'separated';
 
     public function label(): string
@@ -17,6 +18,7 @@ enum EmploymentStatus: string
             self::Regular => 'Regular',
             self::Contractual => 'Contractual',
             self::ProjectBased => 'Project-based',
+            self::Consultant => 'Consultant',
             self::Separated => 'Separated',
         };
     }
@@ -60,6 +62,8 @@ enum EmploymentStatus: string
             'project' => self::ProjectBased,
             'project_based' => self::ProjectBased,
             'projectbased' => self::ProjectBased,
+            'consultant' => self::Consultant,
+            'consultancy' => self::Consultant,
             'separated' => self::Separated,
             'inactive' => self::Separated,
             'resigned' => self::Separated,
@@ -98,6 +102,8 @@ enum EmploymentStatus: string
             'project' => self::ProjectBased,
             'project_based' => self::ProjectBased,
             'projectbased' => self::ProjectBased,
+            'consultant' => self::Consultant,
+            'consultancy' => self::Consultant,
             'separated' => self::Separated,
             'inactive' => self::Separated,
             'resigned' => self::Separated,

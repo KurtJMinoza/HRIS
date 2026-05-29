@@ -1401,6 +1401,11 @@ export default function AdminFinalizePayrollPage() {
                                   <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium', roleBadgeMeta(employeeCompanyPosition(row)).className)}>
                                     {row?.employee_role_label || roleBadgeMeta(employeeCompanyPosition(row)).label}
                                   </span>
+                                  {row?.consultant_fixed_payroll || String(row?.employment_status || '').toLowerCase() === 'consultant' ? (
+                                    <Badge variant="outline" className="h-5 rounded-md border-amber-300 bg-amber-50 px-2 text-[10px] font-semibold uppercase tracking-normal text-amber-700">
+                                      Consultant
+                                    </Badge>
+                                  ) : null}
                                   <span className="text-[11px] text-muted-foreground">{row.employee_code}</span>
                                   {periodFinalized && canSendRow && rowIsSent ? (
                                     <Badge variant="secondary" className="h-5 rounded-md border-brand/30 bg-brand/10 px-2 text-[10px] font-semibold uppercase tracking-normal text-brand">
