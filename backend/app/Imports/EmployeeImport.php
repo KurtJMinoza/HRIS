@@ -356,6 +356,12 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 'commencement_date',
                 'employment_start_date',
             ]), strictCalendarString: true),
+            'payroll_effective_date' => $this->parseImportDate($this->value($row, [
+                'payroll_effective_date',
+                'payroll_effectivity_date',
+                'payroll_start_date',
+                'payroll_effective_from',
+            ]), strictCalendarString: true) ?? now()->toDateString(),
             'employment_status_effective_date' => $this->resolveEmploymentStatusEffectiveDate(
                 $this->parseImportDate(
                     $this->importEmploymentStatusEffectiveDateFromRow($row),
@@ -644,6 +650,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
             'employment_type' => $payload['employment_type'],
             'employment_status_effective_date' => $this->nullUnlessYmdDateString($payload['employment_status_effective_date'] ?? null),
             'hire_date' => $this->nullUnlessYmdDateString($payload['hire_date'] ?? null),
+            'payroll_effective_date' => $this->nullUnlessYmdDateString($payload['payroll_effective_date'] ?? null) ?? now()->toDateString(),
             'contract_start_date' => $this->nullUnlessYmdDateString($payload['contract_start_date'] ?? null),
             'contract_end_date' => $this->nullUnlessYmdDateString($payload['contract_end_date'] ?? null),
             'position' => $payload['position'],

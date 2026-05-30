@@ -6,6 +6,7 @@ use App\Models\EmployeeOrganizationAssignment;
 use App\Models\ExecomEmployeeProfile;
 use App\Models\PayrollBatchRun;
 use App\Models\User;
+use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
@@ -13,6 +14,12 @@ use Illuminate\Support\Facades\Schema;
 
 class PayrollEmployeeEligibilityService
 {
+    public const EXCLUSION_PAYROLL_EFFECTIVE_AFTER_PERIOD = 'Not payroll-effective for this pay cycle';
+
+    public const EXCLUSION_CREATED_AFTER_PERIOD = 'Created after payroll period';
+
+    public const EXCLUSION_ASSIGNMENT_NOT_ACTIVE = 'Assignment not active in period';
+
     public function query(
         ?int $companyId,
         ?int $branchId = null,
@@ -36,6 +43,7 @@ class PayrollEmployeeEligibilityService
         }
 
         $query = User::query()->payrollEmployees()->active();
+        $this->applyPayrollStartDateScope($query, $periodEnd);
         if ($actor instanceof User && $dataScopeService instanceof DataScopeService) {
             $dataScopeService->restrictEmployeeQuery($actor, $query);
         }
@@ -112,6 +120,133 @@ class PayrollEmployeeEligibilityService
             ->get();
     }
 
+    /**
+     * @return list<int>
+     */
+    public function getPayrollEligibleEmployeeIds(
+        ?int $companyId,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        ?CarbonInterface $periodStart = null,
+        ?CarbonInterface $periodEnd = null,
+        ?User $actor = null,
+        ?DataScopeService $dataScopeService = null,
+        string $payrollModule = PayrollBatchRun::MODULE_STANDARD,
+    ): array {
+        return $this->query($companyId, $branchId, $departmentId, $periodStart, $periodEnd, $actor, $dataScopeService, $payrollModule)
+            ->pluck('users.id')
+            ->map(fn ($id): int => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  list<int>  $employeeIds
+     * @return list<int>
+     */
+    public function findIneligibleDraftEmployeeIds(
+        array $employeeIds,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        CarbonInterface $periodStart,
+        CarbonInterface $periodEnd,
+        string $payrollModule = PayrollBatchRun::MODULE_STANDARD,
+    ): array {
+        if ($employeeIds === []) {
+            return [];
+        }
+
+        $eligibleIds = $this->getPayrollEligibleEmployeeIds(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $periodStart,
+            $periodEnd,
+            null,
+            null,
+            $payrollModule
+        );
+
+        return collect($employeeIds)
+            ->map(fn ($id): int => (int) $id)
+            ->diff($eligibleIds)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function evaluateEmployeeEligibility(
+        User $employee,
+        ?int $companyId,
+        CarbonInterface $periodStart,
+        CarbonInterface $periodEnd,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        string $payrollModule = PayrollBatchRun::MODULE_STANDARD,
+        ?int $payrollRunId = null,
+    ): array {
+        $end = Carbon::parse($periodEnd)->startOfDay();
+        $payrollStart = $this->payrollStartDate($employee);
+        $assignment = $payrollModule === PayrollBatchRun::MODULE_EXECOM
+            ? $this->activeExecomProfileForEmployee($employee, $companyId, $branchId, $departmentId, $periodStart, $periodEnd)
+            : $this->activePayrollAssignmentForEvaluation($employee, $companyId, $branchId, $departmentId, $periodStart, $periodEnd);
+
+        $reason = null;
+        if (! $payrollStart instanceof Carbon || $payrollStart->gt($end)) {
+            $createdAt = $employee->created_at ? Carbon::parse($employee->created_at)->startOfDay() : null;
+            $payrollEffective = $this->employeePayrollEffectiveDate($employee);
+            $reason = $createdAt instanceof Carbon && $createdAt->gt($end)
+                ? self::EXCLUSION_CREATED_AFTER_PERIOD
+                : self::EXCLUSION_PAYROLL_EFFECTIVE_AFTER_PERIOD;
+            if ($payrollEffective instanceof Carbon && $payrollEffective->gt($end)) {
+                $reason = self::EXCLUSION_PAYROLL_EFFECTIVE_AFTER_PERIOD;
+            }
+        } elseif ($companyId !== null && $companyId > 0 && ! $assignment) {
+            $reason = self::EXCLUSION_ASSIGNMENT_NOT_ACTIVE;
+        }
+
+        $included = $reason === null;
+        $payload = [
+            'payroll_run_id' => $payrollRunId,
+            'payroll_period_start' => $periodStart->toDateString(),
+            'payroll_period_end' => $periodEnd->toDateString(),
+            'employee_id' => (int) $employee->id,
+            'employee_name' => (string) $employee->display_name,
+            'hire_date' => $employee->hire_date?->toDateString(),
+            'created_at' => $employee->created_at?->toDateString(),
+            'payroll_effective_date' => $this->employeePayrollEffectiveDate($employee)?->toDateString(),
+            'payroll_start_date' => $payrollStart?->toDateString(),
+            'assignment_effective_from' => $assignment?->effective_from?->toDateString(),
+            'assignment_effective_to' => $assignment?->effective_to?->toDateString(),
+            'included_or_excluded' => $included ? 'included' : 'excluded',
+            'exclusion_reason' => $reason,
+        ];
+
+        if (! $included) {
+            Log::info('Payroll employee excluded by eligibility', $payload);
+        }
+
+        return $payload + [
+            'included' => $included,
+        ];
+    }
+
+    public function clampComputationStart(User $employee, CarbonInterface $periodStart, CarbonInterface $periodEnd): Carbon
+    {
+        $start = Carbon::parse($periodStart)->startOfDay();
+        $end = Carbon::parse($periodEnd)->startOfDay();
+        $payrollStart = $this->payrollStartDate($employee);
+
+        if ($payrollStart instanceof Carbon && $payrollStart->betweenIncluded($start, $end)) {
+            return $payrollStart->copy();
+        }
+
+        return $start;
+    }
+
     private function execomPayrollQuery(
         ?int $companyId,
         ?int $branchId,
@@ -124,6 +259,7 @@ class PayrollEmployeeEligibilityService
         $query = User::query()
             ->payrollEmployees()
             ->active();
+        $this->applyPayrollStartDateScope($query, $periodEnd);
         $this->applyActiveExecomProfileScope($query, $companyId, $branchId, $departmentId, $periodStart, $periodEnd, true);
 
         if ($actor instanceof User && $dataScopeService instanceof DataScopeService) {
@@ -376,12 +512,12 @@ class PayrollEmployeeEligibilityService
                 if ($departmentId !== null && $departmentId > 0) {
                     $assignment->where('department_id', $departmentId);
                 }
-            })->orWhere(function (Builder $legacyProfile) use ($companyId, $branchId, $departmentId, $periodStart, $periodEnd): void {
+            })->orWhere(function (Builder $legacyProfile) use ($companyId, $branchId, $departmentId): void {
                 $legacyProfile
                     ->where('company_id', $companyId)
-                    ->whereDoesntHave('organizationAssignments', function (Builder $assignment) use ($periodStart, $periodEnd): void {
-                        $this->applyAssignmentDateScope($assignment, $periodStart, $periodEnd);
+                    ->whereDoesntHave('organizationAssignments', function (Builder $assignment) use ($companyId): void {
                         $assignment
+                            ->where('company_id', $companyId)
                             ->where('is_active', true)
                             ->where('is_primary', true)
                             ->where('assignment_type', EmployeeOrganizationAssignment::TYPE_PRIMARY);
@@ -452,5 +588,121 @@ class PayrollEmployeeEligibilityService
             ->where(function (Builder $query) use ($start): void {
                 $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $start);
             });
+    }
+
+    private function applyPayrollStartDateScope(Builder $query, ?CarbonInterface $periodEnd): void
+    {
+        if (! $periodEnd instanceof CarbonInterface) {
+            return;
+        }
+
+        $end = $periodEnd->toDateString();
+        $payrollStartSql = $this->payrollStartDateSql();
+        $query
+            ->whereDate('users.created_at', '<=', $end)
+            ->whereRaw($payrollStartSql.' <= ?', [$end]);
+    }
+
+    private function payrollStartDateSql(): string
+    {
+        $parts = [
+            "COALESCE(users.hire_date, '1000-01-01')",
+            'DATE(users.created_at)',
+        ];
+        if (Schema::hasColumn('users', 'payroll_effective_date')) {
+            $parts[] = "COALESCE(users.payroll_effective_date, DATE(users.created_at))";
+        }
+
+        return 'GREATEST('.implode(', ', $parts).')';
+    }
+
+    private function payrollStartDate(User $employee): ?Carbon
+    {
+        $dates = [];
+        if ($employee->hire_date) {
+            $dates[] = Carbon::parse($employee->hire_date)->startOfDay();
+        }
+        if ($employee->created_at) {
+            $dates[] = Carbon::parse($employee->created_at)->startOfDay();
+        }
+        $payrollEffective = $this->employeePayrollEffectiveDate($employee);
+        if ($payrollEffective instanceof Carbon) {
+            $dates[] = $payrollEffective;
+        }
+
+        if ($dates === []) {
+            return null;
+        }
+
+        return collect($dates)->max();
+    }
+
+    private function employeePayrollEffectiveDate(User $employee): ?Carbon
+    {
+        if (Schema::hasColumn('users', 'payroll_effective_date') && $employee->payroll_effective_date) {
+            return Carbon::parse($employee->payroll_effective_date)->startOfDay();
+        }
+        if ($employee->created_at) {
+            return Carbon::parse($employee->created_at)->startOfDay();
+        }
+
+        return null;
+    }
+
+    private function activePayrollAssignmentForEvaluation(User $employee, ?int $companyId, ?int $branchId, ?int $departmentId, CarbonInterface $periodStart, CarbonInterface $periodEnd): ?object
+    {
+        if ($companyId === null || $companyId <= 0) {
+            return (object) [
+                'effective_from' => null,
+                'effective_to' => null,
+            ];
+        }
+
+        $hasPrimaryAssignmentForCompany = $employee->organizationAssignments()
+            ->where('company_id', $companyId)
+            ->where('is_active', true)
+            ->where('is_primary', true)
+            ->where('assignment_type', EmployeeOrganizationAssignment::TYPE_PRIMARY)
+            ->exists();
+
+        return $this->primaryPayrollAssignmentForEmployee($employee, $companyId, $branchId, $departmentId, $periodStart, $periodEnd)
+            ?: $employee->organizationAssignments()
+                ->where(function (Builder $query) use ($companyId, $branchId, $departmentId, $periodStart, $periodEnd): void {
+                    $this->applySharedPayrollEligibility($query, $companyId, $branchId, $departmentId, $periodStart, $periodEnd);
+                })
+                ->first()
+            ?: (! $hasPrimaryAssignmentForCompany && (int) ($employee->company_id ?? 0) === $companyId ? (object) [
+                'effective_from' => null,
+                'effective_to' => null,
+            ] : null);
+    }
+
+    private function activeExecomProfileForEmployee(User $employee, ?int $companyId, ?int $branchId, ?int $departmentId, CarbonInterface $periodStart, CarbonInterface $periodEnd): ?ExecomEmployeeProfile
+    {
+        if (! Schema::hasTable('execom_employee_profiles')) {
+            return null;
+        }
+
+        $query = ExecomEmployeeProfile::query()
+            ->where('employee_id', (int) $employee->id)
+            ->where('is_active', true)
+            ->where(function (Builder $date) use ($periodEnd): void {
+                $date->whereNull('effective_from')->orWhereDate('effective_from', '<=', $periodEnd->toDateString());
+            })
+            ->where(function (Builder $date) use ($periodStart): void {
+                $date->whereNull('effective_to')->orWhereDate('effective_to', '>=', $periodStart->toDateString());
+            });
+
+        if ($companyId !== null && $companyId > 0) {
+            $query->where('company_id', $companyId);
+        }
+        if ($branchId !== null && $branchId > 0) {
+            $query->where('branch_id', $branchId);
+        }
+        if ($departmentId !== null && $departmentId > 0) {
+            $query->where('department_id', $departmentId);
+        }
+
+        return $query->first();
     }
 }

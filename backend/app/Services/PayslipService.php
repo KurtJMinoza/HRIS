@@ -1559,6 +1559,9 @@ class PayslipService
         } else {
             [$from, $to, $preview, $cycle] = $this->resolveComputationContext($employee, $input);
         }
+        $periodStart = $from->copy();
+        $periodEnd = $to->copy();
+        $from = $this->payrollEligibility->clampComputationStart($employee, $from, $to);
         if (is_array($precomputedPreview)) {
             $preview = $precomputedPreview;
         }
@@ -1680,8 +1683,8 @@ class PayslipService
                 'user_id' => $employee->id,
                 'company_id' => $companyId,
                 'payroll_module' => $payrollModule,
-                'pay_period_start' => $from->toDateString(),
-                'pay_period_end' => $to->toDateString(),
+                'pay_period_start' => $periodStart->toDateString(),
+                'pay_period_end' => $periodEnd->toDateString(),
                 'period_slot' => 0,
             ],
             'attributes' => [
@@ -4417,8 +4420,11 @@ class PayslipService
      *
      * @return array{payslip_count: int, total_net_pay: float, generated_at: ?\Carbon\Carbon, finalized_count: int, payslip_ids: list<int>, company_id: ?int, total_gross_pay: float, total_deductions: float}
      */
-    public function aggregateForBatchRun(PayrollBatchRun $run, bool $recomputeDraftTotals = false): array
-    {
+    public function aggregateForBatchRun(
+        PayrollBatchRun $run,
+        bool $recomputeDraftTotals = false,
+        bool $syncMissingEligibleEmployees = true,
+    ): array {
         if ($recomputeDraftTotals) {
             $live = $this->aggregateLiveDraftForBatchRun($run);
             if (is_array($live)) {
@@ -4427,7 +4433,11 @@ class PayslipService
         }
 
         $this->cleanupStaleBatchModulePayslips($run);
-        $this->attachMatchingPayslipsToBatchRun($run);
+        if ($syncMissingEligibleEmployees && (string) $run->status === PayrollBatchRun::STATUS_DRAFT) {
+            $this->syncMissingEligibleEmployeesToDraftBatch($run);
+        } else {
+            $this->attachMatchingPayslipsToBatchRun($run);
+        }
 
         $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
         $eligibleEmployeeIds = $this->employeeIdsForBatchScope($run);
@@ -4517,7 +4527,7 @@ class PayslipService
             return null;
         }
 
-        $stored = $this->aggregateForBatchRun($run, false);
+        $stored = $this->aggregateForBatchRun($run, false, false);
         if ((int) ($stored['finalized_count'] ?? 0) > 0) {
             return null;
         }
@@ -4670,7 +4680,10 @@ class PayslipService
      */
     public function syncBatchRunTotals(PayrollBatchRun $run): void
     {
-        $agg = $this->aggregateForBatchRun($run);
+        if ((string) $run->status === PayrollBatchRun::STATUS_DRAFT) {
+            $this->syncMissingEligibleEmployeesToDraftBatch($run);
+        }
+        $agg = $this->aggregateForBatchRun($run, false, false);
         $payload = [
             'employee_count' => $agg['payslip_count'],
             'total_employees' => max((int) ($run->total_employees ?? 0), (int) $agg['payslip_count']),
@@ -4896,6 +4909,7 @@ class PayslipService
         }
 
         $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        $this->normalizeDraftBatchPayslipPeriodDates($run, $expectedModule);
         $wrongModule = $expectedModule === PayrollBatchRun::MODULE_EXECOM
             ? PayrollBatchRun::MODULE_STANDARD
             : PayrollBatchRun::MODULE_EXECOM;
@@ -4922,13 +4936,229 @@ class PayslipService
             return;
         }
 
+        $removedEmployees = User::query()
+            ->whereIn('id', Payslip::query()
+                ->whereIn('id', $stalePayslipIds)
+                ->select('user_id'))
+            ->get();
+        foreach ($removedEmployees as $employee) {
+            $this->payrollEligibility->evaluateEmployeeEligibility(
+                $employee,
+                $run->company_id ? (int) $run->company_id : null,
+                $run->pay_period_start,
+                $run->pay_period_end,
+                $run->branch_id ? (int) $run->branch_id : null,
+                $run->department_id ? (int) $run->department_id : null,
+                $expectedModule,
+                (int) $run->id
+            );
+        }
+
         $this->deletePayslipsAndPayrollLines($stalePayslipIds);
+        $this->refreshBatchRunDraftTotals($run, $expectedModule);
 
         Log::info('Payroll batch removed stale payslips from wrong payroll module or membership', [
             'payroll_batch_run_id' => (int) $run->id,
             'expected_module' => $expectedModule,
             'removed_count' => count($stalePayslipIds),
         ]);
+    }
+
+    /**
+     * Add draft payslips for employees who became payroll-eligible after the batch was first generated.
+     */
+    public function syncMissingEligibleEmployeesToDraftBatch(PayrollBatchRun $run): int
+    {
+        if ($run->pay_period_start === null || $run->pay_period_end === null) {
+            return 0;
+        }
+        if ((string) $run->status !== PayrollBatchRun::STATUS_DRAFT) {
+            return 0;
+        }
+
+        $this->cleanupStaleBatchModulePayslips($run);
+
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        $normalizedCount = $this->normalizeDraftBatchPayslipPeriodDates($run, $expectedModule);
+        $this->attachMatchingPayslipsToBatchRun($run);
+        $eligibleIds = $this->employeeIdsForBatchScope($run);
+        if ($eligibleIds === []) {
+            return 0;
+        }
+
+        $existingUserIds = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->where('payroll_module', $expectedModule)
+            ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
+            ->whereIn('status', $this->draftSnapshotStatuses())
+            ->whereNull('voided_at')
+            ->where('period_slot', 0)
+            ->pluck('user_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $missingIds = array_values(array_diff($eligibleIds, $existingUserIds));
+        if ($missingIds === []) {
+            if ($normalizedCount > 0) {
+                $this->refreshBatchRunDraftTotals($run, $expectedModule);
+                $run->refresh();
+            }
+
+            return 0;
+        }
+
+        $maxSync = 150;
+        if (count($missingIds) > $maxSync) {
+            Log::warning('Payroll batch has too many newly eligible employees to sync synchronously', [
+                'payroll_batch_run_id' => (int) $run->id,
+                'missing_count' => count($missingIds),
+                'max_sync' => $maxSync,
+            ]);
+            $missingIds = array_slice($missingIds, 0, $maxSync);
+        }
+
+        $periodInput = [
+            'from_date' => $run->pay_period_start->toDateString(),
+            'to_date' => $run->pay_period_end->toDateString(),
+            'pay_cycle_id' => $run->pay_cycle_id,
+            'reference_date' => $run->reference_date?->toDateString(),
+            'payroll_period_id' => $run->payroll_period_id,
+            'payroll_batch_run_id' => (int) $run->id,
+            'payroll_module' => $expectedModule,
+            'is_final_pay' => (bool) $run->is_final_pay,
+            'password_protect' => (bool) $run->password_protect,
+        ];
+
+        Log::info('Payroll batch syncing newly eligible employees into draft', [
+            'payroll_batch_run_id' => (int) $run->id,
+            'missing_count' => count($missingIds),
+        ]);
+
+        try {
+            $this->generateBulkPayslips(
+                $run->company_id ? (int) $run->company_id : null,
+                $run->branch_id ? (int) $run->branch_id : null,
+                $run->department_id ? (int) $run->department_id : null,
+                $missingIds,
+                $periodInput,
+                null,
+                withPdf: false,
+                progressRun: $run
+            );
+        } catch (\Throwable $e) {
+            Log::error('Payroll batch sync for missing eligible employees failed', [
+                'payroll_batch_run_id' => (int) $run->id,
+                'missing_count' => count($missingIds),
+                'error' => $e->getMessage(),
+            ]);
+
+            return 0;
+        }
+
+        $this->refreshBatchRunDraftTotals($run, $expectedModule);
+        $run->refresh();
+
+        return count($missingIds);
+    }
+
+    private function normalizeDraftBatchPayslipPeriodDates(PayrollBatchRun $run, string $expectedModule): int
+    {
+        if ((string) $run->status === PayrollBatchRun::STATUS_FINALIZED) {
+            return 0;
+        }
+        if ($run->pay_period_start === null || $run->pay_period_end === null) {
+            return 0;
+        }
+
+        $expectedStart = $run->pay_period_start->toDateString();
+        $expectedEnd = $run->pay_period_end->toDateString();
+
+        $candidateIds = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->where('payroll_module', $expectedModule)
+            ->whereIn('status', $this->draftSnapshotStatuses())
+            ->whereNull('voided_at')
+            ->where('period_slot', 0)
+            ->whereDate('pay_period_end', $expectedEnd)
+            ->whereDate('pay_period_start', '!=', $expectedStart)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+
+        if ($candidateIds === []) {
+            return 0;
+        }
+
+        $updated = 0;
+        foreach ($candidateIds as $payslipId) {
+            $payslip = Payslip::query()->find($payslipId);
+            if (! $payslip instanceof Payslip) {
+                continue;
+            }
+
+            $conflict = Payslip::query()
+                ->where('user_id', (int) $payslip->user_id)
+                ->where('company_id', (int) $payslip->company_id)
+                ->where('payroll_module', $expectedModule)
+                ->whereDate('pay_period_start', $expectedStart)
+                ->whereDate('pay_period_end', $expectedEnd)
+                ->where('period_slot', 0)
+                ->where('status', '!=', Payslip::STATUS_VOIDED)
+                ->whereKeyNot($payslipId)
+                ->exists();
+            if ($conflict) {
+                continue;
+            }
+
+            $payslip->forceFill([
+                'pay_period_start' => $expectedStart,
+                'pay_period_end' => $expectedEnd,
+            ])->save();
+            $updated++;
+        }
+
+        if ($updated > 0) {
+            Log::info('Payroll batch normalized draft payslip period dates', [
+                'payroll_batch_run_id' => (int) $run->id,
+                'expected_module' => $expectedModule,
+                'updated_count' => $updated,
+            ]);
+        }
+
+        return $updated;
+    }
+
+    private function refreshBatchRunDraftTotals(PayrollBatchRun $run, string $expectedModule): void
+    {
+        if ((string) $run->status === PayrollBatchRun::STATUS_FINALIZED) {
+            return;
+        }
+
+        $remainingIds = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->where('payroll_module', $expectedModule)
+            ->whereIn('status', $this->draftSnapshotStatuses())
+            ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
+            ->selectRaw('MAX(id) as id')
+            ->groupBy('user_id')
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+
+        $sums = $this->sumUniquePayslipsByIds($remainingIds);
+        $run->forceFill([
+            'employee_count' => (int) $sums['employee_count'],
+            'total_employees' => (int) $sums['employee_count'],
+            'total_gross' => round((float) $sums['total_gross'], 2),
+            'total_deductions' => round((float) $sums['total_deductions'], 2),
+            'total_net' => round((float) $sums['total_net'], 2),
+        ])->save();
     }
 
     /**

@@ -106,6 +106,7 @@ const INITIAL_ADD_FORM = {
   branch_office_location: '',
   employment_type: '',
   hire_date: '',
+  payroll_effective_date: '',
   supervisor_id: '',
   working_schedule_id: '',
   password: '',
@@ -357,6 +358,7 @@ export function AdminAddEmployeeDialog({
         branch_office_location: addForm.branch_office_location.trim() || undefined,
         employment_type: addForm.employment_type || undefined,
         hire_date: addForm.hire_date || undefined,
+        payroll_effective_date: addForm.payroll_effective_date || undefined,
         supervisor_id: addForm.supervisor_id || undefined,
         working_schedule_id: addForm.working_schedule_id || undefined,
         password: addForm.password,
@@ -970,6 +972,17 @@ export function AdminAddEmployeeDialog({
                         onChange={(e) => setAddForm((f) => ({ ...f, hire_date: e.target.value }))}
                         className="h-9 dark:scheme-dark"
                       />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="add-payroll_effective_date" className="text-[13px] font-medium">Payroll Effective Date</Label>
+                      <Input
+                        id="add-payroll_effective_date"
+                        type="date"
+                        value={addForm.payroll_effective_date}
+                        onChange={(e) => setAddForm((f) => ({ ...f, payroll_effective_date: e.target.value }))}
+                        className="h-9 dark:scheme-dark"
+                      />
+                      <p className="text-[11px] text-muted-foreground">Defaults to the created date if left blank.</p>
                     </div>
                     <div className="grid gap-1.5">
                       <Label htmlFor="add-supervisor_id" className="text-[13px] font-medium">Supervisor</Label>

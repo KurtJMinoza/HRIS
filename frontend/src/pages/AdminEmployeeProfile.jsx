@@ -1070,6 +1070,7 @@ export default function AdminEmployeeProfile() {
     employment_type: '',
     branch_office_location: '',
     hire_date: '',
+    payroll_effective_date: '',
     contract_start_date: '',
     contract_end_date: '',
     supervisor_id: '',
@@ -1376,6 +1377,7 @@ export default function AdminEmployeeProfile() {
             employment_type: normalizedEmploymentType,
             branch_office_location: found.branch_name || found.branch_office_location || '',
             hire_date: found.hire_date || '',
+            payroll_effective_date: found.payroll_effective_date || '',
             contract_start_date: found.contract_start_date || '',
             contract_end_date: found.contract_end_date || '',
             supervisor_id: found.supervisor_id != null ? String(found.supervisor_id) : '',
@@ -3948,6 +3950,7 @@ export default function AdminEmployeeProfile() {
         employment_type: form.employment_type || undefined,
         branch_office_location: form.branch_office_location || null,
         hire_date: form.hire_date || null,
+        payroll_effective_date: form.payroll_effective_date || null,
         contract_start_date: form.contract_start_date || null,
         contract_end_date: form.contract_end_date || null,
         working_schedule_id: form.working_schedule_id ? Number(form.working_schedule_id) : null,
@@ -5135,6 +5138,14 @@ export default function AdminEmployeeProfile() {
                       </InlineValidationMessage>
                     ))}
                   </div>
+                </div>
+                <div className="space-y-3">
+                  <Label className="flex items-center gap-2 text-base text-muted-foreground">
+                    <Calendar className="size-4 shrink-0" />
+                    Payroll Effective Date
+                  </Label>
+                  <Input className="h-11 text-base" type="date" value={form.payroll_effective_date || ''} onChange={(e) => setForm((f) => ({ ...f, payroll_effective_date: e.target.value }))} />
+                  <p className="text-sm text-muted-foreground">Defaults to the employee created date if blank.</p>
                 </div>
                 {form.employment_status === 'contractual' ? (
                   <>

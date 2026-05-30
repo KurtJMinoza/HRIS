@@ -118,7 +118,7 @@ const HEADER_GROUPS = [
     label: 'Employment Information',
     keys: [
       'employment_type', 'employment_status', 'employment_status_effective_date',
-      'date_hired', 'hire_date', 'contract_start_date', 'contract_end_date',
+      'date_hired', 'hire_date', 'payroll_effective_date', 'contract_start_date', 'contract_end_date',
       'position', 'job_title', 'department', 'department_name', 'branch', 'branch_name', 'company', 'company_name',
       'supervisor', 'supervisor_name', 'working_schedule', 'schedule',
       'working_time_in', 'time_in', 'working_time_out', 'time_out', 'rest_days', 'rest_day', 'pay_schedule',

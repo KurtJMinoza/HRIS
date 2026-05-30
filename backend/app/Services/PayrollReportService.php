@@ -14,6 +14,7 @@ class PayrollReportService
 {
     public function __construct(
         private readonly PayslipService $payslipService,
+        private readonly PayrollEmployeeEligibilityService $payrollEligibility,
     ) {}
 
     /**
@@ -312,6 +313,22 @@ class PayrollReportService
             ->orderBy('user_id')
             ->orderByDesc('id');
 
+        $eligibleIds = $this->payrollEligibility->getPayrollEligibleEmployeeIds(
+            (int) $company->id,
+            $run->branch_id ? (int) $run->branch_id : null,
+            $run->department_id ? (int) $run->department_id : null,
+            $run->pay_period_start,
+            $run->pay_period_end,
+            null,
+            null,
+            (string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)
+        );
+        if ($eligibleIds === []) {
+            $query->whereRaw('1 = 0');
+        } else {
+            $query->whereIn('user_id', $eligibleIds);
+        }
+
         return $query->get()->unique('user_id')->values();
     }
 
@@ -334,6 +351,22 @@ class PayrollReportService
         $module = trim((string) ($run->payroll_module ?? ''));
         if ($module !== '') {
             $query->where('payroll_module', $module);
+        }
+
+        $eligibleIds = $this->payrollEligibility->getPayrollEligibleEmployeeIds(
+            $run->company_id ? (int) $run->company_id : null,
+            $run->branch_id ? (int) $run->branch_id : null,
+            $run->department_id ? (int) $run->department_id : null,
+            $run->pay_period_start,
+            $run->pay_period_end,
+            null,
+            null,
+            (string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)
+        );
+        if ($eligibleIds === []) {
+            $query->whereRaw('1 = 0');
+        } else {
+            $query->whereIn('user_id', $eligibleIds);
         }
 
         return $query->get()->unique('user_id')->values();

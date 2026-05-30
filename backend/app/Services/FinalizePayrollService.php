@@ -614,7 +614,11 @@ class FinalizePayrollService
             ];
         }
 
-        $this->attachMatchingPayslipsToBatchRun($run);
+        if ((string) $run->status === PayrollBatchRun::STATUS_DRAFT) {
+            $this->syncMissingEligibleEmployeesToDraftBatch($run);
+        } else {
+            $this->attachMatchingPayslipsToBatchRun($run);
+        }
 
         $query = $this->payslipQueryForBatchRun($run)
             ->with([
@@ -770,12 +774,14 @@ class FinalizePayrollService
 
         $uniqueIds = $this->payslipService->latestUniquePayslipIdsForQuery($this->payslipQueryForBatchRun($run));
         $uniqueSums = $this->payslipService->sumUniquePayslipsByIds($uniqueIds);
+        $eligibleEmployeeCount = count($this->payslipService->employeeIdsForBatchScope($run));
         $totalEmployees = max(
             (int) ($batchRun['total_employees'] ?? 0),
             (int) ($run->total_employees ?? 0),
             (int) ($run->employee_count ?? 0),
             $uniqueSums['employee_count'],
-            $storedCount
+            $storedCount,
+            $eligibleEmployeeCount
         );
 
         return [
@@ -1161,19 +1167,29 @@ class FinalizePayrollService
                     ->values()
                     ->all();
                 $expectedSavedRosterCount = (int) ($existingRun->employee_count ?? 0);
+                if ($draftUserIds !== [] && count($draftUserIds) < $employees->count()) {
+                    $this->syncMissingEligibleEmployeesToDraftBatch($existingRun);
+                    $draftUserIds = $this->payslipQueryForBatchRun($existingRun)
+                        ->whereNotNull('snapshot')
+                        ->pluck('user_id')
+                        ->unique()
+                        ->map(fn ($id) => (int) $id)
+                        ->values()
+                        ->all();
+                    Log::info('Payroll finalize expanded draft roster with newly eligible employees', [
+                        'payroll_run_id' => (int) $existingRun->id,
+                        'selected_company_id' => $companyId,
+                        'saved_draft_employee_count' => count($draftUserIds),
+                        'live_eligible_employee_count' => $employees->count(),
+                    ]);
+                }
                 if ($draftUserIds !== [] && ($expectedSavedRosterCount <= 0 || count($draftUserIds) === $expectedSavedRosterCount)) {
-                    if (count($draftUserIds) !== $employees->count()) {
-                        Log::info('Payroll finalize using saved draft roster instead of changed live eligibility roster', [
-                            'payroll_run_id' => (int) $existingRun->id,
-                            'selected_company_id' => $companyId,
-                            'saved_draft_employee_count' => count($draftUserIds),
-                            'live_eligible_employee_count' => $employees->count(),
-                        ]);
+                    if (count($draftUserIds) === $employees->count()) {
+                        $employees = User::query()
+                            ->whereIn('id', $draftUserIds)
+                            ->orderByLastName()
+                            ->get();
                     }
-                    $employees = User::query()
-                        ->whereIn('id', $draftUserIds)
-                        ->orderByLastName()
-                        ->get();
                 } elseif ($draftUserIds !== []) {
                     Log::warning('Payroll finalize saved draft roster count does not match batch employee_count', [
                         'payroll_run_id' => (int) $existingRun->id,
@@ -2813,6 +2829,19 @@ class FinalizePayrollService
             ->filter(fn (int $id) => $id > 0)
             ->values()
             ->all();
+    }
+
+    private function syncMissingEligibleEmployeesToDraftBatch(PayrollBatchRun $run): void
+    {
+        if (! method_exists($this->payslipService, 'syncMissingEligibleEmployeesToDraftBatch')) {
+            Log::warning('PayslipService::syncMissingEligibleEmployeesToDraftBatch is unavailable; restart queue/PHP after deploy', [
+                'payroll_batch_run_id' => (int) $run->id,
+            ]);
+
+            return;
+        }
+
+        $this->payslipService->syncMissingEligibleEmployeesToDraftBatch($run);
     }
 
     private function scopedEmployees(

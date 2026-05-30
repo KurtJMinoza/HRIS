@@ -204,8 +204,16 @@ class PayslipController extends Controller
             $batchStatus = (string) $run->status;
             $payslipCount = (int) $agg['payslip_count'];
             $finalizedCount = (int) $agg['finalized_count'];
-            $totalEmployees = max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0), $payslipCount);
-            $processedEmployees = max((int) ($run->processed_employees ?? 0), $payslipCount);
+            $isCompletedPayroll = in_array($batchStatus, [
+                PayrollBatchRun::STATUS_DRAFT,
+                PayrollBatchRun::STATUS_FINALIZED,
+            ], true);
+            $totalEmployees = $isCompletedPayroll
+                ? $payslipCount
+                : max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0), $payslipCount);
+            $processedEmployees = $isCompletedPayroll
+                ? $payslipCount
+                : max((int) ($run->processed_employees ?? 0), $payslipCount);
             $failedEmployees = (int) ($run->failed_employees ?? 0);
 
             $runFinalized = $batchStatus === PayrollBatchRun::STATUS_FINALIZED;
@@ -257,7 +265,9 @@ class PayslipController extends Controller
                 'pay_cycle_id' => $run->pay_cycle_id,
                 'pay_cycle_source' => $run->pay_cycle_id ? 'template' : 'company_default',
                 'pay_cycle_source_label' => $run->pay_cycle_id ? 'Pay cycle template' : 'Company default',
-                'employee_count' => max((int) $agg['payslip_count'], (int) ($run->employee_count ?? 0)),
+                'employee_count' => $isCompletedPayroll
+                    ? $payslipCount
+                    : max($payslipCount, (int) ($run->employee_count ?? 0)),
                 'total_employees' => $totalEmployees,
                 'processed_employees' => $processedEmployees,
                 'failed_employees' => $failedEmployees,
@@ -502,24 +512,28 @@ class PayslipController extends Controller
         if (! empty($v['employee_id'])) {
             $user = User::query()->payrollEmployees()->active()->findOrFail((int) $v['employee_id']);
             $this->dataScopeService->ensureEmployeeAccessible($request->user(), $user);
-            $periodStartForEligibility = ! empty($periodInput['from_date'])
-                ? \Carbon\Carbon::parse((string) $periodInput['from_date'])->startOfDay()
-                : null;
-            $periodEndForEligibility = ! empty($periodInput['to_date'])
-                ? \Carbon\Carbon::parse((string) $periodInput['to_date'])->startOfDay()
-                : null;
+            [$resolvedStartForEligibility, $resolvedEndForEligibility] = $this->payslipService->resolveComputationWindow($user, $periodInput);
             $regularEligible = $this->payrollEligibility->query(
                 isset($v['company_id']) ? (int) $v['company_id'] : null,
                 isset($v['branch_id']) ? (int) $v['branch_id'] : null,
                 isset($v['department_id']) ? (int) $v['department_id'] : null,
-                $periodStartForEligibility,
-                $periodEndForEligibility,
+                $resolvedStartForEligibility,
+                $resolvedEndForEligibility,
                 $request->user(),
                 $this->dataScopeService,
                 PayrollBatchRun::MODULE_STANDARD
             )->whereKey((int) $user->id)->exists();
             if (! $regularEligible) {
-                abort(422, 'Selected employee is EXECOM-active for this period and cannot be generated in Regular Payroll.');
+                $eligibility = $this->payrollEligibility->evaluateEmployeeEligibility(
+                    $user,
+                    isset($v['company_id']) ? (int) $v['company_id'] : null,
+                    $resolvedStartForEligibility,
+                    $resolvedEndForEligibility,
+                    isset($v['branch_id']) ? (int) $v['branch_id'] : null,
+                    isset($v['department_id']) ? (int) $v['department_id'] : null,
+                    PayrollBatchRun::MODULE_STANDARD
+                );
+                abort(422, (string) ($eligibility['exclusion_reason'] ?? 'Selected employee is not eligible for Regular Payroll in the selected period.'));
             }
             // Single-employee generation should be quick and usable for preview immediately.
             // PDFs are not generated here to keep the endpoint responsive.
@@ -568,6 +582,22 @@ class PayslipController extends Controller
         abort_unless($probe, 422, 'No active employees in the selected scope.');
 
         [$periodStart, $periodEnd] = $this->payslipService->resolveComputationWindow($probe, $periodInput);
+        $resolvedEligibilityQ = $this->payrollEligibility->query(
+            isset($v['company_id']) ? (int) $v['company_id'] : null,
+            isset($v['branch_id']) ? (int) $v['branch_id'] : null,
+            isset($v['department_id']) ? (int) $v['department_id'] : null,
+            $periodStart,
+            $periodEnd,
+            $actor,
+            $this->dataScopeService,
+            PayrollBatchRun::MODULE_STANDARD
+        );
+        if (is_array($v['employee_ids'] ?? null) && count($v['employee_ids']) > 0) {
+            $resolvedEligibilityQ->whereIn('id', $v['employee_ids']);
+        }
+        $employeeCount = (int) (clone $resolvedEligibilityQ)->count();
+        abort_unless($employeeCount > 0, 422, 'No employees are eligible for the selected payroll period.');
+
         $resolvedCompanyId = isset($v['company_id']) && $v['company_id'] !== null
             ? (int) $v['company_id']
             : ($probe->getEffectiveCompanyId() !== null ? (int) $probe->getEffectiveCompanyId() : null);
@@ -604,7 +634,6 @@ class PayslipController extends Controller
             ], 202);
         }
 
-        $employeeCount = (int) (clone $probeQ)->count();
         $runPayload = [
             'payroll_module' => PayrollBatchRun::MODULE_STANDARD,
             'batch_key' => $batchKey,

@@ -304,6 +304,7 @@ export default function AdminEmployees() {
     branch_office_location: '',
     employment_type: '',
     hire_date: '',
+    payroll_effective_date: '',
     supervisor_id: '',
     working_schedule_id: '',
   })
@@ -559,6 +560,7 @@ export default function AdminEmployees() {
         branch_office_location: personalInfoForm.branch_office_location.trim() || null,
         employment_type: personalInfoForm.employment_type || null,
         hire_date: personalInfoForm.hire_date || null,
+        payroll_effective_date: personalInfoForm.payroll_effective_date || null,
         supervisor_id: normalizedSupervisorId || null,
         working_schedule_id: personalInfoForm.working_schedule_id || null,
       })
@@ -584,6 +586,7 @@ export default function AdminEmployees() {
         branch_office_location: emp?.branch_office_location || '',
         employment_type: emp?.employment_type || '',
         hire_date: emp?.hire_date || '',
+        payroll_effective_date: emp?.payroll_effective_date || '',
         supervisor_id: emp?.supervisor_id ?? '',
         working_schedule_id: emp?.working_schedule_id ?? '',
       })
@@ -3321,6 +3324,16 @@ export default function AdminEmployees() {
                           value={personalInfoForm.hire_date}
                           onChange={(e) => setPersonalInfoForm((f) => ({ ...f, hire_date: e.target.value }))}
                         />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-medium text-muted-foreground">Payroll Effective Date</label>
+                        <Input
+                          type="date"
+                          className="h-9 text-sm dark:scheme-dark"
+                          value={personalInfoForm.payroll_effective_date}
+                          onChange={(e) => setPersonalInfoForm((f) => ({ ...f, payroll_effective_date: e.target.value }))}
+                        />
+                        <p className="mt-1 text-[11px] text-muted-foreground">Defaults to the employee created date if blank.</p>
                       </div>
                       <div>
                         <label className="mb-2 block text-xs font-medium text-muted-foreground">Supervisor</label>

@@ -271,7 +271,7 @@ class ExecomPayrollSeparationTest extends TestCase
         $this->payslip($run, $execom, PayrollBatchRun::MODULE_STANDARD, 2000, Payslip::STATUS_DRAFT, '2026-05-26', '2026-06-10');
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Cannot finalize: no execom draft payslips are linked');
+        $this->expectExceptionMessage('Cannot finalize: no EXECOM draft payslips are linked');
 
         app(FinalizePayrollService::class)->finalizeQueuedRun($run, $admin);
     }
@@ -318,6 +318,9 @@ class ExecomPayrollSeparationTest extends TestCase
             'is_system_user' => false,
             'is_hidden' => false,
             'exclude_from_payroll' => false,
+            'hire_date' => '2026-01-01',
+            'payroll_effective_date' => '2026-01-01',
+            'created_at' => Carbon::parse('2026-01-01 09:00:00'),
         ], $overrides));
     }
 
@@ -375,8 +378,8 @@ class ExecomPayrollSeparationTest extends TestCase
             'pay_period_end' => '2026-06-10',
             'status' => PayrollBatchRun::STATUS_FINALIZED,
         ]);
-        $this->payslip($run, $firstExecom, PayrollBatchRun::MODULE_EXECOM, 50000);
-        $this->payslip($run, $secondExecom, PayrollBatchRun::MODULE_EXECOM, 60000);
+        $this->payslip($run, $firstExecom, PayrollBatchRun::MODULE_EXECOM, 50000, Payslip::STATUS_FINALIZED, '2026-05-26', '2026-06-10');
+        $this->payslip($run, $secondExecom, PayrollBatchRun::MODULE_EXECOM, 60000, Payslip::STATUS_FINALIZED, '2026-05-26', '2026-06-10');
 
         $payload = app(PayrollReportService::class)->buildReportPayloadForRun($run, $admin);
 

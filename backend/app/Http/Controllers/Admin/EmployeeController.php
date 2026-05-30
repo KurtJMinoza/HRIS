@@ -275,6 +275,7 @@ class EmployeeController extends Controller
             'employment_status',
             'employment_status_effective_date',
             'hire_date',
+            'payroll_effective_date',
             'schedule',
             'working_schedule_id',
             'monthly_salary',
@@ -328,6 +329,7 @@ class EmployeeController extends Controller
             'employment_status',
             'employment_status_effective_date',
             'hire_date',
+            'payroll_effective_date',
             'contract_start_date',
             'contract_end_date',
             'supervisor_id',
@@ -600,6 +602,7 @@ class EmployeeController extends Controller
             'Employment Status',
             'Employment Status Effective Date',
             'Date Hired',
+            'Payroll Effective Date',
             'Contract Start Date',
             'Contract End Date',
             'Position',
@@ -871,6 +874,7 @@ class EmployeeController extends Controller
             (string) ($user->employment_status ?? ''),
             $this->csvDate($user->employment_status_effective_date),
             $this->csvDate($user->hire_date),
+            $this->csvDate($user->payroll_effective_date),
             $this->csvDate($user->contract_start_date),
             $this->csvDate($user->contract_end_date),
             (string) ($user->position ?? ''),
@@ -954,6 +958,7 @@ class EmployeeController extends Controller
             'employment_status' => ['nullable', 'string', Rule::in(array_column(EmploymentStatus::cases(), 'value'))],
             'status_override' => ['nullable', 'boolean'],
             'hire_date' => ['nullable', 'date'],
+            'payroll_effective_date' => ['nullable', 'date'],
             'supervisor_id' => ['nullable', 'integer', 'exists:users,id'],
             'working_schedule_id' => ['nullable', 'integer', 'exists:working_schedules,id'],
             'daily_rate' => ['nullable', 'numeric', 'min:0'],
@@ -1042,6 +1047,14 @@ class EmployeeController extends Controller
         $phone = is_string($rawPhone) && trim($rawPhone) !== '' ? \App\Services\SmsService::normalizePhone($rawPhone) : null;
 
         $resolvedHomeAddress = $this->resolveHomeAddressForEmployeeCreate($validated);
+        $payrollEffectiveDate = $validated['payroll_effective_date'] ?? now()->toDateString();
+        if (isset($validated['payroll_effective_date'])
+            && \Carbon\Carbon::parse((string) $validated['payroll_effective_date'])->lt(now()->startOfDay())
+            && ! $request->user()?->isAdmin()) {
+            throw ValidationException::withMessages([
+                'payroll_effective_date' => ['Only authorized admins can set Payroll Effective Date earlier than today.'],
+            ]);
+        }
 
         $firstName = trim((string) $validated['first_name']);
         $middleName = isset($validated['middle_name']) && trim((string) $validated['middle_name']) !== '' ? trim((string) $validated['middle_name']) : null;
@@ -1089,6 +1102,7 @@ class EmployeeController extends Controller
                 : EmploymentStatus::Probationary->value,
             'status_override' => (bool) ($validated['status_override'] ?? $request->filled('employment_status')),
             'hire_date' => $validated['hire_date'] ?? null,
+            'payroll_effective_date' => $payrollEffectiveDate,
             'supervisor_id' => $validated['supervisor_id'] ?? null,
             'working_schedule_id' => $validated['working_schedule_id'] ?? null,
             'daily_rate' => isset($validated['daily_rate']) && $validated['daily_rate'] > 0 ? (float) $validated['daily_rate'] : null,
@@ -1346,6 +1360,7 @@ class EmployeeController extends Controller
                 'employment_status_effective_date' => ['sometimes', 'nullable', 'date'],
                 'status_override' => ['sometimes', 'boolean'],
                 'hire_date' => ['sometimes', 'nullable', 'date'],
+                'payroll_effective_date' => ['sometimes', 'nullable', 'date'],
                 'contract_start_date' => ['sometimes', 'nullable', 'date'],
                 'contract_end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:contract_start_date'],
                 'supervisor_id' => ['sometimes', 'nullable', 'integer', 'exists:users,id'],
@@ -1496,6 +1511,19 @@ class EmployeeController extends Controller
             if ($this->requestHasInput($request, 'hire_date')) {
                 $hireRaw = $request->input('hire_date');
                 $employee->hire_date = is_string($hireRaw) && trim($hireRaw) !== '' ? $hireRaw : null;
+            }
+            if ($this->requestHasInput($request, 'payroll_effective_date')) {
+                $payrollEffectiveRaw = $request->input('payroll_effective_date');
+                if (is_string($payrollEffectiveRaw) && trim($payrollEffectiveRaw) !== ''
+                    && \Carbon\Carbon::parse($payrollEffectiveRaw)->lt(now()->startOfDay())
+                    && ! $request->user()?->isAdmin()) {
+                    throw ValidationException::withMessages([
+                        'payroll_effective_date' => ['Only authorized admins can set Payroll Effective Date earlier than today.'],
+                    ]);
+                }
+                $employee->payroll_effective_date = is_string($payrollEffectiveRaw) && trim($payrollEffectiveRaw) !== ''
+                    ? $payrollEffectiveRaw
+                    : ($employee->created_at?->toDateString() ?? now()->toDateString());
             }
             if ($this->requestHasInput($request, 'contract_start_date')) {
                 $raw = $request->input('contract_start_date');
@@ -2629,6 +2657,7 @@ class EmployeeController extends Controller
             'regularization_date' => $user->regularization_date?->toDateString(),
             'status_override' => (bool) ($user->status_override ?? false),
             'hire_date' => $user->hire_date?->toDateString(),
+            'payroll_effective_date' => $user->payroll_effective_date?->toDateString(),
             'contract_start_date' => $user->contract_start_date?->toDateString(),
             'contract_end_date' => $user->contract_end_date?->toDateString(),
             'supervisor_id' => $user->supervisor_id,
@@ -3334,6 +3363,7 @@ class EmployeeController extends Controller
                 ?? ($user->employment_status ? ucfirst(str_replace('_', ' ', (string) $user->employment_status)) : null),
             'employment_status_effective_date' => $user->employment_status_effective_date?->toDateString(),
             'hire_date' => $user->hire_date?->toDateString(),
+            'payroll_effective_date' => $user->payroll_effective_date?->toDateString(),
             'schedule' => $user->schedule,
             'working_schedule_id' => $user->working_schedule_id,
             'has_qr' => ! empty($user->qr_token),
