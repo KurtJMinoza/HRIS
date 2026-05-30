@@ -11,6 +11,7 @@ use App\Models\Overtime;
 use App\Models\User;
 use App\Services\AttendanceCacheService;
 use App\Services\AttendancePresenceDisplayService;
+use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusService;
 use App\Services\FaceAttemptThrottleService;
 use App\Services\FaceAuthService;
@@ -42,6 +43,7 @@ class AttendanceController extends Controller
         private readonly OtDetectionService $otDetectionService,
         private readonly PayrollComputationService $payrollComputation,
         private readonly OvertimePayrollService $overtimePayroll,
+        private readonly AttendanceRollupService $attendanceRollup,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -2152,7 +2154,6 @@ class AttendanceController extends Controller
 
             if ($isOnLeave) {
                 $status = 'leave';
-                $metrics['leave_count']++;
             } else {
                 // Rest day / not scheduled: never surface punches (e.g., Sundays) in employee attendance.
                 // Even if logs exist, these days must show no time in/out and no "present/absent".
@@ -2174,7 +2175,6 @@ class AttendanceController extends Controller
                         // Absent only after cutoff (e.g. 5 PM). Do NOT mark future dates as absent.
                         $pastCutoff = ! $isToday || AttendanceStatusService::isPastAbsentCutoff($dateKey, $todayNow);
                         if ($pastCutoff) {
-                            $metrics['absent_count']++;
                             $status = 'absent';
                         }
                     }
@@ -2187,11 +2187,9 @@ class AttendanceController extends Controller
                     );
 
                     if ($clockInResult['status'] === 'half_day') {
-                        $metrics['halfday_count']++;
                         $status = 'halfday';
                         $dayLateLabel = $clockInResult['late_label'] ?? 'Half Day';
                     } elseif ($clockInResult['status'] === 'late') {
-                        $metrics['late_count']++;
                         $dayLateMinutes = $clockInResult['late_minutes'];
                         $dayLateLabel = $clockInResult['late_label'] ?? 'Late';
                         // Store and display actual late minutes (Actual Time-In − 8:00 AM)
@@ -2243,10 +2241,6 @@ class AttendanceController extends Controller
 
                     // Still on duty: primary status is Clocked In (late info may still show in late_minutes).
                     if ($effectiveTimeIn && ! $effectiveTimeOut && $status !== 'incomplete' && $status !== 'halfday' && $status !== 'leave') {
-                        if ($status === 'late') {
-                            $metrics['late_count'] = max(0, $metrics['late_count'] - 1);
-                            $metrics['late_minutes'] = max(0, $metrics['late_minutes'] - (int) ($dayLateMinutes ?? 0));
-                        }
                         $status = 'clocked_in';
                     }
                 }
@@ -2257,7 +2251,6 @@ class AttendanceController extends Controller
             if ($status === '—' && ! $isOnLeave && ! $isFuture) {
                 $pastCutoff = ! $isToday || AttendanceStatusService::isPastAbsentCutoff($dateKey, $todayNow);
                 if ($pastCutoff) {
-                    $metrics['absent_count']++;
                     $status = 'absent';
                 }
             }
@@ -2283,10 +2276,6 @@ class AttendanceController extends Controller
             $status = $qualified['status'];
             $presenceLabel = $qualified['presence_label'];
             $presenceIssue = $qualified['presence_issue'];
-
-            if ($status === 'present') {
-                $metrics['present_count']++;
-            }
 
             if ($effectiveWorkedMinutes !== null) {
                 $metrics['total_worked_minutes'] += $effectiveWorkedMinutes;
@@ -2519,6 +2508,13 @@ class AttendanceController extends Controller
 
         $transformStart = microtime(true);
         $this->attachPresenceFilingsToEmployeeSummaryDays($corrections, $days, $attendanceTz);
+
+        $rollupCounts = $this->attendanceRollup->summarizeEmployeeDays($days);
+        $metrics['present_count'] = $rollupCounts['present_count'];
+        $metrics['late_count'] = $rollupCounts['late_count'];
+        $metrics['absent_count'] = $rollupCounts['absent_count'];
+        $metrics['leave_count'] = $rollupCounts['leave_count'];
+        $metrics['halfday_count'] = $rollupCounts['halfday_count'];
 
         usort($days, fn (array $a, array $b) => strcmp((string) ($b['date'] ?? ''), (string) ($a['date'] ?? '')));
 

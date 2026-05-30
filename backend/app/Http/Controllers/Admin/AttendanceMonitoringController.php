@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Services\AttendanceCacheService;
 use App\Services\AttendancePresenceDisplayService;
+use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
 use App\Services\PayrollComputationService;
@@ -37,6 +38,7 @@ class AttendanceMonitoringController extends Controller
         private readonly PayrollComputationService $payrollComputation,
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly PremiumReportService $premiumReport,
+        private readonly AttendanceRollupService $attendanceRollup,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -1113,33 +1115,19 @@ class AttendanceMonitoringController extends Controller
      */
     private function attendanceMonitoringTotals(array $rows): array
     {
-        $present = 0;
-        $absent = 0;
-        $late = 0;
-        $leaveHalf = 0;
+        $rollup = $this->attendanceRollup->summarizeAdminRows($rows);
         $totalHours = 0.0;
 
         foreach ($rows as $r) {
-            $st = (string) ($r['status'] ?? '');
-            if ($st === 'present') {
-                $present++;
-            } elseif ($st === 'absent') {
-                $absent++;
-            } elseif ($st === 'late') {
-                $late++;
-            } elseif ($st === 'leave' || $st === 'halfday') {
-                $leaveHalf++;
-            }
-
             $raw = $r['total_rendered_hours'] ?? $r['total_hours'] ?? 0;
             $totalHours += is_numeric($raw) ? (float) $raw : 0.0;
         }
 
         return [
-            'present_count' => $present,
-            'absent_count' => $absent,
-            'late_count' => $late,
-            'leave_or_halfday_count' => $leaveHalf,
+            'present_count' => $rollup['present_count'],
+            'absent_count' => $rollup['absent_count'],
+            'late_count' => $rollup['late_count'],
+            'leave_or_halfday_count' => $rollup['leave_count'] + $rollup['halfday_count'],
             'total_hours_rendered' => $totalHours,
         ];
     }

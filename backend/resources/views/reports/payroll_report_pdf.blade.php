@@ -12,12 +12,14 @@
   $payDate = $date($reportPayDate ?? ($run->reference_date ?? null));
   $columns = $columns ?? [];
   $layout = $layout ?? [
-      'body_font' => '7.2px',
-      'header_font' => '6.2px',
-      'cell_padding' => '2.8px 3px',
-      'employee_width' => 16,
+      'body_font' => '8.5px',
+      'header_font' => '7.1px',
+      'cell_padding' => '1.45px 1.75px',
+      'employee_width' => 27,
       'numeric_width' => 6,
-      'orientation' => 'portrait',
+      'orientation' => 'landscape',
+      'content_width' => '98.5%',
+      'table_width' => '99%',
   ];
   $groupSpans = [];
   foreach ($columns as $column) {
@@ -42,7 +44,7 @@
 <head>
   <meta charset="utf-8">
   <style>
-    @page { size: A4 portrait; margin: 5mm 5mm 8mm; }
+    @page { size: A4 landscape; margin: 6mm 6mm 9mm 22mm; }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -56,16 +58,16 @@
     body.report-wide { font-size: var(--report-body-font, 10.0px); }
     body.report-ultra { font-size: var(--report-body-font, 9.4px); }
     .report-shell {
-      width: 100%;
-      max-width: 100%;
+      width: var(--report-content-width, 98.5%);
+      max-width: var(--report-content-width, 98.5%);
       margin: 0 auto;
       padding: 0;
     }
     body.report-compact .report-shell,
     body.report-wide .report-shell,
     body.report-ultra .report-shell {
-      width: 100%;
-      max-width: 100%;
+      width: var(--report-content-width, 98.5%);
+      max-width: var(--report-content-width, 98.5%);
     }
     .hero {
       display: table;
@@ -107,20 +109,20 @@
     }
     .company-name {
       margin: 0 0 2px;
-      font-size: 12.5px;
+      font-size: 14px;
       font-weight: 800;
       color: #111827;
     }
     .company-address {
       margin: 0;
       color: #4b5563;
-      font-size: 6.8px;
+      font-size: 8px;
       line-height: 1.18;
     }
     .report-title {
       margin: 0 0 2px;
       color: #111827;
-      font-size: 13px;
+      font-size: 14.5px;
       font-weight: 800;
       letter-spacing: 0.04em;
       text-transform: uppercase;
@@ -128,7 +130,7 @@
     .report-subtitle {
       margin: 0;
       color: #4b5563;
-      font-size: 6.8px;
+      font-size: 8px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.08em;
@@ -152,7 +154,7 @@
       display: block;
       margin-bottom: 1px;
       color: #6b7280;
-      font-size: 6.8px;
+      font-size: 7.6px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
@@ -160,7 +162,7 @@
     .meta-value {
       display: block;
       color: #111827;
-      font-size: 7.6px;
+      font-size: 8.6px;
       font-weight: 700;
       line-height: 1.18;
     }
@@ -186,7 +188,7 @@
       display: block;
       margin-bottom: 2px;
       color: #6b7280;
-      font-size: 6.8px;
+      font-size: 7.6px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
@@ -194,7 +196,7 @@
     .summary-value {
       display: block;
       color: #111827;
-      font-size: 9px;
+      font-size: 10.2px;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
     }
@@ -202,14 +204,14 @@
     .section-title {
       margin: 2px 0 4px;
       color: #111827;
-      font-size: 8px;
+      font-size: 9px;
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
     table.payroll-table {
-      width: 100%;
-      max-width: 100%;
+      width: var(--report-table-width, 99%);
+      max-width: var(--report-table-width, 99%);
       margin: 0 auto;
       border-collapse: collapse;
       table-layout: fixed;
@@ -295,7 +297,7 @@
     .note {
       margin-top: 5px;
       color: #6b7280;
-      font-size: 6.8px;
+      font-size: 7.6px;
       line-height: 1.15;
     }
     .footer {
@@ -309,7 +311,7 @@
       padding-top: 3px;
       border-top: 0.5px solid #e5e7eb;
       color: #6b7280;
-      font-size: 6.8px;
+      font-size: 7.6px;
     }
     .footer-left, .footer-right {
       display: table-cell;
@@ -321,7 +323,7 @@
 </head>
 <body
   class="{{ $layoutClass }}"
-  style="--report-body-font: {{ $layout['body_font'] ?? '6.2px' }}; --report-header-font: {{ $layout['header_font'] ?? '5.5px' }}; --report-cell-padding: {{ $layout['cell_padding'] ?? '1.4px 1.6px' }}; --number-col-width: {{ $layout['row_number_width'] ?? 4 }}%; --employee-col-width: {{ $layout['employee_width'] ?? 30 }}%; --numeric-col-width: {{ $layout['numeric_width'] ?? 7 }}%;"
+  style="--report-body-font: {{ $layout['body_font'] ?? '8.5px' }}; --report-header-font: {{ $layout['header_font'] ?? '7.1px' }}; --report-cell-padding: {{ $layout['cell_padding'] ?? '1.45px 1.75px' }}; --number-col-width: {{ $layout['row_number_width'] ?? 4 }}%; --employee-col-width: {{ $layout['employee_width'] ?? 30 }}%; --numeric-col-width: {{ $layout['numeric_width'] ?? 7 }}%; --report-content-width: {{ $layout['content_width'] ?? '98.5%' }}; --report-table-width: {{ $layout['table_width'] ?? '99%' }};"
 >
   <div class="report-shell">
     <div class="hero">

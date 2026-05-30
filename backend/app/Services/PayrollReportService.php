@@ -249,49 +249,51 @@ class PayrollReportService
     }
 
     /**
-     * @return array{paper_size:string,orientation:string,body_font:string,header_font:string,cell_padding:string,row_number_width:float,employee_width:float,numeric_width:float}
+     * @return array{paper_size:string,orientation:string,body_font:string,header_font:string,cell_padding:string,row_number_width:float,employee_width:float,numeric_width:float,content_width:string,table_width:string}
      */
     private function layoutForColumnCount(int $columnCount): array
     {
-        // Portrait keeps the register print-friendly; scale text by column count
-        // so finalized reports still fit when optional payroll columns are present.
-        $rowNumberWidth = 4.0;
+        // Landscape gives payroll reports enough room for readable totals without
+        // pushing the table all the way to the paper edge.
+        $rowNumberWidth = 3.8;
         $employeeWidth = match (true) {
-            $columnCount >= 21 => 18.0,
-            $columnCount >= 17 => 20.0,
-            $columnCount >= 13 => 22.0,
-            $columnCount >= 10 => 24.0,
-            default => 30.0,
+            $columnCount >= 21 => 22.0,
+            $columnCount >= 17 => 24.0,
+            $columnCount >= 13 => 27.0,
+            $columnCount >= 10 => 30.0,
+            default => 36.0,
         };
         $numericWidth = round((100.0 - $rowNumberWidth - $employeeWidth) / max(1, $columnCount - 2), 4);
 
         return [
             'paper_size' => 'a4',
-            'orientation' => 'portrait',
+            'orientation' => 'landscape',
             'body_font' => match (true) {
-                $columnCount >= 21 => '4.7px',
-                $columnCount >= 17 => '5.2px',
-                $columnCount >= 13 => '5.9px',
-                $columnCount >= 10 => '6.6px',
-                default => '9.4px',
+                $columnCount >= 21 => '7.2px',
+                $columnCount >= 17 => '7.8px',
+                $columnCount >= 13 => '8.5px',
+                $columnCount >= 10 => '9.2px',
+                default => '10.2px',
             },
             'header_font' => match (true) {
-                $columnCount >= 21 => '3.9px',
-                $columnCount >= 17 => '4.2px',
-                $columnCount >= 13 => '4.8px',
-                $columnCount >= 10 => '5.1px',
-                default => '7.4px',
+                $columnCount >= 21 => '6.0px',
+                $columnCount >= 17 => '6.5px',
+                $columnCount >= 13 => '7.1px',
+                $columnCount >= 10 => '7.7px',
+                default => '8.6px',
             },
             'cell_padding' => match (true) {
-                $columnCount >= 21 => '0.4px 0.45px',
-                $columnCount >= 17 => '0.45px 0.5px',
-                $columnCount >= 13 => '0.6px 0.65px',
-                $columnCount >= 10 => '0.8px 0.9px',
-                default => '1.8px 1.6px',
+                $columnCount >= 21 => '1.1px 1.35px',
+                $columnCount >= 17 => '1.25px 1.5px',
+                $columnCount >= 13 => '1.45px 1.75px',
+                $columnCount >= 10 => '1.7px 2px',
+                default => '2.4px 2.6px',
             },
             'row_number_width' => $rowNumberWidth,
             'employee_width' => $employeeWidth,
             'numeric_width' => $numericWidth,
+            'content_width' => '98.5%',
+            'table_width' => '99%',
         ];
     }
 
@@ -350,7 +352,12 @@ class PayrollReportService
         $snapshot = is_array($payslip->snapshot)
             ? $payslip->snapshot
             : (is_string($payslip->snapshot) ? json_decode($payslip->snapshot, true) : []);
-        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $viewSnapshot = is_array($snapshot) && $snapshot !== []
+            ? $this->payslipService->frozenSnapshotForPayslipView($snapshot)
+            : [];
+        $summary = is_array($viewSnapshot['summary'] ?? null)
+            ? $viewSnapshot['summary']
+            : (is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : []);
         $earningLines = array_values(array_merge(
             $this->lineList($summary['daily_computation_earning_lines'] ?? []),
             $this->lineList($summary['payslip_earning_lines'] ?? [])
@@ -377,13 +384,13 @@ class PayrollReportService
             }
             $earnings[$this->earningBucket($line)] += $amount;
         }
-        $earnings['regular_basic_pay'] = $this->metricAmount($categoryTotals, 'regular_pay', $earnings['regular_basic_pay']);
-        $earnings['holiday_pay'] = $this->metricAmount($categoryTotals, 'holiday_pay', $earnings['holiday_pay']);
-        $earnings['overtime_pay'] = $this->metricAmount($categoryTotals, 'overtime_pay', $earnings['overtime_pay']);
-        $earnings['night_differential'] = $this->metricAmount($categoryTotals, 'night_differential', $earnings['night_differential']);
-        $earnings['paid_leave'] = $this->metricAmount($categoryTotals, 'paid_leave', $earnings['paid_leave']);
-        $earnings['allowance'] = $this->metricAmount($categoryTotals, 'allowance', $earnings['allowance']);
-        $earnings['other_earnings'] = $this->metricAmount($categoryTotals, 'other_earning', $earnings['other_earnings']);
+        $earnings['regular_basic_pay'] = $this->metricAmount($metrics, $categoryTotals, 'regular_pay', $earnings['regular_basic_pay']);
+        $earnings['holiday_pay'] = $this->metricAmount($metrics, $categoryTotals, 'holiday_pay', $earnings['holiday_pay']);
+        $earnings['overtime_pay'] = $this->metricAmount($metrics, $categoryTotals, 'overtime_pay', $earnings['overtime_pay']);
+        $earnings['night_differential'] = $this->metricAmount($metrics, $categoryTotals, 'night_differential', $earnings['night_differential']);
+        $earnings['paid_leave'] = $this->metricAmount($metrics, $categoryTotals, 'paid_leave', $earnings['paid_leave']);
+        $earnings['allowance'] = $this->metricAmount($metrics, $categoryTotals, 'allowances', $earnings['allowance'], 'allowance');
+        $earnings['other_earnings'] = $this->metricAmount($metrics, $categoryTotals, 'other_earning', $earnings['other_earnings']);
 
         $deductions = [
             'sss' => 0.0,
@@ -430,19 +437,37 @@ class PayrollReportService
      */
     private function lineAmount(array $line): float
     {
-        return round(max(0.0, (float) ($line['amount'] ?? 0)), 2);
+        foreach (['amount', 'resolved_amount', 'total_amount', 'value'] as $field) {
+            if (array_key_exists($field, $line) && is_numeric($line[$field])) {
+                return round(max(0.0, (float) $line[$field]), 2);
+            }
+        }
+
+        return 0.0;
     }
 
     /**
+     * @param  array<string, mixed>  $metrics
      * @param  array<string, mixed>  $categoryTotals
      */
-    private function metricAmount(array $categoryTotals, string $key, float $fallback): float
+    private function metricAmount(array $metrics, array $categoryTotals, string $metricKey, float $fallback, ?string $categoryKey = null): float
     {
-        if (! array_key_exists($key, $categoryTotals)) {
-            return round($fallback, 2);
+        if (array_key_exists($metricKey, $metrics) && is_numeric($metrics[$metricKey])) {
+            $amount = round(max(0.0, (float) $metrics[$metricKey]), 2);
+            if ($amount > 0.004) {
+                return $amount;
+            }
         }
 
-        return round(max(0.0, (float) $categoryTotals[$key]), 2);
+        $categoryKey ??= $metricKey;
+        if (array_key_exists($categoryKey, $categoryTotals) && is_numeric($categoryTotals[$categoryKey])) {
+            $amount = round(max(0.0, (float) $categoryTotals[$categoryKey]), 2);
+            if ($amount > 0.004) {
+                return $amount;
+            }
+        }
+
+        return round($fallback, 2);
     }
 
     /**
@@ -454,20 +479,20 @@ class PayrollReportService
         if (str_contains($text, 'allowance')) {
             return 'allowance';
         }
-        if (str_contains($text, 'regular') || str_contains($text, 'basic')) {
-            return 'regular_basic_pay';
-        }
         if (str_contains($text, 'holiday')) {
             return 'holiday_pay';
         }
-        if (str_contains($text, 'overtime') || preg_match('/\bot\b/', $text)) {
+        if (str_contains($text, 'overtime') || str_contains($text, 'ot_pay') || preg_match('/\bot\b/', $text)) {
             return 'overtime_pay';
         }
         if (str_contains($text, 'night') || str_contains($text, 'nd_pay') || str_contains($text, 'night_diff')) {
             return 'night_differential';
         }
-        if (str_contains($text, 'paid_leave') || str_contains($text, 'paid leave') || str_contains($text, 'leave adjustment')) {
+        if (str_contains($text, 'paid_leave') || str_contains($text, 'paid leave') || str_contains($text, 'leave adjustment') || str_contains($text, 'leave adjustments')) {
             return 'paid_leave';
+        }
+        if (str_contains($text, 'regular') || str_contains($text, 'basic')) {
+            return 'regular_basic_pay';
         }
 
         return 'other_earnings';
@@ -502,9 +527,16 @@ class PayrollReportService
     {
         return strtolower(trim(implode(' ', array_filter([
             (string) ($line['category'] ?? ''),
+            (string) ($line['component'] ?? ''),
+            (string) ($line['component_code'] ?? ''),
+            (string) ($line['code'] ?? ''),
             (string) ($line['key'] ?? ''),
             (string) ($line['label'] ?? ''),
             (string) ($line['name'] ?? ''),
+            (string) ($line['component_name'] ?? ''),
+            (string) ($line['description'] ?? ''),
+            (string) ($line['source_type'] ?? ''),
+            (string) ($line['calculation_standard'] ?? ''),
             (string) ($line['type'] ?? ''),
         ]))));
     }
