@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { minutesFromMidnight, minutesToHhMm, ndOverlapMinutes, netShiftMinutes } from '@/lib/scheduleLib'
 import { ShiftPill } from '@/components/schedules/ShiftPill'
@@ -39,17 +39,16 @@ export function ScheduleWeeklyGrid({
   className,
 }) {
   const restSet = useMemo(() => new Set(restDays), [restDays])
-  const gridRef = useRef(null)
   const [drag, setDrag] = useState(null)
 
-  const ti = toHhMm(timeIn) || '09:00'
-  const to = toHhMm(timeOut) || '17:00'
-  const a = minutesFromMidnight(ti)
-  const b = minutesFromMidnight(to)
+  const timeInHhMm = toHhMm(timeIn) || '09:00'
+  const timeOutHhMm = toHhMm(timeOut) || '17:00'
+  const a = minutesFromMidnight(timeInHhMm)
+  const b = minutesFromMidnight(timeOutHhMm)
   const crosses = b <= a
   const endMm = crosses ? b + 24 * 60 : b
 
-  const ndMinutes = useMemo(() => ndOverlapMinutes(ti, to), [ti, to])
+  const ndMinutes = ndOverlapMinutes(timeInHhMm, timeOutHhMm)
 
   const pointerToMinutes = useCallback((clientY, bounds) => {
     const y = clientY - bounds.top
@@ -193,7 +192,7 @@ export function ScheduleWeeklyGrid({
       <p className="mt-2 text-[11px] text-muted-foreground">
         Net shift (excl. break):{' '}
         <span className="font-medium text-foreground">
-          {(netShiftMinutes(ti, to, breakStart, breakEnd) / 60).toFixed(2)} h
+          {(netShiftMinutes(timeInHhMm, timeOutHhMm, breakStart, breakEnd) / 60).toFixed(2)} h
         </span>
         {ndMinutes > 0 && (
           <span className="text-purple-700 dark:text-purple-300">

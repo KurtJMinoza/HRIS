@@ -110,10 +110,11 @@ function requestedScheduleSubtitle(item) {
 
 function scheduleTimeRange(item) {
   const ws = item?.working_schedule
-  const tIn = ws?.time_in
-  const tOut = ws?.time_out
+  const payload = item?.custom_schedule_payload
+  const tIn = ws?.time_in || payload?.time_in
+  const tOut = ws?.time_out || payload?.time_out
   if (!tIn && !tOut) return '—'
-  return `${tIn || '—'} – ${tOut || '—'}`
+  return formatShiftRange12h(tIn, tOut)
 }
 
 function scheduleDetailSummary(item) {
@@ -126,7 +127,7 @@ function scheduleDetailSummary(item) {
   const breakMinutes = Number(payload.break_duration_minutes ?? 0)
   const hasBreakWindow = ws.break_start && ws.break_end
   const breakLabel = hasBreakWindow
-    ? `${ws.break_start} – ${ws.break_end}`
+    ? formatShiftRange12h(ws.break_start, ws.break_end)
     : breakMinutes > 0
       ? `${breakMinutes} min`
       : 'No break set'
@@ -307,9 +308,11 @@ export default function MySchedule() {
     if (!current?.break_start || !current?.break_end) return null
     const [startHour, startMinute] = String(current.break_start).split(':').map((value) => Number(value))
     const [endHour, endMinute] = String(current.break_end).split(':').map((value) => Number(value))
-    if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) return `${current.break_start} - ${current.break_end}`
+    if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) {
+      return formatShiftRange12h(current.break_start, current.break_end, ' - ')
+    }
     const totalMinutes = ((endHour * 60) + endMinute) - ((startHour * 60) + startMinute)
-    if (totalMinutes <= 0) return `${current.break_start} - ${current.break_end}`
+    if (totalMinutes <= 0) return formatShiftRange12h(current.break_start, current.break_end, ' - ')
     const hours = Math.floor(totalMinutes / 60)
     const minutes = totalMinutes % 60
     if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`
@@ -471,9 +474,9 @@ export default function MySchedule() {
                       <div className="max-w-md rounded-xl border border-border bg-card px-4 py-4 shadow-sm dark:border-border">
                         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Shift Hours</p>
                         <p className="mt-2 text-2xl font-extrabold tracking-tight text-brand">
-                          <span>{current.time_in}</span>
+                          <span>{formatClockTimeDisplay(current.time_in)}</span>
                           <span className="mx-2 text-muted-foreground">–</span>
-                          <span>{current.time_out}</span>
+                          <span>{formatClockTimeDisplay(current.time_out)}</span>
                         </p>
                       </div>
                     </div>
@@ -489,9 +492,9 @@ export default function MySchedule() {
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-3">
-                    <ScheduleMetaCard icon={Clock3} label="Start Time" value={current.time_in} />
-                    <ScheduleMetaCard icon={Clock3} label="End Time" value={current.time_out} />
-                    <ScheduleMetaCard icon={Timer} label="Break Window" value={current.break_start && current.break_end ? `${current.break_start} - ${current.break_end}` : 'No break set'} />
+                    <ScheduleMetaCard icon={Clock3} label="Start Time" value={formatClockTimeDisplay(current.time_in)} />
+                    <ScheduleMetaCard icon={Clock3} label="End Time" value={formatClockTimeDisplay(current.time_out)} />
+                    <ScheduleMetaCard icon={Timer} label="Break Window" value={current.break_start && current.break_end ? formatShiftRange12h(current.break_start, current.break_end, ' - ') : 'No break set'} />
                   </div>
                 </div>
               </div>
@@ -797,7 +800,7 @@ export default function MySchedule() {
                                 label="Break"
                                 value={
                                   selectedSchedule.break_start && selectedSchedule.break_end
-                                    ? `${selectedSchedule.break_start} - ${selectedSchedule.break_end}`
+                                    ? formatShiftRange12h(selectedSchedule.break_start, selectedSchedule.break_end, ' - ')
                                     : 'No break set'
                                 }
                               />

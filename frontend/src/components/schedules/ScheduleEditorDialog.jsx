@@ -19,7 +19,7 @@ import {
   weeklyNdHours,
   weeklyScheduledHours,
 } from '@/lib/scheduleLib'
-import { toHhMm } from '@/lib/timeFormat'
+import { formatShiftRange12h, toHhMm } from '@/lib/timeFormat'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -96,8 +96,8 @@ export function ScheduleEditorDialog({
               </span>
             </DialogTitle>
             <DialogDescription className="max-w-3xl text-xs leading-relaxed text-muted-foreground @sm:text-sm">
-              Fixed shift template for PH teams. Night shift: set time out earlier than time in (e.g. 22:00 → 06:00).
-              Night differential preview uses the DOLE 22:00–06:00 window; payroll still follows your active policy.
+              Fixed shift template for PH teams. Night shift: set time out earlier than time in (e.g. 10:00 PM → 6:00 AM).
+              Night differential preview uses the DOLE {formatShiftRange12h('22:00', '06:00')} window; payroll still follows your active policy.
             </DialogDescription>
           </DialogHeader>
 
@@ -230,7 +230,7 @@ export function ScheduleEditorDialog({
               <div className="flex flex-col gap-3 rounded-lg border border-border/50 bg-background/80 px-3 py-3 min-[400px]:flex-row min-[400px]:items-center min-[400px]:justify-between dark:bg-background/40">
                 <div className="min-w-0">
                   <p className="text-sm font-medium">Night differential preview</p>
-                  <p className="text-xs text-muted-foreground">Highlight DOLE 22:00–06:00 exposure in the summary bar.</p>
+                  <p className="text-xs text-muted-foreground">Highlight DOLE {formatShiftRange12h('22:00', '06:00')} exposure in the summary bar.</p>
                 </div>
                 <Checkbox
                   checked={ndPreview}
