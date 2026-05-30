@@ -833,6 +833,7 @@ export default function AdminFinalizePayrollPage() {
       }
       const { blob, bulk_download: doneBulk } = await adminPollAndDownloadBulkPayslipZip(requestId, {
         signal: abort.signal,
+        initialBulk: queued?.bulk_download ?? null,
         onProgress: (b) => setBulkDownloadProgress(b),
       })
       const filename =

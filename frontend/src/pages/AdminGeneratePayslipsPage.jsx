@@ -17,6 +17,7 @@ import {
   getDepartments,
   getPayCycles,
   getPayrollRunCompanyPayrollReportPdfBlob,
+  getExecomPayrollReportPdfBlob,
   apiOrigin,
 } from '@/api'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
@@ -775,9 +776,12 @@ export default function AdminGeneratePayslipsPage() {
     setBulkDownloadProgress({ status: 'pending', progress_percent: 0 })
     try {
       const queued = await adminQueueBulkPayslipDownload(id)
+      const bulkReady = Boolean(queued?.bulk_download?.ready)
       toast({
-        title: queued?.message || 'Bulk payslip download is being prepared.',
-        description: 'PDFs are generated in the background. You can keep using this page.',
+        title: queued?.message || (bulkReady ? 'Bulk payslip download is ready.' : 'Bulk payslip download is being prepared.'),
+        description: bulkReady
+          ? 'Your ZIP download will start shortly.'
+          : 'PDFs are generated in the background. You can keep using this page.',
       })
       const requestId = Number(queued?.request_id ?? queued?.bulk_download?.id ?? 0)
       if (!requestId) {
@@ -785,6 +789,7 @@ export default function AdminGeneratePayslipsPage() {
       }
       const { blob, bulk_download: doneBulk } = await adminPollAndDownloadBulkPayslipZip(requestId, {
         signal: abort.signal,
+        initialBulk: queued?.bulk_download ?? null,
         onProgress: (b) => setBulkDownloadProgress(b),
       })
       const filename =
@@ -810,15 +815,23 @@ export default function AdminGeneratePayslipsPage() {
 
   const handleDownloadPayrollReportPdf = async (row) => {
     const id = row?.payroll_batch_run_id
+    const isExecomRow =
+      row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
     const rowCompanyId = Number(row?.company_id || 0)
-    if (id == null || rowCompanyId <= 0 || payrollReportDownloadingBatchId != null) return
+    if (id == null || payrollReportDownloadingBatchId != null) return
+    if (!isExecomRow && rowCompanyId <= 0) return
     if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
     if (!canBulkDownloadPayslipZip) return
 
     setPayrollReportDownloadingBatchId(id)
     try {
-      const blob = await getPayrollRunCompanyPayrollReportPdfBlob(id, rowCompanyId)
-      const companyName = String(row?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      const blob = isExecomRow
+        ? await getExecomPayrollReportPdfBlob(id)
+        : await getPayrollRunCompanyPayrollReportPdfBlob(id, rowCompanyId)
+      const companyName = (isExecomRow ? 'Execom' : String(row?.company_name || 'company')).replace(
+        /[^\w-]+/g,
+        '_',
+      )
       savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${id}.pdf`)
       toast({ title: 'Payroll Report PDF downloaded', description: 'Your report download has started.' })
     } catch (e) {
@@ -1578,7 +1591,7 @@ export default function AdminGeneratePayslipsPage() {
                       const deleteDisabled = !r.can_delete || deletingBatchId === r.payroll_batch_run_id
                       const batchFinalized = String(r.batch_run_status || '').toLowerCase() === 'finalized'
                       const showBulkPdf = batchFinalized && canBulkDownloadPayslipZip
-                      const showPayrollReportPdf = showBulkPdf && Number(r.company_id || 0) > 0
+                      const showPayrollReportPdf = showBulkPdf && (isExecomRow || Number(r.company_id || 0) > 0)
                       return (
                         <TableRow
                           key={key}

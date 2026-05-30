@@ -14,7 +14,6 @@ class PayrollReportService
 {
     public function __construct(
         private readonly PayslipService $payslipService,
-        private readonly PayrollEmployeeEligibilityService $payrollEligibility,
     ) {}
 
     /**
@@ -297,36 +296,29 @@ class PayrollReportService
     }
 
     /**
+     * Finalized payslips for a payroll report. When scoped to a batch run, the batch id is the
+     * source of truth so legacy rows with a clamped computation start date still appear.
+     *
      * @return Collection<int, Payslip>
      */
-    private function finalizedPayslipsForRunCompany(PayrollBatchRun $run, Company $company): Collection
+    private function finalizedPayslipsForBatchRun(PayrollBatchRun $run, ?int $companyId = null): Collection
     {
         $query = Payslip::query()
             ->with(['employee:id,name,first_name,middle_name,last_name,suffix,employee_code'])
             ->where('payroll_batch_run_id', (int) $run->id)
-            ->where('company_id', (int) $company->id)
             ->whereNull('voided_at')
             ->where('period_slot', 0)
             ->whereIn('status', Payslip::lockingStatuses())
-            ->when($run->pay_period_start !== null, fn ($q) => $q->whereDate('pay_period_start', $run->pay_period_start->toDateString()))
-            ->when($run->pay_period_end !== null, fn ($q) => $q->whereDate('pay_period_end', $run->pay_period_end->toDateString()))
+            ->whereNotNull('snapshot')
             ->orderBy('user_id')
             ->orderByDesc('id');
 
-        $eligibleIds = $this->payrollEligibility->getPayrollEligibleEmployeeIds(
-            (int) $company->id,
-            $run->branch_id ? (int) $run->branch_id : null,
-            $run->department_id ? (int) $run->department_id : null,
-            $run->pay_period_start,
-            $run->pay_period_end,
-            null,
-            null,
-            (string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)
-        );
-        if ($eligibleIds === []) {
-            $query->whereRaw('1 = 0');
-        } else {
-            $query->whereIn('user_id', $eligibleIds);
+        $module = trim((string) ($run->payroll_module ?? ''));
+        if ($module !== '') {
+            $query->where('payroll_module', $module);
+        }
+        if ($companyId !== null && $companyId > 0) {
+            $query->where('company_id', $companyId);
         }
 
         return $query->get()->unique('user_id')->values();
@@ -335,41 +327,17 @@ class PayrollReportService
     /**
      * @return Collection<int, Payslip>
      */
+    private function finalizedPayslipsForRunCompany(PayrollBatchRun $run, Company $company): Collection
+    {
+        return $this->finalizedPayslipsForBatchRun($run, (int) $company->id);
+    }
+
+    /**
+     * @return Collection<int, Payslip>
+     */
     private function finalizedPayslipsForRun(PayrollBatchRun $run): Collection
     {
-        $query = Payslip::query()
-            ->with(['employee:id,name,first_name,middle_name,last_name,suffix,employee_code'])
-            ->where('payroll_batch_run_id', (int) $run->id)
-            ->whereNull('voided_at')
-            ->where('period_slot', 0)
-            ->whereIn('status', Payslip::lockingStatuses())
-            ->when($run->pay_period_start !== null, fn ($q) => $q->whereDate('pay_period_start', $run->pay_period_start->toDateString()))
-            ->when($run->pay_period_end !== null, fn ($q) => $q->whereDate('pay_period_end', $run->pay_period_end->toDateString()))
-            ->orderBy('user_id')
-            ->orderByDesc('id');
-
-        $module = trim((string) ($run->payroll_module ?? ''));
-        if ($module !== '') {
-            $query->where('payroll_module', $module);
-        }
-
-        $eligibleIds = $this->payrollEligibility->getPayrollEligibleEmployeeIds(
-            $run->company_id ? (int) $run->company_id : null,
-            $run->branch_id ? (int) $run->branch_id : null,
-            $run->department_id ? (int) $run->department_id : null,
-            $run->pay_period_start,
-            $run->pay_period_end,
-            null,
-            null,
-            (string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)
-        );
-        if ($eligibleIds === []) {
-            $query->whereRaw('1 = 0');
-        } else {
-            $query->whereIn('user_id', $eligibleIds);
-        }
-
-        return $query->get()->unique('user_id')->values();
+        return $this->finalizedPayslipsForBatchRun($run);
     }
 
     /**

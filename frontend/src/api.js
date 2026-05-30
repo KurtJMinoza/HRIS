@@ -2265,7 +2265,7 @@ const BULK_PAYSLIP_POLL_MS = 2500
  * @returns {Promise<{ blob: Blob, bulk_download: Record<string, unknown> }>}
  */
 export async function adminPollAndDownloadBulkPayslipZip(requestId, options = {}) {
-  const { onProgress, signal } = options
+  const { onProgress, signal, initialBulk } = options
   const sleep = (ms) =>
     new Promise((resolve, reject) => {
       const t = setTimeout(resolve, ms)
@@ -2278,6 +2278,19 @@ export async function adminPollAndDownloadBulkPayslipZip(requestId, options = {}
         { once: true }
       )
     })
+
+  const initial = initialBulk ?? null
+  if (initial) {
+    onProgress?.(initial)
+    const initialStatus = String(initial?.status || '').toLowerCase()
+    if (initialStatus === 'completed' && initial?.ready) {
+      const blob = await adminDownloadPayslipBulkZipFile(requestId)
+      return { blob, bulk_download: initial }
+    }
+    if (initialStatus === 'failed') {
+      throw new Error(initial?.error_message || 'Bulk payslip download failed. Please try again.')
+    }
+  }
 
   while (true) {
     if (signal?.aborted) {

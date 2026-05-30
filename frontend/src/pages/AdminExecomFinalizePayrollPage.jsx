@@ -346,7 +346,9 @@ export default function AdminExecomFinalizePayrollPage() {
     if (!selectedId) return
     try {
       const queued = await adminQueueBulkPayslipDownload(selectedId)
-      const { blob } = await adminPollAndDownloadBulkPayslipZip(queued.request_id)
+      const { blob } = await adminPollAndDownloadBulkPayslipZip(queued.request_id, {
+        initialBulk: queued?.bulk_download ?? null,
+      })
       saveBulkPayslipZipBlob(blob, `EXECOM-payslips-${selectedId}.zip`)
     } catch (error) {
       toast({ title: 'Bulk download failed', description: error.message, variant: 'error' })

@@ -16,7 +16,7 @@ use ZipArchive;
 
 class PayslipBulkDownloadService
 {
-    private const CHUNK_SIZE = 15;
+    private const CHUNK_SIZE = 25;
 
     public function __construct(
         private readonly PayslipService $payslipService,
@@ -214,7 +214,13 @@ class PayslipBulkDownloadService
                 $relative = $this->payslipService->ensurePayslipPdfOnDisk($payslip, $employee, $forceRegenerate);
                 $full = storage_path('app/private/'.$relative);
                 if (! is_file($full)) {
-                    throw new \RuntimeException('PDF generation failed for payslip id='.$payslip->id);
+                    Log::warning('Payslip bulk download skipped missing PDF', [
+                        'bulk_download_id' => (int) $download->id,
+                        'payslip_id' => (int) $payslip->id,
+                        'employee_id' => (int) $employee->id,
+                    ]);
+
+                    continue;
                 }
 
                 $entryName = $this->allocateZipEntryName($payslip, $employee, $zipNameCounts);
@@ -294,7 +300,9 @@ class PayslipBulkDownloadService
 
         return Cache::remember($cacheKey, 600, function () use ($run) {
             $companyName = 'Company';
-            if ($run->company_id) {
+            if (strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_EXECOM) {
+                $companyName = 'Execom';
+            } elseif ($run->company_id) {
                 $company = Company::query()->find((int) $run->company_id);
                 if ($company) {
                     $companyName = (string) ($company->name ?? $companyName);
