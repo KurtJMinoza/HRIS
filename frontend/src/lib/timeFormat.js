@@ -91,14 +91,15 @@ export function formatShiftRange12h(start, end, sep = ' – ') {
 }
 
 /**
- * Backend schedule labels like "08:00 – 17:00", or "Rest day". Passthrough if not a simple range.
+ * Backend schedule labels like "08:00 – 17:00", "08:00:00 – 17:00:00", or "Rest day".
+ * Passthrough if not a simple range.
  * @param {string|null|undefined} label
  */
 export function formatScheduleLabel12h(label) {
   if (isEmptyValue(label)) return EMPTY_PLACEHOLDER
   const s = repairMojibake(String(label).trim())
   if (s === 'Rest day' || s === EMPTY_PLACEHOLDER || s === '-') return s
-  const range = s.match(/^(\d{1,2}:\d{2})\s*[-\u2013]\s*(\d{1,2}:\d{2})$/)
+  const range = s.match(/^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-\u2013]\s*(\d{1,2}:\d{2}(?::\d{2})?)$/)
   if (range) return formatShiftRange12h(range[1], range[2])
   return s
 }

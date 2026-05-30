@@ -623,7 +623,7 @@ export default function AdminSchedules() {
   const exportTemplatesCsv = useCallback(() => {
     const rows = filteredTemplates.map((s) => ({
       name: s.name,
-      shift: `${s.time_in}-${s.time_out}`,
+      shift: formatShiftRange12h(s.time_in, s.time_out, '-'),
       rest_days: (s.rest_days || []).join(';'),
       grace_min: s.grace_period_minutes ?? '',
       updated_at: s.updated_at || s.created_at || '',

@@ -37,6 +37,7 @@ import {
   tableOtHoursHrs,
 } from '@/components/attendance/attendanceRecordUtils'
 import { AttendanceStatusPill } from '@/components/attendance/AttendanceStatusPill'
+import { formatClockTimeDisplay } from '@/lib/timeFormat'
 
 function TimelineItem({ title, subtitle, done, isLast }) {
   return (
@@ -231,7 +232,7 @@ export function AttendanceRecordDetailSheet({
                     }
                     subtitle={
                       row.has_approved_overtime && row.approved_ot_end_time
-                        ? `Clock-out extended to ${row.approved_ot_end_time} (regular shift ends at ${row.schedule_out || '—'})`
+                        ? `Clock-out extended to ${formatClockTimeDisplay(row.approved_ot_end_time)} (regular shift ends at ${formatClockTimeDisplay(row.schedule_out)})`
                         : row.virtual_time_out_from_ot
                           ? 'Virtual clock-out reference for premium calculations'
                           : 'Closing punch'

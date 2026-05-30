@@ -38,6 +38,7 @@ import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { cn } from '@/lib/utils'
 import { formatEmployeeName } from '@/lib/employeeSort'
+import { formatScheduleLabel12h } from '@/lib/timeFormat'
 import {
   SalaryAutomatedDeductionsCard,
   SalaryCompensationStructureCard,
@@ -5205,7 +5206,7 @@ export default function AdminEmployeeProfile() {
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       Approved change pending: becomes{' '}
                       <span className="font-medium text-foreground">{employee.pending_working_schedule_name}</span>
-                      {employee.pending_working_schedule_time ? ` (${employee.pending_working_schedule_time})` : ''} on{' '}
+                      {employee.pending_working_schedule_time ? ` (${formatScheduleLabel12h(employee.pending_working_schedule_time)})` : ''} on{' '}
                       {new Date(`${employee.pending_schedule_effective_from}T12:00:00`).toLocaleDateString('en-PH', { dateStyle: 'medium' })}.
                     </p>
                   ) : null}

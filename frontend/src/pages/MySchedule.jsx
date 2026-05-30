@@ -40,6 +40,7 @@ import { ScheduleRequestStatusBadge } from '@/components/schedules/ScheduleReque
 import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
+import { formatClockTimeDisplay, formatShiftRange12h } from '@/lib/timeFormat'
 
 const DAY_OPTIONS = [
   { key: 'mon', label: 'M', full: 'Monday' },
@@ -423,7 +424,7 @@ export default function MySchedule() {
             {pendingChange.schedule.time_in && pendingChange.schedule.time_out ? (
               <span className="text-muted-foreground">
                 {' '}
-                ({pendingChange.schedule.time_in} – {pendingChange.schedule.time_out})
+                ({formatShiftRange12h(pendingChange.schedule.time_in, pendingChange.schedule.time_out)})
               </span>
             ) : null}
             .
@@ -731,7 +732,7 @@ export default function MySchedule() {
                                 <div className="min-w-0 flex-1">
                                   <span className={cn('block truncate text-sm', selectedSchedule ? 'text-foreground' : 'text-muted-foreground')}>
                                     {selectedSchedule
-                                      ? `${selectedSchedule.name} · ${selectedSchedule.time_in} - ${selectedSchedule.time_out}`
+                                      ? `${selectedSchedule.name} · ${formatShiftRange12h(selectedSchedule.time_in, selectedSchedule.time_out, ' - ')}`
                                       : 'Search and select a schedule template'}
                                   </span>
                                 </div>
@@ -772,7 +773,7 @@ export default function MySchedule() {
                                       <div className="min-w-0 flex-1">
                                         <p className="font-medium text-foreground">{schedule.name}</p>
                                         <p className="mt-1 text-xs text-muted-foreground">
-                                          {schedule.time_in} - {schedule.time_out}
+                                          {formatShiftRange12h(schedule.time_in, schedule.time_out, ' - ')}
                                         </p>
                                         <p className="mt-1 text-xs text-muted-foreground">Rest days: {schedule.rest_days_label || 'None'}</p>
                                       </div>
@@ -789,8 +790,8 @@ export default function MySchedule() {
                           <p className="text-sm font-medium text-foreground">Template preview</p>
                           {selectedSchedule ? (
                             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                              <ScheduleMetaCard icon={Clock3} label="Start Time" value={selectedSchedule.time_in} />
-                              <ScheduleMetaCard icon={Clock3} label="End Time" value={selectedSchedule.time_out} />
+                              <ScheduleMetaCard icon={Clock3} label="Start Time" value={formatClockTimeDisplay(selectedSchedule.time_in)} />
+                              <ScheduleMetaCard icon={Clock3} label="End Time" value={formatClockTimeDisplay(selectedSchedule.time_out)} />
                               <ScheduleMetaCard
                                 icon={Timer}
                                 label="Break"
@@ -1022,7 +1023,7 @@ export default function MySchedule() {
                         <p className="mt-2 wrap-break-word text-lg font-semibold text-foreground">{rightPanelSchedule?.name || '—'}</p>
                         <p className="mt-1 text-sm text-muted-foreground">
                           {rightPanelSchedule
-                            ? `${rightPanelSchedule.time_in} – ${rightPanelSchedule.time_out}`
+                            ? formatShiftRange12h(rightPanelSchedule.time_in, rightPanelSchedule.time_out)
                             : 'Complete the form on the left.'}
                         </p>
                         <p className="mt-3 text-sm text-muted-foreground">
@@ -1054,8 +1055,8 @@ export default function MySchedule() {
                       <div>
                         <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Shift details</p>
                         <div className="grid gap-3">
-                          <ScheduleMetaCard icon={Clock3} label="Start time" value={rightPanelSchedule.time_in} />
-                          <ScheduleMetaCard icon={Clock3} label="End time" value={rightPanelSchedule.time_out} />
+                          <ScheduleMetaCard icon={Clock3} label="Start time" value={formatClockTimeDisplay(rightPanelSchedule.time_in)} />
+                          <ScheduleMetaCard icon={Clock3} label="End time" value={formatClockTimeDisplay(rightPanelSchedule.time_out)} />
                           <ScheduleMetaCard
                             icon={Timer}
                             label="Break"

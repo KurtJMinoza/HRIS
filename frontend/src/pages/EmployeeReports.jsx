@@ -7,6 +7,7 @@ import { getMyAttendanceSummary } from '@/api'
 import { AttendanceStatusBadge } from '@/components/AttendanceStatusBadge'
 import { CardMetricSkeleton, TableBodySkeleton } from '@/components/skeletons'
 import { displayAttendanceTime, formatDayName } from '@/components/attendance/attendanceRecordUtils'
+import { formatClockTimeDisplay, formatShiftRange12h } from '@/lib/timeFormat'
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10)
@@ -129,8 +130,8 @@ export default function EmployeeReports() {
           : null
       const schedLabel =
         att.schedule_in && att.schedule_out
-          ? `${att.schedule_in} – ${att.schedule_out}`
-          : att.schedule_in || att.schedule_out || '—'
+          ? formatShiftRange12h(att.schedule_in, att.schedule_out)
+          : formatClockTimeDisplay(att.schedule_in || att.schedule_out) || '—'
       return {
         ...att,
         schedule: schedLabel,

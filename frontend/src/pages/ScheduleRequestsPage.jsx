@@ -33,6 +33,7 @@ import {
 } from '@/api'
 import { cn } from '@/lib/utils'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
+import { formatShiftRange12h } from '@/lib/timeFormat'
 
 function formatDateTime(value) {
   if (!value) return '-'
@@ -55,7 +56,7 @@ function scheduleDetailSummary(item) {
     : Math.max(0, 7 - restDays.length)
   const breakMinutes = Number(payload.break_duration_minutes ?? 0)
   const breakLabel = ws.break_start && ws.break_end
-    ? `${ws.break_start} - ${ws.break_end}`
+    ? formatShiftRange12h(ws.break_start, ws.break_end, ' - ')
     : breakMinutes > 0
       ? `${breakMinutes} min`
       : 'No break set'
@@ -80,7 +81,7 @@ function scheduleTimeRange(item) {
   const timeIn = item?.working_schedule?.time_in || item?.custom_schedule_payload?.time_in
   const timeOut = item?.working_schedule?.time_out || item?.custom_schedule_payload?.time_out
   if (!timeIn && !timeOut) return '-'
-  return `${timeIn || '-'} - ${timeOut || '-'}`
+  return formatShiftRange12h(timeIn, timeOut, ' - ')
 }
 
 function scheduleName(item) {

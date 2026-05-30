@@ -1,4 +1,5 @@
 import { EMPTY_PLACEHOLDER, isEmptyValue, repairMojibake } from '@/lib/formatEmpty'
+import { formatScheduleLabel12h, formatShiftRange12h } from '@/lib/timeFormat'
 
 export function attendanceRecordRef(employeeId, dateStr) {
   const d = String(dateStr || '').replace(/-/g, '')
@@ -198,58 +199,15 @@ export function formatTimeHhMm(value) {
 }
 
 /**
- * Like {@link formatTimeHhMm} but always includes seconds: "HH:MM:SS".
- * Used for shift-time displays so "08:00:00 – 17:00:00" stays consistent.
+ * Shift-time display in the same 12-hour style as attendance punch times.
  */
 export function formatTimeHhMmSs(value) {
-  if (!value) return EMPTY_PLACEHOLDER
-  if (typeof value === 'string') {
-    const raw = value.trim()
-
-    // ISO timestamps: extract time portion directly to avoid timezone shifts.
-    // Matches "...T08:00:00Z" or "...T08:00:00+08:00"
-    const isoWithSeconds = raw.match(/T(\d{2}):(\d{2}):(\d{2})/)
-    if (isoWithSeconds) {
-      const [, hh, mm, ss] = isoWithSeconds
-      return `${hh}:${mm}:${ss}`
-    }
-    // Matches "...T08:00Z" (rare) -> seconds default to 00
-    const isoWithoutSeconds = raw.match(/T(\d{2}):(\d{2})(?:Z|[+-]\d{2}:?\d{2})?/)
-    if (isoWithoutSeconds) {
-      const [, hh, mm] = isoWithoutSeconds
-      return `${hh}:${mm}:00`
-    }
-
-    if (/^\d{1,2}:\d{2}:\d{2}$/.test(raw)) {
-      const [hStr, mStr, sStr] = raw.split(':')
-      const h = Number(hStr)
-      if (Number.isNaN(h)) return raw
-      return `${String(h).padStart(2, '0')}:${mStr}:${sStr}`
-    }
-
-    if (/^\d{1,2}:\d{2}$/.test(raw)) {
-      const [hStr, mStr] = raw.split(':')
-      const h = Number(hStr)
-      if (Number.isNaN(h)) return raw
-      return `${String(h).padStart(2, '0')}:${mStr}:00`
-    }
-  }
-
-  try {
-    const d = value instanceof Date ? value : new Date(value)
-    if (Number.isNaN(d.getTime())) return String(value)
-    const hh = String(d.getHours()).padStart(2, '0')
-    const mm = String(d.getMinutes()).padStart(2, '0')
-    const ss = String(d.getSeconds()).padStart(2, '0')
-    return `${hh}:${mm}:${ss}`
-  } catch {
-    return String(value)
-  }
+  return formatAttendanceClockTime(value) || EMPTY_PLACEHOLDER
 }
 
 /** Human-readable shift window for table column (uses schedule_in / schedule_out when present). */
 export function formatScheduleRange(row) {
-  if (row?.schedule_label) return row.schedule_label
+  if (row?.schedule_label) return formatScheduleLabel12h(row.schedule_label)
   if (row?.status === 'rest' || row?.is_rest_day) return 'Rest Day'
   const a = row?.schedule_in
   const b = row?.schedule_out
@@ -259,22 +217,15 @@ export function formatScheduleRange(row) {
     }
     return EMPTY_PLACEHOLDER
   }
-  const toIso = (t) => {
-    if (!t || typeof t !== 'string') return null
-    const s = t.trim()
-    if (/^\d{1,2}:\d{2}$/.test(s)) return `2000-01-01T${s}:00`
-    if (/^\d{1,2}:\d{2}:\d{2}$/.test(s)) return `2000-01-01T${s}`
-    return t
-  }
-  const left = formatTimeHhMmSs(toIso(a))
-  const right = formatTimeHhMmSs(toIso(b))
+  const left = formatTimeHhMmSs(a)
+  const right = formatTimeHhMmSs(b)
   if (left === EMPTY_PLACEHOLDER && right === EMPTY_PLACEHOLDER) return EMPTY_PLACEHOLDER
   const otEnd = row?.approved_ot_end_time
   if (otEnd && otEnd !== b) {
-    const otRight = formatTimeHhMmSs(toIso(otEnd))
+    const otRight = formatTimeHhMmSs(otEnd)
     return `${left} – ${right} → ${otRight} (OT)`
   }
-  return `${left} – ${right}`
+  return formatShiftRange12h(a, b)
 }
 
 export function adminActivityLine(row) {

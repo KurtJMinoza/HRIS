@@ -321,8 +321,9 @@ function buildSalaryScheduleSummaryLine(u) {
     return `${scheduleName} · ${daysLabel} working days/mo · ${hours} hrs/day`
   }
   const timeStr = String(u.working_schedule_time || '').trim()
-  if (nameFromUser && timeStr) return `${nameFromUser} · ${timeStr}`
-  return nameFromUser || timeStr || null
+  const displayTime = timeStr ? formatScheduleLabel12h(timeStr) : ''
+  if (nameFromUser && displayTime) return `${nameFromUser} · ${displayTime}`
+  return nameFromUser || displayTime || null
 }
 
 /**

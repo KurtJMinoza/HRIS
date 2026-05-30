@@ -30,6 +30,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { isAdminHrUser } from '@/lib/hrRoutes'
 import { displayAttendanceTime, formatDayName } from '@/components/attendance/attendanceRecordUtils'
 import { compareEmployeesByLastName } from '@/lib/employeeSort'
+import { formatScheduleLabel12h } from '@/lib/timeFormat'
 
 export { AttendanceStatusBadge }
 
@@ -73,6 +74,10 @@ function savePdfBlob(blob, filename) {
 function reportClockTime(row, key) {
   const formattedKey = key === 'time_in' ? 'formatted_time_in' : key === 'time_out' ? 'formatted_time_out' : null
   return displayAttendanceTime(row?.[key], formattedKey ? row?.[formattedKey] : undefined) || '—'
+}
+
+function reportScheduleTime(row) {
+  return formatScheduleLabel12h(row?.schedule) || '—'
 }
 
 const LEAVE_TYPE_LABELS = {
@@ -435,7 +440,7 @@ export default function AdminReports() {
       { label: 'Employment status', accessor: emp, ...txt(130) },
       { label: 'Date', accessor: 'date', ...txt(100) },
       { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name), ...txt(100) },
-      { label: 'Schedule', accessor: (row) => row.schedule || '—', ...txt(110) },
+      { label: 'Schedule', accessor: (row) => reportScheduleTime(row), ...txt(110) },
       { label: 'Time In', accessor: (row) => reportClockTime(row, 'time_in'), minW: 90, align: 'center' },
       { label: 'Time Out', accessor: (row) => reportClockTime(row, 'time_out'), minW: 90, align: 'center' },
       { label: 'Total Hours', accessor: (row) => (row.total_hours != null ? row.total_hours.toFixed(2) : '—'), ...num() },
@@ -482,7 +487,7 @@ export default function AdminReports() {
       { label: 'Hire date', accessor: (row) => row.hire_date || '—', ...txt(100) },
       { label: 'Date', accessor: 'date', ...txt(100) },
       { label: 'Day', accessor: (row) => formatDayName(row.date, row.day_name), ...txt(100) },
-      { label: 'Schedule', accessor: (row) => row.schedule || '—', ...txt(110) },
+      { label: 'Schedule', accessor: (row) => reportScheduleTime(row), ...txt(110) },
       { label: 'Time In', accessor: (row) => reportClockTime(row, 'time_in'), minW: 90, align: 'center' },
       { label: 'Time Out', accessor: (row) => reportClockTime(row, 'time_out'), minW: 90, align: 'center' },
       {
