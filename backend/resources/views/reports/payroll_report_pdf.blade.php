@@ -200,7 +200,9 @@
       font-weight: 800;
       font-variant-numeric: tabular-nums;
     }
-    .summary-value.net { color: #111827; }
+    .summary-value.gross,
+    .summary-value.net { color: #047857; }
+    .summary-value.deductions { color: #b91c1c; }
     .section-title {
       margin: 2px 0 4px;
       color: #111827;
@@ -272,6 +274,7 @@
       white-space: normal;
       overflow-wrap: anywhere;
       word-break: break-word;
+      font-weight: 800;
       font-variant-numeric: tabular-nums;
       letter-spacing: -0.045em;
       font-size: 1em;
@@ -285,9 +288,10 @@
     }
     tbody tr:nth-child(even) td { background: #fafafa; }
     tbody tr:nth-child(odd) td { background: #ffffff; }
-    .gross { font-weight: 700; }
-    .deductions { color: #111827; font-weight: 700; }
-    .net { color: #111827; font-weight: 800; }
+    .earnings { font-weight: 800; }
+    .gross { color: #047857; font-weight: 800; }
+    .deductions { color: #b91c1c; font-weight: 800; }
+    .net { color: #047857; font-weight: 800; }
     tfoot td {
       background: #eef2f7;
       border-top: 1px solid #111827;
@@ -373,13 +377,13 @@
       <div class="summary-card">
         <div class="summary-inner">
           <span class="summary-label">Gross Earnings</span>
-          <span class="summary-value">{{ $money($totals['gross_earnings'] ?? 0) }}</span>
+          <span class="summary-value gross">{{ $money($totals['gross_earnings'] ?? 0) }}</span>
         </div>
       </div>
       <div class="summary-card">
         <div class="summary-inner">
           <span class="summary-label">Total Deductions</span>
-          <span class="summary-value">{{ $money($totals['total_deductions'] ?? 0) }}</span>
+          <span class="summary-value deductions">{{ $money($totals['total_deductions'] ?? 0) }}</span>
         </div>
       </div>
       <div class="summary-card">

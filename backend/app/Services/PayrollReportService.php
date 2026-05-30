@@ -220,7 +220,7 @@ class PayrollReportService
         $columns = [
             ['key' => 'row_number', 'label' => 'No.', 'group' => '#', 'class' => 'num row-number'],
             ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
-            ['key' => 'regular_basic_pay', 'label' => 'Basic Pay', 'group' => 'Earnings', 'class' => 'num'],
+            ['key' => 'regular_basic_pay', 'label' => 'Basic Pay', 'group' => 'Earnings', 'class' => 'num earnings'],
         ];
 
         foreach ([
@@ -231,7 +231,7 @@ class PayrollReportService
             'other_earnings' => 'Other Earn',
         ] as $key => $label) {
             if ($dynamicColumns[$key] ?? false) {
-                $columns[] = ['key' => $key, 'label' => $label, 'group' => 'Earnings', 'class' => 'num'];
+                $columns[] = ['key' => $key, 'label' => $label, 'group' => 'Earnings', 'class' => 'num earnings'];
             }
         }
 
