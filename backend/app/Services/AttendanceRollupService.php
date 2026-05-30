@@ -9,8 +9,23 @@ namespace App\Services;
 class AttendanceRollupService
 {
     /**
+     * Scheduled rest day from assigned shift template (empty `in` for weekday).
+     *
+     * @param  array<string, mixed>|null  $effectiveSchedule
+     * @param  array<string, mixed>|null  $daySchedule
+     */
+    public function isScheduledRestDay(?array $effectiveSchedule, ?array $daySchedule): bool
+    {
+        if (! is_array($effectiveSchedule) || $effectiveSchedule === []) {
+            return false;
+        }
+
+        return ! (is_array($daySchedule) && trim((string) ($daySchedule['in'] ?? '')) !== '');
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $days
-     * @return array{present_count:int,late_count:int,absent_count:int,leave_count:int,halfday_count:int}
+     * @return array{present_count:int,late_count:int,absent_count:int,leave_count:int,halfday_count:int,rest_day_count:int,holiday_count:int}
      */
     public function summarizeEmployeeDays(array $days): array
     {
@@ -19,6 +34,8 @@ class AttendanceRollupService
         $absent = 0;
         $leave = 0;
         $halfday = 0;
+        $restDay = 0;
+        $holiday = 0;
 
         foreach ($days as $day) {
             if (! is_array($day)) {
@@ -34,7 +51,11 @@ class AttendanceRollupService
             }
 
             $label = $this->employeeDisplayLabel($day);
-            if ($this->labelCountsAsPresent($label, $day)) {
+            if ($this->labelCountsAsHoliday($label, $day)) {
+                $holiday++;
+            } elseif ($this->labelCountsAsRestDay($label, $day)) {
+                $restDay++;
+            } elseif ($this->labelCountsAsPresent($label, $day)) {
                 $present++;
             } elseif ($this->labelCountsAsAbsent($label, $day)) {
                 $absent++;
@@ -51,12 +72,14 @@ class AttendanceRollupService
             'absent_count' => $absent,
             'leave_count' => $leave,
             'halfday_count' => $halfday,
+            'rest_day_count' => $restDay,
+            'holiday_count' => $holiday,
         ];
     }
 
     /**
      * @param  list<array<string, mixed>>  $rows
-     * @return array{present_count:int,late_count:int,absent_count:int,leave_count:int,halfday_count:int}
+     * @return array{present_count:int,late_count:int,absent_count:int,leave_count:int,halfday_count:int,rest_day_count:int,holiday_count:int}
      */
     public function summarizeAdminRows(array $rows): array
     {
@@ -65,6 +88,8 @@ class AttendanceRollupService
         $absent = 0;
         $leave = 0;
         $halfday = 0;
+        $restDay = 0;
+        $holiday = 0;
 
         foreach ($rows as $row) {
             if (! is_array($row)) {
@@ -77,7 +102,11 @@ class AttendanceRollupService
             }
 
             $label = $this->adminDisplayLabel($row);
-            if ($this->labelCountsAsPresent($label, $row)) {
+            if ($this->labelCountsAsHoliday($label, $row)) {
+                $holiday++;
+            } elseif ($this->labelCountsAsRestDay($label, $row)) {
+                $restDay++;
+            } elseif ($this->labelCountsAsPresent($label, $row)) {
                 $present++;
             } elseif ($this->labelCountsAsAbsent($label, $row)) {
                 $absent++;
@@ -94,6 +123,8 @@ class AttendanceRollupService
             'absent_count' => $absent,
             'leave_count' => $leave,
             'halfday_count' => $halfday,
+            'rest_day_count' => $restDay,
+            'holiday_count' => $holiday,
         ];
     }
 
@@ -114,6 +145,16 @@ class AttendanceRollupService
             }
 
             return 'Leave';
+        }
+
+        if ($status === 'holiday') {
+            $name = trim((string) ($row['holiday_name'] ?? ''));
+
+            return $name !== '' ? $name : 'Holiday';
+        }
+
+        if ($status === 'rest' || ! empty($row['is_rest_day'])) {
+            return 'Rest Day';
         }
 
         $presenceLabel = trim((string) ($row['presence_label'] ?? ''));
@@ -207,8 +248,14 @@ class AttendanceRollupService
             return 'On Leave';
         }
 
+        if ($status === 'holiday') {
+            $name = trim((string) ($row['holiday_name'] ?? ''));
+
+            return $name !== '' ? $name : 'Holiday';
+        }
+
         if ($status === 'rest' || ! empty($row['is_rest_day'])) {
-            return 'Rest day';
+            return 'Rest Day';
         }
 
         $presenceLabel = trim((string) ($row['presence_label'] ?? ''));
@@ -224,7 +271,7 @@ class AttendanceRollupService
      */
     public function labelCountsAsPresent(string $label, array $row = []): bool
     {
-        if (! empty($row['is_rest_day']) || ($row['status'] ?? '') === 'rest') {
+        if ($this->labelCountsAsRestDay('', $row) || $this->labelCountsAsHoliday('', $row)) {
             return false;
         }
 
@@ -257,11 +304,39 @@ class AttendanceRollupService
      */
     public function labelCountsAsAbsent(string $label, array $row = []): bool
     {
-        if (($row['status'] ?? '') === 'rest') {
+        if ($this->labelCountsAsRestDay($label, $row) || $this->labelCountsAsHoliday($label, $row)) {
             return false;
         }
 
         return strtolower(trim($label)) === 'absent';
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    public function labelCountsAsRestDay(string $label, array $row = []): bool
+    {
+        if (($row['status'] ?? '') === 'rest' || ! empty($row['is_rest_day'])) {
+            return true;
+        }
+
+        $normalized = strtolower(trim($label));
+
+        return $normalized === 'rest day' || $normalized === 'restday';
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    public function labelCountsAsHoliday(string $label, array $row = []): bool
+    {
+        if (($row['status'] ?? '') === 'holiday') {
+            return true;
+        }
+
+        $normalized = strtolower(trim($label));
+
+        return $normalized === 'holiday' || str_contains($normalized, 'holiday');
     }
 
     /**

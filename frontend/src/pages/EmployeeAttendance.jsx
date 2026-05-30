@@ -622,7 +622,7 @@ export default function EmployeeAttendance() {
       )}
 
       {attSummary && (
-        <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-4">
+        <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-5">
           <Card className="overflow-hidden rounded-xl border border-border/60 shadow-sm">
             <CardContent className="p-5">
               <div className="flex items-start justify-between">
@@ -667,6 +667,22 @@ export default function EmployeeAttendance() {
                 </div>
                 <div className="flex size-10 items-center justify-center rounded-xl bg-red-500/15">
                   <UserX className="size-5 text-red-600" aria-hidden />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="overflow-hidden rounded-xl border border-border/60 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Rest days</p>
+                  <p className="mt-1 text-3xl font-black tracking-tight text-slate-600 dark:text-slate-300">
+                    {attSummary.rest_day_count ?? 0}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">Scheduled off</p>
+                </div>
+                <div className="flex size-10 items-center justify-center rounded-xl bg-slate-500/15">
+                  <CalendarDays className="size-5 text-slate-600 dark:text-slate-400" aria-hidden />
                 </div>
               </div>
             </CardContent>

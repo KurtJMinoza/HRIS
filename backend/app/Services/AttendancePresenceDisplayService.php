@@ -25,7 +25,7 @@ class AttendancePresenceDisplayService
         ?AttendanceCorrection $correction,
         bool $isFuture,
     ): array {
-        if (in_array($status, ['leave', 'halfday'], true)) {
+        if (in_array($status, ['leave', 'halfday', 'rest', 'holiday'], true)) {
             return [
                 'status' => $status,
                 'presence_label' => null,

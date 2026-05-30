@@ -14,6 +14,7 @@ use App\Models\ReportExportRun;
 use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Services\AttendancePresenceDisplayService;
+use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
@@ -44,6 +45,7 @@ class ReportsController extends Controller
         private readonly PayrollComputationService $payrollComputation,
         private readonly PremiumReportService $premiumReport,
         private readonly OvertimePayrollService $overtimePayroll,
+        private readonly AttendanceRollupService $attendanceRollup,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -355,7 +357,7 @@ class ReportsController extends Controller
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
-            'status' => ['nullable', 'string', 'in:present,late,absent,halfday,leave,undertime,incomplete,all'],
+            'status' => ['nullable', 'string', 'in:present,late,absent,halfday,leave,undertime,incomplete,rest,holiday,all'],
             'leave_type' => ['nullable', 'string', 'max:50'],
             'overtime_status' => ['nullable', 'string', 'max:50'],
             'page' => ['nullable', 'integer', 'min:1'],
@@ -797,8 +799,16 @@ class ReportsController extends Controller
                 $leaveInfo = $leaveByUserDate[$employee->id][$dateKey] ?? null;
                 /** @var Collection<int, AttendanceLog>|null $dayLogs */
                 $dayLogs = $logsByUserDate[$employee->id][$dateKey] ?? null;
+                $isRestDayRow = $this->attendanceRollup->isScheduledRestDay(
+                    $effectiveSchedule,
+                    is_array($todaySchedule) ? $todaySchedule : null
+                );
+                $holidayOnDate = $leaveInfo === null
+                    ? $this->payrollComputation->getHolidayForUserDate($employee, $dateKey)
+                    : null;
 
-                if (! $todaySchedule && ! $leaveInfo && ($dayLogs === null || $dayLogs->isEmpty())) {
+                if (! $todaySchedule && ! $leaveInfo && ! $isRestDayRow && $holidayOnDate === null
+                    && ($dayLogs === null || $dayLogs->isEmpty())) {
                     $cursor->addDay();
 
                     continue;
@@ -937,6 +947,10 @@ class ReportsController extends Controller
                     } else {
                         $status = 'leave';
                     }
+                } elseif ($holidayOnDate !== null) {
+                    $status = 'holiday';
+                } elseif ($isRestDayRow) {
+                    $status = 'rest';
                 } elseif ($todaySchedule && ! empty($todaySchedule['in'])) {
                     if (! $effectiveTimeIn) {
                         if ($effectiveTimeOut) {
@@ -1083,16 +1097,19 @@ class ReportsController extends Controller
                 $presenceLabel = $qualifiedRow['presence_label'];
                 $presenceIssue = $qualifiedRow['presence_issue'];
 
-                if (! $todaySchedule && ! $leaveInfo && ! $effectiveTimeIn && ! $effectiveTimeOut) {
-                    // No schedule, no leave, no logs — skip blank days
+                if (! $todaySchedule && ! $leaveInfo && ! $effectiveTimeIn && ! $effectiveTimeOut
+                    && $status !== 'rest' && $status !== 'holiday') {
+                    // No schedule, no leave, no logs — skip blank days (rest/holiday rows are kept).
                     $cursor->addDay();
 
                     continue;
                 }
 
-                $scheduleLabel = $todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])
-                    ? sprintf('%s – %s', $todaySchedule['in'], $todaySchedule['out'])
-                    : '—';
+                $scheduleLabel = ($isRestDayRow || $status === 'rest')
+                    ? 'Rest Day'
+                    : ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])
+                        ? sprintf('%s – %s', $todaySchedule['in'], $todaySchedule['out'])
+                        : '—');
 
                 // Apply filters: status (must run after presence qualification). Search / leave type / OT already gated earlier.
                 if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {

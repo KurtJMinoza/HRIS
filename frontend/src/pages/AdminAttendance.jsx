@@ -399,6 +399,7 @@ export default function AdminAttendance() {
   const absentCount = rollups.absent_count ?? 0
   const lateCount = rollups.late_count ?? 0
   const onLeaveCount = rollups.leave_or_halfday_count ?? 0
+  const restDayCount = rollups.rest_day_count ?? 0
 
   const totalHoursRendered =
     typeof rollups.total_hours_rendered === 'number' ? rollups.total_hours_rendered : 0
@@ -736,7 +737,7 @@ export default function AdminAttendance() {
       <p className="text-xs font-medium text-muted-foreground">
         Snapshot for the selected period{fromDate === toDate ? ` (${fromDate})` : ''}.
       </p>
-      <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-4">
+      <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-5">
         {/* Present */}
         <Card className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm dark:border-white/10">
           <CardContent className="p-5">
@@ -780,6 +781,22 @@ export default function AdminAttendance() {
               </div>
               <div className={cn('flex size-12 items-center justify-center rounded-full bg-orange-500/10 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300', absentCount > 0 && 'animate-pulse')}>
                 <UserX className="size-6" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Rest days */}
+        <Card className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm dark:border-white/10">
+          <CardContent className="p-5">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground">Rest days</p>
+                <p className="mt-1 text-3xl font-black tracking-normal text-foreground">{restDayCount}</p>
+                <p className="mt-2 text-xs text-muted-foreground">Scheduled off</p>
+              </div>
+              <div className="flex size-12 items-center justify-center rounded-full bg-slate-500/10 text-slate-600 dark:bg-slate-500/15 dark:text-slate-300">
+                <CalendarDays className="size-6" />
               </div>
             </div>
           </CardContent>
@@ -1062,6 +1079,9 @@ export default function AdminAttendance() {
                   <SelectItem value="present">Present</SelectItem>
                   <SelectItem value="late">Late</SelectItem>
                   <SelectItem value="absent">Absent</SelectItem>
+                  <SelectItem value="rest">Rest Day</SelectItem>
+                  <SelectItem value="holiday">Holiday</SelectItem>
+                  <SelectItem value="leave">On Leave</SelectItem>
                   <SelectItem value="halfday">Halfday</SelectItem>
                   <SelectItem value="undertime">Undertime</SelectItem>
                 </SelectContent>

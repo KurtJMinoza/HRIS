@@ -18,7 +18,7 @@ function resolveStatusVariant(statusRaw, labelRaw, presenceIssue) {
   if (status === 'overtime' || label.includes('overtime')) return 'overtime'
   if (status === 'leave' || label.includes('leave')) return 'leave'
   if (status === 'halfday' || label.includes('half') || label.includes('halfday')) return 'halfday'
-  if (status === 'restday' || label.includes('rest day') || label === 'restday') return 'restday'
+  if (status === 'rest' || status === 'restday' || label.includes('rest day') || label === 'restday') return 'restday'
   if (status === 'upcoming' || label.includes('upcoming')) return 'upcoming'
   if (status === 'clockedin' || status === 'clocked_in' || label.includes('clocked in')) return 'clocked_in'
   if (status === 'incomplete' || label.includes('incomplete')) return 'incomplete'

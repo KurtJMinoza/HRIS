@@ -2152,22 +2152,30 @@ class AttendanceController extends Controller
                 }
             }
 
+            $scheduleAssignedForRow = is_array($effectiveSchedule) && $effectiveSchedule !== [];
+            $isRestDayRow = $this->attendanceRollup->isScheduledRestDay(
+                $effectiveSchedule,
+                is_array($daySchedule) ? $daySchedule : null
+            );
+            $holidayOnDate = ! $isOnLeave
+                ? $this->payrollComputation->getHolidayForUserDate($user, $dateKey)
+                : null;
+
             if ($isOnLeave) {
                 $status = 'leave';
-            } else {
-                // Rest day / not scheduled: never surface punches (e.g., Sundays) in employee attendance.
-                // Even if logs exist, these days must show no time in/out and no "present/absent".
-                $isWorkday = is_array($daySchedule) && ! empty($daySchedule['in']);
-                if (! $isWorkday) {
-                    $effectiveTimeIn = null;
-                    $effectiveTimeOut = null;
-                    $effectiveWorkedMinutes = null;
-                    $hasTimeIn = false;
-                    $hasTimeOut = false;
-                }
+            } elseif ($holidayOnDate !== null) {
+                $status = 'holiday';
+            } elseif ($isRestDayRow) {
+                // Rest day from schedule: no absent/late/undertime; suppress incidental punches.
+                $status = 'rest';
+                $effectiveTimeIn = null;
+                $effectiveTimeOut = null;
+                $effectiveWorkedMinutes = null;
+                $hasTimeIn = false;
+                $hasTimeOut = false;
             }
 
-            if (! $isOnLeave && ($daySchedule && ! empty($daySchedule['in']))) {
+            if (! $isOnLeave && ! $isRestDayRow && $status !== 'holiday' && ($daySchedule && ! empty($daySchedule['in']))) {
                 if (! $effectiveTimeIn) {
                     if ($effectiveTimeOut) {
                         $status = 'incomplete';
@@ -2247,15 +2255,15 @@ class AttendanceController extends Controller
             }
 
             // Treat any past or cutoff-passed day without a specific status as absent,
-            // but never mark future dates as absent.
-            if ($status === '—' && ! $isOnLeave && ! $isFuture) {
+            // but never mark future dates, rest days, or holidays as absent.
+            if ($status === '—' && ! $isOnLeave && ! $isRestDayRow && $holidayOnDate === null && ! $isFuture) {
                 $pastCutoff = ! $isToday || AttendanceStatusService::isPastAbsentCutoff($dateKey, $todayNow);
                 if ($pastCutoff) {
                     $status = 'absent';
                 }
             }
 
-            if (($hasTimeIn || $hasTimeOut) && $status === '—') {
+            if (($hasTimeIn || $hasTimeOut) && $status === '—' && ! $isRestDayRow) {
                 // Only treat punches as presence on scheduled workdays.
                 if (is_array($daySchedule) && ! empty($daySchedule['in'])) {
                     $status = 'present';
@@ -2415,12 +2423,6 @@ class AttendanceController extends Controller
                 : null;
             $timeOutNextDay = $effectiveTimeOutDateForPayroll !== null && $effectiveTimeOutDateForPayroll !== $dateKey;
 
-            $scheduleAssignedForRow = is_array($effectiveSchedule) && $effectiveSchedule !== [];
-            $isRestDayRow = false;
-            if (! $isOnLeave && $scheduleAssignedForRow) {
-                $isRestDayRow = ! (is_array($daySchedule) && ! empty(trim((string) ($daySchedule['in'] ?? ''))));
-            }
-
             $isIncomplete = $status === 'incomplete'
                 || ($effectiveTimeIn && ! $effectiveTimeOut && ! $isFuture && $status !== 'clocked_in')
                 || (! $effectiveTimeIn && $effectiveTimeOut);
@@ -2429,7 +2431,10 @@ class AttendanceController extends Controller
                 'date' => $dateKey,
                 'day_name' => $this->dayNameForDate($dateKey),
                 'status' => $status,
-                'is_rest_day' => $isRestDayRow,
+                'is_rest_day' => $isRestDayRow || $status === 'rest',
+                'holiday_name' => $holidayOnDate['name'] ?? null,
+                'holiday_type' => $holidayOnDate['type'] ?? null,
+                'schedule_label' => ($isRestDayRow || $status === 'rest') ? 'Rest Day' : null,
                 'is_incomplete' => $isIncomplete,
                 'employee_status_label' => $employeeStatusLabel,
                 'schedule_in' => $scheduleInDay,
@@ -2515,6 +2520,8 @@ class AttendanceController extends Controller
         $metrics['absent_count'] = $rollupCounts['absent_count'];
         $metrics['leave_count'] = $rollupCounts['leave_count'];
         $metrics['halfday_count'] = $rollupCounts['halfday_count'];
+        $metrics['rest_day_count'] = $rollupCounts['rest_day_count'];
+        $metrics['holiday_count'] = $rollupCounts['holiday_count'];
 
         usort($days, fn (array $a, array $b) => strcmp((string) ($b['date'] ?? ''), (string) ($a['date'] ?? '')));
 
@@ -2577,6 +2584,8 @@ class AttendanceController extends Controller
                 ? round($metrics['approved_overtime_minutes'] / 60, 2)
                 : 0,
             'leave_count' => $metrics['leave_count'],
+            'rest_day_count' => $metrics['rest_day_count'] ?? 0,
+            'holiday_count' => $metrics['holiday_count'] ?? 0,
             'today' => [
                 'date' => $todayDate,
                 'day_name' => $this->dayNameForDate($todayDate),
@@ -2721,6 +2730,13 @@ class AttendanceController extends Controller
     private function hydrateEmployeeSummaryPayrollImpact(User $user, array &$daysSlice, string $tz): void
     {
         foreach ($daysSlice as &$day) {
+            if (($day['status'] ?? '') === 'rest' || ! empty($day['is_rest_day'])) {
+                $day['payroll_impact_minutes'] = 0;
+                $day['payroll_impact_hours'] = 0.0;
+
+                continue;
+            }
+
             $scheduleIn = $day['schedule_in'] ?? null;
             $scheduleOut = $day['schedule_out'] ?? null;
             if (! $scheduleIn || ! $scheduleOut) {

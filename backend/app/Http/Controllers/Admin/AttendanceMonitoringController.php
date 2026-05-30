@@ -129,7 +129,7 @@ class AttendanceMonitoringController extends Controller
             'department_id' => ['nullable', 'integer'],
             'department' => ['nullable', 'string', 'max:255'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
-            'status' => ['nullable', 'string', 'in:present,late,absent,halfday,undertime,incomplete'],
+            'status' => ['nullable', 'string', 'in:present,late,absent,halfday,undertime,incomplete,rest,holiday,leave'],
             'premium_type' => ['nullable', 'string', 'in:ordinary,rest_day,special_holiday,regular_holiday,special_holiday_rest_day,regular_holiday_rest_day'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', Rule::in(AttendanceCacheService::ALLOWED_PER_PAGE)],
@@ -271,7 +271,7 @@ class AttendanceMonitoringController extends Controller
             'to_date' => ['nullable', 'date'],
             'department' => ['nullable', 'string', 'max:255'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
-            'status' => ['nullable', 'string', 'in:present,late,absent,halfday,undertime,incomplete'],
+            'status' => ['nullable', 'string', 'in:present,late,absent,halfday,undertime,incomplete,rest,holiday,leave'],
             'premium_type' => ['nullable', 'string', 'in:ordinary,rest_day,special_holiday,regular_holiday,special_holiday_rest_day,regular_holiday_rest_day'],
             'format' => ['nullable', 'string', 'in:csv,json'],
             'search' => ['nullable', 'string', 'max:200'],
@@ -606,10 +606,14 @@ class AttendanceMonitoringController extends Controller
                 $remarks = null;
                 $approved = false;
 
+                $isRestDayRow = $this->attendanceRollup->isScheduledRestDay(
+                    $effectiveSchedule,
+                    is_array($todaySchedule) ? $todaySchedule : null
+                );
+
                 // Rest day / not scheduled: never surface punches in attendance monitoring.
-                // Sundays (or any rest day in Schedule module) must show no time in/out and no "present/absent" status.
                 $isWorkday = is_array($todaySchedule) && ! empty($todaySchedule['in']);
-                if (! $isWorkday) {
+                if (! $isWorkday || $isRestDayRow) {
                     $effectiveTimeIn = null;
                     $effectiveTimeOut = null;
                     $effectiveWorkedMinutes = null;
@@ -675,9 +679,16 @@ class AttendanceMonitoringController extends Controller
                 $isOnLeave = $leaveInfo !== null;
                 $leaveType = $leaveInfo['type'] ?? null;
                 $isApprovedUndertime = $isOnLeave && $leaveType === 'undertime';
+                $holidayOnDate = ! $isOnLeave
+                    ? $this->payrollComputation->getHolidayForUserDate($employee, $dateKey)
+                    : null;
 
                 if ($isOnLeave && ! $isApprovedUndertime) {
                     $status = $leaveType === 'half_day' ? 'halfday' : 'leave';
+                } elseif ($holidayOnDate !== null) {
+                    $status = 'holiday';
+                } elseif ($isRestDayRow) {
+                    $status = 'rest';
                 } elseif ($todaySchedule && ! empty($todaySchedule['in'])) {
                     if (! $effectiveTimeIn) {
                         if ($effectiveTimeOut) {
@@ -923,6 +934,10 @@ class AttendanceMonitoringController extends Controller
                     'total_rendered_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
                     'total_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
                     'status' => $status,
+                    'is_rest_day' => $isRestDayRow || $status === 'rest',
+                    'holiday_name' => $holidayOnDate['name'] ?? null,
+                    'holiday_type' => $holidayOnDate['type'] ?? null,
+                    'schedule_label' => ($isRestDayRow || $status === 'rest') ? 'Rest Day' : null,
                     'late_label' => $lateLabel,
                     'late_minutes' => $lateMinutes,
                     'undertime_minutes' => $undertimeMinutes,
@@ -1128,6 +1143,8 @@ class AttendanceMonitoringController extends Controller
             'absent_count' => $rollup['absent_count'],
             'late_count' => $rollup['late_count'],
             'leave_or_halfday_count' => $rollup['leave_count'] + $rollup['halfday_count'],
+            'rest_day_count' => $rollup['rest_day_count'],
+            'holiday_count' => $rollup['holiday_count'],
             'total_hours_rendered' => $totalHours,
         ];
     }

@@ -20,14 +20,14 @@ class AttendanceRollupServiceTest extends TestCase
     public function employee_summary_matches_display_labels_for_sample_period(): void
     {
         $days = [
-            ['status' => 'absent', 'date' => '2026-05-10'],
+            ['status' => 'rest', 'is_rest_day' => true, 'date' => '2026-05-10'],
             ['status' => 'present', 'late_label' => 'Present', 'date' => '2026-05-09'],
             ['status' => 'present', 'late_label' => 'Present', 'date' => '2026-05-08'],
             ['status' => 'present', 'late_label' => 'Present', 'date' => '2026-05-07'],
             ['status' => 'present', 'late_label' => 'Present', 'date' => '2026-05-06'],
             ['status' => 'present', 'late_label' => 'Present', 'date' => '2026-05-05'],
             ['status' => 'present', 'late_label' => 'Present', 'date' => '2026-05-04'],
-            ['status' => 'absent', 'date' => '2026-05-03'],
+            ['status' => 'rest', 'is_rest_day' => true, 'date' => '2026-05-03'],
             ['status' => 'absent', 'date' => '2026-05-02'],
             ['status' => 'present', 'late_label' => 'Present', 'date' => '2026-05-01'],
             ['status' => 'present', 'late_label' => 'Present', 'date' => '2026-04-30'],
@@ -38,13 +38,14 @@ class AttendanceRollupServiceTest extends TestCase
                 'presence_label' => 'Present (Approved)',
                 'date' => '2026-04-27',
             ],
-            ['status' => 'absent', 'date' => '2026-04-26'],
+            ['status' => 'rest', 'is_rest_day' => true, 'date' => '2026-04-26'],
         ];
 
         $counts = $this->rollup->summarizeEmployeeDays($days);
 
         $this->assertSame(11, $counts['present_count']);
-        $this->assertSame(4, $counts['absent_count']);
+        $this->assertSame(1, $counts['absent_count']);
+        $this->assertSame(3, $counts['rest_day_count']);
         $this->assertSame(0, $counts['late_count']);
         $this->assertSame(0, $counts['leave_count']);
     }
@@ -63,15 +64,14 @@ class AttendanceRollupServiceTest extends TestCase
     }
 
     #[Test]
-    public function rest_day_with_absent_status_counts_as_absent_for_employee_view(): void
+    public function scheduled_rest_day_is_detected_from_empty_shift_in(): void
     {
-        $days = [
-            ['status' => 'absent', 'is_rest_day' => true, 'date' => '2026-05-03'],
+        $schedule = [
+            'sun' => null,
+            'mon' => ['in' => '08:00', 'out' => '17:00'],
         ];
 
-        $counts = $this->rollup->summarizeEmployeeDays($days);
-
-        $this->assertSame(1, $counts['absent_count']);
-        $this->assertSame(0, $counts['present_count']);
+        $this->assertTrue($this->rollup->isScheduledRestDay($schedule, null));
+        $this->assertFalse($this->rollup->isScheduledRestDay($schedule, ['in' => '08:00', 'out' => '17:00']));
     }
 }

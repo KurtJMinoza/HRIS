@@ -249,6 +249,8 @@ export function formatTimeHhMmSs(value) {
 
 /** Human-readable shift window for table column (uses schedule_in / schedule_out when present). */
 export function formatScheduleRange(row) {
+  if (row?.schedule_label) return row.schedule_label
+  if (row?.status === 'rest' || row?.is_rest_day) return 'Rest Day'
   const a = row?.schedule_in
   const b = row?.schedule_out
   if (!a && !b) {
@@ -402,6 +404,8 @@ export function employeeTypeReasonLabel(row) {
 
 export function resolveAdminStatusLabel(row) {
   const rawStatus = row.status || ''
+  if (rawStatus === 'holiday') return row.holiday_name || 'Holiday'
+  if (rawStatus === 'rest' || row.is_rest_day) return 'Rest Day'
   if (rawStatus === 'late') return row.late_label || 'Late'
   if (rawStatus === 'undertime') {
     return row.is_approved_undertime ? 'Undertime (Approved)' : 'Undertime (Unfiled)'
@@ -416,6 +420,10 @@ export function resolveAdminStatusLabel(row) {
 }
 
 export function resolveEmployeeStatusLabel(row) {
+  if (row.status === 'holiday') {
+    return row.holiday_name || 'Holiday'
+  }
+  if (row.status === 'rest' || row.is_rest_day) return 'Rest Day'
   if (row.status === 'leave') {
     if (row.leave_pay_status === 'paid') return 'Paid leave'
     if (row.leave_pay_status === 'unpaid') return 'Unpaid leave'
