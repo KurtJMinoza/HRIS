@@ -1,4 +1,4 @@
-import { CalendarDays, Calendar, Clock, FileText, MessageSquareText, RefreshCw, UsersRound } from 'lucide-react'
+import { CalendarDays, Calendar, CheckCircle2, Clock, FileText, MessageSquareText, RefreshCw, UsersRound, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -387,6 +387,9 @@ function LeaveApprovalHistory({ history }) {
  *   error?: string | null
  *   onRetry?: () => void
  *   retrying?: boolean
+ *   onApprove?: (leave: object) => void
+ *   onReject?: (leave: object) => void
+ *   actionLoading?: boolean
  * }} props
  */
 export function LeaveRequestDetailModal({
@@ -399,6 +402,9 @@ export function LeaveRequestDetailModal({
   error = null,
   onRetry,
   retrying = false,
+  onApprove,
+  onReject,
+  actionLoading = false,
 }) {
   const badgeLabel = leave?.display_status || leave?.status || '—'
   const docs = supportingDocUrls(leave)
@@ -406,6 +412,9 @@ export function LeaveRequestDetailModal({
   const showSkeleton = viewState === 'loading'
   const showError = viewState === 'error'
   const showContent = viewState === 'content'
+  const canApprove = leave?.status === 'pending' && (leave?.can_approve === true || leave?.actor_can_approve === true)
+  const canReject = leave?.status === 'pending' && (leave?.can_reject === true || leave?.actor_can_reject === true)
+  const showActions = canApprove || canReject
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -574,14 +583,44 @@ export function LeaveRequestDetailModal({
               <p className="text-xs text-muted-foreground">
                 <kbd className="rounded border border-border bg-background px-1 font-mono text-[10px]">Esc</kbd> to close
               </p>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-w-24 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand dark:border-brand/55 dark:bg-card"
-                onClick={() => onOpenChange(false)}
-              >
-                Close
-              </Button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {showActions ? (
+                  <>
+                    {canReject ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-w-24 rounded-lg border-rose-300 bg-card px-5 font-bold text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-800 dark:bg-card dark:text-rose-300 dark:hover:bg-rose-950/25"
+                        onClick={() => onReject?.(leave)}
+                        disabled={actionLoading}
+                      >
+                        <XCircle className="mr-2 size-4" aria-hidden />
+                        Reject
+                      </Button>
+                    ) : null}
+                    {canApprove ? (
+                      <Button
+                        type="button"
+                        className="min-w-24 rounded-lg bg-emerald-600 px-5 font-bold text-white hover:bg-emerald-700"
+                        onClick={() => onApprove?.(leave)}
+                        disabled={actionLoading}
+                      >
+                        <CheckCircle2 className="mr-2 size-4" aria-hidden />
+                        Approve
+                      </Button>
+                    ) : null}
+                  </>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-w-24 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand dark:border-brand/55 dark:bg-card"
+                  onClick={() => onOpenChange(false)}
+                  disabled={actionLoading}
+                >
+                  Close
+                </Button>
+              </div>
             </div>
           </>
         )}

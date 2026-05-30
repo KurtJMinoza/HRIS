@@ -18,12 +18,14 @@ use App\Services\OvertimeApprovalService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\ReportsCacheService;
 use App\Support\HrApprovalStages;
+use App\Support\OvertimeModuleCache;
 use App\Support\PhPayrollReference;
 use App\Support\RequestPerformanceLogger;
 use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -87,19 +89,57 @@ class OvertimeController extends Controller
         $perf = RequestPerformanceLogger::start('admin.overtime.index');
         $validated = $request->validate([
             'from_date' => ['nullable', 'date'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date'],
             'department' => ['nullable', 'string', 'max:255'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
+            'company_id' => ['nullable', 'integer'],
+            'department_id' => ['nullable', 'integer'],
             'status' => ['nullable', 'string', 'in:pending,approved,rejected'],
             'ot_type' => ['nullable', 'string', 'max:50'],
+            'search' => ['nullable', 'string', 'max:255'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
         ]);
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
 
-        $from = isset($validated['from_date'])
-            ? Carbon::parse($validated['from_date'])->startOfDay()
+        $perPage = (int) ($validated['per_page'] ?? 25);
+        $perPage = in_array($perPage, [10, 25, 50], true) ? $perPage : 25;
+        $page = max(1, (int) $request->query('page', 1));
+        $cacheKey = $this->overtimeListCacheKey($actor, $request, $perPage, $page);
+        $cacheHit = false;
+
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cacheHit = true;
+                RequestPerformanceLogger::finish($perf, $request, count($cached['overtimes'] ?? []), [
+                    'scope' => 'admin',
+                    'per_page' => $perPage,
+                    'total' => $cached['pagination']['total'] ?? null,
+                    'cache' => 'hit',
+                    'cache_hit' => true,
+                ]);
+
+                return response()->json($cached);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('overtime.list.cache_read_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        $fromRaw = $validated['date_from'] ?? $validated['from_date'] ?? null;
+        $toRaw = $validated['date_to'] ?? $validated['to_date'] ?? null;
+        $from = $fromRaw
+            ? Carbon::parse($fromRaw)->startOfDay()
             : null;
-        $to = isset($validated['to_date'])
-            ? Carbon::parse($validated['to_date'])->endOfDay()
+        $to = $toRaw
+            ? Carbon::parse($toRaw)->endOfDay()
             : null;
 
         if ($from && $to && $to->lessThan($from)) {
@@ -107,11 +147,34 @@ class OvertimeController extends Controller
         }
 
         $query = Overtime::query()
+            ->select([
+                'id',
+                'user_id',
+                'company_id',
+                'department_id',
+                'date',
+                'schedule_end',
+                'time_out',
+                'expected_end_time',
+                'computed_minutes',
+                'computed_hours',
+                'ph_ot_rule',
+                'ot_type',
+                'reason',
+                'status',
+                'approval_stage',
+                'pending_approval',
+                'filed_by',
+                'first_approver_id',
+                'second_approver_id',
+                'rejected_at',
+                'rejection_note',
+                'remarks',
+                'created_at',
+                'filed_at',
+            ])
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,department,department_id,branch_id,company_id,profile_image,position',
-                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
-                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id',
             ])
             ->orderByDesc('date')
             ->orderByDesc('id');
@@ -131,119 +194,106 @@ class OvertimeController extends Controller
         if (! empty($validated['employee_id'])) {
             $query->where('user_id', $validated['employee_id']);
         }
+        if (! empty($validated['company_id'])) {
+            $query->where('company_id', (int) $validated['company_id']);
+        }
+        if (! empty($validated['department_id'])) {
+            $query->where('department_id', (int) $validated['department_id']);
+        }
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
         }
         if (! empty($validated['ot_type'])) {
             $query->where('ot_type', $validated['ot_type']);
         }
+        if (! empty($validated['search'])) {
+            $search = trim((string) $validated['search']);
+            $like = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $search).'%';
+            $query->where(function ($scope) use ($search, $like): void {
+                if (ctype_digit($search)) {
+                    $scope->orWhere('id', (int) $search);
+                }
+                $scope->orWhereHas('user', function ($userQuery) use ($like): void {
+                    $userQuery->where('name', 'like', $like)
+                        ->orWhere('first_name', 'like', $like)
+                        ->orWhere('last_name', 'like', $like);
+                });
+            });
+        }
 
-        $this->applyFilingApprovalVisibility($request->user(), $query, $request);
-
-        $perPage = (int) ($validated['per_page'] ?? 10);
-        $perPage = in_array($perPage, [10, 25, 50], true) ? $perPage : 10;
+        $this->applyFilingApprovalVisibility($actor, $query, $request);
 
         $paginator = $query->paginate($perPage)->withQueryString();
+        $pageRows = $paginator->getCollection();
+        $currentApprovals = $this->currentOvertimeApprovalRecords($pageRows->pluck('id')->map(fn ($id) => (int) $id)->all());
 
-        $actor = $request->user();
-        $items = $paginator->getCollection()->map(function (Overtime $o) use ($actor) {
+        $items = $pageRows->map(function (Overtime $o) use ($actor, $currentApprovals) {
             $user = $o->user;
-            $path = $o->attachment_path;
-            $hasAttachment = is_string($path) && trim($path) !== '';
             $disp = $this->overtimeDisplayFields($o);
+            $currentApproval = $currentApprovals[(int) $o->id] ?? null;
+            $auth = $currentApproval && $o->user
+                ? $this->approvalWorkflowService->authorizePendingRecord(
+                    $actor,
+                    $currentApproval,
+                    $o->user,
+                    OrgApprovalWorkflowService::MODULE_OVERTIME,
+                )
+                : ['allowed' => false, 'deny_reason' => $o->status === Overtime::STATUS_PENDING ? 'no_pending_approval_step' : 'request_is_not_pending'];
 
             return array_merge([
                 'id' => $o->id,
+                'request_id' => $o->id,
                 'employee_id' => $o->user_id,
                 'employee_name' => $user?->display_name,
-                'employee_profile_image' => $user?->profile_image_url,
-                'department' => $user?->department,
                 'date' => $o->date?->toDateString(),
+                'start_time' => $o->schedule_end?->format('H:i'),
+                'end_time' => ($o->expected_end_time ?? $o->time_out)?->format('H:i'),
                 'schedule_end' => $o->schedule_end?->format('H:i'),
                 'time_out' => $o->time_out?->format('H:i'),
                 'expected_end_time' => $o->expected_end_time?->format('H:i'),
+                'approved_hours' => $disp['computed_hours'] ?? $disp['requested_ot_hours'],
                 'computed_hours' => $disp['computed_hours'],
                 'computed_minutes' => $disp['computed_minutes'],
                 'requested_ot_hours' => $disp['requested_ot_hours'],
                 'requested_ot_minutes' => $disp['requested_ot_minutes'],
                 'ot_type' => $o->ot_type,
+                'category' => $o->ot_type,
                 'status' => $o->status,
                 'pending_approval' => (bool) $o->pending_approval,
                 'reason' => $o->reason,
                 'remarks' => $o->remarks,
                 'rejection_note' => $o->rejection_note,
-                'has_attachment' => $hasAttachment,
-                'attachment_url' => $this->publicMediaUrl($hasAttachment ? $path : null),
-                'attachment_filename' => $hasAttachment ? basename(str_replace('\\', '/', $path)) : null,
-                'approved_at' => $o->approved_at?->toIso8601String(),
-                'locked_at' => $o->locked_at?->toIso8601String(),
                 'created_at' => $o->created_at?->toIso8601String(),
                 'filed_at' => $o->filed_at?->toIso8601String(),
-                'display_status' => $this->overtimeApprovalService->deriveDisplayStatusLabel($o),
+                'display_status' => $this->overtimeListDisplayStatus($o, $currentApproval),
                 'approval_stage' => $o->approval_stage,
-                'current_approver' => ($o->approval_stage === HrApprovalStages::PENDING_SECOND ? $o->secondApprover : $o->firstApprover)?->display_name,
-            ], $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule), $this->overtimeActorFlags($o, $actor));
+                'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : $o->approval_stage,
+                'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+                'actor_can_approve' => (bool) ($auth['allowed'] ?? false),
+                'actor_can_reject' => (bool) ($auth['allowed'] ?? false),
+                'can_approve' => (bool) ($auth['allowed'] ?? false),
+                'can_reject' => (bool) ($auth['allowed'] ?? false),
+                'actor_can_delete' => $this->canDeleteOvertimeRequest($actor, $o),
+                'hr_wait_message' => $this->overtimeListWaitMessage($o, $currentApproval, (bool) ($auth['allowed'] ?? false)),
+            ], $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
         })->values();
 
         $today = today()->toDateString();
         $startOfMonth = today()->startOfMonth()->toDateString();
 
         $summaryBase = clone $query;
-        $totalOtTodayHours = (clone $summaryBase)->whereDate('date', $today)->sum('computed_hours');
         $pendingCount = (clone $summaryBase)->where('status', Overtime::STATUS_PENDING)->count();
-        $approvedThisMonthHours = (clone $summaryBase)
-            ->where('status', Overtime::STATUS_APPROVED)
-            ->whereDate('date', '>=', $startOfMonth)
-            ->sum('computed_hours');
-        $approvedTotal = (clone $summaryBase)->where('status', Overtime::STATUS_APPROVED)->sum('computed_hours');
-        $pendingTotal = (clone $summaryBase)->where('status', Overtime::STATUS_PENDING)->sum('computed_hours');
-        $topEmployees = (clone $summaryBase)
-            ->reorder()
-            ->select('user_id', DB::raw('SUM(computed_hours) as total_hours'))
-            ->with('user:id,name,first_name,middle_name,last_name,suffix,department')
-            ->groupBy('user_id')
-            ->orderByDesc('total_hours')
-            ->limit(5)
-            ->get()
-            ->map(fn (Overtime $row) => [
-                'employee_id' => (int) $row->user_id,
-                'employee_name' => $row->user?->display_name,
-                'department' => $row->user?->department,
-                'total_hours' => round((float) $row->total_hours, 2),
-            ])
-            ->values()
-            ->all();
-        $monthlySummary = (clone $summaryBase)
-            ->reorder()
-            ->selectRaw("DATE_FORMAT(date, '%Y-%m') as month")
-            ->selectRaw("SUM(CASE WHEN status = 'approved' THEN computed_hours ELSE 0 END) as approved_hours")
-            ->selectRaw("SUM(CASE WHEN status = 'pending' THEN computed_hours ELSE 0 END) as pending_hours")
-            ->selectRaw('COUNT(*) as record_count')
-            ->groupBy('month')
-            ->orderBy('month')
-            ->limit(24)
-            ->get()
-            ->map(function ($row) {
-                $month = Carbon::createFromFormat('Y-m', (string) $row->month);
-
-                return [
-                    'month' => $month->format('Y-m'),
-                    'label' => $month->format('M Y'),
-                    'approved_hours' => round((float) $row->approved_hours, 2),
-                    'pending_hours' => round((float) $row->pending_hours, 2),
-                    'record_count' => (int) $row->record_count,
-                ];
-            })
-            ->values()
-            ->all();
+        $approvedThisMonthHours = (clone $summaryBase)->where('status', Overtime::STATUS_APPROVED)->whereDate('date', '>=', $startOfMonth)->sum('computed_hours');
 
         RequestPerformanceLogger::finish($perf, $request, $items->count(), [
             'scope' => 'admin',
             'per_page' => $paginator->perPage(),
             'total' => $paginator->total(),
+            'cache' => $cacheHit ? 'hit' : 'miss',
+            'cache_hit' => $cacheHit,
         ]);
 
-        return response()->json([
+        $payload = [
             'overtimes' => $items,
             'pagination' => [
                 'current_page' => $paginator->currentPage(),
@@ -252,15 +302,86 @@ class OvertimeController extends Controller
                 'last_page' => $paginator->lastPage(),
             ],
             'summary' => [
-                'total_ot_today_hours' => round((float) $totalOtTodayHours, 2),
+                'total_ot_today_hours' => 0,
                 'pending_requests' => $pendingCount,
                 'approved_this_month_hours' => round((float) $approvedThisMonthHours, 2),
-                'approved_total_hours' => round((float) $approvedTotal, 2),
-                'pending_total_hours' => round((float) $pendingTotal, 2),
-                'top_employees' => $topEmployees,
-                'monthly_summary' => $monthlySummary,
+                'approved_total_hours' => 0,
+                'pending_total_hours' => 0,
+                'top_employees' => [],
+                'monthly_summary' => [],
             ],
+        ];
+
+        try {
+            Cache::put($cacheKey, $payload, now()->addSeconds(45));
+        } catch (\Throwable $e) {
+            Log::warning('overtime.list.cache_write_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json($payload);
+    }
+
+    public function counts(Request $request): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.overtime.counts');
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $company = (string) ($request->query('company_id') ?? 'all');
+        $cacheKey = 'overtime:counts:'.OvertimeModuleCache::version().':'.$actor->id.':'.$company.':'.md5(json_encode($request->query(), JSON_THROW_ON_ERROR));
+        $cacheHit = false;
+
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cacheHit = true;
+                RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'admin', 'cache' => 'hit', 'cache_hit' => true]);
+
+                return response()->json($cached);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('overtime.counts.cache_read_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        $base = Overtime::query()->select('id', 'user_id', 'status', 'company_id', 'department_id', 'date');
+        $this->applyFilingApprovalVisibility($actor, $base, $request);
+        if ($request->query('company_id') !== null && ctype_digit((string) $request->query('company_id'))) {
+            $base->where('company_id', (int) $request->query('company_id'));
+        }
+
+        $today = today()->toDateString();
+        $payload = [
+            'pending' => (int) (clone $base)->where('status', Overtime::STATUS_PENDING)->count(),
+            'approved_today' => (int) (clone $base)->where('status', Overtime::STATUS_APPROVED)->whereDate('date', $today)->count(),
+            'rejected_today' => (int) (clone $base)->where('status', Overtime::STATUS_REJECTED)->whereDate('date', $today)->count(),
+            'my_filings' => (int) (clone $base)->where('user_id', (int) $actor->id)->count(),
+            'all_filings' => (int) (clone $base)->count(),
+        ];
+
+        RequestPerformanceLogger::finish($perf, $request, 1, [
+            'scope' => 'admin',
+            'cache' => $cacheHit ? 'hit' : 'miss',
+            'cache_hit' => $cacheHit,
         ]);
+
+        try {
+            Cache::put($cacheKey, $payload, now()->addSeconds(45));
+        } catch (\Throwable $e) {
+            Log::warning('overtime.counts.cache_write_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json($payload);
     }
 
     /**
@@ -337,6 +458,109 @@ class OvertimeController extends Controller
         ]);
 
         return response()->json(['overtime' => $cached['payload']]);
+    }
+
+    public function reviewLite(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.overtime.review_lite');
+        $actor = $request->user();
+        $started = microtime(true);
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $cached = ReviewRequestCache::rememberOvertimeReviewLite($id, (int) $actor->id, function () use ($actor, $id): array {
+            $overtime = Overtime::query()
+                ->select([
+                    'id',
+                    'user_id',
+                    'company_id',
+                    'department_id',
+                    'date',
+                    'schedule_end',
+                    'time_out',
+                    'expected_end_time',
+                    'computed_minutes',
+                    'computed_hours',
+                    'ph_ot_rule',
+                    'ot_type',
+                    'reason',
+                    'status',
+                    'approval_stage',
+                    'pending_approval',
+                    'filed_at',
+                    'filed_by',
+                    'first_approver_id',
+                    'second_approver_id',
+                    'rejected_at',
+                    'rejection_note',
+                    'remarks',
+                    'created_at',
+                ])
+                ->with([
+                    'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id',
+                    'filedBy:id,name,first_name,middle_name,last_name,suffix',
+                ])
+                ->findOrFail($id);
+
+            if (! $this->canAccessOvertimeThroughFilingScope($actor, $overtime)) {
+                abort(403, 'Forbidden.');
+            }
+
+            $records = OrgApprovalRecord::query()
+                ->select([
+                    'id',
+                    'request_id',
+                    'module_type',
+                    'approval_label',
+                    'approver_role',
+                    'approver_id',
+                    'approver_name',
+                    'eligible_approver_ids',
+                    'approval_status',
+                    'remarks',
+                    'approved_at',
+                    'sequence_order',
+                ])
+                ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                ->where('request_id', (int) $overtime->id)
+                ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+                ->orderBy('sequence_order')
+                ->orderBy('id')
+                ->get();
+
+            $pending = $records->firstWhere('approval_status', OrgApprovalRecord::STATUS_PENDING);
+            $auth = $this->overtimeReviewLiteActionAuthorization($actor, $overtime, $pending);
+
+            return $this->overtimeReviewLiteResponse($overtime, $records, $pending, $auth);
+        });
+
+        $payload = $cached['payload'];
+        $durationMs = round((microtime(true) - $started) * 1000, 2);
+
+        RequestPerformanceLogger::finish($perf, $request, 1, [
+            'scope' => 'admin',
+            'mode' => 'review_lite',
+            'duration_ms' => $durationMs,
+            'cache_hit' => $cached['cache_hit'] ?? false,
+            'query_count' => $cached['query_count'] ?? null,
+            'cache_error' => $cached['cache_error'] ?? null,
+        ]);
+
+        Log::info('admin.overtime.review_lite_ok', [
+            'request_id' => $id,
+            'endpoint_response_time_ms' => $durationMs,
+            'query_count' => $cached['query_count'] ?? null,
+            'cache' => ($cached['cache_hit'] ?? false) ? 'hit' : 'miss',
+            'cache_hit' => $cached['cache_hit'] ?? false,
+            'current_user_employee_id' => (int) $actor->id,
+            'current_approver_id' => $payload['current_approver_id'] ?? null,
+            'can_approve' => $payload['can_approve'] ?? false,
+            'can_reject' => $payload['can_reject'] ?? false,
+            'deny_reason' => $payload['deny_reason'] ?? null,
+        ]);
+
+        return response()->json(['overtime' => $payload]);
     }
 
     public function show(Request $request, int $id): JsonResponse
@@ -473,35 +697,43 @@ class OvertimeController extends Controller
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
+        $skipped = 0;
+        $failedItems = [];
+
         if ($parsed['mode'] === 'all_matching') {
             $filters = $this->normalizeBulkApproveFilters($parsed['filters']);
             $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
         } else {
-            $ids = $parsed['ids'];
-            $this->assertBulkApproveIdsPresent($ids);
-            if (count($ids) > 500) {
+            $this->assertBulkApproveIdsPresent($parsed['ids']);
+            if (count($parsed['ids']) > 500) {
                 throw ValidationException::withMessages([
                     'ids' => ['Too many requests selected. Use “select all matching” or approve in smaller batches.'],
                 ]);
             }
+            $resolved = $this->resolveBulkApproveIds($parsed['ids'], function (int $id) use ($actor): bool {
+                $overtime = Overtime::query()->with(['user', 'filedBy'])->find($id);
+
+                return $overtime !== null && $this->overtimeApprovalService->canApprove($actor, $overtime);
+            });
+            $ids = $resolved['ids'];
+            $skipped = $resolved['skipped'];
+            $failedItems = $resolved['failed_items'];
         }
 
         if (count($ids) === 0) {
-            return $this->bulkApproveJsonResponse(0, 0, 0, [], 'overtime request');
+            return $this->bulkApproveJsonResponse(0, $skipped, 0, $failedItems, 'overtime request');
         }
 
         $remarks = $parsed['remarks'];
         $approved = 0;
-        $skipped = 0;
         $failed = 0;
-        $failedItems = [];
 
         foreach ($ids as $id) {
             try {
-                $single = $request->duplicate(null, [
+                $single = $this->duplicateBulkApproveRequest($request, null, array_filter([
                     'status' => Overtime::STATUS_APPROVED,
                     'remarks' => $remarks,
-                ]);
+                ], static fn ($value) => $value !== null));
                 $single->setUserResolver(fn () => $actor);
                 $response = $this->updateStatus($single, $id);
                 $status = $response->getStatusCode();
@@ -535,6 +767,26 @@ class OvertimeController extends Controller
         }
 
         return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'overtime request');
+    }
+
+    public function approve(Request $request, int $id): JsonResponse
+    {
+        $request->merge(['status' => Overtime::STATUS_APPROVED]);
+
+        return $this->updateStatus($request, $id);
+    }
+
+    public function reject(Request $request, int $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'remarks' => ['required', 'string', 'max:2000'],
+        ]);
+        $request->merge([
+            'status' => Overtime::STATUS_REJECTED,
+            'remarks' => $validated['remarks'],
+        ]);
+
+        return $this->updateStatus($request, $id);
     }
 
     public function updateStatus(Request $request, int $id): JsonResponse
@@ -601,6 +853,16 @@ class OvertimeController extends Controller
             });
 
             ReviewRequestCache::forget('overtime', (int) $overtime->id);
+            OvertimeModuleCache::flush();
+
+            if ($this->wantsLiteOvertimeMutationResponse($request)) {
+                return response()->json([
+                    'message' => 'Overtime request rejected.',
+                    'request_id' => (int) $overtime->id,
+                    'status' => Overtime::STATUS_REJECTED,
+                    'approval_stage' => HrApprovalStages::REJECTED,
+                ]);
+            }
 
             return response()->json([
                 'message' => 'Overtime request rejected.',
@@ -666,6 +928,16 @@ class OvertimeController extends Controller
                 : 'next approver';
 
             ReviewRequestCache::forget('overtime', (int) $overtime->id);
+            OvertimeModuleCache::flush();
+
+            if ($this->wantsLiteOvertimeMutationResponse($request)) {
+                return response()->json([
+                    'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
+                    'request_id' => (int) $overtime->id,
+                    'status' => $overtime->status,
+                    'approval_stage' => $overtime->approval_stage,
+                ]);
+            }
 
             return response()->json([
                 'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
@@ -715,8 +987,18 @@ class OvertimeController extends Controller
         });
 
         ReviewRequestCache::forget('overtime', (int) $overtime->id);
+        OvertimeModuleCache::flush();
         ReportsCacheService::invalidateAttendanceCache((int) $overtime->user_id, $overtime->date?->toDateString());
         $this->clearAffectedDraftPayrollSnapshots($overtime);
+
+        if ($this->wantsLiteOvertimeMutationResponse($request)) {
+            return response()->json([
+                'message' => 'Overtime approved.',
+                'request_id' => (int) $overtime->id,
+                'status' => Overtime::STATUS_APPROVED,
+                'approval_stage' => HrApprovalStages::APPROVED,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Overtime approved.',
@@ -820,6 +1102,7 @@ class OvertimeController extends Controller
         $overtime->updated_by = $admin->id;
         $overtime->save();
         ReviewRequestCache::forget('overtime', (int) $overtime->id);
+        OvertimeModuleCache::flush();
 
         return response()->json([
             'message' => 'Overtime hours updated.',
@@ -858,6 +1141,7 @@ class OvertimeController extends Controller
 
         $overtime->delete();
         ReviewRequestCache::forget('overtime', (int) $overtime->id);
+        OvertimeModuleCache::flush();
 
         return response()->json([
             'message' => 'Overtime request deleted.',
@@ -969,6 +1253,249 @@ class OvertimeController extends Controller
         $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
 
         return is_array($scopedEmployeeIds) && in_array((int) $overtime->user_id, $scopedEmployeeIds, true);
+    }
+
+    private function wantsLiteOvertimeMutationResponse(Request $request): bool
+    {
+        return str_starts_with($request->path(), 'api/overtime-requests/');
+    }
+
+    private function overtimeListCacheKey(User $actor, Request $request, int $perPage, int $page): string
+    {
+        $filters = array_filter([
+            'status' => $request->query('status'),
+            'employee_id' => $request->query('employee_id'),
+            'company_id' => $request->query('company_id'),
+            'department_id' => $request->query('department_id'),
+            'date_from' => $request->query('date_from') ?? $request->query('from_date'),
+            'date_to' => $request->query('date_to') ?? $request->query('to_date'),
+            'ot_type' => $request->query('ot_type'),
+            'search' => is_string($request->query('search')) ? trim((string) $request->query('search')) : null,
+            'page' => $page,
+            'per_page' => $perPage,
+        ], static fn ($value): bool => $value !== null && $value !== '');
+        $hash = md5(json_encode($filters, JSON_THROW_ON_ERROR));
+        $company = (string) ($filters['company_id'] ?? 'all');
+        $status = (string) ($filters['status'] ?? 'all');
+
+        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':v'.OvertimeModuleCache::version();
+    }
+
+    /**
+     * @param  list<int>  $requestIds
+     * @return array<int, OrgApprovalRecord>
+     */
+    private function currentOvertimeApprovalRecords(array $requestIds): array
+    {
+        if ($requestIds === []) {
+            return [];
+        }
+
+        return OrgApprovalRecord::query()
+            ->select([
+                'id',
+                'request_id',
+                'module_type',
+                'approval_label',
+                'approver_role',
+                'approver_id',
+                'approver_name',
+                'eligible_approver_ids',
+                'approval_status',
+                'sequence_order',
+            ])
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+            ->whereIn('request_id', $requestIds)
+            ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+            ->orderBy('sequence_order')
+            ->orderBy('id')
+            ->get()
+            ->unique('request_id')
+            ->mapWithKeys(fn (OrgApprovalRecord $record): array => [(int) $record->request_id => $record])
+            ->all();
+    }
+
+    private function overtimeListDisplayStatus(Overtime $overtime, ?OrgApprovalRecord $currentApproval): string
+    {
+        if ($overtime->status === Overtime::STATUS_APPROVED) {
+            return 'HR Approved';
+        }
+        if ($overtime->status === Overtime::STATUS_REJECTED || $overtime->rejected_at !== null) {
+            return 'Rejected';
+        }
+        if ($currentApproval) {
+            return 'Pending '.rtrim(str_ireplace(' approval', '', $this->approvalRecordStageLabel($currentApproval))).' Approval';
+        }
+
+        return 'Pending';
+    }
+
+    private function overtimeListWaitMessage(Overtime $overtime, ?OrgApprovalRecord $currentApproval, bool $canAct): ?string
+    {
+        if ($overtime->status !== Overtime::STATUS_PENDING || $canAct || ! $currentApproval) {
+            return null;
+        }
+
+        return 'Waiting for '.$this->approvalRecordStageLabel($currentApproval).'.';
+    }
+
+    /**
+     * @return array{can_approve: bool, can_reject: bool, deny_reason: ?string}
+     */
+    private function overtimeReviewLiteActionAuthorization(User $actor, Overtime $overtime, ?OrgApprovalRecord $pending): array
+    {
+        if (! $overtime->pending_approval || $overtime->status !== Overtime::STATUS_PENDING || $overtime->rejected_at !== null) {
+            return ['can_approve' => false, 'can_reject' => false, 'deny_reason' => 'request_is_not_pending'];
+        }
+        if (! $overtime->user) {
+            return ['can_approve' => false, 'can_reject' => false, 'deny_reason' => 'request_employee_not_loaded'];
+        }
+        if (! $pending) {
+            return ['can_approve' => false, 'can_reject' => false, 'deny_reason' => 'no_pending_approval_step'];
+        }
+
+        $auth = $this->approvalWorkflowService->authorizePendingRecord(
+            $actor,
+            $pending,
+            $overtime->user,
+            OrgApprovalWorkflowService::MODULE_OVERTIME,
+        );
+
+        return [
+            'can_approve' => (bool) $auth['allowed'],
+            'can_reject' => (bool) $auth['allowed'],
+            'deny_reason' => $auth['deny_reason'],
+        ];
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, OrgApprovalRecord>  $records
+     * @param  array{can_approve: bool, can_reject: bool, deny_reason: ?string}  $auth
+     * @return array<string, mixed>
+     */
+    private function overtimeReviewLiteResponse(Overtime $overtime, $records, ?OrgApprovalRecord $pending, array $auth): array
+    {
+        $disp = $this->overtimeDisplayFields($overtime);
+        $hours = $disp['computed_hours'] ?? $disp['requested_ot_hours'];
+
+        return array_merge([
+            'id' => (int) $overtime->id,
+            'request_id' => (int) $overtime->id,
+            'employee_id' => (int) $overtime->user_id,
+            'employee' => [
+                'id' => (int) $overtime->user_id,
+                'name' => $overtime->user?->display_name,
+                'initials' => $this->initialsForName($overtime->user?->display_name),
+            ],
+            'employee_name' => $overtime->user?->display_name,
+            'date' => $overtime->date?->toDateString(),
+            'start_time' => $overtime->schedule_end?->format('H:i'),
+            'end_time' => ($overtime->expected_end_time ?? $overtime->time_out)?->format('H:i'),
+            'schedule_end' => $overtime->schedule_end?->format('H:i'),
+            'expected_end_time' => $overtime->expected_end_time?->format('H:i'),
+            'time_out' => $overtime->time_out?->format('H:i'),
+            'hours' => $hours,
+            'computed_hours' => $disp['computed_hours'],
+            'computed_minutes' => $disp['computed_minutes'],
+            'requested_ot_hours' => $disp['requested_ot_hours'],
+            'requested_ot_minutes' => $disp['requested_ot_minutes'],
+            'category' => $overtime->ot_type,
+            'ot_type' => $overtime->ot_type,
+            'pay_rule' => $overtime->ph_ot_rule,
+            'ph_ot_rule' => $overtime->ph_ot_rule,
+            'reason' => $overtime->reason,
+            'remarks' => $overtime->remarks,
+            'rejection_note' => $overtime->rejection_note,
+            'status' => $overtime->status,
+            'display_status' => $this->overtimeListDisplayStatus($overtime, $pending),
+            'current_approver_id' => $pending?->approver_id,
+            'current_approver' => $pending?->approver?->display_name ?? $pending?->approver_name,
+            'current_stage' => $pending ? $this->approvalRecordStageLabel($pending) : $overtime->approval_stage,
+            'approval_stage' => $overtime->approval_stage,
+            'approval_chain' => $this->approvalRecordSummary($records),
+            'approval_progress' => $this->approvalRecordSummary($records),
+            'approval_history' => $records
+                ->whereIn('approval_status', [OrgApprovalRecord::STATUS_APPROVED, OrgApprovalRecord::STATUS_REJECTED])
+                ->map(fn (OrgApprovalRecord $record): array => [
+                    'action' => $record->approval_status === OrgApprovalRecord::STATUS_REJECTED ? 'reject' : 'approve',
+                    'approver_role' => $this->approvalRecordRoleLabel($record),
+                    'details' => $record->remarks,
+                    'at' => $record->approved_at?->toIso8601String(),
+                    'actor_name' => $record->approver?->display_name ?? $record->approver_name,
+                ])->values()->all(),
+            'can_approve' => $auth['can_approve'],
+            'can_reject' => $auth['can_reject'],
+            'actor_can_approve' => $auth['can_approve'],
+            'actor_can_reject' => $auth['can_reject'],
+            'deny_reason' => $auth['deny_reason'],
+            'created_at' => $overtime->created_at?->toIso8601String(),
+            'filed_at' => ($overtime->filed_at ?? $overtime->created_at)?->toIso8601String(),
+        ], $this->overtimeRequesterMeta($overtime->user), PhPayrollReference::ruleMetaForOvertime($overtime->ph_ot_rule));
+    }
+
+    private function approvalRecordStageLabel(OrgApprovalRecord $record): string
+    {
+        $label = trim((string) ($record->approval_label ?? ''));
+        if ($label !== '') {
+            return $label;
+        }
+        if ($record->approver_role === \App\Enums\HrRole::AdminHr->value) {
+            return 'Admin HR final approval';
+        }
+
+        return $this->approvalRecordRoleLabel($record).' approval';
+    }
+
+    private function approvalRecordRoleLabel(OrgApprovalRecord $record): string
+    {
+        $role = \App\Enums\HrRole::tryFrom((string) $record->approver_role);
+
+        return $role?->badgeLabel() ?? (string) ($record->approver_role ?: 'Approver');
+    }
+
+    private function approvalRecordSummary($records): array
+    {
+        $currentMarked = false;
+
+        return $records->map(function (OrgApprovalRecord $record) use (&$currentMarked): array {
+            $status = match ($record->approval_status) {
+                OrgApprovalRecord::STATUS_APPROVED => 'completed',
+                OrgApprovalRecord::STATUS_REJECTED => 'rejected',
+                default => $currentMarked ? 'pending' : 'current',
+            };
+            if ($status === 'current') {
+                $currentMarked = true;
+            }
+
+            return [
+                'id' => (int) $record->id,
+                'key' => 'approval-'.$record->id,
+                'label' => $this->approvalRecordStageLabel($record),
+                'role_label' => $this->approvalRecordRoleLabel($record),
+                'approver_role_label' => $this->approvalRecordRoleLabel($record),
+                'status' => $status,
+                'approver_id' => $record->approver_id,
+                'approver_name' => $record->approver?->display_name ?? $record->approver_name,
+                'remarks' => $record->remarks,
+                'approved_at' => $record->approved_at?->toIso8601String(),
+                'acted_at' => $record->approved_at?->toIso8601String(),
+                'sequence_order' => (int) $record->sequence_order,
+            ];
+        })->values()->all();
+    }
+
+    private function initialsForName(?string $name): string
+    {
+        $parts = preg_split('/\s+/', trim((string) $name), -1, PREG_SPLIT_NO_EMPTY);
+        if (! is_array($parts) || $parts === []) {
+            return '?';
+        }
+        if (count($parts) === 1) {
+            return strtoupper(substr($parts[0], 0, 2));
+        }
+
+        return strtoupper(substr($parts[0], 0, 1).substr($parts[count($parts) - 1], 0, 1));
     }
 
     /**

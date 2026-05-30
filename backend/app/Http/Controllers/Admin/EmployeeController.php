@@ -36,6 +36,7 @@ use App\Services\PayrollCalculatorService;
 use App\Services\RbacService;
 use App\Services\ScheduleRateService;
 use App\Support\EmployeeProfileCache;
+use App\Support\LeaveModuleCache;
 use App\Support\LeaveScheduleSupport;
 use App\Support\ManagementRole;
 use Illuminate\Contracts\Cache\LockTimeoutException;
@@ -1164,6 +1165,8 @@ class EmployeeController extends Controller
                 'message' => $e->getMessage(),
             ]);
         }
+
+        LeaveModuleCache::flush();
 
         return response()->json([
             'message' => 'Employee added successfully.',

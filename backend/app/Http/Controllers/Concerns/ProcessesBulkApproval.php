@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Concerns;
 
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -87,6 +88,83 @@ trait ProcessesBulkApproval
                 'ids' => ['Select at least one request to approve.'],
             ]);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $extraInput
+     */
+    protected function duplicateBulkApproveRequest(Request $request, ?string $remarks, array $extraInput = []): Request
+    {
+        $input = array_merge($extraInput, ['notes' => $remarks]);
+        $single = $request->duplicate();
+        $single->merge($input);
+
+        return $single;
+    }
+
+    /**
+     * Build a sub-request for per-id bulk actions. JSON bulk payloads live in the
+     * json bag; duplicate() alone does not replace them.
+     *
+     * @param  array<string, mixed>  $input
+     */
+    protected function duplicateBulkActionRequest(Request $request, array $input): Request
+    {
+        $single = $request->duplicate();
+        $single->merge($input);
+
+        return $single;
+    }
+
+    /**
+     * HR bulk remarks (min. 10 chars) may satisfy leave rest-day override fields.
+     *
+     * @return array<string, mixed>
+     */
+    protected function leaveBulkApproveExtraInput(?string $remarks, User $actor, callable $isAdminHr): array
+    {
+        if ($remarks === null || ! $isAdminHr($actor)) {
+            return [];
+        }
+
+        $reason = trim($remarks);
+        if (strlen($reason) < 10) {
+            return [];
+        }
+
+        return [
+            'bypass_rest_days' => true,
+            'rest_day_bypass_reason' => $reason,
+        ];
+    }
+
+    /**
+     * @param  int[]  $requestedIds
+     * @param  callable(int): bool  $canApproveId
+     * @return array{ids: int[], skipped: int, failed_items: array<int, array{request_id: int, reason: string}>}
+     */
+    protected function resolveBulkApproveIds(array $requestedIds, callable $canApproveId): array
+    {
+        $ids = [];
+        $skipped = 0;
+        $failedItems = [];
+
+        foreach (array_values(array_unique(array_map('intval', $requestedIds))) as $id) {
+            if ($id <= 0) {
+                continue;
+            }
+            if ($canApproveId($id)) {
+                $ids[] = $id;
+                continue;
+            }
+            $skipped++;
+            $failedItems[] = [
+                'request_id' => $id,
+                'reason' => 'You are not authorized to approve this request, it is no longer pending, or required approval data is missing.',
+            ];
+        }
+
+        return ['ids' => $ids, 'skipped' => $skipped, 'failed_items' => $failedItems];
     }
 
     protected function bulkApproveJsonResponse(

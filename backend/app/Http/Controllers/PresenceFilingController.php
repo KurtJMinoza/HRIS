@@ -22,11 +22,13 @@ use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\BulkApproval\PresenceFilingBulkApprovalQuery;
 use App\Services\PresenceFilingService;
+use App\Support\AttendanceCorrectionModuleCache;
 use App\Support\RequestPerformanceLogger;
 use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -275,6 +277,7 @@ class PresenceFilingController extends Controller
             'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
             'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
         ]);
+        AttendanceCorrectionModuleCache::flush();
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',
@@ -507,6 +510,7 @@ class PresenceFilingController extends Controller
             'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
             'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
         ]);
+        AttendanceCorrectionModuleCache::flush();
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',
@@ -559,7 +563,7 @@ class PresenceFilingController extends Controller
             'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
             'per_page' => ['nullable', 'integer', 'in:10,25,50'],
         ]);
-        $perPage = (int) ($validated['per_page'] ?? 10);
+        $perPage = (int) ($validated['per_page'] ?? 25);
 
         $tz = $this->presenceFilingService->attendanceTimezone();
         $q = AttendanceCorrection::query()
@@ -666,6 +670,8 @@ class PresenceFilingController extends Controller
             $correction->delete();
         });
         ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
+        AttendanceCorrectionModuleCache::flush();
+        AttendanceCorrectionModuleCache::flush();
 
         return response()->json([
             'message' => 'Attendance correction request deleted.',
@@ -684,17 +690,60 @@ class PresenceFilingController extends Controller
         }
 
         $statusFilter = $request->query('status', 'all');
-        $perPage = (int) $request->query('per_page', 10);
-        $perPage = in_array($perPage, [10, 25, 50], true) ? $perPage : 10;
+        $perPage = (int) $request->query('per_page', 25);
+        $perPage = in_array($perPage, [10, 25, 50], true) ? $perPage : 25;
+        $page = max(1, (int) $request->query('page', 1));
+        $cacheKey = $this->attendanceCorrectionListCacheKey($actor, $request, $perPage, $page);
+        $cacheHit = false;
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cacheHit = true;
+                RequestPerformanceLogger::finish($perf, $request, count($cached['presence_filings'] ?? []), [
+                    'scope' => 'admin',
+                    'per_page' => $perPage,
+                    'total' => $cached['pagination']['total'] ?? null,
+                    'cache' => 'hit',
+                    'cache_hit' => true,
+                ]);
+
+                return response()->json($cached);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('attendance_correction.list.cache_read_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
 
         $query = AttendanceCorrection::query()
+            ->select([
+                'id',
+                'user_id',
+                'date',
+                'time_in',
+                'time_out',
+                'remarks',
+                'issue_kind',
+                'approved',
+                'approved_by',
+                'approved_at',
+                'pending_approval',
+                'filed_at',
+                'filed_by',
+                'rejected_at',
+                'rejected_by',
+                'rejection_note',
+                'approval_stage',
+                'first_approver_id',
+                'first_approved_at',
+                'second_approver_id',
+                'second_approved_at',
+                'is_incomplete_record',
+                'created_at',
+            ])
             ->with([
-                'user',
-                'filedBy',
-                'firstApprover',
-                'secondApprover',
-                'attendanceLogsSyncedBy',
-                'rejectedBy',
+                'user:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,department_id,department',
             ])
             ->orderByDesc('filed_at');
 
@@ -755,7 +804,8 @@ class PresenceFilingController extends Controller
 
         $this->applyPresenceFilingApprovalVisibility($actor, $query, $request);
 
-        $summary = $this->presenceFilingStatusCounts(clone $query);
+        $includeSummary = ! $request->boolean('lite') && ! $request->boolean('skip_summary');
+        $summary = $includeSummary ? $this->presenceFilingStatusCounts(clone $query) : null;
 
         if ($statusFilter === 'pending') {
             $query->where('pending_approval', true)
@@ -770,22 +820,20 @@ class PresenceFilingController extends Controller
         $tz = $this->presenceFilingService->attendanceTimezone();
 
         $paginator = $query->paginate($perPage)->withQueryString();
+        $pageRows = $paginator->getCollection();
+        $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageRows->pluck('id')->map(fn ($id) => (int) $id)->all());
         $items = $paginator->getCollection()
-            ->map(fn (AttendanceCorrection $c) => $this->correctionFormatter->format(
-                $c,
-                $tz,
-                includeEmployee: true,
-                actor: $actor,
-                includeDisplayFields: true
-            ));
+            ->map(fn (AttendanceCorrection $c) => $this->attendanceCorrectionListRow($c, $actor, $tz, $currentApprovals[(int) $c->id] ?? null));
 
         RequestPerformanceLogger::finish($perf, $request, $items->count(), [
             'scope' => 'admin',
             'per_page' => $paginator->perPage(),
             'total' => $paginator->total(),
+            'cache' => $cacheHit ? 'hit' : 'miss',
+            'cache_hit' => $cacheHit,
         ]);
 
-        return response()->json([
+        $payload = [
             'presence_filings' => $items->values(),
             'pagination' => [
                 'current_page' => $paginator->currentPage(),
@@ -794,7 +842,18 @@ class PresenceFilingController extends Controller
                 'last_page' => $paginator->lastPage(),
             ],
             'summary' => $summary,
-        ]);
+        ];
+
+        try {
+            Cache::put($cacheKey, $payload, now()->addSeconds(45));
+        } catch (\Throwable $e) {
+            Log::warning('attendance_correction.list.cache_write_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json($payload);
     }
 
     /**
@@ -817,18 +876,144 @@ class PresenceFilingController extends Controller
         ];
     }
 
+    public function counts(Request $request): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.presence_filings.counts');
+        $actor = $request->user();
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $company = (string) ($request->query('company_id') ?? 'all');
+        $cacheKey = 'attendance_correction:counts:'.AttendanceCorrectionModuleCache::version().':'.$actor->id.':'.$company.':'.md5(json_encode($request->query(), JSON_THROW_ON_ERROR));
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'admin', 'cache' => 'hit', 'cache_hit' => true]);
+
+                return response()->json($cached);
+            }
+        } catch (\Throwable) {
+        }
+
+        $base = AttendanceCorrection::query()->select('id', 'user_id', 'approved', 'pending_approval', 'rejected_at', 'date');
+        $this->applyPresenceFilingApprovalVisibility($actor, $base, $request);
+        $today = today()->toDateString();
+        $payload = [
+            'pending' => (int) (clone $base)->where('pending_approval', true)->where('approved', false)->whereNull('rejected_at')->count(),
+            'approved_today' => (int) (clone $base)->where('approved', true)->whereDate('approved_at', $today)->count(),
+            'rejected_today' => (int) (clone $base)->whereNotNull('rejected_at')->whereDate('rejected_at', $today)->count(),
+            'my_filings' => (int) (clone $base)->where('user_id', (int) $actor->id)->count(),
+            'all_filings' => (int) (clone $base)->count(),
+        ];
+
+        RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'admin', 'cache' => 'miss', 'cache_hit' => false]);
+        Cache::put($cacheKey, $payload, now()->addSeconds(45));
+
+        return response()->json($payload);
+    }
+
+    private function attendanceCorrectionListCacheKey(User $actor, Request $request, int $perPage, int $page): string
+    {
+        $filters = array_filter([
+            'status' => $request->query('status'),
+            'company_id' => $request->query('company_id'),
+            'from_date' => $request->query('from_date') ?? $request->query('date_from'),
+            'to_date' => $request->query('to_date') ?? $request->query('date_to'),
+            'issue_type' => $request->query('issue_type'),
+            'q' => $request->query('q') ?? $request->query('search'),
+            'request_id' => $request->query('request_id'),
+            'page' => $page,
+            'per_page' => $perPage,
+        ], static fn ($value): bool => $value !== null && $value !== '');
+        $company = (string) ($filters['company_id'] ?? 'all');
+        $status = (string) ($filters['status'] ?? 'all');
+
+        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':v'.AttendanceCorrectionModuleCache::version();
+    }
+
+    /**
+     * @param  list<int>  $requestIds
+     * @return array<int, OrgApprovalRecord>
+     */
+    private function currentAttendanceCorrectionApprovalRecords(array $requestIds): array
+    {
+        if ($requestIds === []) {
+            return [];
+        }
+
+        return OrgApprovalRecord::query()
+            ->select(['id', 'request_id', 'module_type', 'approval_label', 'approver_role', 'approver_id', 'approver_name', 'eligible_approver_ids', 'approval_status', 'sequence_order', 'remarks', 'approved_at'])
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+            ->whereIn('request_id', $requestIds)
+            ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+            ->orderBy('sequence_order')
+            ->orderBy('id')
+            ->get()
+            ->unique('request_id')
+            ->mapWithKeys(fn (OrgApprovalRecord $record): array => [(int) $record->request_id => $record])
+            ->all();
+    }
+
+    private function attendanceCorrectionListRow(AttendanceCorrection $c, User $actor, string $tz, ?OrgApprovalRecord $currentApproval): array
+    {
+        $auth = $currentApproval && $c->user
+            ? $this->approvalWorkflowService->authorizePendingRecord($actor, $currentApproval, $c->user, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+            : ['allowed' => false];
+        $canApprove = (bool) ($auth['allowed'] ?? false);
+        if ($canApprove
+            && $currentApproval?->approver_role === \App\Enums\HrRole::AdminHr->value
+            && ! $c->hasRequiredTimesForFinalApproval()) {
+            $canApprove = false;
+        }
+        $status = $c->rejected_at ? 'rejected' : ($c->approved ? 'approved' : 'pending');
+        $displayStatus = $status === 'approved'
+            ? 'HR Approved'
+            : ($status === 'rejected' ? 'Rejected' : ($currentApproval ? 'Pending '.rtrim(str_ireplace(' approval', '', $this->approvalRecordStageLabel($currentApproval))).' Approval' : 'Pending'));
+
+        return [
+            'id' => (int) $c->id,
+            'request_id' => (int) $c->id,
+            'correction_request_id' => (int) $c->id,
+            'employee_id' => (int) $c->user_id,
+            'user_id' => (int) $c->user_id,
+            'employee_name' => $c->user?->display_name,
+            'requested_by_name' => $c->user?->display_name,
+            'employee_code' => $c->user?->employee_code,
+            'company' => $c->user?->company_id,
+            'department' => $c->user?->department,
+            'date' => $c->date?->toDateString(),
+            'attendance_date' => $c->date?->toDateString(),
+            'correction_date' => $c->date?->toDateString(),
+            'issue_type' => $this->normalizeIssueKind($c),
+            'correction_type' => $this->normalizeIssueKind($c),
+            'original_time_in' => null,
+            'original_time_out' => null,
+            'requested_time_in' => $c->time_in?->copy()->setTimezone($tz)->toIso8601String(),
+            'requested_time_out' => $c->time_out?->copy()->setTimezone($tz)->toIso8601String(),
+            'time_in' => $c->time_in?->copy()->setTimezone($tz)->toIso8601String(),
+            'time_out' => $c->time_out?->copy()->setTimezone($tz)->toIso8601String(),
+            'status' => $status,
+            'display_status' => $displayStatus,
+            'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+            'created_at' => $c->created_at?->toIso8601String(),
+            'filed_at' => $c->filed_at?->toIso8601String(),
+            'remarks' => $c->remarks,
+            'rejection_note' => $c->rejection_note,
+            'actor_can_approve' => $canApprove,
+            'actor_can_reject' => $canApprove,
+            'can_approve' => $canApprove,
+            'can_reject' => $canApprove,
+        ];
+    }
+
     /**
      * @param  \Illuminate\Database\Eloquent\Builder<AttendanceCorrection>  $query
      */
     private function applyPresenceFilingApprovalVisibility(User $actor, $query, Request $request): void
     {
         if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
-            Log::info('filing_visibility: attendance correction list unrestricted for Admin HR', [
-                'current_user_id' => (int) $actor->id,
-                'current_employee_id' => (int) $actor->id,
-                'role' => $actor->role,
-            ]);
-
             return;
         }
 
@@ -853,19 +1038,6 @@ class PresenceFilingController extends Controller
             }
         });
 
-        Log::info('filing_visibility: attendance correction list scoped for approvals', [
-            'current_user_id' => $actorId,
-            'current_employee_id' => $actorId,
-            'role' => $this->hrRoleResolver->resolve($actor)->value,
-            'can_view_my_filings' => true,
-            'can_view_assigned_approvals' => true,
-            'can_view_team_filings' => $hierarchyOn,
-            'attendance_correction_hierarchy_approval' => $hierarchyOn,
-            'approval_scoped_employee_ids' => $scopedEmployeeIds,
-            'assigned_approval_request_ids' => $assignedRequestIds,
-            'returned_all_filings_count' => null,
-            'request_status_filter' => $request->query('status', 'all'),
-        ]);
     }
 
     /**
@@ -923,6 +1095,124 @@ class PresenceFilingController extends Controller
         $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
 
         return is_array($scopedEmployeeIds) && in_array((int) $correction->user_id, $scopedEmployeeIds, true);
+    }
+
+    private function wantsLiteAttendanceCorrectionMutationResponse(Request $request): bool
+    {
+        return $request->boolean('_bulk_approval') || str_starts_with($request->path(), 'api/attendance-corrections/');
+    }
+
+    private function isBulkApprovalRequest(Request $request): bool
+    {
+        return $request->boolean('_bulk_approval');
+    }
+
+    /**
+     * @return array{can_approve: bool, can_reject: bool, deny_reason: ?string}
+     */
+    private function attendanceCorrectionActionAuthorization(User $actor, AttendanceCorrection $c, ?OrgApprovalRecord $pending): array
+    {
+        if (! $c->pending_approval || $c->approved || $c->rejected_at !== null) {
+            return ['can_approve' => false, 'can_reject' => false, 'deny_reason' => 'request_is_not_pending'];
+        }
+        if (! $c->user || ! $pending) {
+            return ['can_approve' => false, 'can_reject' => false, 'deny_reason' => 'no_pending_approval_step'];
+        }
+        $auth = $this->approvalWorkflowService->authorizePendingRecord($actor, $pending, $c->user, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION);
+
+        return ['can_approve' => (bool) $auth['allowed'], 'can_reject' => (bool) $auth['allowed'], 'deny_reason' => $auth['deny_reason']];
+    }
+
+    private function attendanceCorrectionReviewLiteResponse(AttendanceCorrection $c, $records, ?OrgApprovalRecord $pending, array $auth): array
+    {
+        $tz = $this->presenceFilingService->attendanceTimezone();
+        $status = $c->rejected_at ? 'rejected' : ($c->approved ? 'approved' : 'pending');
+
+        return [
+            'id' => (int) $c->id,
+            'request_id' => (int) $c->id,
+            'employee_id' => (int) $c->user_id,
+            'employee' => ['id' => (int) $c->user_id, 'name' => $c->user?->display_name],
+            'employee_name' => $c->user?->display_name,
+            'date' => $c->date?->toDateString(),
+            'correction_date' => $c->date?->toDateString(),
+            'issue_type' => $this->normalizeIssueKind($c),
+            'correction_type' => $this->normalizeIssueKind($c),
+            'original_values' => ['time_in' => null, 'time_out' => null],
+            'requested_values' => [
+                'time_in' => $c->time_in?->copy()->setTimezone($tz)->toIso8601String(),
+                'time_out' => $c->time_out?->copy()->setTimezone($tz)->toIso8601String(),
+            ],
+            'requested_time_in' => $c->time_in?->copy()->setTimezone($tz)->toIso8601String(),
+            'requested_time_out' => $c->time_out?->copy()->setTimezone($tz)->toIso8601String(),
+            'time_in' => $c->time_in?->copy()->setTimezone($tz)->toIso8601String(),
+            'time_out' => $c->time_out?->copy()->setTimezone($tz)->toIso8601String(),
+            'reason' => $c->remarks,
+            'remarks' => $c->remarks,
+            'rejection_note' => $c->rejection_note,
+            'status' => $status,
+            'display_status' => $status === 'approved' ? 'HR Approved' : ($status === 'rejected' ? 'Rejected' : 'Pending'),
+            'current_approver_id' => $pending?->approver_id,
+            'current_approver' => $pending?->approver?->display_name ?? $pending?->approver_name,
+            'approval_chain' => $this->approvalRecordSummary($records),
+            'approval_progress' => $this->approvalRecordSummary($records),
+            'approval_history' => $records->whereIn('approval_status', [OrgApprovalRecord::STATUS_APPROVED, OrgApprovalRecord::STATUS_REJECTED])->map(fn (OrgApprovalRecord $record): array => [
+                'action' => $record->approval_status === OrgApprovalRecord::STATUS_REJECTED ? 'reject' : 'approve',
+                'approver_role' => $this->approvalRecordRoleLabel($record),
+                'details' => $record->remarks,
+                'at' => $record->approved_at?->toIso8601String(),
+                'actor_name' => $record->approver?->display_name ?? $record->approver_name,
+            ])->values()->all(),
+            'can_approve' => $auth['can_approve'],
+            'can_reject' => $auth['can_reject'],
+            'actor_can_approve' => $auth['can_approve'],
+            'actor_can_reject' => $auth['can_reject'],
+            'created_at' => $c->created_at?->toIso8601String(),
+            'filed_at' => ($c->filed_at ?? $c->created_at)?->toIso8601String(),
+        ];
+    }
+
+    private function approvalRecordStageLabel(OrgApprovalRecord $record): string
+    {
+        $label = trim((string) ($record->approval_label ?? ''));
+        if ($label !== '') {
+            return $label;
+        }
+
+        return $this->approvalRecordRoleLabel($record).' approval';
+    }
+
+    private function approvalRecordRoleLabel(OrgApprovalRecord $record): string
+    {
+        $role = HrRole::tryFrom((string) $record->approver_role);
+
+        return $role?->badgeLabel() ?? (string) ($record->approver_role ?: 'Approver');
+    }
+
+    private function approvalRecordSummary($records): array
+    {
+        $currentMarked = false;
+
+        return $records->map(function (OrgApprovalRecord $record) use (&$currentMarked): array {
+            $status = match ($record->approval_status) {
+                OrgApprovalRecord::STATUS_APPROVED => 'completed',
+                OrgApprovalRecord::STATUS_REJECTED => 'rejected',
+                default => $currentMarked ? 'pending' : 'current',
+            };
+            if ($status === 'current') {
+                $currentMarked = true;
+            }
+
+            return [
+                'key' => 'approval-'.$record->id,
+                'label' => $this->approvalRecordStageLabel($record),
+                'status' => $status,
+                'approver_role_label' => $this->approvalRecordRoleLabel($record),
+                'approver_name' => $record->approver?->display_name ?? $record->approver_name,
+                'remarks' => $record->remarks,
+                'acted_at' => $record->approved_at?->toIso8601String(),
+            ];
+        })->values()->all();
     }
 
     public function adminShow(Request $request, int $id): JsonResponse
@@ -1037,6 +1327,50 @@ class PresenceFilingController extends Controller
         return response()->json(['presence_filing' => $cached['payload']]);
     }
 
+    public function adminReviewLite(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.presence_filings.review_lite');
+        $actor = $request->user();
+        $started = microtime(true);
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $cached = ReviewRequestCache::rememberAttendanceCorrectionReviewLite($id, (int) $actor->id, function () use ($actor, $id): array {
+            $c = AttendanceCorrection::query()
+                ->select(['id', 'user_id', 'date', 'time_in', 'time_out', 'remarks', 'issue_kind', 'approved', 'approved_by', 'approved_at', 'pending_approval', 'filed_at', 'filed_by', 'rejected_at', 'rejected_by', 'rejection_note', 'approval_stage', 'first_approver_id', 'second_approver_id', 'created_at'])
+                ->with(['user:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,department_id,department'])
+                ->findOrFail($id);
+            if (! $this->canAccessPresenceFilingThroughApprovalScope($actor, $c)) {
+                abort(403, 'Forbidden.');
+            }
+            $records = OrgApprovalRecord::query()
+                ->select(['id', 'request_id', 'module_type', 'approval_label', 'approver_role', 'approver_id', 'approver_name', 'eligible_approver_ids', 'approval_status', 'remarks', 'approved_at', 'sequence_order'])
+                ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                ->where('request_id', (int) $c->id)
+                ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+                ->orderBy('sequence_order')
+                ->orderBy('id')
+                ->get();
+            $pending = $records->firstWhere('approval_status', OrgApprovalRecord::STATUS_PENDING);
+            $auth = $this->attendanceCorrectionActionAuthorization($actor, $c, $pending);
+
+            return $this->attendanceCorrectionReviewLiteResponse($c, $records, $pending, $auth);
+        });
+
+        $payload = $cached['payload'];
+        RequestPerformanceLogger::finish($perf, $request, 1, [
+            'scope' => 'admin',
+            'mode' => 'review_lite',
+            'duration_ms' => round((microtime(true) - $started) * 1000, 2),
+            'cache_hit' => $cached['cache_hit'] ?? false,
+            'query_count' => $cached['query_count'] ?? null,
+            'cache_error' => $cached['cache_error'] ?? null,
+        ]);
+
+        return response()->json(['presence_filing' => $payload]);
+    }
+
     public function bulkApprovePreview(Request $request): JsonResponse
     {
         $actor = $request->user();
@@ -1049,10 +1383,10 @@ class PresenceFilingController extends Controller
         ]);
 
         $filters = $this->normalizeBulkApproveFilters($validated['filters']);
-        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+        $count = $this->bulkApprovalQuery->approvableCount($actor, $filters);
 
         return response()->json([
-            'approvable_count' => count($ids),
+            'approvable_count' => $count,
         ]);
     }
 
@@ -1065,39 +1399,59 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
+        $skipped = 0;
+        $failedItems = [];
+
         if ($parsed['mode'] === 'all_matching') {
             $filters = $this->normalizeBulkApproveFilters($parsed['filters']);
             $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
         } else {
-            $ids = $parsed['ids'];
-            $this->assertBulkApproveIdsPresent($ids);
-            if (count($ids) > 500) {
+            $this->assertBulkApproveIdsPresent($parsed['ids']);
+            if (count($parsed['ids']) > 500) {
                 throw ValidationException::withMessages([
                     'ids' => ['Too many requests selected. Use “select all matching” or approve in smaller batches.'],
                 ]);
             }
+            $resolved = $this->resolveBulkApproveIds($parsed['ids'], function (int $id) use ($actor): bool {
+                $correction = AttendanceCorrection::query()
+                    ->with([
+                        'user',
+                        'filedBy',
+                        'firstApprover',
+                        'secondApprover',
+                        'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
+                    ])
+                    ->find($id);
+
+                return $correction !== null && $this->bulkApprovalQuery->canBulkApprove($actor, $correction);
+            });
+            $ids = $resolved['ids'];
+            $skipped = $resolved['skipped'];
+            $failedItems = $resolved['failed_items'];
         }
 
         if (count($ids) === 0) {
-            return $this->bulkApproveJsonResponse(0, 0, 0, [], 'attendance correction');
-
+            return $this->bulkApproveJsonResponse(0, $skipped, 0, $failedItems, 'attendance correction');
         }
 
         $remarks = $parsed['remarks'];
         $approved = 0;
-        $skipped = 0;
         $failed = 0;
-        $failedItems = [];
+        $payrollDates = [];
 
         foreach ($ids as $id) {
             try {
-                $single = $request->duplicate(null, ['notes' => $remarks]);
+                $single = $this->duplicateBulkApproveRequest($request, $remarks, ['_bulk_approval' => true]);
                 $single->setUserResolver(fn () => $actor);
                 $response = $this->approve($single, $id);
                 $status = $response->getStatusCode();
 
                 if ($status >= 200 && $status < 300) {
                     $approved++;
+                    $body = $response->getData(true);
+                    if (($body['status'] ?? null) === 'approved' && ! empty($body['date'])) {
+                        $payrollDates[(string) $body['date']] = true;
+                    }
                     continue;
                 }
 
@@ -1124,7 +1478,68 @@ class PresenceFilingController extends Controller
             }
         }
 
+        if ($approved > 0) {
+            foreach (array_keys($payrollDates) as $dateKey) {
+                ProcessDailyPayrollJob::dispatchSync($dateKey);
+            }
+            AttendanceCorrectionModuleCache::flush();
+        }
+
         return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'attendance correction');
+    }
+
+    public function bulkReject(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+            'remarks' => ['required', 'string', 'max:2000'],
+        ]);
+        $actor = $request->user();
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+        $rejected = 0;
+        $skipped = 0;
+        $failedItems = [];
+        foreach (array_values(array_unique(array_map('intval', $validated['ids']))) as $id) {
+            try {
+                $single = $this->duplicateBulkApproveRequest($request, null, [
+                    'rejection_note' => $validated['remarks'],
+                ]);
+                $single->setUserResolver(fn () => $actor);
+                $response = $this->reject($single, $id);
+                if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
+                    $rejected++;
+                } else {
+                    $skipped++;
+                    $failedItems[] = ['request_id' => $id, 'reason' => (string) ($response->getData(true)['message'] ?? 'Skipped')];
+                }
+            } catch (\Throwable $e) {
+                $skipped++;
+                $failedItems[] = ['request_id' => $id, 'reason' => $e->getMessage()];
+            }
+        }
+        AttendanceCorrectionModuleCache::flush();
+
+        return response()->json([
+            'rejected_count' => $rejected,
+            'skipped_count' => $skipped,
+            'failed_count' => 0,
+            'failed_items' => $failedItems,
+            'skipped_reasons' => $failedItems,
+        ]);
+    }
+
+    public function bulkApproveFiltered(Request $request): JsonResponse
+    {
+        $request->merge([
+            'mode' => 'all_matching',
+            'filters' => $request->input('filters', []),
+            'remarks' => $request->input('remarks'),
+        ]);
+
+        return $this->bulkApprove($request);
     }
 
     public function approve(Request $request, int $id): JsonResponse
@@ -1230,6 +1645,19 @@ class PresenceFilingController extends Controller
                 : 'next approver';
 
             ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
+            if (! $this->isBulkApprovalRequest($request)) {
+                AttendanceCorrectionModuleCache::flush();
+            }
+
+            if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
+                return response()->json([
+                    'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
+                    'request_id' => (int) $correction->id,
+                    'status' => 'pending',
+                    'date' => $dateKey,
+                    'approval_stage' => $correction->approval_stage,
+                ]);
+            }
 
             return response()->json([
                 'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
@@ -1243,26 +1671,17 @@ class PresenceFilingController extends Controller
         // Ensure issue_kind is properly set for sync service
         $issueKind = $this->normalizeIssueKind($correction);
         
-        // Validate that required times are present based on issue kind
         if ($issueKind === 'missing_in' && $timeIn === null) {
-            throw ValidationException::withMessages([
-                'time_in' => ['Missing clock-in request requires a clock-in time.'],
-            ]);
+            return response()->json(['message' => 'Missing clock-in request requires a clock-in time.'], 422);
         }
         if ($issueKind === 'missing_out' && $timeOut === null) {
-            throw ValidationException::withMessages([
-                'time_out' => ['Missing clock-out request requires a clock-out time.'],
-            ]);
+            return response()->json(['message' => 'Missing clock-out request requires a clock-out time.'], 422);
         }
         if ($issueKind === 'both' && ($timeIn === null || $timeOut === null)) {
-            throw ValidationException::withMessages([
-                'time' => ['Both clock-in and clock-out times are required for this request.'],
-            ]);
+            return response()->json(['message' => 'Both clock-in and clock-out times are required for this request.'], 422);
         }
         if ($timeIn !== null && $timeOut !== null && $timeOut->lessThanOrEqualTo($timeIn)) {
-            throw ValidationException::withMessages([
-                'time_out' => ['Time out must be after time in.'],
-            ]);
+            return response()->json(['message' => 'Time out must be after time in.'], 422);
         }
 
         $previousIn = $correction->time_in;
@@ -1347,8 +1766,23 @@ class PresenceFilingController extends Controller
             $correction->save();
         });
 
-        ProcessDailyPayrollJob::dispatchSync($dateKey);
+        if (! $this->isBulkApprovalRequest($request)) {
+            ProcessDailyPayrollJob::dispatchSync($dateKey);
+        }
         ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
+        if (! $this->isBulkApprovalRequest($request)) {
+            AttendanceCorrectionModuleCache::flush();
+        }
+
+        if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
+            return response()->json([
+                'message' => 'Attendance correction approved.',
+                'request_id' => (int) $correction->id,
+                'status' => 'approved',
+                'date' => $dateKey,
+                'approval_stage' => AttendanceCorrectionApprovalService::STAGE_APPROVED,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Attendance correction approved and applied.',
@@ -1428,6 +1862,16 @@ class PresenceFilingController extends Controller
 
         $tz = $this->presenceFilingService->attendanceTimezone();
         ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
+        AttendanceCorrectionModuleCache::flush();
+
+        if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
+            return response()->json([
+                'message' => 'Attendance correction rejected.',
+                'request_id' => (int) $correction->id,
+                'status' => 'rejected',
+                'approval_stage' => AttendanceCorrectionApprovalService::STAGE_REJECTED,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Attendance correction rejected.',
@@ -1494,6 +1938,7 @@ class PresenceFilingController extends Controller
             ]);
         });
         ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
+        AttendanceCorrectionModuleCache::flush();
 
         return response()->json([
             'message' => 'Remark recorded.',

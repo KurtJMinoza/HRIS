@@ -2265,7 +2265,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * Approved leave overlapping today, plus pending leave starting today or within the next week.
+     * Pending leave starting today or within the next week.
      *
      * @param  array<int, int>  $scopedActiveUserIds
      * @return array<int, array<string, mixed>>
@@ -2275,17 +2275,9 @@ class DashboardController extends Controller
         $dateKey = $today->toDateString();
         $upcomingEnd = $today->copy()->addDays(7)->toDateString();
         $query = LeaveRequest::query()
-            ->where(function (Builder $q) use ($dateKey, $upcomingEnd) {
-                $q->where(function (Builder $approved) use ($dateKey) {
-                    $approved->where('status', LeaveRequest::STATUS_APPROVED)
-                        ->whereDate('start_date', '<=', $dateKey)
-                        ->whereDate('end_date', '>=', $dateKey);
-                })->orWhere(function (Builder $pending) use ($dateKey, $upcomingEnd) {
-                    $pending->where('status', LeaveRequest::STATUS_PENDING)
-                        ->whereDate('start_date', '>=', $dateKey)
-                        ->whereDate('start_date', '<=', $upcomingEnd);
-                });
-            });
+            ->where('status', LeaveRequest::STATUS_PENDING)
+            ->whereDate('start_date', '>=', $dateKey)
+            ->whereDate('start_date', '<=', $upcomingEnd);
         if ($scopedActiveUserIds !== []) {
             $query->whereIn('user_id', $scopedActiveUserIds);
         } else {
@@ -2302,6 +2294,10 @@ class DashboardController extends Controller
 
         $items = [];
         foreach ($rows as $leave) {
+            if ($leave->status !== LeaveRequest::STATUS_PENDING) {
+                continue;
+            }
+
             $user = $leave->user;
             if (! $user) {
                 continue;
@@ -2336,11 +2332,6 @@ class DashboardController extends Controller
         }
 
         usort($items, function (array $a, array $b) {
-            $aPending = ($a['status'] ?? '') === LeaveRequest::STATUS_PENDING ? 0 : 1;
-            $bPending = ($b['status'] ?? '') === LeaveRequest::STATUS_PENDING ? 0 : 1;
-            if ($aPending !== $bPending) {
-                return $aPending <=> $bPending;
-            }
             $startCmp = strcmp((string) ($a['start_date'] ?? ''), (string) ($b['start_date'] ?? ''));
             if ($startCmp !== 0) {
                 return $startCmp;

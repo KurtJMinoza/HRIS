@@ -17,6 +17,7 @@ use App\Services\LeaveCreditService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
+use App\Support\LeaveModuleCache;
 use App\Support\LeaveFilingRules;
 use App\Support\LeaveScheduleSupport;
 use App\Support\RequestPerformanceLogger;
@@ -25,6 +26,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -55,75 +57,134 @@ class LeaveController extends Controller
         $status = $request->query('status');
         $actor = $request->user();
         $perPage = $this->requestPerPage($request);
+        $page = max(1, (int) $request->query('page', 1));
 
-        $query = LeaveRequest::with([
-            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,division_id,section_unit_id',
-            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id,division_id,section_unit_id',
-            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-        ]);
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $cacheKey = $this->leaveListCacheKey($actor, $request, $perPage, $page);
+        $cacheHit = false;
+
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cacheHit = true;
+                RequestPerformanceLogger::finish($perf, $request, count($cached['leave_requests'] ?? []), [
+                    'scope' => 'admin',
+                    'per_page' => $perPage,
+                    'total' => $cached['pagination']['total'] ?? null,
+                    'cache' => 'hit',
+                    'cache_hit' => true,
+                ]);
+
+                return response()->json($cached);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('leave.list.cache_read_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        $query = LeaveRequest::query()
+            ->select([
+                'id',
+                'user_id',
+                'company_id',
+                'department_id',
+                'type',
+                'start_date',
+                'end_date',
+                'undertime_time',
+                'undertime_minutes',
+                'half_type',
+                'status',
+                'notes',
+                'rejection_note',
+                'approval_stage',
+                'pending_approval',
+                'filed_by',
+                'first_approver_id',
+                'second_approver_id',
+                'rejected_at',
+                'created_at',
+            ])
+            ->with([
+                'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id',
+            ]);
 
         $this->applyFilingApprovalVisibility($actor, $query, $request);
 
         $requestId = $request->query('request_id');
         if ($requestId !== null && $requestId !== '' && ctype_digit((string) $requestId)) {
             $query->where('id', (int) $requestId);
-        } elseif (in_array($status, [LeaveRequest::STATUS_PENDING, LeaveRequest::STATUS_APPROVED, LeaveRequest::STATUS_REJECTED], true)) {
+        } elseif (in_array($status, [LeaveRequest::STATUS_PENDING, LeaveRequest::STATUS_APPROVED, LeaveRequest::STATUS_REJECTED, 'cancelled'], true)) {
             $query->where('status', $status);
         }
 
-        $fromDate = $request->query('from_date');
-        $toDate = $request->query('to_date');
-        if (is_string($fromDate) && $fromDate !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fromDate)) {
-            $query->whereDate('end_date', '>=', $fromDate);
-        }
-        if (is_string($toDate) && $toDate !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $toDate)) {
-            $query->whereDate('start_date', '<=', $toDate);
-        }
+        $this->applyLeaveListFilters($query, $request);
 
         $paginator = $query->orderByDesc('created_at')->paginate($perPage)->withQueryString();
+        $pageLeaves = $paginator->getCollection();
+        $currentApprovals = $this->currentLeaveApprovalRecords($pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all());
 
-        $leaves = $paginator->getCollection()->map(function (LeaveRequest $l) use ($actor) {
-            $currentApprover = $l->approval_stage === HrApprovalStages::PENDING_SECOND
-                ? $l->secondApprover
-                : $l->firstApprover;
+        $leaves = $pageLeaves->map(function (LeaveRequest $l) use ($actor, $currentApprovals) {
+            $currentApproval = $currentApprovals[(int) $l->id] ?? null;
+            $auth = $currentApproval && $l->user
+                ? $this->approvalWorkflowService->authorizePendingRecord(
+                    $actor,
+                    $currentApproval,
+                    $l->user,
+                    OrgApprovalWorkflowService::MODULE_LEAVE,
+                )
+                : ['allowed' => false, 'deny_reason' => $l->status === LeaveRequest::STATUS_PENDING ? 'no_pending_approval_step' : 'request_is_not_pending'];
 
-            return array_merge([
+            return [
                 'id' => $l->id,
+                'request_id' => $l->id,
                 'request_no' => 'LV-'.$l->id,
                 'employee_id' => $l->user_id,
                 'employee_name' => $l->user?->display_name,
-                'employee_profile_image' => $l->user?->profile_image_url,
+                'employee_profile_image' => null,
                 'request_type' => 'leave',
                 'type' => $l->type,
+                'leave_type' => $l->type,
                 'start_date' => $l->start_date->toDateString(),
                 'end_date' => $l->end_date->toDateString(),
+                'leave_dates' => $l->start_date->toDateString() === $l->end_date->toDateString()
+                    ? $l->start_date->toDateString()
+                    : $l->start_date->toDateString().' - '.$l->end_date->toDateString(),
                 'undertime_time' => $l->undertime_time ? substr((string) $l->undertime_time, 0, 5) : null,
                 'undertime_minutes' => $l->undertime_minutes,
                 'undertime_hours' => $l->undertime_minutes !== null ? round(((int) $l->undertime_minutes) / 60, 2) : null,
-                'shift_end_time' => $l->shift_end_time,
-                'actual_clock_out_time' => $l->actual_clock_out_time,
-                'undertime_filing_status' => $l->type === 'undertime' ? 'filed' : null,
                 'half_type' => $l->half_type,
-                'leave_credits_charged' => $l->leave_credits_charged,
-                'leave_unpaid_credit_days' => $l->leave_unpaid_credit_days,
+                'duration' => $this->leaveDurationSummary($l),
                 'status' => $l->status,
                 'notes' => $l->notes,
-                'current_approver' => $currentApprover?->display_name,
+                'rejection_note' => $l->rejection_note,
+                'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
                 'created_at' => $l->created_at->toIso8601String(),
-                'filed_at' => $l->filed_at?->toIso8601String(),
-                'display_status' => $this->leaveApprovalService->deriveDisplayStatusLabel($l),
+                'display_status' => $this->leaveListDisplayStatus($l, $currentApproval),
                 'approval_stage' => $l->approval_stage,
-            ], $this->documentPayload($l), $this->leaveRequesterMeta($l), $this->leaveActorFlags($l, $actor));
+                'actor_can_approve' => (bool) ($auth['allowed'] ?? false),
+                'actor_can_reject' => (bool) ($auth['allowed'] ?? false),
+                'can_approve' => (bool) ($auth['allowed'] ?? false),
+                'can_reject' => (bool) ($auth['allowed'] ?? false),
+                'actor_can_delete' => $this->canDeleteLeaveRequest($actor, $l),
+                'hr_wait_message' => $this->leaveListWaitMessage($l, $currentApproval, (bool) ($auth['allowed'] ?? false)),
+            ];
         });
 
         RequestPerformanceLogger::finish($perf, $request, $leaves->count(), [
             'scope' => 'admin',
             'per_page' => $paginator->perPage(),
             'total' => $paginator->total(),
+            'cache' => $cacheHit ? 'hit' : 'miss',
+            'cache_hit' => $cacheHit,
         ]);
 
-        return response()->json([
+        $payload = [
             'leave_requests' => $leaves->values(),
             'pagination' => [
                 'current_page' => $paginator->currentPage(),
@@ -131,7 +192,88 @@ class LeaveController extends Controller
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
             ],
+        ];
+
+        try {
+            Cache::put($cacheKey, $payload, now()->addSeconds(45));
+        } catch (\Throwable $e) {
+            Log::warning('leave.list.cache_write_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json($payload);
+    }
+
+    public function counts(Request $request): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.leave.counts');
+        $actor = $request->user();
+
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $filters = $this->normalizedLeaveListFilters($request);
+        unset($filters['status'], $filters['page'], $filters['per_page']);
+        $hash = md5(json_encode($filters, JSON_THROW_ON_ERROR));
+        $cacheKey = 'leave:counts:'.LeaveModuleCache::version().':'.$actor->id.':'.$hash;
+        $cacheHit = false;
+
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cacheHit = true;
+                RequestPerformanceLogger::finish($perf, $request, 1, [
+                    'scope' => 'admin',
+                    'cache' => 'hit',
+                    'cache_hit' => true,
+                ]);
+
+                return response()->json($cached);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('leave.counts.cache_read_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        $base = LeaveRequest::query()->select('id', 'user_id', 'status', 'company_id', 'department_id', 'start_date', 'end_date');
+        $this->applyFilingApprovalVisibility($actor, $base, $request);
+        $this->applyLeaveListFilters($base, $request, includeStatus: false);
+
+        $statusCounts = (clone $base)
+            ->select('status', DB::raw('COUNT(*) as aggregate'))
+            ->groupBy('status')
+            ->pluck('aggregate', 'status');
+
+        $payload = [
+            'pending' => (int) ($statusCounts[LeaveRequest::STATUS_PENDING] ?? 0),
+            'approved' => (int) ($statusCounts[LeaveRequest::STATUS_APPROVED] ?? 0),
+            'rejected' => (int) ($statusCounts[LeaveRequest::STATUS_REJECTED] ?? 0),
+            'cancelled' => (int) ($statusCounts['cancelled'] ?? 0),
+            'my_filings' => (int) (clone $base)->where('user_id', (int) $actor->id)->count(),
+            'all_filings' => (int) (clone $base)->count(),
+        ];
+
+        RequestPerformanceLogger::finish($perf, $request, 1, [
+            'scope' => 'admin',
+            'cache' => $cacheHit ? 'hit' : 'miss',
+            'cache_hit' => $cacheHit,
         ]);
+
+        try {
+            Cache::put($cacheKey, $payload, now()->addSeconds(45));
+        } catch (\Throwable $e) {
+            Log::warning('leave.counts.cache_write_failed', [
+                'user_id' => (int) $actor->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json($payload);
     }
 
     /**
@@ -296,6 +438,7 @@ class LeaveController extends Controller
             $actor,
         );
         $leave->refresh();
+        LeaveModuleCache::flush();
 
         return response()->json([
             'message' => 'Leave request created.',
@@ -389,6 +532,107 @@ class LeaveController extends Controller
         return response()->json(['leave_request' => $payload]);
     }
 
+    /**
+     * Lean permission-aware review payload for modal shells and dashboard deep-links.
+     */
+    public function reviewLite(Request $request, int $id): JsonResponse
+    {
+        $perf = RequestPerformanceLogger::start('admin.leave.review_lite');
+        $actor = $request->user();
+        $started = microtime(true);
+
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $cached = ReviewRequestCache::rememberLeaveReviewLite($id, (int) $actor->id, function () use ($actor, $id): array {
+            $leave = LeaveRequest::query()
+                ->select([
+                    'id',
+                    'user_id',
+                    'type',
+                    'start_date',
+                    'end_date',
+                    'undertime_time',
+                    'undertime_minutes',
+                    'half_type',
+                    'status',
+                    'notes',
+                    'rejection_note',
+                    'approval_stage',
+                    'pending_approval',
+                    'filed_at',
+                    'filed_by',
+                    'first_approver_id',
+                    'second_approver_id',
+                    'rejected_at',
+                    'created_at',
+                ])
+                ->with([
+                    'user:id,name,first_name,middle_name,last_name,suffix',
+                    'filedBy:id,name,first_name,middle_name,last_name,suffix',
+                ])
+                ->findOrFail($id);
+
+            $this->ensureLeaveRequestReviewAccessible($actor, $leave);
+
+            $approvalRecords = OrgApprovalRecord::query()
+                ->select([
+                    'id',
+                    'request_id',
+                    'module_type',
+                    'approval_level',
+                    'approval_label',
+                    'approver_role',
+                    'approver_id',
+                    'approver_name',
+                    'eligible_approver_ids',
+                    'approval_status',
+                    'remarks',
+                    'approved_at',
+                    'sequence_order',
+                ])
+                ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+                ->where('request_id', (int) $leave->id)
+                ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+                ->orderBy('sequence_order')
+                ->orderBy('id')
+                ->get();
+
+            $pending = $approvalRecords->firstWhere('approval_status', OrgApprovalRecord::STATUS_PENDING);
+            $auth = $this->leaveReviewLiteActionAuthorization($actor, $leave, $pending);
+
+            return $this->leaveReviewLiteResponse($leave, $approvalRecords, $pending, $auth);
+        });
+
+        $payload = $cached['payload'];
+        $durationMs = round((microtime(true) - $started) * 1000, 2);
+
+        RequestPerformanceLogger::finish($perf, $request, 1, [
+            'scope' => 'admin',
+            'mode' => 'review_lite',
+            'duration_ms' => $durationMs,
+            'cache_hit' => $cached['cache_hit'] ?? false,
+            'query_count' => $cached['query_count'] ?? null,
+            'cache_error' => $cached['cache_error'] ?? null,
+        ]);
+
+        Log::info('admin.leave.review_lite_ok', [
+            'request_id' => $id,
+            'endpoint_response_time_ms' => $durationMs,
+            'query_count' => $cached['query_count'] ?? null,
+            'cache' => ($cached['cache_hit'] ?? false) ? 'hit' : 'miss',
+            'cache_hit' => $cached['cache_hit'] ?? false,
+            'current_user_employee_id' => (int) $actor->id,
+            'current_approver_id' => $payload['current_approver_id'] ?? null,
+            'can_approve' => $payload['can_approve'] ?? false,
+            'can_reject' => $payload['can_reject'] ?? false,
+            'deny_reason' => $payload['deny_reason'] ?? null,
+        ]);
+
+        return response()->json(['leave_request' => $payload]);
+    }
+
     public function show(Request $request, int $id): JsonResponse
     {
         $perf = RequestPerformanceLogger::start('admin.leave.show');
@@ -430,10 +674,10 @@ class LeaveController extends Controller
         ]);
 
         $filters = $this->normalizeBulkApproveFilters($validated['filters']);
-        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+        $count = $this->bulkApprovalQuery->approvableCount($actor, $filters);
 
         return response()->json([
-            'approvable_count' => count($ids),
+            'approvable_count' => $count,
         ]);
     }
 
@@ -446,32 +690,45 @@ class LeaveController extends Controller
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
+        $skipped = 0;
+        $failedItems = [];
+
         if ($parsed['mode'] === 'all_matching') {
             $filters = $this->normalizeBulkApproveFilters($parsed['filters']);
             $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
         } else {
-            $ids = $parsed['ids'];
-            $this->assertBulkApproveIdsPresent($ids);
-            if (count($ids) > 500) {
+            $this->assertBulkApproveIdsPresent($parsed['ids']);
+            if (count($parsed['ids']) > 500) {
                 throw ValidationException::withMessages([
                     'ids' => ['Too many requests selected. Use “select all matching” or approve in smaller batches.'],
                 ]);
             }
+            $resolved = $this->resolveBulkApproveIds($parsed['ids'], function (int $id) use ($actor): bool {
+                $leave = LeaveRequest::query()->with(['user', 'filedBy'])->find($id);
+
+                return $leave !== null && $this->leaveApprovalService->canApprove($actor, $leave);
+            });
+            $ids = $resolved['ids'];
+            $skipped = $resolved['skipped'];
+            $failedItems = $resolved['failed_items'];
         }
 
         if (count($ids) === 0) {
-            return $this->bulkApproveJsonResponse(0, 0, 0, [], 'leave request');
+            return $this->bulkApproveJsonResponse(0, $skipped, 0, $failedItems, 'leave request');
         }
 
         $remarks = $parsed['remarks'];
         $approved = 0;
-        $skipped = 0;
         $failed = 0;
-        $failedItems = [];
+        $leaveBulkExtra = $this->leaveBulkApproveExtraInput(
+            $remarks,
+            $actor,
+            fn (User $user) => $this->hrRoleResolver->isAdminHrAccount($user),
+        );
 
         foreach ($ids as $id) {
             try {
-                $single = $request->duplicate(null, ['notes' => $remarks]);
+                $single = $this->duplicateBulkApproveRequest($request, $remarks, $leaveBulkExtra);
                 $single->setUserResolver(fn () => $actor);
                 $response = $this->approve($single, $id);
                 $status = $response->getStatusCode();
@@ -619,6 +876,16 @@ class LeaveController extends Controller
                 : 'next approver';
 
             ReviewRequestCache::forget('leave', (int) $leave->id);
+            LeaveModuleCache::flush();
+
+            if ($this->wantsLiteLeaveMutationResponse($request)) {
+                return response()->json([
+                    'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
+                    'request_id' => (int) $leave->id,
+                    'status' => $leave->status,
+                    'approval_stage' => $leave->approval_stage,
+                ]);
+            }
 
             return response()->json([
                 'message' => 'Approval recorded. Pending '.$nextLabel.' approval.',
@@ -697,6 +964,16 @@ class LeaveController extends Controller
         }
 
         ReviewRequestCache::forget('leave', (int) $leave->id);
+        LeaveModuleCache::flush();
+
+        if ($this->wantsLiteLeaveMutationResponse($request)) {
+            return response()->json([
+                'message' => 'Leave request approved.',
+                'request_id' => (int) $leave->id,
+                'status' => LeaveRequest::STATUS_APPROVED,
+                'approval_stage' => HrApprovalStages::APPROVED,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Leave request approved.',
@@ -762,6 +1039,16 @@ class LeaveController extends Controller
         });
 
         ReviewRequestCache::forget('leave', (int) $leave->id);
+        LeaveModuleCache::flush();
+
+        if ($this->wantsLiteLeaveMutationResponse($request)) {
+            return response()->json([
+                'message' => 'Leave request rejected.',
+                'request_id' => (int) $leave->id,
+                'status' => LeaveRequest::STATUS_REJECTED,
+                'approval_stage' => HrApprovalStages::REJECTED,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Leave request rejected.',
@@ -787,6 +1074,7 @@ class LeaveController extends Controller
         }
         $leave->update(['notes' => $validated['notes'] ?? null]);
         ReviewRequestCache::forget('leave', (int) $leave->id);
+        LeaveModuleCache::flush();
 
         return response()->json([
             'message' => 'Notes updated.',
@@ -825,6 +1113,7 @@ class LeaveController extends Controller
 
         $leave->delete();
         ReviewRequestCache::forget('leave', (int) $leave->id);
+        LeaveModuleCache::flush();
 
         return response()->json([
             'message' => 'Leave request deleted.',
@@ -1007,9 +1296,150 @@ class LeaveController extends Controller
 
     private function requestPerPage(Request $request): int
     {
-        $perPage = (int) $request->query('per_page', 10);
+        $perPage = (int) $request->query('per_page', 25);
 
-        return in_array($perPage, [10, 25, 50], true) ? $perPage : 10;
+        return in_array($perPage, [10, 25, 50], true) ? $perPage : 25;
+    }
+
+    private function wantsLiteLeaveMutationResponse(Request $request): bool
+    {
+        return str_starts_with($request->path(), 'api/leave-requests/');
+    }
+
+    private function leaveListCacheKey(User $actor, Request $request, int $perPage, int $page): string
+    {
+        $filters = $this->normalizedLeaveListFilters($request);
+        $filters['per_page'] = $perPage;
+        $filters['page'] = $page;
+        $hash = md5(json_encode($filters, JSON_THROW_ON_ERROR));
+        $company = (string) ($filters['company_id'] ?? 'all');
+        $status = (string) ($filters['status'] ?? 'all');
+
+        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':v'.LeaveModuleCache::version();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function normalizedLeaveListFilters(Request $request): array
+    {
+        return array_filter([
+            'status' => $request->query('status'),
+            'employee_id' => $request->query('employee_id') ?? $request->query('user_id'),
+            'company_id' => $request->query('company_id'),
+            'department_id' => $request->query('department_id'),
+            'date_from' => $request->query('date_from') ?? $request->query('from_date'),
+            'date_to' => $request->query('date_to') ?? $request->query('to_date'),
+            'search' => is_string($request->query('search')) ? trim((string) $request->query('search')) : null,
+            'request_id' => $request->query('request_id'),
+        ], static fn ($value): bool => $value !== null && $value !== '');
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<LeaveRequest>  $query
+     */
+    private function applyLeaveListFilters($query, Request $request, bool $includeStatus = false): void
+    {
+        $filters = $this->normalizedLeaveListFilters($request);
+
+        if ($includeStatus && isset($filters['status']) && in_array($filters['status'], [LeaveRequest::STATUS_PENDING, LeaveRequest::STATUS_APPROVED, LeaveRequest::STATUS_REJECTED, 'cancelled'], true)) {
+            $query->where('status', $filters['status']);
+        }
+
+        if (isset($filters['employee_id']) && ctype_digit((string) $filters['employee_id'])) {
+            $query->where('user_id', (int) $filters['employee_id']);
+        }
+
+        if (isset($filters['company_id']) && ctype_digit((string) $filters['company_id'])) {
+            $query->where('company_id', (int) $filters['company_id']);
+        }
+
+        if (isset($filters['department_id']) && ctype_digit((string) $filters['department_id'])) {
+            $query->where('department_id', (int) $filters['department_id']);
+        }
+
+        $from = $filters['date_from'] ?? null;
+        $to = $filters['date_to'] ?? null;
+        if (is_string($from) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
+            $query->where('end_date', '>=', $from);
+        }
+        if (is_string($to) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+            $query->where('start_date', '<=', $to);
+        }
+
+        $search = $filters['search'] ?? null;
+        if (is_string($search) && $search !== '') {
+            $like = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $search).'%';
+            $query->where(function ($scope) use ($like, $search): void {
+                if (ctype_digit($search)) {
+                    $scope->orWhere('id', (int) $search);
+                }
+                $scope->orWhereHas('user', function ($userQuery) use ($like): void {
+                    $userQuery->where('name', 'like', $like)
+                        ->orWhere('first_name', 'like', $like)
+                        ->orWhere('last_name', 'like', $like);
+                });
+            });
+        }
+    }
+
+    /**
+     * @param  list<int>  $requestIds
+     * @return array<int, OrgApprovalRecord>
+     */
+    private function currentLeaveApprovalRecords(array $requestIds): array
+    {
+        if ($requestIds === []) {
+            return [];
+        }
+
+        return OrgApprovalRecord::query()
+            ->select([
+                'id',
+                'request_id',
+                'module_type',
+                'approval_label',
+                'approver_role',
+                'approver_id',
+                'approver_name',
+                'eligible_approver_ids',
+                'approval_status',
+                'sequence_order',
+            ])
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+            ->whereIn('request_id', $requestIds)
+            ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+            ->orderBy('sequence_order')
+            ->orderBy('id')
+            ->get()
+            ->unique('request_id')
+            ->mapWithKeys(fn (OrgApprovalRecord $record): array => [(int) $record->request_id => $record])
+            ->all();
+    }
+
+    private function leaveListDisplayStatus(LeaveRequest $leave, ?OrgApprovalRecord $currentApproval): string
+    {
+        if ($leave->status === LeaveRequest::STATUS_APPROVED) {
+            return 'HR Approved';
+        }
+        if ($leave->status === LeaveRequest::STATUS_REJECTED || $leave->rejected_at !== null) {
+            return 'Rejected';
+        }
+        if ($currentApproval) {
+            return 'Pending '.rtrim(str_ireplace(' approval', '', $this->approvalRecordStageLabel($currentApproval))).' Approval';
+        }
+
+        return 'Pending';
+    }
+
+    private function leaveListWaitMessage(LeaveRequest $leave, ?OrgApprovalRecord $currentApproval, bool $canAct): ?string
+    {
+        if ($leave->status !== LeaveRequest::STATUS_PENDING || $canAct || ! $currentApproval) {
+            return null;
+        }
+
+        return 'Waiting for '.$this->approvalRecordStageLabel($currentApproval).'.';
     }
 
     /**
@@ -1067,12 +1497,6 @@ class LeaveController extends Controller
     {
         $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
         if ($scopedEmployeeIds === null) {
-            Log::info('filing_visibility: leave admin list unrestricted for Admin HR', [
-                'current_user_id' => (int) $actor->id,
-                'current_employee_id' => (int) $actor->id,
-                'role' => $actor->role,
-            ]);
-
             return;
         }
 
@@ -1088,19 +1512,6 @@ class LeaveController extends Controller
             }
         });
 
-        Log::info('filing_visibility: leave admin list scoped for approvals', [
-            'current_user_id' => $actorId,
-            'current_employee_id' => $actorId,
-            'role' => $this->hrRoleResolver->resolve($actor)->value,
-            'permissions' => $actor->permissions ?? null,
-            'can_view_my_filings' => true,
-            'can_view_assigned_approvals' => true,
-            'can_view_team_filings' => true,
-            'approval_scoped_employee_ids' => $scopedEmployeeIds,
-            'assigned_approval_request_ids' => $assignedRequestIds,
-            'returned_all_filings_count' => null,
-            'request_status_filter' => $request->query('status'),
-        ]);
     }
 
     /**
@@ -1150,6 +1561,154 @@ class LeaveController extends Controller
         $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
 
         return is_array($scopedEmployeeIds) && in_array((int) $leave->user_id, $scopedEmployeeIds, true);
+    }
+
+    /**
+     * @return array{can_approve: bool, can_reject: bool, deny_reason: ?string}
+     */
+    private function leaveReviewLiteActionAuthorization(User $actor, LeaveRequest $leave, ?OrgApprovalRecord $pending): array
+    {
+        if (! $leave->pending_approval || $leave->status !== LeaveRequest::STATUS_PENDING || $leave->rejected_at !== null) {
+            return [
+                'can_approve' => false,
+                'can_reject' => false,
+                'deny_reason' => 'request_is_not_pending',
+            ];
+        }
+
+        if (! $leave->user) {
+            return [
+                'can_approve' => false,
+                'can_reject' => false,
+                'deny_reason' => 'request_employee_not_loaded',
+            ];
+        }
+
+        if (! $pending) {
+            return [
+                'can_approve' => false,
+                'can_reject' => false,
+                'deny_reason' => 'no_pending_approval_step',
+            ];
+        }
+
+        $auth = $this->approvalWorkflowService->authorizePendingRecord(
+            $actor,
+            $pending,
+            $leave->user,
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+        );
+
+        return [
+            'can_approve' => (bool) $auth['allowed'],
+            'can_reject' => (bool) $auth['allowed'],
+            'deny_reason' => $auth['deny_reason'],
+        ];
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, OrgApprovalRecord>  $approvalRecords
+     * @param  array{can_approve: bool, can_reject: bool, deny_reason: ?string}  $auth
+     * @return array<string, mixed>
+     */
+    private function leaveReviewLiteResponse(LeaveRequest $leave, $approvalRecords, ?OrgApprovalRecord $pending, array $auth): array
+    {
+        $employeeName = $leave->user?->display_name;
+        $currentApproverName = $pending
+            ? ($pending->approver?->display_name ?? $pending->approver_name ?? $this->approvalRecordRoleLabel($pending))
+            : null;
+
+        return [
+            'request_id' => (int) $leave->id,
+            'employee_name' => $employeeName,
+            'employee_initials' => $this->initialsForName($employeeName),
+            'leave_type' => $leave->type,
+            'start_date' => $leave->start_date?->toDateString(),
+            'end_date' => $leave->end_date?->toDateString(),
+            'duration' => $this->leaveDurationSummary($leave),
+            'date_filed' => ($leave->filed_at ?? $leave->created_at)?->toIso8601String(),
+            'status' => $leave->status,
+            'current_stage' => $pending ? $this->approvalRecordStageLabel($pending) : $leave->approval_stage,
+            'current_approver_id' => $pending?->approver_id,
+            'current_approver_name' => $currentApproverName,
+            'requester_id' => $leave->user_id,
+            'remarks' => $leave->notes,
+            'approval_chain' => $approvalRecords->map(fn (OrgApprovalRecord $record): array => [
+                'id' => (int) $record->id,
+                'role_label' => $this->approvalRecordRoleLabel($record),
+                'stage' => $this->approvalRecordStageLabel($record),
+                'status' => $record->approval_status,
+                'approver_id' => $record->approver_id,
+                'approver_name' => $record->approver?->display_name ?? $record->approver_name,
+                'remarks' => $record->remarks,
+                'approved_at' => $record->approved_at?->toIso8601String(),
+                'sequence_order' => (int) $record->sequence_order,
+            ])->values()->all(),
+            'can_approve' => $auth['can_approve'],
+            'can_reject' => $auth['can_reject'],
+            'deny_reason' => $auth['deny_reason'],
+        ];
+    }
+
+    private function approvalRecordStageLabel(OrgApprovalRecord $record): string
+    {
+        $label = trim((string) ($record->approval_label ?? ''));
+        if ($label !== '') {
+            return $label;
+        }
+
+        if ($record->approver_role === \App\Enums\HrRole::AdminHr->value) {
+            return 'Admin HR final approval';
+        }
+
+        return $this->approvalRecordRoleLabel($record).' approval';
+    }
+
+    private function approvalRecordRoleLabel(OrgApprovalRecord $record): string
+    {
+        $role = \App\Enums\HrRole::tryFrom((string) $record->approver_role);
+
+        return $role?->badgeLabel() ?? (string) ($record->approver_role ?: 'Approver');
+    }
+
+    private function initialsForName(?string $name): string
+    {
+        $parts = preg_split('/\s+/', trim((string) $name), -1, PREG_SPLIT_NO_EMPTY);
+        if (! is_array($parts) || $parts === []) {
+            return '?';
+        }
+        if (count($parts) === 1) {
+            return strtoupper(substr($parts[0], 0, 2));
+        }
+
+        return strtoupper(substr($parts[0], 0, 1).substr($parts[count($parts) - 1], 0, 1));
+    }
+
+    private function leaveDurationSummary(LeaveRequest $leave): string
+    {
+        if (! $leave->start_date || ! $leave->end_date) {
+            return '—';
+        }
+
+        if ($leave->type === 'half_day') {
+            $label = $leave->half_type ? ' ('.strtoupper((string) $leave->half_type).')' : '';
+
+            return '0.5 day'.$label;
+        }
+
+        if ($leave->type === 'undertime') {
+            if ($leave->undertime_minutes !== null) {
+                $minutes = (int) $leave->undertime_minutes;
+
+                return $minutes.' min ('.round($minutes / 60, 2).' hours)';
+            }
+
+            return '—';
+        }
+
+        $days = $leave->start_date->diffInDays($leave->end_date) + 1;
+
+        return $days.' day'.($days === 1 ? '' : 's');
     }
 
     /**
@@ -1267,6 +1826,7 @@ class LeaveController extends Controller
         $leave->save();
         $leave->refresh();
         ReviewRequestCache::forget('leave', (int) $leave->id);
+        LeaveModuleCache::flush();
 
         return response()->json([
             'message' => 'Document uploaded.',

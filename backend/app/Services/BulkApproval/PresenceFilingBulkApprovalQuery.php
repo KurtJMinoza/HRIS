@@ -2,10 +2,13 @@
 
 namespace App\Services\BulkApproval;
 
+use App\Enums\HrRole;
 use App\Models\AttendanceCorrection;
+use App\Models\OrgApprovalRecord;
 use App\Models\User;
 use App\Services\AttendanceCorrectionApprovalService;
 use App\Services\DataScopeService;
+use App\Services\OrgApprovalWorkflowService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 
@@ -14,6 +17,7 @@ class PresenceFilingBulkApprovalQuery
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly AttendanceCorrectionApprovalService $approvalService,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
     ) {}
 
     /**
@@ -107,6 +111,10 @@ class PresenceFilingBulkApprovalQuery
      */
     public function approvableIds(User $actor, array $filters, int $max = 2000): array
     {
+        if ((string) ($actor->hr_role ?? '') === HrRole::AdminHr->value) {
+            return $this->fastAdminHrApprovableIds($actor, $filters, $max);
+        }
+
         $query = $this->baseQuery($actor, $filters);
         $query->where('pending_approval', true)
             ->where('approved', false)
@@ -129,7 +137,7 @@ class PresenceFilingBulkApprovalQuery
                 if (count($ids) >= $max) {
                     return false;
                 }
-                if ($this->approvalService->canApprove($actor, $correction)) {
+                if ($this->canBulkApprove($actor, $correction)) {
                     $ids[] = (int) $correction->id;
                 }
             }
@@ -138,5 +146,113 @@ class PresenceFilingBulkApprovalQuery
         });
 
         return $ids;
+    }
+
+    public function approvableCount(User $actor, array $filters): int
+    {
+        if ((string) ($actor->hr_role ?? '') === HrRole::AdminHr->value) {
+            return (int) $this->fastAdminHrApprovableQuery($actor, $filters)
+                ->count('attendance_corrections.id');
+        }
+
+        return count($this->approvableIds($actor, $filters));
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return int[]
+     */
+    private function fastAdminHrApprovableIds(User $actor, array $filters, int $max): array
+    {
+        return $this->fastAdminHrApprovableQuery($actor, $filters)
+            ->reorder()
+            ->orderBy('attendance_corrections.id')
+            ->limit($max)
+            ->pluck('attendance_corrections.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /**
+     * Fast SQL-only path for Admin HR final approvals.
+     *
+     * @param  array<string, mixed>  $filters
+     */
+    private function fastAdminHrApprovableQuery(User $actor, array $filters): Builder
+    {
+        $query = $this->baseQuery($actor, array_merge($filters, ['status' => 'pending']));
+        $query->setEagerLoads([]);
+        $query->reorder();
+        $query
+            ->select('attendance_corrections.id')
+            ->join('org_approval_records as current_approval', function ($join): void {
+                $join->on('current_approval.request_id', '=', 'attendance_corrections.id')
+                    ->where('current_approval.module_type', '=', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                    ->where('current_approval.approval_status', '=', OrgApprovalRecord::STATUS_PENDING)
+                    ->where('current_approval.approver_role', '=', HrRole::AdminHr->value);
+            })
+            ->where('attendance_corrections.pending_approval', true)
+            ->where('attendance_corrections.approved', false)
+            ->whereNull('attendance_corrections.rejected_at')
+            ->where(function ($q): void {
+                $q->where(function ($missingIn): void {
+                    $missingIn->where('attendance_corrections.issue_kind', 'missing_in')
+                        ->whereNotNull('attendance_corrections.time_in');
+                })->orWhere(function ($missingOut): void {
+                    $missingOut->where('attendance_corrections.issue_kind', 'missing_out')
+                        ->whereNotNull('attendance_corrections.time_out');
+                })->orWhere(function ($both): void {
+                    $both->where('attendance_corrections.issue_kind', 'both')
+                        ->whereNotNull('attendance_corrections.time_in')
+                        ->whereNotNull('attendance_corrections.time_out')
+                        ->whereColumn('attendance_corrections.time_out', '>', 'attendance_corrections.time_in');
+                })->orWhere(function ($legacy): void {
+                    $legacy->whereNull('attendance_corrections.issue_kind')
+                        ->where(function ($legacyCase): void {
+                            $legacyCase->where(function ($missingIn): void {
+                                $missingIn->whereNull('attendance_corrections.time_in')
+                                    ->whereNotNull('attendance_corrections.time_out')
+                                    ->whereRaw('0 = 1');
+                            })->orWhere(function ($missingOut): void {
+                                $missingOut->whereNull('attendance_corrections.time_out')
+                                    ->whereNotNull('attendance_corrections.time_in')
+                                    ->whereRaw('0 = 1');
+                            })->orWhere(function ($both): void {
+                                $both->whereNotNull('attendance_corrections.time_in')
+                                    ->whereNotNull('attendance_corrections.time_out')
+                                    ->whereColumn('attendance_corrections.time_out', '>', 'attendance_corrections.time_in');
+                            });
+                        });
+                });
+            })
+            ->distinct();
+
+        return $query;
+    }
+
+    public function canBulkApprove(User $actor, AttendanceCorrection $correction): bool
+    {
+        if (! $this->approvalService->canApprove($actor, $correction)) {
+            return false;
+        }
+
+        $employee = $correction->user;
+        if (! $employee) {
+            return false;
+        }
+
+        $requestor = $correction->relationLoaded('filedBy') ? $correction->filedBy : null;
+        $pending = $this->approvalWorkflowService->currentPendingRecord(
+            $correction,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            $employee,
+            $requestor,
+        );
+
+        if ($pending?->approver_role !== HrRole::AdminHr->value) {
+            return true;
+        }
+
+        return $correction->hasRequiredTimesForFinalApproval();
     }
 }

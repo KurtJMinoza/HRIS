@@ -1308,7 +1308,9 @@ function normalizeDashboardData(raw) {
     company_distribution: Array.isArray(raw.company_distribution) ? raw.company_distribution : [],
     today_logs: Array.isArray(raw.today_logs) ? raw.today_logs : [],
     half_day_summary: raw.half_day_summary ?? { am_today: 0, pm_today: 0, total_today: 0, total_workforce: 0 },
-    today_leaves: Array.isArray(raw.today_leaves) ? raw.today_leaves : [],
+    today_leaves: Array.isArray(raw.today_leaves)
+      ? raw.today_leaves.filter((row) => String(row?.status || '').toLowerCase() === 'pending')
+      : [],
     today_birthdays: Array.isArray(raw.today_birthdays) ? raw.today_birthdays : [],
     current_month_birthdays: Array.isArray(raw.current_month_birthdays) ? raw.current_month_birthdays : [],
     upcoming_30_days: Array.isArray(raw.upcoming_30_days) ? raw.upcoming_30_days : (Array.isArray(raw.upcoming_birthdays) ? raw.upcoming_birthdays : []),
@@ -1322,12 +1324,32 @@ function normalizeDashboardData(raw) {
     expiring_contracts: Array.isArray(raw.expiring_contracts) ? raw.expiring_contracts : [],
     employment_settings: raw.employment_settings ?? null,
     pending_attendance_corrections: Number(raw.pending_attendance_corrections ?? 0) || 0,
-    pending_attendance_correction_preview: raw.pending_attendance_correction_preview ?? null,
-    pending_attendance_correction_previews: Array.isArray(raw.pending_attendance_correction_previews) ? raw.pending_attendance_correction_previews : [],
-    pending_requests: Array.isArray(raw.pending_requests) ? raw.pending_requests : [],
+    pending_overtime_request:
+      String(raw.pending_overtime_request?.status || '').toLowerCase() === 'pending'
+        ? raw.pending_overtime_request
+        : null,
+    pending_attendance_correction_preview:
+      isPendingAttendanceCorrection(raw.pending_attendance_correction_preview)
+        ? raw.pending_attendance_correction_preview
+        : null,
+    pending_attendance_correction_previews: Array.isArray(raw.pending_attendance_correction_previews)
+      ? raw.pending_attendance_correction_previews.filter(isPendingAttendanceCorrection)
+      : [],
+    pending_requests: Array.isArray(raw.pending_requests)
+      ? raw.pending_requests.filter(isPendingAttendanceCorrection)
+      : [],
     pending_counts: raw.pending_counts ?? { leave: 0, overtime: 0, attendance_correction: 0, total: 0 },
     payroll_summary: raw.payroll_summary ?? { pending_count: 0, finalized_count: 0, failed_count: 0 },
   }
+}
+
+function isPendingAttendanceCorrection(row) {
+  if (!row || typeof row !== 'object') return false
+  const status = String(row.status || '').toLowerCase()
+  if (status && status !== 'pending') return false
+  if (row.approved === true || row.rejected_at) return false
+  if (row.pending_approval === false) return false
+  return true
 }
 
 /**
@@ -4111,12 +4133,18 @@ export async function getLeaveRequests(filters) {
     if (filters.status) params.set('status', String(filters.status))
     if (filters.from_date) params.set('from_date', String(filters.from_date))
     if (filters.to_date) params.set('to_date', String(filters.to_date))
+    if (filters.date_from) params.set('date_from', String(filters.date_from))
+    if (filters.date_to) params.set('date_to', String(filters.date_to))
+    if (filters.employee_id) params.set('employee_id', String(filters.employee_id))
+    if (filters.company_id) params.set('company_id', String(filters.company_id))
+    if (filters.department_id) params.set('department_id', String(filters.department_id))
+    if (filters.search) params.set('search', String(filters.search))
     if (filters.page) params.set('page', String(filters.page))
     if (filters.per_page) params.set('per_page', String(filters.per_page))
   }
   const qs = params.toString()
   const url = qs ? `/admin/leave?${qs}` : '/admin/leave'
-  const res = await authenticatedFetch(url)
+  const res = await authenticatedFetch(url, filters?.signal ? { signal: filters.signal } : {})
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load leave requests')
   return data
@@ -4141,6 +4169,8 @@ export async function fetchLeaveRequestReview(requestId, options = {}) {
   const fetchOpts = options.signal ? { signal: options.signal } : {}
   const id = encodeURIComponent(raw)
   const paths = [
+    `/leave-requests/${id}/review-lite`,
+    `/admin/leave/${id}/review-lite`,
     `/leave-requests/${id}/review`,
     `/admin/leave/${id}/review`,
     `/admin/leave/${id}`,
@@ -4241,7 +4271,7 @@ export async function approveLeaveRequest(id, notes, opts = {}) {
   if (opts.forceInsufficientCredits) body.force_insufficient_credits = true
   if (opts.bypassRestDays) body.bypass_rest_days = true
   if (opts.restDayBypassReason) body.rest_day_bypass_reason = opts.restDayBypassReason
-  const res = await authenticatedFetch(`/admin/leave/${id}/approve`, {
+  const res = await authenticatedFetch(`/leave-requests/${id}/approve`, {
     method: 'POST',
     body: JSON.stringify(body),
   })
@@ -4282,7 +4312,7 @@ export async function bulkApproveLeaveRequests(payloadOrIds, remarks = '') {
 }
 
 export async function rejectLeaveRequest(id, reason) {
-  const res = await authenticatedFetch(`/admin/leave/${id}/reject`, {
+  const res = await authenticatedFetch(`/leave-requests/${id}/reject`, {
     method: 'POST',
     body: JSON.stringify({ reason: reason ?? '' }),
   })
@@ -5444,7 +5474,7 @@ export async function getMyPresenceFilings(params = {}) {
   if (params.page) q.set('page', String(params.page))
   if (params.per_page) q.set('per_page', String(params.per_page))
   const path = `/employee/presence-filings${q.toString() ? `?${q}` : ''}`
-  const res = await authenticatedFetch(path)
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : undefined)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load correction requests')
   return data
@@ -5488,15 +5518,17 @@ export async function getAdminPresenceFilings(params = {}) {
   if (params.request_id != null && params.request_id !== '') q.set('request_id', String(params.request_id))
   if (params.page) q.set('page', String(params.page))
   if (params.per_page) q.set('per_page', String(params.per_page))
+  if (params.lite != null) q.set('lite', params.lite ? '1' : '0')
+  if (params.skip_summary != null) q.set('skip_summary', params.skip_summary ? '1' : '0')
   const path = `/admin/presence-filings${q.toString() ? `?${q}` : ''}`
-  const res = await authenticatedFetch(path)
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : undefined)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load presence filings')
   return data
 }
 
 export async function getAdminPresenceFilingDetail(id) {
-  const res = await authenticatedFetch(`/attendance-corrections/${encodeURIComponent(String(id))}/review`)
+  const res = await authenticatedFetch(`/attendance-corrections/${encodeURIComponent(String(id))}/review-lite`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load correction request')
   return data
@@ -5518,7 +5550,7 @@ export async function getAdminPresenceFilingAttendanceDetail(params = {}) {
  * @param {{ notes?: string }} payload
  */
 export async function approvePresenceFiling(id, payload = {}) {
-  const res = await authenticatedFetch(`/admin/presence-filings/${id}/approve`, {
+  const res = await authenticatedFetch(`/attendance-corrections/${id}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -5530,11 +5562,12 @@ export async function approvePresenceFiling(id, payload = {}) {
   return data
 }
 
-export async function bulkApprovePresenceFilingsPreview(filters = {}) {
+export async function bulkApprovePresenceFilingsPreview(filters = {}, opts = {}) {
   const res = await authenticatedFetch('/admin/presence-filings/bulk-approve-preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filters }),
+    ...(opts.signal ? { signal: opts.signal } : {}),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to count approvable attendance corrections')
@@ -5561,8 +5594,19 @@ export async function bulkApprovePresenceFilings(payloadOrIds, remarks = '') {
   return data
 }
 
+export async function bulkRejectPresenceFilings(ids = [], remarks = '') {
+  const res = await authenticatedFetch('/attendance-corrections/bulk-reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: ids.map(Number), remarks: String(remarks || '').trim() }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to reject selected attendance corrections')
+  return data
+}
+
 export async function rejectPresenceFiling(id, rejectionNote) {
-  const res = await authenticatedFetch(`/admin/presence-filings/${id}/reject`, {
+  const res = await authenticatedFetch(`/attendance-corrections/${id}/reject`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rejection_note: String(rejectionNote || '') }),
@@ -5791,15 +5835,20 @@ export async function getAdminOvertime(params = {}) {
   const query = new URLSearchParams()
   if (params.from_date) query.set('from_date', params.from_date)
   if (params.to_date) query.set('to_date', params.to_date)
+  if (params.date_from) query.set('date_from', params.date_from)
+  if (params.date_to) query.set('date_to', params.date_to)
   if (params.department) query.set('department', params.department)
   if (params.employee_id) query.set('employee_id', String(params.employee_id))
+  if (params.company_id) query.set('company_id', String(params.company_id))
+  if (params.department_id) query.set('department_id', String(params.department_id))
   if (params.status) query.set('status', params.status)
   if (params.ot_type) query.set('ot_type', params.ot_type)
+  if (params.search) query.set('search', params.search)
   if (params.page) query.set('page', String(params.page))
   if (params.per_page) query.set('per_page', String(params.per_page))
 
   const path = `/admin/overtime${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : {})
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load overtime records')
   return data
@@ -5809,8 +5858,11 @@ export async function getAdminOvertime(params = {}) {
  * Get a single overtime record with adjustment history.
  * @param {number} id
  */
-export async function getAdminOvertimeDetail(id) {
-  const res = await authenticatedFetch(`/overtime-requests/${encodeURIComponent(String(id))}/review`)
+export async function getAdminOvertimeDetail(id, options = {}) {
+  const res = await authenticatedFetch(
+    `/overtime-requests/${encodeURIComponent(String(id))}/review-lite`,
+    options.signal ? { signal: options.signal } : undefined,
+  )
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load overtime details')
   return data
@@ -5823,11 +5875,11 @@ export async function getAdminOvertimeDetail(id) {
  * @param {string} [remarks]
  */
 export async function updateAdminOvertimeStatus(id, status, remarks) {
-  const body = { status }
+  const body = {}
   if (remarks != null && String(remarks).trim() !== '') body.remarks = String(remarks).trim()
-
-  const res = await authenticatedFetch(`/admin/overtime/${id}/status`, {
-    method: 'PATCH',
+  const action = status === 'rejected' ? 'reject' : 'approve'
+  const res = await authenticatedFetch(`/overtime-requests/${id}/${action}`, {
+    method: 'POST',
     body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))

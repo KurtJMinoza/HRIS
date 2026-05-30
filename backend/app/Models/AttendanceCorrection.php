@@ -98,4 +98,46 @@ class AttendanceCorrection extends Model
     {
         return $this->hasMany(AttendanceCorrectionApproval::class, 'attendance_correction_id')->orderBy('acted_at')->orderBy('id');
     }
+
+    public function resolvedIssueKind(): string
+    {
+        $stored = is_string($this->issue_kind) ? trim($this->issue_kind) : '';
+        if (in_array($stored, ['missing_in', 'missing_out', 'both'], true)) {
+            return $stored;
+        }
+
+        $hasIn = $this->time_in !== null;
+        $hasOut = $this->time_out !== null;
+        if (! $hasIn && ! $hasOut) {
+            return 'both';
+        }
+        if (! $hasIn) {
+            return 'missing_in';
+        }
+        if (! $hasOut) {
+            return 'missing_out';
+        }
+
+        return 'both';
+    }
+
+    public function hasRequiredTimesForFinalApproval(): bool
+    {
+        $issueKind = $this->resolvedIssueKind();
+
+        if ($issueKind === 'missing_in' && $this->time_in === null) {
+            return false;
+        }
+        if ($issueKind === 'missing_out' && $this->time_out === null) {
+            return false;
+        }
+        if ($issueKind === 'both' && ($this->time_in === null || $this->time_out === null)) {
+            return false;
+        }
+        if ($this->time_in !== null && $this->time_out !== null && $this->time_out->lessThanOrEqualTo($this->time_in)) {
+            return false;
+        }
+
+        return true;
+    }
 }

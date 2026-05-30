@@ -219,17 +219,25 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:attendance.corrections.approve')->group(function () {
             Route::get('/admin/presence-filings', [PresenceFilingController::class, 'adminIndex']);
             Route::get('/attendance-corrections', [PresenceFilingController::class, 'adminIndex']);
+            Route::get('/admin/presence-filings/counts', [PresenceFilingController::class, 'counts']);
+            Route::get('/attendance-corrections/counts', [PresenceFilingController::class, 'counts']);
             Route::get('/admin/presence-filings/attendance-detail', [PresenceFilingController::class, 'adminAttendanceDetail']);
             Route::get('/admin/presence-filings/{id}/review', [PresenceFilingController::class, 'adminReview'])->whereNumber('id');
+            Route::get('/admin/presence-filings/{id}/review-lite', [PresenceFilingController::class, 'adminReviewLite'])->whereNumber('id');
             Route::get('/admin/presence-filings/{id}', [PresenceFilingController::class, 'adminShow'])->whereNumber('id');
             Route::get('/attendance-corrections/{id}/review', [PresenceFilingController::class, 'adminReview'])->whereNumber('id');
+            Route::get('/attendance-corrections/{id}/review-lite', [PresenceFilingController::class, 'adminReviewLite'])->whereNumber('id');
             Route::get('/attendance-corrections/{id}', [PresenceFilingController::class, 'adminShow'])->whereNumber('id');
             Route::post('/admin/presence-filings', [PresenceFilingController::class, 'adminStore']);
             Route::post('/admin/presence-filings/bulk-approve-preview', [PresenceFilingController::class, 'bulkApprovePreview']);
             Route::post('/admin/presence-filings/bulk-approve', [PresenceFilingController::class, 'bulkApprove']);
             Route::post('/attendance-corrections/bulk-approve', [PresenceFilingController::class, 'bulkApprove']);
+            Route::post('/attendance-corrections/bulk-reject', [PresenceFilingController::class, 'bulkReject']);
+            Route::post('/attendance-corrections/bulk-approve-filtered', [PresenceFilingController::class, 'bulkApproveFiltered']);
             Route::post('/admin/presence-filings/{id}/approve', [PresenceFilingController::class, 'approve']);
             Route::post('/admin/presence-filings/{id}/reject', [PresenceFilingController::class, 'reject']);
+            Route::post('/attendance-corrections/{id}/approve', [PresenceFilingController::class, 'approve'])->whereNumber('id');
+            Route::post('/attendance-corrections/{id}/reject', [PresenceFilingController::class, 'reject'])->whereNumber('id');
             Route::post('/admin/presence-filings/{id}/note', [PresenceFilingController::class, 'addHrNote']);
             Route::delete('/admin/presence-filings/{id}', [PresenceFilingController::class, 'destroy']);
         });
@@ -376,9 +384,13 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
         Route::middleware('permission:leave.view')->get('/admin/leave', [LeaveController::class, 'index']);
+        Route::middleware('permission:leave.view')->get('/admin/leave/counts', [LeaveController::class, 'counts']);
         Route::middleware('permission:leave.view')->get('/admin/leave/{id}/review', [LeaveController::class, 'review'])->whereNumber('id');
+        Route::middleware('permission:leave.view')->get('/admin/leave/{id}/review-lite', [LeaveController::class, 'reviewLite'])->whereNumber('id');
         Route::middleware('permission:leave.view')->get('/admin/leave/{id}', [LeaveController::class, 'show'])->whereNumber('id');
         Route::middleware('permission:leave.view')->get('/leave-requests', [LeaveController::class, 'index']);
+        Route::middleware('permission:leave.view')->get('/leave-requests/counts', [LeaveController::class, 'counts']);
+        Route::middleware('permission:leave.view')->get('/leave-requests/{id}/review-lite', [LeaveController::class, 'reviewLite'])->whereNumber('id');
         Route::middleware('permission:leave.view')->get('/leave-requests/{id}/review', [LeaveController::class, 'review'])->whereNumber('id');
         Route::middleware('permission:leave.view')->get('/leave-requests/{id}', [LeaveController::class, 'show'])->whereNumber('id');
         Route::middleware('permission:leave.approve')->get('/admin/leave/validate-range', [LeaveController::class, 'validateLeaveDateRange']);
@@ -389,6 +401,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/leave-requests/bulk-approve', [LeaveController::class, 'bulkApprove']);
             Route::post('/admin/leave/{id}/approve', [LeaveController::class, 'approve']);
             Route::post('/admin/leave/{id}/reject', [LeaveController::class, 'reject']);
+            Route::post('/leave-requests/{id}/approve', [LeaveController::class, 'approve'])->whereNumber('id');
+            Route::post('/leave-requests/{id}/reject', [LeaveController::class, 'reject'])->whereNumber('id');
             Route::post('/admin/leave/{id}/document', [LeaveController::class, 'uploadDocument']);
         });
         Route::middleware('permission:leave.view')->delete('/admin/leave/{id}', [LeaveController::class, 'destroy']);
@@ -396,9 +410,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:overtime.view')->group(function () {
             Route::get('/admin/overtime', [OvertimeController::class, 'index']);
+            Route::get('/admin/overtime/counts', [OvertimeController::class, 'counts']);
             Route::get('/admin/overtime/{id}/review', [OvertimeController::class, 'review'])->whereNumber('id');
+            Route::get('/admin/overtime/{id}/review-lite', [OvertimeController::class, 'reviewLite'])->whereNumber('id');
             Route::get('/admin/overtime/{id}', [OvertimeController::class, 'show']);
             Route::get('/overtime-requests', [OvertimeController::class, 'index']);
+            Route::get('/overtime-requests/counts', [OvertimeController::class, 'counts']);
+            Route::get('/overtime-requests/{id}/review-lite', [OvertimeController::class, 'reviewLite'])->whereNumber('id');
             Route::get('/overtime-requests/{id}/review', [OvertimeController::class, 'review'])->whereNumber('id');
             Route::get('/overtime-requests/{id}', [OvertimeController::class, 'show'])->whereNumber('id');
         });
@@ -406,6 +424,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:overtime.approve')->post('/admin/overtime/bulk-approve-preview', [OvertimeController::class, 'bulkApprovePreview']);
         Route::middleware('permission:overtime.approve')->post('/admin/overtime/bulk-approve', [OvertimeController::class, 'bulkApprove']);
         Route::middleware('permission:overtime.approve')->post('/overtime-requests/bulk-approve', [OvertimeController::class, 'bulkApprove']);
+        Route::middleware('permission:overtime.approve')->post('/overtime-requests/{id}/approve', [OvertimeController::class, 'approve'])->whereNumber('id');
+        Route::middleware('permission:overtime.approve')->post('/overtime-requests/{id}/reject', [OvertimeController::class, 'reject'])->whereNumber('id');
         Route::middleware('permission:overtime.approve')->patch('/admin/overtime/{id}/status', [OvertimeController::class, 'updateStatus']);
         Route::middleware('permission:overtime.edit_hours')->patch('/admin/overtime/{id}/hours', [OvertimeController::class, 'updateHours']);
         Route::middleware('permission:overtime.view')->delete('/admin/overtime/{id}', [OvertimeController::class, 'destroy']);

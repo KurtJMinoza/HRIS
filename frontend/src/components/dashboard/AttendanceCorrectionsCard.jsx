@@ -14,10 +14,9 @@ export function AttendanceCorrectionsCard({
   onViewAll,
   onReviewRequest,
 }) {
-  const hasPending = Number(pendingCount) > 0
-  const pendingRequests = hasPending
-    ? (Array.isArray(requests) && requests.length > 0 ? requests : [request].filter(Boolean))
-    : []
+  const pendingRequests = (Array.isArray(requests) && requests.length > 0 ? requests : [request].filter(Boolean))
+    .filter(isPendingCorrection)
+  const hasPending = Number(pendingCount) > 0 && pendingRequests.length > 0
 
   return (
     <Card
@@ -101,6 +100,15 @@ export function AttendanceCorrectionsCard({
       </CardContent>
     </Card>
   )
+}
+
+function isPendingCorrection(row) {
+  if (!row || typeof row !== 'object') return false
+  const status = String(row.status || '').toLowerCase()
+  if (status && status !== 'pending') return false
+  if (row.approved === true || row.rejected_at) return false
+  if (row.pending_approval === false) return false
+  return true
 }
 
 function PendingCorrectionItem({ request, onReviewRequest }) {

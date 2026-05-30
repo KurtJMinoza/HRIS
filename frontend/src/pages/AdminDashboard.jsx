@@ -307,6 +307,15 @@ function formatDate(value) {
   }
 }
 
+function isPendingDashboardRequest(row) {
+  if (!row || typeof row !== 'object') return false
+  const status = String(row.status || '').toLowerCase()
+  if (status && status !== 'pending') return false
+  if (row.approved === true || row.rejected_at) return false
+  if (row.pending_approval === false) return false
+  return true
+}
+
 function formatDaysLabel(label) {
   if (!label) return EMPTY_PLACEHOLDER
   const s = String(label)
@@ -588,11 +597,12 @@ export default function AdminDashboard() {
   const hrBase = useHrBasePath()
 
   const attendanceCorrectionsHref = useCallback((opts = {}) => {
-    const q = new URLSearchParams({ tab: 'corrections' })
+    const q = new URLSearchParams()
     if (opts.status) q.set('status', String(opts.status))
     const rid = opts.request_id ?? opts.requestId
-    if (rid != null && rid !== '') q.set('reviewRequestId', String(rid))
-    return `${hrPanelPath(hrBase, 'attendance')}?${q}`
+    if (rid != null && rid !== '') q.set('review_id', String(rid))
+    const qs = q.toString()
+    return `${hrPanelPath(hrBase, 'attendance-corrections')}${qs ? `?${qs}` : ''}`
   }, [hrBase])
 
   const dashboardQuery = useQuery({
@@ -629,8 +639,13 @@ export default function AdminDashboard() {
   }, [queryClient])
 
   const loading = authLoading || dashboardQuery.isLoading
-  const overtimePendingCount = Number(data?.pending_counts?.overtime ?? 0) || 0
-  const pendingOvertimeRequest = data?.pending_overtime_request ?? null
+  const pendingOvertimeRequest =
+    String(data?.pending_overtime_request?.status || '').toLowerCase() === 'pending'
+      ? data.pending_overtime_request
+      : null
+  const overtimePendingCount = pendingOvertimeRequest
+    ? Number(data?.pending_counts?.overtime ?? 0) || 1
+    : 0
 
   const fetchDashboard = useCallback(async () => {
     const result = await dashboardQuery.refetch()
@@ -959,7 +974,9 @@ export default function AdminDashboard() {
     0
   )
   const halfDaySummary = data?.half_day_summary ?? { am_today: 0, pm_today: 0, total_today: 0, total_workforce: 0 }
-  const todayLeaves = Array.isArray(data?.today_leaves) ? data.today_leaves : []
+  const todayLeaves = Array.isArray(data?.today_leaves)
+    ? data.today_leaves.filter((leave) => String(leave?.status || '').toLowerCase() === 'pending')
+    : []
   const cards = [
     {
       key: 'total_employees',
@@ -1038,24 +1055,27 @@ export default function AdminDashboard() {
     ? data.upcoming_regularizations
     : []
   const expiringContracts = Array.isArray(data?.expiring_contracts) ? data.expiring_contracts : []
-  const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
-    ? Number(
-        data?.pending_attendance_corrections
-          ?? 0
-      ) || 0
-    : 0
-  const pendingAttendanceCorrectionPreview =
-    canApproveAttendanceCorrections && pendingAttendanceCorrectionsCount > 0
-      ? data?.pending_attendance_correction_preview ?? null
-      : null
-  const pendingAttendanceCorrectionPreviews =
+  const pendingAttendanceCorrectionRows =
     canApproveAttendanceCorrections && Array.isArray(data?.pending_requests)
-      ? data.pending_requests
+      ? data.pending_requests.filter(isPendingDashboardRequest)
       : canApproveAttendanceCorrections && Array.isArray(data?.pending_attendance_correction_previews)
-        ? data.pending_attendance_correction_previews
+        ? data.pending_attendance_correction_previews.filter(isPendingDashboardRequest)
+        : []
+  const pendingAttendanceCorrectionPreview =
+    canApproveAttendanceCorrections && isPendingDashboardRequest(data?.pending_attendance_correction_preview)
+      ? data.pending_attendance_correction_preview
+      : pendingAttendanceCorrectionRows[0] ?? null
+  const pendingAttendanceCorrectionPreviews =
+    pendingAttendanceCorrectionRows.length > 0
+      ? pendingAttendanceCorrectionRows
       : pendingAttendanceCorrectionPreview
         ? [pendingAttendanceCorrectionPreview]
         : []
+  const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
+    ? pendingAttendanceCorrectionPreviews.length > 0
+      ? Number(data?.pending_attendance_corrections ?? pendingAttendanceCorrectionPreviews.length) || pendingAttendanceCorrectionPreviews.length
+      : 0
+    : 0
   const todayLeavesPreview = todayLeaves.slice(0, 5)
   // Used by other dashboard sections; keep available for future copy changes.
   // eslint-disable-next-line no-unused-vars
@@ -1474,8 +1494,8 @@ export default function AdminDashboard() {
                   </CardTitle>
                   <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
                     {todayLeaves.length > 0
-                      ? `${todayLeaves.length} on leave today or with pending leave starting soon`
-                      : 'Shows approved leave today and pending leave starting within the next 7 days.'}
+                      ? `${todayLeaves.length} pending leave starting soon`
+                      : 'Shows pending leave starting within the next 7 days.'}
                   </CardDescription>
                 </div>
                 {canViewLeave ? (
@@ -1503,7 +1523,7 @@ export default function AdminDashboard() {
                   </span>
                   <p className="text-sm font-semibold leading-[1.55] text-foreground">No leave activity for today.</p>
                   <p className="mt-2 max-w-56 text-xs font-normal leading-[1.55] text-muted-foreground">
-                    Approved leave for today and pending leave starting within 7 days will appear here.
+                    Pending leave starting within 7 days will appear here.
                   </p>
                 </div>
               ) : (
@@ -1564,7 +1584,7 @@ export default function AdminDashboard() {
                                   return
                                 }
                                 navigate(
-                                  `${hrPanelPath(hrBase, 'leave')}?tab=all&reviewRequestId=${encodeURIComponent(String(rid))}`,
+                                  `${hrPanelPath(hrBase, 'leave')}?review_id=${encodeURIComponent(String(rid))}`,
                                 )
                               }}
                             >
@@ -1738,7 +1758,9 @@ export default function AdminDashboard() {
                 navigate(hrPanelPath(hrBase, 'overtime'))
                 return
               }
-              navigate(`${hrPanelPath(hrBase, 'overtime')}?tab=all&reviewRequestId=${encodeURIComponent(String(rid))}`)
+              navigate(`${hrPanelPath(hrBase, 'overtime')}?review_id=${encodeURIComponent(String(rid))}`, {
+                state: { overtimeReviewSeed: req },
+              })
             }}
           />
         </Motion.div>

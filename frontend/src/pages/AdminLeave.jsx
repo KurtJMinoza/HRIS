@@ -44,7 +44,6 @@ import {
   getLeaveRequests,
   getMyLeaveSummary,
   fetchLeaveRequestReview,
-  getAdminLeaveByRequestId,
   createLeaveRequest,
   approveLeaveRequest,
   bulkApproveLeaveRequests,
@@ -91,7 +90,6 @@ import {
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
 import {
   extractLeaveRequestFromReviewPayload,
-  leaveReviewErrorMessage,
   logLeaveReviewFetchFailure,
   parseLeaveReviewRequestId,
 } from '@/lib/leaveReviewDeepLink'
@@ -187,7 +185,7 @@ function LeaveModalCalendarArt() {
 
 export default function AdminLeave() {
   const { toast } = useToast()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const { user, refreshUser } = useAuth()
   const perms = new Set(user?.permissions ?? [])
   const canApproveLeave = perms.has('leave.approve')
@@ -261,7 +259,7 @@ export default function AdminLeave() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
   const reviewRequestIdFromUrl = parseLeaveReviewRequestId(
-    searchParams.get('reviewRequestId') || searchParams.get('request_id'),
+    searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id'),
   )
   const leaveTabFromUrl = searchParams.get('tab')
   const openAllRequestsTab =
@@ -274,6 +272,11 @@ export default function AdminLeave() {
   const detailAbortRef = useRef(null)
   const detailFetchIdRef = useRef(0)
   const detailRequestIdRef = useRef(null)
+  const [deferAllListLoad, setDeferAllListLoad] = useState(() => Boolean(reviewRequestIdFromUrl))
+  const leaveListAbortRef = useRef(null)
+  const mineListAbortRef = useRef(null)
+  const allListLoadedOnceRef = useRef(false)
+  const mineListLoadedOnceRef = useRef(false)
   const tabInitialized = useRef(false)
   const [tab, setTab] = useState('all')
   const [myLeaveRequests, setMyLeaveRequests] = useState([])
@@ -283,9 +286,9 @@ export default function AdminLeave() {
   const [minePage, setMinePage] = useState(1)
   const [allPagination, setAllPagination] = useState(null)
   const [minePagination, setMinePagination] = useState(null)
-  const leavePerPage = 10
+  const leavePerPage = 25
 
-  const fetchLeaves = useCallback(async () => {
+  const fetchLeaves = useCallback(async (opts = {}) => {
     setError(null)
     try {
       const data = await getLeaveRequests({
@@ -294,18 +297,20 @@ export default function AdminLeave() {
         to_date: appliedTo || undefined,
         page: allPage,
         per_page: leavePerPage,
+        signal: opts.signal,
       })
       setLeaveRequests(data.leave_requests || [])
       setAllPagination(data.pagination || null)
     } catch (e) {
+      if (e?.name === 'AbortError') return
       setError(e.message)
       setLeaveRequests([])
     } finally {
-      setLoading(false)
+      if (!opts.signal?.aborted) setLoading(false)
     }
   }, [statusFilter, appliedFrom, appliedTo, allPage])
 
-  const fetchMineLeaves = useCallback(async () => {
+  const fetchMineLeaves = useCallback(async (opts = {}) => {
     setMineError(null)
     try {
       const data = await getMyLeaveSummary({
@@ -314,14 +319,16 @@ export default function AdminLeave() {
         to_date: appliedTo || undefined,
         page: minePage,
         per_page: leavePerPage,
+        signal: opts.signal,
       })
       setMyLeaveRequests(Array.isArray(data.leave_requests) ? data.leave_requests : [])
       setMinePagination(data.pagination || null)
     } catch (e) {
+      if (e?.name === 'AbortError') return
       setMineError(e.message)
       setMyLeaveRequests([])
     } finally {
-      setLoadingMine(false)
+      if (!opts.signal?.aborted) setLoadingMine(false)
     }
   }, [statusFilter, appliedFrom, appliedTo, minePage])
 
@@ -341,15 +348,41 @@ export default function AdminLeave() {
   }, [user?.id, showEmployeePicker, openAllRequestsTab])
 
   useEffect(() => {
+    if (!user?.id || tab !== 'all' || deferAllListLoad || (!openAllRequestsTab && !showEmployeePicker)) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
-    fetchLeaves()
-  }, [fetchLeaves])
+    leaveListAbortRef.current?.abort()
+    const controller = new AbortController()
+    leaveListAbortRef.current = controller
+    const timer = setTimeout(() => {
+      fetchLeaves({ signal: controller.signal }).finally(() => {
+        if (!controller.signal.aborted) allListLoadedOnceRef.current = true
+      })
+    }, 0)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [fetchLeaves, deferAllListLoad, openAllRequestsTab, showEmployeePicker, tab, user?.id])
 
   useEffect(() => {
-    if (tab !== 'mine') return
+    if (!user?.id || tab !== 'mine') return
     setLoadingMine(true)
-    fetchMineLeaves()
-  }, [tab, fetchMineLeaves])
+    mineListAbortRef.current?.abort()
+    const controller = new AbortController()
+    mineListAbortRef.current = controller
+    const timer = setTimeout(() => {
+      fetchMineLeaves({ signal: controller.signal }).finally(() => {
+        if (!controller.signal.aborted) mineListLoadedOnceRef.current = true
+      })
+    }, 0)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [tab, fetchMineLeaves, user?.id])
 
   useEffect(() => {
     if (addOpen) {
@@ -602,7 +635,11 @@ export default function AdminLeave() {
         notes: '',
         supportingFiles: [],
       })
-      await Promise.all([fetchLeaves(), fetchMineLeaves()])
+      if (tab === 'all') {
+        await fetchLeaves()
+      } else {
+        await fetchMineLeaves()
+      }
       if (!showEmployeePicker || String(uid) === String(user?.id)) {
         setTab('mine')
       }
@@ -684,9 +721,10 @@ export default function AdminLeave() {
         setDetailError(code)
         setDetailLeave(null)
       } finally {
-        if (signal.aborted || fetchId !== detailFetchIdRef.current) return
-        setDetailLoading(false)
-        setDetailRetrying(false)
+        if (!signal.aborted && fetchId === detailFetchIdRef.current) {
+          setDetailLoading(false)
+          setDetailRetrying(false)
+        }
       }
     },
     [mapReviewFetchError, searchParams, user],
@@ -727,6 +765,32 @@ export default function AdminLeave() {
     setApproveOpen(true)
   }
 
+  const updateLeaveRowAfterAction = useCallback((requestId, patch) => {
+    const id = String(requestId)
+    const applyPatch = (row) => {
+      if (String(row?.id ?? row?.request_id) !== id) return row
+      const nextStatus = patch.status ?? row.status
+      const displayStatus =
+        nextStatus === 'approved'
+          ? 'HR Approved'
+          : nextStatus === 'rejected'
+          ? 'Rejected'
+          : patch.display_status ?? row.display_status
+      return {
+        ...row,
+        ...patch,
+        status: nextStatus,
+        display_status: displayStatus,
+        actor_can_approve: false,
+        actor_can_reject: false,
+        can_approve: false,
+        can_reject: false,
+      }
+    }
+    setLeaveRequests((rows) => rows.map(applyPatch))
+    setMyLeaveRequests((rows) => rows.map(applyPatch))
+  }, [])
+
   const handleConfirmApprove = async (e) => {
     e.preventDefault()
     if (!approveLeave) return
@@ -756,7 +820,17 @@ export default function AdminLeave() {
       setApproveOpen(false)
       setApproveLeave(null)
       setApproveNotes('')
-      await fetchLeaves()
+      if (detailRequestIdRef.current && String(detailRequestIdRef.current) === String(approveLeave.id)) {
+        setDetailOpen(false)
+        setDetailLeave(null)
+        setDetailLoading(false)
+        setDetailError(null)
+        setDeferAllListLoad(false)
+      }
+      updateLeaveRowAfterAction(approveLeave.id, {
+        status: data.status,
+        approval_stage: data.approval_stage,
+      })
       notifyPendingApprovalsChanged()
       toast({ title: data.message || 'Leave approved', variant: 'success' })
     } catch (e) {
@@ -825,7 +899,28 @@ export default function AdminLeave() {
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
       bulkSelection.clearSelection()
-      await fetchLeaves()
+      if (bulkSelection.selectAllMatching) {
+        setLeaveRequests((rows) =>
+          statusFilter === 'pending'
+            ? rows.filter((leave) => !(leave?.status === 'pending' && leave?.actor_can_approve))
+            : rows.map((leave) =>
+                leave?.status === 'pending' && leave?.actor_can_approve
+                  ? { ...leave, status: 'approved', display_status: 'HR Approved', actor_can_approve: false, actor_can_reject: false }
+                  : leave
+              )
+        )
+      } else {
+        const selectedIds = new Set([...bulkSelection.selectedIds].map((id) => String(id)))
+        setLeaveRequests((rows) =>
+          statusFilter === 'pending'
+            ? rows.filter((leave) => !selectedIds.has(String(leave?.id)))
+            : rows.map((leave) =>
+                selectedIds.has(String(leave?.id))
+                  ? { ...leave, status: 'approved', display_status: 'HR Approved', actor_can_approve: false, actor_can_reject: false }
+                  : leave
+              )
+        )
+      }
     } catch (e) {
       setError(e.message)
       toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
@@ -845,17 +940,30 @@ export default function AdminLeave() {
     if (!rejectLeave) return
     setRejectSubmitting(true)
     setError(null)
+    setActionLoadingId(rejectLeave.id)
     try {
       await rejectLeaveRequest(rejectLeave.id, rejectReason)
       setRejectOpen(false)
       setRejectLeave(null)
-      await fetchLeaves()
+      if (detailRequestIdRef.current && String(detailRequestIdRef.current) === String(rejectLeave.id)) {
+        setDetailOpen(false)
+        setDetailLeave(null)
+        setDetailLoading(false)
+        setDetailError(null)
+        setDeferAllListLoad(false)
+      }
+      updateLeaveRowAfterAction(rejectLeave.id, {
+        status: 'rejected',
+        approval_stage: 'rejected',
+        rejection_note: rejectReason,
+      })
       notifyPendingApprovalsChanged()
     } catch (e) {
       setError(e.message)
       toast({ title: 'Failed to reject leave', description: e.message, variant: 'error' })
     } finally {
       setRejectSubmitting(false)
+      setActionLoadingId(null)
     }
   }
 
@@ -870,7 +978,11 @@ export default function AdminLeave() {
       }
       toast({ title: 'Leave deleted', variant: 'success' })
       setDeleteDialog({ open: false, leave: null })
-      await Promise.all([fetchLeaves(), fetchMineLeaves()])
+      if (tab === 'all') {
+        await fetchLeaves()
+      } else {
+        await fetchMineLeaves()
+      }
     } catch (e) {
       toast({ title: 'Failed to delete leave', description: e.message, variant: 'error' })
     } finally {
@@ -891,7 +1003,11 @@ export default function AdminLeave() {
     setError(null)
     try {
       await updateLeaveNotes(notesLeave.id, notesValue.trim())
-      await fetchLeaves()
+      if (tab === 'all') {
+        await fetchLeaves()
+      } else {
+        await fetchMineLeaves()
+      }
       setNotesOpen(false)
       setNotesLeave(null)
       toast({ title: 'Notes updated', variant: 'success' })
@@ -936,7 +1052,7 @@ export default function AdminLeave() {
   const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    if (!canApproveLeave) {
+    if (!canApproveLeave || tab !== 'all' || deferAllListLoad) {
       setTotalMatchingApprovable(0)
       return undefined
     }
@@ -951,7 +1067,7 @@ export default function AdminLeave() {
     return () => {
       cancelled = true
     }
-  }, [bulkApprovalFilters, bulkFiltersKey, canApproveLeave])
+  }, [bulkApprovalFilters, bulkFiltersKey, canApproveLeave, deferAllListLoad, tab])
 
   const pageBulkRows = useMemo(
     () =>
@@ -1730,6 +1846,11 @@ export default function AdminLeave() {
         onConfirm={handleBulkApprove}
         loading={bulkApproving}
         entityLabel="leave requests"
+        remarksHint={
+          isAdminHr
+            ? 'For leave spanning a rest day, enter approval remarks of at least 10 characters to apply the HR override on each request.'
+            : ''
+        }
       />
 
       <BulkApprovalSummaryDialog
@@ -2327,6 +2448,7 @@ export default function AdminLeave() {
             setDetailLoading(false)
             setDetailError(null)
             setDetailRetrying(false)
+            setDeferAllListLoad(false)
           }
         }}
         leave={detailLeave}
@@ -2335,6 +2457,9 @@ export default function AdminLeave() {
         loading={detailLoading}
         error={detailError}
         retrying={detailRetrying}
+        actionLoading={actionLoadingId === detailLeave?.id || approveSubmitting || rejectSubmitting}
+        onApprove={(leave) => openApproveDialog(leave)}
+        onReject={(leave) => openRejectDialog(leave)}
         onRetry={() => {
           const id = reviewRequestIdFromUrl || detailRequestIdRef.current
           if (id) loadReviewDetail(id, { isRetry: true })

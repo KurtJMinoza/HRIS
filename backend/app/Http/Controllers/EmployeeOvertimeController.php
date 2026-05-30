@@ -11,6 +11,7 @@ use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
+use App\Support\OvertimeModuleCache;
 use App\Support\PhPayrollReference;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -468,6 +469,7 @@ class EmployeeOvertimeController extends Controller
             'attachment_path' => $attachmentPath,
         ]);
         $overtime->save();
+        OvertimeModuleCache::flush();
 
         $overtime->load('approvedBy:id,name,first_name,middle_name,last_name,suffix');
 
@@ -519,6 +521,7 @@ class EmployeeOvertimeController extends Controller
         }
 
         $overtime->delete();
+        OvertimeModuleCache::flush();
 
         return response()->json([
             'message' => 'Overtime request deleted.',
@@ -778,6 +781,7 @@ class EmployeeOvertimeController extends Controller
                 $user,
             );
         }
+        OvertimeModuleCache::flush();
 
         return response()->json([
             'message' => $overtimes->count() > 1

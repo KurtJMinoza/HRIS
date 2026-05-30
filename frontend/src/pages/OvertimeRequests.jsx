@@ -49,7 +49,7 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
@@ -755,6 +755,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const { toast } = useToast()
   const { user } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const hrBase = useHrBasePath()
   const perms = new Set(user?.permissions ?? [])
   const isHr = variant === 'hr'
@@ -794,12 +795,20 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setMonthIndex(t.getMonth())
   }
 
-  const [tab, setTab] = useState(() => (canSeeAllTab ? 'all' : 'mine'))
+  const initialReviewId = searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id')
+  const hasDeepLinkReview = Boolean(isHr && canSeeAllTab && initialReviewId)
+  const [tab, setTab] = useState(() => (hasDeepLinkReview || canSeeAllTab ? 'all' : 'mine'))
 
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
   const [loadingMine, setLoadingMine] = useState(true)
   const [loadingAll, setLoadingAll] = useState(false)
+  const [deferAllListLoad, setDeferAllListLoad] = useState(() => Boolean(hasDeepLinkReview))
+  const mineListAbortRef = useRef(null)
+  const allListAbortRef = useRef(null)
+  const allListLoadedOnceRef = useRef(false)
+  const mineListLoadedOnceRef = useRef(false)
+  const detailAbortRef = useRef(null)
   const [unfiledLoading, setUnfiledLoading] = useState(false)
   const [unfiledRows, setUnfiledRows] = useState([])
 
@@ -831,7 +840,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   }, [isHr, dateFromUrl, segmentsFromUrl, searchParams, setSearchParams])
 
   const deepLinkedOtRequestId = isHr && canSeeAllTab
-    ? (searchParams.get('reviewRequestId') || searchParams.get('request_id'))
+    ? (searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id'))
     : null
   const handledOtDeepLinkRef = useRef(null)
 
@@ -852,9 +861,15 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [selectedSegments, setSelectedSegments] = useState([])
   const [, setSeedSegments] = useState([])
   const fileModalClockPrefillRef = useRef({ start: '', end: '' })
-  const [viewOpen, setViewOpen] = useState(false)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [detail, setDetail] = useState(null)
+  const [viewOpen, setViewOpen] = useState(() => hasDeepLinkReview)
+  const [detailLoading, setDetailLoading] = useState(() => hasDeepLinkReview)
+  const [detail, setDetail] = useState(() => {
+    if (!hasDeepLinkReview || Number(initialReviewId) <= 0) return null
+    const seed = location.state?.overtimeReviewSeed
+    const seedId = Number(seed?.id ?? seed?.request_id ?? 0)
+    if (seed && seedId === Number(initialReviewId)) return seed
+    return { id: Number(initialReviewId) }
+  })
 
   const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
@@ -871,31 +886,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [exportingCsv, setExportingCsv] = useState(false)
   const [approvalInfoOpen, setApprovalInfoOpen] = useState(false)
 
-  const viewOpenRef = useRef(false)
-  useEffect(() => {
-    viewOpenRef.current = viewOpen
-  }, [viewOpen])
-
-  const refetchDetailForModal = useCallback(
-    async (id) => {
-      if (id == null) return
-      setDetailLoading(true)
-      try {
-        const useAdmin = canSeeAllTab && tab === 'all'
-        const res = useAdmin ? await getAdminOvertimeDetail(id) : await getMyOvertimeDetail(id)
-        const ot = res?.overtime ?? res?.data?.overtime
-        if (ot && typeof ot === 'object') {
-          setDetail(ot)
-        }
-      } catch (e) {
-        toast({ title: 'Failed to refresh details', description: e.message, variant: 'error' })
-      } finally {
-        setDetailLoading(false)
-      }
-    },
-    [canSeeAllTab, tab, toast]
-  )
-
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState(null)
   const [editStartTime, setEditStartTime] = useState('')
@@ -910,19 +900,20 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [deleteDialog, setDeleteDialog] = useState({ open: false, row: null })
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
-  const loadMine = useCallback(async () => {
+  const loadMine = useCallback(async (opts = {}) => {
     setLoadingMine(true)
     try {
       const res =
         !isHr
-          ? await getMyOvertimeRequests({ per_page: 50, from_date: monthFrom, to_date: monthTo })
-          : await getMyOvertimeRequests({ per_page: 50 })
+          ? await getMyOvertimeRequests({ per_page: 25, from_date: monthFrom, to_date: monthTo, signal: opts.signal })
+          : await getMyOvertimeRequests({ per_page: 25, signal: opts.signal })
       setMineItems(Array.isArray(res.overtimes) ? res.overtimes : [])
     } catch (e) {
+      if (e?.name === 'AbortError') return
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
       setMineItems([])
     } finally {
-      setLoadingMine(false)
+      if (!opts.signal?.aborted) setLoadingMine(false)
     }
   }, [toast, isHr, monthFrom, monthTo])
 
@@ -982,7 +973,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     }
   }, [isHr, monthFrom, monthTo, mineItems])
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (opts = {}) => {
     setLoadingAll(true)
     try {
       const res = await getAdminOvertime({
@@ -990,88 +981,120 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         to_date: allTo || undefined,
         status: allStatus !== 'all' ? allStatus : undefined,
         page: allPage,
-        per_page: 50,
+        per_page: 25,
+        signal: opts.signal,
       })
       setAllItems(res.overtimes || [])
       setAllPagination(res.pagination || null)
     } catch (e) {
+      if (e?.name === 'AbortError') return
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
       setAllItems([])
     } finally {
-      setLoadingAll(false)
+      if (!opts.signal?.aborted) setLoadingAll(false)
     }
   }, [toast, allStatus, allFrom, allTo, allPage])
 
   useEffect(() => {
-    loadMine()
-  }, [loadMine])
+    if (isHr && tab !== 'mine') {
+      setLoadingMine(false)
+      return undefined
+    }
+    mineListAbortRef.current?.abort()
+    const controller = new AbortController()
+    mineListAbortRef.current = controller
+    const delay = mineListLoadedOnceRef.current ? 300 : 0
+    const timer = setTimeout(() => {
+      loadMine({ signal: controller.signal }).finally(() => {
+        if (!controller.signal.aborted) mineListLoadedOnceRef.current = true
+      })
+    }, delay)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [isHr, loadMine, tab])
 
   useEffect(() => {
     void loadUnfiledForMonth()
   }, [loadUnfiledForMonth])
 
   useEffect(() => {
-    if (tab === 'all' && canSeeAllTab) {
-      loadAll()
+    if (tab !== 'all' || !canSeeAllTab || deferAllListLoad) {
+      setLoadingAll(false)
+      return undefined
     }
-  }, [tab, canSeeAllTab, loadAll])
+    allListAbortRef.current?.abort()
+    const controller = new AbortController()
+    allListAbortRef.current = controller
+    const delay = allListLoadedOnceRef.current ? 300 : 0
+    const timer = setTimeout(() => {
+      loadAll({ signal: controller.signal }).finally(() => {
+        if (!controller.signal.aborted) allListLoadedOnceRef.current = true
+      })
+    }, delay)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [tab, canSeeAllTab, loadAll, deferAllListLoad])
 
   useEffect(() => {
-    if (!deepLinkedOtRequestId) {
+    if (!deepLinkedOtRequestId || !isHr || !canSeeAllTab) {
       handledOtDeepLinkRef.current = null
       return
     }
-    if (!isHr || !canSeeAllTab) return
-    setTab('all')
-  }, [deepLinkedOtRequestId, isHr, canSeeAllTab])
-
-  useEffect(() => {
-    if (!deepLinkedOtRequestId || !isHr || !canSeeAllTab) return
-    if (tab !== 'all') return
     if (handledOtDeepLinkRef.current === deepLinkedOtRequestId) return
     const idNum = Number(deepLinkedOtRequestId)
     if (!Number.isFinite(idNum) || idNum <= 0) return
 
     handledOtDeepLinkRef.current = deepLinkedOtRequestId
-
-    const row = allItems.find((r) => Number(r?.id) === idNum)
-    const seed = row || { id: idNum }
-    setDetail(seed)
+    setTab('all')
+    setDetail({ id: idNum })
     setViewOpen(true)
     setDetailLoading(true)
 
-    getAdminOvertimeDetail(idNum)
+    detailAbortRef.current?.abort()
+    const controller = new AbortController()
+    detailAbortRef.current = controller
+
+    getAdminOvertimeDetail(idNum, { signal: controller.signal })
       .then((res) => {
+        if (controller.signal.aborted) return
         const ot = res?.overtime ?? res?.data?.overtime
         if (ot && typeof ot === 'object') {
           setDetail(ot)
         } else {
           toast({
             title: 'Could not load full details',
-            description: 'The server response was incomplete. Showing list data.',
+            description: 'The server response was incomplete.',
             variant: 'error',
           })
         }
       })
       .catch((e) => {
+        if (e?.name === 'AbortError' || controller.signal.aborted) return
         toast({
           title: 'Failed to load details',
-          description: e.message || 'You can still see data from the list.',
+          description: e.message || 'Could not load this overtime request.',
           variant: 'error',
         })
       })
-      .finally(() => setDetailLoading(false))
+      .finally(() => {
+        if (!controller.signal.aborted) setDetailLoading(false)
+      })
 
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
+        next.delete('review_id')
         next.delete('reviewRequestId')
         next.delete('request_id')
         return next
       },
       { replace: true },
     )
-  }, [deepLinkedOtRequestId, isHr, canSeeAllTab, tab, allItems, setSearchParams, toast])
+  }, [deepLinkedOtRequestId, isHr, canSeeAllTab, setSearchParams, toast])
 
   useEffect(() => {
     let cancelled = false
@@ -1182,7 +1205,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    if (tab !== 'all' || !canApproveOvertime) {
+    if (tab !== 'all' || !canApproveOvertime || deferAllListLoad) {
       setTotalMatchingApprovable(0)
       return undefined
     }
@@ -1197,7 +1220,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     return () => {
       cancelled = true
     }
-  }, [bulkApprovalFilters, bulkFiltersKey, tab, canApproveOvertime])
+  }, [bulkApprovalFilters, bulkFiltersKey, tab, canApproveOvertime, deferAllListLoad])
 
   const pageBulkRows = useMemo(
     () =>
@@ -1283,32 +1306,40 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   function openView(row) {
     if (!row || row.id == null) return
-    setDetail(row)
+    const hasSeed = row && Object.keys(row).some((key) => key !== 'id')
+    setDetail(hasSeed ? row : { id: row.id })
     setViewOpen(true)
     setDetailLoading(true)
     const useAdmin = canSeeAllTab && tab === 'all'
     const fetcher = useAdmin ? getAdminOvertimeDetail : getMyOvertimeDetail
-    fetcher(row.id)
+    detailAbortRef.current?.abort()
+    const controller = new AbortController()
+    detailAbortRef.current = controller
+    fetcher(row.id, useAdmin ? { signal: controller.signal } : undefined)
       .then((res) => {
+        if (controller.signal.aborted) return
         const ot = res?.overtime ?? res?.data?.overtime
         if (ot && typeof ot === 'object') {
           setDetail(ot)
-        } else {
+        } else if (!hasSeed) {
           toast({
             title: 'Could not load full details',
-            description: 'The server response was incomplete. Showing list data.',
+            description: 'The server response was incomplete.',
             variant: 'error',
           })
         }
       })
       .catch((e) => {
+        if (e?.name === 'AbortError' || controller.signal.aborted) return
         toast({
           title: 'Failed to load details',
           description: e.message || 'You can still see data from the list.',
           variant: 'error',
         })
       })
-      .finally(() => setDetailLoading(false))
+      .finally(() => {
+        if (!controller.signal.aborted) setDetailLoading(false)
+      })
   }
 
   function openApprove(row) {
@@ -1323,19 +1354,48 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setRejectOpen(true)
   }
 
+  const updateOvertimeRowAfterAction = useCallback((requestId, patch) => {
+    const id = String(requestId)
+    const applyPatch = (row) => {
+      if (String(row?.id ?? row?.request_id) !== id) return row
+      const nextStatus = patch.status ?? row.status
+      const displayStatus =
+        nextStatus === 'approved'
+          ? 'HR Approved'
+          : nextStatus === 'rejected'
+          ? 'Rejected'
+          : patch.display_status ?? row.display_status
+      return {
+        ...row,
+        ...patch,
+        status: nextStatus,
+        display_status: displayStatus,
+        actor_can_approve: false,
+        actor_can_reject: false,
+        can_approve: false,
+        can_reject: false,
+      }
+    }
+    setAllItems((rows) => rows.map(applyPatch))
+    setMineItems((rows) => rows.map(applyPatch))
+    setDetail((current) => (current && String(current?.id ?? current?.request_id) === id ? applyPatch(current) : current))
+  }, [])
+
   async function submitApprove() {
     if (!actionRow) return
     setActionSubmitting(true)
     try {
-      await updateAdminOvertimeStatus(actionRow.id, 'approved', actionRemarks)
+      const res = await updateAdminOvertimeStatus(actionRow.id, 'approved', actionRemarks)
       toast({ title: 'Approval recorded', variant: 'success' })
       setApproveOpen(false)
+      setViewOpen(false)
+      setDetail(null)
+      setDeferAllListLoad(false)
+      updateOvertimeRowAfterAction(actionRow.id, {
+        status: res.status ?? 'approved',
+        approval_stage: res.approval_stage,
+      })
       notifyPendingApprovalsChanged()
-      await loadAll()
-      await loadMine()
-      if (viewOpenRef.current && actionRow?.id != null) {
-        await refetchDetailForModal(actionRow.id)
-      }
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -1368,8 +1428,28 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
       bulkSelection.clearSelection()
-      await loadAll()
-      await loadMine()
+      if (bulkSelection.selectAllMatching) {
+        setAllItems((rows) =>
+          allStatus === 'pending'
+            ? rows.filter((row) => !(row?.status === 'pending' && row?.actor_can_approve))
+            : rows.map((row) =>
+                row?.status === 'pending' && row?.actor_can_approve
+                  ? { ...row, status: 'approved', display_status: 'HR Approved', actor_can_approve: false, actor_can_reject: false }
+                  : row
+              )
+        )
+      } else {
+        const selectedIds = new Set([...bulkSelection.selectedIds].map((id) => String(id)))
+        setAllItems((rows) =>
+          allStatus === 'pending'
+            ? rows.filter((row) => !selectedIds.has(String(row?.id)))
+            : rows.map((row) =>
+                selectedIds.has(String(row?.id))
+                  ? { ...row, status: 'approved', display_status: 'HR Approved', actor_can_approve: false, actor_can_reject: false }
+                  : row
+              )
+        )
+      }
     } catch (e) {
       toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
     } finally {
@@ -1381,15 +1461,18 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     if (!actionRow || !actionRemarks.trim()) return
     setActionSubmitting(true)
     try {
-      await updateAdminOvertimeStatus(actionRow.id, 'rejected', actionRemarks)
+      const res = await updateAdminOvertimeStatus(actionRow.id, 'rejected', actionRemarks)
       toast({ title: 'Request rejected', variant: 'success' })
       setRejectOpen(false)
+      setViewOpen(false)
+      setDetail(null)
+      setDeferAllListLoad(false)
+      updateOvertimeRowAfterAction(actionRow.id, {
+        status: res.status ?? 'rejected',
+        approval_stage: res.approval_stage ?? 'rejected',
+        rejection_note: actionRemarks,
+      })
       notifyPendingApprovalsChanged()
-      await loadAll()
-      await loadMine()
-      if (viewOpenRef.current && actionRow?.id != null) {
-        await refetchDetailForModal(actionRow.id)
-      }
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -2280,7 +2363,12 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         open={viewOpen}
         onOpenChange={(o) => {
           setViewOpen(o)
-          if (!o) setDetail(null)
+          if (!o) {
+            detailAbortRef.current?.abort()
+            setDetail(null)
+            setDetailLoading(false)
+            setDeferAllListLoad(false)
+          }
         }}
       >
         <DialogContent

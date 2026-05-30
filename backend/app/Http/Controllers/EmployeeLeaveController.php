@@ -15,6 +15,7 @@ use App\Services\LeaveCreditService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\LeaveFilingRules;
+use App\Support\LeaveModuleCache;
 use App\Support\LeaveScheduleSupport;
 use App\Support\RequestPerformanceLogger;
 use Carbon\Carbon;
@@ -340,7 +341,7 @@ class EmployeeLeaveController extends Controller
             'per_page' => ['nullable', 'integer', 'in:10,25,50'],
         ]);
         $dashboardLite = $request->boolean('dashboard_lite');
-        $perPage = (int) ($validated['per_page'] ?? ($dashboardLite ? 10 : 10));
+        $perPage = (int) ($validated['per_page'] ?? ($dashboardLite ? 10 : 25));
 
         $query = LeaveRequest::query()
             ->where('user_id', $user->id);
@@ -834,6 +835,7 @@ class EmployeeLeaveController extends Controller
         );
 
         $leave->refresh();
+        LeaveModuleCache::flush();
         $leave->load([
             'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id',
             'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
@@ -876,6 +878,7 @@ class EmployeeLeaveController extends Controller
         $leave->save();
 
         $leave->refresh();
+        LeaveModuleCache::flush();
 
         return response()->json([
             'message' => 'Document uploaded.',
@@ -913,6 +916,7 @@ class EmployeeLeaveController extends Controller
         }
 
         $leave->delete();
+        LeaveModuleCache::flush();
 
         return response()->json([
             'message' => 'Leave request deleted.',

@@ -309,23 +309,6 @@ function formatTableDate(iso) {
   return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function formatDateRangeLabel(from, to) {
-  if (!from && !to) return 'Any date'
-  const fmt = (d) => {
-    if (!d) return null
-    try {
-      return new Date(`${d}T12:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
-    } catch {
-      return d
-    }
-  }
-  const a = fmt(from)
-  const b = fmt(to)
-  if (a && b && from === to) return a
-  if (a && b) return `${a} – ${b}`
-  return a || b || '—'
-}
-
 function formatDetailDate(date) {
   if (!date) return '—'
   const d = new Date(`${date}T12:00:00`)
@@ -549,7 +532,7 @@ export default function AttendanceCorrections() {
   const isAdminHr = user?.hr_role === 'admin_hr'
   const allFilingsLabel = isAdminHr ? 'All Filings' : 'For My Approval'
 
-  const deepLinkedRequestId = searchParams.get('reviewRequestId') || searchParams.get('request_id')
+  const deepLinkedRequestId = searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id')
   const deepLinkedStatus = searchParams.get('status')
   const handledDeepLinkRef = useRef(null)
 
@@ -557,10 +540,11 @@ export default function AttendanceCorrections() {
 
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
-  const [loadingMine, setLoadingMine] = useState(true)
-  const [loadingAll, setLoadingAll] = useState(false)
+  const [loadingMine, setLoadingMine] = useState(() => !canSeeAll)
+  const [loadingAll, setLoadingAll] = useState(() => canSeeAll && !deepLinkedRequestId)
   const [minePagination, setMinePagination] = useState(null)
   const [allPagination, setAllPagination] = useState(null)
+  const [deferAllListLoad, setDeferAllListLoad] = useState(() => Boolean(deepLinkedRequestId))
 
   const [mineSearch, setMineSearch] = useState('')
   const [allStatus, setAllStatus] = useState(() => (deepLinkedStatus === 'pending' ? 'pending' : 'all'))
@@ -576,7 +560,9 @@ export default function AttendanceCorrections() {
   }, [allQInput])
 
   const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 10
+  const itemsPerPage = 25
+  const mineListAbortRef = useRef(null)
+  const allListAbortRef = useRef(null)
 
   const [sortKey, setSortKey] = useState('filed_at')
   const [sortDir, setSortDir] = useState('desc')
@@ -633,21 +619,22 @@ export default function AttendanceCorrections() {
     return list
   }, [fileEmployees, selfEmployeeId, selfEmployeeName, user?.email])
 
-  const loadMine = useCallback(async () => {
+  const loadMine = useCallback(async (opts = {}) => {
     setLoadingMine(true)
     try {
-      const res = await getMyPresenceFilings({ page: currentPage, per_page: itemsPerPage })
+      const res = await getMyPresenceFilings({ page: currentPage, per_page: itemsPerPage, signal: opts.signal })
       setMineItems(res?.presence_filings ?? [])
       setMinePagination(res?.pagination ? { ...res.pagination, summary: res?.summary ?? null } : null)
     } catch (e) {
+      if (opts.signal?.aborted || e?.name === 'AbortError') return
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
       setMineItems([])
     } finally {
-      setLoadingMine(false)
+      if (!opts.signal?.aborted) setLoadingMine(false)
     }
   }, [toast, currentPage])
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (opts = {}) => {
     setLoadingAll(true)
     try {
       const res = await getAdminPresenceFilings({
@@ -658,26 +645,44 @@ export default function AttendanceCorrections() {
         q: debouncedAllQ || undefined,
         page: currentPage,
         per_page: itemsPerPage,
+        lite: true,
+        skip_summary: true,
+        signal: opts.signal,
       })
       setAllItems(res?.presence_filings ?? [])
       setAllPagination(res?.pagination ? { ...res.pagination, summary: res?.summary ?? null } : null)
     } catch (e) {
+      if (opts.signal?.aborted || e?.name === 'AbortError') return
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
       setAllItems([])
     } finally {
-      setLoadingAll(false)
+      if (!opts.signal?.aborted) setLoadingAll(false)
     }
   }, [toast, allStatus, allFrom, allTo, allIssue, debouncedAllQ, currentPage])
 
   useEffect(() => {
-    loadMine()
-  }, [loadMine])
+    if (tab !== 'mine') return undefined
+    mineListAbortRef.current?.abort()
+    const controller = new AbortController()
+    mineListAbortRef.current = controller
+    loadMine({ signal: controller.signal })
+    return () => {
+      controller.abort()
+    }
+  }, [loadMine, tab])
 
   useEffect(() => {
-    if (tab === 'all' && canSeeAll) {
-      loadAll()
+    if (tab === 'all' && canSeeAll && !deferAllListLoad) {
+      allListAbortRef.current?.abort()
+      const controller = new AbortController()
+      allListAbortRef.current = controller
+      loadAll({ signal: controller.signal })
+      return () => {
+        controller.abort()
+      }
     }
-  }, [tab, canSeeAll, loadAll])
+    return undefined
+  }, [tab, canSeeAll, loadAll, deferAllListLoad])
 
   useEffect(() => {
     if (!canSeeAll) return
@@ -690,11 +695,12 @@ export default function AttendanceCorrections() {
   useEffect(() => {
     if (!canSeeAll || !deepLinkedRequestId) return
     setTab('all')
-    const target = allItems.find((item) => String(item.id) === String(deepLinkedRequestId))
     if (handledDeepLinkRef.current === String(deepLinkedRequestId)) return
     handledDeepLinkRef.current = String(deepLinkedRequestId)
-    openView(target || { id: deepLinkedRequestId })
-  }, [allItems, canSeeAll, deepLinkedRequestId])
+    openView({ id: deepLinkedRequestId })
+    // openView is intentionally excluded so the URL deep-link opens exactly once per id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canSeeAll, deepLinkedRequestId])
 
   useEffect(() => {
     if (!fileOpen || !canSeeAll) return undefined
@@ -907,22 +913,22 @@ export default function AttendanceCorrections() {
   const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    if (tab !== 'all' || !canSeeAll) {
+    if (tab !== 'all' || !canSeeAll || deferAllListLoad) {
       setTotalMatchingApprovable(0)
       return undefined
     }
-    let cancelled = false
-    bulkApprovePresenceFilingsPreview(bulkApprovalFilters)
+    const controller = new AbortController()
+    bulkApprovePresenceFilingsPreview(bulkApprovalFilters, { signal: controller.signal })
       .then((res) => {
-        if (!cancelled) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
+        if (!controller.signal.aborted) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
       })
-      .catch(() => {
-        if (!cancelled) setTotalMatchingApprovable(0)
+      .catch((e) => {
+        if (!controller.signal.aborted && e?.name !== 'AbortError') setTotalMatchingApprovable(0)
       })
     return () => {
-      cancelled = true
+      controller.abort()
     }
-  }, [bulkApprovalFilters, bulkFiltersKey, tab, canSeeAll])
+  }, [bulkApprovalFilters, bulkFiltersKey, tab, canSeeAll, deferAllListLoad])
 
   const pageBulkRows = useMemo(
     () =>
@@ -985,6 +991,26 @@ export default function AttendanceCorrections() {
       .finally(() => setSelectedLoading(false))
   }
 
+  const updateCorrectionRowAfterAction = useCallback((requestId, status) => {
+    const id = String(requestId)
+    const displayStatus = status === 'approved' ? 'HR Approved' : status === 'rejected' ? 'Rejected' : 'Pending'
+    const update = (item) =>
+      String(item?.id ?? item?.request_id) === id
+        ? {
+            ...item,
+            status,
+            display_status: displayStatus,
+            actor_can_approve: false,
+            actor_can_reject: false,
+            can_approve: false,
+            can_reject: false,
+          }
+        : item
+    setAllItems((items) => items.map(update))
+    setMineItems((items) => items.map(update))
+    setSelectedItem((item) => (item ? update(item) : item))
+  }, [])
+
   function openApprove(item) {
     setSelectedItem(item)
     setApproveNotes('')
@@ -1033,11 +1059,12 @@ export default function AttendanceCorrections() {
     try {
       setSubmitting(true)
       await approvePresenceFiling(selectedItem.id, { notes: approveNotes.trim() || undefined })
+      updateCorrectionRowAfterAction(selectedItem.id, 'approved')
       toast({ title: 'Approved', description: 'The correction request was updated.', variant: 'success' })
       setApproveOpen(false)
+      setViewOpen(false)
+      setDeferAllListLoad(false)
       notifyPendingApprovalsChanged()
-      await loadAll()
-      await loadMine()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -1070,8 +1097,13 @@ export default function AttendanceCorrections() {
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
       bulkSelection.clearSelection()
-      await loadAll()
-      await loadMine()
+      if (bulkSelection.selectAllMatching) {
+        setAllItems((items) => items.filter((item) => !(item?.status === 'pending' && item?.actor_can_approve)))
+      } else {
+        setAllItems((items) => items.filter((item) => !bulkSelection.selectedIds.has(Number(item.id))))
+        setMineItems((items) => items.filter((item) => !bulkSelection.selectedIds.has(Number(item.id))))
+      }
+      setDeferAllListLoad(false)
     } catch (e) {
       toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
     } finally {
@@ -1108,11 +1140,12 @@ export default function AttendanceCorrections() {
     try {
       setSubmitting(true)
       await rejectPresenceFiling(selectedItem.id, rejectionNote)
+      updateCorrectionRowAfterAction(selectedItem.id, 'rejected')
       toast({ title: 'Rejected', description: 'The request was rejected.', variant: 'success' })
       setRejectOpen(false)
+      setViewOpen(false)
+      setDeferAllListLoad(false)
       notifyPendingApprovalsChanged()
-      await loadAll()
-      await loadMine()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -1889,6 +1922,7 @@ export default function AttendanceCorrections() {
           if (!open) {
             setSelectedItem(null)
             setSelectedLoading(false)
+            setDeferAllListLoad(false)
           }
         }}
       >

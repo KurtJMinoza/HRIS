@@ -11,8 +11,11 @@ export function OvertimeRequestsCard({
   onViewAll,
   onReviewRequest,
 }) {
-  const hasPending = Number(pendingCount) > 0
-  const activeRequest = hasPending ? request : null
+  const activeRequest =
+    String(request?.status || '').toLowerCase() === 'pending'
+      ? request
+      : null
+  const hasPending = Number(pendingCount) > 0 && activeRequest != null
   const employeeName = activeRequest?.requested_by_name || activeRequest?.employee_name || 'Employee'
   const employeePosition = activeRequest?.requested_by_position || activeRequest?.position || activeRequest?.department || 'Employee'
   const employeeId = activeRequest?.employee_id || activeRequest?.requested_by_id

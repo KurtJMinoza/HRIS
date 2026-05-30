@@ -319,6 +319,62 @@ class OrgApprovalWorkflowService
             || $this->actorIsEligibleApprover($actor, $pending);
     }
 
+    /**
+     * Check an already-loaded pending record without resolving/syncing the whole chain.
+     *
+     * @return array{allowed: bool, deny_reason: ?string, self_approval_setting: ?bool, user_is_assigned_approver: bool, is_self_approval: bool}
+     */
+    public function authorizePendingRecord(User $actor, OrgApprovalRecord $pending, User $employee, string $moduleType): array
+    {
+        $isSelfApproval = $this->isAssignedSelfApproval($actor, $employee, $pending);
+        $userIsAssignedApprover = (int) $pending->approver_id === (int) $actor->id
+            || $this->actorIsEligibleApprover($actor, $pending);
+
+        if ($pending->approval_status !== OrgApprovalRecord::STATUS_PENDING) {
+            return [
+                'allowed' => false,
+                'deny_reason' => 'approval_step_is_not_pending',
+                'self_approval_setting' => null,
+                'user_is_assigned_approver' => $userIsAssignedApprover,
+                'is_self_approval' => $isSelfApproval,
+            ];
+        }
+
+        if ((int) $actor->id === (int) $employee->id) {
+            $result = $this->selfApprovalValidationResult($actor, $employee, $pending, $moduleType);
+
+            return [
+                'allowed' => (bool) $result['allowed'],
+                'deny_reason' => $result['deny_reason'],
+                'self_approval_setting' => (bool) $result['self_approval_setting'],
+                'user_is_assigned_approver' => (bool) $result['user_is_assigned_approver'],
+                'is_self_approval' => (bool) $result['is_self_approval'],
+            ];
+        }
+
+        if ($pending->approver_role === HrRole::AdminHr->value) {
+            $allowed = $this->roleResolver->resolve($actor) === HrRole::AdminHr;
+
+            return [
+                'allowed' => $allowed,
+                'deny_reason' => $allowed ? null : 'current_user_role_not_authorized_for_admin_hr_step',
+                'self_approval_setting' => null,
+                'user_is_assigned_approver' => $userIsAssignedApprover,
+                'is_self_approval' => $isSelfApproval,
+            ];
+        }
+
+        $allowed = $userIsAssignedApprover;
+
+        return [
+            'allowed' => $allowed,
+            'deny_reason' => $allowed ? null : 'current_user_not_assigned_or_authorized_for_step',
+            'self_approval_setting' => null,
+            'user_is_assigned_approver' => $userIsAssignedApprover,
+            'is_self_approval' => $isSelfApproval,
+        ];
+    }
+
     public function approveCurrent(Model $request, string $moduleType, User $employee, User $actor, ?string $remarks = null, ?User $requestor = null): ?OrgApprovalRecord
     {
         return DB::transaction(function () use ($request, $moduleType, $employee, $actor, $remarks, $requestor): ?OrgApprovalRecord {

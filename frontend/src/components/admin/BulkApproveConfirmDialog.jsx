@@ -21,6 +21,7 @@ export function BulkApproveConfirmDialog({
   onConfirm,
   loading = false,
   entityLabel = 'requests',
+  remarksHint = '',
 }) {
   const count = Number(selectedCount) || 0
   const trimmedRemarks = String(remarks || '').trim()
@@ -56,6 +57,12 @@ export function BulkApproveConfirmDialog({
               <>
                 {' '}
                 The same approval remarks will be saved on each approved request.
+              </>
+            ) : null}
+            {remarksHint ? (
+              <>
+                {' '}
+                {remarksHint}
               </>
             ) : null}
           </DialogDescription>
