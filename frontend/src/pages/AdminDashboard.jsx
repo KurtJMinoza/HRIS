@@ -63,8 +63,6 @@ import {
   getDashboardCompanyAttendance,
   getCompanies,
   getHalfDayList,
-  getAdminOvertime,
-  getAdminPresenceFilings,
   profileImageUrl,
   userProfileImageSrc,
   companyLogoUrl,
@@ -620,49 +618,19 @@ export default function AdminDashboard() {
     staleTime: 60_000,
   })
 
-  const overtimePendingQuery = useQuery({
-    queryKey: ['admin-dashboard-overtime-pending'],
-    queryFn: () => getAdminOvertime({ status: 'pending', page: 1, per_page: 1 }),
-    enabled: !authLoading && canViewOvertime,
-    refetchInterval: 15000,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-  })
-
-  const attendanceCorrectionsPendingQuery = useQuery({
-    queryKey: ['admin-dashboard-attendance-corrections-pending'],
-    queryFn: () => getAdminPresenceFilings({ status: 'pending', page: 1, per_page: 5 }),
-    enabled: !authLoading && canApproveAttendanceCorrections,
-    refetchInterval: 15000,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-  })
-
   const queryClient = useQueryClient()
 
   useEffect(() => {
     const onPendingApprovalsChanged = () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-dashboard'] })
-      void queryClient.invalidateQueries({ queryKey: ['admin-dashboard-overtime-pending'] })
-      void queryClient.invalidateQueries({ queryKey: ['admin-dashboard-attendance-corrections-pending'] })
     }
     window.addEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
     return () => window.removeEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
   }, [queryClient])
 
   const loading = authLoading || dashboardQuery.isLoading
-  const overtimePendingCount = Number(
-    overtimePendingQuery.data?.summary?.pending_count
-      ?? overtimePendingQuery.data?.summary?.pending
-      ?? overtimePendingQuery.data?.summary?.pending_requests
-      ?? overtimePendingQuery.data?.pending_count
-      ?? overtimePendingQuery.data?.pagination?.total
-      ?? overtimePendingQuery.data?.meta?.total
-      ?? 0,
-  )
-  const pendingOvertimeRequest = Array.isArray(overtimePendingQuery.data?.overtimes)
-    ? overtimePendingQuery.data.overtimes[0] || null
-    : null
+  const overtimePendingCount = Number(data?.pending_counts?.overtime ?? 0) || 0
+  const pendingOvertimeRequest = data?.pending_overtime_request ?? null
 
   const fetchDashboard = useCallback(async () => {
     const result = await dashboardQuery.refetch()
@@ -1072,8 +1040,7 @@ export default function AdminDashboard() {
   const expiringContracts = Array.isArray(data?.expiring_contracts) ? data.expiring_contracts : []
   const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
     ? Number(
-        attendanceCorrectionsPendingQuery.data?.pagination?.total
-          ?? data?.pending_attendance_corrections
+        data?.pending_attendance_corrections
           ?? 0
       ) || 0
     : 0
@@ -1082,9 +1049,7 @@ export default function AdminDashboard() {
       ? data?.pending_attendance_correction_preview ?? null
       : null
   const pendingAttendanceCorrectionPreviews =
-    canApproveAttendanceCorrections && Array.isArray(attendanceCorrectionsPendingQuery.data?.presence_filings)
-      ? attendanceCorrectionsPendingQuery.data.presence_filings
-      : canApproveAttendanceCorrections && Array.isArray(data?.pending_requests)
+    canApproveAttendanceCorrections && Array.isArray(data?.pending_requests)
       ? data.pending_requests
       : canApproveAttendanceCorrections && Array.isArray(data?.pending_attendance_correction_previews)
         ? data.pending_attendance_correction_previews
@@ -1763,7 +1728,7 @@ export default function AdminDashboard() {
         {/* 3. Overtime Requests */}
         <Motion.div variants={itemVariants} className="self-stretch">
           <OvertimeRequestsCard
-            loading={(!canViewOvertime && loading) || overtimePendingQuery.isLoading}
+            loading={loading}
             pendingCount={canViewOvertime ? overtimePendingCount : 0}
             request={pendingOvertimeRequest}
             onViewAll={() => navigate(hrPanelPath(hrBase, 'overtime'))}
@@ -1783,7 +1748,7 @@ export default function AdminDashboard() {
           <AttendanceCorrectionsCard
             loading={
               (!canApproveAttendanceCorrections && loading) ||
-              (canApproveAttendanceCorrections && (dashboardQuery.isLoading || attendanceCorrectionsPendingQuery.isLoading))
+              (canApproveAttendanceCorrections && dashboardQuery.isLoading)
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
@@ -2268,7 +2233,7 @@ export default function AdminDashboard() {
           <AttendanceCorrectionsCard
             loading={
               (!canApproveAttendanceCorrections && loading) ||
-              (canApproveAttendanceCorrections && (dashboardQuery.isLoading || attendanceCorrectionsPendingQuery.isLoading))
+              (canApproveAttendanceCorrections && dashboardQuery.isLoading)
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}

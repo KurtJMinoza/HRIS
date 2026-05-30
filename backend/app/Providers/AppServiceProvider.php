@@ -13,6 +13,8 @@ use App\Models\Division;
 use App\Models\EmployeeBenefit;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
+use App\Models\PayrollBatchRun;
+use App\Models\PayrollEmployee;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeEmergencyContact;
 use App\Models\EmployeeGovernmentId;
@@ -25,8 +27,10 @@ use App\Services\HolidayCalendarService;
 use App\Services\HolidayService;
 use App\Services\LegacyOrganizationMirrorService;
 use App\Support\EmployeeProfileCache;
+use App\Support\AdminDashboardCache;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
@@ -66,6 +70,9 @@ class AppServiceProvider extends ServiceProvider
 
         User::saved(function (User $user): void {
             EmployeeProfileCache::invalidate((int) $user->id);
+            AdminDashboardCache::flush();
+            Cache::forget('permissions:user:'.(int) $user->id);
+            Cache::forget('sidebar:user:'.(int) $user->id);
             if ($user->wasChanged(['schedule', 'working_schedule_id', 'pending_working_schedule_id'])) {
                 AttendanceCacheService::invalidate((int) $user->id);
             }
@@ -73,6 +80,9 @@ class AppServiceProvider extends ServiceProvider
         User::deleted(function (User $user): void {
             EmployeeProfileCache::invalidate((int) $user->id);
             AttendanceCacheService::invalidate((int) $user->id);
+            AdminDashboardCache::flush();
+            Cache::forget('permissions:user:'.(int) $user->id);
+            Cache::forget('sidebar:user:'.(int) $user->id);
         });
 
         $invalidateAttendanceForLog = function (AttendanceLog $log): void {
@@ -85,17 +95,20 @@ class AppServiceProvider extends ServiceProvider
                 ? Carbon::parse($stamp)->timezone($tz)->toDateString()
                 : null;
             AttendanceCacheService::invalidate((int) $log->user_id, $date);
+            AdminDashboardCache::flush();
         };
         AttendanceLog::saved($invalidateAttendanceForLog);
         AttendanceLog::deleted($invalidateAttendanceForLog);
 
         AttendanceCorrection::saved(function (AttendanceCorrection $correction): void {
+            AdminDashboardCache::flush();
             if ($correction->user_id) {
                 $date = $correction->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $correction->user_id, $date);
             }
         });
         AttendanceCorrection::deleted(function (AttendanceCorrection $correction): void {
+            AdminDashboardCache::flush();
             if ($correction->user_id) {
                 $date = $correction->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $correction->user_id, $date);
@@ -103,6 +116,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         LeaveRequest::saved(function (LeaveRequest $leave): void {
+            AdminDashboardCache::flush();
             if (! $leave->user_id) {
                 return;
             }
@@ -110,8 +124,10 @@ class AppServiceProvider extends ServiceProvider
                 AttendanceCacheService::invalidate((int) $leave->user_id);
             }
         });
+        LeaveRequest::deleted(fn (LeaveRequest $leave) => AdminDashboardCache::flush());
 
         Overtime::saved(function (Overtime $overtime): void {
+            AdminDashboardCache::flush();
             if (! $overtime->user_id) {
                 return;
             }
@@ -120,6 +136,12 @@ class AppServiceProvider extends ServiceProvider
                 AttendanceCacheService::invalidate((int) $overtime->user_id, $date);
             }
         });
+        Overtime::deleted(fn (Overtime $overtime) => AdminDashboardCache::flush());
+
+        PayrollBatchRun::saved(fn (PayrollBatchRun $run) => AdminDashboardCache::flush());
+        PayrollBatchRun::deleted(fn (PayrollBatchRun $run) => AdminDashboardCache::flush());
+        PayrollEmployee::saved(fn (PayrollEmployee $employee) => AdminDashboardCache::flush());
+        PayrollEmployee::deleted(fn (PayrollEmployee $employee) => AdminDashboardCache::flush());
 
         EmployeeGovernmentId::saved(function (EmployeeGovernmentId $record): void {
             if ($record->user_id) {

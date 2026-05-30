@@ -1269,7 +1269,24 @@ export async function replaceMyEmergencyContacts(contacts) {
  * @returns {Promise<{ stats: object, stats_prev: object, weekly_overview: array, upcoming_holidays: array, department_distribution: array, today_logs: array }>}
  */
 export async function getDashboardData() {
-  const res = await authenticatedFetch('/admin/dashboard')
+  const [summary, pending, attendance, payroll] = await Promise.all([
+    fetchAdminDashboardSegment('/admin/dashboard/summary'),
+    fetchAdminDashboardSegment('/admin/dashboard/pending-requests'),
+    fetchAdminDashboardSegment('/admin/dashboard/attendance-today'),
+    fetchAdminDashboardSegment('/admin/dashboard/payroll-summary'),
+  ])
+  const raw = {
+    ...summary,
+    ...pending,
+    ...attendance,
+    ...payroll,
+  }
+
+  return normalizeDashboardData(raw)
+}
+
+async function fetchAdminDashboardSegment(path) {
+  const res = await authenticatedFetch(path)
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
     const msg = res.status === 403
@@ -1277,8 +1294,11 @@ export async function getDashboardData() {
       : (body.message || 'Failed to load dashboard')
     throw new Error(msg)
   }
-  // Normalize: support direct response or Laravel API resource wrapper (data key).
-  const raw = body.data != null ? body.data : body
+
+  return body.data != null ? body.data : body
+}
+
+function normalizeDashboardData(raw) {
   return {
     stats: raw.stats ?? {},
     stats_prev: raw.stats_prev ?? {},
@@ -1303,6 +1323,10 @@ export async function getDashboardData() {
     employment_settings: raw.employment_settings ?? null,
     pending_attendance_corrections: Number(raw.pending_attendance_corrections ?? 0) || 0,
     pending_attendance_correction_preview: raw.pending_attendance_correction_preview ?? null,
+    pending_attendance_correction_previews: Array.isArray(raw.pending_attendance_correction_previews) ? raw.pending_attendance_correction_previews : [],
+    pending_requests: Array.isArray(raw.pending_requests) ? raw.pending_requests : [],
+    pending_counts: raw.pending_counts ?? { leave: 0, overtime: 0, attendance_correction: 0, total: 0 },
+    payroll_summary: raw.payroll_summary ?? { pending_count: 0, finalized_count: 0, failed_count: 0 },
   }
 }
 

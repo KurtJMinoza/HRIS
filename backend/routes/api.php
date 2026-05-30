@@ -198,6 +198,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:dashboard.view')->group(function () {
             Route::get('/admin/dashboard', [DashboardController::class, 'index']);
+            Route::get('/admin/dashboard/summary', [DashboardController::class, 'summary']);
+            Route::get('/admin/dashboard/pending-requests', [DashboardController::class, 'dashboardPendingRequests']);
+            Route::get('/admin/dashboard/attendance-today', [DashboardController::class, 'attendanceToday']);
+            Route::get('/admin/dashboard/payroll-summary', [DashboardController::class, 'payrollSummary']);
             Route::get('/dashboard/request-summary', [DashboardController::class, 'requestSummary']);
             Route::get('/dashboard/pending-requests', [DashboardController::class, 'pendingRequests']);
             Route::get('/admin/dashboard/birthdays', [DashboardController::class, 'birthdaysByMonth']);

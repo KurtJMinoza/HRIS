@@ -679,6 +679,20 @@ class AuthController extends Controller
                 ?? $user->sectionUnit?->division?->branch?->name);
 
         $accessFlags = $rbac->accessFlagsForUser($user);
+        $permissions = Cache::remember(
+            'permissions:user:'.(int) $user->id,
+            now()->addMinutes(10),
+            fn () => $rbac->getPermissionsForUser($user)->values()->all()
+        );
+        Cache::put(
+            'sidebar:user:'.(int) $user->id,
+            [
+                'permissions' => $permissions,
+                'access_flags' => $accessFlags,
+                'cached_at' => now()->toIso8601String(),
+            ],
+            now()->addMinutes(10)
+        );
         $canAccessManagementPanel = $user->isAdmin()
             || (bool) ($accessFlags['can_view_admin_dashboard'] ?? false)
             || (bool) ($accessFlags['can_view_employee_module'] ?? false)
@@ -725,7 +739,7 @@ class AuthController extends Controller
             'exclude_from_payroll' => (bool) $user->exclude_from_payroll,
             'exclude_from_attendance' => (bool) $user->exclude_from_attendance,
             'exclude_from_approvals' => (bool) $user->exclude_from_approvals,
-            'permissions' => $rbac->getPermissionsForUser($user)->values()->all(),
+            'permissions' => $permissions,
             'can_view_employee_module' => (bool) ($accessFlags['can_view_employee_module'] ?? false),
             'can_view_subordinate_attendance' => (bool) ($accessFlags['can_view_subordinate_attendance'] ?? false),
             'can_view_subordinate_reports' => (bool) ($accessFlags['can_view_subordinate_reports'] ?? false),

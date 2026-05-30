@@ -12,6 +12,7 @@ use App\Models\Department;
 use App\Models\Division;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
+use App\Models\PayrollBatchRun;
 use App\Models\RegularizationRecommendation;
 use App\Models\SectionUnit;
 use App\Models\User;
@@ -25,6 +26,7 @@ use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PresenceFilingService;
+use App\Support\AdminDashboardCache;
 use App\Support\RequestPerformanceLogger;
 use App\Support\TextSanitizer;
 use Carbon\Carbon;
@@ -115,141 +117,281 @@ class DashboardController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $startedAt = microtime(true);
-        $actor = $request->user();
-        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
-        $now = Carbon::now($tz);
-        $today = $now->copy()->startOfDay();
-        $yesterday = $today->copy()->subDay();
-
-        $todayDayKey = self::DAY_KEYS[(int) $today->format('w')];
-        $yesterdayDayKey = self::DAY_KEYS[(int) $yesterday->format('w')];
-        $undertimeThresholdMinutes = config('attendance.undertime_threshold_minutes', 60);
-
-        $activeScopeIds = $this->scopedEmployeeIds($actor, true);
-        $allScopeIds = $this->scopedEmployeeIds($actor, false);
-        $activeEmployees = $activeScopeIds === []
-            ? collect()
-            : User::whereIn('id', $activeScopeIds)->with('workingSchedule')->get();
-        $activeEmployeeIds = $activeEmployees->pluck('id')->all();
-        // Total employees in scope (active + inactive).
-        $totalEmployees = count($allScopeIds);
-
-        // Today + yesterday daily stats (per-date, reset automatically when the date changes).
-        $statsToday = $this->computeDailyStats(
-            $today,
-            $todayDayKey,
-            $activeEmployees,
-            $activeEmployeeIds,
-            $undertimeThresholdMinutes,
-            $tz,
-            $now,
-            false
-        );
-        $statsYesterday = $this->computeDailyStats(
-            $yesterday,
-            $yesterdayDayKey,
-            $activeEmployees,
-            $activeEmployeeIds,
-            $undertimeThresholdMinutes,
-            $tz,
-            // For yesterday we always treat as past cutoff.
-            $yesterday->copy()->endOfDay(),
-            false
+        $response = array_merge(
+            $this->dashboardSummaryPayload($request),
+            $this->dashboardPendingRequestsPayload($request),
+            $this->dashboardAttendanceTodayPayload($request),
+            $this->dashboardPayrollSummaryPayload($request),
         );
 
-        // Attach total employees (same for both days).
-        $statsToday['total_employees'] = $totalEmployees;
-        $statsYesterday['total_employees'] = $totalEmployees;
+        return response()->json($response);
+    }
 
-        $weeklyOverview = $this->weeklyAttendanceOverview($today, $activeScopeIds);
-        $upcomingHolidays = $this->upcomingHolidays($actor, $now);
-        $departmentDistribution = $this->departmentAttendanceDistribution($today, $actor);
-        $companyDistribution = $this->companyAttendanceDistribution($today, null, $actor);
-        $todayLogs = $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds);
-        $halfDaySummary = $this->halfDaySummary($today, $activeScopeIds);
-        $todayLeaves = $this->todayLeaves($today, $activeScopeIds);
-        $upcomingRegularizations = $this->upcomingRegularizations($actor, 5);
-        $expiringContracts = $this->expiringContracts($actor, 5);
-        $birthdays = $this->birthdays($actor);
-        $employmentSettings = $this->employeeStatusService->getAutomationSettings();
+    public function summary(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardSummaryPayload($request));
+    }
 
-        $pendingCorrectionsCollection = $this->attendanceCorrectionApprovalService->getPendingForApprover($actor);
-        $pendingAttendanceCorrections = $pendingCorrectionsCollection->count();
-        $correctionDisplayTz = $this->presenceFilingService->attendanceTimezone();
-        $pendingAttendanceCorrectionPreview = null;
-        $pendingAttendanceCorrectionPreviews = [];
-        if ($pendingCorrectionsCollection->isNotEmpty()) {
-            $pendingAttendanceCorrectionPreview = $this->correctionFormatter->format(
-                $pendingCorrectionsCollection->first(),
-                $correctionDisplayTz,
-                includeEmployee: true,
-                actor: $actor,
-                includeDisplayFields: true
+    public function dashboardPendingRequests(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardPendingRequestsPayload($request));
+    }
+
+    public function attendanceToday(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardAttendanceTodayPayload($request));
+    }
+
+    public function payrollSummary(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardPayrollSummaryPayload($request));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardSummaryPayload(Request $request): array
+    {
+        return $this->cachedDashboardPayload($request, 'summary', function (User $actor): array {
+            $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+            $now = Carbon::now($tz);
+            $today = $now->copy()->startOfDay();
+            $yesterday = $today->copy()->subDay();
+            $activeScopeIds = $this->scopedEmployeeIds($actor, true);
+            $allScopeIds = $this->scopedEmployeeIds($actor, false);
+            $activeEmployees = $activeScopeIds === []
+                ? collect()
+                : User::query()
+                    ->whereIn('id', $activeScopeIds)
+                    ->with('workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days')
+                    ->get(['id', 'schedule', 'working_schedule_id']);
+            $activeEmployeeIds = $activeEmployees->pluck('id')->all();
+            $undertimeThresholdMinutes = (int) config('attendance.undertime_threshold_minutes', 60);
+
+            $statsToday = $this->computeDailyStats(
+                $today,
+                self::DAY_KEYS[(int) $today->format('w')],
+                $activeEmployees,
+                $activeEmployeeIds,
+                $undertimeThresholdMinutes,
+                $tz,
+                $now,
+                false
             );
-            $pendingAttendanceCorrectionPreviews = $pendingCorrectionsCollection
-                ->take(5)
-                ->map(fn ($correction) => $this->correctionFormatter->format(
-                    $correction,
+            $statsYesterday = $this->computeDailyStats(
+                $yesterday,
+                self::DAY_KEYS[(int) $yesterday->format('w')],
+                $activeEmployees,
+                $activeEmployeeIds,
+                $undertimeThresholdMinutes,
+                $tz,
+                $yesterday->copy()->endOfDay(),
+                false
+            );
+            $statsToday['total_employees'] = count($allScopeIds);
+            $statsYesterday['total_employees'] = count($allScopeIds);
+
+            $birthdays = $this->birthdays($actor);
+
+            return [
+                'stats' => $statsToday,
+                'stats_prev' => $statsYesterday,
+                'half_day_summary' => $this->halfDaySummary($today, $activeScopeIds),
+                'upcoming_holidays' => $this->upcomingHolidays($actor, $now),
+                'today_birthdays' => $birthdays['today_birthdays'],
+                'current_month_birthdays' => $birthdays['current_month_birthdays'],
+                'upcoming_30_days' => $birthdays['upcoming_30_days'],
+                'upcoming_90_days' => $birthdays['upcoming_90_days'],
+                'upcoming_birthdays' => $birthdays['upcoming_birthdays'],
+                'upcoming_birthdays_90' => $birthdays['upcoming_birthdays_90'],
+                'birthday_month_label' => $birthdays['birthday_month_label'],
+                'birthday_month_range_label' => $birthdays['birthday_month_range_label'],
+                'upcoming_regularizations' => $this->upcomingRegularizations($actor, 5),
+                'expiring_contracts' => $this->expiringContracts($actor, 5),
+                'employment_settings' => $this->employeeStatusService->getAutomationSettings(),
+            ];
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardPendingRequestsPayload(Request $request): array
+    {
+        return $this->cachedDashboardPayload($request, 'pending', function (User $actor): array {
+            $scope = User::query()->visibleEmployees();
+            $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
+            $scopedIds = $scope->select('users.id');
+
+            $leavePending = LeaveRequest::query()
+                ->whereIn('user_id', clone $scopedIds)
+                ->where('status', LeaveRequest::STATUS_PENDING)
+                ->count();
+            $overtimePending = Overtime::query()
+                ->whereIn('user_id', clone $scopedIds)
+                ->where('status', Overtime::STATUS_PENDING)
+                ->count();
+            $pendingOvertimeRequest = Overtime::query()
+                ->with('user:id,name,first_name,middle_name,last_name,suffix,employee_code,position,department,profile_image')
+                ->whereIn('user_id', clone $scopedIds)
+                ->where('status', Overtime::STATUS_PENDING)
+                ->latest()
+                ->first();
+
+            $pendingCorrectionsCollection = $this->attendanceCorrectionApprovalService->getPendingForApprover($actor);
+            $pendingAttendanceCorrections = $pendingCorrectionsCollection->count();
+            $correctionDisplayTz = $this->presenceFilingService->attendanceTimezone();
+            $pendingAttendanceCorrectionPreview = null;
+            $pendingAttendanceCorrectionPreviews = [];
+            if ($pendingCorrectionsCollection->isNotEmpty()) {
+                $pendingAttendanceCorrectionPreview = $this->correctionFormatter->format(
+                    $pendingCorrectionsCollection->first(),
                     $correctionDisplayTz,
                     includeEmployee: true,
                     actor: $actor,
                     includeDisplayFields: true
-                ))
+                );
+                $pendingAttendanceCorrectionPreviews = $pendingCorrectionsCollection
+                    ->take(5)
+                    ->map(fn ($correction) => $this->correctionFormatter->format(
+                        $correction,
+                        $correctionDisplayTz,
+                        includeEmployee: true,
+                        actor: $actor,
+                        includeDisplayFields: true
+                    ))
+                    ->values()
+                    ->all();
+            }
+            $pendingAttendanceCorrectionRequests = collect($pendingAttendanceCorrectionPreviews)
+                ->map(fn (array $row) => $row + [
+                    'correction_request_id' => $row['id'] ?? null,
+                    'employee_id' => $row['user_id'] ?? null,
+                    'attendance_date' => $row['date'] ?? null,
+                    'requested_time_start' => $row['requested_time_in'] ?? $row['time_in'] ?? null,
+                    'requested_time_end' => $row['requested_time_out'] ?? $row['time_out'] ?? null,
+                    'current_step' => $row['approval_stage'] ?? null,
+                    'can_review' => (bool) ($row['actor_can_approve'] ?? false),
+                ])
                 ->values()
                 ->all();
-        }
-        $pendingAttendanceCorrectionRequests = collect($pendingAttendanceCorrectionPreviews)
-            ->map(fn (array $row) => $row + [
-                'correction_request_id' => $row['id'] ?? null,
-                'employee_id' => $row['user_id'] ?? null,
-                'attendance_date' => $row['date'] ?? null,
-                'requested_time_start' => $row['requested_time_in'] ?? $row['time_in'] ?? null,
-                'requested_time_end' => $row['requested_time_out'] ?? $row['time_out'] ?? null,
-                'current_step' => $row['approval_stage'] ?? null,
-                'can_review' => (bool) ($row['actor_can_approve'] ?? false),
-            ])
-            ->values()
-            ->all();
 
-        $response = [
-            'stats' => $statsToday,
-            'stats_prev' => $statsYesterday,
-            'weekly_overview' => $weeklyOverview,
-            'upcoming_holidays' => $upcomingHolidays,
-            'department_distribution' => $departmentDistribution,
-            'company_distribution' => $companyDistribution,
-            'today_logs' => $todayLogs,
-            'half_day_summary' => $halfDaySummary,
-            'today_leaves' => $todayLeaves,
-            'today_birthdays' => $birthdays['today_birthdays'],
-            'current_month_birthdays' => $birthdays['current_month_birthdays'],
-            'upcoming_30_days' => $birthdays['upcoming_30_days'],
-            'upcoming_90_days' => $birthdays['upcoming_90_days'],
-            // Backward-compatible aliases for any existing dashboard consumers.
-            'upcoming_birthdays' => $birthdays['upcoming_birthdays'],
-            'upcoming_birthdays_90' => $birthdays['upcoming_birthdays_90'],
-            'birthday_month_label' => $birthdays['birthday_month_label'],
-            'birthday_month_range_label' => $birthdays['birthday_month_range_label'],
-            'upcoming_regularizations' => $upcomingRegularizations,
-            'expiring_contracts' => $expiringContracts,
-            'employment_settings' => $employmentSettings,
-            'pending_attendance_corrections' => $pendingAttendanceCorrections,
-            'pending_attendance_correction_preview' => $pendingAttendanceCorrectionPreview,
-            'pending_attendance_correction_previews' => $pendingAttendanceCorrectionPreviews,
-            'pending_count' => $pendingAttendanceCorrections,
-            'pending_requests' => $pendingAttendanceCorrectionRequests,
-        ];
+            return [
+                'pending_counts' => [
+                    'leave' => $leavePending,
+                    'overtime' => $overtimePending,
+                    'attendance_correction' => $pendingAttendanceCorrections,
+                    'total' => $leavePending + $overtimePending + $pendingAttendanceCorrections,
+                ],
+                'pending_overtime_request' => $pendingOvertimeRequest ? [
+                    'id' => (int) $pendingOvertimeRequest->id,
+                    'request_id' => (int) $pendingOvertimeRequest->id,
+                    'employee_id' => (int) $pendingOvertimeRequest->user_id,
+                    'requested_by_id' => (int) $pendingOvertimeRequest->user_id,
+                    'employee_name' => $pendingOvertimeRequest->user?->display_name,
+                    'requested_by_name' => $pendingOvertimeRequest->user?->display_name,
+                    'employee_code' => $pendingOvertimeRequest->user?->employee_code,
+                    'requested_by_position' => $pendingOvertimeRequest->user?->position,
+                    'department' => $pendingOvertimeRequest->user?->department,
+                    'requested_by_profile_image_url' => $pendingOvertimeRequest->user?->profile_image_url,
+                    'date' => $pendingOvertimeRequest->date?->toDateString(),
+                    'schedule_end' => $pendingOvertimeRequest->schedule_end?->format('H:i'),
+                    'expected_end_time' => $pendingOvertimeRequest->expected_end_time?->format('H:i'),
+                    'time_out' => $pendingOvertimeRequest->time_out?->format('H:i'),
+                    'computed_hours' => $pendingOvertimeRequest->computed_hours,
+                    'reason' => $pendingOvertimeRequest->reason,
+                    'remarks' => $pendingOvertimeRequest->remarks,
+                    'status' => $pendingOvertimeRequest->status,
+                ] : null,
+                'pending_attendance_corrections' => $pendingAttendanceCorrections,
+                'pending_attendance_correction_preview' => $pendingAttendanceCorrectionPreview,
+                'pending_attendance_correction_previews' => $pendingAttendanceCorrectionPreviews,
+                'pending_count' => $pendingAttendanceCorrections,
+                'pending_requests' => $pendingAttendanceCorrectionRequests,
+            ];
+        });
+    }
 
-        Log::info('Admin dashboard payload prepared', [
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardAttendanceTodayPayload(Request $request): array
+    {
+        return $this->cachedDashboardPayload($request, 'attendance', function (User $actor): array {
+            $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+            $today = Carbon::now($tz)->startOfDay();
+            $activeScopeIds = $this->scopedEmployeeIds($actor, true);
+            $todayDayKey = self::DAY_KEYS[(int) $today->format('w')];
+
+            return [
+                'weekly_overview' => $this->weeklyAttendanceOverview($today, $activeScopeIds),
+                'department_distribution' => $this->departmentAttendanceDistribution($today, $actor),
+                'company_distribution' => $this->companyAttendanceDistribution($today, null, $actor),
+                'today_logs' => $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds),
+                'today_leaves' => $this->todayLeaves($today, $activeScopeIds),
+            ];
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardPayrollSummaryPayload(Request $request): array
+    {
+        return $this->cachedDashboardPayload($request, 'payroll', function (User $actor): array {
+            $query = PayrollBatchRun::query();
+            $companyId = $actor->getEffectiveCompanyId() ?? $actor->company_id;
+            if ($companyId !== null) {
+                $query->where('company_id', (int) $companyId);
+            }
+
+            $statusCounts = (clone $query)
+                ->select('status', DB::raw('COUNT(*) as aggregate_count'))
+                ->groupBy('status')
+                ->pluck('aggregate_count', 'status');
+
+            return [
+                'payroll_summary' => [
+                    'pending_count' => (int) (($statusCounts[PayrollBatchRun::STATUS_DRAFT] ?? 0)
+                        + ($statusCounts[PayrollBatchRun::STATUS_QUEUED] ?? 0)
+                        + ($statusCounts[PayrollBatchRun::STATUS_PROCESSING] ?? 0)),
+                    'finalized_count' => (int) ($statusCounts[PayrollBatchRun::STATUS_FINALIZED] ?? 0),
+                    'failed_count' => (int) ($statusCounts[PayrollBatchRun::STATUS_FAILED] ?? 0),
+                ],
+            ];
+        }, 'payroll');
+    }
+
+    /**
+     * @param  callable(User): array<string, mixed>  $resolver
+     * @return array<string, mixed>
+     */
+    private function cachedDashboardPayload(Request $request, string $segment, callable $resolver, ?string $periodKey = null): array
+    {
+        $startedAt = microtime(true);
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $periodKey ??= Carbon::now($tz)->toDateString();
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $result = AdminDashboardCache::remember($actor, $segment, $periodKey, fn () => $resolver($actor));
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+
+        Log::info('Admin dashboard endpoint prepared', [
+            'endpoint' => 'admin.dashboard.'.$segment,
             'actor_user_id' => (int) $actor->id,
-            'active_scope_count' => count($activeScopeIds),
-            'all_scope_count' => count($allScopeIds),
-            'today_logs_count' => is_array($todayLogs) ? count($todayLogs) : 0,
-            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'cache_hit' => $result['cache_hit'],
+            'cache_key' => $result['cache_key'],
+            'query_count' => count($queries),
+            'db_time_ms' => round(array_sum(array_map(fn (array $query) => (float) ($query['time'] ?? 0), $queries)), 2),
+            'response_time_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'rows_returned' => count($result['payload']),
         ]);
 
-        return response()->json($response);
+        return $result['payload'];
     }
 
     public function requestSummary(Request $request): JsonResponse
