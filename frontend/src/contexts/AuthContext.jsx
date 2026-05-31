@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { getAuthenticatedUser, getStoredUser, logout as apiLogout, setStoredUser } from '@/api'
+import { getAuthenticatedUser, getStoredUser, getToken, logout as apiLogout, setStoredUser } from '@/api'
 
 const AuthContext = createContext(null)
 /** Min interval between GET /user calls (reduces backend cache + auth payload work on navigation). */
@@ -67,6 +67,13 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const stored = getStoredUser()
+    const hasToken = Boolean(getToken())
+    if (!hasToken) {
+      applyUserState(null)
+      setStoredUser(null)
+      setLoading(false)
+      return
+    }
     if (stored) applyUserState(stored)
     loadAuthenticatedUser({ force: !stored })
       .then((u) => {

@@ -13,8 +13,8 @@ import {
   recordAttendanceKiosk,
   recordAttendanceKioskFace,
   getKioskRecentAttendance,
+  getPublicSettings,
 } from './api'
-import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
 import { playSuccess, playError } from '@/lib/attendanceSounds'
 import {
   validateLoginIdentifier,
@@ -33,33 +33,24 @@ import { FaceLivenessOverlay } from '@/components/FaceLivenessOverlay'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { useTheme } from '@/contexts/useTheme'
-import { ProtectedRoute } from '@/components/ProtectedRoute'
-import { HrPanelLayout } from '@/layouts/HrPanelLayout'
-import { EmployeeDashboardLayout } from '@/layouts/EmployeeDashboardLayout'
-import { HR_PANEL_CHILD_ROUTES } from '@/routes/hrPanelChildRoutes'
 import { resolvePostLoginPath } from '@/lib/hrRoutes'
-import EmployeeDashboard from '@/pages/EmployeeDashboard'
-import EmployeeAttendance from '@/pages/EmployeeAttendance'
-import EmployeeHolidaysPage from '@/pages/EmployeeHolidaysPage'
-import EmployeeCorrectionRequests from '@/pages/EmployeeCorrectionRequests'
-import EmployeeProfile from '@/pages/EmployeeProfile'
-import EmployeeMyPayslipsPage from '@/pages/EmployeeMyPayslipsPage'
-import EmployeeLeave from '@/pages/EmployeeLeave'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-import { MyScheduleRouteFallback } from '@/components/skeletons/RoutePageFallbacks.jsx'
-
-import EmployeeOvertime from '@/pages/EmployeeOvertime'
-import EmployeeMyQr from '@/pages/EmployeeMyQr'
-const EmployeeReportsPage = lazy(() => import('@/pages/AdminReports'))
-import ForgotPassword from '@/pages/ForgotPassword'
-import VerifyOtp from '@/pages/VerifyOtp'
-import ResetPassword from '@/pages/ResetPassword'
 import { ScannerInput } from '@/components/ScannerInput'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { getEmployeeAvatarColorClass, kioskAttendanceAvatarSrc } from '@/lib/employeeAvatar'
 import Webcam from 'react-webcam'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
+
+const AuthenticatedRoutes = lazy(() => import('@/AuthenticatedRoutes'))
+const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
+const VerifyOtp = lazy(() => import('@/pages/VerifyOtp'))
+const ResetPassword = lazy(() => import('@/pages/ResetPassword'))
+const FaceRekognitionLiveness = lazy(() =>
+  import('@/components/FaceRekognitionLiveness').then((module) => ({
+    default: module.FaceRekognitionLiveness,
+  }))
+)
 
 /**
  * Duo figures + optional tile. `minimal` aligns with kiosk login reference (icon beside HRIS title).
@@ -114,10 +105,6 @@ function LoginHrDualFigureMark({ className, presentation = 'tile' }) {
     </div>
   )
 }
-
-const MySchedule = lazy(() => import('@/pages/MySchedule'))
-const AdminPayslipViewPage = lazy(() => import('@/pages/AdminPayslipViewPage'))
-const EmployeeLoansDeductionsPage = lazy(() => import('@/pages/EmployeeLoansDeductionsPage'))
 
 // —— Real-time clock for DTR ——
 function RealTimeClock() {
@@ -950,43 +937,45 @@ function SmartDTRPreview({ className }) {
               <p className="text-center text-xs text-[#6b7280] dark:text-muted-foreground">
                 Look into the camera and hold still during the guided liveness check.
               </p>
-              <FaceRekognitionLiveness
-                kioskMode
-                kioskType={kioskType}
-                onKioskAttendanceCorrection={(kc) => {
-                  setKioskCorrectionModal({
-                    open: true,
-                    reason: kc?.reason ?? 'already_timed_in',
-                    employeeId: kc?.employee_id ?? null,
-                    employeeName: kc?.employee_name ?? null,
-                    employeeProfileImageUrl: kc?.employee_profile_image_url ?? null,
-                    employeeProfileImage: kc?.employee_profile_image ?? null,
-                  })
-                }}
-                onKioskSuccess={(data) => {
-                  const kc = data?.kiosk_correction
-                  setSummaryModal({
-                    open: true,
-                    employeeId: data.employee_id ?? null,
-                    employeeName: data.employee_name ?? null,
-                    employeeProfileImageUrl: data.employee_profile_image_url ?? null,
-                    employeeProfileImage: data.employee_profile_image ?? null,
-                    type: kioskType,
-                    recordedAt: data.attendance?.created_at ?? new Date().toISOString(),
-                    status: data.attendance?.status ?? null,
-                    lateMinutes: data.attendance?.late_minutes ?? null,
-                    lateLabel: data.attendance?.late_label ?? null,
-                    undertimeMinutes: data.attendance?.undertime_minutes ?? null,
-                    correctionSuggested: Boolean(kc?.suggested),
-                    correctionReason: kc?.reason ?? null,
-                  })
-                  setKioskType(null)
-                  fetchRecent()
-                }}
-                onKioskCancel={() => { setKioskType(null); setError(null); setScanResult(null) }}
-                onKioskErrorStateChange={setKioskFaceInError}
-                hideInstruction
-              />
+              <Suspense fallback={<div className="rounded-xl border border-border bg-muted/30 p-4 text-center text-sm text-muted-foreground">Loading face scanner...</div>}>
+                <FaceRekognitionLiveness
+                  kioskMode
+                  kioskType={kioskType}
+                  onKioskAttendanceCorrection={(kc) => {
+                    setKioskCorrectionModal({
+                      open: true,
+                      reason: kc?.reason ?? 'already_timed_in',
+                      employeeId: kc?.employee_id ?? null,
+                      employeeName: kc?.employee_name ?? null,
+                      employeeProfileImageUrl: kc?.employee_profile_image_url ?? null,
+                      employeeProfileImage: kc?.employee_profile_image ?? null,
+                    })
+                  }}
+                  onKioskSuccess={(data) => {
+                    const kc = data?.kiosk_correction
+                    setSummaryModal({
+                      open: true,
+                      employeeId: data.employee_id ?? null,
+                      employeeName: data.employee_name ?? null,
+                      employeeProfileImageUrl: data.employee_profile_image_url ?? null,
+                      employeeProfileImage: data.employee_profile_image ?? null,
+                      type: kioskType,
+                      recordedAt: data.attendance?.created_at ?? new Date().toISOString(),
+                      status: data.attendance?.status ?? null,
+                      lateMinutes: data.attendance?.late_minutes ?? null,
+                      lateLabel: data.attendance?.late_label ?? null,
+                      undertimeMinutes: data.attendance?.undertime_minutes ?? null,
+                      correctionSuggested: Boolean(kc?.suggested),
+                      correctionReason: kc?.reason ?? null,
+                    })
+                    setKioskType(null)
+                    fetchRecent()
+                  }}
+                  onKioskCancel={() => { setKioskType(null); setError(null); setScanResult(null) }}
+                  onKioskErrorStateChange={setKioskFaceInError}
+                  hideInstruction
+                />
+              </Suspense>
               {!kioskFaceInError && (
                 <div className="flex justify-center">
                   <button
@@ -1561,7 +1550,7 @@ function LoginForm({ onSuccess, onError }) {
     onError?.('')
     try {
       const data = await login(loginValue.trim(), password, undefined, { remember })
-      onSuccess?.(data?.user ?? null)
+      await onSuccess?.(data?.user ?? null)
     } catch (err) {
       const message = String(err?.message || 'Login failed')
       const isTimeout = /timed out/i.test(message)
@@ -1697,7 +1686,7 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
 function LoginPageWrapper() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { user, loading, setUser } = useAuth()
+  const { user, loading, setUser, refreshUser } = useAuth()
   const [previewOpen, setPreviewOpen] = useState(false)
 
   const resetSuccess = Boolean(location?.state?.resetSuccess)
@@ -1711,20 +1700,63 @@ function LoginPageWrapper() {
     return full
   })()
 
+  useEffect(() => {
+    const startedAt = performance.now()
+    const controller = new AbortController()
+    getPublicSettings({ signal: controller.signal })
+      .then((settings) => {
+        if (import.meta.env.DEV) {
+          console.info('[Login] public settings loaded', {
+            endpoint: 'public-settings',
+            cacheHit: settings?._debug?.cache_hit ?? null,
+            timeMs: Math.round(performance.now() - startedAt),
+          })
+        }
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof PerformanceObserver === 'undefined') return undefined
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.name === 'first-contentful-paint') {
+          console.info('[Login] first contentful paint', {
+            metric: 'first-contentful-paint',
+            timeMs: Math.round(entry.startTime),
+          })
+        }
+      }
+    })
+    try {
+      observer.observe({ type: 'paint', buffered: true })
+    } catch {
+      return undefined
+    }
+    return () => observer.disconnect()
+  }, [])
+
   // Already logged in -> redirect to role dashboard
   if (!loading && user) {
     const path = targetPath || resolvePostLoginPath(user)
     return <Navigate to={path} replace />
   }
 
-  function handleAuthSuccess(authUser = null) {
-    const user = authUser || getStoredUser()
-    if (!user) {
+  async function handleAuthSuccess(authUser = null) {
+    const basicUser = authUser || getStoredUser()
+    if (!basicUser) {
       navigate('/', { replace: true })
       return
     }
-    setUser(user)
-    const path = targetPath || resolvePostLoginPath(user)
+    setUser(basicUser)
+    let hydratedUser = basicUser
+    try {
+      hydratedUser = await refreshUser()
+    } catch {
+      hydratedUser = basicUser
+    }
+    const path = targetPath || resolvePostLoginPath(hydratedUser)
     navigate(path, { replace: true })
     setTimeout(() => {
       if (window.location.pathname === '/login') {
@@ -1827,94 +1859,10 @@ export default function App() {
             <Routes>
               <Route path="/" element={<HomeRedirect />} />
               <Route path="/login" element={<LoginPageWrapper />} />
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/verify-otp" element={<VerifyOtp />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route
-                path="/admin"
-                element={(
-                  <ProtectedRoute variant="adminHr">
-                    <HrPanelLayout />
-                  </ProtectedRoute>
-                )}
-              >
-                {HR_PANEL_CHILD_ROUTES}
-              </Route>
-              <Route path="/company" element={<HrPanelLayout />}>
-                {HR_PANEL_CHILD_ROUTES}
-              </Route>
-              <Route path="/branch" element={<HrPanelLayout />}>
-                {HR_PANEL_CHILD_ROUTES}
-              </Route>
-              <Route path="/department" element={<HrPanelLayout />}>
-                {HR_PANEL_CHILD_ROUTES}
-              </Route>
-              <Route path="/division" element={<HrPanelLayout />}>
-                {HR_PANEL_CHILD_ROUTES}
-              </Route>
-              <Route path="/section-unit" element={<HrPanelLayout />}>
-                {HR_PANEL_CHILD_ROUTES}
-              </Route>
-              <Route
-                path="/employee"
-                element={
-                  <ProtectedRoute role="employee">
-                    <EmployeeDashboardLayout />
-                  </ProtectedRoute>
-                }
-              >
-                <Route index element={<Navigate to="dashboard" replace />} />
-                <Route path="dashboard" element={<EmployeeDashboard />} />
-                <Route
-                  path="holidays"
-                  element={
-                    <ProtectedRoute role="employee" permissions={['holidays.view', 'holiday.view']}>
-                      <EmployeeHolidaysPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route path="attendance" element={<EmployeeAttendance />} />
-                <Route path="correction-requests" element={<EmployeeCorrectionRequests />} />
-                <Route
-                  path="schedule"
-                  element={
-                    <Suspense fallback={<MyScheduleRouteFallback />}>
-                      <MySchedule />
-                    </Suspense>
-                  }
-                />
-                <Route path="qr" element={<EmployeeMyQr />} />
-                <Route
-                  path="reports"
-                  element={
-                    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading reports…</div>}>
-                      <EmployeeReportsPage />
-                    </Suspense>
-                  }
-                />
-                <Route path="requests" element={<EmployeeLeave />} />
-                <Route
-                  path="loans-deductions"
-                  element={
-                    <Suspense fallback={<MyScheduleRouteFallback />}>
-                      <EmployeeLoansDeductionsPage />
-                    </Suspense>
-                  }
-                />
-                <Route path="overtime" element={<EmployeeOvertime />} />
-                <Route path="profile" element={<EmployeeProfile />} />
-                <Route path="profile/:employeeId" element={<EmployeeProfile />} />
-                <Route path="payslips" element={<EmployeeMyPayslipsPage />} />
-                <Route
-                  path="payslips/view/:payslipId"
-                  element={
-                    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading payslip…</div>}>
-                      <AdminPayslipViewPage />
-                    </Suspense>
-                  }
-                />
-              </Route>
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="/forgot-password" element={<Suspense fallback={null}><ForgotPassword /></Suspense>} />
+              <Route path="/verify-otp" element={<Suspense fallback={null}><VerifyOtp /></Suspense>} />
+              <Route path="/reset-password" element={<Suspense fallback={null}><ResetPassword /></Suspense>} />
+              <Route path="/*" element={<Suspense fallback={null}><AuthenticatedRoutes /></Suspense>} />
             </Routes>
           </ErrorBoundary>
         </ThemeProvider>

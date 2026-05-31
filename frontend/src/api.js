@@ -804,6 +804,21 @@ export async function loginWithRole(loginValue, password, role, options = {}) {
   return data
 }
 
+export async function getPublicSettings(options = {}) {
+  const res = await wrapNetworkError(fetchWithTimeout(
+    `${API_BASE}/public-settings`,
+    {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+    options.timeoutMs ?? 5000,
+  ))
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load public settings')
+  return data
+}
+
 // ---- Password reset (OTP via email) ----
 
 export async function requestPasswordResetOtp(login) {
@@ -5402,6 +5417,37 @@ export async function getMyAttendanceSummary(params = {}) {
       days: { ...dm, paginated: false, merged_pages: dm.last_page },
     },
   }
+}
+
+export async function getEmployeeDashboardSummary(params = {}) {
+  const res = await authenticatedFetch('/employee-dashboard/summary', params.signal ? { signal: params.signal } : {})
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employee dashboard summary')
+  return data
+}
+
+export async function getEmployeeDashboardAttendanceCalendar(params = {}) {
+  const query = new URLSearchParams()
+  if (params.month) query.set('month', params.month)
+  const path = `/employee-dashboard/attendance-calendar${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : {})
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employee dashboard attendance calendar')
+  return data
+}
+
+export async function getEmployeeDashboardRecentRequests(params = {}) {
+  const res = await authenticatedFetch('/employee-dashboard/recent-requests', params.signal ? { signal: params.signal } : {})
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employee dashboard requests')
+  return data
+}
+
+export async function getEmployeeDashboardPayslipSummary(params = {}) {
+  const res = await authenticatedFetch('/employee-dashboard/payslip-summary', params.signal ? { signal: params.signal } : {})
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employee dashboard payslip summary')
+  return data
 }
 
 /** Employee: submit presence filing (pending approval). */

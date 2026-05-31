@@ -13,7 +13,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useAuth } from '@/contexts/AuthContext'
-import { getMyAttendanceSummary, getMyLeaveSummary, getAllMyOvertimeRequestsInRange, getMyHolidays } from '@/api'
+import {
+  getEmployeeDashboardAttendanceCalendar,
+  getEmployeeDashboardRecentRequests,
+  getEmployeeDashboardSummary,
+  getMyHolidays,
+} from '@/api'
 import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
 import { cn } from '@/lib/utils'
 import { formatEmployeeName } from '@/lib/employeeSort'
@@ -251,9 +256,17 @@ function getCalendarDayVisual(record, dateKey, ctx) {
     }
   }
 
+  if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') {
+    return {
+      badge: 'Rest Day',
+      tileClass: `${baseGridCell} ${tint.slate}`,
+      badgeClass: `${L.ink} ${L.slate}`,
+    }
+  }
+
   if (isRestDay(dateKey) && (status === 'absent' || status === '—')) {
     return {
-      badge: 'Rest day',
+      badge: 'Rest Day',
       tileClass: `${baseGridCell} ${tint.slate}`,
       badgeClass: `${L.ink} ${L.slate}`,
     }
@@ -333,7 +346,7 @@ function getCalendarDayVisual(record, dateKey, ctx) {
   if (!status || status === '—') {
     if (isRestDay(dateKey)) {
       return {
-        badge: 'Rest day',
+        badge: 'Rest Day',
         tileClass: `${baseGridCell} ${tint.slate}`,
         badgeClass: `${L.ink} ${L.slate}`,
       }
@@ -427,6 +440,7 @@ export default function EmployeeDashboard() {
   const [holidayLoading, setHolidayLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [calendarLoading, setCalendarLoading] = useState(true)
+  const [summaryReady, setSummaryReady] = useState(false)
   const [error, setError] = useState(null)
   const [prevSummary, setPrevSummary] = useState(null)
   const [monthOtRequests, setMonthOtRequests] = useState([])
@@ -435,94 +449,146 @@ export default function EmployeeDashboard() {
   const [selectedDay, setSelectedDay] = useState(DEFAULT_CALENDAR_VALUE)
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear())
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth())
-  const dashboardRequestSeq = useRef(0)
-  const dashboardAbortRef = useRef(null)
+  const summaryAbortRef = useRef(null)
+  const calendarAbortRef = useRef(null)
+  const recentAbortRef = useRef(null)
+  const calendarCacheRef = useRef(new Map())
 
-  const loadDashboard = useCallback(async (opts = {}) => {
-    dashboardAbortRef.current?.abort()
+  const mergeSummary = useCallback((next) => {
+    setSummary((current) => ({
+      ...(current || {}),
+      ...(next || {}),
+      today: next?.today ?? current?.today,
+      pending_requests: next?.pending_requests ?? current?.pending_requests,
+      upcoming_payroll: next?.upcoming_payroll ?? current?.upcoming_payroll,
+      latest_payslip: next?.latest_payslip ?? current?.latest_payslip,
+    }))
+  }, [])
+
+  const loadDashboardSummary = useCallback(async (opts = {}) => {
+    summaryAbortRef.current?.abort()
     const controller = new AbortController()
-    dashboardAbortRef.current = controller
-    const requestSeq = dashboardRequestSeq.current + 1
-    dashboardRequestSeq.current = requestSeq
+    summaryAbortRef.current = controller
     const soft = opts.soft === true
     if (!soft) {
       setLoading(true)
-      setCalendarLoading(true)
       setError(null)
     }
     try {
-      const y = typeof opts.year === 'number' ? opts.year : calendarYear
-      const mo = typeof opts.month === 'number' ? opts.month : calendarMonth
-      const from = formatLocalDateKey(new Date(y, mo, 1))
-      const to = formatLocalDateKey(new Date(y, mo + 1, 0))
-      const today = formatLocalDateKey(new Date())
-
-      const todayData = await getMyAttendanceSummary({
-        from_date: today,
-        to_date: today,
-        dashboard_lite: true,
-        merge_all_pages: false,
-        signal: controller.signal,
-      })
-      if (dashboardRequestSeq.current !== requestSeq) return
-      setSummary(todayData.summary || null)
-      if (calendarYear === new Date().getFullYear() && calendarMonth === new Date().getMonth()) {
-        setDays(Array.isArray(todayData.days) ? todayData.days : [])
-      }
-      if (!soft) setLoading(false)
-
-      const [attendanceData, leaveData, otList] = await Promise.all([
-        getMyAttendanceSummary({ from_date: from, to_date: to, dashboard_lite: true, signal: controller.signal }),
-        getMyLeaveSummary({ from_date: from, to_date: to, dashboard_lite: true, signal: controller.signal }),
-        getAllMyOvertimeRequestsInRange(from, to, { dashboard_lite: true, signal: controller.signal }).catch(() => []),
-      ])
-      if (dashboardRequestSeq.current !== requestSeq) return
-      setSummary(attendanceData.summary || null)
-      setDays(Array.isArray(attendanceData.days) ? attendanceData.days : [])
-      setPrevSummary(null)
-      setLeaveSummary(leaveData.summary || null)
-      setLeaveRequests(Array.isArray(leaveData.leave_requests) ? leaveData.leave_requests : [])
-      setMonthOtRequests(Array.isArray(otList) ? otList : [])
+      const data = await getEmployeeDashboardSummary({ signal: controller.signal })
+      mergeSummary(data)
+      setError(null)
     } catch (e) {
       if (controller.signal.aborted) return
       if (!soft) setError(e.message)
-      setSummary(null)
-      setDays([])
-      setLeaveSummary(null)
-      setLeaveRequests([])
-      setMonthOtRequests([])
     } finally {
-      if (dashboardRequestSeq.current === requestSeq) {
-        if (!soft) setLoading(false)
-        setCalendarLoading(false)
+      if (summaryAbortRef.current === controller) {
+        summaryAbortRef.current = null
       }
-      if (dashboardAbortRef.current === controller) {
-        dashboardAbortRef.current = null
+      if (!soft) {
+        setLoading(false)
+        setSummaryReady(true)
       }
     }
-  }, [calendarYear, calendarMonth])
+  }, [mergeSummary])
+
+  const loadAttendanceCalendar = useCallback(async (year, month, opts = {}) => {
+    const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`
+    calendarAbortRef.current?.abort()
+    const cached = calendarCacheRef.current.get(monthKey)
+    if (cached && opts.force !== true) {
+      setDays(Array.isArray(cached.days) ? cached.days : [])
+      mergeSummary({
+        ...(cached.summary || {}),
+        from_date: `${monthKey}-01`,
+        schedule_assigned: cached.schedule_assigned,
+      })
+      setMonthOtRequests(Array.isArray(cached.overtime_requests) ? cached.overtime_requests : [])
+      setPrevSummary(null)
+      setCalendarLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    calendarAbortRef.current = controller
+    setCalendarLoading(true)
+    try {
+      const data = await getEmployeeDashboardAttendanceCalendar({ month: monthKey, signal: controller.signal })
+      calendarCacheRef.current.set(monthKey, data)
+      setDays(Array.isArray(data.days) ? data.days : [])
+      mergeSummary({
+        ...(data.summary || {}),
+        from_date: `${monthKey}-01`,
+        schedule_assigned: data.schedule_assigned,
+      })
+      setMonthOtRequests(Array.isArray(data.overtime_requests) ? data.overtime_requests : [])
+      setPrevSummary(null)
+      setError(null)
+    } catch (e) {
+      if (controller.signal.aborted) return
+      setDays([])
+      setMonthOtRequests([])
+      setError(e.message)
+    } finally {
+      if (calendarAbortRef.current === controller) {
+        calendarAbortRef.current = null
+        setCalendarLoading(false)
+      }
+    }
+  }, [mergeSummary])
+
+  const loadRecentRequests = useCallback(async () => {
+    recentAbortRef.current?.abort()
+    const controller = new AbortController()
+    recentAbortRef.current = controller
+    try {
+      const data = await getEmployeeDashboardRecentRequests({ signal: controller.signal })
+      setLeaveSummary(data.leave_summary || null)
+      setLeaveRequests(Array.isArray(data.leave_requests) ? data.leave_requests : [])
+    } catch {
+      if (controller.signal.aborted) return
+      setLeaveSummary(null)
+      setLeaveRequests([])
+    } finally {
+      if (recentAbortRef.current === controller) {
+        recentAbortRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const id = window.setTimeout(() => {
-      void loadDashboard()
-    }, 180)
+      void (async () => {
+        await loadDashboardSummary()
+        void loadRecentRequests()
+      })()
+    }, 80)
     return () => {
       window.clearTimeout(id)
-      dashboardAbortRef.current?.abort()
+      summaryAbortRef.current?.abort()
+      recentAbortRef.current?.abort()
     }
-  }, [loadDashboard])
+  }, [loadDashboardSummary, loadRecentRequests])
+
+  useEffect(() => {
+    if (!summaryReady) return undefined
+    void loadAttendanceCalendar(calendarYear, calendarMonth)
+    return () => {
+      calendarAbortRef.current?.abort()
+    }
+  }, [calendarYear, calendarMonth, loadAttendanceCalendar, summaryReady])
 
   useEffect(() => {
     const onVis = () => {
-      if (document.visibilityState === 'visible') void loadDashboard({ soft: true })
+      if (document.visibilityState === 'visible') void loadDashboardSummary({ soft: true })
     }
     document.addEventListener('visibilitychange', onVis)
-    const id = window.setInterval(() => void loadDashboard({ soft: true }), 60_000)
+    const id = window.setInterval(() => void loadDashboardSummary({ soft: true }), 60_000)
     return () => {
       document.removeEventListener('visibilitychange', onVis)
       window.clearInterval(id)
     }
-  }, [loadDashboard])
+  }, [loadDashboardSummary])
 
   useEffect(() => {
     let cancelled = false
@@ -550,11 +616,13 @@ export default function EmployeeDashboard() {
   useEffect(() => {
     const onSchedulesChanged = () => {
       void refreshUser?.()
-      void loadDashboard({ soft: true })
+      calendarCacheRef.current.clear()
+      void loadDashboardSummary({ soft: true })
+      void loadAttendanceCalendar(calendarYear, calendarMonth, { force: true })
     }
     window.addEventListener('hr:schedules-changed', onSchedulesChanged)
     return () => window.removeEventListener('hr:schedules-changed', onSchedulesChanged)
-  }, [loadDashboard, refreshUser])
+  }, [calendarMonth, calendarYear, loadAttendanceCalendar, loadDashboardSummary, refreshUser])
 
   /** Prefer server-computed rest day from /attendance/summary; fallback to schedule template / legacy JSON. */
   const restDayByDate = useMemo(() => {
@@ -615,6 +683,7 @@ export default function EmployeeDashboard() {
 
     if (!status) return '—'
     if (status === 'leave') return 'On leave'
+    if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') return 'Rest Day'
     if (status === 'late') return timeIn && !timeOut ? 'Working' : (lateLabel || 'Late')
     if (status === 'halfday') return timeIn && !timeOut ? 'Working' : 'Half Day'
     if (status === 'absent') {
@@ -661,6 +730,10 @@ export default function EmployeeDashboard() {
       const shortLabel = formatDurationMinutes(undertime)
       if (shortLabel) parts.push(`${shortLabel} short`)
       return parts.join(' • ') || 'Recorded as half day against your schedule.'
+    }
+
+    if (t.status === 'rest' || t.status === 'rest_day' || t.status === 'no_schedule_rest') {
+      return 'Rest Day - no work scheduled.'
     }
 
     if (t.status === 'undertime') {
@@ -712,7 +785,7 @@ export default function EmployeeDashboard() {
 
     if (t.status === 'absent') {
       if (isRestDay(formatLocalDateKey(new Date()))) {
-        return 'Rest day — no work scheduled.'
+        return 'Rest Day - no work scheduled.'
       }
       return isPastAbsentCutoff()
         ? 'No attendance recorded for today.'
@@ -1036,6 +1109,15 @@ export default function EmployeeDashboard() {
       }
     }
 
+    if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') {
+      return {
+        tone: 'info',
+        dotClass: 'bg-slate-400',
+        label: 'Rest Day',
+        detail: 'Rest Day - no work scheduled.',
+      }
+    }
+
     // Completed shift — both clock-in and clock-out are recorded (real logs or manual correction)
     const completedStatuses = ['present', 'late', 'halfday', 'undertime', 'incomplete']
     if (timeIn && timeOut && completedStatuses.includes(status)) {
@@ -1054,7 +1136,7 @@ export default function EmployeeDashboard() {
           tone: 'info',
           dotClass: 'bg-slate-400',
           label: 'Rest Day',
-          detail: 'Rest day — no work scheduled.',
+          detail: 'Rest Day - no work scheduled.',
         }
       }
       const pastCutoff = isPastAbsentCutoff()
@@ -1089,6 +1171,7 @@ export default function EmployeeDashboard() {
     const todayKey = formatLocalDateKey(new Date())
     if (dateKey === todayKey && summary?.schedule_assigned === false) return 'No schedule'
     if (status === 'leave') return 'On leave'
+    if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') return 'Rest Day'
     if (status === 'absent' || status === '—') {
       if (isRestDay(dateKey)) return 'Rest Day'
       if (dateKey === todayKey && status === 'absent' && !isPastAbsentCutoff()) return 'Not started'

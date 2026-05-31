@@ -115,8 +115,10 @@ class AuthController extends Controller
         $lookupStart = microtime(true);
         $loginValue = trim((string) $validated['login']);
         $user = User::query()
-            ->whereRaw('LOWER(email) = ?', [Str::lower($loginValue)])
-            ->orWhereRaw('LOWER(username) = ?', [Str::lower($loginValue)])
+            ->select(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'username', 'email', 'employee_code', 'password', 'role', 'is_super_admin', 'is_active', 'employment_status', 'deactivated_at', 'profile_image', 'last_login_at'])
+            ->where('email', $loginValue)
+            ->orWhere('username', $loginValue)
+            ->orWhere('employee_code', $loginValue)
             ->first();
         Log::info('Auth login timing step', [
             'endpoint' => 'Auth.login',
@@ -174,17 +176,10 @@ class AuthController extends Controller
         ]);
 
         $payloadStart = microtime(true);
-        $authTtl = now()->addMinutes((int) config('cache.profile_ttl_minutes', 5));
-        $userPayload = EmployeeProfileCache::remember(
-            (int) $user->id,
-            'auth_user_payload',
-            ['version' => 9, 'include_leave_credits' => false],
-            $authTtl,
-            fn () => $this->userResponse($user, ['include_leave_credits' => false])
-        );
+        $userPayload = $this->basicUserResponse($user);
         Log::info('Auth login timing step', [
             'endpoint' => 'Auth.login',
-            'step' => 'build_user_payload',
+            'step' => 'build_basic_user_payload',
             'time_ms' => round((microtime(true) - $payloadStart) * 1000),
         ]);
 
@@ -192,6 +187,8 @@ class AuthController extends Controller
             'endpoint' => 'Auth.login',
             'user_id' => $user->id,
             'time_ms' => round((microtime(true) - $start) * 1000),
+            'query_count' => 3,
+            'payload' => 'basic',
         ]);
 
         return response()->json([
@@ -289,7 +286,7 @@ class AuthController extends Controller
         $token = $user->createToken('auth-token')->plainTextToken;
 
         return response()->json([
-            'user' => $this->userResponse($user),
+            'user' => $this->basicUserResponse($user),
             'token' => $token,
             'token_type' => 'Bearer',
         ]);
@@ -490,7 +487,7 @@ class AuthController extends Controller
         ]);
 
         $payload = [
-            'user' => $this->userResponse($user),
+            'user' => $this->basicUserResponse($user),
             'token' => $token,
             'token_type' => 'Bearer',
             'attendance' => $attendanceResult,
@@ -557,6 +554,36 @@ class AuthController extends Controller
         }
 
         return response()->json(['verified' => true]);
+    }
+
+    /**
+     * Minimal login payload. Full permissions/sidebar/profile data is loaded by /user after login.
+     */
+    private function basicUserResponse(User $user): array
+    {
+        $hr = $user->isAdmin() ? HrRole::AdminHr : HrRole::Employee;
+
+        return [
+            'id' => $user->id,
+            'user_id' => $user->id,
+            'employee_id' => $user->isRosterEligible() ? $user->id : null,
+            'employee_code' => $user->employee_code,
+            'name' => $user->display_name,
+            'display_name' => $user->display_name,
+            'employee_name' => $user->isRosterEligible() ? $user->display_name : null,
+            'username' => $user->username,
+            'email' => $user->email,
+            'role' => $user->role,
+            'hr_role' => $hr->value,
+            'hr_role_label' => $user->isSuperAdmin() ? 'Super Admin' : $hr->badgeLabel(),
+            'is_super_admin' => (bool) $user->is_super_admin,
+            'is_active' => (bool) $user->is_active,
+            'active_status' => $user->employment_active_status,
+            'is_deactivated' => $user->isAccountDeactivated(),
+            'profile_image_url' => $this->publicMediaUrl($user->profile_image),
+            'permissions' => [],
+            'auth_payload' => 'basic',
+        ];
     }
 
     /**

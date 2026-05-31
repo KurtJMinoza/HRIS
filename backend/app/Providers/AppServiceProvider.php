@@ -23,6 +23,7 @@ use App\Models\SectionUnit;
 use App\Models\Team;
 use App\Models\User;
 use App\Services\AttendanceCacheService;
+use App\Services\EmployeeDashboardCacheService;
 use App\Services\HolidayCalendarService;
 use App\Services\HolidayService;
 use App\Services\LegacyOrganizationMirrorService;
@@ -75,11 +76,13 @@ class AppServiceProvider extends ServiceProvider
             Cache::forget('sidebar:user:'.(int) $user->id);
             if ($user->wasChanged(['schedule', 'working_schedule_id', 'pending_working_schedule_id'])) {
                 AttendanceCacheService::invalidate((int) $user->id);
+                EmployeeDashboardCacheService::invalidate((int) $user->id);
             }
         });
         User::deleted(function (User $user): void {
             EmployeeProfileCache::invalidate((int) $user->id);
             AttendanceCacheService::invalidate((int) $user->id);
+            EmployeeDashboardCacheService::invalidate((int) $user->id);
             AdminDashboardCache::flush();
             Cache::forget('permissions:user:'.(int) $user->id);
             Cache::forget('sidebar:user:'.(int) $user->id);
@@ -95,6 +98,7 @@ class AppServiceProvider extends ServiceProvider
                 ? Carbon::parse($stamp)->timezone($tz)->toDateString()
                 : null;
             AttendanceCacheService::invalidate((int) $log->user_id, $date);
+            EmployeeDashboardCacheService::invalidate((int) $log->user_id);
             AdminDashboardCache::flush();
         };
         AttendanceLog::saved($invalidateAttendanceForLog);
@@ -105,6 +109,7 @@ class AppServiceProvider extends ServiceProvider
             if ($correction->user_id) {
                 $date = $correction->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $correction->user_id, $date);
+                EmployeeDashboardCacheService::invalidate((int) $correction->user_id);
             }
         });
         AttendanceCorrection::deleted(function (AttendanceCorrection $correction): void {
@@ -112,6 +117,7 @@ class AppServiceProvider extends ServiceProvider
             if ($correction->user_id) {
                 $date = $correction->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $correction->user_id, $date);
+                EmployeeDashboardCacheService::invalidate((int) $correction->user_id);
             }
         });
 
@@ -122,9 +128,16 @@ class AppServiceProvider extends ServiceProvider
             }
             if ($leave->wasChanged('status') || $leave->status === LeaveRequest::STATUS_APPROVED) {
                 AttendanceCacheService::invalidate((int) $leave->user_id);
+                EmployeeDashboardCacheService::invalidate((int) $leave->user_id);
             }
         });
-        LeaveRequest::deleted(fn (LeaveRequest $leave) => AdminDashboardCache::flush());
+        LeaveRequest::deleted(function (LeaveRequest $leave): void {
+            AdminDashboardCache::flush();
+            if ($leave->user_id) {
+                AttendanceCacheService::invalidate((int) $leave->user_id);
+                EmployeeDashboardCacheService::invalidate((int) $leave->user_id);
+            }
+        });
 
         Overtime::saved(function (Overtime $overtime): void {
             AdminDashboardCache::flush();
@@ -134,9 +147,17 @@ class AppServiceProvider extends ServiceProvider
             if ($overtime->wasChanged('status') || $overtime->status === Overtime::STATUS_APPROVED) {
                 $date = $overtime->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $overtime->user_id, $date);
+                EmployeeDashboardCacheService::invalidate((int) $overtime->user_id);
             }
         });
-        Overtime::deleted(fn (Overtime $overtime) => AdminDashboardCache::flush());
+        Overtime::deleted(function (Overtime $overtime): void {
+            AdminDashboardCache::flush();
+            if ($overtime->user_id) {
+                $date = $overtime->date?->toDateString();
+                AttendanceCacheService::invalidate((int) $overtime->user_id, $date);
+                EmployeeDashboardCacheService::invalidate((int) $overtime->user_id);
+            }
+        });
 
         PayrollBatchRun::saved(fn (PayrollBatchRun $run) => AdminDashboardCache::flush());
         PayrollBatchRun::deleted(fn (PayrollBatchRun $run) => AdminDashboardCache::flush());
@@ -189,6 +210,7 @@ class AppServiceProvider extends ServiceProvider
 
         Holiday::saved(function (Holiday $h) {
             app(HolidayCalendarService::class)->flushMergedYearCaches();
+            EmployeeDashboardCacheService::invalidateAll();
             if ($h->is_swap) {
                 $dateKey = $h->date instanceof \Carbon\Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
                 app(HolidayService::class)->flushCoverageForDate($dateKey);
@@ -196,6 +218,7 @@ class AppServiceProvider extends ServiceProvider
         });
         Holiday::deleted(function (Holiday $h) {
             app(HolidayCalendarService::class)->flushMergedYearCaches();
+            EmployeeDashboardCacheService::invalidateAll();
             if ($h->is_swap) {
                 $dateKey = $h->date instanceof \Carbon\Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
                 app(HolidayService::class)->flushCoverageForDate($dateKey);
@@ -206,6 +229,7 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(ScheduleUpdated::class, function (ScheduleUpdated $event): void {
             foreach ($event->affectedUserIds as $userId) {
                 AttendanceCacheService::invalidate((int) $userId);
+                EmployeeDashboardCacheService::invalidate((int) $userId);
             }
         });
 

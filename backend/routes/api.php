@@ -46,6 +46,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EmployeeCertificationController;
 use App\Http\Controllers\EmployeeContributionController;
 use App\Http\Controllers\EmployeeDocumentController;
+use App\Http\Controllers\EmployeeDashboardController;
 use App\Http\Controllers\EmployeeGovernmentIdDocumentController;
 use App\Http\Controllers\EmployeeLeaveController;
 use App\Http\Controllers\EmployeeLoanRequestController;
@@ -60,6 +61,7 @@ use App\Http\Controllers\PayrollReportController;
 use App\Http\Controllers\PayslipDownloadController;
 use App\Http\Controllers\PresenceFilingController;
 use App\Http\Controllers\PublicMediaController;
+use App\Http\Controllers\PublicSettingsController;
 use App\Http\Controllers\RegularizationController;
 use App\Http\Controllers\SkillSuggestionController;
 use Illuminate\Support\Facades\Route;
@@ -76,6 +78,7 @@ Route::post('/face/liveness/results', [LivenessController::class, 'sessionResult
 Route::get('/face/liveness/session/{sessionId}', [LivenessController::class, 'getSessionResult']);
 Route::post('/face/verify-only', [AttendanceController::class, 'verifyFaceOnly']);
 Route::get('/media/public/{path}', [PublicMediaController::class, 'show'])->where('path', '.*');
+Route::get('/public-settings', [PublicSettingsController::class, 'index']);
 
 // Unified scan: optional auth (kiosk = no token, employee = Bearer). Real-time flow: decode QR → validate → record → JSON.
 Route::post('/attendance/scan', [AttendanceController::class, 'scan']);
@@ -99,6 +102,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/profile/face/register', [\App\Http\Controllers\ProfileController::class, 'registerMyFace']);
     Route::get('/profile/face/register/status/{trackId}', [\App\Http\Controllers\ProfileController::class, 'faceRegistrationStatus']);
     Route::delete('/profile/face', [\App\Http\Controllers\ProfileController::class, 'removeMyFace']);
+
+    // Employee Dashboard split endpoints. Keep the shell, calendar, requests, and payslip widgets independent.
+    Route::get('/employee-dashboard/summary', [EmployeeDashboardController::class, 'summary']);
+    Route::get('/employee-dashboard/attendance-calendar', [EmployeeDashboardController::class, 'attendanceCalendar']);
+    Route::get('/employee-dashboard/recent-requests', [EmployeeDashboardController::class, 'recentRequests']);
+    Route::get('/employee-dashboard/payslip-summary', [EmployeeDashboardController::class, 'payslipSummary']);
 
     // Employee Dashboard → Profile module (tabbed). Each tab has independent validation/saving.
     Route::get('/employee/profile', [EmployeeProfileController::class, 'show']);

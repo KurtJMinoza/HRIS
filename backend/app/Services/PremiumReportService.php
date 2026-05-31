@@ -21,7 +21,7 @@ class PremiumReportService
     /** Rule code → [work_condition, pay_rule, multiplier] for report columns. */
     private const RULE_LABELS = [
         'ORD' => ['Ordinary working day (first 8 hrs)', '100% of basic hourly rate', '1.00'],
-        'RD' => ['Rest day (first 8 hrs)', '130% of daily/hourly rate', '1.30'],
+        'RD' => ['Rest Day (first 8 hrs)', '130% of daily/hourly rate', '1.30'],
         'RH' => ['Regular holiday worked (first 8 hrs)', '200%', '2.00'],
         'RHRD' => ['Regular holiday + rest day (first 8 hrs)', '260%', '2.60'],
         'SH' => ['Special holiday worked (first 8 hrs)', '130%', '1.30'],

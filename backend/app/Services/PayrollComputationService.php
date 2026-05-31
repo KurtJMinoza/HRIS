@@ -1487,7 +1487,7 @@ class PayrollComputationService
         $dayKey = $this->dayKeyForDate($date);
         $day = $effectiveSchedule[$dayKey] ?? null;
         if ($day === null || ! is_array($day) || empty($day['in'])) {
-            return 'Rest day';
+            return 'Rest Day';
         }
         $inRaw = $day['in'] ?? '';
         $outRaw = $day['out'] ?? '';
@@ -3956,7 +3956,7 @@ class PayrollComputationService
             } elseif ($sessionIn !== null || $sessionOut !== null) {
                 $status = 'Incomplete';
             } elseif ((bool) ($row['is_rest_day'] ?? false)) {
-                $status = 'Rest day';
+                $status = 'Rest Day';
             }
             $row['attendance_status'] = $status;
         }
@@ -4079,7 +4079,7 @@ class PayrollComputationService
     {
         $map = [
             'ORD' => 'Ordinary day — pay uses work after scheduled shift end as rendered OT (not net−8h); 1.00× non-OT work, OT ×1.25; ND +10% (10PM–6AM)',
-            'RD' => 'Rest day — 1.30× first 8h, OT 1.69×; ND +10% on (HWR×1.30) / OT ND on (HWR×1.69)',
+            'RD' => 'Rest Day — 1.30× first 8h, OT 1.69×; ND +10% on (HWR×1.30) / OT ND on (HWR×1.69)',
             'RH' => 'Regular holiday worked — 2.00× first 8h, OT 2.60×; ND +10% on premium rates',
             'RHRD' => 'Regular holiday + rest day — 2.60× first 8h, OT 3.38×; ND +10% on premium rates',
             'SH' => 'Special holiday — 1.30× first 8h, OT 1.69×; ND +10% on premium rates',
