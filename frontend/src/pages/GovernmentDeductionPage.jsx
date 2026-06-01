@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Building2,
   FileClock,
   HeartPulse,
   History,
@@ -15,8 +16,11 @@ import {
   Scale,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
+  UserRound,
   X,
 } from 'lucide-react'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
   calculateStatutoryContributions,
@@ -32,6 +36,7 @@ import {
   updateEmployeeGovernmentDeductionExemption,
   upsertStatutoryRate,
 } from '@/api'
+import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { cn } from '@/lib/utils'
 
 const RATE_CODES = ['SSS', 'PHILHEALTH', 'PAGIBIG', 'EC']
@@ -345,6 +350,86 @@ function ExemptionBadge({ active }) {
   )
 }
 
+function initials(name) {
+  return String(name || 'Employee')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'E'
+}
+
+function employeeTypeLabel(row) {
+  const raw = row?.employment_status || row?.employment_type || ''
+  return String(raw || 'Employee').replace(/[_-]+/g, ' ')
+}
+
+function activeExemptionCount(settings = {}) {
+  return EXEMPTION_TYPES.filter(([field]) => Boolean(settings[field])).length
+}
+
+function exemptionLabels(settings = {}) {
+  return EXEMPTION_TYPES.filter(([field]) => Boolean(settings[field])).map(([, label]) => label)
+}
+
+function EmployeeAvatarCell({ employee, size = 'default' }) {
+  const photo = employeeAvatarSrc(employee)
+  const fallbackClass = getEmployeeAvatarColorClass(employee?.id, employee?.name)
+  return (
+    <Avatar className={cn('border border-border/70 shadow-sm', size === 'lg' ? 'size-16' : 'size-11')}>
+      <AvatarImage src={photo || undefined} alt={employee?.name || 'Employee'} className="object-cover" />
+      <AvatarFallback className={cn('font-bold uppercase', size === 'lg' ? 'text-lg' : 'text-sm', fallbackClass)}>
+        {initials(employee?.name)}
+      </AvatarFallback>
+    </Avatar>
+  )
+}
+
+function ScopePills({ settings = {}, isExecom }) {
+  const appliesToCurrentPayroll = isExecom
+    ? settings.applies_to_execom_payroll !== false
+    : settings.applies_to_regular_payroll !== false
+  const payrollLabel = isExecom ? 'EXECOM payroll' : 'Regular payroll'
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {isExecom ? (
+        <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-[11px] font-bold text-violet-700 dark:text-violet-300">EXECOM employee</span>
+      ) : null}
+      {appliesToCurrentPayroll ? (
+        <span className="rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-bold text-brand">{payrollLabel}</span>
+      ) : (
+        <span className="rounded-full bg-slate-500/10 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-300">Not applied to {payrollLabel}</span>
+      )}
+    </div>
+  )
+}
+
+function ExemptionToggleCard({ field, label, checked, onChange }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(field, !checked)}
+      className={cn(
+        'rounded-xl border p-4 text-left transition hover:border-brand/50 hover:bg-brand/5',
+        checked
+          ? 'border-rose-300 bg-rose-50 text-rose-950 shadow-sm dark:border-rose-500/35 dark:bg-rose-950/25 dark:text-rose-100'
+          : 'border-border bg-background text-foreground'
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-bold">{label}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{checked ? 'Deduction will be zeroed' : 'Deduction remains active'}</p>
+        </div>
+        <span className={cn('mt-0.5 inline-flex size-5 items-center justify-center rounded-full border', checked ? 'border-rose-500 bg-rose-500 text-white' : 'border-border bg-muted')}>
+          {checked ? <CheckCircle2 className="size-3.5" /> : null}
+        </span>
+      </div>
+    </button>
+  )
+}
+
 function EmployeeExemptionsTab({ canManage }) {
   const [rows, setRows] = useState([])
   const [meta, setMeta] = useState(null)
@@ -388,8 +473,8 @@ function EmployeeExemptionsTab({ canManage }) {
       exempt_withholding_tax: Boolean(s.exempt_withholding_tax),
       exempt_all_government_deductions: Boolean(s.exempt_all_government_deductions),
       exemption_reason: s.exemption_reason || '',
-      applies_to_regular_payroll: s.applies_to_regular_payroll !== false,
-      applies_to_execom_payroll: s.applies_to_execom_payroll !== false,
+      applies_to_regular_payroll: row?.is_execom ? false : s.applies_to_regular_payroll !== false,
+      applies_to_execom_payroll: row?.is_execom ? s.applies_to_execom_payroll !== false : false,
       is_active: s.is_active !== false,
     }
     setEditing(row)
@@ -481,24 +566,42 @@ function EmployeeExemptionsTab({ canManage }) {
     }
   }
 
+  const activeRows = rows.filter((row) => row?.settings?.is_active !== false && activeExemptionCount(row?.settings) > 0)
+  const execomRows = rows.filter((row) => row?.is_execom)
+  const allExemptRows = rows.filter((row) => row?.settings?.is_active !== false && row?.settings?.exempt_all_government_deductions)
+
   return (
-    <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-foreground">Employee Exemptions</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Select employees whose SSS, PhilHealth, Pag-IBIG, or withholding tax deductions should be zeroed for active payroll periods.</p>
+    <section className="space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-2 rounded-full bg-brand/10 px-3 py-1 text-xs font-bold uppercase tracking-wide text-brand">
+            <ShieldCheck className="size-3.5" aria-hidden />
+            Employee-level controls
+          </div>
+          <h2 className="mt-3 text-2xl font-bold tracking-tight text-foreground">Employee Exemptions</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            Review employees, payroll scope, and exempted deductions in one place. Active exemptions zero SSS, PhilHealth, Pag-IBIG, or withholding tax for matching payroll runs.
+          </p>
         </div>
-        <Button type="button" variant="outline" onClick={loadRows} disabled={loading}>
-          <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
-          Refresh
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button type="button" variant="outline" onClick={loadRows} disabled={loading} className="h-11">
+            <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <MetricCard label="Employees Shown" value={String(meta?.total ?? rows.length)} caption="Filtered employees in scope" icon={UserRound} />
+        <MetricCard label="Active Exemptions" value={String(activeRows.length)} caption="Rows with at least one active exemption" icon={ShieldCheck} accent="text-emerald-600 dark:text-emerald-300" />
+        <MetricCard label="All Gov Deduction Exempt" value={String(allExemptRows.length)} caption={`${execomRows.length} EXECOM employees in current result`} icon={SlidersHorizontal} accent="text-rose-600 dark:text-rose-300" />
       </div>
 
       {error ? <InfoBanner type="error" onDismiss={() => setError('')}>{error}</InfoBanner> : null}
       {notice ? <InfoBanner onDismiss={() => setNotice('')}>{notice}</InfoBanner> : null}
 
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_190px]">
-        <label className="flex h-11 items-center gap-2 rounded-md border border-border bg-background px-3">
+      <div className="grid gap-3 rounded-xl border border-border bg-background/60 p-3 md:grid-cols-[minmax(0,1fr)_190px_210px]">
+        <label className="flex h-11 items-center gap-2 rounded-lg border border-border bg-card px-3 shadow-sm">
           <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <input
             value={filters.search}
@@ -507,12 +610,12 @@ function EmployeeExemptionsTab({ canManage }) {
             className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none"
           />
         </label>
-        <select value={filters.payroll_type} onChange={(event) => patchFilter('payroll_type', event.target.value)} className="h-11 rounded-md border border-border bg-background px-3 text-sm font-semibold">
+        <select value={filters.payroll_type} onChange={(event) => patchFilter('payroll_type', event.target.value)} className="h-11 rounded-lg border border-border bg-card px-3 text-sm font-semibold shadow-sm">
           <option value="">Any payroll type</option>
           <option value="regular">Regular / Consultant</option>
           <option value="execom">EXECOM</option>
         </select>
-        <select value={filters.employee_type} onChange={(event) => patchFilter('employee_type', event.target.value)} className="h-11 rounded-md border border-border bg-background px-3 text-sm font-semibold">
+        <select value={filters.employee_type} onChange={(event) => patchFilter('employee_type', event.target.value)} className="h-11 rounded-lg border border-border bg-card px-3 text-sm font-semibold shadow-sm">
           <option value="">Any employee type</option>
           <option value="regular">Regular</option>
           <option value="probationary">Probationary</option>
@@ -522,43 +625,76 @@ function EmployeeExemptionsTab({ canManage }) {
         </select>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-304 text-sm">
-          <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
+      <div className="overflow-hidden rounded-xl border border-border">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-312 text-sm">
+          <thead className="bg-muted/50 text-[11px] uppercase tracking-wide text-foreground">
             <tr>
-              {['Employee', 'Company', 'Department', 'SSS', 'PhilHealth', 'Pag-IBIG', 'Withholding Tax', 'Status', 'Actions'].map((head) => (
-                <th key={head} className="border-b border-r border-border px-3 py-3 text-left font-bold last:border-r-0">{head}</th>
+              {['Photo', 'Employee', 'Organization', 'Payroll Scope', 'Exemptions', 'Reason', 'Status', 'Actions'].map((head) => (
+                <th key={head} className="border-b border-border px-4 py-3 text-left font-bold">{head}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">Loading employee exemptions...</td></tr>
+              <tr><td colSpan={8} className="px-3 py-10 text-center text-muted-foreground">Loading employee exemptions...</td></tr>
             ) : null}
             {!loading && rows.length === 0 ? (
-              <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">No employees matched the current filters.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-10 text-center text-muted-foreground">No employees matched the current filters.</td></tr>
             ) : null}
             {!loading && rows.map((row) => {
               const s = row.settings || {}
               const active = s.is_active !== false
+              const count = activeExemptionCount(s)
+              const labels = exemptionLabels(s)
               return (
-                <tr key={row.id} className="border-b border-border align-top last:border-b-0">
-                  <td className="border-r border-border px-3 py-3">
-                    <div className="font-bold text-foreground">{row.name}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">{row.employee_code || 'No employee no.'}{row.is_execom ? ' • EXECOM' : ''}</div>
+                <tr key={row.id} className="border-b border-border align-middle last:border-b-0 hover:bg-muted/30">
+                  <td className="px-4 py-4">
+                    <EmployeeAvatarCell employee={row} />
                   </td>
-                  <td className="border-r border-border px-3 py-3 text-foreground">{row.company || '-'}</td>
-                  <td className="border-r border-border px-3 py-3 text-foreground">{row.department || '-'}</td>
-                  <td className="border-r border-border px-3 py-3"><ExemptionBadge active={active && s.exempt_sss} /></td>
-                  <td className="border-r border-border px-3 py-3"><ExemptionBadge active={active && s.exempt_philhealth} /></td>
-                  <td className="border-r border-border px-3 py-3"><ExemptionBadge active={active && s.exempt_pagibig} /></td>
-                  <td className="border-r border-border px-3 py-3"><ExemptionBadge active={active && s.exempt_withholding_tax} /></td>
-                  <td className="border-r border-border px-3 py-3">
-                    <span className={cn('rounded-md px-2 py-1 text-xs font-bold', active ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300')}>
+                  <td className="px-4 py-4">
+                    <div className="font-bold text-foreground">{row.name}</div>
+                    <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                      <span>{row.employee_code || 'No employee no.'}</span>
+                      <span aria-hidden>•</span>
+                      <span className="capitalize">{employeeTypeLabel(row)}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-4">
+                    <div className="font-semibold text-foreground">{row.company || 'No company'}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{row.department || 'No department'}</div>
+                  </td>
+                  <td className="px-4 py-4">
+                    <ScopePills settings={s} isExecom={row.is_execom} />
+                  </td>
+                  <td className="px-4 py-4">
+                    <div className="flex flex-wrap gap-1.5">
+                      {EXEMPTION_TYPES.map(([field, label]) => (
+                        <span
+                          key={field}
+                          className={cn(
+                            'rounded-full px-2.5 py-1 text-[11px] font-bold',
+                            active && s[field]
+                              ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                              : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          )}
+                        >
+                          {label}: {active && s[field] ? 'Exempt' : 'Deduct'}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">{count > 0 ? `${count} exemption${count === 1 ? '' : 's'} selected` : 'No exemptions selected'}</p>
+                  </td>
+                  <td className="max-w-xs px-4 py-4">
+                    <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{labels.length > 0 ? (s.exemption_reason || 'No reason provided') : 'Not exempted'}</p>
+                  </td>
+                  <td className="px-4 py-4">
+                    <span className={cn('rounded-full px-2.5 py-1 text-xs font-bold', active ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300')}>
                       {active ? 'Active' : 'Inactive'}
                     </span>
+                    {s.updated_at ? <p className="mt-2 text-[11px] text-muted-foreground">Updated {normalizeDateLabel(s.updated_at)}</p> : null}
                   </td>
-                  <td className="px-3 py-3">
+                  <td className="px-4 py-4">
                     <div className="flex flex-wrap gap-2">
                       <Button type="button" size="sm" variant="outline" onClick={() => openEditor(row)} disabled={!canManage}>Edit</Button>
                       <Button type="button" size="sm" variant="outline" onClick={() => deactivateRow(row)} disabled={!canManage || !active || saving}>Deactivate</Button>
@@ -569,6 +705,7 @@ function EmployeeExemptionsTab({ canManage }) {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {meta ? (
@@ -583,50 +720,86 @@ function EmployeeExemptionsTab({ canManage }) {
 
       {editing ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
-          <div className="w-full max-w-3xl overflow-hidden rounded-lg border border-border bg-card text-foreground shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-              <div>
-                <h3 className="text-lg font-bold">Government Deduction Exemptions</h3>
-                <p className="mt-1 text-sm text-muted-foreground">{editing.name} - {editing.employee_code || 'No employee no.'}</p>
+          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card text-foreground shadow-2xl">
+            <div className="border-b border-border bg-linear-to-br from-brand/10 via-card to-card px-5 py-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-center gap-4">
+                  <EmployeeAvatarCell employee={editing} size="lg" />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="truncate text-xl font-bold">Edit Government Exemptions</h3>
+                      <span className={cn('rounded-full px-2.5 py-1 text-xs font-bold', form.is_active ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300')}>
+                        {form.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">{editing.name} • {editing.employee_code || 'No employee no.'}</p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-background/80 px-2.5 py-1">
+                        <Building2 className="size-3.5" aria-hidden />
+                        {editing.company || 'No company'}
+                      </span>
+                      <span className="rounded-full bg-background/80 px-2.5 py-1">{editing.department || 'No department'}</span>
+                      <span className="rounded-full bg-background/80 px-2.5 py-1 capitalize">{employeeTypeLabel(editing)}</span>
+                    </div>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setEditing(null)} className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background hover:bg-muted">
+                  <X className="size-4" />
+                  <span className="sr-only">Close</span>
+                </button>
               </div>
-              <button type="button" onClick={() => setEditing(null)} className="inline-flex size-9 items-center justify-center rounded-md border border-border bg-background hover:bg-muted">
-                <X className="size-4" />
-              </button>
             </div>
-            <div className="max-h-[70vh] space-y-4 overflow-y-auto p-5">
-              <label className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm font-semibold">
-                <input type="checkbox" checked={form.exempt_all_government_deductions} onChange={(event) => patchForm('exempt_all_government_deductions', event.target.checked)} />
-                Exempt from all government deductions
-              </label>
-              <div className="grid gap-3 sm:grid-cols-2">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+                <div className="rounded-xl border border-border bg-background p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h4 className="font-bold text-foreground">Deduction exemptions</h4>
+                      <p className="mt-1 text-sm text-muted-foreground">Choose exactly which government deductions should be zeroed.</p>
+                    </div>
+                    <label className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs font-bold">
+                      <input type="checkbox" checked={form.exempt_all_government_deductions} onChange={(event) => patchForm('exempt_all_government_deductions', event.target.checked)} />
+                      Exempt all
+                    </label>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 {EXEMPTION_TYPES.map(([field, label]) => (
-                  <label key={field} className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
-                    <input type="checkbox" checked={Boolean(form[field])} onChange={(event) => patchForm(field, event.target.checked)} />
-                    <span className="font-semibold">Exempt from {label}</span>
-                  </label>
+                  <ExemptionToggleCard key={field} field={field} label={label} checked={Boolean(form[field])} onChange={patchForm} />
                 ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-xl border border-border bg-background p-4">
+                  <h4 className="font-bold text-foreground">Payroll scope</h4>
+                  <p className="text-sm text-muted-foreground">
+                    This employee is in {editing.is_execom ? 'EXECOM payroll' : 'Regular / Consultant payroll'}, so exemptions are scoped there only.
+                  </p>
+                  {editing.is_execom ? (
+                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-3 text-sm">
+                      <span className="font-semibold">EXECOM payroll</span>
+                      <input type="checkbox" checked={form.applies_to_execom_payroll} onChange={(event) => patchForm('applies_to_execom_payroll', event.target.checked)} />
+                    </label>
+                  ) : (
+                    <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-3 text-sm">
+                      <span className="font-semibold">Regular / Consultant payroll</span>
+                      <input type="checkbox" checked={form.applies_to_regular_payroll} onChange={(event) => patchForm('applies_to_regular_payroll', event.target.checked)} />
+                    </label>
+                  )}
+                  <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-3 text-sm">
+                    <span className="font-semibold">Setting active</span>
+                    <input type="checkbox" checked={form.is_active} onChange={(event) => patchForm('is_active', event.target.checked)} />
+                  </label>
+                </div>
               </div>
-              <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100">
+
+              <label className="block rounded-xl border border-border bg-background p-4">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Exemption Reason</span>
+                <textarea value={form.exemption_reason} onChange={(event) => patchForm('exemption_reason', event.target.value)} rows={4} className="mt-2 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20" placeholder="Required when any exemption is active. Example: Consultant, EXECOM exception, statutory exemption memo, or payroll instruction." />
+              </label>
+
+              <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100">
                 Active exemptions apply immediately to matching payroll scopes. Recompute existing draft batches to refresh saved payslip previews.
               </p>
-              <label className="block">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Exemption Reason</span>
-                <textarea value={form.exemption_reason} onChange={(event) => patchForm('exemption_reason', event.target.value)} rows={3} className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" placeholder="Required when any exemption is active." />
-              </label>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <label className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
-                  <input type="checkbox" checked={form.applies_to_regular_payroll} onChange={(event) => patchForm('applies_to_regular_payroll', event.target.checked)} />
-                  Regular / Consultant payroll
-                </label>
-                <label className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
-                  <input type="checkbox" checked={form.applies_to_execom_payroll} onChange={(event) => patchForm('applies_to_execom_payroll', event.target.checked)} />
-                  EXECOM payroll
-                </label>
-                <label className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
-                  <input type="checkbox" checked={form.is_active} onChange={(event) => patchForm('is_active', event.target.checked)} />
-                  Active
-                </label>
-              </div>
             </div>
             <div className="flex flex-col gap-2 border-t border-border px-5 py-4 sm:flex-row sm:justify-end">
               <Button type="button" variant="outline" onClick={() => setEditing(null)}>Cancel</Button>

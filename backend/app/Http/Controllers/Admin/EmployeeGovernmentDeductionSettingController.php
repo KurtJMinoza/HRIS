@@ -69,7 +69,7 @@ class EmployeeGovernmentDeductionSettingController extends Controller
         $query = User::query()
             ->payrollEmployees()
             ->with(['governmentDeductionSetting', 'company:id,name', 'departmentRelation:id,name'])
-            ->select(['id', 'first_name', 'middle_name', 'last_name', 'suffix', 'name', 'employee_code', 'company_id', 'department_id', 'employment_status', 'employment_type', 'is_execom'])
+            ->select(['id', 'first_name', 'middle_name', 'last_name', 'suffix', 'name', 'employee_code', 'company_id', 'department_id', 'employment_status', 'employment_type', 'is_execom', 'profile_image'])
             ->orderByLastName();
 
         if (! empty($validated['search'])) {
@@ -121,6 +121,11 @@ class EmployeeGovernmentDeductionSettingController extends Controller
                     'id' => (int) $employee->id,
                     'employee_code' => $employee->employee_code,
                     'name' => $employee->display_name,
+                    'profile_image' => $employee->profile_image,
+                    'profile_image_url' => $employee->profile_image_url,
+                    'profile_picture_url' => $employee->profile_picture_url,
+                    'avatar_url' => $employee->avatar_url,
+                    'photo_url' => $employee->photo_url,
                     'employment_status' => $employee->employment_status,
                     'employment_type' => $employee->employment_type,
                     'is_execom' => (bool) $employee->is_execom,
