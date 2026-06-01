@@ -496,7 +496,7 @@ export default function EmployeeDashboard() {
     const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    if (cached && opts.force !== true) {
+    if (cached && cached?.meta?.schema_version === 4 && opts.force !== true) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
       mergeSummary({
         ...(cached.summary || {}),
@@ -840,9 +840,19 @@ export default function EmployeeDashboard() {
     return map
   }, [days])
 
+  function normalizeCalendarRecord(record) {
+    if (!record) return record
+    const hasTimeIn = Boolean(record.formatted_time_in || record.time_in)
+    const hasTimeOut = Boolean(record.formatted_time_out || record.time_out)
+    if (record.status === 'present' && hasTimeIn !== hasTimeOut) {
+      return { ...record, status: 'undertime' }
+    }
+    return record
+  }
+
   function calendarRecordForTile(key) {
     const raw = recordByDate.get(key) ?? null
-    if (raw) return raw
+    if (raw) return normalizeCalendarRecord(raw)
     const st = statusByDate.get(key)
     const effective = st ?? '—'
     if (isRestDay(key) && (effective === '—' || effective === 'absent')) {
@@ -913,14 +923,28 @@ export default function EmployeeDashboard() {
     if (!selectedDay || !Array.isArray(days)) return null
     const iso = formatLocalDateKey(selectedDay)
     const fromApi = days.find((d) => d.date === iso)
-    if (fromApi) return { ...fromApi, date_iso: iso }
+    if (fromApi) {
+      const todayKey = formatLocalDateKey(new Date())
+      const today = summary?.today
+      const merged =
+        iso === todayKey && today
+          ? {
+              ...fromApi,
+              time_in: fromApi.time_in || today.time_in || null,
+              time_out: fromApi.time_out || today.time_out || null,
+              formatted_time_in: fromApi.formatted_time_in || today.formatted_time_in || null,
+              formatted_time_out: fromApi.formatted_time_out || today.formatted_time_out || null,
+            }
+          : fromApi
+      return { ...normalizeCalendarRecord(merged), date_iso: iso }
+    }
     const st = statusByDate.get(iso)
     const effective = st ?? '—'
     if (isRestDay(iso) && (effective === '—' || effective === 'absent')) {
       return { status: effective, date: iso, date_iso: iso }
     }
     return { date_iso: iso, status: null }
-  }, [selectedDay, days, statusByDate, isRestDay])
+  }, [selectedDay, days, statusByDate, isRestDay, summary?.today])
 
   const hasLeaveActivity = useMemo(() => {
     if (loading) return true
@@ -1195,8 +1219,10 @@ export default function EmployeeDashboard() {
     const lines = []
     const label = getDisplayStatus(record.status, dateKey, record.late_label, record.late_minutes) || '—'
     lines.push(label)
-    if (record.time_in) lines.push(`In: ${formatTime(record.time_in)}`)
-    if (record.time_out) lines.push(`Out: ${formatTime(record.time_out)}`)
+    const timeIn = record.formatted_time_in || record.time_in
+    const timeOut = record.formatted_time_out || record.time_out
+    if (timeIn) lines.push(`In: ${formatTime(timeIn)}`)
+    if (timeOut) lines.push(`Out: ${formatTime(timeOut)}`)
     if (record.late_label) lines.push(`Status: ${record.late_label}`)
     if (!record.late_label && typeof record.late_minutes === 'number' && record.late_minutes > 0) {
       lines.push(`Status: ${record.late_minutes} min`)
@@ -2083,18 +2109,32 @@ export default function EmployeeDashboard() {
                 ) : (
                   <>
                     <div className="grid gap-2 text-sm">
-                      {selectedDayDetails.time_in ? (
+                      {(() => {
+                        const timeIn = selectedDayDetails.formatted_time_in || selectedDayDetails.time_in
+                        const timeOut = selectedDayDetails.formatted_time_out || selectedDayDetails.time_out
+                        return (
+                          <>
+                      {timeIn ? (
                         <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
                           <span className="font-medium text-muted-foreground">In</span>
-                          <span className="font-semibold tabular-nums text-foreground">{formatTime(selectedDayDetails.time_in)}</span>
+                          <span className="font-semibold tabular-nums text-foreground">{formatTime(timeIn)}</span>
                         </div>
                       ) : null}
-                      {selectedDayDetails.time_out ? (
+                      {timeOut ? (
                         <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
                           <span className="font-medium text-muted-foreground">Out</span>
-                          <span className="font-semibold tabular-nums text-foreground">{formatTime(selectedDayDetails.time_out)}</span>
+                          <span className="font-semibold tabular-nums text-foreground">{formatTime(timeOut)}</span>
                         </div>
                       ) : null}
+                      {timeIn && timeOut ? (
+                        <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-card px-3 py-2.5">
+                          <span className="font-medium text-muted-foreground">Status</span>
+                          <span className="font-semibold text-foreground">Clocked out</span>
+                        </div>
+                      ) : null}
+                          </>
+                        )
+                      })()}
                       {(selectedDayDetails.late_label ||
                         (typeof selectedDayDetails.late_minutes === 'number' && selectedDayDetails.late_minutes > 0)) && (
                         <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5">
@@ -2123,7 +2163,9 @@ export default function EmployeeDashboard() {
                           </div>
                         )
                       })()}
-                      {!selectedDayDetails.time_in && !selectedDayDetails.time_out && getAttendanceTotalHours(selectedDayDetails) == null && (
+                      {!(selectedDayDetails.formatted_time_in || selectedDayDetails.time_in) &&
+                        !(selectedDayDetails.formatted_time_out || selectedDayDetails.time_out) &&
+                        getAttendanceTotalHours(selectedDayDetails) == null && (
                         <p className="rounded-xl border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
                           No clock in/out details captured for this day.
                         </p>

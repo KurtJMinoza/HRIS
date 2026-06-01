@@ -55,11 +55,26 @@ class AttendanceStatusResolver
         $hasTimeOut = false;
 
         if ($dayLogs !== null) {
-            $logs = collect($dayLogs);
-            $timeInLog = $logs->first(fn ($l) => $l instanceof AttendanceLog ? $l->type === AttendanceLog::TYPE_CLOCK_IN : ($l['type'] ?? '') === AttendanceLog::TYPE_CLOCK_IN);
-            $timeOutLog = $logs->first(fn ($l) => $l instanceof AttendanceLog ? $l->type === AttendanceLog::TYPE_CLOCK_OUT : ($l['type'] ?? '') === AttendanceLog::TYPE_CLOCK_OUT);
-            $timeIn = $timeInLog ? ($timeInLog instanceof AttendanceLog ? $timeInLog->verified_at : Carbon::parse($timeInLog['verified_at'] ?? ''))->timezone($nowTz->getTimezone()) : null;
-            $timeOut = $timeOutLog ? ($timeOutLog instanceof AttendanceLog ? $timeOutLog->verified_at : Carbon::parse($timeOutLog['verified_at'] ?? ''))->timezone($nowTz->getTimezone()) : null;
+            foreach ($dayLogs as $log) {
+                $type = $log instanceof AttendanceLog ? $log->type : ($log['type'] ?? '');
+                $rawStamp = $log instanceof AttendanceLog
+                    ? ($log->verified_at ?? $log->created_at)
+                    : ($log['verified_at'] ?? $log['created_at'] ?? null);
+                if ($rawStamp === null || $rawStamp === '') {
+                    continue;
+                }
+                $stamp = $rawStamp instanceof Carbon
+                    ? $rawStamp->copy()->timezone($nowTz->getTimezone())
+                    : Carbon::parse($rawStamp)->timezone($nowTz->getTimezone());
+
+                if ($type === AttendanceLog::TYPE_CLOCK_IN) {
+                    if ($timeIn === null) {
+                        $timeIn = $stamp;
+                    }
+                } elseif ($type === AttendanceLog::TYPE_CLOCK_OUT) {
+                    $timeOut = $stamp;
+                }
+            }
             $hasTimeIn = $timeIn !== null;
             $hasTimeOut = $timeOut !== null;
         }

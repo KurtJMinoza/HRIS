@@ -53,7 +53,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::summaryKey($employeeId, $todayDate);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 3) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 4) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             Log::debug('[EmployeeDashboard] summary cache HIT', [
@@ -170,7 +170,7 @@ class EmployeeDashboardController extends Controller
             'upcoming_payroll' => $upcomingBatch,
             'latest_payslip' => $latestPayslipSummary,
             'meta' => [
-                'schema_version' => 3,
+                'schema_version' => 4,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -228,7 +228,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 3) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 4) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -365,17 +365,28 @@ class EmployeeDashboardController extends Controller
             );
 
             $status = $resolved['status'];
-            $effectiveTimeIn = $resolved['effective_time_in'];
-            $effectiveTimeOut = $resolved['effective_time_out'];
+            [$effectiveTimeIn, $effectiveTimeOut, $hasTimeIn, $hasTimeOut] = $this->resolveDisplayClockTimes($dayLogs, $correction);
             $effectiveWorkedMinutes = $resolved['effective_worked_minutes'];
-            $hasTimeIn = $resolved['has_time_in'];
-            $hasTimeOut = $resolved['has_time_out'];
+            if ($hasTimeIn && $hasTimeOut && $effectiveTimeIn && $effectiveTimeOut && is_array($daySchedule)) {
+                $in = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
+                $out = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
+                if ($out->greaterThan($in)) {
+                    $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
+                        $in,
+                        $out,
+                        $daySchedule,
+                        $dateKey,
+                        $attendanceTz
+                    );
+                }
+            }
             $dayLateMinutes = 0;
             $dayLateLabel = null;
             $dayUndertimeMinutes = 0;
             $rawOtMinutes = 0;
             $rawPreOtSegment = null;
             $rawPostOtSegment = null;
+            $hasIncompletePunchPair = ($hasTimeIn xor $hasTimeOut);
 
             // Track extra metrics for monthly overview using the legacy /attendance/summary rules.
             if (
@@ -425,6 +436,17 @@ class EmployeeDashboardController extends Controller
                         $status = 'undertime';
                     }
                 }
+            }
+
+            if (
+                $status === 'present'
+                && $hasIncompletePunchPair
+                && ! in_array($status, ['holiday', 'leave', 'rest', 'upcoming', 'absent'], true)
+                && ! $isRestDay
+            ) {
+                $status = 'undertime';
+                $dayUndertimeMinutes = $dayUndertimeMinutes > 0 ? $dayUndertimeMinutes : null;
+                $extraMetrics['undertime_count']++;
             }
 
             if (in_array($status, ['present', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true) && $effectiveWorkedMinutes !== null) {
@@ -524,6 +546,8 @@ class EmployeeDashboardController extends Controller
                 'schedule_out' => is_array($daySchedule) ? ($daySchedule['out'] ?? null) : null,
                 'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
                 'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
+                'formatted_time_in' => $this->formatTimeForDisplay($effectiveTimeIn),
+                'formatted_time_out' => $this->formatTimeForDisplay($effectiveTimeOut),
                 'total_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
                 'total_rendered_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
                 'late_minutes' => $dayLateMinutes,
@@ -583,7 +607,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 3,
+                'schema_version' => 4,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -669,7 +693,7 @@ class EmployeeDashboardController extends Controller
             'corrections' => $recentCorrections,
             'leave_summary' => $leaveSummary,
             'meta' => [
-                'schema_version' => 3,
+                'schema_version' => 4,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -791,34 +815,10 @@ class EmployeeDashboardController extends Controller
     ): array {
         $attendanceTz = $this->attendanceTimezone();
 
-        $timeIn = null;
-        $timeOut = null;
-        $hasTimeIn = false;
-        $hasTimeOut = false;
-
-        foreach ($todayLogs as $log) {
-            if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
-                $timeIn = $log->verified_at;
-                $hasTimeIn = true;
-            } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
-                $timeOut = $log->verified_at;
-                $hasTimeOut = true;
-            }
-        }
-
-        $effectiveTimeIn = $timeIn;
-        $effectiveTimeOut = $timeOut;
-
-        if ($todayCorrection && $todayCorrection->approved) {
-            if ($todayCorrection->time_in) {
-                $effectiveTimeIn = $todayCorrection->time_in;
-                $hasTimeIn = true;
-            }
-            if ($todayCorrection->time_out) {
-                $effectiveTimeOut = $todayCorrection->time_out;
-                $hasTimeOut = true;
-            }
-        }
+        $todayLogList = $todayLogs instanceof \Illuminate\Support\Collection
+            ? $todayLogs->all()
+            : (is_array($todayLogs) ? $todayLogs : []);
+        [$effectiveTimeIn, $effectiveTimeOut, $hasTimeIn, $hasTimeOut] = $this->resolveDisplayClockTimes($todayLogList, $todayCorrection);
 
         $status = '—';
         $lateMinutes = null;
@@ -1007,6 +1007,58 @@ class EmployeeDashboardController extends Controller
     private function attendanceTimezone(): string
     {
         return config('attendance.timezone', config('app.timezone', 'UTC'));
+    }
+
+    /**
+     * Resolve clock-in / clock-out for calendar and today widgets from device logs + approved corrections.
+     * Uses verified_at (not created_at) and keeps the latest clock-out when multiple exist.
+     *
+     * @param  list<AttendanceLog>|null  $dayLogs
+     * @return array{0: ?Carbon, 1: ?Carbon, 2: bool, 3: bool}
+     */
+    private function resolveDisplayClockTimes(?array $dayLogs, ?AttendanceCorrection $correction): array
+    {
+        $timeIn = null;
+        $timeOut = null;
+        $tz = $this->attendanceTimezone();
+
+        if ($dayLogs !== null) {
+            foreach ($dayLogs as $log) {
+                if (! $log instanceof AttendanceLog) {
+                    continue;
+                }
+                $stamp = $log->verified_at ?? $log->created_at;
+                if ($stamp === null) {
+                    continue;
+                }
+                $stamp = $stamp instanceof Carbon
+                    ? $stamp->copy()->timezone($tz)
+                    : Carbon::parse($stamp)->timezone($tz);
+
+                if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
+                    if ($timeIn === null) {
+                        $timeIn = $stamp;
+                    }
+                } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
+                    $timeOut = $stamp;
+                }
+            }
+        }
+
+        if ($correction && $correction->approved && $correction->pending_approval !== true) {
+            if ($correction->time_in) {
+                $timeIn = $correction->time_in instanceof Carbon
+                    ? $correction->time_in->copy()->timezone($tz)
+                    : Carbon::parse($correction->time_in)->timezone($tz);
+            }
+            if ($correction->time_out) {
+                $timeOut = $correction->time_out instanceof Carbon
+                    ? $correction->time_out->copy()->timezone($tz)
+                    : Carbon::parse($correction->time_out)->timezone($tz);
+            }
+        }
+
+        return [$timeIn, $timeOut, $timeIn !== null, $timeOut !== null];
     }
 
     private function formatTimeInAttendanceTz(mixed $carbon): ?string
