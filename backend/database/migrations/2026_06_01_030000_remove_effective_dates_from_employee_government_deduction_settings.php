@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -9,13 +10,13 @@ return new class extends Migration
     public function up(): void
     {
         if (Schema::hasTable('employee_government_deduction_settings')) {
-            Schema::table('employee_government_deduction_settings', function (Blueprint $table) {
-                try {
+            if ($this->indexExists('employee_government_deduction_settings', 'egd_settings_effective_dates_idx')) {
+                Schema::table('employee_government_deduction_settings', function (Blueprint $table) {
                     $table->dropIndex('egd_settings_effective_dates_idx');
-                } catch (\Throwable) {
-                    // The index only exists on databases that ran the earlier date-scoped draft.
-                }
+                });
+            }
 
+            Schema::table('employee_government_deduction_settings', function (Blueprint $table) {
                 if (Schema::hasColumn('employee_government_deduction_settings', 'effective_from')) {
                     $table->dropColumn('effective_from');
                 }
@@ -47,7 +48,9 @@ return new class extends Migration
                 if (! Schema::hasColumn('employee_government_deduction_settings', 'effective_to')) {
                     $table->date('effective_to')->nullable()->after('effective_from');
                 }
-                $table->index(['effective_from', 'effective_to'], 'egd_settings_effective_dates_idx');
+                if (! $this->indexExists('employee_government_deduction_settings', 'egd_settings_effective_dates_idx')) {
+                    $table->index(['effective_from', 'effective_to'], 'egd_settings_effective_dates_idx');
+                }
             });
         }
 
@@ -61,5 +64,26 @@ return new class extends Migration
                 }
             });
         }
+    }
+
+    private function indexExists(string $table, string $index): bool
+    {
+        try {
+            if (DB::connection()->getDriverName() === 'mysql') {
+                return count(DB::select('SHOW INDEX FROM `'.$table.'` WHERE Key_name = ?', [$index])) > 0;
+            }
+
+            if (method_exists(Schema::getFacadeRoot(), 'getIndexes')) {
+                foreach (Schema::getIndexes($table) as $candidate) {
+                    if (($candidate['name'] ?? null) === $index) {
+                        return true;
+                    }
+                }
+            }
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return false;
     }
 };
