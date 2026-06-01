@@ -18,6 +18,7 @@ use App\Http\Controllers\Admin\ExecomPayrollController;
 use App\Http\Controllers\Admin\ExecomPayrollSettingsController;
 use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\EmployeeDeductionController;
+use App\Http\Controllers\Admin\EmployeeGovernmentDeductionSettingController;
 use App\Http\Controllers\Admin\EmployeeSkillController as AdminEmployeeSkillController;
 use App\Http\Controllers\Admin\EmployeeStatusController;
 use App\Http\Controllers\Admin\GovernmentContributionController;
@@ -547,11 +548,15 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/payroll/tax-tables', [GovernmentContributionController::class, 'taxTables']);
             Route::get('/admin/employees/{userId}/statutory-contributions', [GovernmentContributionController::class, 'history']);
             Route::get('/admin/employees/{userId}/tax-profile', [GovernmentContributionController::class, 'showEmployeeTaxProfile']);
+            Route::get('/admin/payroll/government-deduction-exemptions', [EmployeeGovernmentDeductionSettingController::class, 'index']);
+            Route::get('/admin/employees/{userId}/government-deduction-exemption', [EmployeeGovernmentDeductionSettingController::class, 'show']);
         });
         Route::middleware('permission:government_deductions.manage|government_deductions.remittances.manage')->group(function () {
             Route::put('/admin/payroll/statutory-rates/{code}', [GovernmentContributionController::class, 'upsertRate']);
             Route::post('/admin/payroll/remittances/generate', [GovernmentContributionController::class, 'generateRemittance']);
             Route::put('/admin/employees/{userId}/tax-profile', [GovernmentContributionController::class, 'upsertEmployeeTaxProfile']);
+            Route::put('/admin/employees/{userId}/government-deduction-exemption', [EmployeeGovernmentDeductionSettingController::class, 'update']);
+            Route::post('/admin/payroll/government-deduction-exemptions/bulk', [EmployeeGovernmentDeductionSettingController::class, 'bulkUpdate']);
         });
         Route::middleware('permission:compensation.view|compensation.employee_compensation.view')->group(function () {
             Route::get('/admin/pay-components', [PayComponentController::class, 'index']);

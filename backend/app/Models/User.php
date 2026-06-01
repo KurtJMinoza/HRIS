@@ -11,6 +11,7 @@ use App\Support\EmployeeProfileCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
@@ -476,6 +477,11 @@ class User extends Authenticatable
     protected function attendanceTimezone(): string
     {
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+    }
+
+    public function governmentDeductionSetting(): HasOne
+    {
+        return $this->hasOne(EmployeeGovernmentDeductionSetting::class, 'user_id');
     }
 
     /**

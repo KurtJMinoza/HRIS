@@ -42,6 +42,7 @@ import { formatScheduleLabel12h } from '@/lib/timeFormat'
 import {
   SalaryAutomatedDeductionsCard,
   SalaryCompensationStructureCard,
+  SalaryGovernmentDeductionExemptionsCard,
   SalaryPayComponentsBreakdownCard,
   SalaryPayrollHistoryCard,
   SalaryTaxInfoCard,
@@ -5433,6 +5434,8 @@ export default function AdminEmployeeProfile() {
                 compensationSummary={compensationSummary}
                 onUpdateGovIds={() => setActiveTab('government-ids')}
               />
+
+              <SalaryGovernmentDeductionExemptionsCard compensationSummary={compensationSummary} />
 
               <SalaryAutomatedDeductionsCard
                 compensationSummary={compensationSummary}

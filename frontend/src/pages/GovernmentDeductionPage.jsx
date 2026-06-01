@@ -26,8 +26,10 @@ import {
   getStatutoryRates,
   getStoredUser,
   getTaxTables,
+  listGovernmentDeductionExemptions,
   listStatutoryRemittances,
   previewWithholdingTax,
+  updateEmployeeGovernmentDeductionExemption,
   upsertStatutoryRate,
 } from '@/api'
 import { cn } from '@/lib/utils'
@@ -38,8 +40,28 @@ const TABS = [
   { id: 'PHILHEALTH', label: 'PhilHealth' },
   { id: 'PAGIBIG', label: 'Pag-IBIG (HDMF)' },
   { id: 'WHT', label: 'Withholding Tax' },
+  { id: 'EMPLOYEE_EXEMPTIONS', label: 'Employee Exemptions' },
   { id: 'AUDIT', label: 'Compliance Audit' },
 ]
+
+const EXEMPTION_TYPES = [
+  ['exempt_sss', 'SSS'],
+  ['exempt_philhealth', 'PhilHealth'],
+  ['exempt_pagibig', 'Pag-IBIG'],
+  ['exempt_withholding_tax', 'Withholding Tax'],
+]
+
+const EMPTY_EXEMPTION_FORM = {
+  exempt_sss: false,
+  exempt_philhealth: false,
+  exempt_pagibig: false,
+  exempt_withholding_tax: false,
+  exempt_all_government_deductions: false,
+  exemption_reason: '',
+  applies_to_regular_payroll: true,
+  applies_to_execom_payroll: true,
+  is_active: true,
+}
 
 const DEFAULT_ROWS = {
   SSS: {
@@ -307,6 +329,316 @@ function RateSettings({ title, description, children }) {
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
     </div>
+  )
+}
+
+function ExemptionBadge({ active }) {
+  return (
+    <span className={cn(
+      'inline-flex rounded-md px-2 py-1 text-xs font-bold',
+      active
+        ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300'
+        : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+    )}>
+      {active ? 'Exempt' : 'Deduct'}
+    </span>
+  )
+}
+
+function EmployeeExemptionsTab({ canManage }) {
+  const [rows, setRows] = useState([])
+  const [meta, setMeta] = useState(null)
+  const [filters, setFilters] = useState({ search: '', payroll_type: '', employee_type: '', page: 1, per_page: 25 })
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState(EMPTY_EXEMPTION_FORM)
+
+  const loadRows = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await listGovernmentDeductionExemptions(filters)
+      setRows(Array.isArray(data?.data) ? data.data : [])
+      setMeta(data?.meta || null)
+    } catch (err) {
+      setError(err?.message || 'Failed to load employee exemptions.')
+    } finally {
+      setLoading(false)
+    }
+  }, [filters])
+
+  useEffect(() => {
+    void loadRows()
+  }, [loadRows])
+
+  function patchFilter(key, value) {
+    setFilters((current) => ({ ...current, [key]: value, page: 1 }))
+  }
+
+  function openEditor(row) {
+    const s = row?.settings || {}
+    const next = {
+      ...EMPTY_EXEMPTION_FORM,
+      exempt_sss: Boolean(s.exempt_sss),
+      exempt_philhealth: Boolean(s.exempt_philhealth),
+      exempt_pagibig: Boolean(s.exempt_pagibig),
+      exempt_withholding_tax: Boolean(s.exempt_withholding_tax),
+      exempt_all_government_deductions: Boolean(s.exempt_all_government_deductions),
+      exemption_reason: s.exemption_reason || '',
+      applies_to_regular_payroll: s.applies_to_regular_payroll !== false,
+      applies_to_execom_payroll: s.applies_to_execom_payroll !== false,
+      is_active: s.is_active !== false,
+    }
+    setEditing(row)
+    setForm(next)
+    setError('')
+    setNotice('')
+  }
+
+  function patchForm(key, value) {
+    setForm((current) => {
+      const next = { ...current, [key]: value }
+      if (key === 'exempt_all_government_deductions' && value) {
+        next.exempt_sss = true
+        next.exempt_philhealth = true
+        next.exempt_pagibig = true
+        next.exempt_withholding_tax = true
+      }
+      if (EXEMPTION_TYPES.some(([field]) => field === key)) {
+        next.exempt_all_government_deductions = EXEMPTION_TYPES.every(([field]) => Boolean(next[field]))
+      }
+      return next
+    })
+  }
+
+  async function saveEditor(nextActive = form.is_active) {
+    if (!editing?.id) return
+    const hasExemption = EXEMPTION_TYPES.some(([field]) => Boolean(form[field]))
+    if (nextActive && hasExemption && !String(form.exemption_reason || '').trim()) {
+      setError('Exemption reason is required.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    setNotice('')
+    try {
+      const payload = {
+        deduct_sss: !form.exempt_sss,
+        deduct_philhealth: !form.exempt_philhealth,
+        deduct_pagibig: !form.exempt_pagibig,
+        deduct_withholding_tax: !form.exempt_withholding_tax,
+        exempt_sss: form.exempt_sss,
+        exempt_philhealth: form.exempt_philhealth,
+        exempt_pagibig: form.exempt_pagibig,
+        exempt_withholding_tax: form.exempt_withholding_tax,
+        exempt_all_government_deductions: form.exempt_all_government_deductions,
+        exemption_reason: form.exemption_reason,
+        applies_to_regular_payroll: form.applies_to_regular_payroll,
+        applies_to_execom_payroll: form.applies_to_execom_payroll,
+        is_active: nextActive,
+      }
+      await updateEmployeeGovernmentDeductionExemption(editing.id, payload)
+      setNotice(
+        nextActive
+          ? 'Employee exemption saved. Recompute draft payroll to refresh existing payslip previews.'
+          : 'Employee exemption deactivated.'
+      )
+      setEditing(null)
+      await loadRows()
+    } catch (err) {
+      setError(err?.message || 'Failed to save employee exemption.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deactivateRow(row) {
+    if (!row?.id) return
+    const s = row.settings || {}
+    setSaving(true)
+    setError('')
+    setNotice('')
+    try {
+      await updateEmployeeGovernmentDeductionExemption(row.id, {
+        deduct_sss: s.deduct_sss !== false,
+        deduct_philhealth: s.deduct_philhealth !== false,
+        deduct_pagibig: s.deduct_pagibig !== false,
+        deduct_withholding_tax: s.deduct_withholding_tax !== false,
+        exemption_reason: s.exemption_reason || 'Deactivated by admin',
+        applies_to_regular_payroll: s.applies_to_regular_payroll !== false,
+        applies_to_execom_payroll: s.applies_to_execom_payroll !== false,
+        is_active: false,
+      })
+      setNotice('Employee exemption deactivated.')
+      await loadRows()
+    } catch (err) {
+      setError(err?.message || 'Failed to deactivate employee exemption.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight text-foreground">Employee Exemptions</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Select employees whose SSS, PhilHealth, Pag-IBIG, or withholding tax deductions should be zeroed for active payroll periods.</p>
+        </div>
+        <Button type="button" variant="outline" onClick={loadRows} disabled={loading}>
+          <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
+          Refresh
+        </Button>
+      </div>
+
+      {error ? <InfoBanner type="error" onDismiss={() => setError('')}>{error}</InfoBanner> : null}
+      {notice ? <InfoBanner onDismiss={() => setNotice('')}>{notice}</InfoBanner> : null}
+
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_190px]">
+        <label className="flex h-11 items-center gap-2 rounded-md border border-border bg-background px-3">
+          <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <input
+            value={filters.search}
+            onChange={(event) => patchFilter('search', event.target.value)}
+            placeholder="Search name, employee no., company, department..."
+            className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none"
+          />
+        </label>
+        <select value={filters.payroll_type} onChange={(event) => patchFilter('payroll_type', event.target.value)} className="h-11 rounded-md border border-border bg-background px-3 text-sm font-semibold">
+          <option value="">Any payroll type</option>
+          <option value="regular">Regular / Consultant</option>
+          <option value="execom">EXECOM</option>
+        </select>
+        <select value={filters.employee_type} onChange={(event) => patchFilter('employee_type', event.target.value)} className="h-11 rounded-md border border-border bg-background px-3 text-sm font-semibold">
+          <option value="">Any employee type</option>
+          <option value="regular">Regular</option>
+          <option value="probationary">Probationary</option>
+          <option value="consultant">Consultant</option>
+          <option value="contractual">Contractual</option>
+          <option value="project_based">Project based</option>
+        </select>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-304 text-sm">
+          <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
+            <tr>
+              {['Employee', 'Company', 'Department', 'SSS', 'PhilHealth', 'Pag-IBIG', 'Withholding Tax', 'Status', 'Actions'].map((head) => (
+                <th key={head} className="border-b border-r border-border px-3 py-3 text-left font-bold last:border-r-0">{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">Loading employee exemptions...</td></tr>
+            ) : null}
+            {!loading && rows.length === 0 ? (
+              <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">No employees matched the current filters.</td></tr>
+            ) : null}
+            {!loading && rows.map((row) => {
+              const s = row.settings || {}
+              const active = s.is_active !== false
+              return (
+                <tr key={row.id} className="border-b border-border align-top last:border-b-0">
+                  <td className="border-r border-border px-3 py-3">
+                    <div className="font-bold text-foreground">{row.name}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">{row.employee_code || 'No employee no.'}{row.is_execom ? ' • EXECOM' : ''}</div>
+                  </td>
+                  <td className="border-r border-border px-3 py-3 text-foreground">{row.company || '-'}</td>
+                  <td className="border-r border-border px-3 py-3 text-foreground">{row.department || '-'}</td>
+                  <td className="border-r border-border px-3 py-3"><ExemptionBadge active={active && s.exempt_sss} /></td>
+                  <td className="border-r border-border px-3 py-3"><ExemptionBadge active={active && s.exempt_philhealth} /></td>
+                  <td className="border-r border-border px-3 py-3"><ExemptionBadge active={active && s.exempt_pagibig} /></td>
+                  <td className="border-r border-border px-3 py-3"><ExemptionBadge active={active && s.exempt_withholding_tax} /></td>
+                  <td className="border-r border-border px-3 py-3">
+                    <span className={cn('rounded-md px-2 py-1 text-xs font-bold', active ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300')}>
+                      {active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => openEditor(row)} disabled={!canManage}>Edit</Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => deactivateRow(row)} disabled={!canManage || !active || saving}>Deactivate</Button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {meta ? (
+        <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <span>Showing page {meta.current_page || 1} of {meta.last_page || 1} ({meta.total || 0} employees)</span>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" disabled={(meta.current_page || 1) <= 1} onClick={() => setFilters((f) => ({ ...f, page: Math.max(1, (meta.current_page || 1) - 1) }))}>Previous</Button>
+            <Button type="button" variant="outline" disabled={(meta.current_page || 1) >= (meta.last_page || 1)} onClick={() => setFilters((f) => ({ ...f, page: (meta.current_page || 1) + 1 }))}>Next</Button>
+          </div>
+        </div>
+      ) : null}
+
+      {editing ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
+          <div className="w-full max-w-3xl overflow-hidden rounded-lg border border-border bg-card text-foreground shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+              <div>
+                <h3 className="text-lg font-bold">Government Deduction Exemptions</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{editing.name} - {editing.employee_code || 'No employee no.'}</p>
+              </div>
+              <button type="button" onClick={() => setEditing(null)} className="inline-flex size-9 items-center justify-center rounded-md border border-border bg-background hover:bg-muted">
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="max-h-[70vh] space-y-4 overflow-y-auto p-5">
+              <label className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm font-semibold">
+                <input type="checkbox" checked={form.exempt_all_government_deductions} onChange={(event) => patchForm('exempt_all_government_deductions', event.target.checked)} />
+                Exempt from all government deductions
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {EXEMPTION_TYPES.map(([field, label]) => (
+                  <label key={field} className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
+                    <input type="checkbox" checked={Boolean(form[field])} onChange={(event) => patchForm(field, event.target.checked)} />
+                    <span className="font-semibold">Exempt from {label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100">
+                Active exemptions apply immediately to matching payroll scopes. Recompute existing draft batches to refresh saved payslip previews.
+              </p>
+              <label className="block">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Exemption Reason</span>
+                <textarea value={form.exemption_reason} onChange={(event) => patchForm('exemption_reason', event.target.value)} rows={3} className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" placeholder="Required when any exemption is active." />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
+                  <input type="checkbox" checked={form.applies_to_regular_payroll} onChange={(event) => patchForm('applies_to_regular_payroll', event.target.checked)} />
+                  Regular / Consultant payroll
+                </label>
+                <label className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
+                  <input type="checkbox" checked={form.applies_to_execom_payroll} onChange={(event) => patchForm('applies_to_execom_payroll', event.target.checked)} />
+                  EXECOM payroll
+                </label>
+                <label className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
+                  <input type="checkbox" checked={form.is_active} onChange={(event) => patchForm('is_active', event.target.checked)} />
+                  Active
+                </label>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 border-t border-border px-5 py-4 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
+              <Button type="button" onClick={() => saveEditor(form.is_active)} disabled={saving || !canManage} className="bg-brand text-brand-foreground hover:bg-brand-strong">
+                <Save className="size-4" />
+                {saving ? 'Saving...' : 'Save Exemption'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -1022,6 +1354,10 @@ export default function GovernmentDeductionPage() {
               </table>
             </div>
           </section>
+        ) : null}
+
+        {!loading && activeTab === 'EMPLOYEE_EXEMPTIONS' ? (
+          <EmployeeExemptionsTab canManage={canManageRates} />
         ) : null}
 
         {!loading && activeTab === 'AUDIT' ? (

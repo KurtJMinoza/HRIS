@@ -96,6 +96,7 @@ import { getHrPanelBasePath, hrPanelPath } from '@/lib/hrRoutes'
 import {
   SalaryAutomatedDeductionsCard,
   SalaryCompensationStructureCard,
+  SalaryGovernmentDeductionExemptionsCard,
   SalaryPayComponentsBreakdownCard,
   SalaryPayrollHistoryCard,
   SalaryTaxInfoCard,
@@ -3375,6 +3376,8 @@ export default function EmployeeProfile() {
               compensationSummary={compensationSummary}
               onUpdateGovIds={() => setActiveTab('government')}
             />
+
+            <SalaryGovernmentDeductionExemptionsCard compensationSummary={compensationSummary} />
 
             <SalaryAutomatedDeductionsCard compensationSummary={compensationSummary} />
 

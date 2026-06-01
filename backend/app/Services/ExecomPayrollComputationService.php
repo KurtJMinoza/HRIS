@@ -11,11 +11,16 @@ use RuntimeException;
 
 class ExecomPayrollComputationService
 {
+    private readonly GovernmentDeductionExemptionResolver $governmentExemptionResolver;
+
     public function __construct(
         private readonly PayrollCalculatorService $calculator,
         private readonly DeductionScheduleService $deductionScheduleService,
         private readonly DeductionApplicationService $deductionApplicationService,
-    ) {}
+        ?GovernmentDeductionExemptionResolver $governmentExemptionResolver = null,
+    ) {
+        $this->governmentExemptionResolver = $governmentExemptionResolver ?? new GovernmentDeductionExemptionResolver;
+    }
 
     /**
      * Fixed-salary EXECOM computation. It intentionally does not read attendance logs,
@@ -60,6 +65,17 @@ class ExecomPayrollComputationService
             'philhealth' => $monthlyFixedSalary,
             'pagibig' => $monthlyFixedSalary,
         ]);
+        $governmentExemption = $this->resolveGovernmentExemptionForPayroll($employee, $from, $to);
+        $payrollExemptionContext = [
+            'employee_id' => (int) $employee->id,
+            'employee_name' => $employee->display_name,
+            'payroll_run_id' => $periodContext['payroll_batch_run_id'] ?? $periodContext['batch_run_id'] ?? null,
+            'payroll_period_start' => $from->toDateString(),
+            'payroll_period_end' => $to->toDateString(),
+        ];
+        $statutoryMonthly = (bool) $settings->apply_government_deductions
+            ? $this->governmentExemptionResolver->applyToStatutory($statutoryMonthly, $governmentExemption, $payrollExemptionContext)
+            : $statutoryMonthly;
         $employeeStatutoryMonthly = (bool) $settings->apply_government_deductions
             ? round((float) data_get($statutoryMonthly, 'totals.employee_deduction', 0), 2)
             : 0.0;
@@ -80,6 +96,14 @@ class ExecomPayrollComputationService
         $withholdingMonthly = (bool) $settings->apply_government_deductions
             ? round((float) ($withholding['withholding_per_month'] ?? 0), 2)
             : 0.0;
+        if ((bool) $settings->apply_government_deductions) {
+            [$withholding, $withholdingMonthly] = $this->governmentExemptionResolver->applyToWithholding(
+                $withholding,
+                $withholdingMonthly,
+                $governmentExemption,
+                $payrollExemptionContext
+            );
+        }
 
         $compensationForSchedule = $this->compensationSummaryWithExecomSalary(
             $compensation,
@@ -257,6 +281,7 @@ class ExecomPayrollComputationService
                 'withholding_breakdown' => $withholding,
                 'net_pay_after_withholding_estimate' => $netPay,
                 'statutory_breakdown' => (bool) $settings->apply_government_deductions ? $statutoryMonthly : [],
+                'government_deduction_exemption' => $governmentExemption,
                 'compensation_breakdown' => array_merge($compensation, [
                     'basic_salary' => $fixedSalary,
                     'basic_salary_period' => $fixedSalary,
@@ -265,6 +290,9 @@ class ExecomPayrollComputationService
                     'monthly_salary' => $monthlyFixedSalary,
                     'fixed_salary' => $monthlyFixedSalary,
                     'payroll_module' => 'execom',
+                    'statutory' => (bool) $settings->apply_government_deductions ? $statutoryMonthly : [],
+                    'withholding' => $withholding,
+                    'government_deduction_exemption' => $governmentExemption,
                     'tax_classification' => [
                         'taxable_total' => $grossPay,
                         'non_taxable_total' => 0.0,
@@ -320,6 +348,32 @@ class ExecomPayrollComputationService
                 ],
             ],
         ];
+    }
+
+    /**
+     * Unit tests instantiate this service with unsaved User models and no database resolver.
+     * Production calls still use the resolver and persisted exemption settings.
+     *
+     * @return array<string, mixed>
+     */
+    private function resolveGovernmentExemptionForPayroll(User $employee, Carbon $from, Carbon $to): array
+    {
+        try {
+            return $this->governmentExemptionResolver->resolve(
+                (int) $employee->id,
+                GovernmentDeductionExemptionResolver::PAYROLL_EXECOM,
+                $from,
+                $to
+            );
+        } catch (\Throwable) {
+            return array_merge($this->governmentExemptionResolver->defaultPayload(), [
+                'active_for_period' => false,
+                'government_exemption_found' => false,
+                'scope_applies' => false,
+                'payroll_type' => GovernmentDeductionExemptionResolver::PAYROLL_EXECOM,
+                'exempted_types' => [],
+            ]);
+        }
     }
 
     /**

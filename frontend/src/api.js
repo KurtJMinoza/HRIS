@@ -2664,6 +2664,35 @@ export async function getEmployeeStatutoryContributions(employeeId) {
   return data
 }
 
+export async function listGovernmentDeductionExemptions(params = {}) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value != null && value !== '') query.set(key, String(value))
+  }
+  const path = `/admin/payroll/government-deduction-exemptions${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employee exemptions')
+  return data
+}
+
+export async function getEmployeeGovernmentDeductionExemption(employeeId) {
+  const res = await authenticatedFetch(`/admin/employees/${employeeId}/government-deduction-exemption`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load government deduction exemption')
+  return data
+}
+
+export async function updateEmployeeGovernmentDeductionExemption(employeeId, payload) {
+  const res = await authenticatedFetch(`/admin/employees/${employeeId}/government-deduction-exemption`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to save government deduction exemption')
+  return data
+}
+
 export async function getMyContributions() {
   const res = await authenticatedFetch('/employee/contributions')
   const data = await res.json().catch(() => ({}))

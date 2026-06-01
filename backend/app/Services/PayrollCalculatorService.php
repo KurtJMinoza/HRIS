@@ -1703,6 +1703,20 @@ class PayrollCalculatorService
             'philhealth' => $statutoryBase,
             'pagibig' => $statutoryBase,
         ]);
+        $asOfCarbon = Carbon::parse($asOfDate)->startOfDay();
+        $governmentExemption = app(GovernmentDeductionExemptionResolver::class)->resolve(
+            (int) $user->id,
+            (string) ($options['payroll_type'] ?? GovernmentDeductionExemptionResolver::PAYROLL_REGULAR),
+            $asOfCarbon,
+            $asOfCarbon
+        );
+        $statutory = app(GovernmentDeductionExemptionResolver::class)->applyToStatutory($statutory, $governmentExemption, [
+            'employee_id' => (int) $user->id,
+            'employee_name' => $user->display_name,
+            'payroll_run_id' => $options['payroll_run_id'] ?? null,
+            'payroll_period_start' => $asOfDate,
+            'payroll_period_end' => $asOfDate,
+        ]);
         /*
          * Tax order (PH payroll): mandatory EE first, then RR 11-2018 monthly withholding table.
          * For monthly withholding estimate in payslip/generate/finalize, use the monthly BASIC salary
@@ -1723,6 +1737,13 @@ class PayrollCalculatorService
         $withholding = $this->calculateWithholdingTax($withholdingParams);
         $employeeStatutory = (float) ($statutory['totals']['employee_deduction'] ?? 0);
         $withholdingMonthly = (float) ($withholding['withholding_per_month'] ?? 0);
+        [$withholding, $withholdingMonthly] = app(GovernmentDeductionExemptionResolver::class)->applyToWithholding($withholding, $withholdingMonthly, $governmentExemption, [
+            'employee_id' => (int) $user->id,
+            'employee_name' => $user->display_name,
+            'payroll_run_id' => $options['payroll_run_id'] ?? null,
+            'payroll_period_start' => $asOfDate,
+            'payroll_period_end' => $asOfDate,
+        ]);
         // Government/statutory and withholding before employee loan & other custom deductions (typical PH net pay ordering).
         $netPay = round($earningsTotal - $employeeStatutory - $withholdingMonthly - $deductionsTotal, 2);
 
@@ -1759,6 +1780,7 @@ class PayrollCalculatorService
             'tax_classification' => $taxClassification,
             'statutory' => $statutory,
             'withholding' => $withholding,
+            'government_deduction_exemption' => $governmentExemption,
             'deduction_schedule_catalog' => $deductionScheduleCatalog,
         ];
     }

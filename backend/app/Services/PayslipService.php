@@ -1069,6 +1069,13 @@ class PayslipService
             $periodInput
         );
         $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
+        $snapshot = $this->applyGovernmentExemptionToPayslipSnapshot(
+            $snapshot,
+            $employee,
+            ! empty($periodInput['from_date']) ? Carbon::parse((string) $periodInput['from_date']) : ($payslip->pay_period_start ?? now()),
+            ! empty($periodInput['to_date']) ? Carbon::parse((string) $periodInput['to_date']) : ($payslip->pay_period_end ?? now()),
+            (string) ($periodInput['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)
+        );
         $lineTotals = $this->payslipLineTotalsFromSnapshot($snapshot);
         $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
 
@@ -1385,6 +1392,40 @@ class PayslipService
      */
     public function freezePayslipSnapshotForFinalization(Payslip $payslip): Payslip
     {
+        if (
+            (string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM
+            && ! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)
+        ) {
+            $employee = $payslip->relationLoaded('employee') && $payslip->employee instanceof User
+                ? $payslip->employee
+                : User::query()->find((int) $payslip->user_id);
+
+            if ($employee instanceof User) {
+                $payslip = $this->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+            }
+        }
+
+        $employee = $payslip->relationLoaded('employee') && $payslip->employee instanceof User
+            ? $payslip->employee
+            : User::query()->find((int) $payslip->user_id);
+        if ($employee instanceof User) {
+            $periodInput = $this->periodInputFromPayslip($payslip);
+            $snapshotRaw = $payslip->snapshot;
+            $snapshotForExemption = is_array($snapshotRaw)
+                ? $snapshotRaw
+                : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+            if (is_array($snapshotForExemption)) {
+                $snapshotForExemption = $this->applyGovernmentExemptionToPayslipSnapshot(
+                    $snapshotForExemption,
+                    $employee,
+                    ! empty($periodInput['from_date']) ? Carbon::parse((string) $periodInput['from_date']) : ($payslip->pay_period_start ?? now()),
+                    ! empty($periodInput['to_date']) ? Carbon::parse((string) $periodInput['to_date']) : ($payslip->pay_period_end ?? now()),
+                    (string) ($periodInput['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)
+                );
+                $payslip->forceFill(['snapshot' => $snapshotForExemption]);
+            }
+        }
+
         $metrics = $this->frozenPayslipLineMetrics($payslip);
         $snapshotRaw = $payslip->snapshot;
         $snapshot = is_array($snapshotRaw)
@@ -1656,6 +1697,13 @@ class PayslipService
 
         // Persist PDF table arrays as 0-based lists with no junk rows so DB + mPDF stay aligned.
         $snapshot = $this->normalizeSnapshotForPayslipPdf($snapshot);
+        $snapshot = $this->applyGovernmentExemptionToPayslipSnapshot(
+            $snapshot,
+            $employee,
+            $from,
+            $to,
+            $payrollModule
+        );
         $lineTotals = $this->payslipLineTotalsFromNormalizedSnapshot($snapshot);
         $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
         $grossPay = $lineTotals['gross_pay'];
@@ -2396,6 +2444,14 @@ class PayslipService
 
         if (is_array($snapshotRaw) && $snapshotRaw !== []) {
             $snapshotRaw = $this->snapshotWithPayrollModule($snapshotRaw, (string) ($payslip->payroll_module ?? ''));
+            $periodInput = $this->periodInputFromPayslip($payslip);
+            $snapshotRaw = $this->applyGovernmentExemptionToPayslipSnapshot(
+                $snapshotRaw,
+                $employee,
+                ! empty($periodInput['from_date']) ? Carbon::parse((string) $periodInput['from_date']) : ($payslip->pay_period_start ?? now()),
+                ! empty($periodInput['to_date']) ? Carbon::parse((string) $periodInput['to_date']) : ($payslip->pay_period_end ?? now()),
+                (string) ($periodInput['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)
+            );
             if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
                 return $this->frozenSnapshotForPayslipView($snapshotRaw);
             }
@@ -2791,6 +2847,9 @@ class PayslipService
             if (! is_array($line)) {
                 continue;
             }
+            if (! empty($line['exempted'])) {
+                continue;
+            }
             $amount = $line['amount'] ?? $line['resolved_amount'] ?? null;
             if (! is_numeric($amount)) {
                 continue;
@@ -2799,6 +2858,170 @@ class PayslipService
         }
 
         return round($total, 2);
+    }
+
+    /**
+     * Ensure payslip government deduction lines and summary totals honor employee exemption settings.
+     * Draft preview uses live computation; finalize freezes a snapshot — this keeps both aligned.
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    public function applyGovernmentExemptionToPayslipSnapshot(
+        array $snapshot,
+        User $employee,
+        Carbon $from,
+        Carbon $to,
+        string $payrollModule = PayrollBatchRun::MODULE_STANDARD,
+    ): array {
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $exemption = is_array($summary['government_deduction_exemption'] ?? null)
+            ? $summary['government_deduction_exemption']
+            : null;
+
+        $payrollType = $this->normalizePayrollModule($payrollModule) === PayrollBatchRun::MODULE_EXECOM
+            ? GovernmentDeductionExemptionResolver::PAYROLL_EXECOM
+            : GovernmentDeductionExemptionResolver::PAYROLL_REGULAR;
+        if (
+            $exemption === null
+            || ! array_key_exists('active_for_period', $exemption)
+            || $payrollType === GovernmentDeductionExemptionResolver::PAYROLL_EXECOM
+        ) {
+            $exemption = app(GovernmentDeductionExemptionResolver::class)->resolve(
+                (int) $employee->id,
+                $payrollType,
+                $from,
+                $to
+            );
+        }
+
+        $summary['government_deduction_exemption'] = $exemption;
+        if (! (bool) ($exemption['active_for_period'] ?? false)) {
+            $snapshot['summary'] = $summary;
+
+            return $snapshot;
+        }
+
+        $govLines = is_array($summary['payslip_deduction_lines'] ?? null)
+            ? $summary['payslip_deduction_lines']
+            : [];
+        $statutoryThisPeriod = 0.0;
+        $withholdingThisPeriod = 0.0;
+
+        foreach ($govLines as $index => $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            if ($this->isPayslipGovernmentLineExempted($line, $exemption)) {
+                $govLines[$index] = $this->markPayslipGovernmentLineExempted($line, $exemption);
+                continue;
+            }
+            $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+            if ($this->isWithholdingTaxPayslipLine($line)) {
+                $withholdingThisPeriod += $amount;
+            } else {
+                $statutoryThisPeriod += $amount;
+            }
+        }
+
+        $summary['payslip_deduction_lines'] = array_values($govLines);
+        $summary['employee_statutory_this_period'] = round($statutoryThisPeriod, 2);
+        $summary['withholding_tax_this_period_estimate'] = round($withholdingThisPeriod, 2);
+
+        $customDeductions = round((float) ($summary['custom_deductions_this_period'] ?? 0), 2);
+        $gross = round(
+            (float) ($summary['gross_pay_this_period']
+                ?? ((float) ($summary['total_pay'] ?? 0) + (float) ($summary['non_basic_earnings_this_period'] ?? 0))),
+            2
+        );
+        $summary['total_deductions_this_period'] = round($statutoryThisPeriod + $withholdingThisPeriod + $customDeductions, 2);
+        $summary['net_pay_after_withholding_estimate'] = round(
+            $gross - $statutoryThisPeriod - $customDeductions - $withholdingThisPeriod,
+            2
+        );
+
+        if (is_array($summary['statutory_breakdown'] ?? null)) {
+            $summary['statutory_breakdown'] = app(GovernmentDeductionExemptionResolver::class)->applyToStatutory(
+                $summary['statutory_breakdown'],
+                $exemption,
+                [
+                    'employee_id' => (int) $employee->id,
+                    'employee_name' => $employee->display_name,
+                    'payroll_period_start' => $from->toDateString(),
+                    'payroll_period_end' => $to->toDateString(),
+                ]
+            );
+        }
+
+        $snapshot['summary'] = $summary;
+
+        return $snapshot;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     * @param  array<string, mixed>  $exemption
+     */
+    private function isPayslipGovernmentLineExempted(array $line, array $exemption): bool
+    {
+        if (! (bool) ($exemption['active_for_period'] ?? false)) {
+            return false;
+        }
+
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? '')));
+
+        if ($this->lineMatchesGovernmentType($key, $label, 'sss')) {
+            return ! (bool) ($exemption['deduct_sss'] ?? true);
+        }
+        if ($this->lineMatchesGovernmentType($key, $label, 'philhealth')) {
+            return ! (bool) ($exemption['deduct_philhealth'] ?? true);
+        }
+        if ($this->lineMatchesGovernmentType($key, $label, 'pagibig') || $this->lineMatchesGovernmentType($key, $label, 'pag-ibig')) {
+            return ! (bool) ($exemption['deduct_pagibig'] ?? true);
+        }
+        if ($this->isWithholdingTaxPayslipLine($line)) {
+            return ! (bool) ($exemption['deduct_withholding_tax'] ?? true);
+        }
+
+        return false;
+    }
+
+    private function lineMatchesGovernmentType(string $key, string $label, string $type): bool
+    {
+        $type = strtolower($type);
+
+        return str_contains($key, $type) || str_contains($label, $type);
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     * @param  array<string, mixed>  $exemption
+     * @return array<string, mixed>
+     */
+    private function markPayslipGovernmentLineExempted(array $line, array $exemption): array
+    {
+        $line['amount'] = 0.0;
+        $line['resolved_amount'] = 0.0;
+        $line['exempted'] = true;
+        $line['note'] = (string) ($line['note'] ?? 'Government deduction exempted');
+        $line['exemption_reason'] = $exemption['exemption_reason'] ?? null;
+
+        return $line;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isWithholdingTaxPayslipLine(array $line): bool
+    {
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? '')));
+
+        return str_contains($key, 'withholding')
+            || str_contains($key, 'wht')
+            || str_contains($label, 'withholding')
+            || str_contains($label, 'wht');
     }
 
     /**

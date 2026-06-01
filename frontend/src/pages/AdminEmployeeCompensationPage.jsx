@@ -521,6 +521,13 @@ export default function AdminEmployeeCompensationPage() {
   const earnings = summary.earnings || []
   const deductions = summary.deductions || []
   const gross = summary?.totals?.gross_earnings || 0
+  const govExemption = summary?.government_deduction_exemption || null
+  const govExemptedLabels = [
+    ['exempt_sss', 'SSS'],
+    ['exempt_philhealth', 'PhilHealth'],
+    ['exempt_pagibig', 'Pag-IBIG'],
+    ['exempt_withholding_tax', 'Withholding Tax'],
+  ].filter(([field]) => Boolean(govExemption?.[field])).map(([, label]) => label)
   const summaryPending = Boolean(summary?._summary_pending) || (Array.isArray(earnings) && earnings.length === 0 && Number(gross) === 0)
   const detailMatchesSelection = detailEntry?.employee?.id === activeEmployeeId
   const showDetailSkeleton = Boolean(activeEmployee && !detailMatchesSelection)
@@ -1107,6 +1114,25 @@ export default function AdminEmployeeCompensationPage() {
                   </div>
                 </section>
               ) : null}
+
+              <section className="rounded-[1.25rem] border border-border/70 bg-card p-4 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">Government deduction toggles</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {govExemption?.active_for_period && govExemptedLabels.length > 0
+                        ? `Exempted: ${govExemptedLabels.join(', ')}`
+                        : 'SSS, PhilHealth, Pag-IBIG, and withholding tax are deducted unless an active exemption is configured.'}
+                    </p>
+                    {govExemption?.exemption_reason ? (
+                      <p className="mt-1 text-xs text-muted-foreground">Reason: {govExemption.exemption_reason}</p>
+                    ) : null}
+                  </div>
+                  <Button type="button" variant="outline" className="rounded-xl" onClick={() => navigate(hrPanelPath(hrBase, 'compensation/government-deduction'))}>
+                    Manage exemptions
+                  </Button>
+                </div>
+              </section>
 
               <section className="rounded-[1.5rem] border border-border/70 bg-card p-5 shadow-sm dark:shadow-[0_14px_45px_rgba(0,0,0,0.22)]">
                 <Tabs defaultValue="earnings" className="w-full">

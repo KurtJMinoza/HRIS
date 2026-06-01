@@ -450,7 +450,17 @@
             <tbody>
               @foreach($govDedLines as $line)
                 <tr>
-                  <td>{{ $line['label'] ?? 'Deduction' }}</td>
+                  <td>
+                    {{ $line['label'] ?? 'Deduction' }}
+                    @if(!empty($line['note']) || !empty($line['exemption_reason']))
+                      <div style="margin-top:2px;font-size:8px;color:#64748b;">
+                        {{ $line['note'] ?? 'Government deduction exempted' }}
+                        @if(!empty($line['exemption_reason']))
+                          — {{ $line['exemption_reason'] }}
+                        @endif
+                      </div>
+                    @endif
+                  </td>
                   <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
                 </tr>
               @endforeach

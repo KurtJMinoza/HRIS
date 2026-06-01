@@ -388,6 +388,7 @@ class DeductionScheduleService
         float $withholdingMonthlyFull,
         ?array $payCyclePreview = null,
         ?string $segmentOverride = null,
+        array $withholding = [],
     ): array {
         $companyId = $user->getEffectiveCompanyId();
         $ref = $referenceDate->copy()->timezone($this->timezone())->startOfDay();
@@ -418,6 +419,9 @@ class DeductionScheduleService
                 'schedule_type' => $sched,
                 'full_monthly_employee' => $full,
                 'this_period_employee' => $thisPeriod,
+                'exempted' => ! empty($statutory[strtolower(str_replace('government:', '', $key))]['exempted']),
+                'exemption_note' => $statutory[strtolower(str_replace('government:', '', $key))]['exemption_note'] ?? null,
+                'exemption_reason' => $statutory[strtolower(str_replace('government:', '', $key))]['exemption_reason'] ?? null,
             ];
         }
 
@@ -435,6 +439,9 @@ class DeductionScheduleService
             'withholding_schedule_type' => $whSched,
             'withholding_full_monthly' => round($withholdingMonthlyFull, 2),
             'withholding_this_period' => $withholdingThis,
+            'withholding_exempted' => ! empty($withholding['exempted']),
+            'withholding_exemption_note' => $withholding['exemption_note'] ?? null,
+            'withholding_exemption_reason' => $withholding['exemption_reason'] ?? null,
         ];
     }
 
@@ -457,6 +464,11 @@ class DeductionScheduleService
                 'label' => $short,
                 'amount' => round(max(0.0, $thisPeriod), 2),
                 'display' => $this->formatPayslipDeductionLineDisplay($short, $full, $sched),
+                'exempted' => ! empty($line['exempted']),
+                'note' => ! empty($line['exempted'])
+                    ? (string) ($line['exemption_note'] ?? 'Government deduction exempted')
+                    : null,
+                'exemption_reason' => $line['exemption_reason'] ?? null,
             ];
         }
         $whSched = (string) ($governmentPreview['withholding_schedule_type'] ?? DeductionScheduleSetting::SCHEDULE_BOTH);
@@ -466,6 +478,11 @@ class DeductionScheduleService
             'label' => 'Withholding tax',
             'amount' => round(max(0.0, $whThisPeriod), 2),
             'display' => $this->formatPayslipDeductionLineDisplay('Withholding tax', max(0.0, $withholdingMonthlyFull), $whSched),
+            'exempted' => ! empty($governmentPreview['withholding_exempted']),
+            'note' => ! empty($governmentPreview['withholding_exempted'])
+                ? (string) ($governmentPreview['withholding_exemption_note'] ?? 'Government deduction exempted')
+                : null,
+            'exemption_reason' => $governmentPreview['withholding_exemption_reason'] ?? null,
         ];
 
         return $out;
@@ -965,7 +982,15 @@ class DeductionScheduleService
             : $ref;
         $segment = $this->inferSemiMonthSegmentFromPayDate($selectedPayDate)
             ?? $this->resolveSemiMonthSegmentForPayrollContext($user, $selectedPayDate, $payCyclePreview);
-        $gov = $this->buildGovernmentSchedulePreview($user, $selectedPayDate, $statutory, $withholdingMonthly, $payCyclePreview, $segment);
+        $gov = $this->buildGovernmentSchedulePreview(
+            $user,
+            $selectedPayDate,
+            $statutory,
+            $withholdingMonthly,
+            $payCyclePreview,
+            $segment,
+            is_array($compensationSummary['withholding'] ?? null) ? $compensationSummary['withholding'] : []
+        );
         $payrollRun = [
             'user' => $user,
             'reference_date' => $ref,

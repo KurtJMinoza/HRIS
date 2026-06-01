@@ -2217,20 +2217,16 @@ class FinalizePayrollService
                 $this->payslipService->clearBlockingPayrollPeriodLinksForUsers($employeeIds);
                 $this->assertFinalizeModuleGuards($lockedRun);
                 $this->payslipService->cleanupStaleBatchModulePayslips($lockedRun);
-                $isExecomBatch = $this->normalizePayrollModule((string) ($lockedRun->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)) === PayrollBatchRun::MODULE_EXECOM;
-
                 foreach ($employees as $user) {
                     $payslip = $draftPayslips->get((int) $user->id);
                     if (! $payslip instanceof Payslip) {
                         throw new \RuntimeException('Missing draft payslip for user_id='.(int) $user->id);
                     }
 
-                    if (! $isExecomBatch) {
-                        if ($this->isConsultantEmployee($user)) {
-                            $payslip = $this->payslipService->refreshConsultantDraftPayslipSnapshot($payslip, $user);
-                        } else {
-                            $payslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $user);
-                        }
+                    if ($this->isConsultantEmployee($user)) {
+                        $payslip = $this->payslipService->refreshConsultantDraftPayslipSnapshot($payslip, $user);
+                    } else {
+                        $payslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $user);
                     }
 
                     $snapshotRaw = $payslip->snapshot;

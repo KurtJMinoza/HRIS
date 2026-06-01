@@ -442,6 +442,9 @@ class PayrollLinePersistService
             if (! is_array($line)) {
                 continue;
             }
+            if (! empty($line['exempted']) && round((float) ($line['amount'] ?? 0), 2) <= 0.0) {
+                continue;
+            }
             $rows[] = $this->mapSnapshotLineToPayrollRow($line, PayrollLine::TYPE_DEDUCTION, 'statutory', $sort++);
         }
 

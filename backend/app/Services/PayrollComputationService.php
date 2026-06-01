@@ -66,6 +66,7 @@ class PayrollComputationService
         private readonly DeductionScheduleService $deductionScheduleService,
         private readonly DeductionApplicationService $deductionApplicationService,
         private readonly LoanAmortizationService $loanAmortizationService,
+        private readonly GovernmentDeductionExemptionResolver $governmentExemptionResolver,
     ) {}
 
     public function flushRuntimeCaches(): void
@@ -1909,13 +1910,25 @@ class PayrollComputationService
             );
         }
         $basicSalary = (float) ($compensationSummary['basic_salary'] ?? 0);
-        $statutory = $isConsultant
-            ? $this->payrollCalculator->calculateAllStatutoryContributions($basicSalary, [
-                'sss' => $basicSalary,
-                'philhealth' => $basicSalary,
-                'pagibig' => $basicSalary,
-            ])
-            : ($compensationSummary['statutory'] ?? $this->payrollCalculator->calculateAllStatutoryContributions($basicSalary));
+        $statutory = $this->payrollCalculator->calculateAllStatutoryContributions($basicSalary, [
+            'sss' => $basicSalary,
+            'philhealth' => $basicSalary,
+            'pagibig' => $basicSalary,
+        ]);
+        $governmentExemption = $this->governmentExemptionResolver->resolve(
+            (int) $user->id,
+            GovernmentDeductionExemptionResolver::PAYROLL_REGULAR,
+            $from,
+            $to
+        );
+        $payrollExemptionContext = [
+            'employee_id' => (int) $user->id,
+            'employee_name' => $user->display_name,
+            'payroll_run_id' => $this->activePayrollBatchRunId,
+            'payroll_period_start' => $from->toDateString(),
+            'payroll_period_end' => $to->toDateString(),
+        ];
+        $statutory = $this->governmentExemptionResolver->applyToStatutory($statutory, $governmentExemption, $payrollExemptionContext);
         $employeeStatutoryFullMonthly = (float) ($statutory['totals']['employee_deduction'] ?? 0);
         $employerStatutoryTotal = (float) ($statutory['totals']['employer_liability'] ?? 0);
         $customDeductionsFullMonthly = (float) ($compensationSummary['totals']['custom_deductions'] ?? 0);
@@ -1948,6 +1961,12 @@ class PayrollComputationService
             ])
         );
         $withholdingMonthlyFull = (float) ($withholdingPreview['withholding_per_month'] ?? 0);
+        [$withholdingPreview, $withholdingMonthlyFull] = $this->governmentExemptionResolver->applyToWithholding(
+            $withholdingPreview,
+            $withholdingMonthlyFull,
+            $governmentExemption,
+            $payrollExemptionContext
+        );
 
         $refForSchedule = $to->copy()->timezone($tz)->startOfDay();
         $selectedPayDate = ! empty($periodContext['selected_pay_date'])
@@ -2002,6 +2021,8 @@ class PayrollComputationService
                 'withholding' => array_merge($compensationSummary['withholding'] ?? [], [
                     'withholding_per_month' => $withholdingMonthlyFull,
                 ]),
+                'statutory' => $statutory,
+                'government_deduction_exemption' => $governmentExemption,
                 'pay_period_start' => $periodStartDate,
                 'pay_period_end' => $periodEndDate,
                 'selected_pay_date' => $selectedPayDate?->toDateString(),
@@ -2163,7 +2184,16 @@ class PayrollComputationService
                 'withholding_breakdown' => $withholdingPreview,
                 'net_pay_after_withholding_estimate' => $netPayAfterWithholding,
                 'statutory_breakdown' => $statutory,
-                'compensation_breakdown' => $compensationSummary,
+                'government_deduction_exemption' => $governmentExemption,
+                'compensation_breakdown' => array_merge($compensationSummary, [
+                    'statutory' => $statutory,
+                    'withholding' => $withholdingPreview,
+                    'government_deduction_exemption' => $governmentExemption,
+                    'totals' => array_merge($compensationSummary['totals'] ?? [], [
+                        'employee_statutory_deductions' => round($employeeStatutoryFullMonthly, 2),
+                        'withholding_tax' => round($withholdingMonthlyFull, 2),
+                    ]),
+                ]),
                 'deduction_schedule' => $deductionSchedule,
                 'legal_warnings' => $phase3Deduction['legal_warnings'],
                 'minimum_take_home_floor' => $phase3Deduction['minimum_take_home_floor'],

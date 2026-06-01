@@ -579,6 +579,64 @@ function StatutoryMiniCard({ icon, title, amount, subtitle, status = 'matched', 
   )
 }
 
+const GOVERNMENT_EXEMPTION_LABELS = [
+  ['exempt_sss', 'SSS'],
+  ['exempt_philhealth', 'PhilHealth'],
+  ['exempt_pagibig', 'Pag-IBIG'],
+  ['exempt_withholding_tax', 'Withholding Tax'],
+]
+
+export function SalaryGovernmentDeductionExemptionsCard({ compensationSummary }) {
+  const exemption = compensationSummary?.government_deduction_exemption
+  if (!exemption?.government_exemption_found && !exemption?.active_for_period) return null
+
+  const activeTypes = GOVERNMENT_EXEMPTION_LABELS
+    .filter(([field]) => Boolean(exemption?.[field]))
+    .map(([, label]) => label)
+
+  return (
+    <Card className="border border-slate-200/90 bg-white shadow-sm dark:border-white/10 dark:bg-[#111318]">
+      <CardHeader className="border-b border-slate-100 pb-4 dark:border-white/10">
+        <CardTitle className={cn('flex items-center gap-2 text-lg font-semibold', TEXT)}>
+          <Shield className="size-5 text-[#0A0A0A] dark:text-slate-100" aria-hidden />
+          Government Deduction Exemptions
+        </CardTitle>
+        <CardDescription className="text-slate-600 dark:text-slate-400">
+          Admin-controlled exemption settings applied to payroll, payslips, and reports.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 pt-4">
+        <div className="flex flex-wrap gap-2">
+          {GOVERNMENT_EXEMPTION_LABELS.map(([field, label]) => {
+            const exempted = Boolean(exemption?.[field])
+            return (
+              <Badge key={field} className={cn(
+                'border font-medium',
+                exempted
+                  ? 'border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-50 dark:border-rose-800/50 dark:bg-rose-950/40 dark:text-rose-200'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800/50 dark:bg-emerald-950/40 dark:text-emerald-200',
+              )}>
+                {label}: {exempted ? 'Exempt' : 'Deduct'}
+              </Badge>
+            )
+          })}
+        </div>
+        <div className="grid gap-3 text-sm sm:grid-cols-1">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Status</p>
+            <p className={cn('mt-1 font-semibold', TEXT)}>{exemption?.active_for_period ? 'Active for payroll' : 'Inactive'}</p>
+          </div>
+        </div>
+        {activeTypes.length > 0 ? (
+          <p className="rounded-xl border border-dashed border-rose-200 bg-rose-50/60 px-4 py-3 text-sm text-rose-900 dark:border-rose-900/40 dark:bg-rose-950/25 dark:text-rose-100">
+            Government deductions exempted: {activeTypes.join(', ')}. Reason: {exemption?.exemption_reason || 'No reason recorded'}.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
 /**
  * @param {{ withholding: object | null | undefined, compensationSummary: object | null | undefined }} args
  */

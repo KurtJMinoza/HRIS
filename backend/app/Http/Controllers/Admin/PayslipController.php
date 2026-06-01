@@ -714,16 +714,8 @@ class PayslipController extends Controller
         }
 
         if (! $isFinalized) {
-            $periodInput = [
-                'from_date' => $payslip->pay_period_start?->toDateString(),
-                'to_date' => $payslip->pay_period_end?->toDateString(),
-                'pay_cycle_id' => $payslip->pay_cycle_id !== null ? (int) $payslip->pay_cycle_id : null,
-                'reference_date' => $payslip->pay_date?->toDateString(),
-                'use_company_default' => $payslip->pay_cycle_id === null,
-                'payroll_period_id' => $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
-                'is_final_pay' => (bool) $payslip->is_final_pay,
-                'password_protect' => false,
-            ];
+            $periodInput = $this->payslipService->periodInputFromPayslip($payslip);
+            $periodInput['password_protect'] = false;
 
             try {
                 $live = $this->payslipService->computePayrollForEmployee(
