@@ -646,18 +646,6 @@ class AttendanceMonitoringController extends Controller
                 $approvedOtRecords = $this->overtimeRecordsByStatus($otRecords, Overtime::STATUS_APPROVED);
                 $approvedOvertimeForRow = $this->pickOvertimeForVirtualEnd($approvedOtRecords);
                 $virtualClockOutFromOt = false;
-                if ($isWorkday && $effectiveTimeOut === null && $approvedOvertimeForRow) {
-                    $resolvedOut = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
-                        $approvedOvertimeForRow,
-                        $dateKey,
-                        is_array($todaySchedule) ? $todaySchedule : null,
-                        $tz
-                    );
-                    if ($resolvedOut !== null) {
-                        $effectiveTimeOut = $resolvedOut;
-                        $virtualClockOutFromOt = true;
-                    }
-                }
 
                 if (! ($correction && $correction->approved && $correction->time_in && $correction->time_out)) {
                     if ($todaySchedule && $effectiveTimeIn && $effectiveTimeOut) {
@@ -803,11 +791,30 @@ class AttendanceMonitoringController extends Controller
                 $status = $qualified['status'];
                 $presenceLabel = $qualified['presence_label'];
                 $presenceIssue = $qualified['presence_issue'];
+                $attendanceOtStatus = null;
+                if ($effectiveTimeIn && ! $effectiveTimeOut && $approvedOtRecords !== []) {
+                    $approvedOtEnd = $approvedOvertimeForRow
+                        ? AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
+                            $approvedOvertimeForRow,
+                            $dateKey,
+                            is_array($todaySchedule) ? $todaySchedule : null,
+                            $tz
+                        )
+                        : null;
+                    $nowForOt = Carbon::now($tz);
+                    $attendanceOtStatus = ($approvedOtEnd instanceof Carbon && $dateKey === $todayTzStr && $nowForOt->lessThanOrEqualTo($approvedOtEnd))
+                        ? 'Working OT'
+                        : 'Missing Clock Out';
+                    $presenceLabel = $attendanceOtStatus;
+                    $presenceIssue = $attendanceOtStatus === 'Working OT'
+                        ? 'approved_ot_working'
+                        : 'approved_ot_missing_clock_out';
+                }
 
                 if (! empty($validated['status'])) {
                     $want = $validated['status'];
                     if ($want === 'incomplete') {
-                        if (! in_array($presenceIssue, ['incomplete_pair', 'correction_pending'], true)) {
+                        if (! in_array($presenceIssue, ['incomplete_pair', 'correction_pending', 'approved_ot_missing_clock_out'], true)) {
                             continue;
                         }
                     } elseif ($status !== $want) {
@@ -983,6 +990,7 @@ class AttendanceMonitoringController extends Controller
                     'virtual_time_out_from_ot' => $virtualClockOutFromOt,
                     'presence_label' => $presenceLabel,
                     'presence_issue' => $presenceIssue,
+                    'attendance_time_out_status' => $attendanceOtStatus,
                 ];
             }
 

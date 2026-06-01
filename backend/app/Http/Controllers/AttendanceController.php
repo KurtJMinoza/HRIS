@@ -2107,33 +2107,6 @@ class AttendanceController extends Controller
             }
 
             $virtualTimeOutFromOt = false;
-            if ($effectiveTimeIn && $effectiveTimeOut === null) {
-                $otRecordsForVirtual = $overtimeByDate->get($dateKey)?->all() ?? [];
-                $otApproved = $this->pickOvertimeForVirtualEnd($this->overtimeRecordsByStatus($otRecordsForVirtual, Overtime::STATUS_APPROVED));
-                if ($otApproved && $otApproved->status === Overtime::STATUS_APPROVED) {
-                    $resolvedOut = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
-                        $otApproved,
-                        $dateKey,
-                        is_array($daySchedule) ? $daySchedule : null,
-                        $attendanceTz
-                    );
-                    if ($resolvedOut !== null) {
-                        $effectiveTimeOut = $resolvedOut;
-                        $virtualTimeOutFromOt = true;
-                        $tIn = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
-                        $tOut = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
-                        $effectiveWorkedMinutes = $daySchedule
-                            ? AttendanceStatusService::getNetWorkedMinutes(
-                                $tIn,
-                                $tOut,
-                                $daySchedule,
-                                $dateKey,
-                                $attendanceTz
-                            )
-                            : max(0, (int) $tIn->diffInMinutes($tOut));
-                    }
-                }
-            }
 
             $status = '—';
             $dayLateMinutes = null;
@@ -2296,6 +2269,25 @@ class AttendanceController extends Controller
             $approvedOtRecords = $this->overtimeRecordsByStatus($otRecords, Overtime::STATUS_APPROVED);
             $otRow = $this->pickOvertimeForVirtualEnd($approvedOtRecords) ?? ($otRecords[0] ?? null);
             $hasEffectiveTimeOut = $effectiveTimeOut !== null;
+            $attendanceOtStatus = null;
+            if ($effectiveTimeIn && ! $effectiveTimeOut && $approvedOtRecords !== []) {
+                $approvedOtEnd = $otRow && $otRow->status === Overtime::STATUS_APPROVED
+                    ? AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
+                        $otRow,
+                        $dateKey,
+                        is_array($daySchedule) ? $daySchedule : null,
+                        $attendanceTz
+                    )
+                    : null;
+                $nowForOt = Carbon::now($attendanceTz);
+                $attendanceOtStatus = ($approvedOtEnd instanceof Carbon && $dateKey === $todayDate && $nowForOt->lessThanOrEqualTo($approvedOtEnd))
+                    ? 'Working OT'
+                    : 'Missing Clock Out';
+                $presenceLabel = $attendanceOtStatus;
+                $presenceIssue = $attendanceOtStatus === 'Working OT'
+                    ? 'approved_ot_working'
+                    : 'approved_ot_missing_clock_out';
+            }
 
             $approvedOtHours = $this->sumOvertimeHours($approvedOtRecords);
 
@@ -2459,7 +2451,7 @@ class AttendanceController extends Controller
                 'late_minutes' => $dayLateMinutes,
                 'late_label' => $dayLateLabel,
                 'undertime_minutes' => $dayUndertimeMinutes,
-                // Reports parity: OT minutes only when we have an actual/virtual time-out anchor.
+                // Reports parity: OT minutes only when we have an actual attendance/correction time-out.
                 'overtime_minutes' => $otMinutesForRow,
                 'rendered_overtime_hours' => $showOtPremiumFields ? round($actualRenderedOtHours, 2) : null,
                 'actual_rendered_overtime_hours' => $showOtPremiumFields ? round($actualRenderedOtHours, 2) : null,
@@ -2490,6 +2482,7 @@ class AttendanceController extends Controller
                 'has_approved_overtime' => $approvedFromFiling > 0.0001,
                 'presence_label' => $presenceLabel,
                 'presence_issue' => $presenceIssue,
+                'attendance_time_out_status' => $attendanceOtStatus,
                 'presence_filing' => null,
                 'leave_pay_status' => $leavePayStatus,
             ];

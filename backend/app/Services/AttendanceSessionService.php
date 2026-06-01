@@ -327,10 +327,6 @@ class AttendanceSessionService
             }
         }
 
-        if ($timeIn !== null && $timeOut === null) {
-            $timeOut = $this->virtualTimeOutFromApprovedOvertime($user, $dateKey, $tz);
-        }
-
         if ($timeIn === null || $timeOut === null) {
             $this->timesForDateCache[$cacheKey] = [null, null];
 
@@ -367,7 +363,7 @@ class AttendanceSessionService
             }
         }
 
-        $approvedOtEnd = $this->virtualTimeOutFromApprovedOvertime($user, $dateKey, $tz);
+        $approvedOtEnd = $this->approvedOvertimeSearchEnd($user, $dateKey, $tz);
         if ($approvedOtEnd !== null) {
             $end = $end->max($approvedOtEnd->copy()->addHours(2));
         }
@@ -376,9 +372,9 @@ class AttendanceSessionService
     }
 
     /**
-     * When there is no clock-out log and no manual time_out, mirror Admin Reports: use approved OT expected end.
+     * Approved OT end can expand the log search range, but it must never become actual time_out.
      */
-    private function virtualTimeOutFromApprovedOvertime(User $user, string $dateKey, string $tz): ?Carbon
+    private function approvedOvertimeSearchEnd(User $user, string $dateKey, string $tz): ?Carbon
     {
         $ot = null;
         if ($this->bulkPayrollMode) {
@@ -478,10 +474,6 @@ class AttendanceSessionService
             if ($clockOut) {
                 $timeOut = $clockOut->verified_at->copy()->timezone($tz);
             }
-        }
-
-        if ($timeIn !== null && $timeOut === null) {
-            $timeOut = $this->virtualTimeOutFromApprovedOvertime($user, $dateKey, $tz);
         }
 
         if ($timeIn === null || $timeOut === null) {

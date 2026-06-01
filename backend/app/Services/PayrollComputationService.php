@@ -2438,10 +2438,9 @@ class PayrollComputationService
     }
 
     /**
-     * Allowance eligibility is stricter than payroll's payable-time fallback:
+     * Allowance eligibility is strict:
      * actual attendance must have a valid IN and OUT from raw logs and/or approved correction.
-     * Approved OT virtual time-outs may pay OT in payroll, but must not turn an incomplete log
-     * into an allowance day.
+     * Approved OT windows must never turn an incomplete log into an allowance day.
      *
      * @return array{valid: bool, reason: string, sources: array<string, bool>}
      */

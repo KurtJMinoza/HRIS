@@ -870,18 +870,6 @@ class ReportsController extends Controller
                 $approvedOvertimeRecords = $this->approvedOvertimeRecords($otRecords);
                 $approvedOtForDetailedRow = $this->pickOvertimeForVirtualEnd($approvedOvertimeRecords);
                 $virtualClockOutFromOt = false;
-                if ($timeOut === null && $approvedOtForDetailedRow && $approvedOtForDetailedRow->status === Overtime::STATUS_APPROVED) {
-                    $resolvedOut = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
-                        $approvedOtForDetailedRow,
-                        $dateKey,
-                        is_array($todaySchedule) ? $todaySchedule : null,
-                        $attendanceTz
-                    );
-                    if ($resolvedOut !== null) {
-                        $timeOut = $resolvedOut;
-                        $virtualClockOutFromOt = true;
-                    }
-                }
 
                 // For regular clock-in/out logs (no correction covering both times), deduct the
                 // schedule's unpaid break window so worked minutes are consistent across all views.
@@ -1096,6 +1084,24 @@ class ReportsController extends Controller
                 $status = $qualifiedRow['status'];
                 $presenceLabel = $qualifiedRow['presence_label'];
                 $presenceIssue = $qualifiedRow['presence_issue'];
+                $attendanceOtStatus = null;
+                if ($effectiveTimeIn && ! $effectiveTimeOut && $approvedOvertimeRecords !== []) {
+                    $approvedOtEnd = $approvedOtForDetailedRow
+                        ? AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
+                            $approvedOtForDetailedRow,
+                            $dateKey,
+                            is_array($todaySchedule) ? $todaySchedule : null,
+                            $attendanceTz
+                        )
+                        : null;
+                    $attendanceOtStatus = ($approvedOtEnd instanceof Carbon && $dateKey === $todayDateRow && $nowTz->lessThanOrEqualTo($approvedOtEnd))
+                        ? 'Working OT'
+                        : 'Missing Clock Out';
+                    $presenceLabel = $attendanceOtStatus;
+                    $presenceIssue = $attendanceOtStatus === 'Working OT'
+                        ? 'approved_ot_working'
+                        : 'approved_ot_missing_clock_out';
+                }
 
                 if (! $todaySchedule && ! $leaveInfo && ! $effectiveTimeIn && ! $effectiveTimeOut
                     && $status !== 'rest' && $status !== 'holiday') {
@@ -1115,7 +1121,7 @@ class ReportsController extends Controller
                 if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {
                     $sf = strtolower((string) $statusFilter);
                     if ($sf === 'incomplete') {
-                        if (! in_array($presenceIssue, ['incomplete_pair', 'correction_pending'], true)) {
+                        if (! in_array($presenceIssue, ['incomplete_pair', 'correction_pending', 'approved_ot_missing_clock_out'], true)) {
                             $cursor->addDay();
 
                             continue;
@@ -1302,6 +1308,7 @@ class ReportsController extends Controller
                         'status' => $status,
                         'presence_label' => $presenceLabel,
                         'presence_issue' => $presenceIssue,
+                        'attendance_time_out_status' => $attendanceOtStatus,
                         'leave_type' => $leaveInfo['type'] ?? null,
                         'leave_status' => $leaveInfo['status'] ?? null,
                         'undertime_filing_status' => $undertimeFilingStatus,

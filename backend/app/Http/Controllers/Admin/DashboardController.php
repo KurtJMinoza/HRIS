@@ -2819,6 +2819,8 @@ class DashboardController extends Controller
             'is_half_day' => false,
             'is_absent' => false,
             'absent_label' => null,
+            'attendance_time_out_status' => null,
+            'virtual_time_out_from_ot' => false,
         ];
     }
 
@@ -2871,6 +2873,8 @@ class DashboardController extends Controller
                     'is_half_day' => false,
                     'is_absent' => false,
                     'absent_label' => null,
+                    'attendance_time_out_status' => null,
+                    'virtual_time_out_from_ot' => false,
                 ];
                 $schedules[$userId] = $this->resolveEffectiveSchedule($user);
             }
@@ -2994,29 +2998,6 @@ class DashboardController extends Controller
         }
 
         foreach ($grouped as $userId => &$row) {
-            // No clock-out yet: use approved OT expected end (same as Attendance session / Reports).
-            if ($row['time_in'] && $row['time_out'] === null) {
-                $ot = $approvedOvertimeByUserId[$userId] ?? null;
-                if ($ot) {
-                    $schedule = $schedules[$userId] ?? null;
-                    $todaySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-                    $resolvedOut = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
-                        $ot,
-                        $dateKey,
-                        is_array($todaySchedule) ? $todaySchedule : null,
-                        $tz
-                    );
-                    if ($resolvedOut !== null) {
-                        $row['time_out'] = $resolvedOut;
-                        // Same flag name as Admin Attendance detailed report for UI tooltips.
-                        $row['virtual_time_out_from_ot'] = true;
-                    }
-                }
-            }
-        }
-        unset($row);
-
-        foreach ($grouped as $userId => &$row) {
             $schedule = $schedules[$userId] ?? null;
             $todaySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
 
@@ -3029,7 +3010,20 @@ class DashboardController extends Controller
                 $row['is_half_day'] = $result['status'] === 'half_day';
             }
 
-            $row['virtual_time_out_from_ot'] = (bool) ($row['virtual_time_out_from_ot'] ?? false);
+            $ot = $approvedOvertimeByUserId[$userId] ?? null;
+            if ($row['time_in'] && $row['time_out'] === null && $ot instanceof Overtime) {
+                $approvedOtEnd = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
+                    $ot,
+                    $dateKey,
+                    is_array($todaySchedule) ? $todaySchedule : null,
+                    $tz
+                );
+                $row['attendance_time_out_status'] = ($approvedOtEnd instanceof Carbon && Carbon::now($tz)->lessThanOrEqualTo($approvedOtEnd))
+                    ? 'Working OT'
+                    : 'Missing Clock Out';
+            }
+
+            $row['virtual_time_out_from_ot'] = false;
 
             $row['time_in'] = $row['time_in'] ? $row['time_in']->toIso8601String() : null;
             $row['time_out'] = $row['time_out'] ? $row['time_out']->toIso8601String() : null;
