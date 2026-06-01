@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\ProcessDailyPayrollJob;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceCorrectionAudit;
 use App\Models\AttendanceLog;
@@ -12,6 +13,7 @@ use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
+use App\Services\OvertimeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\PresenceFilingService;
 use Carbon\Carbon;
@@ -26,6 +28,7 @@ class AttendanceCorrectionController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly PresenceFilingService $presenceFilingService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
+        private readonly OvertimeService $overtimeService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -296,36 +299,7 @@ class AttendanceCorrectionController extends Controller
             }
         }
 
-        // 4) If there is an approved overtime for this date, require that time_out is not earlier than the approved OT end.
-        if ($timeOut) {
-            $approvedOvertime = Overtime::query()
-                ->where('user_id', $employee->id)
-                ->whereDate('date', $date)
-                ->where('status', Overtime::STATUS_APPROVED)
-                ->orderByDesc('id')
-                ->first();
-
-            if ($approvedOvertime) {
-                $otEndCarbon = AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
-                    $approvedOvertime,
-                    $date,
-                    is_array($daySchedule) ? $daySchedule : null,
-                    $tz
-                );
-                if ($otEndCarbon) {
-                    if ($isNightShift && $timeIn && $otEndCarbon->lessThanOrEqualTo($timeIn)) {
-                        $otEndCarbon = $otEndCarbon->copy()->addDay();
-                    }
-                    if ($timeOut->lessThan($otEndCarbon)) {
-                        $otEndStr = $otEndCarbon->format('H:i');
-                        $dayHint = $isNightShift ? ' (+1 day)' : '';
-                        throw ValidationException::withMessages([
-                            'time_out' => ["Time out must not be earlier than the approved overtime end of {$otEndStr}{$dayHint}."],
-                        ]);
-                    }
-                }
-            }
-        }
+        // Approved OT authorizes the window only; corrections may record an earlier actual clock-out.
 
         // 5) Optional: if logs already contain a completed in/out pair and there is no existing correction,
         // prevent creating a second, conflicting manual record.
@@ -396,6 +370,11 @@ class AttendanceCorrectionController extends Controller
             'new_time_out' => $correction->time_out,
             'reason' => $remarks,
         ]);
+
+        if ($approved) {
+            $this->overtimeService->syncActualClockOutToFiledOvertime($employee, $date, $timeOut, $admin);
+            ProcessDailyPayrollJob::dispatchSync($date);
+        }
 
         // Compute derived metrics so the client can show an immediate summary.
         $lateMinutes = null;
@@ -486,7 +465,11 @@ class AttendanceCorrectionController extends Controller
             ? (float) ($approvedOtRow->computed_hours ?? 0)
             : 0.0;
         $renderedOtHours = $overtimeMinutes !== null ? round($overtimeMinutes / 60, 2) : null;
-        $payableOtHours = $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : null;
+        $actualRenderedOtMinutes = $overtimeMinutes !== null ? (int) $overtimeMinutes : 0;
+        $payableOtMinutes = $approvedOtHours > 0.0001
+            ? min((int) round($approvedOtHours * 60), $actualRenderedOtMinutes)
+            : 0;
+        $payableOtHours = $payableOtMinutes > 0 ? round($payableOtMinutes / 60, 2) : null;
 
         return response()->json([
             'message' => 'Attendance correction saved.',
@@ -508,7 +491,8 @@ class AttendanceCorrectionController extends Controller
                     'undertime_minutes' => $undertimeMinutes,
                     'overtime_minutes' => $overtimeMinutes,
                     'rendered_overtime_hours' => $renderedOtHours,
-                    'approved_overtime_hours' => $payableOtHours,
+                    'approved_overtime_hours' => $approvedOtHours > 0.0001 ? round($approvedOtHours, 2) : null,
+                    'payable_overtime_hours' => $payableOtHours,
                     'overtime_hours' => $payableOtHours,
                     'scheduled_regular_hours' => $scheduledRegularMinutes !== null && $scheduledRegularMinutes > 0
                         ? round($scheduledRegularMinutes / 60, 2)

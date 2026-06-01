@@ -17,6 +17,7 @@ use App\Services\AttendanceCorrectionDetailService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
+use App\Services\OvertimeService;
 use App\Services\PresenceFilingAttendanceLogSyncService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PayrollPeriodMutationGuard;
@@ -50,6 +51,7 @@ class PresenceFilingController extends Controller
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly PresenceFilingBulkApprovalQuery $bulkApprovalQuery,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
+        private readonly OvertimeService $overtimeService,
     ) {}
 
     private function normalizeTimeToHi(?string $value): ?string
@@ -1765,6 +1767,8 @@ class PresenceFilingController extends Controller
             $correction->attendance_logs_synced_by = $actor->id;
             $correction->save();
         });
+
+        $this->overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $correction->time_out, $actor);
 
         if (! $this->isBulkApprovalRequest($request)) {
             ProcessDailyPayrollJob::dispatchSync($dateKey);

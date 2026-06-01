@@ -303,7 +303,7 @@ class EmployeeDashboardController extends Controller
         $holidays = $this->loadMonthHolidays($user, $year, $month);
 
         $overtimes = Overtime::query()
-            ->select(['id', 'user_id', 'date', 'computed_hours', 'expected_end_time', 'time_out', 'schedule_end', 'status', 'ph_ot_rule'])
+            ->select(['id', 'user_id', 'date', 'computed_hours', 'approved_ot_hours', 'actual_rendered_ot_hours', 'payable_ot_hours', 'unapproved_ot_hours', 'overtime_reduction_reason', 'expected_end_time', 'time_out', 'schedule_end', 'status', 'ph_ot_rule'])
             ->where('user_id', $employeeId)
             ->whereBetween('date', [$fromStr, $toStr]);
         if (Schema::hasColumn('overtimes', 'voided_at')) {
@@ -485,6 +485,17 @@ class EmployeeDashboardController extends Controller
             $otRecords = $overtimesByDate->get($dateKey)?->all() ?? [];
             $approvedOtRecords = array_values(array_filter($otRecords, fn ($o) => $o->status === Overtime::STATUS_APPROVED));
             $approvedOtHours = $this->sumOvertimeHours($approvedOtRecords);
+            $actualRenderedOtHours = $rawOtMinutes > 0 ? round($rawOtMinutes / 60, 2) : 0.0;
+            $payableOtMinutes = $approvedOtHours > 0
+                ? $this->overtimePayroll->resolvePayableOtMinutes($rawOtMinutes, (int) round($approvedOtHours * 60))
+                : 0;
+            $payableOtHours = round($payableOtMinutes / 60, 2);
+            $unapprovedOtHours = ($approvedOtHours > 0.0001 || $actualRenderedOtHours > 0.0001)
+                ? abs(round($actualRenderedOtHours - $approvedOtHours, 2))
+                : 0.0;
+            if ($actualRenderedOtHours <= 0.0001 && $approvedOtHours > 0) {
+                $unapprovedOtHours = 0.0;
+            }
 
             if ($status === 'present' || $status === 'late') {
                 $metrics['present_count']++;
@@ -526,6 +537,10 @@ class EmployeeDashboardController extends Controller
                 'presence_label' => $resolved['presence_label'],
                 'presence_issue' => $resolved['presence_issue'],
                 'approved_overtime_hours' => $approvedOtHours > 0 ? round($approvedOtHours, 2) : null,
+                'actual_rendered_overtime_hours' => ($rawOtMinutes > 0 || $approvedOtHours > 0) ? $actualRenderedOtHours : null,
+                'rendered_overtime_hours' => ($rawOtMinutes > 0 || $approvedOtHours > 0) ? $actualRenderedOtHours : null,
+                'payable_overtime_hours' => $payableOtHours > 0 ? $payableOtHours : null,
+                'unapproved_overtime_hours' => $unapprovedOtHours > 0.0001 ? round($unapprovedOtHours, 2) : null,
             ];
 
             $cursor->addDay();
@@ -555,6 +570,11 @@ class EmployeeDashboardController extends Controller
                     'id' => $o->id,
                     'date' => $o->date?->toDateString(),
                     'computed_hours' => (float) ($o->computed_hours ?? 0),
+                    'approved_ot_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : null,
+                    'actual_rendered_ot_hours' => (float) ($o->actual_rendered_ot_hours ?? 0),
+                    'payable_ot_hours' => (float) ($o->payable_ot_hours ?? 0),
+                    'unapproved_ot_hours' => (float) ($o->unapproved_ot_hours ?? 0),
+                    'overtime_reduction_reason' => $o->overtime_reduction_reason,
                     'status' => $o->status,
                     'expected_end_time' => $o->expected_end_time,
                     'time_out' => $o->time_out,
@@ -619,7 +639,7 @@ class EmployeeDashboardController extends Controller
             ->get();
 
         $recentOvertimes = Overtime::query()
-            ->select(['id', 'date', 'computed_hours', 'status', 'created_at'])
+            ->select(['id', 'date', 'computed_hours', 'approved_ot_hours', 'actual_rendered_ot_hours', 'payable_ot_hours', 'unapproved_ot_hours', 'overtime_reduction_reason', 'status', 'created_at'])
             ->where('user_id', $employeeId)
             ->orderByDesc('created_at')
             ->limit(5)
@@ -979,7 +999,7 @@ class EmployeeDashboardController extends Controller
     {
         $total = 0.0;
         foreach ($otRecords as $ot) {
-            $total += (float) ($ot->computed_hours ?? 0);
+            $total += (float) ($ot->approved_ot_hours ?? $ot->computed_hours ?? 0);
         }
         return $total;
     }

@@ -2375,7 +2375,9 @@ class AttendanceController extends Controller
             $otPayableBasis = $this->overtimePayroll->payableBasis();
             $otReductionReason = $this->overtimeReductionReason($otPayableBasis, $approvedOtMinutes, $actualRenderedOtMinutes, $payableOtMinutes);
             $clockVal = $actualRenderedOtHours;
-            $unapprovedOtHours = max(0.0, round($clockVal - min($approvedFromFiling, $clockVal), 2));
+            $unapprovedOtHours = ($approvedFromFiling > 0.0001 || $clockVal > 0.0001)
+                ? abs(round($clockVal - $approvedFromFiling, 2))
+                : 0.0;
             if ($clockVal <= 0.0001 && $approvedFromFiling > 0) {
                 $unapprovedOtHours = 0.0;
             }
@@ -2872,19 +2874,17 @@ class AttendanceController extends Controller
 
     private function overtimeReductionReason(string $basis, int $approvedMinutes, int $actualMinutes, int $payableMinutes): ?string
     {
-        if ($approvedMinutes <= 0 || $payableMinutes >= $approvedMinutes) {
+        if ($approvedMinutes <= 0) {
             return null;
         }
+        if ($actualMinutes < $approvedMinutes) {
+            return 'Clocked out before approved OT end';
+        }
+        if ($actualMinutes > $approvedMinutes) {
+            return 'Rendered OT exceeded approved OT window';
+        }
 
-        $approvedHours = number_format($approvedMinutes / 60, 2, '.', '');
-        $actualHours = number_format($actualMinutes / 60, 2, '.', '');
-        $payableHours = number_format($payableMinutes / 60, 2, '.', '');
-
-        return match ($basis) {
-            'rendered' => "Payable OT reduced to actual rendered OT ({$actualHours}h) from approved {$approvedHours}h.",
-            'min' => "Payable OT is the minimum of approved {$approvedHours}h and actual rendered {$actualHours}h ({$payableHours}h).",
-            default => null,
-        };
+        return null;
     }
 
     /**

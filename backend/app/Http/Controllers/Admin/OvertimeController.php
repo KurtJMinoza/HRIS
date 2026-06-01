@@ -15,6 +15,7 @@ use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeApprovalService;
+use App\Services\OvertimeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\ReportsCacheService;
 use App\Support\HrApprovalStages;
@@ -43,13 +44,14 @@ class OvertimeController extends Controller
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly OvertimeBulkApprovalQuery $bulkApprovalQuery,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
+        private readonly OvertimeService $overtimeService,
     ) {}
 
     /**
      * Single row: measured OT only exists once attendance time-out is stored on the OT row
      * (after clock-out sync). Until then, computed_* holds the employee's requested/planned OT.
      *
-     * @return array{computed_hours: float|null, computed_minutes: int|null, requested_ot_hours: float|null, requested_ot_minutes: int|null}
+     * @return array{computed_hours: float|null, computed_minutes: int|null, requested_ot_hours: float|null, requested_ot_minutes: int|null, approved_ot_hours: float|null, actual_rendered_ot_hours: float, payable_ot_hours: float, unapproved_ot_hours: float, overtime_reduction_reason: ?string}
      */
     private function overtimeDisplayFields(Overtime $o): array
     {
@@ -63,6 +65,11 @@ class OvertimeController extends Controller
                 'computed_minutes' => $storedMinutes,
                 'requested_ot_hours' => null,
                 'requested_ot_minutes' => null,
+                'approved_ot_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : round($storedHours, 2),
+                'actual_rendered_ot_hours' => (float) ($o->actual_rendered_ot_hours ?? 0),
+                'payable_ot_hours' => (float) ($o->payable_ot_hours ?? 0),
+                'unapproved_ot_hours' => (float) ($o->unapproved_ot_hours ?? 0),
+                'overtime_reduction_reason' => $o->overtime_reduction_reason,
             ];
         }
 
@@ -71,6 +78,11 @@ class OvertimeController extends Controller
             'computed_minutes' => null,
             'requested_ot_hours' => round($storedHours, 2),
             'requested_ot_minutes' => $storedMinutes,
+            'approved_ot_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : null,
+            'actual_rendered_ot_hours' => (float) ($o->actual_rendered_ot_hours ?? 0),
+            'payable_ot_hours' => (float) ($o->payable_ot_hours ?? 0),
+            'unapproved_ot_hours' => (float) ($o->unapproved_ot_hours ?? 0),
+            'overtime_reduction_reason' => $o->overtime_reduction_reason,
         ];
     }
 
@@ -156,6 +168,13 @@ class OvertimeController extends Controller
                 'schedule_end',
                 'time_out',
                 'expected_end_time',
+                'approved_ot_start',
+                'approved_ot_end',
+                'approved_ot_hours',
+                'actual_rendered_ot_hours',
+                'payable_ot_hours',
+                'unapproved_ot_hours',
+                'overtime_reduction_reason',
                 'computed_minutes',
                 'computed_hours',
                 'ph_ot_rule',
@@ -252,6 +271,13 @@ class OvertimeController extends Controller
                 'time_out' => $o->time_out?->format('H:i'),
                 'expected_end_time' => $o->expected_end_time?->format('H:i'),
                 'approved_hours' => $disp['computed_hours'] ?? $disp['requested_ot_hours'],
+                'approved_ot_start' => $o->approved_ot_start?->format('H:i'),
+                'approved_ot_end' => $o->approved_ot_end?->format('H:i'),
+                'approved_ot_hours' => $disp['approved_ot_hours'],
+                'actual_rendered_ot_hours' => $disp['actual_rendered_ot_hours'],
+                'payable_ot_hours' => $disp['payable_ot_hours'],
+                'unapproved_ot_hours' => $disp['unapproved_ot_hours'],
+                'overtime_reduction_reason' => $disp['overtime_reduction_reason'],
                 'computed_hours' => $disp['computed_hours'],
                 'computed_minutes' => $disp['computed_minutes'],
                 'requested_ot_hours' => $disp['requested_ot_hours'],
@@ -407,7 +433,9 @@ class OvertimeController extends Controller
             ->select([
                 'id', 'user_id', 'assignment_id', 'assignment_type', 'company_id', 'branch_id',
                 'division_id', 'department_id', 'section_unit_id', 'date', 'schedule_end',
-                'time_out', 'expected_end_time', 'computed_minutes', 'computed_hours',
+                'time_out', 'expected_end_time', 'approved_ot_start', 'approved_ot_end',
+                'approved_ot_hours', 'actual_rendered_ot_hours', 'payable_ot_hours',
+                'unapproved_ot_hours', 'overtime_reduction_reason', 'computed_minutes', 'computed_hours',
                 'ph_ot_rule', 'ot_type', 'reason', 'attachment_path', 'status', 'approved_by',
                 'approved_at', 'remarks', 'locked_at', 'approval_stage', 'pending_approval',
                 'filed_at', 'filed_by', 'first_approver_id', 'first_approved_at',
@@ -969,6 +997,9 @@ class OvertimeController extends Controller
             $overtime->second_approved_at = now();
             $overtime->approved_by = $actor->id;
             $overtime->approved_at = now();
+            $overtime->approved_ot_start = $overtime->schedule_end?->format('H:i:s');
+            $overtime->approved_ot_end = $overtime->expected_end_time?->format('H:i:s');
+            $overtime->approved_ot_hours = round((float) ($overtime->computed_hours ?? 0), 2);
             if ($remarks !== null && $remarks !== '') {
                 $overtime->remarks = $remarks;
             }
@@ -985,6 +1016,20 @@ class OvertimeController extends Controller
                 'approver_role' => $roleLabel,
             ]);
         });
+
+        $freshForRenderedSync = $overtime->fresh('user');
+        if ($freshForRenderedSync instanceof Overtime && $freshForRenderedSync->user instanceof User) {
+            $dateKey = $freshForRenderedSync->date?->toDateString();
+            if ($dateKey !== null) {
+                $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+                $computedClockOut = $this->overtimeService->computeOvertimeForDate($freshForRenderedSync->user, Carbon::parse($dateKey, $tz));
+                $actualClockOut = $computedClockOut['time_out'] ?? null;
+                if (! $actualClockOut instanceof Carbon && $freshForRenderedSync->time_out !== null) {
+                    $actualClockOut = Carbon::parse($dateKey.' '.$freshForRenderedSync->time_out->format('H:i:s'), $tz);
+                }
+                $this->overtimeService->syncActualClockOutToFiledOvertime($freshForRenderedSync->user, $dateKey, $actualClockOut, $actor);
+            }
+        }
 
         ReviewRequestCache::forget('overtime', (int) $overtime->id);
         OvertimeModuleCache::flush();
@@ -1395,6 +1440,13 @@ class OvertimeController extends Controller
             'schedule_end' => $overtime->schedule_end?->format('H:i'),
             'expected_end_time' => $overtime->expected_end_time?->format('H:i'),
             'time_out' => $overtime->time_out?->format('H:i'),
+            'approved_ot_start' => $overtime->approved_ot_start?->format('H:i'),
+            'approved_ot_end' => $overtime->approved_ot_end?->format('H:i'),
+            'approved_ot_hours' => $disp['approved_ot_hours'],
+            'actual_rendered_ot_hours' => $disp['actual_rendered_ot_hours'],
+            'payable_ot_hours' => $disp['payable_ot_hours'],
+            'unapproved_ot_hours' => $disp['unapproved_ot_hours'],
+            'overtime_reduction_reason' => $disp['overtime_reduction_reason'],
             'hours' => $hours,
             'computed_hours' => $disp['computed_hours'],
             'computed_minutes' => $disp['computed_minutes'],
@@ -1729,6 +1781,13 @@ class OvertimeController extends Controller
             'date' => $overtime->date?->toDateString(),
             'schedule_end' => $overtime->schedule_end?->format('H:i'),
             'time_out' => $overtime->time_out?->format('H:i'),
+            'approved_ot_start' => $overtime->approved_ot_start?->format('H:i'),
+            'approved_ot_end' => $overtime->approved_ot_end?->format('H:i'),
+            'approved_ot_hours' => $disp['approved_ot_hours'],
+            'actual_rendered_ot_hours' => $disp['actual_rendered_ot_hours'],
+            'payable_ot_hours' => $disp['payable_ot_hours'],
+            'unapproved_ot_hours' => $disp['unapproved_ot_hours'],
+            'overtime_reduction_reason' => $disp['overtime_reduction_reason'],
             'expected_end_time' => $overtime->expected_end_time?->format('H:i'),
             'computed_hours' => $disp['computed_hours'],
             'computed_minutes' => $disp['computed_minutes'],

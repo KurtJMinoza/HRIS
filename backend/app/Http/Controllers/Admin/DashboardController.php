@@ -231,6 +231,17 @@ class DashboardController extends Controller
                 ->whereIn('user_id', clone $scopedIds)
                 ->where('status', Overtime::STATUS_PENDING)
                 ->count();
+            $today = now($this->presenceFilingService->attendanceTimezone())->toDateString();
+            $approvedOtTodayHours = (float) Overtime::query()
+                ->whereIn('user_id', clone $scopedIds)
+                ->where('status', Overtime::STATUS_APPROVED)
+                ->whereDate('date', $today)
+                ->sum(DB::raw('COALESCE(approved_ot_hours, computed_hours, 0)'));
+            $renderedOtTodayHours = (float) Overtime::query()
+                ->whereIn('user_id', clone $scopedIds)
+                ->where('status', Overtime::STATUS_APPROVED)
+                ->whereDate('date', $today)
+                ->sum('actual_rendered_ot_hours');
             $pendingOvertimeRequest = Overtime::query()
                 ->with('user:id,name,first_name,middle_name,last_name,suffix,employee_code,position,department,profile_image')
                 ->whereIn('user_id', clone $scopedIds)
@@ -282,6 +293,11 @@ class DashboardController extends Controller
                     'overtime' => $overtimePending,
                     'attendance_correction' => $pendingAttendanceCorrections,
                     'total' => $leavePending + $overtimePending + $pendingAttendanceCorrections,
+                ],
+                'overtime_summary' => [
+                    'pending_ot' => $overtimePending,
+                    'approved_ot_hours_today' => round($approvedOtTodayHours, 2),
+                    'rendered_ot_hours_today' => round($renderedOtTodayHours, 2),
                 ],
                 'pending_overtime_request' => $pendingOvertimeRequest ? [
                     'id' => (int) $pendingOvertimeRequest->id,

@@ -721,7 +721,7 @@ class PayrollComputationService
                 }
             }
 
-            // Approved OT without clock logs: pay all eligible approved requests for this date.
+            // Approved OT without clock logs remains authorized but not payable until attendance supplies an actual out.
             $noPunchOtComp = $this->computeApprovedOvertimeCompensationForDay(
                 $user,
                 $dateKey,
@@ -792,8 +792,10 @@ class PayrollComputationService
                 'ot_pay' => $noPunchOtPay,
                 'nd_pay' => round($noPunchNdPay, 2),
                 'holiday_premium_pay' => round($holidayPremiumPayForLeave, 2),
-                'approved_ot_hours' => $noPunchApprovedOtHours,
-                'approved_ot_requested_hours' => (float) ($noPunchOtComp['approved_hours'] ?? $noPunchApprovedOtHours),
+                'approved_ot_hours' => (float) ($noPunchOtComp['approved_hours'] ?? 0),
+                'approved_ot_requested_hours' => (float) ($noPunchOtComp['approved_hours'] ?? 0),
+                'actual_rendered_ot_hours' => 0.0,
+                'payable_ot_hours' => $noPunchApprovedOtHours,
                 'approved_overtime_items' => $noPunchOtComp['items'] ?? [],
                 'pending_ot_hours' => 0.0,
                 'unapproved_ot_hours' => 0.0,
@@ -1077,8 +1079,10 @@ class PayrollComputationService
             'ot_pay' => round($otPay, 2),
             'nd_pay' => round($ndPay, 2),
             'holiday_premium_pay' => round($holidayPremiumPay, 2),
-            'approved_ot_hours' => round($paidOtMinutes / 60.0, 2),
+            'approved_ot_hours' => round($approvedOtHours, 2),
             'approved_ot_requested_hours' => round($approvedOtRequestedHours, 2),
+            'actual_rendered_ot_hours' => round($renderedOtMinutes / 60.0, 2),
+            'payable_ot_hours' => round($paidOtMinutes / 60.0, 2),
             'approved_overtime_items' => $approvedOtComp['items'] ?? [],
             'pending_ot_hours' => $pendingOtHours,
             'unapproved_ot_hours' => $unapprovedOtHours,

@@ -22,9 +22,7 @@ class OvertimePayrollService
 
     public function payableBasis(): string
     {
-        $basis = strtolower(trim((string) config('payroll.ot_payable_basis', 'approved')));
-
-        return in_array($basis, ['approved', 'rendered', 'min'], true) ? $basis : 'approved';
+        return 'min';
     }
 
     /**
@@ -80,11 +78,7 @@ class OvertimePayrollService
         $renderedOtMinutes = max(0, $renderedOtMinutes);
         $approvedOtMinutes = max(0, $approvedOtMinutes);
 
-        return match ($this->payableBasis()) {
-            'rendered' => $renderedOtMinutes,
-            'min' => min($renderedOtMinutes, $approvedOtMinutes),
-            default => $approvedOtMinutes,
-        };
+        return min($renderedOtMinutes, $approvedOtMinutes);
     }
 
     /**

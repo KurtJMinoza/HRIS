@@ -32,7 +32,7 @@ class OvertimeNightDifferentialTest extends TestCase
         $dateKey = '2026-05-12';
         $records = [$this->makeApprovedOvertime($dateKey, '17:00:00', '23:00:00', 6.0)];
 
-        $comp = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 0, $dateKey, null, $tz);
+        $comp = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 360, $dateKey, null, $tz);
 
         $this->assertSame(6.0, $comp['approved_hours']);
         $this->assertSame(1.0, $comp['nd_hours']);
@@ -49,7 +49,7 @@ class OvertimeNightDifferentialTest extends TestCase
         $dateKey = '2026-05-12';
         $records = [$this->makeApprovedOvertime($dateKey, '17:00:00', '20:00:00', 3.0)];
 
-        $comp = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 0, $dateKey, null, $tz);
+        $comp = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 180, $dateKey, null, $tz);
 
         $this->assertSame(0.0, $comp['nd_hours']);
         $this->assertSame(0.0, (float) $comp['nd_pay']);
@@ -63,7 +63,7 @@ class OvertimeNightDifferentialTest extends TestCase
         $dateKey = '2026-05-12';
         $records = [$this->makeApprovedOvertime($dateKey, '22:00:00', '02:00:00', 4.0)];
 
-        $comp = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 0, $dateKey, null, $tz);
+        $comp = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 240, $dateKey, null, $tz);
 
         $this->assertSame(4.0, $comp['nd_hours']);
         $this->assertSame(50.0, (float) $comp['nd_pay']); // 4h × 100 × 1.25 × 0.10
@@ -77,5 +77,25 @@ class OvertimeNightDifferentialTest extends TestCase
         $end = Carbon::parse('2026-05-12 23:00', $tz);
 
         $this->assertSame(60, $service->nightMinutesInInterval($start, $end, $tz));
+    }
+
+    public function test_payable_ot_is_limited_to_actual_rendered_hours(): void
+    {
+        $service = app(OvertimePayrollService::class);
+        $tz = 'Asia/Manila';
+        $dateKey = '2026-05-12';
+        $records = [$this->makeApprovedOvertime($dateKey, '17:00:00', '20:00:00', 3.0)];
+
+        $leftEarly = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 120, $dateKey, null, $tz);
+        $onTime = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 180, $dateKey, null, $tz);
+        $overRendered = $service->computeCompensationFromRecords($records, 100.0, null, 'ORD', 240, $dateKey, null, $tz);
+
+        $this->assertSame(3.0, $leftEarly['approved_hours']);
+        $this->assertSame(2.0, $leftEarly['payable_hours']);
+        $this->assertSame(3.0, $onTime['payable_hours']);
+        $this->assertSame(3.0, $overRendered['payable_hours']);
+        $this->assertSame(250.0, (float) $leftEarly['ot_pay']);
+        $this->assertSame(375.0, (float) $onTime['ot_pay']);
+        $this->assertSame(375.0, (float) $overRendered['ot_pay']);
     }
 }

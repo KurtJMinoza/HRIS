@@ -69,6 +69,44 @@ class EmployeeOvertimeController extends Controller
         ];
     }
 
+    private function validateNoOverlappingOvertime(
+        User $user,
+        string $dateYmd,
+        string $startTimeHmi,
+        string $endTimeHmi,
+        ?int $ignoreId = null
+    ): void {
+        $tz = $this->attendanceTimezone();
+        $newStart = Carbon::parse($dateYmd.' '.$startTimeHmi, $tz);
+        $newEnd = Carbon::parse($dateYmd.' '.$endTimeHmi, $tz);
+        if ($newEnd->lessThanOrEqualTo($newStart)) {
+            $newEnd->addDay();
+        }
+
+        $existing = Overtime::query()
+            ->where('user_id', $user->id)
+            ->whereDate('date', $dateYmd)
+            ->where('status', '!=', Overtime::STATUS_REJECTED)
+            ->when($ignoreId !== null, fn ($q) => $q->whereKeyNot($ignoreId))
+            ->get(['id', 'schedule_end', 'expected_end_time', 'status']);
+
+        foreach ($existing as $row) {
+            if ($row->schedule_end === null || $row->expected_end_time === null) {
+                continue;
+            }
+            $existingStart = Carbon::parse($dateYmd.' '.$row->schedule_end->format('H:i:s'), $tz);
+            $existingEnd = Carbon::parse($dateYmd.' '.$row->expected_end_time->format('H:i:s'), $tz);
+            if ($existingEnd->lessThanOrEqualTo($existingStart)) {
+                $existingEnd->addDay();
+            }
+            if ($newStart->lessThan($existingEnd) && $existingStart->lessThan($newEnd)) {
+                throw ValidationException::withMessages([
+                    'start_time' => ['Overtime request overlaps an existing OT window for this date. File only the uncovered time, such as after the previous approved end.'],
+                ]);
+            }
+        }
+    }
+
     private function publicMediaUrl(?string $path): ?string
     {
         if (! is_string($path) || trim($path) === '') {
@@ -267,6 +305,13 @@ class EmployeeOvertimeController extends Controller
             'date' => $o->date?->toDateString(),
             'schedule_end' => $o->schedule_end?->format('H:i'),
             'expected_end_time' => $o->expected_end_time?->format('H:i'),
+            'approved_ot_start' => $o->approved_ot_start?->format('H:i'),
+            'approved_ot_end' => $o->approved_ot_end?->format('H:i'),
+            'approved_ot_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : null,
+            'actual_rendered_ot_hours' => (float) ($o->actual_rendered_ot_hours ?? 0),
+            'payable_ot_hours' => (float) ($o->payable_ot_hours ?? 0),
+            'unapproved_ot_hours' => (float) ($o->unapproved_ot_hours ?? 0),
+            'overtime_reduction_reason' => $o->overtime_reduction_reason,
             'start_time' => $o->schedule_end?->format('H:i'),
             'end_time' => $o->expected_end_time?->format('H:i'),
             'computed_hours' => (float) $o->computed_hours,
@@ -364,6 +409,11 @@ class EmployeeOvertimeController extends Controller
                 'end_time' => $o->expected_end_time?->format('H:i'),
                 'expected_end_time' => $o->expected_end_time?->format('H:i'),
                 'computed_hours' => (float) ($o->computed_hours ?? 0),
+                'approved_ot_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : null,
+                'actual_rendered_ot_hours' => (float) ($o->actual_rendered_ot_hours ?? 0),
+                'payable_ot_hours' => (float) ($o->payable_ot_hours ?? 0),
+                'unapproved_ot_hours' => (float) ($o->unapproved_ot_hours ?? 0),
+                'overtime_reduction_reason' => $o->overtime_reduction_reason,
             ];
         })->values();
 
@@ -449,6 +499,7 @@ class EmployeeOvertimeController extends Controller
 
         $dateYmd = $overtime->date->toDateString();
         $computed = $this->computeOvertimeRequestQuantities($dateYmd, $validated['start_time'], $validated['end_time']);
+        $this->validateNoOverlappingOvertime($user, $dateYmd, $validated['start_time'], $validated['end_time'], (int) $overtime->id);
 
         $attachmentPath = $overtime->attachment_path;
         if ($request->hasFile('attachment')) {
@@ -461,6 +512,13 @@ class EmployeeOvertimeController extends Controller
         $overtime->fill([
             'schedule_end' => $computed['schedule_end']->format('H:i:s'),
             'expected_end_time' => $computed['expected_end']->format('H:i:s'),
+            'approved_ot_start' => null,
+            'approved_ot_end' => null,
+            'approved_ot_hours' => null,
+            'actual_rendered_ot_hours' => 0,
+            'payable_ot_hours' => 0,
+            'unapproved_ot_hours' => 0,
+            'overtime_reduction_reason' => null,
             'computed_minutes' => $computed['computed_minutes'],
             'computed_hours' => $computed['computed_hours'],
             'ph_ot_rule' => $validated['ph_ot_rule'] ?? $overtime->ph_ot_rule ?? 'ORD',
@@ -619,11 +677,6 @@ class EmployeeOvertimeController extends Controller
 
         $dateYmd = Carbon::parse($validated['date'])->toDateString();
 
-        $existingForDate = Overtime::query()
-            ->where('user_id', $user->id)
-            ->whereDate('date', $dateYmd)
-            ->get();
-
         $detected = $this->otDetectionService->detectForDate($user, $dateYmd, $this->attendanceTimezone());
         $detectedSegments = collect($this->mapDetectedSegmentsForFiling($detected))
             ->keyBy(static fn (array $seg) => $seg['key']);
@@ -669,17 +722,7 @@ class EmployeeOvertimeController extends Controller
         }
 
         foreach ($computedTargets as $target) {
-            $newStart = $target['start_time'];
-            $newEnd = $target['end_time'];
-            foreach ($existingForDate as $existing) {
-                $existingStart = $existing->schedule_end?->format('H:i');
-                $existingEnd = $existing->expected_end_time?->format('H:i');
-                if ($existingStart === $newStart && $existingEnd === $newEnd) {
-                    throw ValidationException::withMessages([
-                        'selected_segments' => ['You already filed this OT time segment for the selected date.'],
-                    ]);
-                }
-            }
+            $this->validateNoOverlappingOvertime($user, $dateYmd, $target['start_time'], $target['end_time']);
         }
 
         $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
@@ -743,6 +786,13 @@ class EmployeeOvertimeController extends Controller
                     'schedule_end' => $computed['schedule_end']->format('H:i:s'),
                     'time_out' => null,
                     'expected_end_time' => $computed['expected_end']->format('H:i:s'),
+                    'approved_ot_start' => null,
+                    'approved_ot_end' => null,
+                    'approved_ot_hours' => null,
+                    'actual_rendered_ot_hours' => 0,
+                    'payable_ot_hours' => 0,
+                    'unapproved_ot_hours' => 0,
+                    'overtime_reduction_reason' => null,
                     'computed_minutes' => $computed['computed_minutes'],
                     'computed_hours' => $computed['computed_hours'],
                     'ph_ot_rule' => $validated['ph_ot_rule'] ?? 'ORD',

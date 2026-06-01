@@ -11,6 +11,197 @@ use Carbon\Carbon;
 
 class OvertimeService
 {
+    private function attendanceTimezone(): string
+    {
+        return (string) config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+    }
+
+    /**
+     * @return array{schedule_end: Carbon, actual_rendered_minutes: int}|null
+     */
+    private function renderedOvertimeContext(User $user, string $dateKey, ?Carbon $actualClockOut): ?array
+    {
+        if ($actualClockOut === null) {
+            return null;
+        }
+
+        $tz = $this->attendanceTimezone();
+        $user->loadMissing('workingSchedule');
+        $schedule = EmployeeScheduleResolver::resolve($user);
+        if (! is_array($schedule) || $schedule === []) {
+            return null;
+        }
+
+        $dayKey = EmployeeScheduleResolver::dayKeyForDate(Carbon::parse($dateKey, $tz));
+        $daySchedule = $schedule[$dayKey] ?? null;
+        if (! is_array($daySchedule) || empty($daySchedule['out'])) {
+            return null;
+        }
+
+        $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+        if (! $scheduledEnd instanceof Carbon) {
+            return null;
+        }
+
+        $actualOut = $actualClockOut->copy()->timezone($tz);
+        if (! empty($daySchedule['in'])) {
+            $scheduledStart = AttendanceStatusService::getScheduledStartForDate($dateKey, $daySchedule, $tz);
+            if ($scheduledStart instanceof Carbon && $scheduledEnd->lessThanOrEqualTo($scheduledStart)) {
+                $scheduledEnd->addDay();
+            }
+            if ($scheduledStart instanceof Carbon && $actualOut->lessThanOrEqualTo($scheduledStart) && $scheduledEnd->toDateString() !== $scheduledStart->toDateString()) {
+                $actualOut->addDay();
+            }
+        }
+
+        $minutes = $actualOut->greaterThan($scheduledEnd)
+            ? (int) $scheduledEnd->diffInMinutes($actualOut)
+            : 0;
+
+        return [
+            'schedule_end' => $scheduledEnd,
+            'actual_rendered_minutes' => max(0, $minutes),
+        ];
+    }
+
+    private function approvedWindowStart(Overtime $overtime, string $dateKey, string $tz): ?Carbon
+    {
+        $value = $overtime->approved_ot_start ?? $overtime->schedule_end;
+        if ($value === null) {
+            return null;
+        }
+
+        $time = $value instanceof \DateTimeInterface
+            ? Carbon::instance($value)->format('H:i:s')
+            : trim((string) $value);
+        if ($time === '' || preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $time) !== 1) {
+            return null;
+        }
+
+        return Carbon::parse($dateKey.' '.$time, $tz);
+    }
+
+    private function approvedWindowEnd(Overtime $overtime, string $dateKey, string $tz, Carbon $start): Carbon
+    {
+        $value = $overtime->approved_ot_end ?? $overtime->expected_end_time ?? $overtime->time_out;
+        if ($value !== null) {
+            $time = $value instanceof \DateTimeInterface
+                ? Carbon::instance($value)->format('H:i:s')
+                : trim((string) $value);
+            if ($time !== '' && preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $time) === 1) {
+                $end = Carbon::parse($dateKey.' '.$time, $tz);
+                if (! $end->greaterThan($start)) {
+                    $end->addDay();
+                }
+
+                return $end;
+            }
+        }
+
+        $minutes = (int) round(max(0.0, (float) ($overtime->approved_ot_hours ?? $overtime->computed_hours ?? 0)) * 60);
+
+        return $start->copy()->addMinutes($minutes);
+    }
+
+    private function overlapMinutes(Carbon $aStart, Carbon $aEnd, Carbon $bStart, Carbon $bEnd): int
+    {
+        $start = $aStart->greaterThan($bStart) ? $aStart : $bStart;
+        $end = $aEnd->lessThan($bEnd) ? $aEnd : $bEnd;
+
+        return $end->greaterThan($start) ? (int) $start->diffInMinutes($end) : 0;
+    }
+
+    private function reductionReason(int $approvedMinutes, int $actualRenderedMinutes, bool $hasClockOut): ?string
+    {
+        if (! $hasClockOut) {
+            return $approvedMinutes > 0 ? 'Pending clock out' : null;
+        }
+        if ($approvedMinutes > 0 && $actualRenderedMinutes < $approvedMinutes) {
+            return 'Clocked out before approved OT end';
+        }
+        if ($actualRenderedMinutes > $approvedMinutes) {
+            return 'Rendered OT exceeded approved OT window';
+        }
+
+        return null;
+    }
+
+    public function syncActualClockOutToFiledOvertime(User $user, string $dateKey, ?Carbon $actualClockOut, ?User $admin = null): ?Overtime
+    {
+        $records = Overtime::query()
+            ->where('user_id', $user->id)
+            ->whereDate('date', $dateKey)
+            ->orderBy('id')
+            ->get();
+
+        if ($records->isEmpty()) {
+            return null;
+        }
+
+        $tz = $this->attendanceTimezone();
+        $context = $this->renderedOvertimeContext($user, $dateKey, $actualClockOut);
+        $actualRenderedMinutes = (int) ($context['actual_rendered_minutes'] ?? 0);
+        $hasClockOut = $actualClockOut !== null;
+        $actualStart = $context['schedule_end'] ?? null;
+        $actualEnd = $actualStart instanceof Carbon
+            ? $actualStart->copy()->addMinutes($actualRenderedMinutes)
+            : null;
+
+        $approvedRecords = $records
+            ->filter(fn (Overtime $ot): bool => $ot->status === Overtime::STATUS_APPROVED)
+            ->values();
+        $approvedTotalMinutes = 0;
+        foreach ($approvedRecords as $approved) {
+            $approvedTotalMinutes += (int) round(max(0.0, (float) ($approved->approved_ot_hours ?? $approved->computed_hours ?? 0)) * 60);
+        }
+        $unapprovedMinutes = $hasClockOut && ($approvedTotalMinutes > 0 || $actualRenderedMinutes > 0)
+            ? abs($actualRenderedMinutes - $approvedTotalMinutes)
+            : 0;
+        $reason = $this->reductionReason($approvedTotalMinutes, $actualRenderedMinutes, $hasClockOut);
+
+        $last = null;
+        foreach ($records as $overtime) {
+            if ($overtime->status === Overtime::STATUS_REJECTED) {
+                $last = $overtime;
+                continue;
+            }
+
+            $approvedHours = $overtime->status === Overtime::STATUS_APPROVED
+                ? round(max(0.0, (float) ($overtime->approved_ot_hours ?? $overtime->computed_hours ?? 0)), 2)
+                : null;
+            $payableMinutes = 0;
+            if ($overtime->status === Overtime::STATUS_APPROVED && $actualStart instanceof Carbon && $actualEnd instanceof Carbon && $actualRenderedMinutes > 0) {
+                $windowStart = $this->approvedWindowStart($overtime, $dateKey, $tz);
+                if ($windowStart instanceof Carbon) {
+                    $windowEnd = $this->approvedWindowEnd($overtime, $dateKey, $tz, $windowStart);
+                    $payableMinutes = $this->overlapMinutes($windowStart, $windowEnd, $actualStart, $actualEnd);
+                }
+            }
+
+            $payload = [
+                'time_out' => $actualClockOut?->copy()->timezone($tz)->format('H:i:s'),
+                'actual_rendered_ot_hours' => round($actualRenderedMinutes / 60, 2),
+                'payable_ot_hours' => round($payableMinutes / 60, 2),
+                'unapproved_ot_hours' => round($unapprovedMinutes / 60, 2),
+                'overtime_reduction_reason' => $reason,
+            ];
+            if ($approvedHours !== null) {
+                $payload['approved_ot_start'] = ($overtime->approved_ot_start ?? $overtime->schedule_end)?->format('H:i:s');
+                $payload['approved_ot_end'] = ($overtime->approved_ot_end ?? $overtime->expected_end_time)?->format('H:i:s');
+                $payload['approved_ot_hours'] = $approvedHours;
+            }
+            if ($admin) {
+                $payload['updated_by'] = $admin->id;
+            }
+
+            $overtime->fill($payload);
+            $overtime->save();
+            $last = $overtime;
+        }
+
+        return $last;
+    }
+
     /**
      * Compute overtime for a given user and date based on attendance logs and schedule.
      *
@@ -114,74 +305,9 @@ class OvertimeService
     public function syncClockOutToFiledOvertime(User $user, AttendanceLog $clockOutLog, ?User $admin = null): ?Overtime
     {
         $date = $clockOutLog->created_at->copy();
-        $data = $this->computeOvertimeForDate($user, $date);
         $dateKey = $date->toDateString();
 
-        $existing = Overtime::query()
-            ->where('user_id', $user->id)
-            ->whereDate('date', $dateKey)
-            ->first();
-
-        if (! $existing) {
-            return null;
-        }
-
-        if ($existing->status === Overtime::STATUS_REJECTED) {
-            return $existing;
-        }
-
-        if ($data === null) {
-            if ($existing->status === Overtime::STATUS_PENDING) {
-                $existing->fill([
-                    'schedule_end' => null,
-                    'time_out' => null,
-                    'computed_minutes' => 0,
-                    'computed_hours' => 0,
-                ]);
-                if ($admin) {
-                    $existing->updated_by = $admin->id;
-                }
-                $existing->save();
-            } elseif ($existing->status === Overtime::STATUS_APPROVED) {
-                $lastOut = $clockOutLog->created_at->timezone(config('attendance.timezone', config('app.timezone', 'Asia/Manila')));
-                $existing->fill([
-                    'time_out' => $lastOut->format('H:i:s'),
-                ]);
-                if ($admin) {
-                    $existing->updated_by = $admin->id;
-                }
-                $existing->save();
-            }
-
-            return $existing;
-        }
-
-        if ($existing->status === Overtime::STATUS_APPROVED) {
-            $payloadApproved = [
-                'schedule_end' => $data['schedule_end']->format('H:i:s'),
-                'time_out' => $data['time_out']->format('H:i:s'),
-            ];
-            if ($admin) {
-                $payloadApproved['updated_by'] = $admin->id;
-            }
-            $existing->fill($payloadApproved);
-            $existing->save();
-
-            return $existing;
-        }
-
-        $existing->fill([
-            'schedule_end' => $data['schedule_end']->format('H:i:s'),
-            'time_out' => $data['time_out']->format('H:i:s'),
-            'computed_minutes' => $data['minutes'],
-            'computed_hours' => $data['hours'],
-        ]);
-        if ($admin) {
-            $existing->updated_by = $admin->id;
-        }
-        $existing->save();
-
-        return $existing;
+        return $this->syncActualClockOutToFiledOvertime($user, $dateKey, $clockOutLog->created_at, $admin);
     }
 
     /**
