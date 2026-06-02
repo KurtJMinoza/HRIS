@@ -173,6 +173,11 @@ function formatHolidayCardDate(dateStr) {
   }
 }
 
+function calendarStatusBadge(record, fallback) {
+  if (!record) return fallback
+  return record.display_badge || record.status_label || fallback
+}
+
 function holidayTypeDisplay(type) {
   const key = String(type || '').toLowerCase()
   if (key === 'regular') return 'Regular Holiday'
@@ -298,7 +303,7 @@ function getCalendarDayVisual(record, dateKey, ctx) {
 
   if (status === 'present' || status === 'present_with_ot') {
     return {
-      badge: status === 'present_with_ot' ? 'Present w/ OT' : 'Present',
+      badge: calendarStatusBadge(record, status === 'present_with_ot' ? 'Present w/ OT' : 'Present'),
       tileClass: `${baseGridCell} ${tint.emerald}`,
       badgeClass: `${L.ink} ${L.emerald}`,
     }
@@ -329,7 +334,7 @@ function getCalendarDayVisual(record, dateKey, ctx) {
 
   if (status === 'undertime') {
     return {
-      badge: 'Undertime',
+      badge: calendarStatusBadge(record, 'Undertime'),
       tileClass: `${baseGridCell} ${tint.orange}`,
       badgeClass: `${L.ink} ${L.orange}`,
     }
@@ -1180,7 +1185,8 @@ export default function EmployeeDashboard() {
     }
   }, [summary, scheduleAssigned, isRestDay])
 
-  function getDisplayStatus(status, dateKey, lateLabel, lateMinutes) {
+  function getDisplayStatus(status, dateKey, lateLabel, lateMinutes, statusLabel = null) {
+    if (statusLabel) return statusLabel
     if (!dateKey) return status
     const todayKey = formatLocalDateKey(new Date())
     if (dateKey === todayKey && summary?.schedule_assigned === false) return 'No schedule'
@@ -1208,7 +1214,7 @@ export default function EmployeeDashboard() {
   function tileTooltipLines(record, dateKey) {
     if (!record) return []
     const lines = []
-    const label = getDisplayStatus(record.status, dateKey, record.late_label, record.late_minutes) || '—'
+    const label = getDisplayStatus(record.status, dateKey, record.late_label, record.late_minutes, record.status_label) || '—'
     lines.push(label)
     const timeIn = record.formatted_time_in || record.time_in
     const timeOut = record.formatted_time_out || record.time_out
@@ -2093,6 +2099,7 @@ export default function EmployeeDashboard() {
                           selectedDayDetails.date_iso,
                           selectedDayDetails.late_label,
                           selectedDayDetails.late_minutes,
+                          selectedDayDetails.status_label || selectedDayDetails.display_badge,
                         ) || '—'}
                       </p>
                     )}
@@ -2154,23 +2161,33 @@ export default function EmployeeDashboard() {
                             </span>
                           </div>
                         )}
-                      {(() => {
-                        const otHours =
-                          typeof selectedDayDetails.raw_overtime_hours === 'number'
-                            ? selectedDayDetails.raw_overtime_hours
-                            : typeof selectedDayDetails.overtime_minutes === 'number' && selectedDayDetails.overtime_minutes > 0
-                              ? selectedDayDetails.overtime_minutes / 60
-                              : null
-                        if (otHours == null || otHours <= 0) return null
-                        return (
-                          <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
-                            <span className="font-medium text-muted-foreground">OT</span>
-                            <span className="font-semibold text-emerald-700 dark:text-emerald-300">
-                              {otHours.toFixed(2)} hrs
+                      {typeof selectedDayDetails.unapproved_overtime_hours === 'number' &&
+                        selectedDayDetails.unapproved_overtime_hours > 0 && (
+                          <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5">
+                            <span className="font-medium text-muted-foreground">Unapproved OT</span>
+                            <span className="font-semibold text-amber-700 dark:text-amber-300">
+                              {selectedDayDetails.unapproved_overtime_hours.toFixed(2)} hrs
                             </span>
                           </div>
-                        )
-                      })()}
+                        )}
+                      {typeof selectedDayDetails.approved_overtime_hours === 'number' &&
+                        selectedDayDetails.approved_overtime_hours > 0 && (
+                          <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
+                            <span className="font-medium text-muted-foreground">Approved OT</span>
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                              {selectedDayDetails.approved_overtime_hours.toFixed(2)} hrs
+                            </span>
+                          </div>
+                        )}
+                      {typeof selectedDayDetails.payable_overtime_hours === 'number' &&
+                        selectedDayDetails.payable_overtime_hours > 0 && (
+                          <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
+                            <span className="font-medium text-muted-foreground">Payable OT</span>
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                              {selectedDayDetails.payable_overtime_hours.toFixed(2)} hrs
+                            </span>
+                          </div>
+                        )}
                       {(() => {
                         const th = getAttendanceTotalHours(selectedDayDetails)
                         if (th == null) return null

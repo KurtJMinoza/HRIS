@@ -12,10 +12,10 @@ use Carbon\Carbon;
  * Single source of truth for calendar/day attendance status.
  *
  * Priority (after holiday / leave / rest):
- * Missing clock-out → Present with OT → Present → Late → Undertime → Absent.
+ * Missing clock-out → Absent → Undertime → Late → Present with approved/payable OT → Present.
  *
- * Undertime applies only when clock-out is before scheduled end ({@see AttendanceStatusService::getScheduleAwareUndertimeMinutes}).
- * Post-shift clock-out never produces undertime.
+ * {@see STATUS_PRESENT_WITH_OT} requires approved_ot_hours or payable_ot_hours from an approved OT request.
+ * Raw/rendered/unapproved OT minutes alone never change the status badge.
  */
 class AttendanceStatusResolver
 {
@@ -54,6 +54,10 @@ class AttendanceStatusResolver
      *     late_label: ?string,
      *     undertime_minutes: int,
      *     overtime_minutes: int,
+     *     status_label: string,
+     *     status_code: string,
+     *     approved_ot_hours: float,
+     *     payable_ot_hours: float,
      * }
      */
     public function resolve(
@@ -68,6 +72,7 @@ class AttendanceStatusResolver
         ?LeaveRequest $leave,
         bool $isRestDay,
         bool $isFuture,
+        ?array $overtimeContext = null,
     ): array {
         $timeIn = null;
         $timeOut = null;
@@ -151,6 +156,7 @@ class AttendanceStatusResolver
                 correction: $correction,
                 isFuture: $isFuture,
                 metrics: $metrics,
+                overtimeContext: $overtimeContext,
             );
         }
 
@@ -170,6 +176,7 @@ class AttendanceStatusResolver
                 correction: $correction,
                 isFuture: $isFuture,
                 metrics: $metrics,
+                overtimeContext: $overtimeContext,
             );
         }
 
@@ -189,6 +196,7 @@ class AttendanceStatusResolver
                 correction: null,
                 isFuture: $isFuture,
                 metrics: $this->emptyMetrics(),
+                overtimeContext: $overtimeContext,
             );
         }
 
@@ -203,6 +211,7 @@ class AttendanceStatusResolver
             hasTimeOut: $hasTimeOut,
             isFuture: $isFuture,
             metrics: $metrics,
+            overtimeContext: $overtimeContext,
         );
 
         return $this->buildResult(
@@ -219,7 +228,25 @@ class AttendanceStatusResolver
             correction: $correction,
             isFuture: $isFuture,
             metrics: $metrics,
+            overtimeContext: $overtimeContext,
         );
+    }
+
+    /**
+     * Approved or payable OT from an approved request — required for {@see STATUS_PRESENT_WITH_OT}.
+     *
+     * @param  array{approved_ot_hours?: float|int|null, payable_ot_hours?: float|int|null}|null  $overtimeContext
+     */
+    public static function hasApprovedOrPayableOvertime(?array $overtimeContext): bool
+    {
+        if ($overtimeContext === null) {
+            return false;
+        }
+
+        $approved = (float) ($overtimeContext['approved_ot_hours'] ?? 0);
+        $payable = (float) ($overtimeContext['payable_ot_hours'] ?? 0);
+
+        return $approved > 0.0001 || $payable > 0.0001;
     }
 
     /**
@@ -293,6 +320,7 @@ class AttendanceStatusResolver
         bool $hasTimeOut,
         bool $isFuture,
         array $metrics,
+        ?array $overtimeContext,
     ): string {
         if (! $hasTimeIn && ! $hasTimeOut) {
             if ($isFuture) {
@@ -331,18 +359,18 @@ class AttendanceStatusResolver
             return self::STATUS_CLOCKED_IN;
         }
 
-        // Priority 5–8: OT, present, late, undertime (both punches required below)
+        // Priority 6–9: undertime, late, approved OT, present (both punches required below)
         if ($hasTimeIn && $hasTimeOut) {
-            if ($metrics['overtime_minutes'] > 0) {
-                return self::STATUS_PRESENT_WITH_OT;
+            if ($metrics['undertime_minutes'] > 0) {
+                return self::STATUS_UNDERTIME;
             }
 
             if ($metrics['clock_in_status'] === 'late') {
                 return self::STATUS_LATE;
             }
 
-            if ($metrics['undertime_minutes'] > 0) {
-                return self::STATUS_UNDERTIME;
+            if (self::hasApprovedOrPayableOvertime($overtimeContext)) {
+                return self::STATUS_PRESENT_WITH_OT;
             }
 
             return self::STATUS_PRESENT;
@@ -368,6 +396,7 @@ class AttendanceStatusResolver
         ?AttendanceCorrection $correction,
         bool $isFuture,
         array $metrics,
+        ?array $overtimeContext = null,
     ): array {
         $qualified = $this->presenceDisplay->qualify(
             $dateKey, $todayDate, $nowTz, $daySchedule,
@@ -375,8 +404,15 @@ class AttendanceStatusResolver
             $correction, $isFuture,
         );
 
+        $statusCode = $qualified['status'];
+        $approvedOtHours = (float) ($overtimeContext['approved_ot_hours'] ?? 0);
+        $payableOtHours = (float) ($overtimeContext['payable_ot_hours'] ?? 0);
+
         return [
-            'status' => $qualified['status'],
+            'status' => $statusCode,
+            'status_code' => $statusCode,
+            'status_label' => self::statusLabel($statusCode),
+            'display_badge' => self::statusLabel($statusCode),
             'presence_label' => $qualified['presence_label'],
             'presence_issue' => $qualified['presence_issue'],
             'effective_time_in' => $effectiveTimeIn,
@@ -388,6 +424,9 @@ class AttendanceStatusResolver
             'late_label' => $metrics['late_label'],
             'undertime_minutes' => $metrics['undertime_minutes'],
             'overtime_minutes' => $metrics['overtime_minutes'],
+            'approved_ot_hours' => $approvedOtHours,
+            'payable_ot_hours' => $payableOtHours,
+            'payroll_impact_hours' => $payableOtHours > 0 ? $payableOtHours : $approvedOtHours,
         ];
     }
 

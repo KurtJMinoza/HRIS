@@ -54,6 +54,10 @@ class AttendanceStatusResolverTest extends TestCase
             leave: null,
             isRestDay: false,
             isFuture: false,
+            overtimeContext: [
+                'approved_ot_hours' => 4.05,
+                'payable_ot_hours' => 4.05,
+            ],
         );
 
         $this->assertSame(AttendanceStatusResolver::STATUS_PRESENT_WITH_OT, $result['status']);
@@ -96,6 +100,88 @@ class AttendanceStatusResolverTest extends TestCase
         $this->assertSame(AttendanceStatusResolver::STATUS_UNDERTIME, $result['status']);
         $this->assertGreaterThan(0, $result['undertime_minutes']);
         $this->assertSame(0, $result['overtime_minutes']);
+    }
+
+    public function test_raw_overtime_without_approval_stays_undertime_when_early_out(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-06-01';
+        $nowTz = Carbon::parse('2026-06-01 18:00:00', $tz);
+
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_minutes' => 60,
+            'grace_minutes' => 5,
+        ];
+
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-06-01 07:49:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-06-01 16:00:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['mon' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+            overtimeContext: [
+                'approved_ot_hours' => 0,
+                'payable_ot_hours' => 0,
+            ],
+        );
+
+        $this->assertSame(AttendanceStatusResolver::STATUS_UNDERTIME, $result['status']);
+        $this->assertGreaterThan(0, $result['undertime_minutes']);
+        $this->assertGreaterThan(0, $result['overtime_minutes']);
+        $this->assertNotSame(AttendanceStatusResolver::STATUS_PRESENT_WITH_OT, $result['status']);
+    }
+
+    public function test_raw_overtime_without_approval_is_not_present_with_ot(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-06-03';
+        $nowTz = Carbon::parse('2026-06-03 21:00:00', $tz);
+
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_minutes' => 60,
+            'grace_minutes' => 5,
+        ];
+
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-06-03 07:06:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-06-03 20:10:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['tue' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+            overtimeContext: [
+                'approved_ot_hours' => 0,
+                'payable_ot_hours' => 0,
+            ],
+        );
+
+        $this->assertSame(AttendanceStatusResolver::STATUS_PRESENT, $result['status']);
+        $this->assertGreaterThan(0, $result['overtime_minutes']);
     }
 
 }

@@ -89,11 +89,15 @@ class EmployeeDashboardController extends Controller
         $todayLogs = AttendanceLog::query()
             ->select(['id', 'user_id', 'type', 'verified_at', 'created_at', 'night_hours', 'premium_type', 'calculated_pay_factor'])
             ->where('user_id', $employeeId)
-            ->whereBetween('verified_at', [
-                $todayNow->copy()->startOfDay()->setTimezone('UTC'),
-                $todayNow->copy()->endOfDay()->setTimezone('UTC'),
-            ])
-            ->orderBy('verified_at')
+            ->where(function ($q) use ($todayNow) {
+                $startUtc = $todayNow->copy()->startOfDay()->setTimezone('UTC');
+                $endUtc = $todayNow->copy()->endOfDay()->setTimezone('UTC');
+                $q->whereBetween('verified_at', [$startUtc, $endUtc])
+                    ->orWhere(function ($q) use ($startUtc, $endUtc) {
+                        $q->whereNull('verified_at')->whereBetween('created_at', [$startUtc, $endUtc]);
+                    });
+            })
+            ->orderByRaw('COALESCE(verified_at, created_at)')
             ->get();
 
         $todayCorrection = AttendanceCorrection::query()
@@ -221,14 +225,14 @@ class EmployeeDashboardController extends Controller
         $year = (int) $year;
         $month = (int) $month;
 
-        $from = Carbon::parse("{$year}-{$month}-01")->startOfDay();
+        $from = Carbon::parse("{$year}-{$month}-01", $attendanceTz)->startOfDay();
         $to = $from->copy()->endOfMonth();
         $fromStr = $from->toDateString();
         $toStr = $to->toDateString();
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 5) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 7) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -264,10 +268,17 @@ class EmployeeDashboardController extends Controller
         $logs = AttendanceLog::query()
             ->select(['id', 'user_id', 'type', 'verified_at', 'created_at', 'night_hours', 'premium_type', 'calculated_pay_factor'])
             ->where('user_id', $employeeId)
-            ->whereBetween('verified_at', [$from->copy()->startOfDay()->setTimezone('UTC'), $to->copy()->endOfDay()->setTimezone('UTC')])
-            ->orderBy('verified_at')
+            ->where(function ($q) use ($from, $to) {
+                $startUtc = $from->copy()->setTimezone('UTC');
+                $endUtc = $to->copy()->setTimezone('UTC');
+                $q->whereBetween('verified_at', [$startUtc, $endUtc])
+                    ->orWhere(function ($q) use ($startUtc, $endUtc) {
+                        $q->whereNull('verified_at')->whereBetween('created_at', [$startUtc, $endUtc]);
+                    });
+            })
+            ->orderByRaw('COALESCE(verified_at, created_at)')
             ->get()
-            ->groupBy(fn ($l) => $l->verified_at->copy()->timezone($attendanceTz)->toDateString());
+            ->groupBy(fn ($l) => $this->attendanceLogPunchInstant($l)->timezone($attendanceTz)->toDateString());
 
         $corrections = AttendanceCorrection::query()
             ->select(['id', 'user_id', 'date', 'time_in', 'time_out', 'approved', 'pending_approval', 'reason_code', 'filed_at', 'is_incomplete_record'])
@@ -349,6 +360,38 @@ class EmployeeDashboardController extends Controller
             $correctionCollection = $corrections->get($dateKey);
             $correction = $correctionCollection?->first();
 
+            [$effectiveTimeIn, $effectiveTimeOut, $hasTimeIn, $hasTimeOut] = $this->resolveDisplayClockTimes($dayLogs, $correction);
+
+            $otRecords = $overtimesByDate->get($dateKey)?->all() ?? [];
+            $approvedOtRecords = array_values(array_filter($otRecords, fn ($o) => $o->status === Overtime::STATUS_APPROVED));
+            $approvedOtHours = $this->sumOvertimeHours($approvedOtRecords);
+            $rawOtMinutes = 0;
+            if (
+                $effectiveTimeIn instanceof Carbon
+                && $effectiveTimeOut instanceof Carbon
+                && is_array($daySchedule)
+                && ! empty($daySchedule['in'])
+                && ! empty($daySchedule['out'])
+                && ! $isRestDay
+            ) {
+                $rawOtMinutes = AttendanceStatusService::computeRawOvertimeBreakdown(
+                    $dateKey,
+                    $daySchedule,
+                    $effectiveTimeIn,
+                    $effectiveTimeOut,
+                    $attendanceTz
+                )['total_minutes'];
+            }
+            $actualRenderedOtHours = $rawOtMinutes > 0 ? round($rawOtMinutes / 60, 2) : 0.0;
+            $payableOtMinutes = $approvedOtHours > 0
+                ? $this->overtimePayroll->resolvePayableOtMinutes($rawOtMinutes, (int) round($approvedOtHours * 60))
+                : 0;
+            $payableOtHours = round($payableOtMinutes / 60, 2);
+            $overtimeContext = [
+                'approved_ot_hours' => $approvedOtHours,
+                'payable_ot_hours' => $payableOtHours,
+            ];
+
             $resolved = $this->statusResolver->resolve(
                 dateKey: $dateKey,
                 todayDate: $todayDate,
@@ -361,10 +404,10 @@ class EmployeeDashboardController extends Controller
                 leave: $leaveOnDate,
                 isRestDay: $isRestDay,
                 isFuture: $isFuture,
+                overtimeContext: $overtimeContext,
             );
 
             $status = $resolved['status'];
-            [$effectiveTimeIn, $effectiveTimeOut, $hasTimeIn, $hasTimeOut] = $this->resolveDisplayClockTimes($dayLogs, $correction);
             $effectiveWorkedMinutes = $resolved['effective_worked_minutes'];
             if ($hasTimeIn && $hasTimeOut && $effectiveTimeIn && $effectiveTimeOut && is_array($daySchedule)) {
                 $in = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
@@ -383,7 +426,7 @@ class EmployeeDashboardController extends Controller
             $dayLateMinutes = (int) ($resolved['late_minutes'] ?? 0);
             $dayLateLabel = $resolved['late_label'] ?? null;
             $dayUndertimeMinutes = (int) ($resolved['undertime_minutes'] ?? 0);
-            $rawOtMinutes = (int) ($resolved['overtime_minutes'] ?? 0);
+            $rawOtMinutes = (int) ($resolved['overtime_minutes'] ?? $rawOtMinutes);
             $rawPreOtSegment = null;
             $rawPostOtSegment = null;
 
@@ -451,15 +494,6 @@ class EmployeeDashboardController extends Controller
                 }
             }
 
-            // OT processing
-            $otRecords = $overtimesByDate->get($dateKey)?->all() ?? [];
-            $approvedOtRecords = array_values(array_filter($otRecords, fn ($o) => $o->status === Overtime::STATUS_APPROVED));
-            $approvedOtHours = $this->sumOvertimeHours($approvedOtRecords);
-            $actualRenderedOtHours = $rawOtMinutes > 0 ? round($rawOtMinutes / 60, 2) : 0.0;
-            $payableOtMinutes = $approvedOtHours > 0
-                ? $this->overtimePayroll->resolvePayableOtMinutes($rawOtMinutes, (int) round($approvedOtHours * 60))
-                : 0;
-            $payableOtHours = round($payableOtMinutes / 60, 2);
             $unapprovedOtHours = ($approvedOtHours > 0.0001 || $actualRenderedOtHours > 0.0001)
                 ? abs(round($actualRenderedOtHours - $approvedOtHours, 2))
                 : 0.0;
@@ -485,7 +519,9 @@ class EmployeeDashboardController extends Controller
             $days[] = [
                 'date' => $dateKey,
                 'status' => in_array($status, ['rest', 'rest_day', 'no_schedule_rest'], true) ? 'rest' : $status,
-                'status_label' => AttendanceStatusResolver::statusLabel($status),
+                'status_label' => $resolved['status_label'] ?? AttendanceStatusResolver::statusLabel($status),
+                'status_code' => $resolved['status_code'] ?? $status,
+                'display_badge' => $resolved['display_badge'] ?? AttendanceStatusResolver::statusLabel($status),
                 'is_rest_day' => $isRestDay || $status === 'rest',
                 'schedule_label' => ($isRestDay || $status === 'rest') ? AttendanceStatusResolver::REST_DAY_LABEL : null,
                 'holiday_name' => $holidayOnDate['name'] ?? null,
@@ -555,7 +591,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 5,
+                'schema_version' => 7,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -768,6 +804,44 @@ class EmployeeDashboardController extends Controller
             : (is_array($todayLogs) ? $todayLogs : []);
         [$effectiveTimeIn, $effectiveTimeOut, $hasTimeIn, $hasTimeOut] = $this->resolveDisplayClockTimes($todayLogList, $todayCorrection);
 
+        $approvedOtHours = 0.0;
+        $payableOtHours = 0.0;
+        if ($user) {
+            $todayOtQuery = Overtime::query()
+                ->where('user_id', $user->id)
+                ->whereDate('date', $todayDate);
+            if (Schema::hasColumn('overtimes', 'voided_at')) {
+                $todayOtQuery->whereNull('voided_at');
+            }
+            $todayOtRecords = $todayOtQuery->get()->all();
+            $approvedTodayOt = array_values(array_filter(
+                $todayOtRecords,
+                fn ($o) => $o->status === Overtime::STATUS_APPROVED
+            ));
+            $approvedOtHours = $this->sumOvertimeHours($approvedTodayOt);
+            $rawOtMinutesToday = 0;
+            if (
+                $effectiveTimeIn instanceof Carbon
+                && $effectiveTimeOut instanceof Carbon
+                && is_array($daySchedule)
+                && ! empty($daySchedule['in'])
+                && ! empty($daySchedule['out'])
+                && ! $isRestDay
+            ) {
+                $rawOtMinutesToday = AttendanceStatusService::computeRawOvertimeBreakdown(
+                    $todayDate,
+                    $daySchedule,
+                    $effectiveTimeIn,
+                    $effectiveTimeOut,
+                    $attendanceTz
+                )['total_minutes'];
+            }
+            $payableOtMinutesToday = $approvedOtHours > 0
+                ? $this->overtimePayroll->resolvePayableOtMinutes($rawOtMinutesToday, (int) round($approvedOtHours * 60))
+                : 0;
+            $payableOtHours = round($payableOtMinutesToday / 60, 2);
+        }
+
         $resolved = $this->statusResolver->resolve(
             dateKey: $todayDate,
             todayDate: $todayDate,
@@ -780,6 +854,10 @@ class EmployeeDashboardController extends Controller
             leave: $todayLeave,
             isRestDay: $isRestDay,
             isFuture: false,
+            overtimeContext: [
+                'approved_ot_hours' => $approvedOtHours,
+                'payable_ot_hours' => $payableOtHours,
+            ],
         );
 
         $status = $resolved['status'];
@@ -919,8 +997,18 @@ class EmployeeDashboardController extends Controller
     }
 
     /**
+     * Prefer the actual punch timestamp and fall back to insertion time for legacy rows.
+     */
+    private function attendanceLogPunchInstant(AttendanceLog $log): Carbon
+    {
+        $stamp = $log->verified_at ?? $log->created_at;
+
+        return $stamp instanceof Carbon ? $stamp->copy() : Carbon::parse($stamp);
+    }
+
+    /**
      * Resolve clock-in / clock-out for calendar and today widgets from device logs + approved corrections.
-     * Uses verified_at (not created_at) and keeps the latest clock-out when multiple exist.
+     * Uses verified_at when available and keeps the latest clock-out when multiple exist.
      *
      * @param  list<AttendanceLog>|null  $dayLogs
      * @return array{0: ?Carbon, 1: ?Carbon, 2: bool, 3: bool}
@@ -936,13 +1024,10 @@ class EmployeeDashboardController extends Controller
                 if (! $log instanceof AttendanceLog) {
                     continue;
                 }
-                $stamp = $log->verified_at ?? $log->created_at;
-                if ($stamp === null) {
+                if (($log->verified_at ?? $log->created_at) === null) {
                     continue;
                 }
-                $stamp = $stamp instanceof Carbon
-                    ? $stamp->copy()->timezone($tz)
-                    : Carbon::parse($stamp)->timezone($tz);
+                $stamp = $this->attendanceLogPunchInstant($log)->timezone($tz);
 
                 if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
                     if ($timeIn === null) {
