@@ -4598,6 +4598,43 @@ class PayslipService
     }
 
     /**
+     * Cheap ID-only lookup for "Bulk Send Payslips".
+     *
+     * Avoids {@see aggregateForBatchRun()} because delivery does not need gross/net totals,
+     * snapshot hydration, or frozen-line recalculation. It only needs the latest published
+     * payslip row per employee for the finalized batch.
+     *
+     * @return list<int>
+     */
+    public function finalizedBatchPayslipIdsForDelivery(PayrollBatchRun $run): array
+    {
+        $this->attachMatchingPayslipsToBatchRun($run);
+
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        $q = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->where('payroll_module', $expectedModule)
+            ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
+            ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
+            ->whereIn('status', Payslip::lockingStatuses());
+
+        if ($run->company_id) {
+            $q->where('company_id', (int) $run->company_id);
+        }
+        if ($run->branch_id) {
+            $q->where('branch_id', (int) $run->branch_id);
+        }
+        if ($run->department_id) {
+            $q->where('department_id', (int) $run->department_id);
+        }
+        if ($run->employee_id) {
+            $q->where('user_id', (int) $run->employee_id);
+        }
+
+        return $this->latestUniquePayslipIdsForQuery($q);
+    }
+
+    /**
      * @return array{total_gross: float, total_deductions: float, total_net: float, employee_count: int}
      */
     public function sumUniquePayslipsByIds(array $payslipIds): array

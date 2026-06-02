@@ -413,6 +413,7 @@ class PayrollFinalizeController extends Controller
         return response()->json([
             'message' => 'Payslips sent (visible in My Payslips).',
             'delivered' => $result['delivered'],
+            'notified' => $result['notified'] ?? 0,
             'skipped' => $result['skipped'],
             'errors' => $result['errors'],
         ]);
@@ -438,6 +439,7 @@ class PayrollFinalizeController extends Controller
             'batch_id' => $result['batch_id'],
             'targeted' => $result['targeted'],
             'delivered' => $result['delivered'],
+            'notified' => $result['notified'] ?? 0,
             'skipped' => $result['skipped'],
             'errors' => $result['errors'],
         ]);

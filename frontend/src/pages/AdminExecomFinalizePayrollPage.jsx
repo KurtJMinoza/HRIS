@@ -374,7 +374,7 @@ export default function AdminExecomFinalizePayrollPage() {
       await loadSelected(selectedId)
       toast({
         title: 'EXECOM payslips sent',
-        description: `${Number(result?.delivered || 0)} of ${Number(result?.targeted || totals.employeeCount || 0)} employees were sent.`,
+        description: `${Number(result?.delivered || 0)} of ${Number(result?.targeted || totals.employeeCount || 0)} employees were sent. ${Number(result?.notified || 0)} notification(s) sent.`,
       })
     } catch (error) {
       toast({ title: 'Bulk send failed', description: error.message, variant: 'error' })

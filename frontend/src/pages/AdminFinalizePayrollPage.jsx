@@ -722,10 +722,13 @@ export default function AdminFinalizePayrollPage() {
     const alreadySent = Boolean(row?.is_sent || row?.delivered_at)
     setDeliveringPayslipId(pid)
     try {
-      await adminDeliverFinalizePayslips(buildDeliverPayload([pid]))
+      const result = await adminDeliverFinalizePayslips(buildDeliverPayload([pid]))
+      const notified = Number(result?.notified || 0)
       toastRef.current({
         title: alreadySent ? 'Payslip re-sent' : 'Payslip sent',
-        description: 'Employees can open this payslip from My Payslips.',
+        description: notified > 0
+          ? 'Employee was notified and can open this payslip from My Payslips.'
+          : 'Employee can open this payslip from My Payslips.',
       })
       setRefreshToken(String(Date.now()))
     } catch (e) {
@@ -739,10 +742,11 @@ export default function AdminFinalizePayrollPage() {
     if (!periodFinalized || selectedPayslipIds.size === 0) return
     setDeliveringBulk(true)
     try {
-      await adminDeliverFinalizePayslips(buildDeliverPayload(Array.from(selectedPayslipIds)))
+      const result = await adminDeliverFinalizePayslips(buildDeliverPayload(Array.from(selectedPayslipIds)))
+      const notified = Number(result?.notified || 0)
       toastRef.current({
         title: 'Payslips sent',
-        description: `${selectedPayslipIds.size} payslip(s) are now visible in My Payslips.`,
+        description: `${selectedPayslipIds.size} payslip(s) are now visible in My Payslips. ${notified} employee notification(s) sent.`,
       })
       setSelectedPayslipIds(new Set())
       setRefreshToken(String(Date.now()))
@@ -932,7 +936,7 @@ export default function AdminFinalizePayrollPage() {
       setRefreshToken(String(Date.now()))
       toastRef.current({
         title: 'Batch payslips sent',
-        description: `${Number(result?.delivered || 0)} of ${Number(result?.targeted || finalizedBatchEmployeeCount || 0)} employees were sent.`,
+        description: `${Number(result?.delivered || 0)} of ${Number(result?.targeted || finalizedBatchEmployeeCount || 0)} employees were sent. ${Number(result?.notified || 0)} notification(s) sent.`,
       })
     } catch (e) {
       toastRef.current({
