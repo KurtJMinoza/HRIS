@@ -4247,6 +4247,11 @@ export default function AdminEmployeeProfile() {
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                   <Badge className={statusMeta.className}>{statusMeta.label}</Badge>
                   <RoleBadge user={employee} />
+                  {employee.employee_level_label ? (
+                    <Badge variant="outline" className="border-slate-300 bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                      {employee.employee_level_label}
+                    </Badge>
+                  ) : null}
                   {employee.is_execom || employee.execom_badge ? (
                     <Badge className="border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-200">
                       EXECOM

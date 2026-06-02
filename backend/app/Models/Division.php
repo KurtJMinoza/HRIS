@@ -21,6 +21,19 @@ class Division extends Model
         'description',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function (self $division): void {
+            foreach (array_filter([$division->division_head_id, $division->getOriginal('division_head_id')]) as $employeeId) {
+                try {
+                    app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $employeeId, 'division_head_changed');
+                } catch (\Throwable) {
+                    // Employee level cache refresh should never block organization maintenance.
+                }
+            }
+        });
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);

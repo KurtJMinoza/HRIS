@@ -193,7 +193,7 @@ class OvertimeController extends Controller
                 'filed_at',
             ])
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id',
+                'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
             ])
             ->orderByDesc('date')
             ->orderByDesc('id');
@@ -443,7 +443,7 @@ class OvertimeController extends Controller
                 'rejection_note', 'created_at', 'updated_at',
             ])
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,role,department,department_id,branch_id,company_id,profile_image,position',
+                'user:id,name,first_name,middle_name,last_name,suffix,role,department,department_id,branch_id,company_id,profile_image,position,employee_level,employee_level_label',
                 'approvedBy:id,name,first_name,middle_name,last_name,suffix',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
@@ -526,7 +526,7 @@ class OvertimeController extends Controller
                     'created_at',
                 ])
                 ->with([
-                    'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id',
+                    'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
                     'filedBy:id,name,first_name,middle_name,last_name,suffix',
                 ])
                 ->findOrFail($id);
@@ -597,7 +597,7 @@ class OvertimeController extends Controller
         $overtime = Overtime::query()
             ->with([
                 // `role` required: ensureEmployeeAccessible() rejects subjects whose role is not employee.
-                'user:id,name,first_name,middle_name,last_name,suffix,role,department,department_id,branch_id,company_id,profile_image,position',
+                'user:id,name,first_name,middle_name,last_name,suffix,role,department,department_id,branch_id,company_id,profile_image,position,employee_level,employee_level_label',
                 'adjustments.admin:id,name,first_name,middle_name,last_name,suffix',
                 'approvedBy:id,name,first_name,middle_name,last_name,suffix',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
@@ -1577,7 +1577,7 @@ class OvertimeController extends Controller
             [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->endOfDay()];
         }
 
-        $query = Overtime::query()->with(['user:id,name,first_name,middle_name,last_name,suffix,department,department_id,branch_id,company_id']);
+        $query = Overtime::query()->with(['user:id,name,first_name,middle_name,last_name,suffix,department,department_id,branch_id,company_id,employee_level,employee_level_label']);
 
         if ($from) {
             $query->whereDate('date', '>=', $from->toDateString());
@@ -1671,6 +1671,8 @@ class OvertimeController extends Controller
                 'requested_by_profile_image_url' => null,
                 'requested_by_hr_role' => null,
                 'requested_by_role_label' => null,
+                'requested_by_employee_level' => null,
+                'requested_by_employee_level_label' => null,
             ];
         }
 
@@ -1684,6 +1686,8 @@ class OvertimeController extends Controller
             'requested_by_profile_image_url' => $user->profile_image_url,
             'requested_by_hr_role' => $hr->value,
             'requested_by_role_label' => $hr->badgeLabel(),
+            'requested_by_employee_level' => $user->employee_level,
+            'requested_by_employee_level_label' => $user->employee_level_label,
         ];
     }
 
@@ -1759,7 +1763,7 @@ class OvertimeController extends Controller
     private function mapOvertime(Overtime $overtime, ?User $actor = null): array
     {
         $overtime->loadMissing([
-            'user:id,name,first_name,middle_name,last_name,suffix,department,department_id,branch_id,company_id,profile_image,position',
+            'user:id,name,first_name,middle_name,last_name,suffix,department,department_id,branch_id,company_id,profile_image,position,employee_level,employee_level_label',
             'approvedBy:id,name,first_name,middle_name,last_name,suffix',
             'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',

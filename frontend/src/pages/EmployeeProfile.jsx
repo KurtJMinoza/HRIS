@@ -2577,6 +2577,11 @@ export default function EmployeeProfile() {
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-2xl font-bold tracking-tight text-foreground">{displayUser?.name || 'Employee'}</h3>
                 <RoleBadge user={displayUser} size="sm" />
+                {displayUser?.employee_level_label ? (
+                  <Badge variant="outline" className="border-slate-300 bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                    {displayUser.employee_level_label}
+                  </Badge>
+                ) : null}
                 {displayUser?.is_execom || displayUser?.execom_badge ? (
                   <Badge className="border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-200">
                     EXECOM

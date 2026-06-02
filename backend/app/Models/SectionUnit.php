@@ -26,6 +26,19 @@ class SectionUnit extends Model
         'description',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function (self $sectionUnit): void {
+            foreach (array_filter([$sectionUnit->section_unit_head_id, $sectionUnit->getOriginal('section_unit_head_id')]) as $employeeId) {
+                try {
+                    app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $employeeId, 'section_unit_head_changed');
+                } catch (\Throwable) {
+                    // Employee level cache refresh should never block organization maintenance.
+                }
+            }
+        });
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);

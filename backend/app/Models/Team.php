@@ -17,6 +17,19 @@ class Team extends Model
         'team_leader_id',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function (self $team): void {
+            foreach (array_filter([$team->team_leader_id, $team->getOriginal('team_leader_id')]) as $employeeId) {
+                try {
+                    app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $employeeId, 'team_leader_changed');
+                } catch (\Throwable) {
+                    // Employee level cache refresh should never block team maintenance.
+                }
+            }
+        });
+    }
+
     public function department(): BelongsTo
     {
         return $this->belongsTo(Department::class);

@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Casts\EncryptedArray;
+use App\Services\EmployeeLevelResolver;
 use App\Services\FaceEmbeddingCacheService;
 use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
@@ -301,6 +302,9 @@ class User extends Authenticatable
         'password',
         'account_export_password',
         'role',
+        'employee_level',
+        'employee_level_label',
+        'employee_level_resolved_at',
         'is_super_admin',
         'is_system_user',
         'is_hidden',
@@ -386,6 +390,8 @@ class User extends Authenticatable
             'hire_date' => 'date',
             'payroll_effective_date' => 'date',
             'pending_schedule_effective_from' => 'date',
+            'employee_level' => 'integer',
+            'employee_level_resolved_at' => 'datetime',
             'employment_status_effective_date' => 'date',
             'regularization_date' => 'date',
             'contract_start_date' => 'date',
@@ -464,6 +470,27 @@ class User extends Authenticatable
                 );
                 if ($oldCompanyId !== null && (int) $oldCompanyId !== (int) $user->company_id) {
                     FaceEmbeddingCacheService::forgetCompanyIndex($user->company_id ? (int) $user->company_id : null);
+                }
+            }
+
+            if ($user->wasChanged([
+                'role',
+                'is_super_admin',
+                'is_execom',
+                'company_id',
+                'branch_id',
+                'department_id',
+                'division_id',
+                'section_unit_id',
+                'team_id',
+                'assigned_team_leader_id',
+                'supervisor_id',
+                'is_active',
+            ])) {
+                try {
+                    app(EmployeeLevelResolver::class)->syncCachedLevel($user, 'user_profile_or_role_changed');
+                } catch (\Throwable) {
+                    // Employee save should not fail because a derived cache could not refresh.
                 }
             }
         });

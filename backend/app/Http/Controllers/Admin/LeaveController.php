@@ -111,7 +111,7 @@ class LeaveController extends Controller
                 'created_at',
             ])
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id',
+                'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
             ]);
 
         $this->applyFilingApprovalVisibility($actor, $query, $request);
@@ -466,7 +466,7 @@ class LeaveController extends Controller
 
         $leave = LeaveRequest::query()
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,employee_code,department_id,section_unit_id,department,role',
+                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,employee_code,department_id,section_unit_id,department,role,employee_level,employee_level_label',
                 'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,role',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix',
@@ -569,7 +569,7 @@ class LeaveController extends Controller
                     'created_at',
                 ])
                 ->with([
-                    'user:id,name,first_name,middle_name,last_name,suffix',
+                    'user:id,name,first_name,middle_name,last_name,suffix,employee_level,employee_level_label',
                     'filedBy:id,name,first_name,middle_name,last_name,suffix',
                 ])
                 ->findOrFail($id);
@@ -639,7 +639,7 @@ class LeaveController extends Controller
         $actor = $request->user();
         $leave = LeaveRequest::query()
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,schedule,working_schedule_id,role,department_id,department,branch_id,company_id,division_id,section_unit_id',
+                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,schedule,working_schedule_id,role,department_id,department,branch_id,company_id,division_id,section_unit_id,employee_level,employee_level_label',
                 'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id,division_id,section_unit_id',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
@@ -1079,7 +1079,7 @@ class LeaveController extends Controller
         return response()->json([
             'message' => 'Notes updated.',
             'leave_request' => $this->leaveResponse($leave->fresh([
-                'user:id,name,first_name,middle_name,last_name,suffix', 'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
+                'user:id,name,first_name,middle_name,last_name,suffix,employee_level,employee_level_label', 'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
                 'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $request->user()),
         ]);
@@ -1456,6 +1456,8 @@ class LeaveController extends Controller
                 'requested_by_position' => null,
                 'requested_by_hr_role' => null,
                 'requested_by_role_label' => null,
+                'requested_by_employee_level' => null,
+                'requested_by_employee_level_label' => null,
             ];
         }
 
@@ -1470,6 +1472,8 @@ class LeaveController extends Controller
             'requested_by_position' => $requester->position,
             'requested_by_hr_role' => $hr->value,
             'requested_by_role_label' => $hr->badgeLabel(),
+            'requested_by_employee_level' => $requester->employee_level,
+            'requested_by_employee_level_label' => $requester->employee_level_label,
         ];
     }
 

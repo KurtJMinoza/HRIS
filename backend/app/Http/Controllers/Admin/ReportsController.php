@@ -17,6 +17,7 @@ use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
+use App\Services\EmployeeLevelResolver;
 use App\Services\HrRoleResolver;
 use App\Services\RbacService;
 use App\Services\LeaveCreditService;
@@ -77,12 +78,30 @@ class ReportsController extends Controller
         return [
             'employment_status' => $employee->employment_status,
             'employment_status_label' => $label,
+            ...$this->employeeLevelFieldsForReport($employee),
             'hire_date' => $employee->hire_date?->toDateString(),
             'employment_status_effective_date' => $employee->employment_status_effective_date?->toDateString(),
             'regularization_date' => $employee->regularization_date?->toDateString(),
             'status_override' => (bool) ($employee->status_override ?? false),
             'contract_start_date' => $employee->contract_start_date?->toDateString(),
             'contract_end_date' => $employee->contract_end_date?->toDateString(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function employeeLevelFieldsForReport(User $employee): array
+    {
+        $resolved = app(EmployeeLevelResolver::class)->resolveEmployeeLevel($employee);
+
+        return [
+            'employee_level' => (int) $resolved['level_number'],
+            'employee_level_name' => $resolved['level_name'],
+            'employee_level_label' => $resolved['level_label'],
+            'employee_level_source_module' => $resolved['source_module'],
+            'employee_level_source_assignment_id' => $resolved['source_assignment_id'],
+            'employee_level_organization_path' => $resolved['organization_path'],
         ];
     }
 

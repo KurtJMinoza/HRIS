@@ -20,6 +20,19 @@ class Branch extends Model
         'default_pay_cycle_id',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function (self $branch): void {
+            foreach (array_filter([$branch->branch_manager_id, $branch->getOriginal('branch_manager_id')]) as $employeeId) {
+                try {
+                    app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $employeeId, 'branch_head_changed');
+                } catch (\Throwable) {
+                    // Employee level cache refresh should never block organization maintenance.
+                }
+            }
+        });
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);

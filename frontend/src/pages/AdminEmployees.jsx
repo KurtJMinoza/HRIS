@@ -98,6 +98,16 @@ const DEFAULT_SCHEDULE = {
   sun: null,
 }
 
+const EMPLOYEE_LEVEL_OPTIONS = [
+  { value: '0', label: 'Level 0 Staff / Employee' },
+  { value: '1', label: 'Level 1 OIC / Team Leader / Unit/Section Head' },
+  { value: '2', label: 'Level 2 Department Head' },
+  { value: '3', label: 'Level 3 Division Head' },
+  { value: '4', label: 'Level 4 Branch Head' },
+  { value: '5', label: 'Level 5 Company Head / Executive' },
+  { value: '6', label: 'Level 6 Admin' },
+]
+
 /** No working days — employee cannot clock in/out until admin assigns a schedule. */
 const EMPTY_SCHEDULE = Object.fromEntries(DAY_KEYS.map((k) => [k, null]))
 
@@ -233,6 +243,7 @@ export default function AdminEmployees() {
   const didInitialEmployeeLoadRef = useRef(false)
   const [filterStatus, setFilterStatus] = useState('active')
   const [filterCompany, setFilterCompany] = useState('')
+  const [filterLevel, setFilterLevel] = useState('')
   const [filterSchedule, setFilterSchedule] = useState('')
   const [filterFace, setFilterFace] = useState('')
   const [sortBy, setSortBy] = useState('')
@@ -349,7 +360,7 @@ export default function AdminEmployees() {
 
   useEffect(() => {
     setPage(1)
-  }, [filterCompany])
+  }, [filterCompany, filterLevel])
 
   useEffect(() => {
     if (location.pathname === hrPanelPath(hrBase, 'employees/add')) {
@@ -364,6 +375,7 @@ export default function AdminEmployees() {
       q: debouncedSearchQuery,
       activeFilter: filterStatus,
       companyId: filterCompany,
+      employeeLevel: filterLevel,
     }],
     queryFn: () =>
       getEmployees({
@@ -373,6 +385,7 @@ export default function AdminEmployees() {
         q: debouncedSearchQuery || undefined,
         active_filter: filterStatus || 'active',
         company_id: filterCompany || undefined,
+        employee_level: filterLevel || undefined,
       }),
     staleTime: 60 * 1000,
     gcTime: 2 * 60 * 1000,
@@ -845,6 +858,7 @@ export default function AdminEmployees() {
       }
       if (filterStatus === 'active' && !emp.is_active) return false
       if (filterStatus === 'deactivated' && emp.is_active) return false
+      if (filterLevel && String(emp.employee_level ?? '') !== String(filterLevel)) return false
       const hasSchedule = hasAssignedSchedule(emp)
       if (filterSchedule === 'scheduled' && !hasSchedule) return false
       if (filterSchedule === 'unscheduled' && hasSchedule) return false
@@ -884,22 +898,27 @@ export default function AdminEmployees() {
           va = formatEmploymentStatusForViewer(a.employment_status, a.employment_status_label, false) || '\uFFFF'
           vb = formatEmploymentStatusForViewer(b.employment_status, b.employment_status_label, false) || '\uFFFF'
           return dir * va.localeCompare(vb, undefined, { sensitivity: 'base' })
+        case 'employee_level':
+          va = Number(a.employee_level ?? 99)
+          vb = Number(b.employee_level ?? 99)
+          return dir * (va - vb)
         default:
           return 0
       }
     })
-  }, [employees, normalizedSearchQuery, filterStatus, filterSchedule, filterFace, sortBy, sortDir])
+  }, [employees, normalizedSearchQuery, filterStatus, filterLevel, filterSchedule, filterFace, sortBy, sortDir])
 
   const hasListFilters = useMemo(
     () =>
       Boolean(
         filterCompany ||
+        filterLevel ||
         filterSchedule ||
         filterFace ||
         debouncedSearchQuery ||
         (filterStatus && filterStatus !== 'active'),
       ),
-    [filterCompany, filterSchedule, filterFace, debouncedSearchQuery, filterStatus],
+    [filterCompany, filterLevel, filterSchedule, filterFace, debouncedSearchQuery, filterStatus],
   )
 
   const toggleSort = (column) => {
@@ -1586,6 +1605,23 @@ export default function AdminEmployees() {
                       </select>
                     </label>
 
+                    <label className="inline-flex items-center gap-2">
+                      <span className="sr-only">Employee Level</span>
+                      <select
+                        value={filterLevel}
+                        onChange={(event) => setFilterLevel(event.target.value)}
+                        className={`${FIELD_SELECT_CLASS} h-10 min-w-[13rem] rounded-md text-sm`}
+                        aria-label="Filter employees by level"
+                      >
+                        <option value="">All Levels</option>
+                        {EMPLOYEE_LEVEL_OPTIONS.map((level) => (
+                          <option key={level.value} value={level.value}>
+                            {level.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
                     {/* Status chips */}
                     {[{ val: 'active', label: 'Active', color: 'emerald' }, { val: 'deactivated', label: 'Deactivated', color: 'zinc' }, { val: 'all', label: 'All', color: 'blue' }].map(({ val, label, color }) => (
                       <button
@@ -1650,10 +1686,10 @@ export default function AdminEmployees() {
                     ))}
 
                     {/* Clear all active filters */}
-                    {(filterCompany || filterStatus || filterSchedule || filterFace) && (
+                    {(filterCompany || filterLevel || filterStatus || filterSchedule || filterFace) && (
                       <button
                         type="button"
-                        onClick={() => { setFilterCompany(''); setFilterStatus(''); setFilterSchedule(''); setFilterFace('') }}
+                        onClick={() => { setFilterCompany(''); setFilterLevel(''); setFilterStatus(''); setFilterSchedule(''); setFilterFace('') }}
                         className="ml-auto inline-flex h-10 items-center gap-1 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                       >
                         <X className="size-3.5" />
@@ -1711,6 +1747,15 @@ export default function AdminEmployees() {
                           </span>
                         </th>
                         <th className="px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Position</th>
+                        <th
+                          className="w-[150px] cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+                          onClick={() => toggleSort('employee_level')}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            Level
+                            {sortBy === 'employee_level' ? (sortDir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUp className="size-3 opacity-20" />}
+                          </span>
+                        </th>
                         <th className="px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Branch</th>
                         <th
                           className="w-[128px] max-w-[140px] cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
@@ -1860,6 +1905,13 @@ export default function AdminEmployees() {
                           {/* Position */}
                           <td className="px-4 align-middle">
                             <span className="text-[12.5px] text-slate-500 dark:text-slate-400">{emp.position || '—'}</span>
+                          </td>
+
+                          {/* Employee Level */}
+                          <td className="px-4 align-middle">
+                            <span className="block max-w-[150px] truncate text-[12.5px] font-medium text-slate-600 dark:text-slate-300" title={emp.employee_level_label || undefined}>
+                              {emp.employee_level_label || '—'}
+                            </span>
                           </td>
 
                           {/* Branch */}

@@ -25,6 +25,19 @@ class Company extends Model
         'payroll_settings',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function (self $company): void {
+            foreach (array_filter([$company->company_head_id, $company->getOriginal('company_head_id')]) as $employeeId) {
+                try {
+                    app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $employeeId, 'company_head_changed');
+                } catch (\Throwable) {
+                    // Employee level cache refresh should never block organization maintenance.
+                }
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [

@@ -917,6 +917,8 @@ class AttendanceMonitoringController extends Controller
                     'employee_name' => $employee->display_name,
                     'employee_formatted_name' => $employee->formatted_name,
                     'employee_sort_key' => $employee->employeeListingSortKey(),
+                    'employee_level' => $employee->employee_level,
+                    'employee_level_label' => $employee->employee_level_label,
                     'profile_image' => $employee->profile_image_url,
                     'department' => $employee->departmentRelation?->name ?? $employee->department,
                     'company_name' => $employeeCompanyNames[$employee->id] ?? null,

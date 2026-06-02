@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\EmployeeLevelResolver;
 use App\Services\HolidayService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -39,11 +40,16 @@ class EmployeeOrganizationAssignment extends Model
 
     protected static function booted(): void
     {
-        $flush = static function (): void {
+        $flush = static function (self $assignment): void {
             try {
                 app(HolidayService::class)->flushRuntimeCaches();
             } catch (\Throwable) {
                 // Cache invalidation should never block assignment maintenance.
+            }
+            try {
+                app(EmployeeLevelResolver::class)->syncCachedLevel((int) $assignment->employee_id, 'employee_organization_assignment_changed');
+            } catch (\Throwable) {
+                // Employee level cache refresh should never block assignment maintenance.
             }
         };
 

@@ -24,6 +24,20 @@ class OrganizationPositionAssignment extends Model
         'remarks',
     ];
 
+    protected static function booted(): void
+    {
+        $syncLevel = static function (self $assignment): void {
+            try {
+                app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $assignment->employee_id, 'organization_position_assignment_changed');
+            } catch (\Throwable) {
+                // Employee level cache refresh should never block assignment maintenance.
+            }
+        };
+
+        static::saved($syncLevel);
+        static::deleted($syncLevel);
+    }
+
     protected function casts(): array
     {
         return [

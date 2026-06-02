@@ -24,6 +24,7 @@ use App\Models\UserAdminActivityLog;
 use App\Models\UserPhoneChangeLog;
 use App\Models\WorkingSchedule;
 use App\Services\DataScopeService;
+use App\Services\EmployeeLevelResolver;
 use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\ESignatureService;
 use App\Services\FaceEmbeddingCacheService;
@@ -103,6 +104,12 @@ class EmployeeController extends Controller
         $departmentId = $request->filled('department_id') ? (int) $request->query('department_id') : null;
         $divisionId = $request->filled('division_id') ? (int) $request->query('division_id') : null;
         $sectionUnitId = $request->filled('section_unit_id') ? (int) $request->query('section_unit_id') : null;
+        $employeeLevelFilter = $request->filled('employee_level')
+            ? (int) $request->query('employee_level')
+            : ($request->filled('level') ? (int) $request->query('level') : null);
+        if ($employeeLevelFilter !== null && ($employeeLevelFilter < 0 || $employeeLevelFilter > 6)) {
+            $employeeLevelFilter = null;
+        }
         $assignableToCompanyId = $request->filled('assignable_to_company_id') ? (int) $request->query('assignable_to_company_id') : null;
         $forDepartmentAssignment = $request->boolean('for_department_assignment', false);
         $activeFilter = strtolower(trim((string) $request->query('active_filter', $request->query('status_filter', 'active'))));
@@ -266,6 +273,9 @@ class EmployeeController extends Controller
             'email',
             'phone_number',
             'role',
+            'employee_level',
+            'employee_level_label',
+            'employee_level_resolved_at',
             'department',
             'department_id',
             'division_id',
@@ -317,6 +327,9 @@ class EmployeeController extends Controller
             'province',
             'postal_code',
             'role',
+            'employee_level',
+            'employee_level_label',
+            'employee_level_resolved_at',
             'department',
             'department_id',
             'division_id',
@@ -373,6 +386,7 @@ class EmployeeController extends Controller
             'department_id' => $departmentId,
             'division_id' => $divisionId,
             'section_unit_id' => $sectionUnitId,
+            'employee_level' => $employeeLevelFilter,
         ]);
 
         if ($forLeadershipAssignment || $forScheduleAssignment || $forOrganizationAssignment || $perPageParam === 'all' || (int) $perPageParam === 0) {
@@ -380,6 +394,9 @@ class EmployeeController extends Controller
             $baseQuery = User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns);
             $query = ($forLeadershipAssignment ? $applySearch($baseQuery) : $applyOrgFilters($applySearch($baseQuery)))
                 ->orderByLastName();
+            if ($employeeLevelFilter !== null) {
+                $query->where('employee_level', $employeeLevelFilter);
+            }
             $this->applyActiveFilter($query, $activeFilter);
             if (! $forLeadershipAssignment) {
                 $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
@@ -432,6 +449,7 @@ class EmployeeController extends Controller
                     'per_page' => $users->count(),
                     'total' => $users->count(),
                     'last_page' => 1,
+                    'employee_level_options' => app(EmployeeLevelResolver::class)->levelOptions(),
                 ],
             ]);
         }
@@ -446,6 +464,9 @@ class EmployeeController extends Controller
         $baseQuery = User::query()->roster()->select($lite ? $liteSelectColumns : $selectColumns);
         $query = ($forLeadershipAssignment ? $applySearch($baseQuery) : $applyOrgFilters($applySearch($baseQuery)))
             ->orderByLastName();
+        if ($employeeLevelFilter !== null) {
+            $query->where('employee_level', $employeeLevelFilter);
+        }
         $this->applyActiveFilter($query, $activeFilter);
         if (! $lite) {
             $query->with($fullEagerLoads);
@@ -505,6 +526,7 @@ class EmployeeController extends Controller
                 'per_page' => $paginator->perPage(),
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
+                'employee_level_options' => app(EmployeeLevelResolver::class)->levelOptions(),
             ],
         ]);
     }
@@ -607,6 +629,7 @@ class EmployeeController extends Controller
             'Contract Start Date',
             'Contract End Date',
             'Position',
+            'Employee Level',
             'Department',
             'Branch',
             'Company',
@@ -672,6 +695,9 @@ class EmployeeController extends Controller
                 'contract_start_date',
                 'contract_end_date',
                 'position',
+                'employee_level',
+                'employee_level_label',
+                'employee_level_resolved_at',
                 'department',
                 'department_id',
                 'company_id',
@@ -879,6 +905,7 @@ class EmployeeController extends Controller
             $this->csvDate($user->contract_start_date),
             $this->csvDate($user->contract_end_date),
             (string) ($user->position ?? ''),
+            (string) ($this->employeeLevelFields($user)['employee_level_label'] ?? ''),
             (string) ($departmentName ?? ''),
             (string) ($branchName ?? ''),
             (string) $companyName,
@@ -2587,6 +2614,7 @@ class EmployeeController extends Controller
         [$firstNameFallback, $middleNameFallback, $lastNameFallback] = $this->splitNameParts($user->getRawOriginal('name'));
 
         $hr = $this->hrRoleResolver->resolve($user);
+        $employeeLevel = $this->employeeLevelFields($user);
 
         $row = [
             'id' => $user->id,
@@ -2616,6 +2644,7 @@ class EmployeeController extends Controller
             'role' => $user->role,
             'hr_role' => $hr->value,
             'hr_role_label' => $hr->badgeLabel(),
+            ...$employeeLevel,
             'has_qr' => ! empty($user->qr_token),
             'has_face' => $this->userHasFace($user),
             'face_status' => $user->face_status ?? ($this->userHasFace($user) ? 'registered' : 'not_registered'),
@@ -3319,6 +3348,7 @@ class EmployeeController extends Controller
         $managedDivision = is_array($managedDivisions) ? ($managedDivisions[$uid] ?? null) : null;
         $managedSections = $orgMaps['managed_section_unit_by_user'] ?? [];
         $managedSection = is_array($managedSections) ? ($managedSections[$uid] ?? null) : null;
+        $employeeLevel = $this->employeeLevelFields($user);
 
         return [
             'id' => $user->id,
@@ -3337,6 +3367,7 @@ class EmployeeController extends Controller
             'role' => $user->role,
             'hr_role' => $hr->value,
             'hr_role_label' => $hr->badgeLabel(),
+            ...$employeeLevel,
             'management_role' => $this->managementRoleFromHrRole($hr),
             'managed_branch_id' => $managedBranch['id'] ?? null,
             'managed_branch_name' => $managedBranch['name'] ?? null,
@@ -3403,6 +3434,23 @@ class EmployeeController extends Controller
      *
      * @return array<string, mixed>
      */
+    private function employeeLevelFields(User $user): array
+    {
+        $resolved = app(EmployeeLevelResolver::class)->resolveEmployeeLevel($user);
+
+        return [
+            'employee_level' => (int) $resolved['level_number'],
+            'employee_level_name' => $resolved['level_name'],
+            'employee_level_label' => $resolved['level_label'],
+            'employee_level_source_module' => $resolved['source_module'],
+            'employee_level_source_assignment_id' => $resolved['source_assignment_id'],
+            'employee_level_organization_path' => $resolved['organization_path'],
+            'employee_level_effective_from' => $resolved['effective_from'],
+            'employee_level_effective_to' => $resolved['effective_to'],
+            'employee_level_resolved_at' => $user->employee_level_resolved_at?->toIso8601String(),
+        ];
+    }
+
     private function leaveCreditsSnapshotFields(User $user): array
     {
         $this->leaveCreditService->ensureAnnualRechargeForUserId((int) $user->id);

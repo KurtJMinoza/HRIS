@@ -24,6 +24,19 @@ class Department extends Model
         'hierarchy_mismatch',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function (self $department): void {
+            foreach (array_filter([$department->department_head_id, $department->getOriginal('department_head_id')]) as $employeeId) {
+                try {
+                    app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $employeeId, 'department_head_changed');
+                } catch (\Throwable) {
+                    // Employee level cache refresh should never block organization maintenance.
+                }
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [

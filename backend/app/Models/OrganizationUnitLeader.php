@@ -20,6 +20,20 @@ class OrganizationUnitLeader extends Model
         'is_active',
     ];
 
+    protected static function booted(): void
+    {
+        $syncLevel = static function (self $leader): void {
+            try {
+                app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $leader->employee_id, 'organization_unit_leader_changed');
+            } catch (\Throwable) {
+                // Employee level cache refresh should never block leadership maintenance.
+            }
+        };
+
+        static::saved($syncLevel);
+        static::deleted($syncLevel);
+    }
+
     protected function casts(): array
     {
         return [

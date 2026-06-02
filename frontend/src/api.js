@@ -2866,6 +2866,7 @@ export async function getEmployees(params = {}) {
   if (params.department_id != null && params.department_id !== '') query.set('department_id', String(params.department_id))
   if (params.division_id != null && params.division_id !== '') query.set('division_id', String(params.division_id))
   if (params.section_unit_id != null && params.section_unit_id !== '') query.set('section_unit_id', String(params.section_unit_id))
+  if (params.employee_level != null && params.employee_level !== '') query.set('employee_level', String(params.employee_level))
   if (params.assignable_to_company_id != null && params.assignable_to_company_id !== '') query.set('assignable_to_company_id', String(params.assignable_to_company_id))
   if (params.for_department_assignment) query.set('for_department_assignment', '1')
   if (params.for_organization_assignment) query.set('for_organization_assignment', '1')
