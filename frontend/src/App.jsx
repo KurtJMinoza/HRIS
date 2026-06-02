@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils'
 import { useBlinkLiveness } from '@/hooks/useBlinkLiveness'
 import { FaceLivenessOverlay } from '@/components/FaceLivenessOverlay'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
+import { NotificationsProvider } from '@/contexts/NotificationsContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { useTheme } from '@/contexts/useTheme'
 import { resolvePostLoginPath } from '@/lib/hrRoutes'
@@ -1853,18 +1854,20 @@ export default function App() {
     <BrowserRouter basename={routerBasename}>
       <AuthProvider>
         <ThemeProvider>
-          <ThemedToaster />
-          <AccessDeniedToast />
-          <ErrorBoundary fullScreen>
-            <Routes>
-              <Route path="/" element={<HomeRedirect />} />
-              <Route path="/login" element={<LoginPageWrapper />} />
-              <Route path="/forgot-password" element={<Suspense fallback={null}><ForgotPassword /></Suspense>} />
-              <Route path="/verify-otp" element={<Suspense fallback={null}><VerifyOtp /></Suspense>} />
-              <Route path="/reset-password" element={<Suspense fallback={null}><ResetPassword /></Suspense>} />
-              <Route path="/*" element={<Suspense fallback={null}><AuthenticatedRoutes /></Suspense>} />
-            </Routes>
-          </ErrorBoundary>
+          <NotificationsProvider>
+            <ThemedToaster />
+            <AccessDeniedToast />
+            <ErrorBoundary fullScreen>
+              <Routes>
+                <Route path="/" element={<HomeRedirect />} />
+                <Route path="/login" element={<LoginPageWrapper />} />
+                <Route path="/forgot-password" element={<Suspense fallback={null}><ForgotPassword /></Suspense>} />
+                <Route path="/verify-otp" element={<Suspense fallback={null}><VerifyOtp /></Suspense>} />
+                <Route path="/reset-password" element={<Suspense fallback={null}><ResetPassword /></Suspense>} />
+                <Route path="/*" element={<Suspense fallback={null}><AuthenticatedRoutes /></Suspense>} />
+              </Routes>
+            </ErrorBoundary>
+          </NotificationsProvider>
         </ThemeProvider>
       </AuthProvider>
     </BrowserRouter>

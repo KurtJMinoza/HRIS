@@ -19,6 +19,7 @@ const EmployeeReportsPage = lazy(() => import('@/pages/AdminReports'))
 const MySchedule = lazy(() => import('@/pages/MySchedule'))
 const AdminPayslipViewPage = lazy(() => import('@/pages/AdminPayslipViewPage'))
 const EmployeeLoansDeductionsPage = lazy(() => import('@/pages/EmployeeLoansDeductionsPage'))
+const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
 
 function routeFallback(label = 'Loading...') {
   return <div className="p-6 text-muted-foreground">{label}</div>
@@ -77,6 +78,7 @@ function authenticatedRoutes() {
       <Route path="profile/:employeeId" element={withSuspense(<EmployeeProfile />)} />
       <Route path="payslips" element={withSuspense(<EmployeeMyPayslipsPage />)} />
       <Route path="payslips/view/:payslipId" element={withSuspense(<AdminPayslipViewPage />, routeFallback('Loading payslip...'))} />
+      <Route path="notifications" element={withSuspense(<NotificationsCenter />, routeFallback('Loading notifications...'))} />
     </Route>,
   ]
 }

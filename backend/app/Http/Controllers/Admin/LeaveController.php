@@ -14,6 +14,7 @@ use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\LeaveCreditService;
+use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
@@ -46,6 +47,7 @@ class LeaveController extends Controller
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly LeaveBulkApprovalQuery $bulkApprovalQuery,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
+        private readonly NotificationService $notificationService,
     ) {}
 
     /**
@@ -877,6 +879,18 @@ class LeaveController extends Controller
 
             ReviewRequestCache::forget('leave', (int) $leave->id);
             LeaveModuleCache::flush();
+            $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
+            if ($nextPending instanceof OrgApprovalRecord) {
+                $this->notificationService->notifyApprovalRecord(
+                    $nextPending,
+                    $leave,
+                    'leave',
+                    'leave.needs_approval',
+                    'Leave request needs approval',
+                    ($leave->user?->display_name ?? $leave->user?->name ?? 'An employee').' needs the next leave approval step.',
+                    '/admin/leave?review_id='.$leave->id,
+                );
+            }
 
             if ($this->wantsLiteLeaveMutationResponse($request)) {
                 return response()->json([
@@ -965,6 +979,16 @@ class LeaveController extends Controller
 
         ReviewRequestCache::forget('leave', (int) $leave->id);
         LeaveModuleCache::flush();
+        $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
+        $this->notificationService->notifyRequester(
+            $leave->user,
+            $leave,
+            'leave',
+            'leave.final_approved',
+            'Leave request approved',
+            'Your leave request has been approved.',
+            '/employee/requests?request_id='.$leave->id,
+        );
 
         if ($this->wantsLiteLeaveMutationResponse($request)) {
             return response()->json([
@@ -1040,6 +1064,17 @@ class LeaveController extends Controller
 
         ReviewRequestCache::forget('leave', (int) $leave->id);
         LeaveModuleCache::flush();
+        $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
+        $this->notificationService->notifyRequester(
+            $leave->user,
+            $leave,
+            'leave',
+            'leave.rejected',
+            'Leave request rejected',
+            'Your leave request was rejected.',
+            '/employee/requests?request_id='.$leave->id,
+            'high',
+        );
 
         if ($this->wantsLiteLeaveMutationResponse($request)) {
             return response()->json([

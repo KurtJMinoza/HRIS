@@ -1300,6 +1300,55 @@ export async function getDashboardData() {
   return normalizeDashboardData(raw)
 }
 
+export async function getNotifications(params = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value))
+  })
+  const res = await authenticatedFetch(`/notifications${query.toString() ? `?${query}` : ''}`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.message || 'Failed to load notifications')
+  return body
+}
+
+export async function getNotificationUnreadCount() {
+  const res = await authenticatedFetch('/notifications/unread-count')
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.message || 'Failed to load notification count')
+  return Number(body.unread_count || 0)
+}
+
+export async function getNotificationModuleCounts() {
+  const res = await authenticatedFetch('/notifications/module-counts')
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.message || 'Failed to load notification module counts')
+  return body || {}
+}
+
+export async function markNotificationRead(id) {
+  const res = await authenticatedFetch(`/notifications/${id}/read`, { method: 'POST' })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.message || 'Failed to mark notification as read')
+  return body
+}
+
+export async function markAllNotificationsRead(module) {
+  const res = await authenticatedFetch('/notifications/mark-all-read', {
+    method: 'POST',
+    body: JSON.stringify(module ? { module } : {}),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.message || 'Failed to mark notifications as read')
+  return body
+}
+
+export async function dismissNotification(id) {
+  const res = await authenticatedFetch(`/notifications/${id}`, { method: 'DELETE' })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.message || 'Failed to dismiss notification')
+  return body
+}
+
 async function fetchAdminDashboardSegment(path) {
   const res = await authenticatedFetch(path)
   const body = await res.json().catch(() => ({}))
@@ -4204,61 +4253,79 @@ export async function getAdminLeaveByRequestId(requestId) {
 }
 
 /** Admin: fast review payload for modal (approval chain, history, attachments only). */
+const leaveReviewPrefetches = new Map()
+
+function normalizePositiveId(value) {
+  const raw = String(value ?? '').trim()
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) return null
+  return raw
+}
+
+async function fetchLeaveRequestReviewFromPath(path, options = {}) {
+  const fetchOpts = options.signal ? { signal: options.signal } : {}
+  const res = await authenticatedFetch(path, fetchOpts)
+  const data = await res.json().catch(() => ({}))
+  if (res.ok) return data
+
+  const err = new Error(data.message || 'Failed to load leave request details')
+  err.status = res.status
+  err.url = path
+  err.body = data
+  if (res.status === 403) err.code = 'forbidden'
+  else if (res.status === 404) err.code = 'not_found'
+  else if (res.status >= 500) err.code = 'server_error'
+  else err.code = 'generic'
+  throw err
+}
+
 export async function fetchLeaveRequestReview(requestId, options = {}) {
-  const raw = String(requestId ?? '').trim()
-  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+  const raw = normalizePositiveId(requestId)
+  if (!raw) {
     const err = new Error('Invalid leave request ID')
     err.code = 'invalid_id'
     throw err
   }
-  const fetchOpts = options.signal ? { signal: options.signal } : {}
+
+  if (!options.signal && leaveReviewPrefetches.has(raw)) {
+    return leaveReviewPrefetches.get(raw)
+  }
+
   const id = encodeURIComponent(raw)
   const paths = [
     `/leave-requests/${id}/review-lite`,
     `/admin/leave/${id}/review-lite`,
-    `/leave-requests/${id}/review`,
-    `/admin/leave/${id}/review`,
-    `/admin/leave/${id}`,
-    `/leave-requests/${id}`,
   ]
   let lastErr = null
-  let lastStatus = 0
-  let lastBody = null
-  let lastUrl = null
   for (const path of paths) {
-    lastUrl = path
-    const res = await authenticatedFetch(path, fetchOpts)
-    const data = await res.json().catch(() => ({}))
-    lastBody = data
-    if (res.ok) {
-      return data
+    try {
+      return await fetchLeaveRequestReviewFromPath(path, options)
+    } catch (err) {
+      lastErr = err
     }
-    lastStatus = res.status
-    lastErr = new Error(data.message || 'Failed to load leave request details')
-    lastErr.status = res.status
-    lastErr.url = path
-    lastErr.body = data
-    if (res.status === 403) {
-      lastErr.code = 'forbidden'
-      break
-    }
-    if (res.status >= 500) {
-      lastErr.code = 'server_error'
-      break
-    }
-    if (res.status !== 404) {
+    if (lastErr?.status !== 404) {
       break
     }
   }
-  if (lastErr) {
-    if (!lastErr.code && lastStatus === 404) lastErr.code = 'not_found'
-    throw lastErr
-  }
-  const fallback = new Error('Failed to load leave request details')
-  fallback.status = lastStatus
-  fallback.url = lastUrl
-  fallback.body = lastBody
-  throw fallback
+  throw lastErr || Object.assign(new Error('Failed to load leave request details'), { code: 'generic' })
+}
+
+export function prefetchLeaveRequestReview(requestId) {
+  const raw = normalizePositiveId(requestId)
+  if (!raw) return null
+  if (leaveReviewPrefetches.has(raw)) return leaveReviewPrefetches.get(raw)
+
+  const promise = fetchLeaveRequestReview(raw)
+    .catch((err) => {
+      leaveReviewPrefetches.delete(raw)
+      throw err
+    })
+
+  leaveReviewPrefetches.set(raw, promise)
+  window.setTimeout(() => {
+    leaveReviewPrefetches.delete(raw)
+  }, 30000)
+
+  return promise
 }
 
 /**

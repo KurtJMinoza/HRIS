@@ -16,6 +16,7 @@ use App\Services\ApprovalWorkflowSettingService;
 use App\Services\AttendanceCorrectionDetailService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeService;
 use App\Services\PresenceFilingAttendanceLogSyncService;
@@ -52,6 +53,7 @@ class PresenceFilingController extends Controller
         private readonly PresenceFilingBulkApprovalQuery $bulkApprovalQuery,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly OvertimeService $overtimeService,
+        private readonly NotificationService $notificationService,
     ) {}
 
     private function normalizeTimeToHi(?string $value): ?string
@@ -87,6 +89,28 @@ class PresenceFilingController extends Controller
         }
 
         return 'both';
+    }
+
+    private function notifyAttendanceCorrectionApprover(AttendanceCorrection $correction): void
+    {
+        $approverId = $correction->first_approver_id ?: $correction->second_approver_id;
+        if (! $approverId) {
+            return;
+        }
+
+        $employeeName = $correction->user?->display_name ?? $correction->user?->name ?? 'An employee';
+
+        $this->notificationService->notifyUser((int) $approverId, [
+            'type' => 'attendance_correction.needs_approval',
+            'title' => 'Attendance correction needs approval',
+            'message' => $employeeName.' submitted an attendance correction.',
+            'module' => 'attendance_correction',
+            'entity_id' => $correction->id,
+            'entity_type' => AttendanceCorrection::class,
+            'action_url' => '/admin/attendance/corrections?review_id='.$correction->id,
+            'company_id' => $correction->company_id ?? $correction->user?->getEffectiveCompanyId(),
+            'department_id' => $correction->department_id ?? $correction->user?->department_id,
+        ]);
     }
 
     /**
@@ -280,6 +304,8 @@ class PresenceFilingController extends Controller
             'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
         ]);
         AttendanceCorrectionModuleCache::flush();
+
+        $this->notifyAttendanceCorrectionApprover($correction);
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',
@@ -513,6 +539,8 @@ class PresenceFilingController extends Controller
             'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
         ]);
         AttendanceCorrectionModuleCache::flush();
+
+        $this->notifyAttendanceCorrectionApprover($correction);
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',
@@ -1650,6 +1678,18 @@ class PresenceFilingController extends Controller
             if (! $this->isBulkApprovalRequest($request)) {
                 AttendanceCorrectionModuleCache::flush();
             }
+            $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+            if ($nextPending instanceof OrgApprovalRecord) {
+                $this->notificationService->notifyApprovalRecord(
+                    $nextPending,
+                    $correction,
+                    'attendance_correction',
+                    'attendance_correction.needs_approval',
+                    'Attendance correction needs approval',
+                    ($employee->display_name ?? $employee->name ?? 'An employee').' needs the next attendance correction approval step.',
+                    '/admin/attendance/corrections?review_id='.$correction->id,
+                );
+            }
 
             if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
                 return response()->json([
@@ -1777,6 +1817,16 @@ class PresenceFilingController extends Controller
         if (! $this->isBulkApprovalRequest($request)) {
             AttendanceCorrectionModuleCache::flush();
         }
+        $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+        $this->notificationService->notifyRequester(
+            $employee,
+            $correction,
+            'attendance_correction',
+            'attendance_correction.approved',
+            'Attendance correction approved',
+            'Your attendance correction was approved and applied.',
+            '/employee/correction-requests?request_id='.$correction->id,
+        );
 
         if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
             return response()->json([
@@ -1867,6 +1917,17 @@ class PresenceFilingController extends Controller
         $tz = $this->presenceFilingService->attendanceTimezone();
         ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
         AttendanceCorrectionModuleCache::flush();
+        $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+        $this->notificationService->notifyRequester(
+            $employee,
+            $correction,
+            'attendance_correction',
+            'attendance_correction.rejected',
+            'Attendance correction rejected',
+            'Your attendance correction was rejected.',
+            '/employee/correction-requests?request_id='.$correction->id,
+            'high',
+        );
 
         if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
             return response()->json([

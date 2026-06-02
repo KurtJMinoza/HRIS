@@ -12,6 +12,7 @@ use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\LeaveCreditService;
+use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\LeaveFilingRules;
@@ -36,6 +37,7 @@ class EmployeeLeaveController extends Controller
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
+        private readonly NotificationService $notificationService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -832,6 +834,16 @@ class EmployeeLeaveController extends Controller
             OrgApprovalWorkflowService::MODULE_LEAVE,
             $user,
             $user,
+        );
+
+        $this->notificationService->notifyCurrentApprover(
+            $leave,
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+            'leave',
+            'leave.needs_approval',
+            'Leave request needs approval',
+            ($user->display_name ?? $user->name ?? 'An employee').' filed a leave request.',
+            '/admin/leave?review_id='.$leave->id,
         );
 
         $leave->refresh();

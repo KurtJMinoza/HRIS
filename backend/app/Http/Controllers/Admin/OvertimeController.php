@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\BulkApproval\OvertimeBulkApprovalQuery;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeApprovalService;
 use App\Services\OvertimeService;
@@ -45,6 +46,7 @@ class OvertimeController extends Controller
         private readonly OvertimeBulkApprovalQuery $bulkApprovalQuery,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly OvertimeService $overtimeService,
+        private readonly NotificationService $notificationService,
     ) {}
 
     /**
@@ -882,6 +884,17 @@ class OvertimeController extends Controller
 
             ReviewRequestCache::forget('overtime', (int) $overtime->id);
             OvertimeModuleCache::flush();
+            $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
+            $this->notificationService->notifyRequester(
+                $overtime->user,
+                $overtime,
+                'overtime',
+                'overtime.rejected',
+                'Overtime request rejected',
+                'Your overtime request was rejected.',
+                '/employee/overtime?request_id='.$overtime->id,
+                'high',
+            );
 
             if ($this->wantsLiteOvertimeMutationResponse($request)) {
                 return response()->json([
@@ -957,6 +970,18 @@ class OvertimeController extends Controller
 
             ReviewRequestCache::forget('overtime', (int) $overtime->id);
             OvertimeModuleCache::flush();
+            $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
+            if ($nextPending instanceof OrgApprovalRecord) {
+                $this->notificationService->notifyApprovalRecord(
+                    $nextPending,
+                    $overtime,
+                    'overtime',
+                    'overtime.needs_approval',
+                    'Overtime request needs approval',
+                    ($overtime->user?->display_name ?? $overtime->user?->name ?? 'An employee').' needs the next overtime approval step.',
+                    '/admin/overtime?review_id='.$overtime->id,
+                );
+            }
 
             if ($this->wantsLiteOvertimeMutationResponse($request)) {
                 return response()->json([
@@ -1035,6 +1060,16 @@ class OvertimeController extends Controller
         OvertimeModuleCache::flush();
         ReportsCacheService::invalidateAttendanceCache((int) $overtime->user_id, $overtime->date?->toDateString());
         $this->clearAffectedDraftPayrollSnapshots($overtime);
+        $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
+        $this->notificationService->notifyRequester(
+            $overtime->user,
+            $overtime,
+            'overtime',
+            'overtime.final_approved',
+            'Overtime request approved',
+            'Your overtime request has been approved.',
+            '/employee/overtime?request_id='.$overtime->id,
+        );
 
         if ($this->wantsLiteOvertimeMutationResponse($request)) {
             return response()->json([

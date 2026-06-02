@@ -41,6 +41,7 @@ const AdminSectionUnits = lazy(() => import('@/pages/AdminSectionUnits'))
 const AdminLeave = lazy(() => import('@/pages/AdminLeave'))
 const AdminHoliday = lazy(() => import('@/pages/AdminHoliday'))
 const AdminOvertime = lazy(() => import('@/pages/AdminOvertime'))
+const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
 
 function withSuspense(node, fallback) {
   return (
@@ -82,6 +83,7 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-le" path="leave" element={withSuspense(<AdminLeave />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ho" path="holiday" element={withSuspense(<AdminHoliday />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ov" path="overtime" element={withSuspense(<AdminOvertime />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-notifications" path="notifications" element={withSuspense(<NotificationsCenter />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ms" path="my-schedule" element={withSuspense(<MySchedule />, <MyScheduleRouteFallback />)} />,
   <Route key="hr-sr" path="schedule-requests" element={withSuspense(<ScheduleRequestsPage />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-dc-rules" path="daily-computation/rules" element={<AdminPayrollLogisticsPlaceholder />} />,

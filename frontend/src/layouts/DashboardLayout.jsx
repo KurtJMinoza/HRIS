@@ -20,15 +20,16 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useAuth } from '@/contexts/AuthContext'
+import { useNotifications } from '@/contexts/NotificationsContext'
 import { useTheme } from '@/contexts/useTheme'
 import { cn } from '@/lib/utils'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { RoleBadge } from '@/components/RoleBadge'
-import { getEmployees } from '@/api'
+import { getEmployees, prefetchLeaveRequestReview } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { formatEmployeeName } from '@/lib/employeeSort'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
-import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
+import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, FileText, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
 const SIDEBAR_COLLAPSED_KEY = 'smartdtr_sidebar_collapsed'
 
@@ -124,6 +125,72 @@ const NOTIFICATION_TABS = [
   { id: 'unread', label: 'Unread' },
 ]
 
+function notificationTimeLabel(value) {
+  if (!value) return ''
+  const diff = Date.now() - new Date(value).getTime()
+  if (!Number.isFinite(diff)) return ''
+  const minutes = Math.max(0, Math.floor(diff / 60000))
+  if (minutes < 1) return 'Just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+function mapNotificationItem(item) {
+  const title = item?.title || 'Notification'
+  const message = item?.message || ''
+  return {
+    id: item.id,
+    actor: title,
+    body: message,
+    time: notificationTimeLabel(item.created_at),
+    detail: item.priority === 'high' ? 'High priority' : null,
+    unread: !item.read_at,
+    mention: false,
+    type: item.module || item.type || 'notification',
+    avatar: null,
+    actionUrl: item.action_url || null,
+  }
+}
+
+function leaveReviewIdFromActionUrl(actionUrl) {
+  if (!actionUrl || typeof actionUrl !== 'string') return null
+  try {
+    const parsed = new URL(actionUrl, window.location.origin)
+    const path = parsed.pathname.toLowerCase()
+    if (!path.includes('/leave')) return null
+    const id = parsed.searchParams.get('review_id') || parsed.searchParams.get('reviewRequestId') || parsed.searchParams.get('request_id')
+    return id && /^\d+$/.test(String(id)) ? String(id) : null
+  } catch {
+    return null
+  }
+}
+
+function navNotificationModule(item) {
+  const haystack = `${item?.to || ''} ${item?.label || ''}`.toLowerCase()
+  if (haystack.includes('overtime')) return 'overtime'
+  if (haystack.includes('correction') || haystack.includes('presence')) return 'attendance_correction'
+  if (haystack.includes('payslip')) return 'payslip'
+  if (haystack.includes('payroll')) return 'payroll'
+  if (haystack.includes('attendance')) return 'attendance'
+  if (haystack.includes('leave') || haystack.includes('request')) return 'leave'
+  if (haystack.includes('dashboard')) return 'dashboard'
+  if (haystack.includes('report')) return 'reports'
+  return null
+}
+
+function navNotificationModules(item) {
+  const modules = new Set()
+  const ownModule = navNotificationModule(item)
+  if (ownModule) modules.add(ownModule)
+  const children = Array.isArray(item?.children) ? item.children : []
+  children.forEach((child) => {
+    navNotificationModules(child).forEach((module) => modules.add(module))
+  })
+  return modules
+}
+
 function SidebarContent({
   navItems,
   homePath,
@@ -136,6 +203,7 @@ function SidebarContent({
   collapsed,
   onToggleCollapse,
   pathname,
+  moduleCounts = {},
 }) {
   const sidebarAvatarSrc = employeeAvatarSrc(user)
   const [manualExpanded, setManualExpanded] = useState({})
@@ -162,6 +230,8 @@ function SidebarContent({
     const hasChildren = children.length > 0
     const active = isItemActive(item, pathname) || hasActiveDescendant(item, pathname)
     const leafTo = getFirstLeafTo(item)
+    const moduleKeys = navNotificationModules(item)
+    const badgeCount = Array.from(moduleKeys).reduce((sum, module) => sum + Number(moduleCounts[module] || 0), 0)
 
     if (collapsed) {
       const to = item.to || leafTo
@@ -171,7 +241,7 @@ function SidebarContent({
           key={key}
           to={to}
           className={cn(
-            'mx-auto flex size-10 items-center justify-center rounded-md text-sm font-medium transition-all duration-200',
+            'relative mx-auto flex size-10 items-center justify-center rounded-md text-sm font-medium transition-all duration-200',
             active
               ? 'bg-orange-50 text-orange-600 ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
               : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
@@ -180,6 +250,11 @@ function SidebarContent({
           title={item.label}
         >
           {item.icon && <item.icon className="size-5 shrink-0" />}
+          {badgeCount > 0 ? (
+            <span className="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-destructive-foreground ring-1 ring-background">
+              {badgeCount > 9 ? '9+' : badgeCount}
+            </span>
+          ) : null}
         </Link>
       )
     }
@@ -201,6 +276,11 @@ function SidebarContent({
           >
             {item.icon ? <item.icon className="mr-3 mt-0.5 size-5 shrink-0" /> : <span className="mr-3 mt-0.5 inline-block size-5 shrink-0" />}
             <span className="min-w-0 flex-1 whitespace-normal wrap-break-word leading-snug">{item.label}</span>
+            {badgeCount > 0 ? (
+              <span className="ml-2 mt-0.5 inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold text-destructive-foreground">
+                {badgeCount > 99 ? '99+' : badgeCount}
+              </span>
+            ) : null}
             {isOpen ? <ChevronDown className="mt-1 size-4 shrink-0" /> : <ChevronRight className="mt-1 size-4 shrink-0" />}
           </button>
           {isOpen && (
@@ -232,6 +312,11 @@ function SidebarContent({
       >
         {item.icon ? <item.icon className="mt-0.5 size-4 shrink-0" /> : <span className="mt-0.5 inline-block size-4 shrink-0" />}
         <span className="min-w-0 flex-1 whitespace-normal wrap-break-word leading-snug">{item.label}</span>
+        {badgeCount > 0 ? (
+          <span className="ml-auto inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold text-destructive-foreground">
+            {badgeCount > 99 ? '99+' : badgeCount}
+          </span>
+        ) : null}
       </NavLink>
     )
   }
@@ -407,7 +492,13 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
       return false
     }
   })
-  const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS)
+  const {
+    items: notificationItems,
+    unreadCount: notificationCount,
+    moduleCounts: notificationModuleCounts,
+    markRead: markNotificationReadBackend,
+    markAllRead: markAllNotificationsReadBackend,
+  } = useNotifications()
   const [notificationTab, setNotificationTab] = useState('all')
 
   useEffect(() => {
@@ -436,7 +527,10 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
 
   const headerAvatarSrc = employeeAvatarSrc(user)
 
-  const notificationCount = notifications.filter((n) => n.unread).length
+  const notifications = useMemo(
+    () => notificationItems.map(mapNotificationItem),
+    [notificationItems],
+  )
 
   const filteredNotifications = useMemo(() => {
     if (notificationTab === 'unread') return notifications.filter((n) => n.unread)
@@ -444,11 +538,25 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   }, [notifications, notificationTab])
 
   const markAllNotificationsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })))
+    markAllNotificationsReadBackend().catch(() => {})
+  }
+
+  const prefetchNotificationTarget = (notification) => {
+    const leaveReviewId = leaveReviewIdFromActionUrl(notification?.actionUrl)
+    if (leaveReviewId) {
+      prefetchLeaveRequestReview(leaveReviewId)?.catch(() => {})
+    }
   }
 
   const markNotificationRead = (id) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, unread: false } : n)))
+    const item = notifications.find((n) => n.id === id)
+    markNotificationReadBackend(id).catch(() => {})
+    if (item?.actionUrl) {
+      prefetchNotificationTarget(item)
+      navigate(item.actionUrl)
+    } else {
+      navigate(role === 'employee' ? `/employee/notifications?notification=${encodeURIComponent(String(id))}` : `${hrPanelPath(hrBasePath, 'notifications')}?notification=${encodeURIComponent(String(id))}`)
+    }
   }
 
   const { theme, cycleTheme } = useTheme()
@@ -611,6 +719,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
           pathname={location.pathname}
+          moduleCounts={notificationModuleCounts}
         />
       </aside>
 
@@ -649,6 +758,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               onLogout={handleLogout}
               onNavClick={() => setSheetOpen(false)}
               pathname={location.pathname}
+              moduleCounts={notificationModuleCounts}
             />
           </SheetContent>
         </Sheet>
@@ -881,20 +991,25 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               </PopoverTrigger>
               <PopoverContent
                 align="end"
-                className="w-[min(94vw,23rem)] overflow-hidden rounded-2xl border border-border/70 bg-card p-0 text-card-foreground shadow-xl ring-1 ring-black/5 dark:border-border/60 dark:ring-white/10"
+                className="w-[min(94vw,22rem)] overflow-hidden rounded-3xl border border-border/70 bg-card p-0 text-card-foreground shadow-xl shadow-black/10 ring-1 ring-black/5 dark:border-border/60 dark:ring-white/10"
                 sideOffset={10}
               >
                 <div className="border-b border-border/60 bg-card px-4 pt-4">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h2 id="notifications-popover-title" className="text-base font-bold tracking-tight text-foreground">
-                        Notifications
-                      </h2>
-                      <p className="mt-0.5 text-xs text-muted-foreground">Recent updates from your workspace</p>
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-brand/10 text-brand">
+                        <Bell className="size-5" />
+                      </span>
+                      <div className="min-w-0">
+                        <h2 id="notifications-popover-title" className="text-lg font-extrabold tracking-tight text-foreground">
+                          Notifications
+                        </h2>
+                        <p className="mt-0.5 text-xs leading-snug text-muted-foreground">Recent updates from your workspace</p>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       {notificationCount > 0 ? (
-                        <span className="inline-flex shrink-0 items-center rounded-md bg-brand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-foreground">
+                        <span className="inline-flex shrink-0 items-center rounded-lg bg-brand px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-brand-foreground shadow-sm">
                           {notificationCount} new
                         </span>
                       ) : null}
@@ -902,7 +1017,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                         type="button"
                         onClick={markAllNotificationsRead}
                         disabled={notificationCount === 0}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold text-brand/90 underline-offset-2 transition hover:bg-brand/10 hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:pointer-events-none disabled:text-muted-foreground/70 disabled:no-underline"
+                        className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-xs font-semibold text-brand/90 underline-offset-2 transition hover:bg-brand/10 hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:pointer-events-none disabled:text-muted-foreground/70 disabled:no-underline"
                       >
                         <CheckCheck className="size-3.5" aria-hidden />
                         Mark all read
@@ -929,9 +1044,9 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                           aria-selected={selected}
                           onClick={() => setNotificationTab(tab.id)}
                           className={cn(
-                            'min-w-0 flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-center text-xs font-semibold transition-colors',
+                            'min-w-0 flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-center text-sm font-semibold transition-colors',
                             selected
-                              ? 'bg-brand text-brand-foreground shadow-sm'
+                              ? 'bg-brand text-brand-foreground shadow-md shadow-brand/20'
                               : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                           )}
                         >
@@ -951,7 +1066,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                 </div>
 
                 <div
-                  className="max-h-[min(52vh,22rem)] overflow-y-auto"
+                  className="max-h-[min(52vh,19rem)] overflow-y-auto"
                   role="tabpanel"
                   aria-labelledby="notifications-popover-title"
                 >
@@ -992,20 +1107,23 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                           key={n.id}
                           type="button"
                           onClick={() => markNotificationRead(n.id)}
+                          onFocus={() => prefetchNotificationTarget(n)}
+                          onMouseEnter={() => prefetchNotificationTarget(n)}
+                          title={n.actionUrl ? 'Open notification details' : 'Open notification center'}
                           className={cn(
                             'relative flex w-full gap-0 border-b border-border/55 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:ring-offset-2 focus-visible:ring-offset-card dark:border-white/10 dark:hover:bg-muted/20',
-                            n.unread ? 'bg-brand/4 dark:bg-brand/7' : 'bg-card'
+                            n.unread ? 'bg-brand/7 dark:bg-brand/10' : 'bg-card'
                           )}
                         >
                           {n.unread ? (
                             <span
-                              className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-full bg-brand"
+                              className="absolute left-0 top-3 bottom-3 w-1 rounded-r-full bg-brand"
                               aria-hidden
                             />
                           ) : null}
-                          <div className="flex min-w-0 flex-1 items-start gap-3 py-3 pr-3 pl-3.5 sm:pl-4">
+                          <div className="flex min-w-0 flex-1 items-start gap-3 py-4 pr-4 pl-4">
                             {n.avatar ? (
-                              <Avatar className="size-9 shrink-0 ring-1 ring-border/50">
+                              <Avatar className="size-11 shrink-0 ring-1 ring-border/50">
                                 <AvatarFallback
                                   className={cn(
                                     'rounded-full text-[11px] font-bold',
@@ -1018,26 +1136,28 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                             ) : (
                               <span
                                 className={cn(
-                                  'flex size-9 shrink-0 items-center justify-center rounded-full ring-1 ring-border/40',
-                                  config.iconBg
+                                  'flex size-11 shrink-0 items-center justify-center rounded-full ring-1 ring-border/40',
+                                  n.unread ? 'bg-brand/10 text-brand ring-brand/10' : config.iconBg
                                 )}
                               >
-                                <Icon className="size-3.5" strokeWidth={2} aria-hidden />
+                                <Icon className="size-5" strokeWidth={2} aria-hidden />
                               </span>
                             )}
-                            <div className="min-w-0 flex-1 pt-0.5">
-                              <p className="line-clamp-2 text-sm leading-snug text-foreground">
-                                <span className="font-semibold text-foreground">{n.actor}</span>
-                                <span className="font-normal text-muted-foreground"> {n.body}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="line-clamp-1 text-sm font-bold leading-snug text-foreground">
+                                {n.actor}
                               </p>
+                              {n.body ? (
+                                <p className="mt-1 line-clamp-2 text-sm leading-snug text-muted-foreground">{n.body}</p>
+                              ) : null}
                               {n.detail ? (
                                 <p className="mt-1 text-xs italic text-muted-foreground">{n.detail}</p>
                               ) : null}
-                              <p className="mt-1.5 text-xs text-muted-foreground">{n.time}</p>
+                              <p className="mt-2 text-xs text-muted-foreground">{n.time}</p>
                             </div>
                             {n.unread ? (
                               <span
-                                className="mt-2 size-2 shrink-0 rounded-full bg-brand"
+                                className="mt-1.5 size-2.5 shrink-0 rounded-full bg-brand"
                                 title="Unread"
                                 aria-hidden
                               />
@@ -1052,9 +1172,12 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                 <div className="border-t border-border/60 bg-card px-4 py-3">
                   <button
                     type="button"
-                    className="w-full rounded-md border border-transparent py-1 text-center text-sm font-semibold text-brand transition hover:border-brand/20 hover:bg-brand/5 hover:text-brand-strong"
+                    onClick={() => navigate(role === 'employee' ? '/employee/notifications' : hrPanelPath(hrBasePath, 'notifications'))}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-transparent py-1.5 text-center text-sm font-semibold text-brand transition hover:border-brand/20 hover:bg-brand/5 hover:text-brand-strong"
                   >
+                    <FileText className="size-4" />
                     View all notifications
+                    <ChevronRight className="size-4" />
                   </button>
                 </div>
               </PopoverContent>

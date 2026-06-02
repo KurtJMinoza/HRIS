@@ -10,6 +10,7 @@ use App\Support\PayslipStoredSnapshotViewPayload;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
@@ -166,10 +167,7 @@ class EmployeePayslipController extends Controller
     public function show(Request $request, int $id): JsonResponse
     {
         $this->ensureSelfServiceAccess($request);
-        $user = $request->user();
-        $payslip = Payslip::query()->where('user_id', $user->id)->findOrFail($id);
-        abort_if($payslip->status === Payslip::STATUS_DRAFT, 404);
-        abort_unless($payslip->is_sent || $payslip->delivered_at !== null, 404);
+        $payslip = $this->findVisiblePayslipForUser($request->user(), $id);
 
         return response()->json($payslip);
     }
@@ -181,13 +179,13 @@ class EmployeePayslipController extends Controller
     {
         $this->ensureSelfServiceAccess($request);
         $user = $request->user();
-        $payslip = Payslip::query()
-            ->with(['employee.company', 'employee.branch', 'employee.departmentRelation', 'employee.governmentIds', 'company'])
-            ->where('user_id', $user->id)
-            ->findOrFail($id);
-
-        abort_if($payslip->status === Payslip::STATUS_DRAFT, 404);
-        abort_unless($payslip->is_sent || $payslip->delivered_at !== null, 404);
+        $payslip = $this->findVisiblePayslipForUser($user, $id, [
+            'employee.company',
+            'employee.branch',
+            'employee.departmentRelation',
+            'employee.governmentIds',
+            'company',
+        ]);
 
         $employee = $payslip->employee;
         abort_unless($employee instanceof User, 404);
@@ -206,9 +204,7 @@ class EmployeePayslipController extends Controller
     {
         $this->ensureSelfServiceAccess($request);
         $user = $request->user();
-        $payslip = Payslip::query()->where('user_id', $user->id)->findOrFail($id);
-        abort_if($payslip->status === Payslip::STATUS_DRAFT, 404);
-        abort_unless($payslip->is_sent || $payslip->delivered_at !== null, 404);
+        $payslip = $this->findVisiblePayslipForUser($user, $id);
         // Regenerate so employee downloads use the same clean template as admin preview/download.
         $relative = $this->payslipService->generatePdf($payslip, $user);
         $payslip->update(['pdf_path' => $relative]);
@@ -230,13 +226,39 @@ class EmployeePayslipController extends Controller
     {
         $this->ensureSelfServiceAccess($request);
         $user = $request->user();
-        $payslip = Payslip::query()->where('user_id', $user->id)->findOrFail($id);
-        abort_if($payslip->status === Payslip::STATUS_DRAFT, 404);
-        abort_unless($payslip->is_sent || $payslip->delivered_at !== null, 404);
+        $payslip = $this->findVisiblePayslipForUser($user, $id);
         $relative = $this->payslipService->generatePrintPdf($payslip, $user);
         $full = storage_path('app/private/'.$relative);
 
         return response()->download($full, 'payslip-print-'.$payslip->id.'.pdf', ['Content-Type' => 'application/pdf']);
+    }
+
+    /**
+     * @param  list<string>  $with
+     */
+    private function findVisiblePayslipForUser(?User $user, int $id, array $with = []): Payslip
+    {
+        if (! $user) {
+            throw new NotFoundHttpException('Payslip is no longer available.');
+        }
+
+        $payslip = Payslip::query()
+            ->with($with)
+            ->where('user_id', $user->id)
+            ->whereIn('status', Payslip::lockingStatuses())
+            ->where('status', '!=', Payslip::STATUS_DRAFT)
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
+            ->where(function ($query) {
+                $query->where('is_sent', true)
+                    ->orWhereNotNull('delivered_at');
+            })
+            ->find($id);
+
+        if (! $payslip) {
+            throw new NotFoundHttpException('Payslip is no longer available.');
+        }
+
+        return $payslip;
     }
 
     private function encodeStoragePath(string $path): string

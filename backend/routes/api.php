@@ -57,6 +57,7 @@ use App\Http\Controllers\EmployeeProfileController;
 use App\Http\Controllers\EmployeeSkillController;
 use App\Http\Controllers\LivenessController;
 use App\Http\Controllers\MyScheduleController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\PayrollReportController;
 use App\Http\Controllers\PayslipDownloadController;
@@ -93,6 +94,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'user']);
     Route::post('/auth/verify-qr', [AuthController::class, 'verifyQr']);
+
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+    Route::get('/notifications/module-counts', [NotificationController::class, 'moduleCounts']);
+    Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllRead']);
+    Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead']);
+    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
 
     Route::patch('/profile', [\App\Http\Controllers\ProfileController::class, 'update']);
     Route::post('/profile/photo', [\App\Http\Controllers\ProfileController::class, 'uploadPhoto']);

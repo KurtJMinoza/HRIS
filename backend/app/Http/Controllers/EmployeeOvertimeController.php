@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
+use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
@@ -30,6 +31,7 @@ class EmployeeOvertimeController extends Controller
         private readonly OtDetectionService $otDetectionService,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
+        private readonly NotificationService $notificationService,
     ) {}
 
     private function attendanceTimezone(): string
@@ -829,6 +831,16 @@ class EmployeeOvertimeController extends Controller
                 OrgApprovalWorkflowService::MODULE_OVERTIME,
                 $user,
                 $user,
+            );
+
+            $this->notificationService->notifyCurrentApprover(
+                $overtime,
+                OrgApprovalWorkflowService::MODULE_OVERTIME,
+                'overtime',
+                'overtime.needs_approval',
+                'Overtime request needs approval',
+                ($user->display_name ?? $user->name ?? 'An employee').' filed an overtime request.',
+                '/admin/overtime?review_id='.$overtime->id,
             );
         }
         OvertimeModuleCache::flush();

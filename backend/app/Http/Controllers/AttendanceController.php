@@ -19,6 +19,7 @@ use App\Services\FaceRecognitionAuditService;
 use App\Services\FaceVerificationService;
 use App\Services\FaceVerificationResultCacheService;
 use App\Services\LeaveCreditService;
+use App\Services\NotificationService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
 use App\Services\OvertimeService;
@@ -44,6 +45,7 @@ class AttendanceController extends Controller
         private readonly PayrollComputationService $payrollComputation,
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly AttendanceRollupService $attendanceRollup,
+        private readonly NotificationService $notificationService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -71,6 +73,38 @@ class AttendanceController extends Controller
     private function attendanceTimezone(): string
     {
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+    }
+
+    private function notifyAttendanceClock(User $user, AttendanceLog $log): void
+    {
+        $isClockIn = $log->type === AttendanceLog::TYPE_CLOCK_IN;
+        $clockAt = $this->attendanceLogPunchInstant($log)->timezone($this->attendanceTimezone());
+
+        try {
+            $this->notificationService->notifyUser($user, [
+                'type' => $isClockIn ? 'attendance.clocked_in' : 'attendance.clocked_out',
+                'title' => $isClockIn ? 'Clock-in recorded' : 'Clock-out recorded',
+                'message' => ($isClockIn ? 'Your clock-in' : 'Your clock-out').' was recorded at '.$clockAt->format('g:i A').'.',
+                'module' => 'attendance',
+                'entity_id' => $log->id,
+                'entity_type' => AttendanceLog::class,
+                'action_url' => '/employee/attendance',
+                'company_id' => $user->getEffectiveCompanyId(),
+                'department_id' => $user->department_id,
+                'data' => [
+                    'attendance_type' => $log->type,
+                    'verified_at' => optional($log->verified_at)->toISOString(),
+                    'clock_at' => $clockAt->toISOString(),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Attendance clock notification failed', [
+                'attendance_log_id' => (int) $log->id,
+                'user_id' => (int) $user->id,
+                'type' => $log->type,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function dayNameForDate(string|\DateTimeInterface $date): string
@@ -772,6 +806,8 @@ class AttendanceController extends Controller
             $this->appendKioskClockOutWithoutClockInHint($payload, $user);
         }
 
+        $this->notifyAttendanceClock($user, $log);
+
         return response()->json($payload, 201);
     }
 
@@ -884,6 +920,7 @@ class AttendanceController extends Controller
             $msg = $this->buildAttendanceSmsMessage($type, $timeOnly, null, AttendanceLog::AUTH_METHOD_QR);
         }
         $this->sendAttendanceSms($user, $msg, $context);
+        $this->notifyAttendanceClock($user, $log);
 
         return response()->json([
             'message' => $type === 'clock_in' ? 'Clocked in successfully.' : 'Clocked out successfully.',
@@ -950,6 +987,7 @@ class AttendanceController extends Controller
                 $authMethod = $faceContext['authentication_method'] ?? null;
                 $msg = $this->buildAttendanceSmsMessage($type, $timeOnly, null, $authMethod);
                 $this->sendAttendanceSms($user, $msg, 'attendance_clock_out');
+                $this->notifyAttendanceClock($user, $log);
 
                 return [
                     'recorded' => true,
@@ -984,6 +1022,7 @@ class AttendanceController extends Controller
             $authMethod = $faceContext['authentication_method'] ?? null;
             $msg = $this->buildAttendanceSmsMessage($type, $timeOnly, $classification, $authMethod);
             $this->sendAttendanceSms($user, $msg, 'attendance_clock_in');
+            $this->notifyAttendanceClock($user, $log);
 
             return [
                 'recorded' => true,
@@ -1201,6 +1240,8 @@ class AttendanceController extends Controller
         if ($suggestCorrectionAfterClockOut) {
             $this->appendKioskClockOutWithoutClockInHint($payload, $user);
         }
+
+        $this->notifyAttendanceClock($user, $log);
 
         return response()->json($payload, 201);
     }
@@ -1768,6 +1809,8 @@ class AttendanceController extends Controller
             'similarity_score' => $similarityScore,
             'client_capture_started_at_ms' => $payload['performance']['client_capture_started_at_ms'],
         ]);
+
+        $this->notifyAttendanceClock($user, $log);
 
         return response()->json($payload, 201);
     }
