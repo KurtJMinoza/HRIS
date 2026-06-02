@@ -23,6 +23,7 @@ function resolveVariant(statusRaw, labelRaw, presenceIssue) {
     return 'present_incomplete'
   }
 
+  if (status === 'presentwithot' || status === 'present_with_ot' || label.includes('present with ot')) return 'present'
   if (status === 'present' || label.includes('present')) return 'present'
   if (status === 'late' || label.includes('late')) return 'late'
   if (status === 'absent' || label.includes('absent')) return 'absent'

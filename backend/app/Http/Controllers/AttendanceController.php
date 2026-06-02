@@ -2205,7 +2205,7 @@ class AttendanceController extends Controller
                             $earlyTimeout
                         );
                         $dayUndertimeMinutes = $undertimeMinutes > 0 ? $undertimeMinutes : null;
-                        if ($undertimeMinutes > 0 || $effectiveWorkedMinutes < $requiredMinutes - $undertimeThresholdMinutes) {
+                        if ($undertimeMinutes > 0) {
                             $metrics['undertime_count']++;
                             $status = 'undertime';
                         }

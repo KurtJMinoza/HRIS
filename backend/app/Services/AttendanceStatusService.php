@@ -549,6 +549,49 @@ class AttendanceStatusService
     }
 
     /**
+     * Raw clock-based OT minutes (pre-shift before scheduled start + post-shift after end + buffer).
+     * Used by dashboard, reports, and {@see AttendanceStatusResolver}.
+     *
+     * @return array{total_minutes: int, pre_minutes: int, post_minutes: int}
+     */
+    public static function computeRawOvertimeBreakdown(
+        string $dateKey,
+        array $daySchedule,
+        Carbon $timeIn,
+        Carbon $timeOut,
+        ?string $tz = null,
+    ): array {
+        $preMinutes = 0;
+        $postMinutes = 0;
+
+        if (empty($daySchedule['in']) || empty($daySchedule['out'])) {
+            return ['total_minutes' => 0, 'pre_minutes' => 0, 'post_minutes' => 0];
+        }
+
+        $scheduledStart = self::getScheduledStartForDate($dateKey, $daySchedule, $tz);
+        if ($scheduledStart && $timeIn->lessThan($scheduledStart)) {
+            $preMinutes = (int) $timeIn->diffInMinutes($scheduledStart);
+        }
+
+        $scheduledEnd = self::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+        if ($scheduledEnd) {
+            $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
+                ? (int) $daySchedule['overtime_buffer_minutes']
+                : (int) config('attendance.overtime_buffer_minutes', 15);
+            $postShiftOtStart = $scheduledEnd->copy()->addMinutes($overtimeBuffer);
+            if ($timeOut->greaterThan($postShiftOtStart)) {
+                $postMinutes = (int) $postShiftOtStart->diffInMinutes($timeOut);
+            }
+        }
+
+        return [
+            'total_minutes' => $preMinutes + $postMinutes,
+            'pre_minutes' => $preMinutes,
+            'post_minutes' => $postMinutes,
+        ];
+    }
+
+    /**
      * Human-readable premium flag for display (e.g. "OT + ND on Rest Day").
      * Used in Employee dashboard and Admin attendance views.
      *

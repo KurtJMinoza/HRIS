@@ -362,6 +362,7 @@ export function resolveAdminStatusLabel(row) {
     return row.is_approved_undertime ? 'Undertime (Approved)' : 'Undertime (Unfiled)'
   }
   if (rawStatus === 'absent') return 'Absent'
+  if (rawStatus === 'present_with_ot') return 'Present with OT'
   if (rawStatus === 'present') return row.has_approved_overtime ? 'Present + OT' : 'Present'
   if (rawStatus === 'halfday') return row.late_label || 'Half Day'
   if (rawStatus === 'incomplete') return 'Present (Incomplete)'
@@ -387,6 +388,7 @@ export function resolveEmployeeStatusLabel(row) {
   if (row.status === 'halfday') return row.late_label || 'Half Day'
   if (row.status === 'absent') return 'Absent'
   if (row.status === 'incomplete') return 'Present (Incomplete)'
+  if (row.status === 'present_with_ot') return 'Present with OT'
   if (row.status === 'present') return row.late_label || 'Present'
   if (row.status === 'undertime') return 'Undertime'
   if (row.status === 'clocked_in') return row.late_label || 'Clocked in'

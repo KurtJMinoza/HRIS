@@ -296,9 +296,9 @@ function getCalendarDayVisual(record, dateKey, ctx) {
     }
   }
 
-  if (status === 'present') {
+  if (status === 'present' || status === 'present_with_ot') {
     return {
-      badge: 'Present',
+      badge: status === 'present_with_ot' ? 'Present w/ OT' : 'Present',
       tileClass: `${baseGridCell} ${tint.emerald}`,
       badgeClass: `${L.ink} ${L.emerald}`,
     }
@@ -840,19 +840,9 @@ export default function EmployeeDashboard() {
     return map
   }, [days])
 
-  function normalizeCalendarRecord(record) {
-    if (!record) return record
-    const hasTimeIn = Boolean(record.formatted_time_in || record.time_in)
-    const hasTimeOut = Boolean(record.formatted_time_out || record.time_out)
-    if (record.status === 'present' && hasTimeIn !== hasTimeOut) {
-      return { ...record, status: 'undertime' }
-    }
-    return record
-  }
-
   function calendarRecordForTile(key) {
     const raw = recordByDate.get(key) ?? null
-    if (raw) return normalizeCalendarRecord(raw)
+    if (raw) return raw
     const st = statusByDate.get(key)
     const effective = st ?? '—'
     if (isRestDay(key) && (effective === '—' || effective === 'absent')) {
@@ -936,7 +926,7 @@ export default function EmployeeDashboard() {
               formatted_time_out: fromApi.formatted_time_out || today.formatted_time_out || null,
             }
           : fromApi
-      return { ...normalizeCalendarRecord(merged), date_iso: iso }
+      return { ...merged, date_iso: iso }
     }
     const st = statusByDate.get(iso)
     const effective = st ?? '—'
@@ -1207,6 +1197,7 @@ export default function EmployeeDashboard() {
       return lateLabel || 'Present'
     }
     if (status === 'present') return 'Present'
+    if (status === 'present_with_ot') return 'Present with OT'
     if (status === 'late') return lateLabel || 'Late'
     if (status === 'halfday') return 'Half Day'
     if (status === 'undertime') return 'Undertime'
@@ -1229,7 +1220,17 @@ export default function EmployeeDashboard() {
     }
     if (typeof record.undertime_minutes === 'number' && record.undertime_minutes > 0) lines.push(`Undertime: ${record.undertime_minutes} min`)
     if (typeof record.total_hours === 'number') lines.push(`Total: ${record.total_hours.toFixed ? record.total_hours.toFixed(2) : record.total_hours}h`)
-    if (typeof record.overtime_hours === 'number' && record.overtime_hours > 0) lines.push(`OT: ${record.overtime_hours.toFixed ? record.overtime_hours.toFixed(2) : record.overtime_hours}h`)
+    const otHours =
+      typeof record.raw_overtime_hours === 'number'
+        ? record.raw_overtime_hours
+        : typeof record.overtime_hours === 'number'
+          ? record.overtime_hours
+          : typeof record.overtime_minutes === 'number' && record.overtime_minutes > 0
+            ? record.overtime_minutes / 60
+            : null
+    if (otHours != null && otHours > 0) {
+      lines.push(`OT: ${typeof otHours === 'number' && otHours.toFixed ? otHours.toFixed(2) : otHours} hrs`)
+    }
     return lines
   }
 
@@ -2153,6 +2154,23 @@ export default function EmployeeDashboard() {
                             </span>
                           </div>
                         )}
+                      {(() => {
+                        const otHours =
+                          typeof selectedDayDetails.raw_overtime_hours === 'number'
+                            ? selectedDayDetails.raw_overtime_hours
+                            : typeof selectedDayDetails.overtime_minutes === 'number' && selectedDayDetails.overtime_minutes > 0
+                              ? selectedDayDetails.overtime_minutes / 60
+                              : null
+                        if (otHours == null || otHours <= 0) return null
+                        return (
+                          <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
+                            <span className="font-medium text-muted-foreground">OT</span>
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                              {otHours.toFixed(2)} hrs
+                            </span>
+                          </div>
+                        )
+                      })()}
                       {(() => {
                         const th = getAttendanceTotalHours(selectedDayDetails)
                         if (th == null) return null

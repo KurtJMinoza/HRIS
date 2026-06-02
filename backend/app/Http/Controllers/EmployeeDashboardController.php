@@ -53,7 +53,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::summaryKey($employeeId, $todayDate);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 4) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 5) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             Log::debug('[EmployeeDashboard] summary cache HIT', [
@@ -170,7 +170,7 @@ class EmployeeDashboardController extends Controller
             'upcoming_payroll' => $upcomingBatch,
             'latest_payslip' => $latestPayslipSummary,
             'meta' => [
-                'schema_version' => 4,
+                'schema_version' => 5,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -228,7 +228,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 4) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 5) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -324,7 +324,6 @@ class EmployeeDashboardController extends Controller
             'undertime_count' => 0,
             'total_worked_minutes' => 0,
         ];
-        $undertimeThresholdMinutes = (int) config('attendance.undertime_threshold_minutes', 60);
         $cursor = $from->copy();
         $holidayMap = [];
         foreach ($holidays as $h) {
@@ -380,115 +379,64 @@ class EmployeeDashboardController extends Controller
                     );
                 }
             }
-            $dayLateMinutes = 0;
-            $dayLateLabel = null;
-            $dayUndertimeMinutes = 0;
-            $rawOtMinutes = 0;
+
+            $dayLateMinutes = (int) ($resolved['late_minutes'] ?? 0);
+            $dayLateLabel = $resolved['late_label'] ?? null;
+            $dayUndertimeMinutes = (int) ($resolved['undertime_minutes'] ?? 0);
+            $rawOtMinutes = (int) ($resolved['overtime_minutes'] ?? 0);
             $rawPreOtSegment = null;
             $rawPostOtSegment = null;
-            $hasIncompletePunchPair = ($hasTimeIn xor $hasTimeOut);
 
-            // Track extra metrics for monthly overview using the legacy /attendance/summary rules.
             if (
-                $effectiveTimeIn instanceof Carbon
-                && is_array($daySchedule)
-                && ! empty($daySchedule['in'])
+                $dayLateMinutes > 0
                 && ! in_array($status, ['holiday', 'leave', 'rest', 'upcoming', 'absent'], true)
                 && ! $isRestDay
             ) {
-                $clockInResult = AttendanceStatusService::getClockInStatus($daySchedule, $dateKey, $effectiveTimeIn);
-                if ($clockInResult['status'] === 'late') {
-                    $dayLateMinutes = (int) $clockInResult['late_minutes'];
-                    $dayLateLabel = $clockInResult['late_label'] ?? 'Late';
-                    $extraMetrics['late_minutes'] += $dayLateMinutes;
-                } elseif ($clockInResult['status'] === 'half_day') {
-                    $dayLateLabel = $clockInResult['late_label'] ?? 'Half Day';
-                } else {
-                    $dayLateLabel = $clockInResult['late_label'] ?? null;
-                }
+                $extraMetrics['late_minutes'] += $dayLateMinutes;
             }
 
             if (
-                $status !== 'halfday'
-                && $effectiveTimeIn instanceof Carbon
-                && $effectiveTimeOut instanceof Carbon
-                && is_array($daySchedule)
-                && ! empty($daySchedule['in'])
-                && ! empty($daySchedule['out'])
+                $dayUndertimeMinutes > 0
+                && $status === AttendanceStatusResolver::STATUS_UNDERTIME
                 && ! in_array($status, ['holiday', 'leave', 'rest', 'upcoming', 'absent'], true)
                 && ! $isRestDay
             ) {
-                $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $attendanceTz);
-                if ($scheduledEnd) {
-                    $requiredMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $daySchedule, $attendanceTz);
-                    $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-                    $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
-                        $dateKey,
-                        $daySchedule,
-                        $effectiveTimeIn,
-                        $effectiveTimeOut,
-                        $attendanceTz,
-                        $earlyTimeout
-                    );
-                    $dayUndertimeMinutes = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
-                    if ($undertimeMinutes > 0 || ($effectiveWorkedMinutes !== null && $effectiveWorkedMinutes < $requiredMinutes - $undertimeThresholdMinutes)) {
-                        $extraMetrics['undertime_count']++;
-                        $status = 'undertime';
-                    }
-                }
-            }
-
-            if (
-                $status === 'present'
-                && $hasIncompletePunchPair
-                && ! in_array($status, ['holiday', 'leave', 'rest', 'upcoming', 'absent'], true)
-                && ! $isRestDay
-            ) {
-                $status = 'undertime';
-                $dayUndertimeMinutes = $dayUndertimeMinutes > 0 ? $dayUndertimeMinutes : null;
                 $extraMetrics['undertime_count']++;
             }
 
-            if (in_array($status, ['present', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true) && $effectiveWorkedMinutes !== null) {
+            if (in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true) && $effectiveWorkedMinutes !== null) {
                 $extraMetrics['total_worked_minutes'] += $effectiveWorkedMinutes;
             }
 
-            if ($effectiveTimeIn instanceof Carbon && $effectiveTimeOut instanceof Carbon && is_array($daySchedule) && ! empty($daySchedule['in']) && ! empty($daySchedule['out']) && ! $isRestDay) {
+            if ($rawOtMinutes > 0 && $effectiveTimeIn instanceof Carbon && $effectiveTimeOut instanceof Carbon && is_array($daySchedule) && ! empty($daySchedule['in']) && ! empty($daySchedule['out']) && ! $isRestDay) {
+                $inCarbon = $effectiveTimeIn;
+                $outCarbon = $effectiveTimeOut;
+                $otBreakdown = AttendanceStatusService::computeRawOvertimeBreakdown($dateKey, $daySchedule, $inCarbon, $outCarbon, $attendanceTz);
                 $scheduledStartForOt = AttendanceStatusService::getScheduledStartForDate($dateKey, $daySchedule, $attendanceTz);
                 $scheduledEndForOt = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $attendanceTz);
 
-                if ($scheduledStartForOt && $effectiveTimeIn->lessThan($scheduledStartForOt)) {
-                    $preMinutes = (int) $effectiveTimeIn->diffInMinutes($scheduledStartForOt);
-                    if ($preMinutes > 0) {
-                        $rawOtMinutes += $preMinutes;
-                        $rawPreOtSegment = [
-                            'kind' => 'pre_shift',
-                            'start' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
-                            'end' => $this->formatTimeInAttendanceTz($scheduledStartForOt),
-                            'minutes' => $preMinutes,
-                            'hours' => round($preMinutes / 60, 2),
-                        ];
-                    }
+                if ($scheduledStartForOt && $otBreakdown['pre_minutes'] > 0) {
+                    $rawPreOtSegment = [
+                        'kind' => 'pre_shift',
+                        'start' => $this->formatTimeInAttendanceTz($inCarbon),
+                        'end' => $this->formatTimeInAttendanceTz($scheduledStartForOt),
+                        'minutes' => $otBreakdown['pre_minutes'],
+                        'hours' => round($otBreakdown['pre_minutes'] / 60, 2),
+                    ];
                 }
 
-                if ($scheduledEndForOt) {
+                if ($scheduledEndForOt && $otBreakdown['post_minutes'] > 0) {
                     $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
                         ? (int) $daySchedule['overtime_buffer_minutes']
                         : (int) config('attendance.overtime_buffer_minutes', 15);
                     $postShiftOtStart = $scheduledEndForOt->copy()->addMinutes($overtimeBuffer);
-                    if ($effectiveTimeOut->greaterThan($postShiftOtStart)) {
-                        $postMinutes = (int) $postShiftOtStart->diffInMinutes($effectiveTimeOut);
-                        if ($postMinutes > 0) {
-                            $rawOtMinutes += $postMinutes;
-                            $rawPostOtSegment = [
-                                'kind' => 'post_shift',
-                                'start' => $this->formatTimeInAttendanceTz($postShiftOtStart),
-                                'end' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
-                                'minutes' => $postMinutes,
-                                'hours' => round($postMinutes / 60, 2),
-                            ];
-                        }
-                    }
+                    $rawPostOtSegment = [
+                        'kind' => 'post_shift',
+                        'start' => $this->formatTimeInAttendanceTz($postShiftOtStart),
+                        'end' => $this->formatTimeInAttendanceTz($outCarbon),
+                        'minutes' => $otBreakdown['post_minutes'],
+                        'hours' => round($otBreakdown['post_minutes'] / 60, 2),
+                    ];
                 }
             }
 
@@ -519,7 +467,7 @@ class EmployeeDashboardController extends Controller
                 $unapprovedOtHours = 0.0;
             }
 
-            if ($status === 'present' || $status === 'late') {
+            if (in_array($status, ['present', 'present_with_ot', 'late'], true)) {
                 $metrics['present_count']++;
                 if ($status === 'late') {
                     $metrics['late_count']++;
@@ -607,7 +555,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 4,
+                'schema_version' => 5,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -693,7 +641,7 @@ class EmployeeDashboardController extends Controller
             'corrections' => $recentCorrections,
             'leave_summary' => $leaveSummary,
             'meta' => [
-                'schema_version' => 4,
+                'schema_version' => 5,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -820,70 +768,30 @@ class EmployeeDashboardController extends Controller
             : (is_array($todayLogs) ? $todayLogs : []);
         [$effectiveTimeIn, $effectiveTimeOut, $hasTimeIn, $hasTimeOut] = $this->resolveDisplayClockTimes($todayLogList, $todayCorrection);
 
-        $status = '—';
-        $lateMinutes = null;
-        $lateLabel = null;
-        $undertimeMinutes = null;
+        $resolved = $this->statusResolver->resolve(
+            dateKey: $todayDate,
+            todayDate: $todayDate,
+            nowTz: $todayNow,
+            effectiveSchedule: $effectiveSchedule,
+            daySchedule: $daySchedule,
+            dayLogs: $todayLogList,
+            correction: $todayCorrection,
+            holiday: null,
+            leave: $todayLeave,
+            isRestDay: $isRestDay,
+            isFuture: false,
+        );
 
-        if ($todayLeave) {
-            $status = 'leave';
-        } elseif ($isRestDay) {
-            $status = 'rest';
+        $status = $resolved['status'];
+        $lateMinutes = ($resolved['late_minutes'] ?? 0) > 0 ? (int) $resolved['late_minutes'] : null;
+        $lateLabel = $resolved['late_label'] ?? null;
+        $undertimeMinutes = ($resolved['undertime_minutes'] ?? 0) > 0 ? (int) $resolved['undertime_minutes'] : null;
+
+        if ($isRestDay) {
             $effectiveTimeIn = null;
             $effectiveTimeOut = null;
             $hasTimeIn = false;
             $hasTimeOut = false;
-        } elseif ($scheduleAssigned && $daySchedule && ! empty($daySchedule['in'])) {
-            if (! $hasTimeIn && ! $hasTimeOut) {
-                $pastCutoff = AttendanceStatusService::isPastAbsentCutoff($todayDate, $todayNow);
-                if ($pastCutoff) {
-                    $status = 'absent';
-                }
-            } elseif ($hasTimeIn) {
-                $timeInCarbon = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
-                $clockInResult = AttendanceStatusService::getClockInStatus($daySchedule, $todayDate, $timeInCarbon);
-
-                if ($clockInResult['status'] === 'half_day') {
-                    $status = 'halfday';
-                    $lateLabel = 'Half Day';
-                } elseif ($clockInResult['status'] === 'late') {
-                    $status = 'late';
-                    $lateMinutes = $clockInResult['late_minutes'];
-                    $lateLabel = $clockInResult['late_label'];
-                } else {
-                    $status = 'present';
-                    $lateLabel = 'Present';
-                }
-
-                // Undertime check
-                if ($hasTimeIn && $hasTimeOut && ! empty($daySchedule['out'])) {
-                    $outCarbon = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
-                    $inCarbon = $timeInCarbon;
-                    $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($todayDate, $daySchedule, $attendanceTz);
-                    $undertimeThreshold = (int) config('attendance.undertime_threshold_minutes', 60);
-
-                    if ($scheduledEnd && $outCarbon->lessThan($scheduledEnd)) {
-                        $requiredMinutes = AttendanceStatusService::getRequiredWorkingMinutes($todayDate, $daySchedule, $attendanceTz);
-                        $netWorked = AttendanceStatusService::getScheduleClippedNetWorkedMinutes(
-                            $inCarbon, $outCarbon, $daySchedule, $todayDate, $attendanceTz
-                        );
-                        $undertimeMinutes = max(0, $requiredMinutes - $netWorked);
-                        if ($undertimeMinutes > 0) {
-                            $status = 'undertime';
-                        }
-                    }
-                }
-
-                // Clocked in without time-out
-                if ($hasTimeIn && ! $hasTimeOut && ! empty($daySchedule['out'])) {
-                    $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($todayDate, $daySchedule, $attendanceTz);
-                    if ($scheduledEnd && $todayNow->greaterThan($scheduledEnd)) {
-                        $status = 'incomplete';
-                    } else {
-                        $status = 'clocked_in';
-                    }
-                }
-            }
         }
 
         // Status label
@@ -892,6 +800,7 @@ class EmployeeDashboardController extends Controller
             'rest' => AttendanceStatusResolver::REST_DAY_LABEL,
             'absent' => 'Missed clock-in',
             'present' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Present',
+            'present_with_ot' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Present with OT',
             'late' => $hasTimeIn && ! $hasTimeOut ? 'Working' : ($lateLabel ?: 'Late'),
             'halfday' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Half Day',
             'clocked_in' => 'Working',
