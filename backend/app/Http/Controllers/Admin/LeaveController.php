@@ -1465,6 +1465,15 @@ class LeaveController extends Controller
             ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
             ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
             ->whereIn('request_id', $requestIds)
+            ->whereNotExists(function ($earlier): void {
+                $earlier
+                    ->selectRaw('1')
+                    ->from('org_approval_records as earlier_approval')
+                    ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
+                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
+            })
             ->with('approver:id,name,first_name,middle_name,last_name,suffix')
             ->orderBy('sequence_order')
             ->orderBy('id')
@@ -1555,23 +1564,63 @@ class LeaveController extends Controller
      */
     private function applyFilingApprovalVisibility(User $actor, $query, Request $request): void
     {
+        $status = (string) $request->query('status', '');
+        if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
+            if ($status === LeaveRequest::STATUS_PENDING) {
+                $this->whereCurrentPendingApprovalForActor($query, OrgApprovalWorkflowService::MODULE_LEAVE, (int) $actor->id, 'leave_requests.id');
+            }
+
+            return;
+        }
+
         $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
         if ($scopedEmployeeIds === null) {
             return;
         }
 
-        $assignedRequestIds = $this->assignedLeaveRequestIdsForActor($actor);
         $actorId = (int) $actor->id;
-        $query->where(function ($scope) use ($scopedEmployeeIds, $assignedRequestIds, $actorId): void {
-            $scope->whereIn('user_id', $scopedEmployeeIds)
-                ->orWhere('first_approver_id', $actorId)
-                ->orWhere('second_approver_id', $actorId);
-
-            if ($assignedRequestIds !== []) {
-                $scope->orWhereIn('id', $assignedRequestIds);
-            }
+        $query->where(function ($scope) use ($actorId): void {
+            $this->whereCurrentPendingApprovalForActor($scope, OrgApprovalWorkflowService::MODULE_LEAVE, $actorId, 'leave_requests.id');
+            $this->orWhereActorHasHandledApproval($scope, OrgApprovalWorkflowService::MODULE_LEAVE, $actorId, 'leave_requests.id');
         });
+    }
 
+    private function whereCurrentPendingApprovalForActor($query, string $moduleType, int $actorId, string $requestColumn): void
+    {
+        $query->whereExists(function ($approval) use ($moduleType, $actorId, $requestColumn): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as current_approval')
+                ->whereColumn('current_approval.request_id', $requestColumn)
+                ->where('current_approval.module_type', $moduleType)
+                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->where('current_approval.approver_id', $actorId)
+                ->whereNotExists(function ($earlier) use ($moduleType): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                        ->where('earlier_approval.module_type', $moduleType)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+                });
+        });
+    }
+
+    private function orWhereActorHasHandledApproval($query, string $moduleType, int $actorId, string $requestColumn): void
+    {
+        $query->orWhereExists(function ($approval) use ($moduleType, $actorId, $requestColumn): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as handled_approval')
+                ->whereColumn('handled_approval.request_id', $requestColumn)
+                ->where('handled_approval.module_type', $moduleType)
+                ->where('handled_approval.approver_id', $actorId)
+                ->whereIn('handled_approval.approval_status', [
+                    OrgApprovalRecord::STATUS_APPROVED,
+                    OrgApprovalRecord::STATUS_REJECTED,
+                ]);
+        });
     }
 
     /**
@@ -1604,23 +1653,58 @@ class LeaveController extends Controller
         $actorId = (int) $actor->id;
         if ((int) $leave->user_id === $actorId
             || (int) $leave->filed_by === $actorId
-            || (int) $leave->first_approver_id === $actorId
-            || (int) $leave->second_approver_id === $actorId
         ) {
             return true;
         }
 
-        if (OrgApprovalRecord::query()
+        if ($leave->status === LeaveRequest::STATUS_PENDING
+            && $leave->pending_approval
+            && OrgApprovalRecord::query()
             ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
             ->where('request_id', (int) $leave->id)
             ->where('approver_id', $actorId)
+            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+            ->whereNotExists(function ($earlier): void {
+                $earlier
+                    ->selectRaw('1')
+                    ->from('org_approval_records as earlier_approval')
+                    ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
+                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
+            })
             ->exists()) {
+            return true;
+        }
+
+        if ($this->actorHasHandledApprovalRecord($actorId, (int) $leave->id, OrgApprovalWorkflowService::MODULE_LEAVE)) {
+            return true;
+        }
+
+        if ($leave->status === LeaveRequest::STATUS_PENDING && $leave->pending_approval) {
+            return false;
+        }
+
+        if ((int) $leave->first_approver_id === $actorId || (int) $leave->second_approver_id === $actorId) {
             return true;
         }
 
         $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
 
         return is_array($scopedEmployeeIds) && in_array((int) $leave->user_id, $scopedEmployeeIds, true);
+    }
+
+    private function actorHasHandledApprovalRecord(int $actorId, int $requestId, string $moduleType): bool
+    {
+        return OrgApprovalRecord::query()
+            ->where('module_type', $moduleType)
+            ->where('request_id', $requestId)
+            ->where('approver_id', $actorId)
+            ->whereIn('approval_status', [
+                OrgApprovalRecord::STATUS_APPROVED,
+                OrgApprovalRecord::STATUS_REJECTED,
+            ])
+            ->exists();
     }
 
     /**

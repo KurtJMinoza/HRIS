@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +28,26 @@ import { getApprovalWorkflowSettings, updateApprovalWorkflowSettings } from '@/a
 import { cn } from '@/lib/utils'
 
 const PARENT_FALLBACK_TYPES = new Set(['leave', 'overtime'])
+
+const HIERARCHY_STEP_FLAGS = [
+  { key: 'include_section_head', label: 'Section / Team' },
+  { key: 'include_department_head', label: 'Department' },
+  { key: 'include_division_head', label: 'Division' },
+  { key: 'include_branch_head', label: 'Branch' },
+  { key: 'include_area_head', label: 'Area' },
+  { key: 'include_company_head', label: 'Company' },
+]
+
+const WORKFLOW_STEP_FLAGS = [
+  ...HIERARCHY_STEP_FLAGS,
+  { key: 'include_admin_hr', label: 'Admin HR', final: true },
+]
+
+const CHAIN_MODE_OPTIONS = [
+  { value: 'nearest_plus_admin', label: 'Nearest Approver + Admin HR' },
+  { value: 'full_hierarchy', label: 'Full Hierarchy + Admin HR' },
+  { value: 'custom_selected_steps', label: 'Custom Selected Steps' },
+]
 
 const MODULE_META = {
   attendance_correction: {
@@ -92,6 +113,15 @@ function snapshotRow(row) {
     request_type: row.request_type,
     use_hierarchy_approval: Boolean(row.use_hierarchy_approval),
     fallback_to_parent_approver: Boolean(row.fallback_to_parent_approver),
+    approval_chain_mode: row.approval_chain_mode || 'custom_selected_steps',
+    max_org_approval_steps: row.max_org_approval_steps ?? null,
+    include_section_head: Boolean(row.include_section_head),
+    include_department_head: Boolean(row.include_department_head),
+    include_division_head: Boolean(row.include_division_head),
+    include_branch_head: Boolean(row.include_branch_head),
+    include_area_head: Boolean(row.include_area_head),
+    include_company_head: Boolean(row.include_company_head),
+    include_admin_hr: row.include_admin_hr !== false,
     is_active: row.is_active !== false,
   }
 }
@@ -125,6 +155,29 @@ function WorkflowSwitch({ checked, disabled, label, onCheckedChange }) {
         {toggleText(checked)}
       </span>
     </div>
+  )
+}
+
+function StepSwitch({ row, step, hierarchyOn, onToggle }) {
+  const checked = step.final ? row[step.key] !== false : Boolean(row[step.key])
+  const disabled = !step.final && !hierarchyOn
+
+  return (
+    <label
+      className={cn(
+        'flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-background px-3 py-2 dark:bg-input/15',
+        disabled && 'opacity-60',
+      )}
+    >
+      <span className="text-xs font-bold text-foreground">{step.label}</span>
+      <Switch
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(value) => onToggle(step.key, value)}
+        aria-label={`${step.label} step for ${row.request_type_label}`}
+        className="data-[state=checked]:bg-brand data-[state=unchecked]:bg-muted dark:data-[state=unchecked]:bg-input/80"
+      />
+    </label>
   )
 }
 
@@ -171,9 +224,19 @@ export default function AdminApprovalWorkflowSettings() {
 
   const resetRow = (row) => {
     const meta = MODULE_META[row.request_type] || {}
+    const defaultHierarchy = Boolean(meta.default_hierarchy)
     updateRow(row.request_type, {
-      use_hierarchy_approval: Boolean(meta.default_hierarchy),
+      use_hierarchy_approval: defaultHierarchy,
       fallback_to_parent_approver: Boolean(meta.default_fallback),
+      approval_chain_mode: 'custom_selected_steps',
+      max_org_approval_steps: null,
+      include_section_head: defaultHierarchy,
+      include_department_head: defaultHierarchy,
+      include_division_head: defaultHierarchy,
+      include_branch_head: defaultHierarchy,
+      include_area_head: defaultHierarchy,
+      include_company_head: defaultHierarchy,
+      include_admin_hr: true,
       is_active: true,
     })
   }
@@ -186,6 +249,17 @@ export default function AdminApprovalWorkflowSettings() {
           request_type: row.request_type,
           use_hierarchy_approval: Boolean(row.use_hierarchy_approval),
           fallback_to_parent_approver: Boolean(row.fallback_to_parent_approver),
+          approval_chain_mode: row.approval_chain_mode || 'custom_selected_steps',
+          max_org_approval_steps: row.max_org_approval_steps === '' || row.max_org_approval_steps == null
+            ? null
+            : Number(row.max_org_approval_steps),
+          include_section_head: Boolean(row.include_section_head),
+          include_department_head: Boolean(row.include_department_head),
+          include_division_head: Boolean(row.include_division_head),
+          include_branch_head: Boolean(row.include_branch_head),
+          include_area_head: Boolean(row.include_area_head),
+          include_company_head: Boolean(row.include_company_head),
+          include_admin_hr: row.include_admin_hr !== false,
           is_active: row.is_active !== false,
         })),
       })
@@ -216,7 +290,7 @@ export default function AdminApprovalWorkflowSettings() {
             <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Approval Workflow</h1>
           </div>
           <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-muted-foreground">
-            Configure whether each request module uses hierarchy approval before HR/Admin final approval.
+            Configure each request module's approval ladder, including Branch Head, Area Head, Company Head, and HR/Admin final approval.
           </p>
         </div>
         <Button
@@ -251,13 +325,15 @@ export default function AdminApprovalWorkflowSettings() {
           </div>
         ) : (
           <div className="overflow-x-auto px-4 pb-5 pt-4 md:px-5">
-            <div className="min-w-[1120px] overflow-hidden rounded-xl border border-border/70 bg-background dark:bg-input/15">
+            <div className="min-w-[1560px] overflow-hidden rounded-xl border border-border/70 bg-background dark:bg-input/15">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-border/70 bg-muted/35 text-[12px] font-extrabold text-foreground dark:bg-input/25">
                     <th className="px-4 py-4">Module / Request Type</th>
                     <th className="px-4 py-4">Use Hierarchy Approval</th>
                     <th className="px-4 py-4">First Approver Source</th>
+                    <th className="px-4 py-4">Approval Chain Mode</th>
+                    <th className="px-4 py-4">Enabled Approval Steps</th>
                     <th className="px-4 py-4">Fallback To Parent</th>
                     <th className="px-4 py-4">Final Approver</th>
                     <th className="px-4 py-4">Status</th>
@@ -302,6 +378,57 @@ export default function AdminApprovalWorkflowSettings() {
                             <span className="text-sm font-semibold text-muted-foreground">—</span>
                           )}
                         </td>
+                        <td className="w-[260px] px-4 py-4 align-middle">
+                          <div className="space-y-2">
+                            <select
+                              className="h-10 w-full rounded-lg border border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm disabled:opacity-60 dark:bg-input/35 dark:scheme-dark"
+                              value={row.approval_chain_mode || 'custom_selected_steps'}
+                              disabled={!hierarchyOn}
+                              onChange={(event) => {
+                                const mode = event.target.value
+                                updateRow(row.request_type, {
+                                  approval_chain_mode: mode,
+                                  max_org_approval_steps: mode === 'nearest_plus_admin' ? 1 : row.max_org_approval_steps ?? '',
+                                })
+                              }}
+                            >
+                              {CHAIN_MODE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                            <div className="flex items-center gap-2">
+                              <span className="shrink-0 text-[11px] font-bold text-muted-foreground">Max org steps</span>
+                              <Input
+                                type="number"
+                                min="0"
+                                max="6"
+                                disabled={!hierarchyOn || row.approval_chain_mode === 'nearest_plus_admin' || row.approval_chain_mode === 'full_hierarchy'}
+                                value={row.approval_chain_mode === 'nearest_plus_admin' ? 1 : row.max_org_approval_steps ?? ''}
+                                onChange={(event) => updateRow(row.request_type, { max_org_approval_steps: event.target.value })}
+                                placeholder="No limit"
+                                className="h-9 rounded-lg border-border/80 bg-background text-xs font-semibold dark:bg-input/35"
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="w-[420px] px-4 py-4 align-middle">
+                          <div className="grid grid-cols-2 gap-2">
+                            {WORKFLOW_STEP_FLAGS.map((step) => (
+                              <StepSwitch
+                                key={step.key}
+                                row={row}
+                                step={step}
+                                hierarchyOn={hierarchyOn}
+                                onToggle={(key, checked) => updateRow(row.request_type, { [key]: checked })}
+                              />
+                            ))}
+                          </div>
+                          {!hierarchyOn ? (
+                            <p className="mt-2 text-[11px] font-medium leading-4 text-muted-foreground">
+                              Turn on hierarchy approval to use organization head steps. Admin HR can still be used as the direct final approver.
+                            </p>
+                          ) : null}
+                        </td>
                         <td className="max-w-[240px] px-4 py-4 align-middle">
                           {fallbackSupported && hierarchyOn ? (
                             <div className="space-y-1.5">
@@ -319,8 +446,15 @@ export default function AdminApprovalWorkflowSettings() {
                           )}
                         </td>
                         <td className="px-4 py-4 align-middle">
-                          <span className="inline-flex rounded-full bg-muted/60 px-3 py-1 text-xs font-extrabold text-foreground ring-1 ring-border/70 dark:bg-input/35">
-                            {row.final_approver_label || 'HR/Admin'}
+                          <span
+                            className={cn(
+                              'inline-flex rounded-full px-3 py-1 text-xs font-extrabold ring-1',
+                              row.include_admin_hr === false
+                                ? 'bg-muted text-muted-foreground ring-border/70'
+                                : 'bg-muted/60 text-foreground ring-border/70 dark:bg-input/35',
+                            )}
+                          >
+                            {row.include_admin_hr === false ? 'Admin HR disabled' : row.final_approver_label || 'HR/Admin'}
                           </span>
                         </td>
                         <td className="px-4 py-4 align-middle">

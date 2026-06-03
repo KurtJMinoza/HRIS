@@ -11,6 +11,7 @@ use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
 use App\Models\LeaveRequest;
+use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
 use App\Models\PayrollBatchRun;
 use App\Models\RegularizationRecommendation;
@@ -24,6 +25,7 @@ use App\Services\EmployeeStatusService;
 use App\Services\HolidayCalendarService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PresenceFilingService;
 use App\Support\AdminDashboardCache;
@@ -223,13 +225,23 @@ class DashboardController extends Controller
             $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
             $scopedIds = $scope->select('users.id');
 
-            $leavePending = LeaveRequest::query()
-                ->whereIn('user_id', clone $scopedIds)
+            $leavePending = $this->whereCurrentPendingApprovalForActor(
+                LeaveRequest::query(),
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+                (int) $actor->id,
+                'leave_requests.id'
+            )
                 ->where('status', LeaveRequest::STATUS_PENDING)
+                ->where('pending_approval', true)
                 ->count();
-            $overtimePending = Overtime::query()
-                ->whereIn('user_id', clone $scopedIds)
+            $overtimePending = $this->whereCurrentPendingApprovalForActor(
+                Overtime::query(),
+                OrgApprovalWorkflowService::MODULE_OVERTIME,
+                (int) $actor->id,
+                'overtimes.id'
+            )
                 ->where('status', Overtime::STATUS_PENDING)
+                ->where('pending_approval', true)
                 ->count();
             $today = now($this->presenceFilingService->attendanceTimezone())->toDateString();
             $approvedOtTodayHours = (float) Overtime::query()
@@ -244,8 +256,14 @@ class DashboardController extends Controller
                 ->sum('actual_rendered_ot_hours');
             $pendingOvertimeRequest = Overtime::query()
                 ->with('user:id,name,first_name,middle_name,last_name,suffix,employee_code,position,department,profile_image')
-                ->whereIn('user_id', clone $scopedIds)
                 ->where('status', Overtime::STATUS_PENDING)
+                ->where('pending_approval', true)
+                ->tap(fn ($query) => $this->whereCurrentPendingApprovalForActor(
+                    $query,
+                    OrgApprovalWorkflowService::MODULE_OVERTIME,
+                    (int) $actor->id,
+                    'overtimes.id'
+                ))
                 ->latest()
                 ->first();
 
@@ -325,6 +343,28 @@ class DashboardController extends Controller
                 'pending_count' => $pendingAttendanceCorrections,
                 'pending_requests' => $pendingAttendanceCorrectionRequests,
             ];
+        });
+    }
+
+    private function whereCurrentPendingApprovalForActor(Builder $query, string $moduleType, int $actorId, string $requestColumn): Builder
+    {
+        return $query->whereExists(function ($approval) use ($moduleType, $actorId, $requestColumn): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as current_approval')
+                ->whereColumn('current_approval.request_id', $requestColumn)
+                ->where('current_approval.module_type', $moduleType)
+                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->where('current_approval.approver_id', $actorId)
+                ->whereNotExists(function ($earlier) use ($moduleType): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                        ->where('earlier_approval.module_type', $moduleType)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+                });
         });
     }
 

@@ -15,6 +15,7 @@ class OrganizationLeadershipService
 {
     public const LEGACY_LEVEL_MAP = [
         'company' => 'company',
+        'area' => 'area',
         'branch' => 'branch',
         'division' => 'division',
         'department' => 'department',
@@ -24,6 +25,8 @@ class OrganizationLeadershipService
     public function __construct(
         private readonly LegacyOrganizationMirrorService $mirrorService,
         private readonly OrganizationLeadershipAssignmentScopeService $assignmentScopeService,
+        private readonly ApprovalChainCacheService $approvalChainCacheService,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
     ) {}
 
     /**
@@ -73,11 +76,20 @@ class OrganizationLeadershipService
      */
     public function positionTypesForLevel(string $organizationLevel): Collection
     {
-        return OrganizationPositionType::query()
+        $types = OrganizationPositionType::query()
             ->where('organization_level', $organizationLevel)
+            ->where('is_active', true)
             ->orderBy('approval_priority')
             ->orderBy('position_name')
             ->get();
+
+        if ($organizationLevel === 'area' && $types->contains(fn (OrganizationPositionType $type): bool => $type->position_name === 'Area Head / Area Manager')) {
+            return $types
+                ->reject(fn (OrganizationPositionType $type): bool => in_array($type->position_name, ['Area Head', 'Head'], true))
+                ->values();
+        }
+
+        return $types;
     }
 
     /**
@@ -87,14 +99,23 @@ class OrganizationLeadershipService
     {
         $unit = $this->resolveUnit($legacyType, $legacyId);
         $level = $this->organizationLevelForLegacyType($legacyType);
+        if ($legacyType === 'area') {
+            $this->normalizeAreaHeadAssignments($unit);
+        }
 
-        $assignments = OrganizationPositionAssignment::query()
+        $assignmentRows = OrganizationPositionAssignment::query()
             ->with(['employee', 'positionType', 'activeDepartmentScopes'])
             ->where('organization_unit_id', (int) $unit->id)
             ->orderBy('approval_priority')
             ->orderByDesc('is_primary')
             ->orderBy('id')
-            ->get()
+            ->get();
+
+        if (in_array($legacyType, ['company', 'area', 'branch'], true)) {
+            $assignmentRows = $assignmentRows->unique(fn (OrganizationPositionAssignment $assignment): int => (int) $assignment->employee_id)->values();
+        }
+
+        $assignments = $assignmentRows
             ->map(fn (OrganizationPositionAssignment $assignment): array => $this->assignmentPayload($assignment, $legacyType))
             ->values()
             ->all();
@@ -118,6 +139,10 @@ class OrganizationLeadershipService
             'assignments' => $assignments,
         ];
 
+        if (in_array($legacyType, ['company', 'area', 'branch', 'division'], true)) {
+            $payload['approval_scope_options'] = $this->assignmentScopeService->approvalScopeOptions($legacyType, $legacyId);
+        }
+
         if ($legacyType === 'division') {
             $payload['departments'] = $this->assignmentScopeService->departmentsForDivision($legacyId);
         }
@@ -133,6 +158,9 @@ class OrganizationLeadershipService
     {
         $unit = $this->resolveUnit($legacyType, $legacyId);
         $level = $this->organizationLevelForLegacyType($legacyType);
+        if ($legacyType === 'area') {
+            $this->normalizeAreaHeadAssignments($unit);
+        }
 
         DB::transaction(function () use ($unit, $level, $assignments, $legacyType, $legacyId): void {
             $seenKeys = [];
@@ -144,10 +172,12 @@ class OrganizationLeadershipService
                     continue;
                 }
 
-                $dedupeKey = $positionTypeId.'|'.$employeeId;
+                $dedupeKey = in_array($legacyType, ['company', 'area', 'branch'], true)
+                    ? (string) $employeeId
+                    : $positionTypeId.'|'.$employeeId;
                 if (isset($seenKeys[$dedupeKey])) {
                     throw ValidationException::withMessages([
-                        "assignments.{$index}.employee_id" => ['This employee is already assigned to the same leadership role for this unit.'],
+                        "assignments.{$index}.employee_id" => ['This employee is already assigned as a head for this unit.'],
                     ]);
                 }
                 $seenKeys[$dedupeKey] = true;
@@ -197,6 +227,12 @@ class OrganizationLeadershipService
             $this->syncUnitLeadersFromAssignments($unit);
             $this->mirrorService->syncLegacyPrimaryHead($legacyType, $legacyId, $unit);
         });
+
+        $this->approvalChainCacheService->forgetForLegacyUnit($legacyType, $legacyId);
+        $this->approvalChainCacheService->forgetWorkflowSettings();
+        if (in_array($legacyType, ['company', 'area', 'branch', 'division', 'department', 'section_unit'], true)) {
+            $this->approvalWorkflowService->resyncPendingRequestChains(['leave', 'overtime']);
+        }
 
         return $this->leadershipPayload($legacyType, $legacyId);
     }
@@ -265,7 +301,8 @@ class OrganizationLeadershipService
             'remarks' => $assignment->remarks,
         ];
 
-        if ($legacyType === 'division' && (bool) ($assignment->positionType?->can_approve ?? true)) {
+        if (in_array($legacyType, ['company', 'area', 'branch', 'division'], true)
+            && (bool) ($assignment->positionType?->can_approve ?? true)) {
             $payload = array_merge($payload, $this->assignmentScopeService->scopePayloadForAssignment($assignment));
         }
 
@@ -332,12 +369,64 @@ class OrganizationLeadershipService
     {
         return match ($legacyType) {
             'company' => 'Company Head',
+            'area' => 'Area Head / Area Manager',
             'branch' => 'Branch Head',
             'division' => 'Division Head',
             'department' => 'Department Head',
             'section_unit' => 'Section Leader',
             default => 'Head',
         };
+    }
+
+    private function normalizeAreaHeadAssignments(OrganizationUnit $unit): void
+    {
+        $canonical = OrganizationPositionType::query()
+            ->where('organization_level', 'area')
+            ->where('position_name', 'Area Head / Area Manager')
+            ->first();
+
+        if (! $canonical) {
+            return;
+        }
+
+        $legacyTypeIds = OrganizationPositionType::query()
+            ->where('organization_level', 'area')
+            ->whereIn('position_name', ['Area Head', 'Head'])
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if ($legacyTypeIds === []) {
+            return;
+        }
+
+        OrganizationPositionAssignment::query()
+            ->where('organization_unit_id', (int) $unit->id)
+            ->whereIn('position_type_id', $legacyTypeIds)
+            ->orderBy('id')
+            ->get()
+            ->each(function (OrganizationPositionAssignment $assignment) use ($canonical, $unit): void {
+                $alreadyCanonical = OrganizationPositionAssignment::query()
+                    ->where('organization_unit_id', (int) $unit->id)
+                    ->where('position_type_id', (int) $canonical->id)
+                    ->where('employee_id', (int) $assignment->employee_id)
+                    ->where('id', '!=', (int) $assignment->id)
+                    ->exists();
+
+                if ($alreadyCanonical) {
+                    $assignment->forceFill([
+                        'is_active' => false,
+                        'effective_to' => $assignment->effective_to ?? now()->toDateString(),
+                    ])->save();
+
+                    return;
+                }
+
+                $assignment->forceFill([
+                    'position_type_id' => (int) $canonical->id,
+                    'organization_level' => 'area',
+                ])->save();
+            });
     }
 
     private function nullableTrim(mixed $value): ?string

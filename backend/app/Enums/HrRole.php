@@ -11,6 +11,7 @@ enum HrRole: string
 {
     case AdminHr = 'admin_hr';
     case CompanyHead = 'company_head';
+    case AreaHead = 'area_head';
     case BranchHead = 'branch_head';
     case DepartmentHead = 'department_head';
     case DivisionHead = 'division_head';
@@ -28,6 +29,7 @@ enum HrRole: string
         return match ($this) {
             self::AdminHr => 'Admin (HR)',
             self::CompanyHead => 'Company Head',
+            self::AreaHead => 'Area Head',
             self::BranchHead => 'Branch Head',
             self::DepartmentHead => 'Department Head',
             self::DivisionHead => 'Division Head',

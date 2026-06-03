@@ -491,8 +491,9 @@ class AdminUserAccountController extends Controller
             HrRole::Employee->value => 0,
             HrRole::DepartmentHead->value => 1,
             HrRole::BranchHead->value => 2,
-            HrRole::CompanyHead->value => 3,
-            HrRole::AdminHr->value => 4,
+            HrRole::AreaHead->value => 3,
+            HrRole::CompanyHead->value => 4,
+            HrRole::AdminHr->value => 5,
         ];
 
         if ($target === HrRole::AdminHr) {

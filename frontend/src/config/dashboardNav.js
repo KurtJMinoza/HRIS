@@ -96,6 +96,7 @@ export const adminNavItems = [
     icon: Building2,
     children: [
       { to: '/admin/companies', end: false, label: 'Companies', icon: Building },
+      { to: '/admin/areas', end: false, label: 'Areas', icon: Network },
       { to: '/admin/branches', end: false, label: 'Branches', icon: Network },
       { to: '/admin/divisions', end: false, label: 'Divisions', icon: Layers },
       { to: '/admin/departments', end: false, label: 'Departments', icon: Layers },

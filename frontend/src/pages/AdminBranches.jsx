@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Plus, MapPin, Loader2, MoreVertical, Pencil, Trash2, Building2, Layers, Users, ExternalLink, ChevronRight, ChevronLeft, Search, ChevronDown } from 'lucide-react'
+import { Plus, MapPin, Loader2, MoreVertical, Pencil, Trash2, Building2, Layers, Users, ExternalLink, ChevronRight, ChevronLeft, Search, ChevronDown, Network } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { getBranches, getCompanies, getEmployees, createBranch, updateBranch, deleteBranch, profileImageUrl, departmentLogoUrl } from '@/api'
+import { getAreas, getBranches, getCompanies, getEmployees, createBranch, updateBranch, deleteBranch, profileImageUrl, departmentLogoUrl } from '@/api'
 import { isRosterStaffMember } from '@/lib/rosterStaff'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
@@ -221,6 +221,7 @@ export default function AdminBranches() {
 
   const [branches, setBranches] = useState([])
   const [companies, setCompanies] = useState([])
+  const [areas, setAreas] = useState([])
   const [allEmployees, setAllEmployees] = useState([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
@@ -231,6 +232,7 @@ export default function AdminBranches() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createCompanyId, setCreateCompanyId] = useState('')
+  const [createAreaId, setCreateAreaId] = useState('')
   const [createAddress, setCreateAddress] = useState('')
   const [createManagerId, setCreateManagerId] = useState('')
   const [createSubmitting, setCreateSubmitting] = useState(false)
@@ -239,12 +241,17 @@ export default function AdminBranches() {
   const [editBranch, setEditBranch] = useState(null)
   const [editName, setEditName] = useState('')
   const [editCompanyId, setEditCompanyId] = useState('')
+  const [editAreaId, setEditAreaId] = useState('')
   const [editAddress, setEditAddress] = useState('')
   const [editManagerId, setEditManagerId] = useState('')
   const [editSubmitting, setEditSubmitting] = useState(false)
 
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
+  const [employeesBranch, setEmployeesBranch] = useState(null)
+  const [branchEmployees, setBranchEmployees] = useState([])
+  const [branchEmployeesLoading, setBranchEmployeesLoading] = useState(false)
+  const [branchEmployeesSearch, setBranchEmployeesSearch] = useState('')
 
   // Sync URL param when filter changes
   useEffect(() => {
@@ -282,7 +289,16 @@ export default function AdminBranches() {
     }
   }, [toast])
 
-  const fetchEmployees = useCallback(async (companyId) => {
+  const fetchAreas = useCallback(async () => {
+    try {
+      const data = await getAreas()
+      setAreas(data.areas || [])
+    } catch {
+      setAreas([])
+    }
+  }, [])
+
+  const fetchEmployees = useCallback(async () => {
     try {
       const params = { for_leadership_assignment: true, per_page: 'all' }
       const data = await getEmployees(params)
@@ -295,7 +311,8 @@ export default function AdminBranches() {
   // Companies list (for filter dropdown) - load once when ready
   useEffect(() => {
     void fetchCompanies()
-  }, [fetchCompanies])
+    void fetchAreas()
+  }, [fetchAreas, fetchCompanies])
 
   // Branches - refetch whenever company filter changes (includes initial mount)
   useEffect(() => {
@@ -321,11 +338,12 @@ export default function AdminBranches() {
       await createBranch({
         name,
         company_id: createdCompanyId,
+        area_id: createAreaId ? parseInt(createAreaId, 10) : null,
         address: createAddress.trim() || undefined,
         branch_manager_id: createManagerId ? parseInt(createManagerId, 10) : null,
       })
       setCreateOpen(false)
-      setCreateName(''); setCreateCompanyId(''); setCreateAddress(''); setCreateManagerId('')
+      setCreateName(''); setCreateCompanyId(''); setCreateAreaId(''); setCreateAddress(''); setCreateManagerId('')
       await fetchBranches()
       await fetchEmployees(createdCompanyId)
       toast({ title: `${name} created! Add departments next?`, variant: 'success' })
@@ -340,6 +358,7 @@ export default function AdminBranches() {
     setEditBranch(branch)
     setEditName(branch.name)
     setEditCompanyId(branch.company_id ? String(branch.company_id) : '')
+    setEditAreaId(branch.area_id ? String(branch.area_id) : '')
     setEditAddress(branch.address || '')
     setEditManagerId(branch.branch_manager_id ? String(branch.branch_manager_id) : '')
     setEditOpen(true)
@@ -354,6 +373,7 @@ export default function AdminBranches() {
       await updateBranch(editBranch.id, {
         name: editName.trim(),
         company_id: companyIdForList,
+        area_id: editAreaId ? parseInt(editAreaId, 10) : null,
         address: editAddress.trim() || null,
         branch_manager_id: editManagerId ? parseInt(editManagerId, 10) : null,
       })
@@ -384,6 +404,26 @@ export default function AdminBranches() {
     }
   }
 
+  const openEmployeesModal = async (branch) => {
+    setEmployeesBranch(branch)
+    setBranchEmployees([])
+    setBranchEmployeesSearch('')
+    setBranchEmployeesLoading(true)
+    try {
+      const data = await getEmployees({
+        branch_id: branch.id,
+        per_page: 'all',
+        fresh: true,
+      })
+      setBranchEmployees(data.employees || [])
+    } catch (e) {
+      setBranchEmployees([])
+      toast({ title: 'Failed to load branch employees', description: e.message, variant: 'error' })
+    } finally {
+      setBranchEmployeesLoading(false)
+    }
+  }
+
   const activeCompany = companies.find((c) => String(c.id) === String(companyFilter))
   const pageSize = 6
   const totalBranches = branches.length
@@ -392,6 +432,23 @@ export default function AdminBranches() {
   const pagedBranches = branches.slice((currentPage - 1) * pageSize, currentPage * pageSize)
   const rangeStart = totalBranches > 0 ? (currentPage - 1) * pageSize + 1 : 0
   const rangeEnd = Math.min(currentPage * pageSize, totalBranches)
+  const areasForCreateCompany = useMemo(
+    () => areas.filter((area) => !createCompanyId || String(area.company_id) === String(createCompanyId)),
+    [areas, createCompanyId],
+  )
+  const areasForEditCompany = useMemo(
+    () => areas.filter((area) => !editCompanyId || String(area.company_id) === String(editCompanyId)),
+    [areas, editCompanyId],
+  )
+  const filteredBranchEmployees = useMemo(() => {
+    const query = branchEmployeesSearch.trim().toLowerCase()
+    if (!query) return branchEmployees
+    return branchEmployees.filter((employee) =>
+      `${employee.name || ''} ${employee.employee_code || ''} ${employee.email || ''} ${employee.position || ''} ${employee.department || ''}`
+        .toLowerCase()
+        .includes(query),
+    )
+  }, [branchEmployees, branchEmployeesSearch])
 
   useEffect(() => {
     if (page > pageCount) setPage(pageCount)
@@ -421,7 +478,7 @@ export default function AdminBranches() {
         </div>
         <Button
           className="h-12 rounded-xl bg-brand px-6 text-base font-bold text-brand-foreground shadow-[0_8px_24px_rgba(249,115,22,0.28)] hover:bg-brand-strong"
-          onClick={() => { setCreateOpen(true); setCreateName(''); setCreateCompanyId(companyFilter || ''); setCreateAddress(''); setCreateManagerId('') }}
+          onClick={() => { setCreateOpen(true); setCreateName(''); setCreateCompanyId(companyFilter || ''); setCreateAreaId(''); setCreateAddress(''); setCreateManagerId('') }}
         >
           <Plus className="size-5" />
           Add Branch
@@ -477,7 +534,7 @@ export default function AdminBranches() {
                   ? `Start organizing ${activeCompany.name} by adding a branch. Branches group departments and employees by location.`
                   : 'Add a branch to get started. Select a company above to filter, or add a branch for any company.'}
               </p>
-              <Button className="mt-6 rounded-xl bg-brand font-bold text-brand-foreground shadow-md transition-shadow hover:bg-brand-strong hover:shadow-lg" onClick={() => { setCreateOpen(true); setCreateName(''); setCreateCompanyId(companyFilter || ''); setCreateAddress(''); setCreateManagerId('') }}>
+              <Button className="mt-6 rounded-xl bg-brand font-bold text-brand-foreground shadow-md transition-shadow hover:bg-brand-strong hover:shadow-lg" onClick={() => { setCreateOpen(true); setCreateName(''); setCreateCompanyId(companyFilter || ''); setCreateAreaId(''); setCreateAddress(''); setCreateManagerId('') }}>
                 <Plus className="size-4" />
                 Add Branch
               </Button>
@@ -511,6 +568,12 @@ export default function AdminBranches() {
                             <span>{branch.company_name} (Company)</span>
                           </button>
                         )}
+                        {branch.area_name ? (
+                          <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                            <Network className="size-3.5 shrink-0" />
+                            <span>{branch.area_name} (Area)</span>
+                          </p>
+                        ) : null}
                         <div className="mt-2.5 flex items-center gap-2">
                           {branch.branch_manager_name ? (
                             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-brand/25 bg-brand/10 px-2.5 py-1">
@@ -535,13 +598,15 @@ export default function AdminBranches() {
                             <Layers className="size-3 shrink-0" />
                             {branch.departments_count ?? 0} Departments
                           </button>
-                          <span
-                            className="inline-flex items-center gap-1.5 rounded-xl bg-muted px-4 py-2 text-sm font-bold text-foreground"
+                          <button
+                            type="button"
+                            onClick={() => openEmployeesModal(branch)}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-muted px-4 py-2 text-sm font-bold text-foreground transition-colors hover:bg-muted/80"
                             title={`${branch.employees_count ?? 0} employee(s) in this branch`}
                           >
                             <Users className="size-3 shrink-0" />
                             {branch.employees_count ?? 0} Employees
-                          </span>
+                          </button>
                           <div className="ml-auto">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
@@ -552,6 +617,9 @@ export default function AdminBranches() {
                               <DropdownMenuContent align="end" className="w-48">
                                 <DropdownMenuItem onClick={() => navigate(`/admin/departments?branch_id=${branch.id}`)}>
                                   <ExternalLink className="size-4" /><span>View Departments</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openEmployeesModal(branch)}>
+                                  <Users className="size-4" /><span>View Employees</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openEdit(branch)}>
                                   <Pencil className="size-4" /><span>Edit</span>
@@ -594,7 +662,7 @@ export default function AdminBranches() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent
           showCloseButton
-          className="max-w-[min(100vw-1.5rem,42rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          className="max-w-[min(100vw-1.5rem,82rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
           innerClassName="p-0"
           closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
           overlayClassName="bg-black/55 backdrop-blur-sm"
@@ -630,7 +698,7 @@ export default function AdminBranches() {
                 <select
                   className="h-12 w-full rounded-xl border border-brand/60 bg-background px-4 text-sm text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35 dark:[color-scheme:dark]"
                   value={createCompanyId}
-                  onChange={(e) => { setCreateCompanyId(e.target.value); setCreateManagerId('') }}
+                  onChange={(e) => { setCreateCompanyId(e.target.value); setCreateAreaId(''); setCreateManagerId('') }}
                   required
                 >
                   <option value="">Select company</option>
@@ -644,6 +712,20 @@ export default function AdminBranches() {
                   No companies yet. <button type="button" className="text-primary underline" onClick={() => { setCreateOpen(false); navigate('/admin/companies') }}>Create a company</button> first.
                 </p>
               )}
+            </div>
+            <div className="space-y-2">
+              <Label className="text-base font-semibold text-foreground">Area (optional)</Label>
+              <select
+                className="h-12 w-full rounded-xl border border-border/80 bg-background px-4 text-sm text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 disabled:opacity-60 dark:bg-input/35 dark:[color-scheme:dark]"
+                value={createAreaId}
+                onChange={(e) => setCreateAreaId(e.target.value)}
+                disabled={!createCompanyId}
+              >
+                <option value="">No area</option>
+                {areasForCreateCompany.map((area) => (
+                  <option key={area.id} value={area.id}>{area.area_name || area.name}</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="create-branch-name" className="text-base font-semibold text-foreground">Branch Name <span className="text-brand">*</span></Label>
@@ -689,14 +771,19 @@ export default function AdminBranches() {
       <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) setEditBranch(null) }}>
         <DialogContent
           showCloseButton
-          className="max-w-[min(100vw-1.5rem,42rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
-          innerClassName="p-0"
+          surfaceStyle={{
+            width: 'min(calc(100vw - 1.5rem), 88rem)',
+            maxWidth: 'none',
+            height: 'min(92vh, 52rem)',
+          }}
+          className="max-h-[min(92vh,52rem)] min-h-0 min-w-0 max-w-none! rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="flex min-h-0 flex-1 flex-col !gap-0 !overflow-hidden !p-0"
           closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
           overlayClassName="bg-black/55 backdrop-blur-sm"
           aria-describedby="branch-edit-desc"
         >
-          <form onSubmit={handleEdit} className="flex min-h-0 flex-1 flex-col">
-            <div className="border-b border-border/80 px-6 pb-5 pt-7 pr-16 @md:px-8">
+          <form onSubmit={handleEdit} className="flex min-h-0 flex-1 flex-col overflow-hidden text-foreground">
+            <div className="shrink-0 border-b border-border/80 px-6 pb-5 pt-7 pr-16 @md:px-8">
               <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
                 <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-brand/20 bg-brand/10 text-brand">
                   {departmentLogoUrl(editBranch) ? (
@@ -716,16 +803,31 @@ export default function AdminBranches() {
               </DialogHeader>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-6 @md:px-8">
+            <div className="grid min-h-0 flex-1 grid-cols-1 divide-y divide-border/80 overflow-hidden lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:divide-x lg:divide-y-0">
+              <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-6 @md:px-8">
             <div className="space-y-2">
               <Label className="text-base font-semibold text-foreground">Company <span className="text-brand">*</span></Label>
               <select
                 className="h-12 w-full rounded-xl border border-brand/60 bg-background px-4 text-sm text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35 dark:[color-scheme:dark]"
                 value={editCompanyId}
-                onChange={(e) => { setEditCompanyId(e.target.value); setEditManagerId('') }}
+                onChange={(e) => { setEditCompanyId(e.target.value); setEditAreaId(''); setEditManagerId('') }}
               >
                 <option value="">Select company</option>
                 {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-base font-semibold text-foreground">Area (optional)</Label>
+              <select
+                className="h-12 w-full rounded-xl border border-border/80 bg-background px-4 text-sm text-foreground shadow-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15 disabled:opacity-60 dark:bg-input/35 dark:[color-scheme:dark]"
+                value={editAreaId}
+                onChange={(e) => setEditAreaId(e.target.value)}
+                disabled={!editCompanyId}
+              >
+                <option value="">No area</option>
+                {areasForEditCompany.map((area) => (
+                  <option key={area.id} value={area.id}>{area.area_name || area.name}</option>
+                ))}
               </select>
             </div>
             <div className="space-y-2">
@@ -755,13 +857,16 @@ export default function AdminBranches() {
                 />
               </div>
             </div>
+              </div>
             {editBranch?.id ? (
-              <LeadershipPositionsSection
-                legacyType="branch"
-                legacyId={editBranch.id}
-                employeeOptions={allEmployees}
-                canManage
-              />
+              <div className="min-h-0 overflow-y-auto bg-muted/10 px-4 py-5 md:px-6">
+                <LeadershipPositionsSection
+                  legacyType="branch"
+                  legacyId={editBranch.id}
+                  employeeOptions={allEmployees}
+                  canManage
+                />
+              </div>
             ) : null}
             </div>
             <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5 @md:px-8">
@@ -773,6 +878,100 @@ export default function AdminBranches() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Branch Employees */}
+      <Dialog open={!!employeesBranch} onOpenChange={(open) => { if (!open) setEmployeesBranch(null) }}>
+        <DialogContent
+          showCloseButton
+          className="max-w-[min(100vw-1.5rem,48rem)] rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="flex max-h-[min(88vh,44rem)] min-h-0 flex-col !gap-0 !overflow-hidden !p-0"
+          closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
+          overlayClassName="bg-black/55 backdrop-blur-sm"
+          aria-describedby="branch-employees-desc"
+        >
+          <div className="shrink-0 border-b border-border/80 px-6 pb-5 pt-7 pr-16">
+            <DialogHeader className="flex-row items-start gap-5 space-y-0 text-left">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand">
+                <Users className="size-7" />
+              </div>
+              <div className="min-w-0 pt-1">
+                <DialogTitle className="text-2xl font-extrabold leading-tight tracking-normal text-foreground">
+                  Branch Employees
+                </DialogTitle>
+                <p id="branch-employees-desc" className="mt-3 max-w-xl text-base leading-7 text-muted-foreground">
+                  {employeesBranch ? `${employeesBranch.name} has ${branchEmployees.length} employee${branchEmployees.length === 1 ? '' : 's'} assigned to this branch.` : 'Employees assigned to this branch.'}
+                </p>
+              </div>
+            </DialogHeader>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-hidden px-6 py-5">
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={branchEmployeesSearch}
+                onChange={(e) => setBranchEmployeesSearch(e.target.value)}
+                placeholder="Search employees by name, ID, email, position..."
+                className="h-11 rounded-xl border-border/80 bg-background pl-10 shadow-sm dark:bg-input/35"
+              />
+            </div>
+
+            <div className="max-h-96 min-h-56 overflow-y-auto rounded-xl border border-border/70 bg-muted/10">
+              {branchEmployeesLoading ? (
+                <div className="flex h-56 items-center justify-center gap-2 text-sm font-medium text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading employees...
+                </div>
+              ) : filteredBranchEmployees.length === 0 ? (
+                <div className="flex h-56 flex-col items-center justify-center px-6 text-center">
+                  <Users className="mb-3 size-9 text-muted-foreground" />
+                  <p className="font-semibold text-foreground">
+                    {branchEmployeesSearch.trim() ? 'No matching employees' : 'No employees assigned'}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {branchEmployeesSearch.trim() ? 'Try another name, employee ID, or position.' : 'This branch has no employees yet.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border/70">
+                  {filteredBranchEmployees.map((employee) => (
+                    <button
+                      key={employee.id}
+                      type="button"
+                      onClick={() => navigate(`/admin/employees/${employee.id}`)}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50"
+                    >
+                      <Avatar className="size-10 shrink-0">
+                        <AvatarImage src={profileImageUrl(employee.profile_image)} />
+                        <AvatarFallback className="text-xs font-bold bg-teal-500/20 text-teal-700 dark:bg-teal-400/90 dark:text-teal-950">
+                          {initials(employee.name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-semibold text-foreground">
+                          {employee.name}{employee.employee_code ? ` (${employee.employee_code})` : ''}
+                        </p>
+                        <p className="truncate text-sm text-muted-foreground">
+                          {employee.position || employee.department || employee.email || '-'}
+                        </p>
+                      </div>
+                      {employee.is_active === false ? (
+                        <Badge variant="outline" className="shrink-0">Inactive</Badge>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 gap-3 border-t border-border/80 px-6 py-5">
+            <Button type="button" variant="outline" onClick={() => setEmployeesBranch(null)} className="h-11 min-w-[120px] rounded-xl border-border/80 bg-background px-6 text-sm font-semibold text-foreground hover:bg-muted">
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

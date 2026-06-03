@@ -13,6 +13,12 @@ class ApprovalWorkflowSettingService
 {
     public const HELPER_TEXT = 'Turn on hierarchy approval if this request type requires approval from the employee\'s immediate leader before HR/Admin. Turn off to route directly to HR/Admin.';
 
+    public const CHAIN_MODES = [
+        ApprovalWorkflowSetting::CHAIN_MODE_NEAREST_PLUS_ADMIN,
+        ApprovalWorkflowSetting::CHAIN_MODE_FULL_HIERARCHY,
+        ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS,
+    ];
+
     /**
      * @var array<string, array{label: string, default_hierarchy: bool}>
      */
@@ -71,6 +77,41 @@ class ApprovalWorkflowSettingService
         $setting = $this->resolveSetting($requestType, $context);
 
         return (bool) ($setting['fallback_to_parent_approver'] ?? false);
+    }
+
+    /**
+     * @param  array<string, mixed>  $setting
+     * @return array{
+     *   include_section_head: bool,
+     *   include_department_head: bool,
+     *   include_division_head: bool,
+     *   include_branch_head: bool,
+     *   include_area_head: bool,
+     *   include_company_head: bool,
+     *   include_admin_hr: bool
+     * }
+     */
+    public function hierarchyStepFlags(array $setting): array
+    {
+        $hierarchyEnabled = (bool) ($setting['use_hierarchy_approval'] ?? false);
+        $default = $hierarchyEnabled;
+        $flag = static fn (string $key): bool => $hierarchyEnabled && (
+            ! array_key_exists($key, $setting) || $setting[$key] === null
+                ? $default
+                : (bool) $setting[$key]
+        );
+
+        return [
+            'include_section_head' => $flag('include_section_head'),
+            'include_department_head' => $flag('include_department_head'),
+            'include_division_head' => $flag('include_division_head'),
+            'include_branch_head' => $flag('include_branch_head'),
+            'include_area_head' => $flag('include_area_head'),
+            'include_company_head' => $flag('include_company_head'),
+            'include_admin_hr' => array_key_exists('include_admin_hr', $setting) && $setting['include_admin_hr'] !== null
+                ? (bool) $setting['include_admin_hr']
+                : true,
+        ];
     }
 
     /**
@@ -172,6 +213,28 @@ class ApprovalWorkflowSettingService
             if (array_key_exists('fallback_to_parent_approver', $row)) {
                 $setting->fallback_to_parent_approver = (bool) $row['fallback_to_parent_approver'];
             }
+            if (array_key_exists('approval_chain_mode', $row) && Schema::hasColumn('approval_workflow_settings', 'approval_chain_mode')) {
+                $setting->approval_chain_mode = $this->normalizeApprovalChainMode($row['approval_chain_mode'] ?? null);
+            }
+            if (array_key_exists('max_org_approval_steps', $row) && Schema::hasColumn('approval_workflow_settings', 'max_org_approval_steps')) {
+                $maxSteps = $row['max_org_approval_steps'];
+                $setting->max_org_approval_steps = $maxSteps === null || $maxSteps === ''
+                    ? null
+                    : max(0, min(6, (int) $maxSteps));
+            }
+            foreach ([
+                'include_section_head',
+                'include_department_head',
+                'include_division_head',
+                'include_branch_head',
+                'include_area_head',
+                'include_company_head',
+                'include_admin_hr',
+            ] as $flag) {
+                if (array_key_exists($flag, $row) && Schema::hasColumn('approval_workflow_settings', $flag)) {
+                    $setting->{$flag} = (bool) $row[$flag];
+                }
+            }
             foreach (['allow_admin_self_approval', 'allow_hr_self_approval', 'allow_super_admin_self_approval'] as $flag) {
                 if (array_key_exists($flag, $row) && Schema::hasColumn('approval_workflow_settings', $flag)) {
                     $setting->{$flag} = (bool) $row[$flag];
@@ -191,6 +254,8 @@ class ApprovalWorkflowSettingService
             $setting->save();
         }
 
+        app(ApprovalChainCacheService::class)->forgetWorkflowSettings();
+
         return $this->listSettings();
     }
 
@@ -201,7 +266,7 @@ class ApprovalWorkflowSettingService
         }
 
         foreach (self::REQUEST_TYPE_CATALOG as $requestType => $meta) {
-            ApprovalWorkflowSetting::query()->firstOrCreate(
+            $setting = ApprovalWorkflowSetting::query()->firstOrCreate(
                 ['request_type' => $requestType],
                 [
                     'use_hierarchy_approval' => $meta['default_hierarchy'],
@@ -209,11 +274,61 @@ class ApprovalWorkflowSettingService
                     'require_final_hr_approval' => true,
                     'immediate_approver_mode' => $this->defaultImmediateModeFor($requestType),
                     'fallback_to_hr' => true,
-                    'fallback_to_parent_approver' => false,
+                    'fallback_to_parent_approver' => in_array($requestType, [
+                        ApprovalWorkflowSetting::REQUEST_TYPE_LEAVE,
+                        ApprovalWorkflowSetting::REQUEST_TYPE_OVERTIME,
+                    ], true),
+                    ...$this->defaultChainModeFieldsForDatabase(),
+                    'include_section_head' => $meta['default_hierarchy'],
+                    'include_department_head' => $meta['default_hierarchy'],
+                    'include_division_head' => $meta['default_hierarchy'],
+                    'include_branch_head' => $meta['default_hierarchy'],
+                    'include_area_head' => $meta['default_hierarchy'],
+                    'include_company_head' => $meta['default_hierarchy'],
+                    'include_admin_hr' => true,
                     ...$this->defaultSelfApprovalFlagsForDatabase(),
                     'is_active' => true,
                 ],
             );
+
+            $this->normalizeHierarchyStepColumnsOnModel($setting);
+        }
+    }
+
+    private function normalizeHierarchyStepColumnsOnModel(ApprovalWorkflowSetting $setting): void
+    {
+        if (! Schema::hasColumn('approval_workflow_settings', 'include_section_head')) {
+            return;
+        }
+
+        $dirty = false;
+        foreach ([
+            'include_section_head',
+            'include_department_head',
+            'include_division_head',
+            'include_branch_head',
+            'include_area_head',
+            'include_company_head',
+        ] as $column) {
+            if ($setting->{$column} === null) {
+                $setting->{$column} = (bool) $setting->use_hierarchy_approval;
+                $dirty = true;
+            }
+        }
+
+        if ($setting->include_admin_hr === null) {
+            $setting->include_admin_hr = true;
+            $dirty = true;
+        }
+
+        if (Schema::hasColumn('approval_workflow_settings', 'approval_chain_mode')
+            && ! in_array((string) $setting->approval_chain_mode, self::CHAIN_MODES, true)) {
+            $setting->approval_chain_mode = ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS;
+            $dirty = true;
+        }
+
+        if ($dirty) {
+            $setting->save();
         }
     }
 
@@ -235,6 +350,23 @@ class ApprovalWorkflowSettingService
         )->all();
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    private function defaultChainModeFieldsForDatabase(): array
+    {
+        if (! Schema::hasTable('approval_workflow_settings')) {
+            return [];
+        }
+
+        return collect([
+            'approval_chain_mode' => ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS,
+            'max_org_approval_steps' => null,
+        ])->filter(
+            fn (mixed $value, string $column): bool => Schema::hasColumn('approval_workflow_settings', $column)
+        )->all();
+    }
+
     private function defaultImmediateModeFor(string $requestType): string
     {
         return in_array($requestType, [
@@ -243,6 +375,15 @@ class ApprovalWorkflowSettingService
         ], true)
             ? ApprovalWorkflowSetting::IMMEDIATE_MODE_SECTION_UNIT_HEAD
             : ApprovalWorkflowSetting::IMMEDIATE_MODE_NEAREST_LEADER;
+    }
+
+    private function normalizeApprovalChainMode(?string $mode): string
+    {
+        $normalized = trim((string) ($mode ?? ''));
+
+        return in_array($normalized, self::CHAIN_MODES, true)
+            ? $normalized
+            : ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS;
     }
 
     /**
@@ -268,7 +409,19 @@ class ApprovalWorkflowSettingService
             'final_approver_label' => 'HR/Admin',
             'require_final_hr_approval' => true,
             'fallback_to_hr' => true,
-            'fallback_to_parent_approver' => false,
+            'fallback_to_parent_approver' => in_array($normalized, [
+                ApprovalWorkflowSetting::REQUEST_TYPE_LEAVE,
+                ApprovalWorkflowSetting::REQUEST_TYPE_OVERTIME,
+            ], true),
+            'approval_chain_mode' => ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS,
+            'max_org_approval_steps' => null,
+            'include_section_head' => $meta['default_hierarchy'],
+            'include_department_head' => $meta['default_hierarchy'],
+            'include_division_head' => $meta['default_hierarchy'],
+            'include_branch_head' => $meta['default_hierarchy'],
+            'include_area_head' => $meta['default_hierarchy'],
+            'include_company_head' => $meta['default_hierarchy'],
+            'include_admin_hr' => true,
             'allow_admin_self_approval' => true,
             'allow_hr_self_approval' => true,
             'allow_super_admin_self_approval' => true,
@@ -300,6 +453,19 @@ class ApprovalWorkflowSettingService
             'require_final_hr_approval' => (bool) $row->require_final_hr_approval,
             'fallback_to_hr' => (bool) $row->fallback_to_hr,
             'fallback_to_parent_approver' => (bool) ($row->fallback_to_parent_approver ?? false),
+            'approval_chain_mode' => Schema::hasColumn('approval_workflow_settings', 'approval_chain_mode')
+                ? $this->normalizeApprovalChainMode($row->approval_chain_mode ?? null)
+                : ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS,
+            'max_org_approval_steps' => Schema::hasColumn('approval_workflow_settings', 'max_org_approval_steps')
+                ? ($row->max_org_approval_steps === null ? null : (int) $row->max_org_approval_steps)
+                : null,
+            'include_section_head' => (bool) ($row->include_section_head ?? (bool) $row->use_hierarchy_approval),
+            'include_department_head' => (bool) ($row->include_department_head ?? (bool) $row->use_hierarchy_approval),
+            'include_division_head' => (bool) ($row->include_division_head ?? (bool) $row->use_hierarchy_approval),
+            'include_branch_head' => (bool) ($row->include_branch_head ?? (bool) $row->use_hierarchy_approval),
+            'include_area_head' => (bool) ($row->include_area_head ?? (bool) $row->use_hierarchy_approval),
+            'include_company_head' => (bool) ($row->include_company_head ?? (bool) $row->use_hierarchy_approval),
+            'include_admin_hr' => (bool) ($row->include_admin_hr ?? true),
             'allow_admin_self_approval' => (bool) ($row->allow_admin_self_approval ?? true),
             'allow_hr_self_approval' => (bool) ($row->allow_hr_self_approval ?? true),
             'allow_super_admin_self_approval' => (bool) ($row->allow_super_admin_self_approval ?? true),

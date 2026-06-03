@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\AdminUserAccountController;
+use App\Http\Controllers\Admin\AreaController;
 use App\Http\Controllers\Admin\AttendanceCorrectionController;
 use App\Http\Controllers\Admin\AttendanceMonitoringController;
 use App\Http\Controllers\Admin\BenefitCatalogController;
@@ -374,17 +375,26 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:org.company.manage')->patch('/admin/companies/{id}', [CompanyController::class, 'update']);
         Route::middleware('permission:org.company.manage')->delete('/admin/companies/{id}', [CompanyController::class, 'destroy']);
 
+        Route::middleware('permission:area.view')->get('/admin/areas', [AreaController::class, 'index']);
+        Route::middleware('permission:area.manage|area.create')->post('/admin/areas', [AreaController::class, 'store']);
+        Route::middleware('permission:area.view')->get('/admin/companies/{companyId}/areas', [AreaController::class, 'companyAreas']);
+        Route::middleware('permission:area.view')->get('/admin/areas/{id}/branches', [AreaController::class, 'branches']);
+        Route::middleware('permission:area.view|area.view_employees')->get('/admin/areas/{id}/employees', [AreaController::class, 'employees']);
+        Route::middleware('permission:area.manage|area.update')->patch('/admin/areas/{id}', [AreaController::class, 'update']);
+        Route::middleware('permission:area.manage|area.delete')->delete('/admin/areas/{id}', [AreaController::class, 'destroy']);
+        Route::middleware('permission:area.manage|area.update')->post('/admin/areas/{id}/assign-branches', [AreaController::class, 'assignBranches']);
+
         Route::middleware('permission:org.branch.view')->get('/admin/branches', [BranchController::class, 'index']);
         Route::middleware('permission:org.branch.manage')->post('/admin/branches', [BranchController::class, 'store']);
         Route::middleware('permission:org.branch.view')->get('/admin/branches/{id}/departments', [BranchController::class, 'departments']);
         Route::middleware('permission:org.branch.manage')->patch('/admin/branches/{id}', [BranchController::class, 'update']);
         Route::middleware('permission:org.branch.manage')->delete('/admin/branches/{id}', [BranchController::class, 'destroy']);
 
-        Route::middleware('permission:org.company.view|org.branch.view|org.division.view|org.department.view|org.section_unit.view')->group(function () {
+        Route::middleware('permission:org.company.view|org.branch.view|org.division.view|org.department.view|org.section_unit.view|area.view')->group(function () {
             Route::get('/admin/organization-leadership/{legacyType}/{legacyId}', [OrganizationLeadershipController::class, 'show']);
             Route::get('/admin/employees/{id}/approval-route-preview', [OrganizationLeadershipController::class, 'approvalRoutePreview']);
         });
-        Route::middleware('permission:org.company.manage|org.branch.manage|org.division.manage|org.department.manage|org.section_unit.manage')->group(function () {
+        Route::middleware('permission:org.company.manage|org.branch.manage|org.division.manage|org.department.manage|org.section_unit.manage|area.manage|area.assign_head')->group(function () {
             Route::put('/admin/organization-leadership/{legacyType}/{legacyId}', [OrganizationLeadershipController::class, 'update']);
         });
 

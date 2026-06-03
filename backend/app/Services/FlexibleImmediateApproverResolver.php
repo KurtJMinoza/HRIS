@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Enums\HrRole;
+use App\Models\Area;
+use App\Models\ApprovalWorkflowSetting;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
@@ -21,7 +23,7 @@ use Illuminate\Support\Str;
 
 class FlexibleImmediateApproverResolver
 {
-    private const HIERARCHY_ORDER = ['section_unit', 'department', 'division', 'branch', 'company'];
+    private const HIERARCHY_ORDER = ['section_unit', 'department', 'division', 'branch', 'area', 'company'];
 
     public function __construct(
         private readonly LegacyOrganizationMirrorService $legacyOrganizationMirrorService,
@@ -425,11 +427,19 @@ class FlexibleImmediateApproverResolver
                     continue;
                 }
             } elseif ((bool) $unit->is_active) {
-                $resolved = $this->resolveFromUnitLeaders($unit, $subject, $requestType, $skipIds, $context, $levelLog);
+                $resolved = $this->resolveFromUnitLeaders($unit, $subject, $requestType, $skipIds, $scopeContext, $levelLog);
             }
 
             if ($resolved === null && $unit->legacy_source_type && (int) $unit->legacy_source_id > 0) {
                 if ($unitLevel === 'division' && $this->usesDepartmentScopedDivisionHead($requestType)) {
+                    continue;
+                }
+
+                if (Schema::hasTable('organization_position_assignments') && $this->unitHasFlexibleApprovalAssignments($unit)) {
+                    $this->log($scopeContext, 'legacy head fallback skipped — flexible approval assignments control routing', $levelLog + [
+                        'skipped_reason' => 'flexible_assignment_scope_not_matched',
+                    ]);
+
                     continue;
                 }
 
@@ -1318,6 +1328,7 @@ class FlexibleImmediateApproverResolver
         $departmentId = $subject->department_id ?: $department?->id ?: $section?->department_id;
         $divisionId = $subject->division_id ?: $department?->division_id ?: $section?->division_id;
         $branchId = $subject->branch_id ?: $department?->branch_id ?: $section?->branch_id;
+        $areaId = null;
         $companyId = $subject->company_id ?: $department?->company_id ?: $section?->company_id;
 
         if ($divisionId && ! $branchId) {
@@ -1326,15 +1337,39 @@ class FlexibleImmediateApproverResolver
         if ($branchId && ! $companyId) {
             $companyId = Branch::query()->whereKey($branchId)->value('company_id');
         }
+        if ($branchId) {
+            $branchMeta = Branch::query()->whereKey($branchId)->first(['area_id', 'company_id']);
+            $areaId = $branchMeta?->area_id ? (int) $branchMeta->area_id : null;
+            $companyId = $companyId ?: $branchMeta?->company_id;
+        }
         if ($divisionId && ! $companyId) {
             $companyId = Division::query()->whereKey($divisionId)->value('company_id');
         }
 
+        $sectionUnitId = $subject->section_unit_id ?: $section?->id;
+        if (! $sectionUnitId && Schema::hasTable('section_unit_team_leaders')) {
+            $ledSectionId = (int) (DB::table('section_unit_team_leaders')
+                ->where('employee_id', (int) $subject->id)
+                ->orderBy('section_unit_id')
+                ->value('section_unit_id') ?? 0);
+            if ($ledSectionId > 0) {
+                $sectionUnitId = $ledSectionId;
+                $ledSection = $section?->id === $ledSectionId
+                    ? $section
+                    : SectionUnit::query()->find($ledSectionId);
+                $departmentId = $departmentId ?: ($ledSection?->department_id ? (int) $ledSection->department_id : null);
+                $divisionId = $divisionId ?: ($ledSection?->division_id ? (int) $ledSection->division_id : null);
+                $branchId = $branchId ?: ($ledSection?->branch_id ? (int) $ledSection->branch_id : null);
+                $companyId = $companyId ?: ($ledSection?->company_id ? (int) $ledSection->company_id : null);
+            }
+        }
+
         $hierarchy = [
-            'section_unit' => $subject->section_unit_id ?: $section?->id,
+            'section_unit' => $sectionUnitId,
             'department' => $departmentId,
             'division' => $divisionId,
             'branch' => $branchId,
+            'area' => $areaId,
             'company' => $companyId,
         ];
 
@@ -1352,7 +1387,7 @@ class FlexibleImmediateApproverResolver
             return $hierarchy;
         }
 
-        foreach (['company', 'branch', 'division', 'department', 'section_unit'] as $key) {
+        foreach (['company', 'area', 'branch', 'division', 'department', 'section_unit'] as $key) {
             $column = $key.'_id';
             if ($assignment->{$column}) {
                 $hierarchy[$key] = (int) $assignment->{$column};
@@ -1449,6 +1484,7 @@ class FlexibleImmediateApproverResolver
         }
 
         $skipLevels = match ($requesterLevel) {
+            'area_head' => ['area', 'branch', 'division', 'department', 'section_unit'],
             'branch_head' => ['branch', 'division', 'department', 'section_unit'],
             'division_head' => ['division', 'department', 'section_unit'],
             'department_head' => ['department', 'section_unit'],
@@ -1499,6 +1535,7 @@ class FlexibleImmediateApproverResolver
             str_contains($probe, 'department') => 'department',
             str_contains($probe, 'division') => 'division',
             str_contains($probe, 'branch') => 'branch',
+            str_contains($probe, 'area') => 'area',
             str_contains($probe, 'company') => 'company',
             default => 'custom',
         };
@@ -1580,6 +1617,7 @@ class FlexibleImmediateApproverResolver
 
         $fromRole = match ($orgRole) {
             HrRole::CompanyHead => 'company_head',
+            HrRole::AreaHead => 'area_head',
             HrRole::BranchHead => 'branch_head',
             HrRole::DivisionHead => 'division_head',
             HrRole::DepartmentHead => 'department_head',
@@ -1598,6 +1636,7 @@ class FlexibleImmediateApproverResolver
                 if ($this->isUserLeaderOfUnit($requestor, $unit)) {
                     return match ($this->unitHierarchyLevel($unit)) {
                         'company' => 'company_head',
+                        'area' => 'area_head',
                         'branch' => 'branch_head',
                         'division' => 'division_head',
                         'department' => 'department_head',
@@ -1614,6 +1653,7 @@ class FlexibleImmediateApproverResolver
             if ($legacyId > 0 && $this->isHeadOfLegacyUnit($requestor, $legacyType, $legacyId)) {
                 return match ($legacyType) {
                     'company' => 'company_head',
+                    'area' => 'area_head',
                     'branch' => 'branch_head',
                     'division' => 'division_head',
                     'department' => 'department_head',
@@ -1867,10 +1907,11 @@ class FlexibleImmediateApproverResolver
     {
         return match ($requesterLevel) {
             'company_head' => null,
-            'branch_head' => $this->firstLevelWithId($hierarchy, ['company']),
-            'division_head' => $this->firstLevelWithId($hierarchy, ['branch', 'company']),
-            'department_head' => $this->firstLevelWithId($hierarchy, ['division', 'branch', 'company']),
-            'section_unit_head' => $this->firstLevelWithId($hierarchy, ['department', 'division', 'branch', 'company']),
+            'area_head' => $this->firstLevelWithId($hierarchy, ['company']),
+            'branch_head' => $this->firstLevelWithId($hierarchy, ['area', 'company']),
+            'division_head' => $this->firstLevelWithId($hierarchy, ['branch', 'area', 'company']),
+            'department_head' => $this->firstLevelWithId($hierarchy, ['division', 'branch', 'area', 'company']),
+            'section_unit_head' => $this->firstLevelWithId($hierarchy, ['department', 'division', 'branch', 'area', 'company']),
             default => $this->deepestLevelWithId($hierarchy),
         };
     }
@@ -1981,9 +2022,414 @@ class FlexibleImmediateApproverResolver
             if ($resolved !== null) {
                 return $resolved;
             }
+
+            if ($this->unitHasFlexibleApprovalAssignments($unit)) {
+                $this->log($context, 'legacy head fallback skipped — flexible approval assignments control routing', $levelLog + [
+                    'skipped_reason' => 'flexible_assignment_scope_not_matched',
+                ]);
+
+                return null;
+            }
         }
 
         return $this->resolveFromLegacyHeadColumnDirect($legacyType, $legacyId, $unit, $skipIds, $context, $levelLog);
+    }
+
+    /**
+     * Resolve every enabled organization-head step from section/unit through company.
+     *
+     * @param  list<int>  $usedApproverIds
+     * @param  array<string, mixed>  $context
+     * @return list<array<string, mixed>>
+     */
+    public function resolveHierarchyApprovalChain(
+        User|int $employee,
+        ?string $requestType = null,
+        ?User $requestor = null,
+        array $usedApproverIds = [],
+        array $context = [],
+    ): array {
+        if ($this->workflowSettingService->isHrOnlyRequestType($requestType, $context)) {
+            return [];
+        }
+
+        $subject = $employee instanceof User
+            ? $employee->loadMissing(['departmentRelation', 'sectionUnit', 'division', 'branch', 'company', 'assignedTeamLeader'])
+            : User::query()
+                ->with(['departmentRelation', 'sectionUnit', 'division', 'branch', 'company', 'assignedTeamLeader'])
+                ->findOrFail($employee);
+
+        $requestorUser = $requestor ?? $subject;
+        $skipIds = array_values(array_unique([
+            (int) $subject->id,
+            (int) $requestorUser->id,
+            ...array_map('intval', $usedApproverIds),
+        ]));
+        $steps = [];
+        $hierarchy = $this->buildLegacyHierarchy($subject, $context);
+        $scopeContext = $this->mergeScopeContext($context, $requestorUser, $hierarchy, $requestType);
+        $workflowSetting = $this->workflowSettingService->resolveSetting($requestType, $context);
+        $stepFlags = $this->workflowSettingService->hierarchyStepFlags($workflowSetting);
+        $requesterLevel = $this->detectRequesterLevel($requestorUser, $hierarchy);
+        $hasFlexibleOrg = Schema::hasTable('organization_units');
+        $primaryAssignment = $this->selectedAssignmentFor($subject, $context);
+        $fallbackToParent = (bool) ($workflowSetting['fallback_to_parent_approver'] ?? false);
+        $chainMode = (string) ($workflowSetting['approval_chain_mode'] ?? ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS);
+        $allowsParentLookup = $fallbackToParent || in_array($chainMode, [
+            ApprovalWorkflowSetting::CHAIN_MODE_NEAREST_PLUS_ADMIN,
+            ApprovalWorkflowSetting::CHAIN_MODE_FULL_HIERARCHY,
+        ], true);
+
+        $this->log($scopeContext, 'hierarchy chain resolution start', [
+            'request_type' => $requestType,
+            'requester_employee_id' => (int) $requestorUser->id,
+            'requester_name' => $requestorUser->display_name,
+            'resolved_company_id' => $hierarchy['company'] ?? null,
+            'resolved_area_id' => $hierarchy['area'] ?? null,
+            'resolved_branch_id' => $hierarchy['branch'] ?? null,
+            'resolved_division_id' => $hierarchy['division'] ?? null,
+            'resolved_department_id' => $hierarchy['department'] ?? null,
+            'resolved_section_unit_id' => $hierarchy['section_unit'] ?? null,
+            'workflow_steps_enabled' => $stepFlags,
+            'approval_chain_mode' => $chainMode,
+            'max_org_approval_steps' => $workflowSetting['max_org_approval_steps'] ?? null,
+            'detected_requester_level' => $requesterLevel,
+            'fallback_to_parent_approver' => $fallbackToParent,
+        ]);
+
+        if ($requesterLevel === 'company_head') {
+            $this->log($scopeContext, 'requester is company head — org chain empty before HR');
+
+            return [];
+        }
+
+        $this->ensureLegacyUnitsForHierarchy($hierarchy, (int) $subject->id, $scopeContext, $hasFlexibleOrg);
+        $startLookupLevel = $this->startingLookupLevel($requesterLevel, $hierarchy);
+        $startLookupIndex = $startLookupLevel === null
+            ? count(self::HIERARCHY_ORDER)
+            : array_search($startLookupLevel, self::HIERARCHY_ORDER, true);
+
+        $directlyAssignedToDepartment = $this->isDirectDepartmentAssignment($subject, $primaryAssignment, $hierarchy);
+
+        if (($stepFlags['include_section_head'] ?? false) && ! $this->requestorLeadsDeepestUnit($requestorUser, $hierarchy)) {
+            $sectionStep = $this->resolveFirstSectionHierarchyApprover(
+                $subject,
+                $requestorUser,
+                $hierarchy,
+                $requestType,
+                $skipIds,
+                $scopeContext,
+                $primaryAssignment,
+                $hasFlexibleOrg,
+            );
+            $this->appendHierarchyChainStep($steps, $sectionStep, $skipIds, $scopeContext, 'section_unit');
+        }
+
+        if ($this->usesDepartmentScopedDivisionHead($requestType)) {
+            $sectionLeaderContext = $this->sectionLeaderRequestContext($requestorUser, $hierarchy, $scopeContext);
+            if ((bool) ($sectionLeaderContext['is_team_leader'] ?? false)) {
+                $departmentResolved = $this->resolveParentDepartmentHeadForSectionLeaderRequest(
+                    $subject,
+                    $requestorUser,
+                    $hierarchy,
+                    $requestType,
+                    $skipIds,
+                    $scopeContext,
+                    $sectionLeaderContext,
+                );
+                $this->appendHierarchyChainStep($steps, $departmentResolved, $skipIds, $scopeContext, 'department');
+            }
+        }
+
+        if (! $allowsParentLookup) {
+            if (
+                ($stepFlags['include_department_head'] ?? false)
+                && $this->usesDepartmentFirstApproval($requestType)
+                && $directlyAssignedToDepartment
+            ) {
+                $departmentResolved = $this->resolveDepartmentHeadForRequester(
+                    $subject,
+                    $hierarchy,
+                    $skipIds,
+                    $scopeContext,
+                    $requestType,
+                    'direct_department_assignment_chain',
+                    $primaryAssignment,
+                    true,
+                );
+                $this->appendHierarchyChainStep($steps, $departmentResolved, $skipIds, $scopeContext, 'department');
+            }
+
+            $unitChain = $hasFlexibleOrg ? $this->buildOrganizationUnitChain($subject, $hierarchy, $scopeContext) : collect();
+            if ($this->requestorIsDepartmentHead($requestorUser, $requesterLevel, $unitChain, $hierarchy)) {
+                $divisionId = $this->resolveDivisionId($hierarchy, $unitChain);
+                if ($divisionId > 0 && $this->usesDepartmentScopedDivisionHead($requestType)) {
+                    $scoped = $this->assignmentScopeService->resolveScopedDivisionHead(
+                        $divisionId,
+                        (int) ($hierarchy['department'] ?? 0),
+                        $requestType,
+                        $skipIds,
+                        $scopeContext,
+                    );
+                    if ($scoped !== null) {
+                        $divisionResolved = $this->formatResult(
+                            $scoped['employee'],
+                            [$scoped['employee']],
+                            $scoped['leader_role'],
+                            OrganizationUnit::ROUTING_FIRST_ASSIGNED,
+                            $scoped['unit'] ?? null,
+                            $this->approvalLevelFor($scoped['unit'] ?? null, $scoped['leader_role'], 'division'),
+                        );
+                        $this->appendHierarchyChainStep($steps, $divisionResolved, $skipIds, $scopeContext, 'division');
+                    }
+                }
+            }
+
+            $this->log($scopeContext, 'hierarchy chain built', [
+                'approval_chain_mode' => $chainMode,
+                'max_org_approval_steps' => $workflowSetting['max_org_approval_steps'] ?? null,
+                'final_chain' => array_map(
+                    fn (array $step): array => [
+                        'approver_id' => $step['approver_id'] ?? null,
+                        'approver_name' => $step['approver_name'] ?? null,
+                        'approval_level' => $step['approval_level'] ?? null,
+                        'approval_label' => $step['approval_label'] ?? null,
+                    ],
+                    $steps,
+                ),
+            ]);
+
+            return $steps;
+        }
+
+        $orgLevels = ['department', 'division', 'branch', 'area', 'company'];
+        $flagByLevel = [
+            'department' => 'include_department_head',
+            'division' => 'include_division_head',
+            'branch' => 'include_branch_head',
+            'area' => 'include_area_head',
+            'company' => 'include_company_head',
+        ];
+
+        foreach ($orgLevels as $level) {
+            $flagKey = $flagByLevel[$level];
+            if (! ($stepFlags[$flagKey] ?? false)) {
+                $this->log($scopeContext, "{$level}_head_candidate skipped — workflow step disabled", [
+                    'skipped_reason' => 'workflow_step_disabled',
+                ]);
+
+                continue;
+            }
+
+            $levelIndex = array_search($level, self::HIERARCHY_ORDER, true);
+            if ($startLookupLevel !== null && $levelIndex !== false && $startLookupIndex !== false && $levelIndex < $startLookupIndex) {
+                $this->log($scopeContext, "{$level}_head_candidate skipped — requester is at or above level", [
+                    'skipped_reason' => 'requester_is_head_at_or_above_level',
+                    'requester_level' => $requesterLevel,
+                ]);
+
+                continue;
+            }
+
+            $legacyId = (int) ($hierarchy[$level] ?? 0);
+            if ($legacyId <= 0) {
+                $this->log($scopeContext, "{$level}_head_candidate skipped — missing organization id", [
+                    'skipped_reason' => 'missing_'.$level.'_id',
+                ]);
+
+                continue;
+            }
+
+            if ($this->isHeadOfLegacyUnit($requestorUser, $level, $legacyId)) {
+                $this->log($scopeContext, "{$level}_head_candidate skipped — requester leads this unit", [
+                    'skipped_reason' => 'requester_is_unit_head',
+                    "{$level}_id" => $legacyId,
+                ]);
+
+                continue;
+            }
+
+            $resolved = null;
+            if ($level === 'division' && $this->usesDepartmentScopedDivisionHead($requestType)) {
+                $scoped = $this->assignmentScopeService->resolveScopedDivisionHead(
+                    $legacyId,
+                    (int) ($hierarchy['department'] ?? 0),
+                    $requestType,
+                    $skipIds,
+                    $scopeContext,
+                );
+                if ($scoped !== null) {
+                    $resolved = $this->formatResult(
+                        $scoped['employee'],
+                        [$scoped['employee']],
+                        $scoped['leader_role'],
+                        OrganizationUnit::ROUTING_FIRST_ASSIGNED,
+                        $scoped['unit'] ?? null,
+                        $this->approvalLevelFor($scoped['unit'] ?? null, $scoped['leader_role'], 'division'),
+                    );
+                }
+            } else {
+                $resolved = $this->resolveOrgHead($level, $legacyId, $subject, $requestType, $skipIds, $scopeContext);
+            }
+
+            $this->logOrgHeadCandidate($scopeContext, $level, $legacyId, $resolved);
+            $this->appendHierarchyChainStep($steps, $resolved, $skipIds, $scopeContext, $level);
+        }
+
+        $this->log($scopeContext, 'hierarchy chain built', [
+            'final_chain' => array_map(
+                fn (array $step): array => [
+                    'approver_id' => $step['approver_id'] ?? null,
+                    'approver_name' => $step['approver_name'] ?? null,
+                    'approval_level' => $step['approval_level'] ?? null,
+                    'approval_label' => $step['approval_label'] ?? null,
+                ],
+                $steps,
+            ),
+        ]);
+
+        return $steps;
+    }
+
+    /**
+     * @param  list<int>  $skipIds
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>|null
+     */
+    public function resolveOrgHead(
+        string $organizationType,
+        int $organizationId,
+        User $subject,
+        ?string $requestType,
+        array $skipIds,
+        array $context = [],
+    ): ?array {
+        if ($organizationId <= 0 || ! in_array($organizationType, self::HIERARCHY_ORDER, true)) {
+            return null;
+        }
+
+        return $this->resolveLeadersForLegacyUnit(
+            $organizationType,
+            $organizationId,
+            $subject,
+            $requestType,
+            $skipIds,
+            $context + [
+                'organization_type' => $organizationType,
+                'organization_id' => $organizationId,
+            ],
+        );
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $steps
+     * @param  list<int>  $skipIds
+     * @param  array<string, mixed>  $context
+     */
+    private function appendHierarchyChainStep(
+        array &$steps,
+        ?array $resolved,
+        array &$skipIds,
+        array $context,
+        string $level,
+    ): void {
+        if ($resolved === null) {
+            return;
+        }
+
+        $approverId = (int) ($resolved['approver_id'] ?? 0);
+        if ($approverId <= 0 || in_array($approverId, $skipIds, true)) {
+            $this->log($context, 'hierarchy step skipped — duplicate or self approver', [
+                'level' => $level,
+                'approver_id' => $approverId > 0 ? $approverId : null,
+                'skipped_reason' => in_array($approverId, $skipIds, true) ? 'duplicate_or_self' : 'missing_approver',
+            ]);
+
+            return;
+        }
+
+        $skipIds[] = $approverId;
+        $steps[] = $resolved;
+
+        $this->log($context, 'hierarchy step added', [
+            'level' => $level,
+            'approver_id' => $approverId,
+            'approver_name' => $resolved['approver_name'] ?? null,
+            'approval_level' => $resolved['approval_level'] ?? null,
+        ]);
+    }
+
+    /**
+     * @param  array<string, int|null>  $hierarchy
+     * @param  list<int>  $skipIds
+     * @param  array<string, mixed>  $context
+     * @return list<array<string, mixed>>
+     */
+    private function resolveFirstSectionHierarchyApprover(
+        User $subject,
+        User $requestorUser,
+        array $hierarchy,
+        ?string $requestType,
+        array $skipIds,
+        array $context,
+        ?EmployeeOrganizationAssignment $primaryAssignment,
+        bool $hasFlexibleOrg,
+    ): ?array {
+        $requestorLeadsDeepestUnit = $hasFlexibleOrg
+            ? $this->requestorLeadsDeepestUnit($requestorUser, $hierarchy)
+            : $this->requestorLeadsLegacySectionUnit($requestorUser, $hierarchy);
+        if ($requestorLeadsDeepestUnit) {
+            return null;
+        }
+
+        $employeeImmediateLeaderId = $this->employeeImmediateLeaderId($subject, $primaryAssignment);
+        if ($employeeImmediateLeaderId !== null) {
+            $leader = $this->validLeader($employeeImmediateLeaderId, $skipIds, $context, 'employee_immediate_leader');
+            if ($leader) {
+                return $this->formatResult(
+                    $leader,
+                    [$leader],
+                    'Immediate Leader',
+                    OrganizationUnit::ROUTING_SPECIFIC_PER_EMPLOYEE,
+                    $primaryAssignment?->organizationUnit,
+                    'immediate_leader',
+                );
+            }
+        }
+
+        $assignedTeamLeader = $this->resolveAssignedTeamLeader($subject, $skipIds, $context);
+        if ($assignedTeamLeader !== null) {
+            return $assignedTeamLeader;
+        }
+
+        $directoryLeader = $this->resolveSectionDirectoryLeadership($subject, $hierarchy, $skipIds, $context);
+        if ($directoryLeader !== null) {
+            return $directoryLeader;
+        }
+
+        if ($hasFlexibleOrg) {
+            return $this->resolveSectionUnitHeadForEmployee($subject, $hierarchy, $requestType, $skipIds, $context);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function logOrgHeadCandidate(array $context, string $level, int $legacyId, ?array $resolved): void
+    {
+        $suffix = $level === 'company' ? 'company' : $level;
+        $this->log($context, "{$suffix}_head_candidate evaluated", [
+            "{$suffix}_id" => $legacyId,
+            "{$suffix}_head_candidate" => $resolved['approver_name'] ?? null,
+            "{$suffix}_head_added_to_chain" => $resolved !== null,
+            "{$suffix}_head_active" => $resolved !== null,
+            "{$suffix}_head_can_approve" => $resolved !== null,
+            "{$suffix}_head_scope_match" => $resolved !== null,
+            "{$suffix}_head_request_type_match" => $resolved !== null,
+            'skipped_reason' => $resolved === null ? 'no_matching_head' : null,
+        ]);
     }
 
     /**
@@ -1997,8 +2443,13 @@ class FlexibleImmediateApproverResolver
             'request_type' => $requestType,
             'requester_employee_id' => (int) $requestor->id,
             'requester_name' => $requestor->display_name,
+            'requester_company_id' => $hierarchy['company'] ?? null,
+            'requester_area_id' => $hierarchy['area'] ?? null,
+            'requester_branch_id' => $hierarchy['branch'] ?? null,
             'requester_department_id' => $hierarchy['department'] ?? null,
             'requester_division_id' => $hierarchy['division'] ?? null,
+            'requester_section_unit_id' => $hierarchy['section_unit'] ?? null,
+            'requester_hierarchy' => $hierarchy,
         ]);
     }
 
@@ -2078,6 +2529,14 @@ class FlexibleImmediateApproverResolver
             if ($resolved !== null) {
                 return $resolved;
             }
+
+            if ($this->unitHasFlexibleApprovalAssignments($unit)) {
+                $this->log($context, 'unit leader fallback skipped — flexible position assignments control approval scope', $levelLog + [
+                    'skipped_reason' => 'flexible_assignment_scope_not_matched',
+                ]);
+
+                return null;
+            }
         }
 
         $leaders = $unit->activeLeaders()->with('employee')->get();
@@ -2127,8 +2586,10 @@ class FlexibleImmediateApproverResolver
         array $context = [],
         array $levelLog = [],
     ): ?array {
+        $unitLevel = $this->unitHierarchyLevel($unit);
+        $hierarchy = is_array($context['requester_hierarchy'] ?? null) ? $context['requester_hierarchy'] : [];
         $assignments = $unit->activePositionAssignments()
-            ->with(['employee', 'positionType'])
+            ->with(['employee', 'positionType', 'activeDepartmentScopes'])
             ->get()
             ->filter(fn (OrganizationPositionAssignment $assignment): bool => (bool) ($assignment->positionType?->can_approve ?? true))
             ->sortBy([
@@ -2152,9 +2613,14 @@ class FlexibleImmediateApproverResolver
         ]);
 
         $candidates = $assignments
-            ->map(function (OrganizationPositionAssignment $assignment) use ($skipIds, $context, $levelLog): ?array {
+            ->map(function (OrganizationPositionAssignment $assignment) use ($skipIds, $context, $levelLog, $unitLevel, $hierarchy, $requestType): ?array {
                 $employee = $assignment->employee;
                 if (! $employee) {
+                    return null;
+                }
+
+                if ($this->unitUsesGenericApprovalScope($unitLevel)
+                    && ! $this->assignmentScopeService->assignmentMatchesApprovalScope($assignment, $hierarchy, $requestType, $context + $levelLog)) {
                     return null;
                 }
 
@@ -2183,6 +2649,17 @@ class FlexibleImmediateApproverResolver
         }
 
         return $this->pickCandidate($candidates, $unit, $subject, $requestType);
+    }
+
+    private function unitUsesGenericApprovalScope(?string $unitLevel): bool
+    {
+        return in_array($unitLevel, ['company', 'area', 'branch'], true);
+    }
+
+    private function unitHasFlexibleApprovalAssignments(OrganizationUnit $unit): bool
+    {
+        return $unit->activePositionAssignments()
+            ->exists();
     }
 
     /**
@@ -2424,6 +2901,7 @@ class FlexibleImmediateApproverResolver
 
         $headId = match ($legacyType) {
             'company' => Company::query()->whereKey($legacyId)->value('company_head_id'),
+            'area' => Area::query()->whereKey($legacyId)->value('area_manager_employee_id'),
             'branch' => Branch::query()->whereKey($legacyId)->value('branch_manager_id'),
             'division' => Division::query()->whereKey($legacyId)->value('division_head_id'),
             'department' => $this->legacyDepartmentHeadId($legacyId),

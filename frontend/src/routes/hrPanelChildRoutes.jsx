@@ -34,6 +34,7 @@ const AdminDashboard = lazy(() => import('@/pages/AdminDashboard'))
 const AdminAttendance = lazy(() => import('@/pages/AdminAttendance'))
 const AdminReports = lazy(() => import('@/pages/AdminReports'))
 const AdminCompanies = lazy(() => import('@/pages/AdminCompanies'))
+const AdminAreas = lazy(() => import('@/pages/AdminAreas'))
 const AdminBranches = lazy(() => import('@/pages/AdminBranches'))
 const AdminDepartments = lazy(() => import('@/pages/AdminDepartments'))
 const AdminDivisions = lazy(() => import('@/pages/AdminDivisions'))
@@ -76,6 +77,7 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-ep6" path="employees/employee-profile/emergency-contacts" element={<ToEmployeesRedirect />} />,
   <Route key="hr-ep7" path="employees/employee-profile/skills" element={<ToEmployeesRedirect />} />,
   <Route key="hr-co" path="companies" element={withSuspense(<AdminCompanies />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-ar" path="areas" element={withSuspense(<AdminAreas />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-br" path="branches" element={withSuspense(<AdminBranches />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-de" path="departments" element={withSuspense(<AdminDepartments />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-di" path="divisions" element={withSuspense(<AdminDivisions />, <DataTableRouteFallback titleWidth="w-64" />)} />,

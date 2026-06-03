@@ -37,11 +37,11 @@ export function isManagerialHrRole(userLike) {
     return userLike.is_assigned_organization_head
   }
   const mgmt = String(userLike.management_role || '').trim().toLowerCase()
-  if (mgmt === 'company_head' || mgmt === 'branch_head' || mgmt === 'department_head' || mgmt === 'division_head' || mgmt === 'section_unit_head') {
+  if (mgmt === 'company_head' || mgmt === 'area_head' || mgmt === 'branch_head' || mgmt === 'department_head' || mgmt === 'division_head' || mgmt === 'section_unit_head') {
     return true
   }
   const hr = String(userLike?.hr_role || '').trim().toLowerCase()
-  return hr === 'company_head' || hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head'
+  return hr === 'company_head' || hr === 'area_head' || hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head'
 }
 
 /** Base path for in-app navigation (not API). */

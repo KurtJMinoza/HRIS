@@ -40,10 +40,14 @@ class OrganizationLeadershipController extends Controller
             'assignments.*.effective_to' => ['nullable', 'date'],
             'assignments.*.is_active' => ['sometimes', 'boolean'],
             'assignments.*.remarks' => ['nullable', 'string', 'max:500'],
+            'assignments.*.approval_scope_type' => ['nullable', 'string', 'in:none,company,area,branch,division,department,section_unit'],
+            'assignments.*.approval_scope_mode' => ['nullable', 'string', 'in:all,selected,none'],
+            'assignments.*.approval_scope_ids' => ['nullable', 'array'],
+            'assignments.*.approval_scope_ids.*' => ['integer', 'min:1'],
             'assignments.*.department_scope_mode' => ['nullable', 'string', 'in:all,selected,none'],
             'assignments.*.department_scope_ids' => ['nullable', 'array'],
             'assignments.*.department_scope_ids.*' => ['integer', 'min:1'],
-            'assignments.*.scope_request_type' => ['nullable', 'string', 'in:all,leave,overtime'],
+            'assignments.*.scope_request_type' => ['nullable', 'string', 'in:all,leave,overtime,attendance_correction,official_business,change_schedule,payroll_approval,schedule'],
         ]);
 
         $payload = $this->leadershipService->syncLeadership(

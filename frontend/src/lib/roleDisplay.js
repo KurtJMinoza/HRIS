@@ -8,6 +8,8 @@ export const HR_ROLE_BADGE_CLASS = {
     'border-blue-600/45 bg-blue-600/12 text-blue-950 shadow-sm dark:border-blue-400/40 dark:bg-blue-600/20 dark:text-blue-50',
   company_head:
     'border-violet-800/50 bg-violet-950/25 text-violet-950 dark:border-violet-400/35 dark:bg-violet-950/45 dark:text-violet-100',
+  area_head:
+    'border-purple-600/45 bg-purple-600/12 text-purple-950 dark:border-purple-400/40 dark:bg-purple-600/18 dark:text-purple-50',
   branch_head:
     'border-indigo-600/45 bg-indigo-600/12 text-indigo-950 dark:border-indigo-400/40 dark:bg-indigo-600/18 dark:text-indigo-50',
   department_head:
@@ -23,6 +25,7 @@ export const HR_ROLE_BADGE_CLASS = {
 const FALLBACK_LABELS = {
   admin_hr: 'Admin (HR)',
   company_head: 'Company Head',
+  area_head: 'Area Head',
   branch_head: 'Branch Head',
   department_head: 'Department Head',
   division_head: 'Division Head',
@@ -52,11 +55,11 @@ export function normalizeHrRoleKey(userLike) {
 /**
  * Map legacy `management_role` from employee payloads when `hr_role` was not yet loaded.
  * @param {string | null | undefined} m
- * @returns {'company_head'|'branch_head'|'department_head'|'division_head'|'section_unit_head'|null}
+ * @returns {'company_head'|'area_head'|'branch_head'|'department_head'|'division_head'|'section_unit_head'|null}
  */
 function managementRoleToHrKey(m) {
   if (!m || typeof m !== 'string') return null
-  if (m === 'company_head' || m === 'branch_head' || m === 'department_head' || m === 'division_head' || m === 'section_unit_head') return m
+  if (m === 'company_head' || m === 'area_head' || m === 'branch_head' || m === 'department_head' || m === 'division_head' || m === 'section_unit_head') return m
   return null
 }
 

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\HrRole;
+use App\Models\Area;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
@@ -191,6 +192,23 @@ class DataScopeService
             ];
         }
 
+        if ($role === HrRole::AreaHead) {
+            $areaIds = $this->areaIdsForAreaScope($user);
+            $areas = $areaIds->isNotEmpty()
+                ? Area::query()->whereIn('id', $areaIds->all())->orderBy('area_name')->get(['id', 'area_name', 'company_id'])
+                : new EloquentCollection;
+            $branchIds = $areaIds->isNotEmpty()
+                ? Branch::query()->whereIn('area_id', $areaIds->all())->pluck('id')
+                : collect();
+
+            return [
+                'kind' => 'area',
+                'area_ids' => $areas->pluck('id')->all(),
+                'area_names' => $areas->pluck('area_name')->filter()->values()->all(),
+                'branch_ids' => $branchIds->all(),
+            ];
+        }
+
         if ($role === HrRole::BranchHead) {
             $branchIds = $this->branchIdsForBranchScope($user);
             if ($branchIds->isEmpty()) {
@@ -247,6 +265,14 @@ class DataScopeService
     private function branchIdsForBranchScope(User $actor): \Illuminate\Support\Collection
     {
         return $this->leadershipAssignments->branchIdsLedBy($actor);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    private function areaIdsForAreaScope(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->leadershipAssignments->areaIdsLedBy($actor);
     }
 
     /**
@@ -1296,6 +1322,29 @@ class DataScopeService
             return;
         }
 
+        if ($role === HrRole::AreaHead) {
+            $areaIds = $this->areaIdsForAreaScope($actor);
+            if ($areaIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $companyIds = Area::query()
+                ->whereIn('id', $areaIds->all())
+                ->pluck('company_id')
+                ->filter()
+                ->unique()
+                ->values();
+            if ($companyIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $companyIds->all());
+
+            return;
+        }
+
         if ($role === HrRole::BranchHead) {
             $branchIds = $this->branchIdsForBranchScope($actor);
             if ($branchIds->isEmpty()) {
@@ -1374,6 +1423,128 @@ class DataScopeService
     }
 
     /**
+     * Restrict an areas query to those visible to the actor.
+     */
+    public function restrictAreaQuery(User $actor, Builder $query): void
+    {
+        $role = $this->effectiveOrgScopeRole($actor);
+        if ($role === null) {
+            return;
+        }
+
+        if ($role === HrRole::Employee) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        if ($role === HrRole::CompanyHead) {
+            $companyIds = $this->companyIdsForCompanyHead($actor);
+            if ($companyIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('company_id', $companyIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::AreaHead) {
+            $areaIds = $this->areaIdsForAreaScope($actor);
+            if ($areaIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $areaIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::BranchHead) {
+            $branchIds = $this->branchIdsForBranchScope($actor);
+            if ($branchIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $areaIds = Branch::query()
+                ->whereIn('id', $branchIds->all())
+                ->pluck('area_id')
+                ->filter()
+                ->unique()
+                ->values();
+            if ($areaIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $areaIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::DepartmentHead) {
+            $deptIds = $this->departmentIdsForDepartmentScope($actor);
+            $areaIds = $deptIds->isNotEmpty()
+                ? Branch::query()
+                    ->whereIn('id', Department::query()->whereIn('id', $deptIds)->pluck('branch_id'))
+                    ->pluck('area_id')
+                    ->filter()
+                    ->unique()
+                    ->values()
+                : collect();
+            if ($areaIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $areaIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::DivisionHead) {
+            $divisionIds = $this->divisionIdsForDivisionScope($actor);
+            $areaIds = $divisionIds->isNotEmpty()
+                ? Branch::query()
+                    ->whereIn('id', Division::query()->whereIn('id', $divisionIds)->pluck('branch_id'))
+                    ->pluck('area_id')
+                    ->filter()
+                    ->unique()
+                    ->values()
+                : collect();
+            if ($areaIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $areaIds->all());
+
+            return;
+        }
+
+        if ($role === HrRole::SectionUnitHead) {
+            $sectionIds = $this->sectionUnitIdsForSectionScope($actor);
+            $areaIds = $sectionIds->isNotEmpty()
+                ? Branch::query()
+                    ->whereIn('id', SectionUnit::query()->whereIn('id', $sectionIds)->pluck('branch_id'))
+                    ->pluck('area_id')
+                    ->filter()
+                    ->unique()
+                    ->values()
+                : collect();
+            if ($areaIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('id', $areaIds->all());
+        }
+    }
+
+    /**
      * Restrict a branches query to those visible to the actor.
      */
     public function restrictBranchQuery(User $actor, Builder $query): void
@@ -1397,6 +1568,18 @@ class DataScopeService
                 return;
             }
             $query->whereIn('company_id', $ids);
+
+            return;
+        }
+
+        if ($role === HrRole::AreaHead) {
+            $areaIds = $this->areaIdsForAreaScope($actor);
+            if ($areaIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+            $query->whereIn('area_id', $areaIds->all());
 
             return;
         }

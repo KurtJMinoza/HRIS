@@ -5,6 +5,9 @@ namespace App\Services;
 use App\Enums\HrRole;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
+use App\Support\LeaveModuleCache;
+use App\Support\OvertimeModuleCache;
+use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
@@ -143,10 +146,12 @@ class OrgApprovalWorkflowService
 
         if (in_array(self::MODULE_LEAVE, $normalized, true)) {
             $synced += $this->resyncPendingLeaveRequests();
+            LeaveModuleCache::flush();
         }
 
         if (in_array(self::MODULE_OVERTIME, $normalized, true)) {
             $synced += $this->resyncPendingOvertimeRequests();
+            OvertimeModuleCache::flush();
         }
 
         if ($synced > 0) {
@@ -853,6 +858,7 @@ class OrgApprovalWorkflowService
             HrRole::SectionUnitHead => 'Section/Unit Head',
             HrRole::DivisionHead => 'Division Head',
             HrRole::BranchHead => 'Branch Head',
+            HrRole::AreaHead => 'Area Head',
             HrRole::CompanyHead => 'Company Head',
             default => $role?->badgeLabel() ?? (string) $record->approver_role,
         };
@@ -922,6 +928,8 @@ class OrgApprovalWorkflowService
     private function resyncRequestChain(Model $request, string $moduleType, User $employee, User $requestor): bool
     {
         $requestId = (int) $request->getKey();
+        ReviewRequestCache::forget($moduleType, $requestId);
+
         $before = $this->records($moduleType, $requestId)
             ->sortBy('sequence_order')
             ->values()
@@ -944,7 +952,18 @@ class OrgApprovalWorkflowService
             ])
             ->all();
 
-        return $before !== $after;
+        $changed = $before !== $after;
+
+        if ($changed) {
+            ReviewRequestCache::forget($moduleType, $requestId);
+            if ($moduleType === self::MODULE_LEAVE) {
+                LeaveModuleCache::flush();
+            } elseif ($moduleType === self::MODULE_OVERTIME) {
+                OvertimeModuleCache::flush();
+            }
+        }
+
+        return $changed;
     }
 
     private function employeeForApprovalRouting(User $employee): User

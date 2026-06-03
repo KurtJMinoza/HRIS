@@ -5224,8 +5224,9 @@ export async function getCompanyBranches(companyId) {
 export async function getBranches(params = {}) {
   const query = new URLSearchParams()
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
+  if (params.fresh) query.set('_ts', String(Date.now()))
   const path = `/admin/branches${query.toString() ? `?${query.toString()}` : ''}`
-  return cachedAuthenticatedGetJson(path, { ttlMs: 5 * 60 * 1000 })
+  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
 }
 
 export async function createBranch(payload) {
@@ -6474,6 +6475,72 @@ export async function updateOrganizationLeadership(legacyType, legacyId, payload
       : null
     throw new Error(firstFieldError || data.message || 'Failed to update leadership positions')
   }
+  return data
+}
+
+export async function getAreas(params = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value) !== '') query.set(key, String(value))
+  })
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/areas${suffix}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load areas')
+  return data
+}
+
+export async function createArea(payload) {
+  const res = await authenticatedFetch('/admin/areas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to create area')
+  return data
+}
+
+export async function updateArea(id, payload) {
+  const res = await authenticatedFetch(`/admin/areas/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update area')
+  return data
+}
+
+export async function deleteArea(id) {
+  const res = await authenticatedFetch(`/admin/areas/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete area')
+  return data
+}
+
+export async function getAreaBranches(id) {
+  const res = await authenticatedFetch(`/admin/areas/${id}/branches`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load area branches')
+  return data
+}
+
+export async function getAreaEmployees(id) {
+  const res = await authenticatedFetch(`/admin/areas/${id}/employees`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load area employees')
+  return data
+}
+
+export async function assignBranchesToArea(id, branchIds) {
+  const res = await authenticatedFetch(`/admin/areas/${id}/assign-branches`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ branch_ids: branchIds }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to assign branches to area')
   return data
 }
 

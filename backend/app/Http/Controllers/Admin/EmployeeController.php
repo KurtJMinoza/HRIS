@@ -3325,6 +3325,7 @@ class EmployeeController extends Controller
     {
         return match ($hr) {
             HrRole::CompanyHead => 'company_head',
+            HrRole::AreaHead => 'area_head',
             HrRole::BranchHead => 'branch_head',
             HrRole::DepartmentHead => 'department_head',
             HrRole::DivisionHead => 'division_head',

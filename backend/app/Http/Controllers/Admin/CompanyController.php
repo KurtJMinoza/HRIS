@@ -82,7 +82,7 @@ class CompanyController extends Controller
             ->select('companies.*')
             ->selectSub($totalEmployeesSub, 'total_employees')
             ->with('companyHead:id,name,first_name,middle_name,last_name,suffix')
-            ->withCount(['branches', 'departments as departments_count'])
+            ->withCount(['areas', 'branches', 'departments as departments_count'])
             ->orderBy('name');
 
         $this->dataScopeService->restrictCompanyQuery($request->user(), $companiesQuery);
@@ -348,6 +348,7 @@ class CompanyController extends Controller
             'address' => $c->address,
             'founded_at' => $c->founded_at?->format('Y-m-d'),
             'branches_count' => $c->branches_count ?? 0,
+            'areas_count' => $c->areas_count ?? 0,
             'departments_count' => $c->departments_count ?? 0,
             'total_employees' => $c->total_employees ?? 0,
             'created_at' => $c->created_at?->toIso8601String(),

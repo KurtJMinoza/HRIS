@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\HrRole;
+use App\Models\Area;
 use App\Models\ApprovalWorkflowSetting;
 use App\Models\Branch;
 use App\Models\Company;
@@ -122,6 +123,8 @@ class HrApprovalChainResolver
         ]);
 
         $workflowSetting = $this->workflowSettingService->resolveSetting($moduleType, $logContext);
+        $approvalChainMode = (string) ($workflowSetting['approval_chain_mode'] ?? ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS);
+        $maxOrgApprovalSteps = $this->maxOrgApprovalStepsForMode($approvalChainMode, $workflowSetting);
 
         Log::info('approval_chain: resolving flexible two-step chain', [
             'request_id' => $logContext['request_id'] ?? null,
@@ -142,6 +145,8 @@ class HrApprovalChainResolver
             'employee_company_id' => $subject->company_id ? (int) $subject->company_id : null,
             'uses_hierarchy' => (bool) ($workflowSetting['use_hierarchy_approval'] ?? false),
             'fallback_to_parent_approver' => (bool) ($workflowSetting['fallback_to_parent_approver'] ?? false),
+            'approval_chain_mode' => $approvalChainMode,
+            'max_org_approval_steps' => $maxOrgApprovalSteps,
             'department_head_fallback_allowed' => (bool) ($workflowSetting['fallback_to_parent_approver'] ?? false),
             'final_approver_role' => $workflowSetting['final_approver_role'] ?? ApprovalWorkflowSetting::FINAL_APPROVER_ADMIN_HR,
         ]);
@@ -159,7 +164,7 @@ class HrApprovalChainResolver
             return $steps;
         }
 
-        $flexible = $this->flexibleImmediateApproverResolver->resolveImmediateApprover(
+        $hierarchySteps = $this->flexibleImmediateApproverResolver->resolveHierarchyApprovalChain(
             $subject,
             $moduleType,
             $requestor,
@@ -167,42 +172,79 @@ class HrApprovalChainResolver
             $logContext,
         );
 
-        if ($flexible !== null) {
-            $approverId = (int) $flexible['approver_id'];
-            if ($approverId !== $subjectId && $approverId !== $requestorId) {
-                $usedApproverIds[] = $approverId;
-                $steps[] = $this->formatFlexibleStep($flexible, 1);
-                Log::info('approval_chain: flexible immediate approver added', [
+        if ($hierarchySteps === []) {
+            $legacyImmediate = $this->flexibleImmediateApproverResolver->resolveImmediateApprover(
+                $subject,
+                $moduleType,
+                $requestor,
+                $usedApproverIds,
+                $logContext,
+            );
+            if ($legacyImmediate !== null) {
+                $hierarchySteps = [$legacyImmediate];
+                Log::info('approval_chain: using legacy immediate approver fallback', [
                     'request_id' => $logContext['request_id'] ?? null,
                     'employee_id' => $subjectId,
-                    'level' => $flexible['approval_level'],
-                    'approver_id' => $approverId,
-                    'approver_name' => $flexible['approver_name'],
-                    'approval_label' => $flexible['approval_label'],
-                ]);
-            } else {
-                Log::info('approval_chain: skipped flexible immediate approver', [
-                    'request_id' => $logContext['request_id'] ?? null,
-                    'employee_id' => $subjectId,
-                    'approver_id' => $approverId,
-                    'reason' => 'self-approval',
+                    'approver_id' => $legacyImmediate['approver_id'] ?? null,
+                    'approval_level' => $legacyImmediate['approval_level'] ?? null,
                 ]);
             }
-        } else {
-            Log::info('approval_chain: no flexible immediate approver found', [
+        }
+
+        foreach ($hierarchySteps as $flexible) {
+            $approverId = (int) ($flexible['approver_id'] ?? 0);
+            if ($approverId <= 0 || $approverId === $subjectId || $approverId === $requestorId) {
+                continue;
+            }
+            if (in_array($approverId, $usedApproverIds, true)) {
+                continue;
+            }
+            if ($maxOrgApprovalSteps !== null && count($steps) >= $maxOrgApprovalSteps) {
+                Log::info('approval_chain: hierarchy approver skipped by max org approval steps', [
+                    'request_id' => $logContext['request_id'] ?? null,
+                    'employee_id' => $subjectId,
+                    'approval_chain_mode' => $approvalChainMode,
+                    'max_org_approval_steps' => $maxOrgApprovalSteps,
+                    'level' => $flexible['approval_level'] ?? null,
+                    'approver_id' => $approverId,
+                    'approver_name' => $flexible['approver_name'] ?? null,
+                    'skipped_reason' => 'max_org_approval_steps_reached',
+                ]);
+
+                continue;
+            }
+            $usedApproverIds[] = $approverId;
+            $steps[] = $this->formatFlexibleStep($flexible, count($steps) + 1);
+            Log::info('approval_chain: hierarchy approver added', [
                 'request_id' => $logContext['request_id'] ?? null,
                 'employee_id' => $subjectId,
-                'request_type' => $moduleType,
-                'skip_reason' => 'no_eligible_section_or_parent_approver',
+                'level' => $flexible['approval_level'] ?? null,
+                'approver_id' => $approverId,
+                'approver_name' => $flexible['approver_name'] ?? null,
+                'approval_label' => $flexible['approval_label'] ?? null,
             ]);
         }
 
-        $this->appendAdminHrFinalStep($steps, $subject, $requestor, $usedApproverIds);
+        if ($hierarchySteps === []) {
+            Log::info('approval_chain: no hierarchy approvers resolved', [
+                'request_id' => $logContext['request_id'] ?? null,
+                'employee_id' => $subjectId,
+                'request_type' => $moduleType,
+                'skip_reason' => 'no_eligible_hierarchy_approvers',
+            ]);
+        }
+
+        $stepFlags = $this->workflowSettingService->hierarchyStepFlags($workflowSetting);
+        if ($stepFlags['include_admin_hr'] ?? true) {
+            $this->appendAdminHrFinalStep($steps, $subject, $requestor, $usedApproverIds);
+        }
 
         Log::info('approval_chain: final order', [
             'request_id' => $logContext['request_id'] ?? null,
             'employee_id' => $subjectId,
             'fallback_to_parent_approver' => (bool) ($workflowSetting['fallback_to_parent_approver'] ?? false),
+            'approval_chain_mode' => $approvalChainMode,
+            'max_org_approval_steps' => $maxOrgApprovalSteps,
             'department_head_fallback_allowed' => (bool) ($workflowSetting['fallback_to_parent_approver'] ?? false),
             'chain' => array_map(
                 fn (array $step): array => [
@@ -292,6 +334,28 @@ class HrApprovalChainResolver
         return $firstLine['approver'] ?? null;
     }
 
+    /**
+     * @param  array<string, mixed>  $workflowSetting
+     */
+    private function maxOrgApprovalStepsForMode(string $approvalChainMode, array $workflowSetting): ?int
+    {
+        if ($approvalChainMode === ApprovalWorkflowSetting::CHAIN_MODE_NEAREST_PLUS_ADMIN) {
+            return 1;
+        }
+
+        if ($approvalChainMode === ApprovalWorkflowSetting::CHAIN_MODE_FULL_HIERARCHY) {
+            return null;
+        }
+
+        if (! array_key_exists('max_org_approval_steps', $workflowSetting)
+            || $workflowSetting['max_org_approval_steps'] === null
+            || $workflowSetting['max_org_approval_steps'] === '') {
+            return null;
+        }
+
+        return max(0, min(6, (int) $workflowSetting['max_org_approval_steps']));
+    }
+
     public function resolveHrApprover(): ?User
     {
         return User::query()
@@ -309,7 +373,8 @@ class HrApprovalChainResolver
             HrRole::SectionUnitHead => HrRole::DepartmentHead,
             HrRole::DepartmentHead => HrRole::DivisionHead,
             HrRole::DivisionHead => HrRole::BranchHead,
-            HrRole::BranchHead => HrRole::CompanyHead,
+            HrRole::BranchHead => HrRole::AreaHead,
+            HrRole::AreaHead => HrRole::CompanyHead,
             HrRole::CompanyHead, HrRole::AdminHr => null,
         };
     }
@@ -321,6 +386,7 @@ class HrApprovalChainResolver
             HrRole::DivisionHead => $this->resolveDivisionHeadFor($employee),
             HrRole::DepartmentHead => $this->resolveDepartmentHeadFor($employee),
             HrRole::BranchHead => $this->resolveBranchHeadFor($employee),
+            HrRole::AreaHead => null,
             HrRole::CompanyHead => $this->resolveCompanyHeadFor($employee),
             default => null,
         };
@@ -401,6 +467,7 @@ class HrApprovalChainResolver
 
         return match (true) {
             str_contains($level, 'company') => HrRole::CompanyHead,
+            str_contains($level, 'area') => HrRole::AreaHead,
             str_contains($level, 'branch') => HrRole::BranchHead,
             str_contains($level, 'division') => HrRole::DivisionHead,
             str_contains($level, 'department') => HrRole::DepartmentHead,
@@ -456,6 +523,21 @@ class HrApprovalChainResolver
             return null;
         }
 
+        $scoped = $this->resolveScopedLegacyFallbackApprover($subject, $targetRole, $requestorId, $usedApproverIds, $context);
+        if ($scoped !== null) {
+            return $this->formatFlexibleStep($scoped, 1);
+        }
+
+        if (in_array($targetRole, [HrRole::BranchHead, HrRole::AreaHead, HrRole::CompanyHead], true)) {
+            Log::info('approval_chain: legacy scoped fallback found no approver for role', array_merge($context, [
+                'target_role' => $targetRole->value,
+                'subject_role' => $subjectRole->value,
+                'skip_reason' => 'no_scope_matched_scoped_org_head',
+            ]));
+
+            return null;
+        }
+
         $approver = $this->resolveApproverForRole($subject, $targetRole);
         if (! $approver) {
             Log::info('approval_chain: legacy fallback found no approver for role', array_merge($context, [
@@ -478,6 +560,87 @@ class HrApprovalChainResolver
         }
 
         return $this->formatStep($targetRole, $approver, 1);
+    }
+
+    /**
+     * @param  list<int>  $usedApproverIds
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>|null
+     */
+    private function resolveScopedLegacyFallbackApprover(
+        User $subject,
+        HrRole $targetRole,
+        int $requestorId,
+        array $usedApproverIds,
+        array $context,
+    ): ?array {
+        $organizationType = match ($targetRole) {
+            HrRole::BranchHead => 'branch',
+            HrRole::AreaHead => 'area',
+            HrRole::CompanyHead => 'company',
+            default => null,
+        };
+
+        if ($organizationType === null) {
+            return null;
+        }
+
+        $organizationId = $this->organizationIdForScopedFallback($subject, $organizationType, $context);
+        if ($organizationId <= 0) {
+            return null;
+        }
+
+        return $this->flexibleImmediateApproverResolver->resolveOrgHead(
+            $organizationType,
+            $organizationId,
+            $subject,
+            $context['request_type'] ?? $context['module_type'] ?? null,
+            array_values(array_unique([
+                (int) $subject->id,
+                $requestorId,
+                ...array_map('intval', $usedApproverIds),
+            ])),
+            $context + [
+                'organization_type' => $organizationType,
+                'organization_id' => $organizationId,
+                'requester_hierarchy' => $this->hierarchyForScopedFallback($subject, $context),
+            ],
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function organizationIdForScopedFallback(User $subject, string $organizationType, array $context): int
+    {
+        $contextKey = $organizationType.'_id';
+        $contextId = (int) ($context[$contextKey] ?? 0);
+        if ($contextId > 0) {
+            return $contextId;
+        }
+
+        return match ($organizationType) {
+            'branch' => (int) ($this->branchFor($subject)?->id ?? 0),
+            'area' => (int) ($this->areaFor($subject)?->id ?? 0),
+            'company' => (int) ($this->companyFor($subject)?->id ?? 0),
+            default => 0,
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array<string, int|null>
+     */
+    private function hierarchyForScopedFallback(User $subject, array $context): array
+    {
+        return [
+            'company' => (int) ($context['company_id'] ?? 0) ?: ($this->companyFor($subject)?->id ? (int) $this->companyFor($subject)->id : null),
+            'area' => (int) ($context['area_id'] ?? 0) ?: ($this->areaFor($subject)?->id ? (int) $this->areaFor($subject)->id : null),
+            'branch' => (int) ($context['branch_id'] ?? 0) ?: ($this->branchFor($subject)?->id ? (int) $this->branchFor($subject)->id : null),
+            'division' => (int) ($context['division_id'] ?? 0) ?: ($this->divisionFor($subject)?->id ? (int) $this->divisionFor($subject)->id : null),
+            'department' => (int) ($context['department_id'] ?? 0) ?: ($this->departmentFor($subject)?->id ? (int) $this->departmentFor($subject)->id : null),
+            'section_unit' => (int) ($context['section_unit_id'] ?? 0) ?: ($this->sectionUnitFor($subject)?->id ? (int) $this->sectionUnitFor($subject)->id : null),
+        ];
     }
 
     private function resolveSectionUnitHeadFor(User $employee): ?User
@@ -675,6 +838,16 @@ class HrApprovalChainResolver
         $division = $this->divisionFor($employee);
         if ($division?->branch_id) {
             return Branch::query()->find($division->branch_id);
+        }
+
+        return null;
+    }
+
+    private function areaFor(User $employee): ?Area
+    {
+        $branch = $this->branchFor($employee);
+        if ($branch?->area_id) {
+            return Area::query()->find($branch->area_id);
         }
 
         return null;

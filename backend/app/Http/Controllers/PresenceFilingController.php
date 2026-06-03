@@ -979,6 +979,15 @@ class PresenceFilingController extends Controller
             ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
             ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
             ->whereIn('request_id', $requestIds)
+            ->whereNotExists(function ($earlier): void {
+                $earlier
+                    ->selectRaw('1')
+                    ->from('org_approval_records as earlier_approval')
+                    ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
+                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
+            })
             ->with('approver:id,name,first_name,middle_name,last_name,suffix')
             ->orderBy('sequence_order')
             ->orderBy('id')
@@ -1045,31 +1054,59 @@ class PresenceFilingController extends Controller
      */
     private function applyPresenceFilingApprovalVisibility(User $actor, $query, Request $request): void
     {
+        $status = (string) $request->query('status', 'all');
         if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
+            if ($status === 'pending') {
+                $this->whereCurrentPendingApprovalForActor($query, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, (int) $actor->id, 'attendance_corrections.id');
+            }
+
             return;
         }
 
         $actorId = (int) $actor->id;
-        $assignedRequestIds = $this->assignedPresenceFilingIdsForActor($actor);
-        $hierarchyOn = app(ApprovalWorkflowSettingService::class)
-            ->usesHierarchyApproval(OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION);
-        $scopedEmployeeIds = $hierarchyOn
-            ? $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor)
-            : [];
-
-        $query->where(function ($scope) use ($actorId, $assignedRequestIds, $scopedEmployeeIds): void {
-            $scope->where('first_approver_id', $actorId)
-                ->orWhere('second_approver_id', $actorId);
-
-            if ($assignedRequestIds !== []) {
-                $scope->orWhereIn('id', $assignedRequestIds);
-            }
-
-            if ($scopedEmployeeIds !== []) {
-                $scope->orWhereIn('user_id', $scopedEmployeeIds);
-            }
+        $query->where(function ($scope) use ($actorId): void {
+            $this->whereCurrentPendingApprovalForActor($scope, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, $actorId, 'attendance_corrections.id');
+            $this->orWhereActorHasHandledApproval($scope, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, $actorId, 'attendance_corrections.id');
         });
 
+    }
+
+    private function whereCurrentPendingApprovalForActor($query, string $moduleType, int $actorId, string $requestColumn): void
+    {
+        $query->whereExists(function ($approval) use ($moduleType, $actorId, $requestColumn): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as current_approval')
+                ->whereColumn('current_approval.request_id', $requestColumn)
+                ->where('current_approval.module_type', $moduleType)
+                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->where('current_approval.approver_id', $actorId)
+                ->whereNotExists(function ($earlier) use ($moduleType): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                        ->where('earlier_approval.module_type', $moduleType)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+                });
+        });
+    }
+
+    private function orWhereActorHasHandledApproval($query, string $moduleType, int $actorId, string $requestColumn): void
+    {
+        $query->orWhereExists(function ($approval) use ($moduleType, $actorId, $requestColumn): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as handled_approval')
+                ->whereColumn('handled_approval.request_id', $requestColumn)
+                ->where('handled_approval.module_type', $moduleType)
+                ->where('handled_approval.approver_id', $actorId)
+                ->whereIn('handled_approval.approval_status', [
+                    OrgApprovalRecord::STATUS_APPROVED,
+                    OrgApprovalRecord::STATUS_REJECTED,
+                ]);
+        });
     }
 
     /**
@@ -1106,17 +1143,40 @@ class PresenceFilingController extends Controller
         $actorId = (int) $actor->id;
         if ((int) $correction->user_id === $actorId
             || (int) $correction->filed_by === $actorId
-            || (int) $correction->first_approver_id === $actorId
-            || (int) $correction->second_approver_id === $actorId
         ) {
             return true;
         }
 
-        if (OrgApprovalRecord::query()
+        if ($correction->pending_approval
+            && ! $correction->approved
+            && $correction->rejected_at === null
+            && OrgApprovalRecord::query()
             ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
             ->where('request_id', (int) $correction->id)
             ->where('approver_id', $actorId)
+            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+            ->whereNotExists(function ($earlier): void {
+                $earlier
+                    ->selectRaw('1')
+                    ->from('org_approval_records as earlier_approval')
+                    ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
+                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
+            })
             ->exists()) {
+            return true;
+        }
+
+        if ($this->actorHasHandledApprovalRecord($actorId, (int) $correction->id, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)) {
+            return true;
+        }
+
+        if ($correction->pending_approval && ! $correction->approved && $correction->rejected_at === null) {
+            return false;
+        }
+
+        if ((int) $correction->first_approver_id === $actorId || (int) $correction->second_approver_id === $actorId) {
             return true;
         }
 
@@ -1127,6 +1187,19 @@ class PresenceFilingController extends Controller
         $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
 
         return is_array($scopedEmployeeIds) && in_array((int) $correction->user_id, $scopedEmployeeIds, true);
+    }
+
+    private function actorHasHandledApprovalRecord(int $actorId, int $requestId, string $moduleType): bool
+    {
+        return OrgApprovalRecord::query()
+            ->where('module_type', $moduleType)
+            ->where('request_id', $requestId)
+            ->where('approver_id', $actorId)
+            ->whereIn('approval_status', [
+                OrgApprovalRecord::STATUS_APPROVED,
+                OrgApprovalRecord::STATUS_REJECTED,
+            ])
+            ->exists();
     }
 
     private function wantsLiteAttendanceCorrectionMutationResponse(Request $request): bool

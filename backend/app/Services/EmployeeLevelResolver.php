@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Branch;
 use App\Models\Company;
+use App\Models\Area;
 use App\Models\Department;
 use App\Models\Division;
 use App\Models\EmployeeOrganizationAssignment;
@@ -26,8 +27,9 @@ class EmployeeLevelResolver
         2 => 'Department Head',
         3 => 'Division Head',
         4 => 'Branch Head',
-        5 => 'Company Head / Executive',
-        6 => 'Admin',
+        5 => 'Area Head',
+        6 => 'Company Head',
+        7 => 'Admin / HR Admin / Payroll Admin / Super Admin',
     ];
 
     /**
@@ -47,11 +49,11 @@ class EmployeeLevelResolver
         $candidates = [];
 
         if ($this->isAdminLevel($user)) {
-            $candidates[] = $this->payload(6, 'user_role', null, $this->organizationPathForUser($user), null, null);
+            $candidates[] = $this->payload(7, 'user_role', null, $this->organizationPathForUser($user), null, null);
         }
 
         if ((bool) ($user->is_execom ?? false)) {
-            $candidates[] = $this->payload(5, 'executive_profile', null, $this->organizationPathForUser($user), null, null);
+            $candidates[] = $this->payload(7, 'executive_profile', null, $this->organizationPathForUser($user), null, null);
         }
 
         $candidates = array_merge($candidates, $this->legacyHeadCandidates($user, $context));
@@ -144,7 +146,7 @@ class EmployeeLevelResolver
      */
     private function normalizeContext(?array $context): array
     {
-        $keys = ['company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id'];
+        $keys = ['company_id', 'area_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id'];
         $normalized = [];
         foreach ($keys as $key) {
             $value = $context[$key] ?? null;
@@ -184,7 +186,14 @@ class EmployeeLevelResolver
         foreach (Company::query()->where('company_head_id', $user->id)->get(['id', 'name']) as $company) {
             $source = ['company_id' => (int) $company->id];
             if ($this->matchesContext($source, $context)) {
-                $candidates[] = $this->payload(5, 'company', (int) $company->id, $company->name, null, null);
+                $candidates[] = $this->payload(6, 'company', (int) $company->id, $company->name, null, null);
+            }
+        }
+
+        foreach (Area::query()->where('area_manager_employee_id', $user->id)->with('company:id,name')->get(['id', 'area_name', 'company_id']) as $area) {
+            $source = ['company_id' => $area->company_id, 'area_id' => (int) $area->id];
+            if ($this->matchesContext($source, $context)) {
+                $candidates[] = $this->payload(5, 'area', (int) $area->id, $this->path([$area->company?->name, $area->area_name]), null, null);
             }
         }
 
@@ -393,14 +402,16 @@ class EmployeeLevelResolver
         }
 
         return match ($level) {
-            'company' => 5,
+            'company' => 6,
+            'area' => 5,
             'branch' => 4,
             'division' => 3,
             'department' => 2,
             'section', 'section_unit' => 1,
             'team' => 1,
             default => match ((string) $unit->legacy_source_type) {
-                'company' => 5,
+                'company' => 6,
+                'area' => 5,
                 'branch' => 4,
                 'division' => 3,
                 'department' => 2,

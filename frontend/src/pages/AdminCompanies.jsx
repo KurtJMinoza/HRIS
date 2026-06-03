@@ -1237,6 +1237,7 @@ export default function AdminCompanies() {
   const [editDetailsAddress, setEditDetailsAddress] = useState('')
   const [editDetailsTin, setEditDetailsTin] = useState('')
   const [editDetailsSubmitting, setEditDetailsSubmitting] = useState(false)
+  const editDetailsLeadershipRef = useRef(null)
 
   // Detail sheet state
   const [detailOpen, setDetailOpen] = useState(false)
@@ -1584,6 +1585,13 @@ export default function AdminCompanies() {
     }
     setEditDetailsSubmitting(true)
     try {
+      if (editDetailsLeadershipRef.current?.isDirty?.()) {
+        const leadershipSaved = await editDetailsLeadershipRef.current.save()
+        if (!leadershipSaved) {
+          return
+        }
+      }
+
       const data = await updateCompany(editDetailsCompany.id, {
         name: editDetailsName.trim(),
         tin: editDetailsTin.trim() || null,
@@ -2167,10 +2175,18 @@ export default function AdminCompanies() {
       <Dialog open={editDetailsOpen} onOpenChange={(open) => { setEditDetailsOpen(open); if (!open) setEditDetailsCompany(null) }}>
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
+          surfaceStyle={{
+            width: 'min(calc(100vw - 1.5rem), 88rem)',
+            maxWidth: 'none',
+            height: 'min(92vh, 52rem)',
+          }}
+          className="max-h-[min(92vh,52rem)] min-h-0 min-w-0 max-w-none! rounded-2xl border-border/80 bg-card shadow-2xl shadow-black/20 dark:shadow-black/60"
+          innerClassName="flex min-h-0 flex-1 flex-col !gap-0 !overflow-hidden !p-0"
+          closeButtonClassName="right-5 top-5 size-9 rounded-lg border-border/80 bg-background text-foreground hover:bg-muted"
+          overlayClassName="bg-black/55 backdrop-blur-sm"
           aria-describedby="company-edit-details-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
+          <div className={cn(ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS, 'shrink-0')}>
             <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
               <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Edit company details</DialogTitle>
               <p id="company-edit-details-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
@@ -2178,41 +2194,54 @@ export default function AdminCompanies() {
               </p>
             </DialogHeader>
           </div>
-          <form onSubmit={handleEditDetails} className="flex min-h-0 flex-1 flex-col">
-            <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4')}>
-              <div>
-                <Label htmlFor="edit-details-name">Company name *</Label>
-                <Input
-                  id="edit-details-name"
-                  value={editDetailsName}
-                  onChange={(e) => setEditDetailsName(e.target.value)}
-                  className="mt-1"
-                  autoComplete="organization"
-                />
-                <p className="mt-1 text-xs text-muted-foreground">Letters, numbers, spaces, hyphens, and apostrophes only.</p>
+          <form onSubmit={handleEditDetails} className="flex min-h-0 flex-1 flex-col overflow-hidden text-foreground">
+            <div className="grid min-h-0 flex-1 grid-cols-1 divide-y divide-border/80 overflow-hidden lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:divide-x lg:divide-y-0">
+              <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-4 overflow-y-auto')}>
+                <div>
+                  <Label htmlFor="edit-details-name">Company name *</Label>
+                  <Input
+                    id="edit-details-name"
+                    value={editDetailsName}
+                    onChange={(e) => setEditDetailsName(e.target.value)}
+                    className="mt-1"
+                    autoComplete="organization"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">Letters, numbers, spaces, hyphens, and apostrophes only.</p>
+                </div>
+                <div>
+                  <Label htmlFor="edit-details-address">Company address</Label>
+                  <textarea
+                    id="edit-details-address"
+                    rows={3}
+                    value={editDetailsAddress}
+                    onChange={(e) => setEditDetailsAddress(e.target.value)}
+                    placeholder="Registered business address (optional)"
+                    className="mt-1 flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:border-border/50 dark:bg-input/30"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-details-tin">Company TIN (ID number)</Label>
+                  <Input
+                    id="edit-details-tin"
+                    value={editDetailsTin}
+                    onChange={(e) => setEditDetailsTin(e.target.value)}
+                    placeholder="e.g. 123-456-789-000 (optional)"
+                    className="mt-1"
+                    autoComplete="off"
+                  />
+                </div>
               </div>
-              <div>
-                <Label htmlFor="edit-details-address">Company address</Label>
-                <textarea
-                  id="edit-details-address"
-                  rows={3}
-                  value={editDetailsAddress}
-                  onChange={(e) => setEditDetailsAddress(e.target.value)}
-                  placeholder="Registered business address (optional)"
-                  className="mt-1 flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:border-border/50 dark:bg-input/30"
-                />
-              </div>
-              <div>
-                <Label htmlFor="edit-details-tin">Company TIN (ID number)</Label>
-                <Input
-                  id="edit-details-tin"
-                  value={editDetailsTin}
-                  onChange={(e) => setEditDetailsTin(e.target.value)}
-                  placeholder="e.g. 123-456-789-000 (optional)"
-                  className="mt-1"
-                  autoComplete="off"
-                />
-              </div>
+              {editDetailsCompany?.id ? (
+                <div className="min-h-0 overflow-y-auto bg-muted/10 px-4 py-5 md:px-6">
+                  <LeadershipPositionsSection
+                    ref={editDetailsLeadershipRef}
+                    legacyType="company"
+                    legacyId={editDetailsCompany.id}
+                    employeeOptions={allEmployees}
+                    canManage
+                  />
+                </div>
+              ) : null}
             </div>
             <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
               <Button type="button" variant="outline" onClick={() => setEditDetailsOpen(false)}>

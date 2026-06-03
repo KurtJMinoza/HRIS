@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\Area;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\User;
@@ -27,7 +28,7 @@ class BranchController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Branch::with('company:id,name,logo')
+        $query = Branch::with(['company:id,name,logo', 'area:id,area_name,company_id'])
             ->with('branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->withCount('departments')
             ->withTotalEmployeesCount();
@@ -51,6 +52,7 @@ class BranchController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'company_id' => ['required', 'integer', 'exists:companies,id'],
+            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
             'address' => ['nullable', 'string', 'max:500'],
             'branch_manager_id' => ['nullable', 'integer', 'exists:users,id'],
         ]);
@@ -63,6 +65,7 @@ class BranchController extends Controller
                 'company_id' => ['Please upload a Company logo before creating Branches and Departments.'],
             ]);
         }
+        $this->assertAreaBelongsToCompany($validated['area_id'] ?? null, (int) $validated['company_id']);
 
         if (($validated['branch_manager_id'] ?? null) !== null) {
             $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['branch_manager_id']);
@@ -71,6 +74,7 @@ class BranchController extends Controller
         $branch = Branch::create([
             'name' => $validated['name'],
             'company_id' => $validated['company_id'],
+            'area_id' => $validated['area_id'] ?? null,
             'address' => $validated['address'] ?? null,
             'branch_manager_id' => $validated['branch_manager_id'] ?? null,
         ]);
@@ -86,7 +90,7 @@ class BranchController extends Controller
 
         return response()->json([
             'message' => 'Branch created successfully.',
-            'branch' => $this->branchResponse($branch->load('company:id,name,logo')->load('branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image')),
+            'branch' => $this->branchResponse($branch->load(['company:id,name,logo', 'area:id,area_name,company_id', 'branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image'])),
         ], 201);
     }
 
@@ -140,6 +144,7 @@ class BranchController extends Controller
         $validated = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
             'company_id' => ['sometimes', 'integer', 'exists:companies,id'],
+            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
             'address' => ['nullable', 'string', 'max:500'],
             'branch_manager_id' => ['nullable', 'integer', 'exists:users,id'],
         ]);
@@ -159,6 +164,9 @@ class BranchController extends Controller
                     'company_id' => ['Please upload a Company logo before creating Branches and Departments.'],
                 ]);
             }
+        }
+        if (array_key_exists('area_id', $validated)) {
+            $this->assertAreaBelongsToCompany($validated['area_id'] ?? null, (int) ($validated['company_id'] ?? $branch->company_id));
         }
 
         if (array_key_exists('branch_manager_id', $validated)) {
@@ -187,7 +195,7 @@ class BranchController extends Controller
             }
         }
 
-        $refreshed = Branch::with(['company:id,name,logo', 'branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image'])
+        $refreshed = Branch::with(['company:id,name,logo', 'area:id,area_name,company_id', 'branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image'])
             ->withCount('departments')
             ->withTotalEmployeesCount()
             ->findOrFail($branch->id);
@@ -215,6 +223,20 @@ class BranchController extends Controller
         $branch->delete();
 
         return response()->json(['message' => 'Branch deleted successfully.']);
+    }
+
+    private function assertAreaBelongsToCompany(mixed $areaId, int $companyId): void
+    {
+        if ($areaId === null || $areaId === '') {
+            return;
+        }
+
+        $area = Area::query()->find((int) $areaId);
+        if (! $area || (int) $area->company_id !== $companyId) {
+            throw ValidationException::withMessages([
+                'area_id' => ['The selected area must belong to the selected company.'],
+            ]);
+        }
     }
 
     private function assertBranchNameIsUnique(string $name, int $companyId, ?int $ignoreBranchId = null): void
@@ -250,6 +272,8 @@ class BranchController extends Controller
             'name' => $b->name,
             'company_id' => $b->company_id,
             'company_name' => $b->company?->name,
+            'area_id' => $b->area_id,
+            'area_name' => $b->area?->area_name,
             'logo' => $b->company?->logo,
             'logo_url' => $logoUrl,
             'address' => $b->address,

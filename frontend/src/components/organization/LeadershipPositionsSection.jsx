@@ -23,6 +23,9 @@ const EMPTY_ROW = {
   employee_id: '',
   is_active: true,
   remarks: '',
+  approval_scope_type: '',
+  approval_scope_mode: 'none',
+  approval_scope_ids: [],
   department_scope_mode: 'none',
   department_scope_ids: [],
   scope_request_type: 'all',
@@ -30,9 +33,38 @@ const EMPTY_ROW = {
 
 const SCOPE_REQUEST_TYPES = [
   ['all', 'All request types'],
-  ['leave', 'Leave only'],
-  ['overtime', 'Overtime only'],
+  ['leave', 'Leave'],
+  ['overtime', 'Overtime'],
+  ['attendance_correction', 'Attendance Correction'],
+  ['official_business', 'Official Business'],
+  ['change_schedule', 'Change Schedule'],
+  ['payroll_approval', 'Payroll Approval'],
 ]
+
+const SCOPE_TYPE_LABELS = {
+  company: 'Company',
+  area: 'Area',
+  branch: 'Branch',
+  division: 'Division',
+  department: 'Department',
+  section_unit: 'Section',
+}
+
+const SCOPE_TYPE_PLURAL_LABELS = {
+  company: 'Companies',
+  area: 'Areas',
+  branch: 'Branches',
+  division: 'Divisions',
+  department: 'Departments',
+  section_unit: 'Sections',
+}
+
+const DEFAULT_SCOPE_TYPES_BY_LEGACY_TYPE = {
+  company: ['company', 'area', 'branch', 'division', 'department', 'section_unit'],
+  area: ['area', 'branch', 'division', 'department', 'section_unit'],
+  branch: ['branch', 'division', 'department', 'section_unit'],
+  division: ['department'],
+}
 
 function normalizeScopeRequestType(value) {
   const key = String(value || 'all')
@@ -47,6 +79,12 @@ function normalizeRowsForCompare(rows) {
       employee_id: String(row.employee_id),
       is_active: Boolean(row.is_active),
       remarks: String(row.remarks || '').trim(),
+      approval_scope_type: row.approval_scope_type || '',
+      approval_scope_mode: row.approval_scope_mode || row.department_scope_mode || 'none',
+      approval_scope_ids: (Array.isArray(row.approval_scope_ids) ? row.approval_scope_ids : row.department_scope_ids || [])
+        .map((id) => Number(id))
+        .filter((id) => id > 0)
+        .sort((a, b) => a - b),
       department_scope_mode: row.department_scope_mode || 'none',
       department_scope_ids: (Array.isArray(row.department_scope_ids) ? row.department_scope_ids : [])
         .map((id) => Number(id))
@@ -62,6 +100,12 @@ function mapAssignmentRows(assignments) {
     position_type_id: String(row.position_type_id || ''),
     employee_id: String(row.employee_id || ''),
     remarks: row.remarks || '',
+    approval_scope_type: row.approval_scope_type || (row.department_scope_mode && row.department_scope_mode !== 'none' ? 'department' : ''),
+    approval_scope_mode: row.approval_scope_mode || row.department_scope_mode || 'none',
+    approval_scope_ids: Array.isArray(row.approval_scope_ids)
+      ? row.approval_scope_ids
+      : Array.isArray(row.department_scope_ids) ? row.department_scope_ids : [],
+    approval_scope_labels: row.approval_scope_labels || row.department_scope_labels || [],
     department_scope_mode: row.department_scope_mode || 'none',
     department_scope_ids: Array.isArray(row.department_scope_ids) ? row.department_scope_ids : [],
     scope_request_type: normalizeScopeRequestType(row.scope_request_type),
@@ -76,13 +120,21 @@ function buildAssignmentsPayload(rows, positionTypes) {
       const positionType = positionTypes.find(
         (type) => String(type.id) === String(row.position_type_id),
       )
-      const mode = row.department_scope_mode || 'none'
-      const departmentScopeIds = Array.isArray(row.department_scope_ids)
-        ? row.department_scope_ids.map(Number).filter((id) => id > 0)
+      const mode = row.approval_scope_mode || row.department_scope_mode || 'none'
+      const scopeType = mode === 'none'
+        ? 'none'
+        : row.approval_scope_type || (row.department_scope_mode && row.department_scope_mode !== 'none' ? 'department' : null)
+      const scopeIds = Array.isArray(row.approval_scope_ids)
+        ? row.approval_scope_ids.map(Number).filter((id) => id > 0)
+        : Array.isArray(row.department_scope_ids)
+          ? row.department_scope_ids.map(Number).filter((id) => id > 0)
+          : []
+      const departmentScopeIds = scopeType === 'department'
+        ? scopeIds
         : []
 
-      if (mode === 'selected' && departmentScopeIds.length === 0) {
-        throw new Error('Select at least one department for the selected approval scope.')
+      if (mode === 'selected' && scopeIds.length === 0) {
+        throw new Error('Select at least one item for the selected approval scope.')
       }
 
       return {
@@ -94,7 +146,10 @@ function buildAssignmentsPayload(rows, positionTypes) {
         approval_priority: Number(positionType?.approval_priority || 1),
         effective_from: null,
         effective_to: null,
-        department_scope_mode: mode,
+        approval_scope_type: scopeType,
+        approval_scope_mode: mode,
+        approval_scope_ids: scopeIds,
+        department_scope_mode: scopeType === 'department' ? mode : 'none',
         department_scope_ids: departmentScopeIds,
         scope_request_type: normalizeScopeRequestType(row.scope_request_type),
       }
@@ -102,9 +157,12 @@ function buildAssignmentsPayload(rows, positionTypes) {
 }
 
 function scopeSummaryLabel(row) {
-  if (row.department_scope_mode === 'all') return 'All departments'
-  if (row.department_scope_mode === 'none') return 'None'
-  const labels = row.department_scope_labels || []
+  const mode = row.approval_scope_mode || row.department_scope_mode || 'none'
+  if (mode === 'none' || row.approval_scope_type === 'none') return 'No approval scope'
+  const scopeType = row.approval_scope_type || 'department'
+  const label = SCOPE_TYPE_LABELS[scopeType]?.toLowerCase() || 'items'
+  if (mode === 'all') return scopeType === 'company' || scopeType === 'area' || scopeType === 'branch' ? `Entire ${label}` : `All ${label}s`
+  const labels = row.approval_scope_labels || row.department_scope_labels || []
   return labels.length > 0 ? labels.join(', ') : 'None selected'
 }
 
@@ -116,8 +174,8 @@ function positionTypeFor(row, positionTypes) {
   return positionTypes.find((type) => String(type.id) === String(row.position_type_id)) || null
 }
 
-function rowSupportsDepartmentScope(legacyType, row, positionTypes) {
-  return legacyType === 'division' && Boolean(positionTypeFor(row, positionTypes)?.can_approve ?? true)
+function rowSupportsApprovalScope(legacyType, row, positionTypes) {
+  return Boolean(DEFAULT_SCOPE_TYPES_BY_LEGACY_TYPE[legacyType]) && Boolean(positionTypeFor(row, positionTypes)?.can_approve ?? true)
 }
 
 function employeeInitials(name) {
@@ -176,48 +234,120 @@ function EmployeeSearchSelect({ value, onChange, roster, disabled }) {
   )
 }
 
-function DepartmentApprovalScopeEditor({ row, index, departments, canManage, saving, onUpdate }) {
-  const selectedIds = Array.isArray(row.department_scope_ids)
-    ? row.department_scope_ids.map(String)
+function ApprovalScopeEditor({ row, index, legacyType, scopeOptions, canManage, saving, onUpdate }) {
+  const configuredTypes = DEFAULT_SCOPE_TYPES_BY_LEGACY_TYPE[legacyType] || []
+  const optionTypes = Object.keys(scopeOptions || {}).filter((type) => SCOPE_TYPE_LABELS[type])
+  const allowedTypes = [...new Set([...configuredTypes, ...optionTypes])]
+  const optionsByType = scopeOptions || {}
+  const savedType = allowedTypes.includes(row.approval_scope_type) ? row.approval_scope_type : ''
+  const currentType = savedType || allowedTypes[0] || 'department'
+  const currentMode = row.approval_scope_mode || row.department_scope_mode || 'none'
+  const currentOptions = optionsByType[currentType] || []
+  const currentPluralLabel = SCOPE_TYPE_PLURAL_LABELS[currentType] || `${SCOPE_TYPE_LABELS[currentType] || 'Item'}s`
+  const selectedIds = Array.isArray(row.approval_scope_ids)
+    ? row.approval_scope_ids.map(String)
+    : Array.isArray(row.department_scope_ids)
+      ? row.department_scope_ids.map(String)
     : []
 
-  const toggleDepartment = (departmentId) => {
-    const id = String(departmentId)
+  const updateScope = (patch) => {
+    const nextMode = patch.approval_scope_mode ?? currentMode
+    const nextType = nextMode === 'none'
+      ? 'none'
+      : patch.approval_scope_type || currentType
+    const nextIds = patch.approval_scope_ids ?? (nextType === currentType ? selectedIds.map(Number) : [])
+    onUpdate(index, {
+      approval_scope_type: nextType,
+      approval_scope_mode: nextMode,
+      approval_scope_ids: nextIds,
+      department_scope_mode: nextType === 'department' ? nextMode : 'none',
+      department_scope_ids: nextType === 'department' ? nextIds : [],
+    })
+  }
+
+  const toggleItem = (scopeId) => {
+    const id = String(scopeId)
     const next = selectedIds.includes(id)
       ? selectedIds.filter((value) => value !== id)
       : [...selectedIds, id]
-    onUpdate(index, {
-      department_scope_mode: 'selected',
-      department_scope_ids: next.map(Number),
+    updateScope({
+      approval_scope_mode: 'selected',
+      approval_scope_ids: next.map(Number),
     })
   }
 
   return (
     <div className="space-y-4 rounded-xl border border-border/70 bg-muted/10 p-4">
       <div>
-        <Label className="text-sm font-semibold text-foreground">Department Approval Scope</Label>
+        <Label className="text-sm font-semibold text-foreground">Approval Scope</Label>
         <p className="mt-1 text-xs text-muted-foreground">
-          Division Head approval applies only to the selected departments. If no departments are selected, this Division Head will not be used as approver for department-scoped requests.
+          Limit when this head is used in approval routing. Inactive leaders, duplicate approvers, and self-approval are skipped by the resolver.
         </p>
       </div>
 
+      {allowedTypes.length > 1 ? (
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Scope level ({legacyType === 'company' ? 'Company / Area / Branch / Division / Department / Section' : legacyType === 'branch' ? 'Branch / Division / Department / Section' : 'Area / Branch / Division / Department / Section'})
+          </Label>
+          <select
+            className="h-10 w-full rounded-xl border border-border/80 bg-background px-3 text-sm shadow-sm dark:bg-input/35"
+            value={currentType}
+            disabled={!canManage || saving}
+            onChange={(event) => updateScope({
+              approval_scope_type: event.target.value,
+              approval_scope_mode: event.target.value === currentType ? currentMode : 'all',
+              approval_scope_ids: [],
+            })}
+          >
+            {allowedTypes.map((type) => (
+              <option key={type} value={type}>
+                {type === legacyType ? `Entire ${SCOPE_TYPE_LABELS[type]?.toLowerCase() || type}` : SCOPE_TYPE_PLURAL_LABELS[type] || `${SCOPE_TYPE_LABELS[type] || type}s`}
+              </option>
+            ))}
+          </select>
+          <div className="flex flex-wrap gap-1.5">
+            {allowedTypes.map((type) => (
+              <button
+                key={`scope-chip-${type}`}
+                type="button"
+                disabled={!canManage || saving}
+                onClick={() => updateScope({
+                  approval_scope_type: type,
+                  approval_scope_mode: type === currentType ? currentMode : 'all',
+                  approval_scope_ids: [],
+                })}
+                className={cn(
+                  'rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors',
+                  currentType === type
+                    ? 'border-brand/60 bg-brand/10 text-brand'
+                    : 'border-border/70 bg-background text-muted-foreground hover:bg-muted/30',
+                )}
+              >
+                {type === legacyType ? `Entire ${SCOPE_TYPE_LABELS[type]}` : SCOPE_TYPE_PLURAL_LABELS[type]}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid gap-2 sm:grid-cols-3">
         {[
-          ['none', 'No departments'],
-          ['selected', 'Selected departments'],
-          ['all', 'All departments'],
+          ['none', 'No approval scope'],
+          ['selected', `Selected ${currentPluralLabel.toLowerCase()}`],
+          ['all', currentType === legacyType ? `Entire ${SCOPE_TYPE_LABELS[currentType]?.toLowerCase() || currentType}` : `All ${currentPluralLabel.toLowerCase()}`],
         ].map(([mode, label]) => (
           <button
             key={mode}
             type="button"
             disabled={!canManage || saving}
-            onClick={() => onUpdate(index, {
-              department_scope_mode: mode,
-              department_scope_ids: mode === 'selected' ? row.department_scope_ids || [] : [],
+            onClick={() => updateScope({
+              approval_scope_mode: mode,
+              approval_scope_ids: mode === 'selected' ? selectedIds.map(Number) : [],
             })}
             className={cn(
               'rounded-xl border px-3 py-2.5 text-left text-sm transition-all',
-              row.department_scope_mode === mode
+              currentMode === mode
                 ? 'border-brand/60 bg-brand/5 text-brand ring-2 ring-brand/15'
                 : 'border-border/70 bg-background hover:bg-muted/20',
             )}
@@ -227,21 +357,21 @@ function DepartmentApprovalScopeEditor({ row, index, departments, canManage, sav
         ))}
       </div>
 
-      {row.department_scope_mode === 'selected' ? (
+      {currentMode === 'selected' ? (
         <div className="max-h-44 space-y-2 overflow-y-auto rounded-xl border border-border/70 bg-background p-3">
-          {departments.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No departments found under this division.</p>
+          {currentOptions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No {currentPluralLabel.toLowerCase()} found for this unit.</p>
           ) : (
-            departments.map((department) => (
-              <label key={department.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted/30">
+            currentOptions.map((option) => (
+              <label key={option.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted/30">
                 <input
                   type="checkbox"
                   className="size-4 rounded border-border accent-brand"
-                  checked={selectedIds.includes(String(department.id))}
+                  checked={selectedIds.includes(String(option.id))}
                   disabled={!canManage || saving}
-                  onChange={() => toggleDepartment(department.id)}
+                  onChange={() => toggleItem(option.id)}
                 />
-                <span className="text-sm text-foreground">{department.name}</span>
+                <span className="text-sm text-foreground">{option.name}</span>
               </label>
             ))
           )}
@@ -273,7 +403,7 @@ function LeadershipAssignmentCard({
   positionTypes,
   roster,
   legacyType,
-  departments,
+  scopeOptions,
   onUpdate,
   onRemove,
 }) {
@@ -417,11 +547,12 @@ function LeadershipAssignmentCard({
           </div>
         ) : null}
 
-        {rowSupportsDepartmentScope(legacyType, row, positionTypes) ? (
-          <DepartmentApprovalScopeEditor
+        {rowSupportsApprovalScope(legacyType, row, positionTypes) ? (
+          <ApprovalScopeEditor
             row={row}
             index={index}
-            departments={departments}
+            legacyType={legacyType}
+            scopeOptions={scopeOptions}
             canManage={canManage}
             saving={saving}
             onUpdate={onUpdate}
@@ -487,7 +618,14 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
 
   const activeCount = useMemo(() => rows.filter((row) => row.is_active).length, [rows])
 
-  const departments = payload?.departments || []
+  const scopeOptions = useMemo(() => {
+    if (payload?.approval_scope_options && typeof payload.approval_scope_options === 'object') {
+      return payload.approval_scope_options
+    }
+    return {
+      department: payload?.departments || [],
+    }
+  }, [payload])
 
   const addRow = () => {
     const defaultType = positionTypes[0]
@@ -623,7 +761,7 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
           </div>
         ) : (
           <div className="space-y-4">
-            {legacyType === 'division' && rows.length > 0 ? (
+            {rowSupportsApprovalScope(legacyType, rows[0], positionTypes) && rows.length > 0 ? (
               <div className="overflow-x-auto rounded-2xl border border-border/70 bg-background shadow-sm">
                 <table className="min-w-full text-sm">
                   <thead className="border-b border-border/70 bg-muted/20 text-left">
@@ -632,7 +770,7 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
                       <th className="px-4 py-3 font-semibold">Position</th>
                       <th className="px-4 py-3 font-semibold">Priority</th>
                       <th className="px-4 py-3 font-semibold">Can Approve</th>
-                      <th className="px-4 py-3 font-semibold">Department Approval Scope</th>
+                      <th className="px-4 py-3 font-semibold">Approval Scope</th>
                       <th className="px-4 py-3 font-semibold">Request Types</th>
                       <th className="px-4 py-3 font-semibold">Status</th>
                     </tr>
@@ -647,8 +785,8 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
                           <td className="px-4 py-3">{type?.position_name || row.position_name || '—'}</td>
                           <td className="px-4 py-3">{row.approval_priority ?? type?.approval_priority ?? '—'}</td>
                           <td className="px-4 py-3">{type?.can_approve === false ? 'No' : 'Yes'}</td>
-                          <td className="px-4 py-3">{rowSupportsDepartmentScope(legacyType, row, positionTypes) ? scopeSummaryLabel(row) : '—'}</td>
-                          <td className="px-4 py-3">{rowSupportsDepartmentScope(legacyType, row, positionTypes) ? requestTypeLabel(row.scope_request_type || 'all') : '—'}</td>
+                          <td className="px-4 py-3">{rowSupportsApprovalScope(legacyType, row, positionTypes) ? scopeSummaryLabel(row) : '—'}</td>
+                          <td className="px-4 py-3">{rowSupportsApprovalScope(legacyType, row, positionTypes) ? requestTypeLabel(row.scope_request_type || 'all') : '—'}</td>
                           <td className="px-4 py-3">{row.is_active ? 'Active' : 'Inactive'}</td>
                         </tr>
                       )
@@ -668,7 +806,7 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
                 positionTypes={positionTypes}
                 roster={roster}
                 legacyType={legacyType}
-                departments={departments}
+                scopeOptions={scopeOptions}
                 onUpdate={updateRow}
                 onRemove={removeRow}
               />

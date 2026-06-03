@@ -15,6 +15,7 @@ class Branch extends Model
     protected $fillable = [
         'name',
         'company_id',
+        'area_id',
         'address',
         'branch_manager_id',
         'default_pay_cycle_id',
@@ -41,6 +42,11 @@ class Branch extends Model
     public function branchManager(): BelongsTo
     {
         return $this->belongsTo(User::class, 'branch_manager_id');
+    }
+
+    public function area(): BelongsTo
+    {
+        return $this->belongsTo(Area::class);
     }
 
     public function defaultPayCycle(): BelongsTo

@@ -269,6 +269,7 @@ class PresenceFilingCorrectionFormatter
                     match ($chain[0]) {
                         HrRole::DepartmentHead => 'Department Head',
                         HrRole::BranchHead => 'Branch Head',
+                        HrRole::AreaHead => 'Area Head',
                         HrRole::CompanyHead => 'Company Head',
                         default => $chain[0]->badgeLabel(),
                     }
@@ -329,7 +330,8 @@ class PresenceFilingCorrectionFormatter
             $step = match ($subject) {
                 HrRole::Employee => 'Department Head Approved',
                 HrRole::DepartmentHead => 'Branch Head Approved',
-                HrRole::BranchHead => 'Company Head Approved',
+                HrRole::BranchHead => 'Area Head Approved',
+                HrRole::AreaHead => 'Company Head Approved',
                 HrRole::CompanyHead => 'Approved',
                 default => 'Approved',
             };

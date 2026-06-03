@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Branch;
 use App\Models\Company;
+use App\Models\Area;
 use App\Models\Department;
 use App\Models\Division;
 use App\Models\OrganizationPositionAssignment;
@@ -39,6 +40,16 @@ class OrganizationLeadershipAssignmentService
         $ids = Branch::query()->where('branch_manager_id', $user->id)->pluck('id');
 
         return $this->mergeLegacySourceIds($ids, $user, 'branch');
+    }
+
+    /**
+     * @return Collection<int, int>
+     */
+    public function areaIdsLedBy(User $user): Collection
+    {
+        $ids = Area::query()->where('area_manager_employee_id', $user->id)->pluck('id');
+
+        return $this->mergeLegacySourceIds($ids, $user, 'area');
     }
 
     /**
@@ -121,6 +132,7 @@ class OrganizationLeadershipAssignmentService
     public function leadsAnyUnit(User $user): bool
     {
         return $this->companyIdsLedBy($user)->isNotEmpty()
+            || $this->areaIdsLedBy($user)->isNotEmpty()
             || $this->branchIdsLedBy($user)->isNotEmpty()
             || $this->divisionIdsLedBy($user)->isNotEmpty()
             || $this->departmentIdsLedBy($user)->isNotEmpty()

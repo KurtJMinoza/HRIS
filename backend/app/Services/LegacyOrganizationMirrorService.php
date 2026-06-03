@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Area;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
@@ -28,6 +29,7 @@ class LegacyOrganizationMirrorService
 
         match ($legacyType) {
             'company' => $this->syncCompanyIfExists($legacyId),
+            'area' => $this->syncAreaIfExists($legacyId),
             'branch' => $this->syncBranchIfExists($legacyId),
             'division' => $this->syncDivisionIfExists($legacyId),
             'department' => $this->syncDepartmentIfExists($legacyId),
@@ -49,6 +51,14 @@ class LegacyOrganizationMirrorService
         $model = Branch::query()->find($legacyId);
         if ($model) {
             $this->syncBranch($model);
+        }
+    }
+
+    private function syncAreaIfExists(int $legacyId): void
+    {
+        $model = Area::query()->find($legacyId);
+        if ($model) {
+            $this->syncArea($model);
         }
     }
 
@@ -94,6 +104,7 @@ class LegacyOrganizationMirrorService
 
         match ($legacyType) {
             'company' => Company::query()->whereKey($legacyId)->update(['company_head_id' => $employeeId]),
+            'area' => Area::query()->whereKey($legacyId)->update(['area_manager_employee_id' => $employeeId]),
             'branch' => Branch::query()->whereKey($legacyId)->update(['branch_manager_id' => $employeeId]),
             'division' => Division::query()->whereKey($legacyId)->update(['division_head_id' => $employeeId]),
             'department' => Department::query()->whereKey($legacyId)->update(['department_head_id' => $employeeId]),
@@ -110,6 +121,7 @@ class LegacyOrganizationMirrorService
 
         match (true) {
             $model instanceof Company => $this->syncCompany($model),
+            $model instanceof Area => $this->syncArea($model),
             $model instanceof Branch => $this->syncBranch($model),
             $model instanceof Division => $this->syncDivision($model),
             $model instanceof Department => $this->syncDepartment($model),
@@ -157,7 +169,9 @@ class LegacyOrganizationMirrorService
 
     public function syncBranch(Branch $branch): ?OrganizationUnit
     {
-        $parentId = $this->companyUnitId($branch->company_id ? (int) $branch->company_id : null);
+        $parentId = $branch->area_id
+            ? $this->legacyUnitId('area', (int) $branch->area_id)
+            : $this->companyUnitId($branch->company_id ? (int) $branch->company_id : null);
         $unit = $this->upsertUnit('branch', (int) $branch->id, [
             'organization_type_id' => $this->typeId('branch', 'Branch', 20),
             'parent_id' => $parentId,
@@ -170,6 +184,24 @@ class LegacyOrganizationMirrorService
         ]);
 
         $this->syncSingleLeader($unit, $branch->branch_manager_id ? (int) $branch->branch_manager_id : null, 'Branch Head');
+
+        return $unit;
+    }
+
+    public function syncArea(Area $area): ?OrganizationUnit
+    {
+        $unit = $this->upsertUnit('area', (int) $area->id, [
+            'organization_type_id' => $this->typeId('area', 'Area', 15),
+            'parent_id' => $this->companyUnitId($area->company_id ? (int) $area->company_id : null),
+            'company_id' => $area->company_id ? (int) $area->company_id : null,
+            'name' => $area->area_name,
+            'code' => $area->area_code,
+            'description' => $area->description,
+            'is_active' => ($area->status ?? 'active') === 'active',
+            'sort_order' => (int) $area->id,
+        ]);
+
+        $this->syncSingleLeader($unit, $area->area_manager_employee_id ? (int) $area->area_manager_employee_id : null, 'Area Head');
 
         return $unit;
     }
@@ -389,6 +421,7 @@ class LegacyOrganizationMirrorService
 
         $level = match ($unit->legacy_source_type) {
             'company' => 'company',
+            'area' => 'area',
             'branch' => 'branch',
             'division' => 'division',
             'department' => 'department',
@@ -511,6 +544,7 @@ class LegacyOrganizationMirrorService
     {
         return match (true) {
             $model instanceof Company => ['company', (int) $model->id],
+            $model instanceof Area => ['area', (int) $model->id],
             $model instanceof Branch => ['branch', (int) $model->id],
             $model instanceof Division => ['division', (int) $model->id],
             $model instanceof Department => ['department', (int) $model->id],

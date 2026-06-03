@@ -18,6 +18,7 @@ const pathToPermissions = {
   '/admin/regularization': ['can_view_employee_module'],
   '/admin/users-permissions': ['users.view'],
   '/admin/companies': ['org.company.view'],
+  '/admin/areas': ['area.view'],
   '/admin/branches': ['org.branch.view'],
   '/admin/departments': ['org.department.view'],
   '/admin/divisions': ['org.division.view'],
@@ -141,7 +142,10 @@ export function buildManagerNav(user, basePath) {
       if (!to) continue
       const mappedTo = to.replace(/^\/admin/, prefix)
       const hr = String(user?.hr_role || '').trim()
-      if (mappedTo === `${prefix}/companies` && (hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
+      if (mappedTo === `${prefix}/companies` && (hr === 'area_head' || hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
+        continue
+      }
+      if (mappedTo === `${prefix}/areas` && (hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
         continue
       }
       if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrUser(user)) continue
@@ -152,7 +156,8 @@ export function buildManagerNav(user, basePath) {
         navItem.label = 'My Company'
       }
       if (mappedTo === `${prefix}/employees`) {
-        if (hr === 'branch_head') navItem.label = 'Branch employees'
+        if (hr === 'area_head') navItem.label = 'Area employees'
+        else if (hr === 'branch_head') navItem.label = 'Branch employees'
         else if (hr === 'department_head') navItem.label = 'Department employees'
         else if (hr === 'division_head') navItem.label = 'Division employees'
         else if (hr === 'section_unit_head') navItem.label = 'Section/Unit employees'

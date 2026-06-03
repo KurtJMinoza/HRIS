@@ -100,6 +100,10 @@ class HrRoleResolver
             return HrRole::CompanyHead;
         }
 
+        if ($this->leadershipAssignments->areaIdsLedBy($user)->isNotEmpty()) {
+            return HrRole::AreaHead;
+        }
+
         if ($this->leadershipAssignments->branchIdsLedBy($user)->isNotEmpty()) {
             return HrRole::BranchHead;
         }

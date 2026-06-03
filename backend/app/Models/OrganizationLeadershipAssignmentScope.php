@@ -8,7 +8,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class OrganizationLeadershipAssignmentScope extends Model
 {
+    public const SCOPE_COMPANY = 'company';
+    public const SCOPE_AREA = 'area';
+    public const SCOPE_BRANCH = 'branch';
+    public const SCOPE_DIVISION = 'division';
     public const SCOPE_DEPARTMENT = 'department';
+    public const SCOPE_SECTION_UNIT = 'section_unit';
 
     public const SCOPE_ALL_DEPARTMENTS = 'all_departments';
 
@@ -22,6 +27,9 @@ class OrganizationLeadershipAssignmentScope extends Model
 
     public const REQUEST_TYPE_ATTENDANCE_CORRECTION = 'attendance_correction';
 
+    public const REQUEST_TYPE_OFFICIAL_BUSINESS = 'official_business';
+    public const REQUEST_TYPE_CHANGE_SCHEDULE = 'change_schedule';
+    public const REQUEST_TYPE_PAYROLL_APPROVAL = 'payroll_approval';
     public const REQUEST_TYPE_SCHEDULE = 'schedule';
 
     protected $fillable = [

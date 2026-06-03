@@ -28,6 +28,15 @@ class ApprovalWorkflowSettingsController extends Controller
             'settings.*.use_hierarchy_approval' => ['required', 'boolean'],
             'settings.*.fallback_to_parent_approver' => ['sometimes', 'boolean'],
             'settings.*.immediate_approver_mode' => ['sometimes', 'string'],
+            'settings.*.approval_chain_mode' => ['sometimes', 'string', 'in:nearest_plus_admin,full_hierarchy,custom_selected_steps'],
+            'settings.*.max_org_approval_steps' => ['nullable', 'integer', 'min:0', 'max:6'],
+            'settings.*.include_section_head' => ['sometimes', 'boolean'],
+            'settings.*.include_department_head' => ['sometimes', 'boolean'],
+            'settings.*.include_division_head' => ['sometimes', 'boolean'],
+            'settings.*.include_branch_head' => ['sometimes', 'boolean'],
+            'settings.*.include_area_head' => ['sometimes', 'boolean'],
+            'settings.*.include_company_head' => ['sometimes', 'boolean'],
+            'settings.*.include_admin_hr' => ['sometimes', 'boolean'],
             'settings.*.is_active' => ['sometimes', 'boolean'],
         ]);
 

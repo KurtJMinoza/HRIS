@@ -13,6 +13,7 @@ class OrganizationPositionType extends Model
 
     public const LEVELS = [
         'company',
+        'area',
         'branch',
         'division',
         'department',
