@@ -106,6 +106,7 @@ import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
 import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
+import { clearRequestReviewSearchParams } from '@/lib/leaveReviewDeepLink'
 
 const OT_TYPE_LABEL = {
   regular: 'Regular Day OT',
@@ -142,8 +143,9 @@ function formatTableDate(iso) {
 
 function formatTimeHm(t) {
   if (!t) return '—'
-  const s = String(t)
-  return s.length >= 5 ? s.slice(0, 5) : s
+  const normalized = toHhMm(String(t))
+  const formatted = formatHHmmTo12h(normalized)
+  return formatted || String(t)
 }
 
 function formatOtRange12h(startHm, endHm) {
@@ -802,8 +804,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
   const [loadingMine, setLoadingMine] = useState(true)
-  const [loadingAll, setLoadingAll] = useState(false)
-  const [deferAllListLoad, setDeferAllListLoad] = useState(() => Boolean(hasDeepLinkReview))
+  const [loadingAll, setLoadingAll] = useState(() => Boolean(isHr && canSeeAllTab))
   const mineListAbortRef = useRef(null)
   const allListAbortRef = useRef(null)
   const allListLoadedOnceRef = useRef(false)
@@ -1020,7 +1021,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   }, [loadUnfiledForMonth])
 
   useEffect(() => {
-    if (tab !== 'all' || !canSeeAllTab || deferAllListLoad) {
+    if (tab !== 'all' || !canSeeAllTab) {
       setLoadingAll(false)
       return undefined
     }
@@ -1037,7 +1038,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [tab, canSeeAllTab, loadAll, deferAllListLoad])
+  }, [tab, canSeeAllTab, loadAll])
 
   useEffect(() => {
     if (!deepLinkedOtRequestId || !isHr || !canSeeAllTab) {
@@ -1050,7 +1051,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
     handledOtDeepLinkRef.current = deepLinkedOtRequestId
     setTab('all')
-    setDetail({ id: idNum })
+    const seed = location.state?.overtimeReviewSeed
+    const seedId = Number(seed?.id ?? seed?.request_id ?? seed?.overtime_request_id ?? 0)
+    const hasSeed = seed && seedId === idNum && Object.keys(seed).some((key) => key !== 'id')
+    setDetail(hasSeed ? { ...seed, id: idNum } : { id: idNum })
     setViewOpen(true)
     setDetailLoading(true)
 
@@ -1084,17 +1088,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         if (!controller.signal.aborted) setDetailLoading(false)
       })
 
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete('review_id')
-        next.delete('reviewRequestId')
-        next.delete('request_id')
-        return next
-      },
-      { replace: true },
-    )
-  }, [deepLinkedOtRequestId, isHr, canSeeAllTab, setSearchParams, toast])
+    clearRequestReviewSearchParams(setSearchParams)
+  }, [deepLinkedOtRequestId, isHr, canSeeAllTab, location.state, setSearchParams, toast])
 
   useEffect(() => {
     let cancelled = false
@@ -1190,7 +1185,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   }, [date, selectedSegments, startTime, endTime, reason, submitting, contextLoading])
 
   const activeItems = tab === 'mine' ? mineItems : allItems
-  const loading = tab === 'mine' ? loadingMine : loadingAll
+  const loading = tab === 'mine'
+    ? loadingMine
+    : loadingAll || (tab === 'all' && canSeeAllTab && !allListLoadedOnceRef.current)
   const showRequesterColumn = tab === 'all'
   const showBulkCheckbox = tab === 'all' && canApproveOvertime
   const overtimeTableClass = showRequesterColumn ? overtimeAdminTableClass : overtimeEmployeeTableClass
@@ -1205,7 +1202,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    if (tab !== 'all' || !canApproveOvertime || deferAllListLoad) {
+    if (tab !== 'all' || !canApproveOvertime) {
       setTotalMatchingApprovable(0)
       return undefined
     }
@@ -1220,7 +1217,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     return () => {
       cancelled = true
     }
-  }, [bulkApprovalFilters, bulkFiltersKey, tab, canApproveOvertime, deferAllListLoad])
+  }, [bulkApprovalFilters, bulkFiltersKey, tab, canApproveOvertime])
 
   const pageBulkRows = useMemo(
     () =>
@@ -1390,7 +1387,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       setApproveOpen(false)
       setViewOpen(false)
       setDetail(null)
-      setDeferAllListLoad(false)
       updateOvertimeRowAfterAction(actionRow.id, {
         status: res.status ?? 'approved',
         approval_stage: res.approval_stage,
@@ -1466,7 +1462,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       setRejectOpen(false)
       setViewOpen(false)
       setDetail(null)
-      setDeferAllListLoad(false)
       updateOvertimeRowAfterAction(actionRow.id, {
         status: res.status ?? 'rejected',
         approval_stage: res.approval_stage ?? 'rejected',
@@ -2367,7 +2362,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             detailAbortRef.current?.abort()
             setDetail(null)
             setDetailLoading(false)
-            setDeferAllListLoad(false)
+            clearRequestReviewSearchParams(setSearchParams)
           }
         }}
       >

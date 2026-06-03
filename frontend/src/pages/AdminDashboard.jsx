@@ -1585,6 +1585,7 @@ export default function AdminDashboard() {
                                 }
                                 navigate(
                                   `${hrPanelPath(hrBase, 'leave')}?review_id=${encodeURIComponent(String(rid))}`,
+                                  { state: { leaveReviewSeed: leave } },
                                 )
                               }}
                             >
@@ -1776,10 +1777,13 @@ export default function AdminDashboard() {
             request={pendingAttendanceCorrectionPreview}
             requests={pendingAttendanceCorrectionPreviews}
             onViewAll={() => navigate(attendanceCorrectionsHref({ status: 'pending' }))}
-            onReviewRequest={(item) => navigate(attendanceCorrectionsHref({
-              status: 'pending',
-              request_id: item?.correction_request_id ?? item?.id,
-            }))}
+            onReviewRequest={(item) => navigate(
+              attendanceCorrectionsHref({
+                status: 'pending',
+                request_id: item?.correction_request_id ?? item?.id,
+              }),
+              { state: { attendanceCorrectionReviewSeed: item } },
+            )}
           />
         </Motion.div>
       </Motion.div>
@@ -2261,10 +2265,13 @@ export default function AdminDashboard() {
             request={pendingAttendanceCorrectionPreview}
             requests={pendingAttendanceCorrectionPreviews}
             onViewAll={() => navigate(attendanceCorrectionsHref({ status: 'pending' }))}
-            onReviewRequest={(item) => navigate(attendanceCorrectionsHref({
-              status: 'pending',
-              request_id: item?.correction_request_id ?? item?.id,
-            }))}
+            onReviewRequest={(item) => navigate(
+              attendanceCorrectionsHref({
+                status: 'pending',
+                request_id: item?.correction_request_id ?? item?.id,
+              }),
+              { state: { attendanceCorrectionReviewSeed: item } },
+            )}
           />
         </Motion.div>
       </Motion.div>

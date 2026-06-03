@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import {
   Loader2,
   CheckCircle2,
@@ -89,7 +89,9 @@ import {
 } from '@/lib/adminFormDialogStyles'
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
 import {
+  clearRequestReviewSearchParams,
   extractLeaveRequestFromReviewPayload,
+  leaveReviewSeedFromDashboardRow,
   logLeaveReviewFetchFailure,
   parseLeaveReviewRequestId,
 } from '@/lib/leaveReviewDeepLink'
@@ -185,7 +187,8 @@ function LeaveModalCalendarArt() {
 
 export default function AdminLeave() {
   const { toast } = useToast()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const { user, refreshUser } = useAuth()
   const perms = new Set(user?.permissions ?? [])
   const canApproveLeave = perms.has('leave.approve')
@@ -265,14 +268,19 @@ export default function AdminLeave() {
   const openAllRequestsTab =
     leaveTabFromUrl === 'all' || Boolean(reviewRequestIdFromUrl)
   const [detailOpen, setDetailOpen] = useState(() => Boolean(reviewRequestIdFromUrl))
-  const [detailLeave, setDetailLeave] = useState(null)
-  const [detailLoading, setDetailLoading] = useState(() => Boolean(reviewRequestIdFromUrl))
+  const [detailLeave, setDetailLeave] = useState(() => {
+    if (!reviewRequestIdFromUrl) return null
+    return leaveReviewSeedFromDashboardRow(location.state?.leaveReviewSeed, reviewRequestIdFromUrl)
+  })
+  const [detailLoading, setDetailLoading] = useState(() => {
+    if (!reviewRequestIdFromUrl) return false
+    return !leaveReviewSeedFromDashboardRow(location.state?.leaveReviewSeed, reviewRequestIdFromUrl)
+  })
   const [detailError, setDetailError] = useState(null)
   const [detailRetrying, setDetailRetrying] = useState(false)
   const detailAbortRef = useRef(null)
   const detailFetchIdRef = useRef(0)
   const detailRequestIdRef = useRef(null)
-  const [deferAllListLoad, setDeferAllListLoad] = useState(() => Boolean(reviewRequestIdFromUrl))
   const leaveListAbortRef = useRef(null)
   const mineListAbortRef = useRef(null)
   const allListLoadedOnceRef = useRef(false)
@@ -348,24 +356,25 @@ export default function AdminLeave() {
   }, [user?.id, showEmployeePicker, openAllRequestsTab])
 
   useEffect(() => {
-    if (!user?.id || tab !== 'all' || deferAllListLoad || (!openAllRequestsTab && !showEmployeePicker)) {
+    if (!user?.id || tab !== 'all') {
       setLoading(false)
-      return
+      return undefined
     }
     setLoading(true)
     leaveListAbortRef.current?.abort()
     const controller = new AbortController()
     leaveListAbortRef.current = controller
+    const delay = allListLoadedOnceRef.current ? 300 : 0
     const timer = setTimeout(() => {
       fetchLeaves({ signal: controller.signal }).finally(() => {
         if (!controller.signal.aborted) allListLoadedOnceRef.current = true
       })
-    }, 0)
+    }, delay)
     return () => {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [fetchLeaves, deferAllListLoad, openAllRequestsTab, showEmployeePicker, tab, user?.id])
+  }, [fetchLeaves, tab, user?.id])
 
   useEffect(() => {
     if (!user?.id || tab !== 'mine') return
@@ -689,8 +698,15 @@ export default function AdminLeave() {
       const fetchId = ++detailFetchIdRef.current
 
       setDetailOpen(true)
-      setDetailLeave(null)
-      setDetailLoading(true)
+      const keepExistingSeed =
+        !isRetry
+        && detailRequestIdRef.current === id
+        && detailLeave
+        && String(detailLeave.id ?? detailLeave.request_id ?? '') === String(id)
+      if (!keepExistingSeed) {
+        setDetailLeave(null)
+      }
+      setDetailLoading(!keepExistingSeed)
       setDetailError(null)
       if (isRetry) setDetailRetrying(true)
 
@@ -727,7 +743,7 @@ export default function AdminLeave() {
         }
       }
     },
-    [mapReviewFetchError, searchParams, user],
+    [mapReviewFetchError, searchParams, user, detailLeave],
   )
 
   function openDetailDialog(leave) {
@@ -742,19 +758,20 @@ export default function AdminLeave() {
     loadReviewDetail(id)
   }
 
+  const handledLeaveDeepLinkRef = useRef(null)
+
   useEffect(() => {
-    if (!reviewRequestIdFromUrl) return
+    if (!reviewRequestIdFromUrl) {
+      handledLeaveDeepLinkRef.current = null
+      return
+    }
+    if (handledLeaveDeepLinkRef.current === reviewRequestIdFromUrl) return
+    handledLeaveDeepLinkRef.current = reviewRequestIdFromUrl
     setTab('all')
     setDetailOpen(true)
-    let cancelled = false
-    ;(async () => {
-      await loadReviewDetail(reviewRequestIdFromUrl)
-      if (cancelled) return
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [reviewRequestIdFromUrl, loadReviewDetail])
+    void loadReviewDetail(reviewRequestIdFromUrl)
+    clearRequestReviewSearchParams(setSearchParams)
+  }, [reviewRequestIdFromUrl, loadReviewDetail, setSearchParams])
 
   const openApproveDialog = (leave) => {
     setApproveLeave(leave)
@@ -825,7 +842,7 @@ export default function AdminLeave() {
         setDetailLeave(null)
         setDetailLoading(false)
         setDetailError(null)
-        setDeferAllListLoad(false)
+        clearRequestReviewSearchParams(setSearchParams)
       }
       updateLeaveRowAfterAction(approveLeave.id, {
         status: data.status,
@@ -950,7 +967,7 @@ export default function AdminLeave() {
         setDetailLeave(null)
         setDetailLoading(false)
         setDetailError(null)
-        setDeferAllListLoad(false)
+        clearRequestReviewSearchParams(setSearchParams)
       }
       updateLeaveRowAfterAction(rejectLeave.id, {
         status: 'rejected',
@@ -1021,7 +1038,9 @@ export default function AdminLeave() {
 
   const isMineTab = tab === 'mine'
   const activeLeaveRequests = isMineTab ? myLeaveRequests : leaveRequests
-  const activeLoading = isMineTab ? loadingMine : loading
+  const activeLoading = isMineTab
+    ? loadingMine
+    : loading || (tab === 'all' && !allListLoadedOnceRef.current)
   const activeError = isMineTab ? mineError : error
   const activePagination = isMineTab ? minePagination : allPagination
   const totalCount = activeLeaveRequests.length
@@ -1052,7 +1071,7 @@ export default function AdminLeave() {
   const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    if (!canApproveLeave || tab !== 'all' || deferAllListLoad) {
+    if (!canApproveLeave || tab !== 'all') {
       setTotalMatchingApprovable(0)
       return undefined
     }
@@ -1067,7 +1086,7 @@ export default function AdminLeave() {
     return () => {
       cancelled = true
     }
-  }, [bulkApprovalFilters, bulkFiltersKey, canApproveLeave, deferAllListLoad, tab])
+  }, [bulkApprovalFilters, bulkFiltersKey, canApproveLeave, tab])
 
   const pageBulkRows = useMemo(
     () =>
@@ -2448,7 +2467,7 @@ export default function AdminLeave() {
             setDetailLoading(false)
             setDetailError(null)
             setDetailRetrying(false)
-            setDeferAllListLoad(false)
+            clearRequestReviewSearchParams(setSearchParams)
           }
         }}
         leave={detailLeave}

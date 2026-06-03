@@ -1,6 +1,6 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion } from 'framer-motion'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { exportRowsToXlsx } from '@/lib/excelExport'
 import {
   Loader2,
@@ -114,6 +114,7 @@ import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
 import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
+import { clearRequestReviewSearchParams } from '@/lib/leaveReviewDeepLink'
 
 const APPROVAL_INFO_SHORT =
   'Multi-step approval: managers first, then HR finalizes and updates attendance.'
@@ -524,7 +525,8 @@ const STATUS_CHIPS = [
 export default function AttendanceCorrections() {
   const { toast } = useToast()
   const { user } = useAuth()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const hrBase = useHrBasePath()
   const perms = new Set(user?.permissions ?? [])
   const canSeeAll = perms.has('attendance.corrections.approve')
@@ -541,10 +543,9 @@ export default function AttendanceCorrections() {
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
   const [loadingMine, setLoadingMine] = useState(() => !canSeeAll)
-  const [loadingAll, setLoadingAll] = useState(() => canSeeAll && !deepLinkedRequestId)
+  const [loadingAll, setLoadingAll] = useState(() => canSeeAll)
   const [minePagination, setMinePagination] = useState(null)
   const [allPagination, setAllPagination] = useState(null)
-  const [deferAllListLoad, setDeferAllListLoad] = useState(() => Boolean(deepLinkedRequestId))
 
   const [mineSearch, setMineSearch] = useState('')
   const [allStatus, setAllStatus] = useState(() => (deepLinkedStatus === 'pending' ? 'pending' : 'all'))
@@ -563,6 +564,7 @@ export default function AttendanceCorrections() {
   const itemsPerPage = 25
   const mineListAbortRef = useRef(null)
   const allListAbortRef = useRef(null)
+  const allListLoadedOnceRef = useRef(false)
 
   const [sortKey, setSortKey] = useState('filed_at')
   const [sortDir, setSortDir] = useState('desc')
@@ -672,17 +674,20 @@ export default function AttendanceCorrections() {
   }, [loadMine, tab])
 
   useEffect(() => {
-    if (tab === 'all' && canSeeAll && !deferAllListLoad) {
-      allListAbortRef.current?.abort()
-      const controller = new AbortController()
-      allListAbortRef.current = controller
-      loadAll({ signal: controller.signal })
-      return () => {
-        controller.abort()
-      }
+    if (tab !== 'all' || !canSeeAll) {
+      setLoadingAll(false)
+      return undefined
     }
-    return undefined
-  }, [tab, canSeeAll, loadAll, deferAllListLoad])
+    allListAbortRef.current?.abort()
+    const controller = new AbortController()
+    allListAbortRef.current = controller
+    loadAll({ signal: controller.signal }).finally(() => {
+      if (!controller.signal.aborted) allListLoadedOnceRef.current = true
+    })
+    return () => {
+      controller.abort()
+    }
+  }, [tab, canSeeAll, loadAll])
 
   useEffect(() => {
     if (!canSeeAll) return
@@ -693,14 +698,22 @@ export default function AttendanceCorrections() {
   }, [canSeeAll, deepLinkedStatus])
 
   useEffect(() => {
-    if (!canSeeAll || !deepLinkedRequestId) return
+    if (!canSeeAll || !deepLinkedRequestId) {
+      handledDeepLinkRef.current = null
+      return
+    }
     setTab('all')
     if (handledDeepLinkRef.current === String(deepLinkedRequestId)) return
     handledDeepLinkRef.current = String(deepLinkedRequestId)
-    openView({ id: deepLinkedRequestId })
+    const seed = location.state?.attendanceCorrectionReviewSeed
+    const seedId = seed?.id ?? seed?.request_id ?? seed?.correction_request_id
+    openView(seed && String(seedId) === String(deepLinkedRequestId)
+      ? { ...seed, id: deepLinkedRequestId }
+      : { id: deepLinkedRequestId })
+    clearRequestReviewSearchParams(setSearchParams)
     // openView is intentionally excluded so the URL deep-link opens exactly once per id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSeeAll, deepLinkedRequestId])
+  }, [canSeeAll, deepLinkedRequestId, location.state, setSearchParams])
 
   useEffect(() => {
     if (!fileOpen || !canSeeAll) return undefined
@@ -761,7 +774,9 @@ export default function AttendanceCorrections() {
   }, [fileOpen, canSeeAll, fileEmployeeId, fileDate, fileIssueKind])
 
   const activeItems = tab === 'mine' ? mineItems : allItems
-  const loading = tab === 'mine' ? loadingMine : loadingAll
+  const loading = tab === 'mine'
+    ? loadingMine
+    : loadingAll || (tab === 'all' && canSeeAll && !allListLoadedOnceRef.current)
   const activePagination = tab === 'mine' ? minePagination : allPagination
   const activeSummary = tab === 'mine' ? minePagination?.summary : allPagination?.summary
 
@@ -913,7 +928,7 @@ export default function AttendanceCorrections() {
   const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    if (tab !== 'all' || !canSeeAll || deferAllListLoad) {
+    if (tab !== 'all' || !canSeeAll) {
       setTotalMatchingApprovable(0)
       return undefined
     }
@@ -928,7 +943,7 @@ export default function AttendanceCorrections() {
     return () => {
       controller.abort()
     }
-  }, [bulkApprovalFilters, bulkFiltersKey, tab, canSeeAll, deferAllListLoad])
+  }, [bulkApprovalFilters, bulkFiltersKey, tab, canSeeAll])
 
   const pageBulkRows = useMemo(
     () =>
@@ -1063,7 +1078,6 @@ export default function AttendanceCorrections() {
       toast({ title: 'Approved', description: 'The correction request was updated.', variant: 'success' })
       setApproveOpen(false)
       setViewOpen(false)
-      setDeferAllListLoad(false)
       notifyPendingApprovalsChanged()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
@@ -1103,7 +1117,6 @@ export default function AttendanceCorrections() {
         setAllItems((items) => items.filter((item) => !bulkSelection.selectedIds.has(Number(item.id))))
         setMineItems((items) => items.filter((item) => !bulkSelection.selectedIds.has(Number(item.id))))
       }
-      setDeferAllListLoad(false)
     } catch (e) {
       toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
     } finally {
@@ -1144,7 +1157,6 @@ export default function AttendanceCorrections() {
       toast({ title: 'Rejected', description: 'The request was rejected.', variant: 'success' })
       setRejectOpen(false)
       setViewOpen(false)
-      setDeferAllListLoad(false)
       notifyPendingApprovalsChanged()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
@@ -1922,7 +1934,7 @@ export default function AttendanceCorrections() {
           if (!open) {
             setSelectedItem(null)
             setSelectedLoading(false)
-            setDeferAllListLoad(false)
+            clearRequestReviewSearchParams(setSearchParams)
           }
         }}
       >

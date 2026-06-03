@@ -12,6 +12,41 @@ export function parseLeaveReviewRequestId(raw) {
   return String(n)
 }
 
+/** Remove review deep-link query keys after the target modal has opened. */
+export function clearRequestReviewSearchParams(setSearchParams) {
+  setSearchParams(
+    (prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('review_id')
+      next.delete('reviewRequestId')
+      next.delete('request_id')
+      return next
+    },
+    { replace: true },
+  )
+}
+
+/**
+ * Normalize a dashboard leave card row into review-modal shape.
+ * @param {object | null | undefined} row
+ * @param {string | null} reviewId
+ */
+export function leaveReviewSeedFromDashboardRow(row, reviewId) {
+  if (!row || typeof row !== 'object') return null
+  const id = row.id ?? row.leave_request_id ?? row.request_id ?? reviewId
+  if (id == null || id === '') return null
+  return (
+    extractLeaveRequestFromReviewPayload({
+      leave_request: {
+        ...row,
+        id,
+        employee_name: row.employee_name ?? row.name,
+        type: row.type ?? row.leave_type,
+      },
+    }) ?? { ...row, id }
+  )
+}
+
 /**
  * @param {unknown} payload
  * @returns {object | null}
