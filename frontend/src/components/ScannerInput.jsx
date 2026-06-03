@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { Button } from '@/components/ui/button'
+import { createAttendanceAttemptMeta } from '@/api'
 
 export function ScannerInput({
   onScan,
@@ -48,7 +49,14 @@ export function ScannerInput({
   useEffect(() => {
     let buffer       = ''
     let firstKeyTime = 0
+    let attemptMeta  = null
     let clearTimer   = null
+
+    function resetBuffer() {
+      buffer = ''
+      firstKeyTime = 0
+      attemptMeta = null
+    }
 
     function handleKeyDown(e) {
       if (submittingRef.current) return
@@ -60,12 +68,12 @@ export function ScannerInput({
       if (e.key === 'Enter') {
         const elapsed = Date.now() - firstKeyTime
         const text = buffer.trim()
-        buffer = ''
-        firstKeyTime = 0
+        const capturedAttemptMeta = attemptMeta
+        resetBuffer()
         clearTimeout(clearTimer)
         // Process only if it looks like a scanner burst (not manual typing)
         if (text.length >= 4 && elapsed > 0 && elapsed < 600) {
-          onScanRef.current(text)
+          onScanRef.current(text, capturedAttemptMeta || createAttendanceAttemptMeta('qr'))
         }
         return
       }
@@ -73,12 +81,15 @@ export function ScannerInput({
       // Ignore non-printable keys (arrows, F-keys, Backspace, etc.)
       if (e.key.length !== 1) return
 
-      if (!buffer) firstKeyTime = Date.now()
+      if (!buffer) {
+        firstKeyTime = Date.now()
+        attemptMeta = createAttendanceAttemptMeta('qr')
+      }
       buffer += e.key
 
       // Expire stale buffer after 1 s of inactivity
       clearTimeout(clearTimer)
-      clearTimer = setTimeout(() => { buffer = ''; firstKeyTime = 0 }, 1000)
+      clearTimer = setTimeout(resetBuffer, 1000)
     }
 
     document.addEventListener('keydown', handleKeyDown)

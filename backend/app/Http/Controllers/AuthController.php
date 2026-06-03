@@ -304,11 +304,17 @@ class AuthController extends Controller
      */
     public function loginWithFace(Request $request): JsonResponse
     {
+        $serverReceivedAt = now();
+        $request->attributes->set('attendance_server_received_at', $serverReceivedAt);
         $startedAt = microtime(true);
         $validated = $request->validate([
             'liveness_session_id' => ['nullable', 'string', 'max:255'],
             'image_base64' => ['nullable', 'string'],
             'client_capture_started_at_ms' => ['nullable', 'numeric'],
+            'clicked_at' => ['nullable', 'string', 'max:80'],
+            'timezone' => ['nullable', 'string', 'max:80'],
+            'method' => ['nullable', 'string', 'max:32'],
+            'client_attempt_id' => ['nullable', 'string', 'max:80'],
         ], [
             'liveness_session_id.required_without' => 'Either liveness session or face image is required.',
         ]);
@@ -484,6 +490,11 @@ class AuthController extends Controller
             'decision' => 'accepted',
             'reason' => 'face_login_clock_in',
             'mode' => 'face_login',
+            'metadata' => [
+                'clicked_at' => data_get($attendanceResult, 'attendance.verified_at'),
+                'server_received_at' => $serverReceivedAt->toIso8601String(),
+                'client_attempt_id' => $request->input('client_attempt_id'),
+            ],
         ]);
 
         $payload = [

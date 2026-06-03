@@ -27,6 +27,49 @@ function firstValidationMessage(data) {
   return null
 }
 
+function browserTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+}
+
+function attendanceAttemptId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+export function createAttendanceAttemptMeta(method = 'qr') {
+  return {
+    clicked_at: new Date().toISOString(),
+    timezone: browserTimezone(),
+    method,
+    client_attempt_id: attendanceAttemptId(),
+  }
+}
+
+function attendanceAttemptPayload(options = {}, defaultMethod = 'qr') {
+  const fallback = createAttendanceAttemptMeta(defaultMethod)
+  const meta = {
+    ...fallback,
+    ...(options?.attemptMeta || {}),
+    clicked_at: options?.clicked_at ?? options?.attemptMeta?.clicked_at ?? fallback.clicked_at,
+    timezone: options?.timezone ?? options?.attemptMeta?.timezone ?? fallback.timezone,
+    method: options?.method ?? options?.attemptMeta?.method ?? defaultMethod,
+    client_attempt_id: options?.client_attempt_id ?? options?.attemptMeta?.client_attempt_id ?? fallback.client_attempt_id,
+  }
+
+  return {
+    clicked_at: meta.clicked_at,
+    timezone: meta.timezone || browserTimezone(),
+    method: meta.method || defaultMethod,
+    client_attempt_id: meta.client_attempt_id || attendanceAttemptId(),
+  }
+}
+
 /** Base URL of the backend (no /api). Used for storage assets (logos, photos). */
 export function apiOrigin() {
   const base = String(API_BASE || '').replace(/\/api\/?$/, '')
@@ -717,13 +760,15 @@ export async function fetchLivenessSessionResults(sessionId) {
  * On 422, throws an error with message and errorCode: 'spoof_detected' | 'no_face_detected' | 'face_not_recognized' | 'service_unavailable'.
  */
 export async function loginWithFace(payload, options = {}) {
+  const attempt = attendanceAttemptPayload(payload || {}, 'face')
   const body =
     typeof payload === 'string'
-      ? { image_base64: payload }
+      ? { image_base64: payload, ...attempt }
       : {
           liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
           client_capture_started_at_ms: payload?.client_capture_started_at_ms,
+          ...attempt,
         }
   const res = await fetchWithSanctumCsrf('/login/face', {
     method: 'POST',
@@ -5399,11 +5444,11 @@ export const NO_SCHEDULE_MESSAGE = 'No schedule assigned. Please contact the adm
  *
  * @param {'clock_in'|'clock_out'} type
  * @param {string} qrToken - scanned QR token (employee_code)
- * @param {{ authenticated?: boolean }} [options] - pass { authenticated: true } for employee, false/omit for kiosk
+ * @param {{ authenticated?: boolean, clicked_at?: string, timezone?: string, method?: string, client_attempt_id?: string }} [options]
  */
 export async function recordAttendanceScan(type, qrToken, options = {}) {
   const { authenticated = false } = options
-  const body = JSON.stringify({ type, qr_token: qrToken })
+  const body = JSON.stringify({ type, qr_token: qrToken, ...attendanceAttemptPayload(options, 'qr') })
   const kioskHeaders = authenticated ? {} : { 'X-Kiosk-Attendance': '1' }
   const res = await wrapNetworkError(
     authenticated
@@ -5437,8 +5482,8 @@ export async function recordAttendanceScan(type, qrToken, options = {}) {
  * @param {'clock_in'|'clock_out'} type
  * @param {string} qrToken - scanned QR token
  */
-export async function recordAttendance(type, qrToken) {
-  return recordAttendanceScan(type, qrToken, { authenticated: true })
+export async function recordAttendance(type, qrToken, options = {}) {
+  return recordAttendanceScan(type, qrToken, { ...options, authenticated: true })
 }
 
 export async function getAttendance() {
@@ -5880,7 +5925,7 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
   if (useLoginFallback) {
     const res = await fetchWithSanctumCsrf('/attendance/kiosk', {
       method: 'POST',
-      body: JSON.stringify({ type, login: qrTokenOrLogin }),
+      body: JSON.stringify({ type, login: qrTokenOrLogin, ...attendanceAttemptPayload(options, 'credentials') }),
       headers: { 'X-Kiosk-Attendance': '1' },
     })
     const data = await res.json().catch(() => ({}))
@@ -5893,7 +5938,7 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
     }
     return data
   }
-  return recordAttendanceScan(type, qrTokenOrLogin, { authenticated: false })
+  return recordAttendanceScan(type, qrTokenOrLogin, { ...options, authenticated: false })
 }
 
 /**
@@ -5902,9 +5947,10 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
  * @param {{ liveness_session_id?: string, image_base64?: string } | string} payload - liveness_session_id (after Amplify liveness) or image_base64 (legacy), or raw base64 string
  */
 export async function recordAttendanceKioskFace(type, payload) {
+  const attempt = attendanceAttemptPayload(payload || {}, 'face')
   const body =
     typeof payload === 'string'
-      ? { type, image_base64: payload }
+      ? { type, image_base64: payload, ...attempt }
       : {
           type,
           login: payload?.login,
@@ -5914,6 +5960,7 @@ export async function recordAttendanceKioskFace(type, payload) {
           device_id: payload?.device_id,
           camera_info: payload?.camera_info,
           client_capture_started_at_ms: payload?.client_capture_started_at_ms,
+          ...attempt,
         }
   const res = await fetchWithSanctumCsrf('/attendance/kiosk/face', {
     method: 'POST',

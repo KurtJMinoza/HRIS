@@ -24,6 +24,10 @@ class AttendanceLog extends Model
         'user_id',
         'type',
         'verified_at',
+        'time_in_clicked_at',
+        'time_out_clicked_at',
+        'server_received_at',
+        'validation_completed_at',
         'ip_address',
         'user_agent',
         'latitude',
@@ -31,6 +35,9 @@ class AttendanceLog extends Model
         'similarity_score',
         'liveness_score',
         'authentication_method',
+        'method',
+        'processing_delay_seconds',
+        'client_attempt_id',
         'overtime_hours',
         'night_hours',
         'premium_type',
@@ -41,8 +48,13 @@ class AttendanceLog extends Model
     {
         return [
             'verified_at' => 'datetime',
+            'time_in_clicked_at' => 'datetime',
+            'time_out_clicked_at' => 'datetime',
+            'server_received_at' => 'datetime',
+            'validation_completed_at' => 'datetime',
             'overtime_hours' => 'float',
             'night_hours' => 'float',
+            'processing_delay_seconds' => 'integer',
             'calculated_pay_factor' => 'array',
         ];
     }

@@ -438,7 +438,7 @@ export default function EmployeeAttendance() {
     setToDate(end.toISOString().slice(0, 10))
   }
 
-  async function handleScan(text) {
+  async function handleScan(text, attemptMeta) {
     if (!text || submitting) return
     const now = Date.now()
     const last = lastScanRef.current
@@ -448,7 +448,7 @@ export default function EmployeeAttendance() {
     setError(null)
     setSubmitting(true)
     try {
-      const data = await recordAttendance(modalType, text)
+      const data = await recordAttendance(modalType, text, { attemptMeta, method: 'qr' })
       setModalOpen(false)
       let msg = data.message ?? 'Recorded.'
       if (modalType === 'clock_in' && data.attendance?.late_label) {

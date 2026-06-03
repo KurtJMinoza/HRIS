@@ -12,6 +12,7 @@ import {
   getStoredUser,
   recordAttendanceKiosk,
   recordAttendanceKioskFace,
+  createAttendanceAttemptMeta,
   getKioskRecentAttendance,
   getPublicSettings,
 } from './api'
@@ -225,7 +226,7 @@ const ATTENDANCE_MODES = [
 ]
 
 // —— Face Recognition: kiosk (attendance only) or login (auth + attendance) ——
-function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, kioskType, onKioskSuccess }) {
+function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, kioskType, onKioskSuccess, attemptMeta }) {
   const [faceSubmitting, setFaceSubmitting] = useState(false)
   const [faceVideoReady, setFaceVideoReady] = useState(false)
   const [faceErrorCode, setFaceErrorCode] = useState(null)
@@ -313,6 +314,7 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
         const data = await recordAttendanceKioskFace(kioskType, {
           image_base64: base64,
           client_capture_started_at_ms: capturedAtMs,
+          ...(attemptMeta || createAttendanceAttemptMeta('face')),
         })
         playSuccess(SOUND_FEEDBACK_ENABLED)
         onKioskSuccess(data)
@@ -321,6 +323,7 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
       const data = await loginWithFace({
         image_base64: base64,
         client_capture_started_at_ms: capturedAtMs,
+        ...(attemptMeta || createAttendanceAttemptMeta('face')),
       })
       playSuccess(SOUND_FEEDBACK_ENABLED)
       const att = data?.attendance?.attendance
@@ -519,6 +522,7 @@ function SmartDTRPreview({ className }) {
   const [scanResult, setScanResult] = useState(null) // inline success feedback
   const [recentLogs, setRecentLogs] = useState([])
   const [recentExpanded, setRecentExpanded] = useState(false)
+  const [kioskAttemptMeta, setKioskAttemptMeta] = useState(null)
   const [summaryModal, setSummaryModal] = useState({
     open: false,
     employeeId: null,
@@ -587,7 +591,7 @@ function SmartDTRPreview({ className }) {
     return () => clearTimeout(t)
   }, [error])
 
-  async function handleScan(qrText) {
+  async function handleScan(qrText, attemptMeta) {
     if (!qrText || submitting) return
     const now = Date.now()
     const last = lastScanRef.current
@@ -606,7 +610,7 @@ function SmartDTRPreview({ className }) {
         throw new Error('Please select Clock In or Clock Out before scanning.')
       }
       // Always submit the explicitly selected action to avoid unintended dual punches.
-      data = await recordAttendanceKiosk(kioskType, qrText)
+      data = await recordAttendanceKiosk(kioskType, qrText, { attemptMeta, method: 'qr' })
       usedType = kioskType
 
       playSuccess(SOUND_FEEDBACK_ENABLED)
@@ -626,6 +630,7 @@ function SmartDTRPreview({ className }) {
         correctionReason: kc?.reason ?? null,
       })
       setKioskType(null)
+      setKioskAttemptMeta(null)
       fetchRecent()
     } catch (e) {
       if (e?.errorCode === 'kiosk_attendance_correction' && e?.kioskCorrection) {
@@ -650,6 +655,7 @@ function SmartDTRPreview({ className }) {
 
   function openCapture(type) {
     setKioskType(type)
+    setKioskAttemptMeta(createAttendanceAttemptMeta('face'))
     setError(null)
     setScanResult(null)
   }
@@ -657,6 +663,7 @@ function SmartDTRPreview({ className }) {
   function handleModeChange(mode) {
     setAttendanceMode(mode)
     setKioskType(null)
+    setKioskAttemptMeta(null)
     setError(null)
     setScanResult(null)
   }
@@ -942,6 +949,7 @@ function SmartDTRPreview({ className }) {
                 <FaceRekognitionLiveness
                   kioskMode
                   kioskType={kioskType}
+                  attemptMeta={kioskAttemptMeta}
                   onKioskAttendanceCorrection={(kc) => {
                     setKioskCorrectionModal({
                       open: true,
@@ -951,6 +959,7 @@ function SmartDTRPreview({ className }) {
                       employeeProfileImageUrl: kc?.employee_profile_image_url ?? null,
                       employeeProfileImage: kc?.employee_profile_image ?? null,
                     })
+                    setKioskAttemptMeta(null)
                   }}
                   onKioskSuccess={(data) => {
                     const kc = data?.kiosk_correction
@@ -970,9 +979,10 @@ function SmartDTRPreview({ className }) {
                       correctionReason: kc?.reason ?? null,
                     })
                     setKioskType(null)
+                    setKioskAttemptMeta(null)
                     fetchRecent()
                   }}
-                  onKioskCancel={() => { setKioskType(null); setError(null); setScanResult(null) }}
+                  onKioskCancel={() => { setKioskType(null); setKioskAttemptMeta(null); setError(null); setScanResult(null) }}
                   onKioskErrorStateChange={setKioskFaceInError}
                   hideInstruction
                 />

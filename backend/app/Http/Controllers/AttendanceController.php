@@ -59,6 +59,8 @@ class AttendanceController extends Controller
     /** Full JSON payload cache for employee summary (revision bumps when source rows change). */
     private const EMPLOYEE_SUMMARY_RESPONSE_CACHE_SECONDS = 900;
 
+    private const DEFAULT_CLICK_TIMESTAMP_MAX_DRIFT_MINUTES = 5;
+
     /** No schedule assigned at all (Admin → Schedule). */
     private const NO_SCHEDULE_ASSIGNED_MESSAGE = 'No schedule assigned. Please contact the administrator.';
 
@@ -503,18 +505,127 @@ class AttendanceController extends Controller
         return $R * $c;
     }
 
+    private function markAttendanceRequestReceived(Request $request): Carbon
+    {
+        $existing = $request->attributes->get('attendance_server_received_at');
+        if ($existing instanceof Carbon) {
+            return $existing;
+        }
+
+        $receivedAt = now();
+        $request->attributes->set('attendance_server_received_at', $receivedAt);
+
+        return $receivedAt;
+    }
+
+    private function clickTimestampMaxDriftMinutes(): int
+    {
+        return max(1, (int) config('attendance.click_timestamp_max_drift_minutes', self::DEFAULT_CLICK_TIMESTAMP_MAX_DRIFT_MINUTES));
+    }
+
+    private function officialClockTimestamp(Request $request, Carbon $serverReceivedAt): Carbon
+    {
+        $clickedAt = trim((string) $request->input('clicked_at', ''));
+        if ($clickedAt === '') {
+            Log::warning('Attendance click timestamp missing; falling back to server receive time', [
+                'path' => $request->path(),
+                'type' => $request->input('type'),
+                'method' => $request->input('method'),
+                'client_attempt_id' => $request->input('client_attempt_id'),
+            ]);
+
+            return $serverReceivedAt->copy();
+        }
+
+        try {
+            $parsed = Carbon::parse($clickedAt);
+        } catch (\Throwable) {
+            throw ValidationException::withMessages([
+                'clicked_at' => ['Invalid clock timestamp. Please try again.'],
+            ]);
+        }
+
+        if ($parsed->greaterThan($serverReceivedAt)) {
+            throw ValidationException::withMessages([
+                'clicked_at' => ['Clock timestamp cannot be in the future. Please sync your device time and try again.'],
+            ]);
+        }
+
+        $maxSeconds = $this->clickTimestampMaxDriftMinutes() * 60;
+        $ageSeconds = $parsed->diffInSeconds($serverReceivedAt, false);
+        if ($ageSeconds > $maxSeconds) {
+            throw ValidationException::withMessages([
+                'clicked_at' => ["Clock timestamp is too old. Please clock again within {$this->clickTimestampMaxDriftMinutes()} minutes."],
+            ]);
+        }
+
+        return $parsed->copy()->setTimezone('UTC');
+    }
+
+    private function attendanceMethodFromRequest(Request $request, ?string $authenticationMethod): ?string
+    {
+        $method = strtolower(trim((string) $request->input('method', '')));
+        if (in_array($method, ['face', 'qr', 'credentials'], true)) {
+            return $method;
+        }
+
+        return match ($authenticationMethod) {
+            AttendanceLog::AUTH_METHOD_FACE => 'face',
+            AttendanceLog::AUTH_METHOD_QR => 'qr',
+            AttendanceLog::AUTH_METHOD_CREDENTIALS => 'credentials',
+            default => null,
+        };
+    }
+
+    private function validateClientAttemptId(Request $request): ?string
+    {
+        $attemptId = trim((string) $request->input('client_attempt_id', ''));
+        if ($attemptId === '') {
+            return null;
+        }
+
+        if (! preg_match('/^[A-Za-z0-9._:-]{8,80}$/', $attemptId)) {
+            throw ValidationException::withMessages([
+                'client_attempt_id' => ['Invalid attendance attempt id. Please try again.'],
+            ]);
+        }
+
+        if (AttendanceLog::query()->where('client_attempt_id', $attemptId)->exists()) {
+            throw ValidationException::withMessages([
+                'client_attempt_id' => ['Duplicate attendance attempt ignored. Please refresh before trying again.'],
+            ]);
+        }
+
+        return $attemptId;
+    }
+
     /**
      * @param  array{similarity_score?: float|null, liveness_score?: float|null, authentication_method?: string|null}  $faceContext
      */
     private function attendanceLogData(Request $request, User $user, string $type, array $faceContext = []): array
     {
+        $serverReceivedAt = $this->markAttendanceRequestReceived($request);
+        $officialClockAt = $this->officialClockTimestamp($request, $serverReceivedAt);
+        $validationCompletedAt = now();
+        $authenticationMethod = $faceContext['authentication_method'] ?? null;
+
         $data = [
             'user_id' => $user->id,
             'type' => $type,
-            'verified_at' => now(),
+            'verified_at' => $officialClockAt,
+            'server_received_at' => $serverReceivedAt,
+            'validation_completed_at' => $validationCompletedAt,
+            'method' => $this->attendanceMethodFromRequest($request, $authenticationMethod),
+            'processing_delay_seconds' => max(0, (int) $officialClockAt->diffInSeconds($serverReceivedAt, false)),
+            'client_attempt_id' => $this->validateClientAttemptId($request),
             'ip_address' => $request->ip(),
             'user_agent' => $request->userAgent(),
         ];
+        if ($type === AttendanceLog::TYPE_CLOCK_IN) {
+            $data['time_in_clicked_at'] = $officialClockAt;
+        } elseif ($type === AttendanceLog::TYPE_CLOCK_OUT) {
+            $data['time_out_clicked_at'] = $officialClockAt;
+        }
         $lat = $request->input('latitude');
         $lng = $request->input('longitude');
         if ($lat !== null && $lng !== null) {
@@ -527,8 +638,8 @@ class AttendanceController extends Controller
         if (isset($faceContext['liveness_score'])) {
             $data['liveness_score'] = $faceContext['liveness_score'];
         }
-        if (isset($faceContext['authentication_method'])) {
-            $data['authentication_method'] = $faceContext['authentication_method'];
+        if ($authenticationMethod !== null) {
+            $data['authentication_method'] = $authenticationMethod;
         }
 
         return $data;
@@ -608,6 +719,8 @@ class AttendanceController extends Controller
      */
     public function recordKiosk(Request $request): JsonResponse
     {
+        $this->markAttendanceRequestReceived($request);
+
         $validated = $request->validate([
             'type' => ['required', 'string', 'in:clock_in,clock_out'],
             'qr_token' => ['nullable', 'string', 'min:8', 'required_without:login'],
@@ -670,13 +783,14 @@ class AttendanceController extends Controller
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
             'authentication_method' => $qrToken !== '' ? AttendanceLog::AUTH_METHOD_QR : AttendanceLog::AUTH_METHOD_CREDENTIALS,
         ]));
+        $punchAt = $this->attendanceLogPunchInstant($log);
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
             $this->overtimeService->syncClockOutToFiledOvertime($user, $log);
             $this->premiumPayCalculator->computeAndStore($log);
         }
 
-        $attendanceTime = $log->created_at
+        $attendanceTime = $punchAt
             ->copy()
             ->timezone($this->attendanceTimezone());
         $timeOnly = $attendanceTime->format('g:i A');
@@ -685,15 +799,15 @@ class AttendanceController extends Controller
         if ($type === AttendanceLog::TYPE_CLOCK_IN) {
             // Compute DTR classification (Present / Late buckets / Half Day) for SMS.
             $schedule = $user->schedule;
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
 
             $classification = 'Present';
             if ($daySchedule && ! empty($daySchedule['in'])) {
                 $clockInResult = AttendanceStatusService::getClockInStatus(
                     $daySchedule,
-                    $log->created_at->toDateString(),
-                    $log->created_at
+                    $punchAt->toDateString(),
+                    $punchAt
                 );
 
                 if ($clockInResult['status'] === 'half_day') {
@@ -731,19 +845,19 @@ class AttendanceController extends Controller
                 'id' => $log->id,
                 'type' => $log->type,
                 'verified_at' => $log->verified_at?->toIso8601String(),
-                'created_at' => $log->created_at->toIso8601String(),
+                'created_at' => $punchAt->toIso8601String(),
             ],
         ];
 
         if ($type === AttendanceLog::TYPE_CLOCK_IN) {
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $schedule = $user->schedule;
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
             if ($daySchedule && ! empty($daySchedule['in'])) {
                 $clockInResult = AttendanceStatusService::getClockInStatus(
                     $daySchedule,
-                    $log->created_at->toDateString(),
-                    $log->created_at
+                    $punchAt->toDateString(),
+                    $punchAt
                 );
                 $payload['attendance']['status'] = $clockInResult['status'];
                 $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
@@ -752,10 +866,10 @@ class AttendanceController extends Controller
         }
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $schedule = $user->schedule;
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-            $dateKey = $log->created_at->toDateString();
+            $dateKey = $punchAt->toDateString();
             if ($daySchedule && ! empty($daySchedule['out'])) {
                 $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
 
@@ -768,16 +882,17 @@ class AttendanceController extends Controller
                 $endUtc = $todayStartTz->copy()->endOfDay()->setTimezone('UTC');
                 $firstIn = AttendanceLog::query()
                     ->where('user_id', $user->id)
-                    ->whereBetween('created_at', [$startUtc, $endUtc])
+                    ->whereRaw('COALESCE(verified_at, created_at) BETWEEN ? AND ?', [$startUtc, $endUtc])
                     ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                    ->orderBy('created_at')
+                    ->orderByRaw('COALESCE(verified_at, created_at)')
                     ->first();
+                $firstInPunchAt = $firstIn ? $this->attendanceLogPunchInstant($firstIn) : null;
 
                 $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
                     $dateKey,
                     $daySchedule,
-                    $firstIn?->created_at,
-                    $log->created_at,
+                    $firstInPunchAt,
+                    $punchAt,
                     $tzToday,
                     $earlyTimeout
                 );
@@ -785,11 +900,11 @@ class AttendanceController extends Controller
 
                 if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
                     $tz = $this->attendanceTimezone();
-                    $firstInDateKey = $firstIn->created_at->copy()->timezone($tz)->toDateString();
+                    $firstInDateKey = $firstInPunchAt->copy()->timezone($tz)->toDateString();
                     $clockInResult = AttendanceStatusService::getClockInStatus(
                         $daySchedule,
                         $firstInDateKey,
-                        $firstIn->created_at
+                        $firstInPunchAt
                     );
                     $status = $clockInResult['status'];
                     $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
@@ -816,6 +931,8 @@ class AttendanceController extends Controller
      */
     public function record(Request $request): JsonResponse
     {
+        $this->markAttendanceRequestReceived($request);
+
         $validated = $request->validate([
             'type' => ['required', 'string', 'in:clock_in,clock_out'],
             'qr_token' => ['required', 'string', 'min:8'],
@@ -881,13 +998,14 @@ class AttendanceController extends Controller
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
             'authentication_method' => AttendanceLog::AUTH_METHOD_QR,
         ]));
+        $punchAt = $this->attendanceLogPunchInstant($log);
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
             $this->overtimeService->syncClockOutToFiledOvertime($user, $log);
             $this->premiumPayCalculator->computeAndStore($log);
         }
 
-        $attendanceTime = $log->created_at
+        $attendanceTime = $punchAt
             ->copy()
             ->timezone($this->attendanceTimezone());
         $timeOnly = $attendanceTime->format('g:i A');
@@ -895,15 +1013,15 @@ class AttendanceController extends Controller
 
         if ($type === AttendanceLog::TYPE_CLOCK_IN) {
             $schedule = $user->schedule;
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
 
             $classification = 'Present';
             if ($daySchedule && ! empty($daySchedule['in'])) {
                 $clockInResult = AttendanceStatusService::getClockInStatus(
                     $daySchedule,
-                    $log->created_at->toDateString(),
-                    $log->created_at
+                    $punchAt->toDateString(),
+                    $punchAt
                 );
 
                 if ($clockInResult['status'] === 'half_day') {
@@ -932,7 +1050,7 @@ class AttendanceController extends Controller
                 'id' => $log->id,
                 'type' => $log->type,
                 'verified_at' => $log->verified_at?->toIso8601String(),
-                'created_at' => $log->created_at->toIso8601String(),
+                'created_at' => $punchAt->toIso8601String(),
             ],
         ], 201);
     }
@@ -948,6 +1066,8 @@ class AttendanceController extends Controller
     public function recordClockInForUser(User $user, Request $request, array $faceContext = []): array
     {
         try {
+            $this->markAttendanceRequestReceived($request);
+
             if ($user->isAccountDeactivated()) {
                 return ['recorded' => false, 'message' => User::DEACTIVATED_LOGIN_MESSAGE];
             }
@@ -978,7 +1098,8 @@ class AttendanceController extends Controller
             }
 
             $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
-            $attendanceTime = $log->created_at->copy()->timezone($this->attendanceTimezone());
+            $punchAt = $this->attendanceLogPunchInstant($log);
+            $attendanceTime = $punchAt->copy()->timezone($this->attendanceTimezone());
             $timeOnly = $attendanceTime->format('g:i A');
 
             if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
@@ -995,21 +1116,22 @@ class AttendanceController extends Controller
                     'attendance' => [
                         'id' => $log->id,
                         'type' => $log->type,
-                        'created_at' => $log->created_at->toIso8601String(),
+                        'verified_at' => $log->verified_at?->toIso8601String(),
+                        'created_at' => $punchAt->toIso8601String(),
                         'status' => 'Clocked Out',
                     ],
                 ];
             }
 
             $schedule = $user->schedule;
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
             $classification = 'Present';
             if ($daySchedule && ! empty($daySchedule['in'])) {
                 $clockInResult = AttendanceStatusService::getClockInStatus(
                     $daySchedule,
-                    $log->created_at->toDateString(),
-                    $log->created_at
+                    $punchAt->toDateString(),
+                    $punchAt
                 );
                 if ($clockInResult['status'] === 'half_day') {
                     $classification = 'Half Day';
@@ -1030,7 +1152,8 @@ class AttendanceController extends Controller
                 'attendance' => [
                     'id' => $log->id,
                     'type' => $log->type,
-                    'created_at' => $log->created_at->toIso8601String(),
+                    'verified_at' => $log->verified_at?->toIso8601String(),
+                    'created_at' => $punchAt->toIso8601String(),
                     'status' => $classification,
                 ],
             ];
@@ -1058,6 +1181,8 @@ class AttendanceController extends Controller
      */
     public function scan(Request $request): JsonResponse
     {
+        $this->markAttendanceRequestReceived($request);
+
         $validated = $request->validate([
             'type' => ['required', 'string', 'in:clock_in,clock_out'],
             'qr_token' => ['required', 'string', 'min:8'],
@@ -1118,13 +1243,14 @@ class AttendanceController extends Controller
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
             'authentication_method' => AttendanceLog::AUTH_METHOD_QR,
         ]));
+        $punchAt = $this->attendanceLogPunchInstant($log);
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
             $this->overtimeService->syncClockOutToFiledOvertime($user, $log);
             $this->premiumPayCalculator->computeAndStore($log);
         }
 
-        $attendanceTime = $log->created_at
+        $attendanceTime = $punchAt
             ->copy()
             ->timezone($this->attendanceTimezone());
         $timeOnly = $attendanceTime->format('g:i A');
@@ -1132,15 +1258,15 @@ class AttendanceController extends Controller
 
         if ($type === AttendanceLog::TYPE_CLOCK_IN) {
             $schedule = $user->schedule;
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
 
             $classification = 'Present';
             if ($daySchedule && ! empty($daySchedule['in'])) {
                 $clockInResult = AttendanceStatusService::getClockInStatus(
                     $daySchedule,
-                    $log->created_at->toDateString(),
-                    $log->created_at
+                    $punchAt->toDateString(),
+                    $punchAt
                 );
 
                 if ($clockInResult['status'] === 'half_day') {
@@ -1168,19 +1294,19 @@ class AttendanceController extends Controller
                 'id' => $log->id,
                 'type' => $log->type,
                 'verified_at' => $log->verified_at?->toIso8601String(),
-                'created_at' => $log->created_at->toIso8601String(),
+                'created_at' => $punchAt->toIso8601String(),
             ],
         ];
 
         if ($type === AttendanceLog::TYPE_CLOCK_IN) {
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $schedule = $user->schedule;
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
             if ($daySchedule && ! empty($daySchedule['in'])) {
                 $clockInResult = AttendanceStatusService::getClockInStatus(
                     $daySchedule,
-                    $log->created_at->toDateString(),
-                    $log->created_at
+                    $punchAt->toDateString(),
+                    $punchAt
                 );
                 $payload['attendance']['status'] = $clockInResult['status'];
                 $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
@@ -1189,10 +1315,10 @@ class AttendanceController extends Controller
         }
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $schedule = $user->schedule;
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-            $dateKey = $log->created_at->toDateString();
+            $dateKey = $punchAt->toDateString();
             if ($daySchedule && ! empty($daySchedule['out'])) {
                 $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
 
@@ -1203,16 +1329,17 @@ class AttendanceController extends Controller
                 $endUtc = $todayStartTz->copy()->endOfDay()->setTimezone('UTC');
                 $firstIn = AttendanceLog::query()
                     ->where('user_id', $user->id)
-                    ->whereBetween('created_at', [$startUtc, $endUtc])
+                    ->whereRaw('COALESCE(verified_at, created_at) BETWEEN ? AND ?', [$startUtc, $endUtc])
                     ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                    ->orderBy('created_at')
+                    ->orderByRaw('COALESCE(verified_at, created_at)')
                     ->first();
+                $firstInPunchAt = $firstIn ? $this->attendanceLogPunchInstant($firstIn) : null;
 
                 $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
                     $dateKey,
                     $daySchedule,
-                    $firstIn?->created_at,
-                    $log->created_at,
+                    $firstInPunchAt,
+                    $punchAt,
                     $tzToday,
                     $earlyTimeout
                 );
@@ -1220,11 +1347,11 @@ class AttendanceController extends Controller
 
                 if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
                     $tz = $this->attendanceTimezone();
-                    $firstInDateKey = $firstIn->created_at->copy()->timezone($tz)->toDateString();
+                    $firstInDateKey = $firstInPunchAt->copy()->timezone($tz)->toDateString();
                     $clockInResult = AttendanceStatusService::getClockInStatus(
                         $daySchedule,
                         $firstInDateKey,
-                        $firstIn->created_at
+                        $firstInPunchAt
                     );
                     $status = $clockInResult['status'];
                     $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
@@ -1277,6 +1404,7 @@ class AttendanceController extends Controller
      */
     public function scanFace(Request $request): JsonResponse
     {
+        $serverReceivedAt = $this->markAttendanceRequestReceived($request);
         $startedAt = microtime(true);
         $validated = $request->validate([
             'type' => ['required', 'string', 'in:clock_in,clock_out'],
@@ -1287,6 +1415,10 @@ class AttendanceController extends Controller
             'device_id' => ['nullable', 'string', 'max:120'],
             'camera_info' => ['nullable', 'string', 'max:255'],
             'client_capture_started_at_ms' => ['nullable', 'numeric'],
+            'clicked_at' => ['nullable', 'string', 'max:80'],
+            'timezone' => ['nullable', 'string', 'max:80'],
+            'method' => ['nullable', 'string', 'max:32'],
+            'client_attempt_id' => ['nullable', 'string', 'max:80'],
         ]);
         $login = trim((string) ($validated['login'] ?? ''));
         $sessionId = $validated['liveness_session_id'] ?? null;
@@ -1657,6 +1789,7 @@ class AttendanceController extends Controller
         $suggestCorrectionAfterClockOut = $type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->hasTimedInToday();
 
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
+        $punchAt = $this->attendanceLogPunchInstant($log);
         FaceRecognitionAuditService::record($request, [
             'employee_id' => $claimedUser?->id,
             'matched_employee_id' => $user->id,
@@ -1671,6 +1804,10 @@ class AttendanceController extends Controller
                 'attendance_log_id' => $log->id,
                 'company_id' => $companyId,
                 'used_liveness_session' => ! empty($sessionId),
+                'clicked_at' => $log->verified_at?->toIso8601String(),
+                'server_received_at' => $serverReceivedAt->toIso8601String(),
+                'processing_delay_seconds' => $log->processing_delay_seconds,
+                'client_attempt_id' => $log->client_attempt_id,
             ],
         ]);
 
@@ -1679,7 +1816,7 @@ class AttendanceController extends Controller
             $this->premiumPayCalculator->computeAndStore($log);
         }
 
-        $attendanceTime = $log->created_at
+        $attendanceTime = $punchAt
             ->copy()
             ->timezone($this->attendanceTimezone());
         $timeOnly = $attendanceTime->format('g:i A');
@@ -1687,14 +1824,14 @@ class AttendanceController extends Controller
 
         if ($type === AttendanceLog::TYPE_CLOCK_IN) {
             $schedule = $user->schedule;
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
             $classification = 'Present';
             if ($daySchedule && ! empty($daySchedule['in'])) {
                 $clockInResult = AttendanceStatusService::getClockInStatus(
                     $daySchedule,
-                    $log->created_at->toDateString(),
-                    $log->created_at
+                    $punchAt->toDateString(),
+                    $punchAt
                 );
                 if ($clockInResult['status'] === 'half_day') {
                     $classification = 'Half Day';
@@ -1721,19 +1858,19 @@ class AttendanceController extends Controller
                 'id' => $log->id,
                 'type' => $log->type,
                 'verified_at' => $log->verified_at?->toIso8601String(),
-                'created_at' => $log->created_at?->toIso8601String(),
+                'created_at' => $punchAt->toIso8601String(),
             ],
         ];
 
         if ($type === AttendanceLog::TYPE_CLOCK_IN) {
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $schedule = $user->schedule;
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
             if ($daySchedule && ! empty($daySchedule['in'])) {
                 $clockInResult = AttendanceStatusService::getClockInStatus(
                     $daySchedule,
-                    $log->created_at->toDateString(),
-                    $log->created_at
+                    $punchAt->toDateString(),
+                    $punchAt
                 );
                 $payload['attendance']['status'] = $clockInResult['status'];
                 $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
@@ -1742,10 +1879,10 @@ class AttendanceController extends Controller
         }
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $dayKey = self::DAY_KEYS[(int) $log->created_at->format('w')];
+            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
             $schedule = $user->schedule;
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-            $dateKey = $log->created_at->toDateString();
+            $dateKey = $punchAt->toDateString();
             if ($daySchedule && ! empty($daySchedule['out'])) {
                 $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
 
@@ -1756,16 +1893,17 @@ class AttendanceController extends Controller
                 $endUtc = $todayStartTz->copy()->endOfDay()->setTimezone('UTC');
                 $firstIn = AttendanceLog::query()
                     ->where('user_id', $user->id)
-                    ->whereBetween('created_at', [$startUtc, $endUtc])
+                    ->whereRaw('COALESCE(verified_at, created_at) BETWEEN ? AND ?', [$startUtc, $endUtc])
                     ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                    ->orderBy('created_at')
+                    ->orderByRaw('COALESCE(verified_at, created_at)')
                     ->first();
+                $firstInPunchAt = $firstIn ? $this->attendanceLogPunchInstant($firstIn) : null;
 
                 $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
                     $dateKey,
                     $daySchedule,
-                    $firstIn?->created_at,
-                    $log->created_at,
+                    $firstInPunchAt,
+                    $punchAt,
                     $tzToday,
                     $earlyTimeout
                 );
@@ -1773,11 +1911,11 @@ class AttendanceController extends Controller
 
                 if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
                     $tz = $this->attendanceTimezone();
-                    $firstInDateKey = $firstIn->created_at->copy()->timezone($tz)->toDateString();
+                    $firstInDateKey = $firstInPunchAt->copy()->timezone($tz)->toDateString();
                     $clockInResult = AttendanceStatusService::getClockInStatus(
                         $daySchedule,
                         $firstInDateKey,
-                        $firstIn->created_at
+                        $firstInPunchAt
                     );
                     $status = $clockInResult['status'];
                     $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
@@ -1822,14 +1960,14 @@ class AttendanceController extends Controller
     {
         $user = $request->user();
         $logs = AttendanceLog::where('user_id', $user->id)
-            ->orderByDesc('created_at')
+            ->orderByRaw('COALESCE(verified_at, created_at) DESC')
             ->limit(100)
             ->get()
             ->map(fn (AttendanceLog $log) => [
                 'id' => $log->id,
                 'type' => $log->type,
                 'verified_at' => $log->verified_at?->toIso8601String(),
-                'created_at' => $log->created_at->toIso8601String(),
+                'created_at' => $this->attendanceLogPunchInstant($log)->toIso8601String(),
             ]);
 
         return response()->json(['attendance' => $logs]);

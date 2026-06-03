@@ -8,7 +8,7 @@ import { ThemeProvider } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
 import { Loader2 } from 'lucide-react'
 import { Amplify } from 'aws-amplify'
-import { createLivenessSession, loginWithFace, recordAttendanceKioskFace } from '@/api'
+import { createAttendanceAttemptMeta, createLivenessSession, loginWithFace, recordAttendanceKioskFace } from '@/api'
 import { playSuccess, playError } from '@/lib/attendanceSounds'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -46,6 +46,7 @@ export function FaceRekognitionLiveness({
   onKioskAttendanceCorrection,
   onKioskCancel,
   onKioskErrorStateChange,
+  attemptMeta,
   instructionText,
 }) {
   const [session, setSession] = useState(null)
@@ -62,6 +63,11 @@ export function FaceRekognitionLiveness({
   const [verifyPhase, setVerifyPhase] = useState('verify') // 'verify' | 'match' — shown during backend round-trip
   const handlingErrorRef = useRef(false)
   const amplifyConfiguredRef = useRef(false)
+  const attemptMetaRef = useRef(attemptMeta || createAttendanceAttemptMeta('face'))
+
+  useEffect(() => {
+    if (attemptMeta) attemptMetaRef.current = attemptMeta
+  }, [attemptMeta])
 
   const ensureAmplifyConfig = useCallback((sessionData) => {
     if (amplifyConfiguredRef.current) return
@@ -167,6 +173,7 @@ export function FaceRekognitionLiveness({
         const data = await withTimeout(
           recordAttendanceKioskFace(kioskType, {
             liveness_session_id: session.sessionId,
+            ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
           }),
           FACE_MATCH_TIMEOUT_MS,
           'Face verification took too long. Please try again.'
@@ -179,7 +186,10 @@ export function FaceRekognitionLiveness({
         return
       }
       const data = await withTimeout(
-        loginWithFace({ liveness_session_id: session.sessionId }),
+        loginWithFace({
+          liveness_session_id: session.sessionId,
+          ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
+        }),
         FACE_MATCH_TIMEOUT_MS,
         'Face login timed out. Please try again.'
       )
