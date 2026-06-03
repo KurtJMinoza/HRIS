@@ -16,53 +16,13 @@ class FaceAttemptThrottleService
      */
     public static function hit(Request $request, ?int $userId = null): ?array
     {
-        try {
-            $blocked = self::blockedPayload($request, $userId);
-            if ($blocked !== null) {
-                return $blocked;
-            }
-
-            $limit = max(1, (int) config('attendance.face_attempts_limit', 5));
-            $window = max(10, (int) config('attendance.face_attempts_window_seconds', 60));
-            $keys = self::attemptKeys($request, $userId);
-
-            foreach ($keys as $key) {
-                $count = self::increment($key, $window);
-                if ($count > $limit) {
-                    self::startCooldown($request, $userId, 'rate_limited');
-
-                    return [
-                        'retry_after' => self::cooldownSeconds(),
-                        'reason' => 'rate_limited',
-                    ];
-                }
-            }
-        } catch (\Throwable $e) {
-            Log::warning('Face attempt throttle unavailable; allowing request', [
-                'message' => $e->getMessage(),
-            ]);
-        }
-
+        // Face recognition must not be rate-limited; always allow attempts.
         return null;
     }
 
     public static function recordFailure(Request $request, ?int $userId = null): void
     {
-        try {
-            $threshold = max(1, (int) config('attendance.face_failed_attempts_cooldown_threshold', 5));
-            $window = max(60, (int) config('attendance.face_failed_attempts_window_minutes', 10) * 60);
-
-            foreach (self::failureKeys($request, $userId) as $key) {
-                $count = self::increment($key, $window);
-                if ($count >= $threshold) {
-                    self::startCooldown($request, $userId, 'failed_attempt_cooldown');
-                }
-            }
-        } catch (\Throwable $e) {
-            Log::warning('Face failure throttle unavailable', [
-                'message' => $e->getMessage(),
-            ]);
-        }
+        // Failed scans are still audited elsewhere, but they should not create lockouts.
     }
 
     public static function deviceId(Request $request): string
