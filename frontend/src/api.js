@@ -2896,7 +2896,7 @@ export async function deleteAdminScheduleRequest(id) {
 
 /**
  * Get employees list (admin) with optional simple pagination.
- * @param {{ page?: number, per_page?: number, for_schedule_assignment?: boolean, active_filter?: 'active'|'deactivated'|'all' }} [params]
+ * @param {{ page?: number, per_page?: number, for_schedule_assignment?: boolean, active_filter?: 'active'|'deactivated'|'all', schedule_filter?: 'scheduled'|'unscheduled', face_filter?: 'registered'|'unregistered' }} [params]
  *   - for_schedule_assignment: true → returns all employees (no pagination, for Assign Schedule modal).
  * @returns {Promise<{ employees: Array<{ id: number, name: string, email: string, role: string, department?: string|null, schedule: object|null, working_schedule_id?: number|null, is_active: boolean, created_at: string }>, meta?: { current_page: number, per_page: number, total: number, last_page: number } }>}
  */
@@ -2909,6 +2909,8 @@ export async function getEmployees(params = {}) {
   if (employeesPerPage != null) query.set('per_page', String(employeesPerPage))
   if (params.for_schedule_assignment) query.set('for_schedule_assignment', '1')
   if (params.active_filter) query.set('active_filter', String(params.active_filter))
+  if (params.schedule_filter) query.set('schedule_filter', String(params.schedule_filter))
+  if (params.face_filter) query.set('face_filter', String(params.face_filter))
   if (params.q) query.set('q', String(params.q))
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))

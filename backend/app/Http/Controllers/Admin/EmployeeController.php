@@ -119,6 +119,14 @@ class EmployeeController extends Controller
         if (! in_array($activeFilter, ['active', 'deactivated', 'all'], true)) {
             $activeFilter = 'active';
         }
+        $scheduleFilter = strtolower(trim((string) $request->query('schedule_filter', '')));
+        if (! in_array($scheduleFilter, ['scheduled', 'unscheduled'], true)) {
+            $scheduleFilter = '';
+        }
+        $faceFilter = strtolower(trim((string) $request->query('face_filter', '')));
+        if (! in_array($faceFilter, ['registered', 'unregistered'], true)) {
+            $faceFilter = '';
+        }
         $assignmentBranchId = $request->filled('assignment_branch_id') ? (int) $request->query('assignment_branch_id') : null;
         $employeeScopeOptions = [];
         if ($forDepartmentAssignment && $assignmentBranchId !== null) {
@@ -398,6 +406,8 @@ class EmployeeController extends Controller
                 $query->where('employee_level', $employeeLevelFilter);
             }
             $this->applyActiveFilter($query, $activeFilter);
+            $this->applyScheduleFilter($query, $scheduleFilter);
+            $this->applyFaceFilter($query, $faceFilter);
             if (! $forLeadershipAssignment) {
                 $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
             }
@@ -468,6 +478,8 @@ class EmployeeController extends Controller
             $query->where('employee_level', $employeeLevelFilter);
         }
         $this->applyActiveFilter($query, $activeFilter);
+        $this->applyScheduleFilter($query, $scheduleFilter);
+        $this->applyFaceFilter($query, $faceFilter);
         if (! $lite) {
             $query->with($fullEagerLoads);
         }
@@ -3213,6 +3225,74 @@ class EmployeeController extends Controller
         }
 
         $query->active();
+    }
+
+    private function applyScheduleFilter($query, string $scheduleFilter): void
+    {
+        if ($scheduleFilter === '') {
+            return;
+        }
+
+        $hasSchedule = function ($q): void {
+            $q->whereNotNull('working_schedule_id')
+                ->orWhere(function ($scheduleQuery): void {
+                    $scheduleQuery->whereNotNull('schedule')
+                        ->whereRaw('('.$this->scheduleHasWorkingDaySql().')');
+                });
+        };
+
+        if ($scheduleFilter === 'scheduled') {
+            $query->where($hasSchedule);
+
+            return;
+        }
+
+        $query->where(function ($q): void {
+            $q->whereNull('working_schedule_id')
+                ->where(function ($scheduleQuery): void {
+                    $scheduleQuery->whereNull('schedule')
+                        ->orWhereRaw('NOT ('.$this->scheduleHasWorkingDaySql().')');
+                });
+        });
+    }
+
+    private function scheduleHasWorkingDaySql(): string
+    {
+        $days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+        return collect($days)
+            ->map(fn (string $day): string => sprintf(
+                "(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(schedule, '$.%s.in')), '') IS NOT NULL AND NULLIF(JSON_UNQUOTE(JSON_EXTRACT(schedule, '$.%s.out')), '') IS NOT NULL)",
+                $day,
+                $day,
+            ))
+            ->implode(' OR ');
+    }
+
+    private function applyFaceFilter($query, string $faceFilter): void
+    {
+        if ($faceFilter === '') {
+            return;
+        }
+
+        $registered = function ($q): void {
+            $q->where('face_status', 'registered')
+                ->orWhereNotNull('face_registered_at');
+        };
+
+        if ($faceFilter === 'registered') {
+            $query->where($registered);
+
+            return;
+        }
+
+        $query->where(function ($q): void {
+            $q->whereNull('face_registered_at')
+                ->where(function ($statusQuery): void {
+                    $statusQuery->whereNull('face_status')
+                        ->orWhere('face_status', '!=', 'registered');
+                });
+        });
     }
 
     /**
