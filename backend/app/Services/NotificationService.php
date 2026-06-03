@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\DashboardCountsUpdated;
 use App\Events\NotificationCreated;
+use App\Jobs\MarkNotificationsReadJob;
 use App\Models\HrisNotification;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
@@ -155,6 +156,16 @@ class NotificationService
             $query->where('module', $module);
         }
 
+        $updated = (clone $query)->count();
+        if ($updated > 500) {
+            app()->terminating(static function () use ($userId, $module): void {
+                (new MarkNotificationsReadJob($userId, $module))->handle(app(NotificationService::class));
+            });
+            $this->clearCountCache($userId);
+
+            return $updated;
+        }
+
         $updated = $query->update(['read_at' => now(), 'updated_at' => now()]);
         $this->clearCountCache($userId);
 
@@ -189,6 +200,42 @@ class NotificationService
         if ($entityId !== null) {
             $query->where('entity_id', $entityId);
         }
+        if ($type !== null) {
+            $query->where('type', $type);
+        }
+
+        $updated = $query->update(['read_at' => now(), 'updated_at' => now()]);
+        if ($updated > 0) {
+            $this->clearCountCache($recipientUserId);
+        }
+
+        return $updated;
+    }
+
+    /**
+     * @param  int[]  $entityIds
+     */
+    public function markRelatedReadForEntities(
+        int $recipientUserId,
+        string $module,
+        array $entityIds,
+        ?string $type = null,
+    ): int {
+        $entityIds = array_values(array_filter(
+            array_unique(array_map('intval', $entityIds)),
+            static fn (int $id): bool => $id > 0,
+        ));
+        if ($entityIds === []) {
+            return 0;
+        }
+
+        $query = HrisNotification::query()
+            ->where('recipient_user_id', $recipientUserId)
+            ->where('module', $module)
+            ->whereIn('entity_id', $entityIds)
+            ->visible()
+            ->unread();
+
         if ($type !== null) {
             $query->where('type', $type);
         }
@@ -244,7 +291,11 @@ class NotificationService
             return null;
         }
 
-        return $this->notifyUser((int) $record->approver_id, [
+        $recipient = $record->relationLoaded('approver') && $record->approver instanceof User
+            ? $record->approver
+            : (int) $record->approver_id;
+
+        return $this->notifyUser($recipient, [
             'type' => $type,
             'title' => $title,
             'message' => $message,

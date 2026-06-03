@@ -101,6 +101,36 @@ class LeaveBulkApprovalQuery
     }
 
     /**
+     * @param  int[]  $requestedIds
+     * @return int[]
+     */
+    public function approvableSelectedIds(User $actor, array $requestedIds, int $max = 500): array
+    {
+        $requestedIds = array_values(array_filter(
+            array_unique(array_map('intval', $requestedIds)),
+            static fn (int $id): bool => $id > 0,
+        ));
+        if ($requestedIds === []) {
+            return [];
+        }
+
+        $items = $this->baseQuery($actor, ['status' => LeaveRequest::STATUS_PENDING])
+            ->whereIn('leave_requests.id', $requestedIds)
+            ->where('leave_requests.status', LeaveRequest::STATUS_PENDING)
+            ->limit($max)
+            ->get();
+
+        $ids = [];
+        foreach ($items as $leave) {
+            if ($this->leaveApprovalService->canApprove($actor, $leave)) {
+                $ids[] = (int) $leave->id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
      * @param  array<string, mixed>  $filters
      */
     public function approvableCount(User $actor, array $filters): int

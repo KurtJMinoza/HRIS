@@ -73,15 +73,19 @@ class NotificationController extends Controller
 
     public function markAllRead(Request $request): JsonResponse
     {
+        $module = $request->filled('module') ? (string) $request->input('module') : null;
         $updated = $this->notifications->markAllRead(
             $request->user(),
-            $request->filled('module') ? (string) $request->input('module') : null,
+            $module,
         );
+        $moduleCounts = $module === null
+            ? array_fill_keys(NotificationService::MODULES, 0)
+            : $this->notifications->moduleCounts($request->user());
 
         return response()->json([
             'updated' => $updated,
             'unread_count' => 0,
-            'module_counts' => $this->notifications->moduleCounts($request->user()),
+            'module_counts' => $moduleCounts,
         ]);
     }
 

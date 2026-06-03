@@ -167,6 +167,36 @@ trait ProcessesBulkApproval
         return ['ids' => $ids, 'skipped' => $skipped, 'failed_items' => $failedItems];
     }
 
+    /**
+     * @param  int[]  $requestedIds
+     * @param  int[]  $approvableIds
+     * @return array{ids: int[], skipped: int, failed_items: array<int, array{request_id: int, reason: string}>}
+     */
+    protected function resolveBulkApproveIdsFromCandidates(array $requestedIds, array $approvableIds): array
+    {
+        $requested = array_values(array_filter(
+            array_unique(array_map('intval', $requestedIds)),
+            static fn (int $id): bool => $id > 0,
+        ));
+        $allowed = array_fill_keys(array_map('intval', $approvableIds), true);
+        $ids = [];
+        $failedItems = [];
+
+        foreach ($requested as $id) {
+            if (isset($allowed[$id])) {
+                $ids[] = $id;
+                continue;
+            }
+
+            $failedItems[] = [
+                'request_id' => $id,
+                'reason' => 'You are not authorized to approve this request, it is no longer pending, or required approval data is missing.',
+            ];
+        }
+
+        return ['ids' => $ids, 'skipped' => count($failedItems), 'failed_items' => $failedItems];
+    }
+
     protected function bulkApproveJsonResponse(
         int $approved,
         int $skipped,

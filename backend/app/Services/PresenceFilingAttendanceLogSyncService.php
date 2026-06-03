@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\AttendanceCorrection;
 use App\Models\AttendanceCorrectionAudit;
 use App\Models\AttendanceLog;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 
 /**
  * Writes HR-approved corrected times into {@see AttendanceLog} so DTR, kiosk,
@@ -35,6 +37,92 @@ class PresenceFilingAttendanceLogSyncService
      *
      * @return array{applied_time_in: ?\Carbon\Carbon, applied_time_out: ?\Carbon\Carbon}
      */
+    /**
+     * @param  Collection<int, AttendanceCorrection>  $corrections
+     * @return array<int, array{applied_time_in: ?Carbon, applied_time_out: ?Carbon}>
+     */
+    public function syncApprovedCorrectionsBatch(
+        Collection $corrections,
+        User $hrApprover,
+        string $approverRoleLabel,
+    ): array {
+        if ($corrections->isEmpty()) {
+            return [];
+        }
+
+        $tz = $this->presenceFilingService->attendanceTimezone();
+        $userIds = $corrections->pluck('user_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $dateKeys = $corrections
+            ->map(fn (AttendanceCorrection $c) => $c->date?->toDateString())
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($userIds === [] || $dateKeys->isEmpty()) {
+            return [];
+        }
+
+        $rangeStart = Carbon::parse($dateKeys->min(), $tz)->startOfDay()->utc();
+        $rangeEnd = Carbon::parse($dateKeys->max(), $tz)->endOfDay()->utc();
+
+        $logsByUser = AttendanceLog::query()
+            ->whereIn('user_id', $userIds)
+            ->where(function ($q) use ($rangeStart, $rangeEnd) {
+                $q->whereBetween('verified_at', [$rangeStart, $rangeEnd])
+                    ->orWhereBetween('created_at', [$rangeStart, $rangeEnd]);
+            })
+            ->orderBy('created_at')
+            ->get()
+            ->groupBy('user_id');
+
+        $results = [];
+        foreach ($corrections as $correction) {
+            $employee = $correction->user;
+            if (! $employee instanceof User) {
+                continue;
+            }
+
+            $dateKey = $correction->date?->toDateString();
+            if ($dateKey === null) {
+                continue;
+            }
+
+            $dayStart = Carbon::parse($dateKey, $tz)->startOfDay();
+            $dayEnd = Carbon::parse($dateKey, $tz)->endOfDay();
+            $userLogs = ($logsByUser->get($employee->id) ?? collect())->filter(
+                function (AttendanceLog $log) use ($dayStart, $dayEnd, $tz): bool {
+                    $stamp = $this->effectiveStamp($log);
+                    if ($stamp === null) {
+                        return false;
+                    }
+
+                    $local = $stamp->copy()->timezone($tz);
+
+                    return $local->gte($dayStart) && $local->lte($dayEnd);
+                }
+            )->values();
+
+            $results[(int) $correction->id] = $this->syncApprovedCorrectionToLogs(
+                $employee,
+                $dateKey,
+                $correction->time_in,
+                $correction->time_out,
+                $hrApprover,
+                (int) $correction->id,
+                $approverRoleLabel,
+                $correction->resolvedIssueKind(),
+                $userLogs,
+                false,
+            );
+        }
+
+        return $results;
+    }
+
+    /**
+     * @param  Collection<int, AttendanceLog>|null  $prefetchedLogs
+     * @return array{applied_time_in: ?\Carbon\Carbon, applied_time_out: ?\Carbon\Carbon}
+     */
     public function syncApprovedCorrectionToLogs(
         User $employee,
         string $dateKey,
@@ -44,6 +132,8 @@ class PresenceFilingAttendanceLogSyncService
         ?int $attendanceCorrectionId = null,
         ?string $approverRoleLabel = null,
         ?string $issueKind = null,
+        ?Collection $prefetchedLogs = null,
+        bool $writeSyncAudit = true,
     ): array {
         $tz = $this->presenceFilingService->attendanceTimezone();
         $effectiveIssueKind = is_string($issueKind) ? trim($issueKind) : null;
@@ -57,7 +147,7 @@ class PresenceFilingAttendanceLogSyncService
             $rangeEnd = $timeOutUtc->copy()->addSecond();
         }
 
-        $existingLogs = AttendanceLog::query()
+        $existingLogs = $prefetchedLogs ?? AttendanceLog::query()
             ->where('user_id', $employee->id)
             ->where(function ($q) use ($rangeStart, $rangeEnd) {
                 $q->whereBetween('verified_at', [$rangeStart, $rangeEnd])
@@ -128,7 +218,7 @@ class PresenceFilingAttendanceLogSyncService
             $now
         );
 
-        if ($attendanceCorrectionId !== null) {
+        if ($writeSyncAudit && $attendanceCorrectionId !== null) {
             $ts = now();
             AttendanceCorrectionAudit::create([
                 'attendance_correction_id' => $attendanceCorrectionId,

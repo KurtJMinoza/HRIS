@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
+use App\Jobs\LeaveBulkFollowUpJob;
 use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
@@ -705,11 +706,10 @@ class LeaveController extends Controller
                     'ids' => ['Too many requests selected. Use “select all matching” or approve in smaller batches.'],
                 ]);
             }
-            $resolved = $this->resolveBulkApproveIds($parsed['ids'], function (int $id) use ($actor): bool {
-                $leave = LeaveRequest::query()->with(['user', 'filedBy'])->find($id);
-
-                return $leave !== null && $this->leaveApprovalService->canApprove($actor, $leave);
-            });
+            $resolved = $this->resolveBulkApproveIdsFromCandidates(
+                $parsed['ids'],
+                $this->bulkApprovalQuery->approvableSelectedIds($actor, $parsed['ids']),
+            );
             $ids = $resolved['ids'];
             $skipped = $resolved['skipped'];
             $failedItems = $resolved['failed_items'];
@@ -722,6 +722,7 @@ class LeaveController extends Controller
         $remarks = $parsed['remarks'];
         $approved = 0;
         $failed = 0;
+        $approvedIds = [];
         $leaveBulkExtra = $this->leaveBulkApproveExtraInput(
             $remarks,
             $actor,
@@ -730,13 +731,16 @@ class LeaveController extends Controller
 
         foreach ($ids as $id) {
             try {
-                $single = $this->duplicateBulkApproveRequest($request, $remarks, $leaveBulkExtra);
+                $single = $this->duplicateBulkApproveRequest($request, $remarks, array_merge($leaveBulkExtra, [
+                    '_bulk_approval' => true,
+                ]));
                 $single->setUserResolver(fn () => $actor);
                 $response = $this->approve($single, $id);
                 $status = $response->getStatusCode();
 
                 if ($status >= 200 && $status < 300) {
                     $approved++;
+                    $approvedIds[] = (int) $id;
                     continue;
                 }
 
@@ -761,6 +765,19 @@ class LeaveController extends Controller
                         : ($e->getMessage() ?: 'Bulk approval failed for this leave request.'),
                 ];
             }
+        }
+
+        if ($approved > 0) {
+            $this->notificationService->markRelatedReadForEntities(
+                (int) $actor->id,
+                'leave',
+                $approvedIds,
+                'leave.needs_approval',
+            );
+            LeaveModuleCache::flush();
+            app()->terminating(static function () use ($approvedIds): void {
+                (new LeaveBulkFollowUpJob($approvedIds))->handle(app(NotificationService::class));
+            });
         }
 
         return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'leave request');
@@ -878,9 +895,11 @@ class LeaveController extends Controller
                 : 'next approver';
 
             ReviewRequestCache::forget('leave', (int) $leave->id);
-            LeaveModuleCache::flush();
-            $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
-            if ($nextPending instanceof OrgApprovalRecord) {
+            if (! $request->boolean('_bulk_approval')) {
+                LeaveModuleCache::flush();
+                $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
+            }
+            if (! $request->boolean('_bulk_approval') && $nextPending instanceof OrgApprovalRecord) {
                 $this->notificationService->notifyApprovalRecord(
                     $nextPending,
                     $leave,
@@ -978,17 +997,19 @@ class LeaveController extends Controller
         }
 
         ReviewRequestCache::forget('leave', (int) $leave->id);
-        LeaveModuleCache::flush();
-        $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
-        $this->notificationService->notifyRequester(
-            $leave->user,
-            $leave,
-            'leave',
-            'leave.final_approved',
-            'Leave request approved',
-            'Your leave request has been approved.',
-            '/employee/requests?request_id='.$leave->id,
-        );
+        if (! $request->boolean('_bulk_approval')) {
+            LeaveModuleCache::flush();
+            $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
+            $this->notificationService->notifyRequester(
+                $leave->user,
+                $leave,
+                'leave',
+                'leave.final_approved',
+                'Leave request approved',
+                'Your leave request has been approved.',
+                '/employee/requests?request_id='.$leave->id,
+            );
+        }
 
         if ($this->wantsLiteLeaveMutationResponse($request)) {
             return response()->json([
@@ -1338,7 +1359,7 @@ class LeaveController extends Controller
 
     private function wantsLiteLeaveMutationResponse(Request $request): bool
     {
-        return str_starts_with($request->path(), 'api/leave-requests/');
+        return $request->boolean('_bulk_approval') || str_starts_with($request->path(), 'api/leave-requests/');
     }
 
     private function leaveListCacheKey(User $actor, Request $request, int $perPage, int $page): string

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
+use App\Jobs\OvertimeBulkFollowUpJob;
 use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
 use App\Models\OvertimeApprovalAudit;
@@ -711,10 +712,10 @@ class OvertimeController extends Controller
         ]);
 
         $filters = $this->normalizeBulkApproveFilters($validated['filters']);
-        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+        $count = $this->bulkApprovalQuery->approvableCount($actor, $filters);
 
         return response()->json([
-            'approvable_count' => count($ids),
+            'approvable_count' => $count,
         ]);
     }
 
@@ -740,11 +741,10 @@ class OvertimeController extends Controller
                     'ids' => ['Too many requests selected. Use “select all matching” or approve in smaller batches.'],
                 ]);
             }
-            $resolved = $this->resolveBulkApproveIds($parsed['ids'], function (int $id) use ($actor): bool {
-                $overtime = Overtime::query()->with(['user', 'filedBy'])->find($id);
-
-                return $overtime !== null && $this->overtimeApprovalService->canApprove($actor, $overtime);
-            });
+            $resolved = $this->resolveBulkApproveIdsFromCandidates(
+                $parsed['ids'],
+                $this->bulkApprovalQuery->approvableSelectedIds($actor, $parsed['ids']),
+            );
             $ids = $resolved['ids'];
             $skipped = $resolved['skipped'];
             $failedItems = $resolved['failed_items'];
@@ -757,10 +757,12 @@ class OvertimeController extends Controller
         $remarks = $parsed['remarks'];
         $approved = 0;
         $failed = 0;
+        $approvedIds = [];
 
         foreach ($ids as $id) {
             try {
                 $single = $this->duplicateBulkApproveRequest($request, null, array_filter([
+                    '_bulk_approval' => true,
                     'status' => Overtime::STATUS_APPROVED,
                     'remarks' => $remarks,
                 ], static fn ($value) => $value !== null));
@@ -770,6 +772,7 @@ class OvertimeController extends Controller
 
                 if ($status >= 200 && $status < 300) {
                     $approved++;
+                    $approvedIds[] = (int) $id;
                     continue;
                 }
 
@@ -794,6 +797,23 @@ class OvertimeController extends Controller
                         : ($e->getMessage() ?: 'Bulk approval failed for this overtime request.'),
                 ];
             }
+        }
+
+        if ($approved > 0) {
+            $this->notificationService->markRelatedReadForEntities(
+                (int) $actor->id,
+                'overtime',
+                $approvedIds,
+                'overtime.needs_approval',
+            );
+            OvertimeModuleCache::flush();
+            $actorId = (int) $actor->id;
+            app()->terminating(static function () use ($approvedIds, $actorId): void {
+                (new OvertimeBulkFollowUpJob($approvedIds, $actorId))->handle(
+                    app(NotificationService::class),
+                    app(OvertimeService::class),
+                );
+            });
         }
 
         return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'overtime request');
@@ -883,7 +903,9 @@ class OvertimeController extends Controller
             });
 
             ReviewRequestCache::forget('overtime', (int) $overtime->id);
-            OvertimeModuleCache::flush();
+            if (! $request->boolean('_bulk_approval')) {
+                OvertimeModuleCache::flush();
+            }
             $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
             $this->notificationService->notifyRequester(
                 $overtime->user,
@@ -969,9 +991,11 @@ class OvertimeController extends Controller
                 : 'next approver';
 
             ReviewRequestCache::forget('overtime', (int) $overtime->id);
-            OvertimeModuleCache::flush();
-            $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
-            if ($nextPending instanceof OrgApprovalRecord) {
+            if (! $request->boolean('_bulk_approval')) {
+                OvertimeModuleCache::flush();
+                $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
+            }
+            if (! $request->boolean('_bulk_approval') && $nextPending instanceof OrgApprovalRecord) {
                 $this->notificationService->notifyApprovalRecord(
                     $nextPending,
                     $overtime,
@@ -1042,34 +1066,40 @@ class OvertimeController extends Controller
             ]);
         });
 
-        $freshForRenderedSync = $overtime->fresh('user');
-        if ($freshForRenderedSync instanceof Overtime && $freshForRenderedSync->user instanceof User) {
-            $dateKey = $freshForRenderedSync->date?->toDateString();
-            if ($dateKey !== null) {
-                $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-                $computedClockOut = $this->overtimeService->computeOvertimeForDate($freshForRenderedSync->user, Carbon::parse($dateKey, $tz));
-                $actualClockOut = $computedClockOut['time_out'] ?? null;
-                if (! $actualClockOut instanceof Carbon && $freshForRenderedSync->time_out !== null) {
-                    $actualClockOut = Carbon::parse($dateKey.' '.$freshForRenderedSync->time_out->format('H:i:s'), $tz);
+        if (! $request->boolean('_bulk_approval')) {
+            $freshForRenderedSync = $overtime->fresh('user');
+            if ($freshForRenderedSync instanceof Overtime && $freshForRenderedSync->user instanceof User) {
+                $dateKey = $freshForRenderedSync->date?->toDateString();
+                if ($dateKey !== null) {
+                    $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+                    $computedClockOut = $this->overtimeService->computeOvertimeForDate($freshForRenderedSync->user, Carbon::parse($dateKey, $tz));
+                    $actualClockOut = $computedClockOut['time_out'] ?? null;
+                    if (! $actualClockOut instanceof Carbon && $freshForRenderedSync->time_out !== null) {
+                        $actualClockOut = Carbon::parse($dateKey.' '.$freshForRenderedSync->time_out->format('H:i:s'), $tz);
+                    }
+                    $this->overtimeService->syncActualClockOutToFiledOvertime($freshForRenderedSync->user, $dateKey, $actualClockOut, $actor);
                 }
-                $this->overtimeService->syncActualClockOutToFiledOvertime($freshForRenderedSync->user, $dateKey, $actualClockOut, $actor);
             }
         }
 
         ReviewRequestCache::forget('overtime', (int) $overtime->id);
-        OvertimeModuleCache::flush();
-        ReportsCacheService::invalidateAttendanceCache((int) $overtime->user_id, $overtime->date?->toDateString());
-        $this->clearAffectedDraftPayrollSnapshots($overtime);
-        $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
-        $this->notificationService->notifyRequester(
-            $overtime->user,
-            $overtime,
-            'overtime',
-            'overtime.final_approved',
-            'Overtime request approved',
-            'Your overtime request has been approved.',
-            '/employee/overtime?request_id='.$overtime->id,
-        );
+        if (! $request->boolean('_bulk_approval')) {
+            OvertimeModuleCache::flush();
+        }
+        if (! $request->boolean('_bulk_approval')) {
+            ReportsCacheService::invalidateAttendanceCache((int) $overtime->user_id, $overtime->date?->toDateString());
+            $this->clearAffectedDraftPayrollSnapshots($overtime);
+            $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
+            $this->notificationService->notifyRequester(
+                $overtime->user,
+                $overtime,
+                'overtime',
+                'overtime.final_approved',
+                'Overtime request approved',
+                'Your overtime request has been approved.',
+                '/employee/overtime?request_id='.$overtime->id,
+            );
+        }
 
         if ($this->wantsLiteOvertimeMutationResponse($request)) {
             return response()->json([
@@ -1337,7 +1367,7 @@ class OvertimeController extends Controller
 
     private function wantsLiteOvertimeMutationResponse(Request $request): bool
     {
-        return str_starts_with($request->path(), 'api/overtime-requests/');
+        return $request->boolean('_bulk_approval') || str_starts_with($request->path(), 'api/overtime-requests/');
     }
 
     private function overtimeListCacheKey(User $actor, Request $request, int $perPage, int $page): string

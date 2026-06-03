@@ -121,14 +121,12 @@ class PresenceFilingBulkApprovalQuery
             ->whereNull('rejected_at');
 
         $ids = [];
+        $query->setEagerLoads([]);
         $query->select('id')->orderBy('id')->chunkById(200, function ($rows) use ($actor, &$ids, $max) {
             $corrections = AttendanceCorrection::query()
                 ->with([
                     'user',
                     'filedBy',
-                    'firstApprover',
-                    'secondApprover',
-                    'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
                 ])
                 ->whereIn('id', $rows->pluck('id'))
                 ->get();
@@ -144,6 +142,42 @@ class PresenceFilingBulkApprovalQuery
 
             return count($ids) < $max;
         });
+
+        return $ids;
+    }
+
+    /**
+     * @param  int[]  $requestedIds
+     * @return int[]
+     */
+    public function approvableSelectedIds(User $actor, array $requestedIds, int $max = 500): array
+    {
+        $requestedIds = array_values(array_filter(
+            array_unique(array_map('intval', $requestedIds)),
+            static fn (int $id): bool => $id > 0,
+        ));
+        if ($requestedIds === []) {
+            return [];
+        }
+
+        $query = $this->baseQuery($actor, ['status' => 'pending']);
+        $query->setEagerLoads([]);
+
+        $items = $query
+            ->with(['user', 'filedBy'])
+            ->whereIn('attendance_corrections.id', $requestedIds)
+            ->where('attendance_corrections.pending_approval', true)
+            ->where('attendance_corrections.approved', false)
+            ->whereNull('attendance_corrections.rejected_at')
+            ->limit($max)
+            ->get();
+
+        $ids = [];
+        foreach ($items as $correction) {
+            if ($this->canBulkApprove($actor, $correction)) {
+                $ids[] = (int) $correction->id;
+            }
+        }
 
         return $ids;
     }

@@ -22,6 +22,7 @@ use App\Services\OvertimeService;
 use App\Services\PresenceFilingAttendanceLogSyncService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PayrollPeriodMutationGuard;
+use App\Services\BulkApproval\AttendanceCorrectionBulkApprovalService;
 use App\Services\BulkApproval\PresenceFilingBulkApprovalQuery;
 use App\Services\PresenceFilingService;
 use App\Support\AttendanceCorrectionModuleCache;
@@ -51,6 +52,7 @@ class PresenceFilingController extends Controller
         private readonly PresenceFilingAttendanceLogSyncService $attendanceLogSyncService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly PresenceFilingBulkApprovalQuery $bulkApprovalQuery,
+        private readonly AttendanceCorrectionBulkApprovalService $bulkApprovalService,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly OvertimeService $overtimeService,
         private readonly NotificationService $notificationService,
@@ -1442,19 +1444,10 @@ class PresenceFilingController extends Controller
                     'ids' => ['Too many requests selected. Use “select all matching” or approve in smaller batches.'],
                 ]);
             }
-            $resolved = $this->resolveBulkApproveIds($parsed['ids'], function (int $id) use ($actor): bool {
-                $correction = AttendanceCorrection::query()
-                    ->with([
-                        'user',
-                        'filedBy',
-                        'firstApprover',
-                        'secondApprover',
-                        'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
-                    ])
-                    ->find($id);
-
-                return $correction !== null && $this->bulkApprovalQuery->canBulkApprove($actor, $correction);
-            });
+            $resolved = $this->resolveBulkApproveIdsFromCandidates(
+                $parsed['ids'],
+                $this->bulkApprovalQuery->approvableSelectedIds($actor, $parsed['ids']),
+            );
             $ids = $resolved['ids'];
             $skipped = $resolved['skipped'];
             $failedItems = $resolved['failed_items'];
@@ -1465,57 +1458,25 @@ class PresenceFilingController extends Controller
         }
 
         $remarks = $parsed['remarks'];
-        $approved = 0;
-        $failed = 0;
-        $payrollDates = [];
 
-        foreach ($ids as $id) {
-            try {
-                $single = $this->duplicateBulkApproveRequest($request, $remarks, ['_bulk_approval' => true]);
-                $single->setUserResolver(fn () => $actor);
-                $response = $this->approve($single, $id);
-                $status = $response->getStatusCode();
+        $result = $this->bulkApprovalService->approveMany($actor, $ids, $remarks);
 
-                if ($status >= 200 && $status < 300) {
-                    $approved++;
-                    $body = $response->getData(true);
-                    if (($body['status'] ?? null) === 'approved' && ! empty($body['date'])) {
-                        $payrollDates[(string) $body['date']] = true;
-                    }
-                    continue;
-                }
-
-                $body = $response->getData(true);
-                $skipped++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => (string) ($body['message'] ?? 'Attendance correction was skipped.'),
-                ];
-            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
-                $skipped++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => 'Attendance correction was not found.',
-                ];
-            } catch (\Throwable $e) {
-                $failed++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => $e instanceof ValidationException
-                        ? (string) collect($e->errors())->flatten()->first()
-                        : ($e->getMessage() ?: 'Bulk approval failed for this attendance correction.'),
-                ];
-            }
+        if ($result['approved'] > 0) {
+            $this->notificationService->markRelatedReadForEntities(
+                (int) $actor->id,
+                'attendance_correction',
+                $result['approved_ids'],
+                'attendance_correction.needs_approval',
+            );
         }
 
-        if ($approved > 0) {
-            foreach (array_keys($payrollDates) as $dateKey) {
-                ProcessDailyPayrollJob::dispatchSync($dateKey);
-            }
-            AttendanceCorrectionModuleCache::flush();
-        }
-
-        return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'attendance correction');
+        return $this->bulkApproveJsonResponse(
+            $result['approved'],
+            $skipped + $result['skipped'],
+            $result['failed'],
+            array_merge($failedItems, $result['failed_items']),
+            'attendance correction',
+        );
     }
 
     public function bulkReject(Request $request): JsonResponse
@@ -1588,14 +1549,32 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => 'This filing cannot be approved.'], 422);
         }
 
-        $employee = User::query()
-            ->whereKey($correction->user_id)
-            ->with('workingSchedule')
-            ->firstOrFail();
+        $employee = $correction->user;
+        if (! $employee instanceof User) {
+            return response()->json(['message' => 'Employee was not found.'], 404);
+        }
 
         $this->dataScopeService->ensureCorrectionSubjectAccessible($actor, $employee);
 
-        if (! $this->approvalService->canApprove($actor, $correction)) {
+        $currentApproval = $this->approvalWorkflowService->currentPendingRecord(
+            $correction,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            $employee,
+            $correction->filedBy,
+        );
+
+        if (! $currentApproval instanceof OrgApprovalRecord) {
+            return response()->json(['message' => 'You are not authorized to approve at this stage.'], 403);
+        }
+
+        $authorization = $this->approvalWorkflowService->authorizePendingRecord(
+            $actor,
+            $currentApproval,
+            $employee,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+        );
+
+        if (! $authorization['allowed']) {
             return response()->json(['message' => 'You are not authorized to approve at this stage.'], 403);
         }
 
@@ -1604,12 +1583,6 @@ class PresenceFilingController extends Controller
 
         $actorRole = $this->hrRoleResolver->resolve($actor);
         $roleLabel = $actorRole->badgeLabel();
-        $currentApproval = $this->approvalWorkflowService->currentPendingRecord(
-            $correction,
-            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
-            $employee,
-            $correction->filedBy,
-        );
         $isHrFinalStep = $currentApproval?->approver_role === HrRole::AdminHr->value;
 
         if (! $isHrFinalStep) {
@@ -1620,7 +1593,7 @@ class PresenceFilingController extends Controller
                 return response()->json(['message' => $e->getMessage()], 422);
             }
 
-            $nextPending = DB::transaction(function () use ($correction, $actor, $validated, $employee, $dateKey, $roleLabel) {
+            $nextPending = DB::transaction(function () use ($correction, $actor, $validated, $employee, $dateKey, $roleLabel, $currentApproval) {
                 $nextPending = $this->approvalWorkflowService->approveCurrent(
                     $correction,
                     OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
@@ -1658,10 +1631,7 @@ class PresenceFilingController extends Controller
                 AttendanceCorrectionApproval::create([
                     'attendance_correction_id' => $correction->id,
                     'approver_id' => $actor->id,
-                    'level' => $this->approvalWorkflowService
-                        ->records(OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, (int) $correction->id)
-                        ->where('approval_status', 'approved')
-                        ->max('sequence_order') ?? 1,
+                    'level' => (int) ($currentApproval->sequence_order ?? 1),
                     'status' => 'approved',
                     'notes' => $validated['notes'] ?? null,
                     'acted_at' => now(),
@@ -1678,7 +1648,9 @@ class PresenceFilingController extends Controller
             if (! $this->isBulkApprovalRequest($request)) {
                 AttendanceCorrectionModuleCache::flush();
             }
-            $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+            if (! $this->isBulkApprovalRequest($request)) {
+                $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+            }
             if ($nextPending instanceof OrgApprovalRecord) {
                 $this->notificationService->notifyApprovalRecord(
                     $nextPending,
@@ -1817,7 +1789,9 @@ class PresenceFilingController extends Controller
         if (! $this->isBulkApprovalRequest($request)) {
             AttendanceCorrectionModuleCache::flush();
         }
-        $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+        if (! $this->isBulkApprovalRequest($request)) {
+            $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+        }
         $this->notificationService->notifyRequester(
             $employee,
             $correction,
