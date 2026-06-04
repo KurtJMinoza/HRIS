@@ -5,9 +5,11 @@ namespace App\Jobs;
 use App\Models\AttendanceCorrection;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
+use App\Services\HrRoleResolver;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeService;
+use App\Services\PresenceFilingAttendanceLogSyncService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -35,6 +37,8 @@ class AttendanceCorrectionBulkFollowUpJob implements ShouldQueue
     public function handle(
         NotificationService $notificationService,
         OvertimeService $overtimeService,
+        PresenceFilingAttendanceLogSyncService $attendanceLogSyncService,
+        HrRoleResolver $hrRoleResolver,
     ): void {
         $actor = User::query()->find($this->actorId);
         if (! $actor) {
@@ -45,6 +49,20 @@ class AttendanceCorrectionBulkFollowUpJob implements ShouldQueue
             ->with(['user', 'filedBy'])
             ->whereIn('id', $this->approvedCorrectionIds)
             ->get();
+
+        $roleLabel = $hrRoleResolver->resolve($actor)->badgeLabel();
+        $syncResults = $attendanceLogSyncService->syncApprovedCorrectionsBatch($corrections, $actor, $roleLabel);
+        $now = now();
+        foreach ($corrections as $correction) {
+            $sync = $syncResults[(int) $correction->id] ?? null;
+            if ($sync === null) {
+                continue;
+            }
+            $correction->is_incomplete_record = ! (($sync['applied_time_in'] ?? null) && ($sync['applied_time_out'] ?? null));
+            $correction->attendance_logs_synced_at = $now;
+            $correction->attendance_logs_synced_by = $actor->id;
+            $correction->save();
+        }
 
         $overtimeSyncKeys = [];
 

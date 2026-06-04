@@ -2,11 +2,13 @@
 
 namespace App\Services;
 
+use App\Jobs\LeadershipPendingChainResyncJob;
 use App\Models\OrganizationPositionAssignment;
 use App\Models\OrganizationPositionType;
 use App\Models\OrganizationUnit;
 use App\Models\OrganizationUnitLeader;
 use App\Models\User;
+use App\Support\OrganizationLeadershipScopeOptionsCache;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -106,13 +108,23 @@ class OrganizationLeadershipService
         $assignmentRows = OrganizationPositionAssignment::query()
             ->with(['employee', 'positionType', 'activeDepartmentScopes'])
             ->where('organization_unit_id', (int) $unit->id)
+            ->active()
             ->orderBy('approval_priority')
             ->orderByDesc('is_primary')
             ->orderBy('id')
             ->get();
 
         if (in_array($legacyType, ['company', 'area', 'branch'], true)) {
-            $assignmentRows = $assignmentRows->unique(fn (OrganizationPositionAssignment $assignment): int => (int) $assignment->employee_id)->values();
+            $assignmentRows = $assignmentRows
+                ->sortByDesc(function (OrganizationPositionAssignment $assignment): int {
+                    $scopeCount = $assignment->relationLoaded('activeDepartmentScopes')
+                        ? $assignment->activeDepartmentScopes->count()
+                        : 0;
+
+                    return ($scopeCount * 1000) + (int) $assignment->id;
+                })
+                ->unique(fn (OrganizationPositionAssignment $assignment): int => (int) $assignment->employee_id)
+                ->values();
         }
 
         $assignments = $assignmentRows
@@ -230,8 +242,10 @@ class OrganizationLeadershipService
 
         $this->approvalChainCacheService->forgetForLegacyUnit($legacyType, $legacyId);
         $this->approvalChainCacheService->forgetWorkflowSettings();
+        OrganizationLeadershipScopeOptionsCache::flush($legacyType, $legacyId);
+
         if (in_array($legacyType, ['company', 'area', 'branch', 'division', 'department', 'section_unit'], true)) {
-            $this->approvalWorkflowService->resyncPendingRequestChains(['leave', 'overtime']);
+            LeadershipPendingChainResyncJob::dispatch(['leave', 'overtime'])->afterResponse();
         }
 
         return $this->leadershipPayload($legacyType, $legacyId);
@@ -284,12 +298,14 @@ class OrganizationLeadershipService
      */
     public function assignmentPayload(OrganizationPositionAssignment $assignment, ?string $legacyType = null): array
     {
+        [$positionTypeId, $positionName] = $this->displayPositionTypeForAssignment($assignment, $legacyType);
+
         $payload = [
             'id' => (int) $assignment->id,
             'organization_level' => $assignment->organization_level,
             'organization_unit_id' => (int) $assignment->organization_unit_id,
-            'position_type_id' => (int) $assignment->position_type_id,
-            'position_name' => $assignment->positionType?->position_name,
+            'position_type_id' => $positionTypeId,
+            'position_name' => $positionName,
             'can_approve' => (bool) ($assignment->positionType?->can_approve ?? true),
             'employee_id' => (int) $assignment->employee_id,
             'employee_name' => $assignment->employee?->display_name,
@@ -376,6 +392,31 @@ class OrganizationLeadershipService
             'section_unit' => 'Section Leader',
             default => 'Head',
         };
+    }
+
+    /**
+     * @return array{0: int, 1: string|null}
+     */
+    private function displayPositionTypeForAssignment(OrganizationPositionAssignment $assignment, ?string $legacyType): array
+    {
+        $positionTypeId = (int) $assignment->position_type_id;
+        $positionName = $assignment->positionType?->position_name;
+
+        if ($legacyType !== 'area' || ! in_array($positionName, ['Area Head', 'Head'], true)) {
+            return [$positionTypeId, $positionName];
+        }
+
+        $canonical = OrganizationPositionType::query()
+            ->where('organization_level', 'area')
+            ->where('position_name', 'Area Head / Area Manager')
+            ->where('is_active', true)
+            ->first();
+
+        if (! $canonical) {
+            return [$positionTypeId, $positionName];
+        }
+
+        return [(int) $canonical->id, $canonical->position_name];
     }
 
     private function normalizeAreaHeadAssignments(OrganizationUnit $unit): void

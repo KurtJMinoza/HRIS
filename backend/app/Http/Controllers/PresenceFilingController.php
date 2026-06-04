@@ -12,6 +12,7 @@ use App\Models\OrgApprovalRecord;
 use App\Models\AttendanceLog;
 use App\Models\User;
 use App\Services\AttendanceCorrectionApprovalService;
+use App\Services\AttendanceCorrectionStatusService;
 use App\Services\ApprovalWorkflowSettingService;
 use App\Services\AttendanceCorrectionDetailService;
 use App\Services\DataScopeService;
@@ -56,6 +57,7 @@ class PresenceFilingController extends Controller
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly OvertimeService $overtimeService,
         private readonly NotificationService $notificationService,
+        private readonly AttendanceCorrectionStatusService $correctionStatusService,
     ) {}
 
     private function normalizeTimeToHi(?string $value): ?string
@@ -252,9 +254,11 @@ class PresenceFilingController extends Controller
                     'remarks' => $fullRemarks,
                     'reason_code' => PresenceFilingService::REASON_FORGOT_PUNCH,
                     'pending_approval' => true,
+                    'status' => AttendanceCorrectionStatusService::STATUS_PENDING,
                     'approved' => false,
                     'approved_by' => null,
                     'approved_at' => null,
+                    'final_approved_by' => null,
                     'filed_at' => now(),
                     'filed_by' => $employee->id,
                     'rejected_at' => null,
@@ -487,9 +491,11 @@ class PresenceFilingController extends Controller
                     'remarks' => $fullRemarks,
                     'reason_code' => PresenceFilingService::REASON_FORGOT_PUNCH,
                     'pending_approval' => true,
+                    'status' => AttendanceCorrectionStatusService::STATUS_PENDING,
                     'approved' => false,
                     'approved_by' => null,
                     'approved_at' => null,
+                    'final_approved_by' => null,
                     'filed_at' => now(),
                     'filed_by' => $actor->id,
                     'rejected_at' => null,
@@ -761,6 +767,8 @@ class PresenceFilingController extends Controller
                 'approved_by',
                 'approved_at',
                 'pending_approval',
+                'status',
+                'final_approved_by',
                 'filed_at',
                 'filed_by',
                 'rejected_at',
@@ -839,15 +847,8 @@ class PresenceFilingController extends Controller
         $includeSummary = ! $request->boolean('lite') && ! $request->boolean('skip_summary');
         $summary = $includeSummary ? $this->presenceFilingStatusCounts(clone $query) : null;
 
-        if ($statusFilter === 'pending') {
-            $query->where('pending_approval', true)
-                ->whereNull('rejected_at')
-                ->where(fn ($pending) => $this->whereAttendanceCorrectionNotHrApproved($pending));
-        } elseif ($statusFilter === 'approved') {
-            $query->whereNull('rejected_at')
-                ->where(fn ($approved) => $this->whereAttendanceCorrectionHrApproved($approved));
-        } elseif ($statusFilter === 'rejected') {
-            $query->whereNotNull('rejected_at');
+        if (in_array($statusFilter, ['pending', 'approved', 'rejected', 'cancelled'], true)) {
+            $query->where('status', $statusFilter);
         }
 
         $tz = $this->presenceFilingService->attendanceTimezone();
@@ -905,18 +906,14 @@ class PresenceFilingController extends Controller
      */
     private function presenceFilingStatusCounts($query): array
     {
-        $approved = fn ($q) => $this->whereAttendanceCorrectionHrApproved($q);
-        $notApproved = fn ($q) => $this->whereAttendanceCorrectionNotHrApproved($q);
+        $counts = $this->correctionStatusService->aggregateStatusCounts($query);
 
         return [
-            'total' => (clone $query)->count(),
-            'pending' => (clone $query)
-                ->where('pending_approval', true)
-                ->whereNull('rejected_at')
-                ->where($notApproved)
-                ->count(),
-            'approved' => (clone $query)->whereNull('rejected_at')->where($approved)->count(),
-            'rejected' => (clone $query)->whereNotNull('rejected_at')->count(),
+            'total' => $counts['total'],
+            'pending' => $counts['pending'],
+            'approved' => $counts['approved'],
+            'rejected' => $counts['rejected'],
+            'cancelled' => $counts['cancelled'],
         ];
     }
 
@@ -1043,53 +1040,27 @@ class PresenceFilingController extends Controller
 
         $this->applyPresenceFilingApprovalVisibility($actor, $base, $request);
         $today = today()->toDateString();
-        $hrApprovedSql = "(
-            attendance_corrections.approved = 1
-            OR attendance_corrections.approval_stage = ?
-            OR attendance_corrections.second_approved_at IS NOT NULL
-            OR EXISTS (
-                SELECT 1
-                FROM org_approval_records AS final_approval
-                WHERE final_approval.request_id = attendance_corrections.id
-                    AND final_approval.module_type = ?
-                    AND final_approval.approver_role = ?
-                    AND final_approval.approval_status = ?
-            )
-        )";
-        $hrApprovedBindings = [
-            AttendanceCorrectionApprovalService::STAGE_APPROVED,
-            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
-            HrRole::AdminHr->value,
-            OrgApprovalRecord::STATUS_APPROVED,
-        ];
-        $totals = (clone $base)
-            ->selectRaw('COUNT(*) as total')
-            ->selectRaw(
-                "SUM(CASE WHEN pending_approval = 1 AND rejected_at IS NULL AND NOT {$hrApprovedSql} THEN 1 ELSE 0 END) as pending",
-                $hrApprovedBindings,
-            )
-            ->selectRaw(
-                "SUM(CASE WHEN rejected_at IS NULL AND {$hrApprovedSql} THEN 1 ELSE 0 END) as approved",
-                $hrApprovedBindings,
-            )
-            ->selectRaw('SUM(CASE WHEN rejected_at IS NOT NULL THEN 1 ELSE 0 END) as rejected')
-            ->selectRaw(
-                "SUM(CASE WHEN rejected_at IS NULL AND {$hrApprovedSql} AND DATE(COALESCE(approved_at, second_approved_at)) = ? THEN 1 ELSE 0 END) as approved_today",
-                [...$hrApprovedBindings, $today],
-            )
-            ->selectRaw('SUM(CASE WHEN rejected_at IS NOT NULL AND DATE(rejected_at) = ? THEN 1 ELSE 0 END) as rejected_today', [$today])
-            ->selectRaw('SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as my_filings', [(int) $actor->id])
-            ->first();
+        $counts = $this->correctionStatusService->aggregateStatusCounts($base);
+        $myFilings = (clone $base)->where('user_id', (int) $actor->id)->count();
+        $approvedToday = (clone $base)
+            ->where('status', AttendanceCorrectionStatusService::STATUS_APPROVED)
+            ->whereDate(DB::raw('COALESCE(approved_at, second_approved_at)'), $today)
+            ->count();
+        $rejectedToday = (clone $base)
+            ->where('status', AttendanceCorrectionStatusService::STATUS_REJECTED)
+            ->whereDate('rejected_at', $today)
+            ->count();
 
         $payload = [
-            'total' => (int) ($totals->total ?? 0),
-            'pending' => (int) ($totals->pending ?? 0),
-            'approved' => (int) ($totals->approved ?? 0),
-            'rejected' => (int) ($totals->rejected ?? 0),
-            'approved_today' => (int) ($totals->approved_today ?? 0),
-            'rejected_today' => (int) ($totals->rejected_today ?? 0),
-            'my_filings' => (int) ($totals->my_filings ?? 0),
-            'all_filings' => (int) ($totals->total ?? 0),
+            'total' => $counts['total'],
+            'pending' => $counts['pending'],
+            'approved' => $counts['approved'],
+            'rejected' => $counts['rejected'],
+            'cancelled' => $counts['cancelled'],
+            'approved_today' => $approvedToday,
+            'rejected_today' => $rejectedToday,
+            'my_filings' => $myFilings,
+            'all_filings' => $counts['total'],
         ];
 
         RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'admin', 'cache' => 'miss', 'cache_hit' => false]);
@@ -1181,14 +1152,14 @@ class PresenceFilingController extends Controller
             && ! $c->hasRequiredTimesForFinalApproval()) {
             $canApprove = false;
         }
-        $isHrApproved = (bool) $c->approved
-            || $c->approval_stage === AttendanceCorrectionApprovalService::STAGE_APPROVED
-            || $c->second_approved_at !== null
-            || $hrApprovedByWorkflow;
-        $status = $c->rejected_at ? 'rejected' : ($isHrApproved ? 'approved' : 'pending');
-        $displayStatus = $status === 'approved'
-            ? 'HR Approved'
-            : ($status === 'rejected' ? 'Rejected' : ($currentApproval ? 'Pending '.rtrim(str_ireplace(' approval', '', $this->approvalRecordStageLabel($currentApproval))).' Approval' : 'Pending'));
+        $status = $this->correctionStatusService->resolvedStatus($c);
+        if ($status === AttendanceCorrectionStatusService::STATUS_PENDING && $hrApprovedByWorkflow) {
+            $status = AttendanceCorrectionStatusService::STATUS_APPROVED;
+        }
+        $displayStatus = $this->correctionStatusService->displayStatusLabel($c);
+        if ($status === AttendanceCorrectionStatusService::STATUS_PENDING && $currentApproval) {
+            $displayStatus = 'Pending '.rtrim(str_ireplace(' approval', '', $this->approvalRecordStageLabel($currentApproval))).' Approval';
+        }
 
         return [
             'id' => (int) $c->id,
@@ -1408,7 +1379,7 @@ class PresenceFilingController extends Controller
     private function attendanceCorrectionReviewLiteResponse(AttendanceCorrection $c, $records, ?OrgApprovalRecord $pending, array $auth): array
     {
         $tz = $this->presenceFilingService->attendanceTimezone();
-        $status = $c->rejected_at ? 'rejected' : ($c->approved ? 'approved' : 'pending');
+        $status = $this->correctionStatusService->resolvedStatus($c);
 
         return [
             'id' => (int) $c->id,
@@ -1433,8 +1404,13 @@ class PresenceFilingController extends Controller
             'remarks' => $c->remarks,
             'rejection_note' => $c->rejection_note,
             'status' => $status,
-            'display_status' => $status === 'approved' ? 'HR Approved' : ($status === 'rejected' ? 'Rejected' : 'Pending'),
-            'current_approver_id' => $pending?->approver_id,
+            'display_status' => $this->correctionStatusService->displayStatusLabel($c),
+            'current_approver_id' => $status === AttendanceCorrectionStatusService::STATUS_PENDING ? $pending?->approver_id : null,
+            'current_stage' => $status === AttendanceCorrectionStatusService::STATUS_APPROVED
+                ? 'completed'
+                : ($status === AttendanceCorrectionStatusService::STATUS_REJECTED
+                    ? 'rejected'
+                    : ($pending ? $this->approvalRecordStageLabel($pending) : $c->approval_stage)),
             'current_approver' => $pending?->approver?->display_name ?? $pending?->approver_name,
             'approval_chain' => $this->approvalRecordSummary($records),
             'approval_progress' => $this->approvalRecordSummary($records),
@@ -1879,16 +1855,11 @@ class PresenceFilingController extends Controller
                     $correction->filedBy,
                 );
 
-                if ($correction->first_approver_id === null) {
-                    $correction->first_approver_id = $actor->id;
-                }
-                if ($nextPending?->approver_role === HrRole::AdminHr->value) {
-                    $correction->first_approved_at = now();
-                    $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND;
-                } else {
-                    $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
-                }
-                $correction->save();
+                $this->correctionStatusService->markFirstStepApproved(
+                    $correction,
+                    $actor,
+                    $nextPending?->approver_role === HrRole::AdminHr->value,
+                );
 
                 AttendanceCorrectionAudit::create([
                     'attendance_correction_id' => $correction->id,
@@ -1920,9 +1891,12 @@ class PresenceFilingController extends Controller
                 ? (HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
                 : 'next approver';
 
-            ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
             if (! $this->isBulkApprovalRequest($request)) {
-                AttendanceCorrectionModuleCache::flush();
+                AttendanceCorrectionModuleCache::flushAfterMutation(
+                    $actor,
+                    (int) ($employee->company_id ?? 0) ?: null,
+                    (int) $correction->id,
+                );
             }
             if (! $this->isBulkApprovalRequest($request)) {
                 $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
@@ -1991,6 +1965,8 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        $oldStatus = $this->correctionStatusService->resolvedStatus($correction);
+
         DB::transaction(function () use ($correction, $actor, $employee, $dateKey, $timeIn, $timeOut, $previousIn, $previousOut, $roleLabel, $issueKind, $finalApprovalNote) {
             $this->approvalWorkflowService->approveCurrent(
                 $correction,
@@ -2004,14 +1980,7 @@ class PresenceFilingController extends Controller
             // Update correction record with approved times (convert to UTC for storage)
             $correction->time_in = $timeIn?->copy()->setTimezone('UTC');
             $correction->time_out = $timeOut?->copy()->setTimezone('UTC');
-            $correction->pending_approval = false;
-            $correction->approved = true;
-            $correction->approved_by = $actor->id;
-            $correction->approved_at = now();
-            $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_APPROVED;
-            $correction->second_approver_id = $actor->id;
-            $correction->second_approved_at = now();
-            $correction->save();
+            $this->correctionStatusService->markHrFinalApproved($correction, $actor);
 
             AttendanceCorrectionAudit::create([
                 'attendance_correction_id' => $correction->id,
@@ -2061,9 +2030,17 @@ class PresenceFilingController extends Controller
         if (! $this->isBulkApprovalRequest($request)) {
             ProcessDailyPayrollJob::dispatchSync($dateKey);
         }
-        ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
         if (! $this->isBulkApprovalRequest($request)) {
-            AttendanceCorrectionModuleCache::flush();
+            AttendanceCorrectionModuleCache::flushAfterMutation(
+                $actor,
+                (int) ($employee->company_id ?? 0) ?: null,
+                (int) $correction->id,
+            );
+            $this->correctionStatusService->logAfterApproval(
+                $correction,
+                $oldStatus,
+                AttendanceCorrectionStatusService::STATUS_APPROVED,
+            );
         }
         if (! $this->isBulkApprovalRequest($request)) {
             $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
@@ -2122,6 +2099,8 @@ class PresenceFilingController extends Controller
 
         $actorRole = $this->hrRoleResolver->resolve($actor);
 
+        $oldStatus = $this->correctionStatusService->resolvedStatus($correction);
+
         DB::transaction(function () use ($correction, $actor, $validated, $employee, $actorRole) {
             $rejectedStep = $this->approvalWorkflowService->rejectCurrent(
                 $correction,
@@ -2132,13 +2111,7 @@ class PresenceFilingController extends Controller
                 $correction->filedBy,
             );
 
-            $correction->pending_approval = false;
-            $correction->approved = false;
-            $correction->rejected_at = now();
-            $correction->rejected_by = $actor->id;
-            $correction->rejection_note = $validated['rejection_note'];
-            $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_REJECTED;
-            $correction->save();
+            $this->correctionStatusService->markRejected($correction, $actor, $validated['rejection_note']);
 
             AttendanceCorrectionAudit::create([
                 'attendance_correction_id' => $correction->id,
@@ -2165,8 +2138,16 @@ class PresenceFilingController extends Controller
         });
 
         $tz = $this->presenceFilingService->attendanceTimezone();
-        ReviewRequestCache::forget('attendance_correction', (int) $correction->id);
-        AttendanceCorrectionModuleCache::flush();
+        AttendanceCorrectionModuleCache::flushAfterMutation(
+            $actor,
+            (int) ($employee->company_id ?? 0) ?: null,
+            (int) $correction->id,
+        );
+        $this->correctionStatusService->logAfterApproval(
+            $correction,
+            $oldStatus,
+            AttendanceCorrectionStatusService::STATUS_REJECTED,
+        );
         $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
         $this->notificationService->notifyRequester(
             $employee,

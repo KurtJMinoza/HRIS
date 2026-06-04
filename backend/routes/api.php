@@ -219,6 +219,9 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/dashboard', [DashboardController::class, 'index']);
             Route::get('/admin/dashboard/summary', [DashboardController::class, 'summary']);
             Route::get('/admin/dashboard/attendance-today', [DashboardController::class, 'attendanceToday']);
+            Route::get('/admin/dashboard/attendance-summary', [DashboardController::class, 'attendanceSummary']);
+            Route::get('/admin/dashboard/attendance-today-lite', [DashboardController::class, 'attendanceTodayLite']);
+            Route::get('/admin/dashboard/attendance-corrections-pending', [DashboardController::class, 'pendingAttendanceCorrections']);
             Route::get('/admin/dashboard/requests', [DashboardController::class, 'dashboardRequests']);
             Route::get('/admin/dashboard/payroll', [DashboardController::class, 'payroll']);
             Route::get('/admin/dashboard/charts', [DashboardController::class, 'charts']);

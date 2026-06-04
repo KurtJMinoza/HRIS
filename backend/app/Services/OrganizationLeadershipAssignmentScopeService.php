@@ -12,6 +12,7 @@ use App\Models\OrganizationPositionAssignment;
 use App\Models\OrganizationUnit;
 use App\Models\SectionUnit;
 use App\Models\User;
+use App\Support\OrganizationLeadershipScopeOptionsCache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -214,15 +215,23 @@ class OrganizationLeadershipAssignmentScopeService
      */
     public function approvalScopeOptions(string $legacyType, int $legacyId): array
     {
-        return match ($legacyType) {
-            'company' => $this->companyScopeOptions($legacyId),
-            'area' => $this->areaScopeOptions($legacyId),
-            'branch' => $this->branchScopeOptions($legacyId),
-            'division' => [
-                'department' => $this->departmentsForDivision($legacyId),
-            ],
-            default => [],
-        };
+        if ($legacyId <= 0) {
+            return [];
+        }
+
+        return OrganizationLeadershipScopeOptionsCache::remember(
+            $legacyType,
+            $legacyId,
+            fn (): array => match ($legacyType) {
+                'company' => $this->companyScopeOptions($legacyId),
+                'area' => $this->areaScopeOptions($legacyId),
+                'branch' => $this->branchScopeOptions($legacyId),
+                'division' => [
+                    'department' => $this->departmentsForDivision($legacyId),
+                ],
+                default => [],
+            },
+        );
     }
 
     /**

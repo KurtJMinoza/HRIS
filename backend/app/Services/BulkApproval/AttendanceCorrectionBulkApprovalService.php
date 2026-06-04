@@ -10,14 +10,12 @@ use App\Models\AttendanceCorrectionAudit;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
 use App\Services\AttendanceCorrectionApprovalService;
+use App\Services\AttendanceCorrectionStatusService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
-use App\Services\PresenceFilingAttendanceLogSyncService;
-use App\Services\PresenceFilingService;
 use App\Support\AttendanceCorrectionModuleCache;
-use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -30,8 +28,7 @@ class AttendanceCorrectionBulkApprovalService
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
-        private readonly PresenceFilingService $presenceFilingService,
-        private readonly PresenceFilingAttendanceLogSyncService $attendanceLogSyncService,
+        private readonly AttendanceCorrectionStatusService $correctionStatusService,
     ) {}
 
     /**
@@ -64,7 +61,6 @@ class AttendanceCorrectionBulkApprovalService
             ->keyBy('request_id');
 
         $roleLabel = $this->hrRoleResolver->resolve($actor)->badgeLabel();
-        $tz = $this->presenceFilingService->attendanceTimezone();
         $now = now();
 
         /** @var list<array{correction: AttendanceCorrection, employee: User, pending: OrgApprovalRecord}> $finalItems */
@@ -150,7 +146,7 @@ class AttendanceCorrectionBulkApprovalService
         if ($finalItems !== []) {
             $approvedIds = array_merge(
                 $approvedIds,
-                $this->approveFinalBatch($actor, $finalItems, $notes, $roleLabel, $tz, $now, $payrollDates),
+                $this->approveFinalBatch($actor, $finalItems, $notes, $roleLabel, $now, $payrollDates),
             );
         }
 
@@ -165,19 +161,14 @@ class AttendanceCorrectionBulkApprovalService
         $approved = count($approvedIds);
 
         if ($approved > 0) {
-            foreach ($approvedIds as $correctionId) {
-                ReviewRequestCache::forget('attendance_correction', $correctionId);
-            }
-            AttendanceCorrectionModuleCache::flush();
+            AttendanceCorrectionModuleCache::flushAfterMutation(
+                $actor,
+                (int) ($actor->getEffectiveCompanyId() ?? $actor->company_id ?? 0) ?: null,
+            );
 
             $actorId = (int) $actor->id;
             $dateKeys = array_values(array_unique($payrollDates));
-            app()->terminating(static function () use ($approvedIds, $actorId, $dateKeys, $notes): void {
-                (new AttendanceCorrectionBulkFollowUpJob($approvedIds, $actorId, $dateKeys, $notes))->handle(
-                    app(\App\Services\NotificationService::class),
-                    app(\App\Services\OvertimeService::class),
-                );
-            });
+            AttendanceCorrectionBulkFollowUpJob::dispatch($approvedIds, $actorId, $dateKeys, $notes)->afterResponse();
         }
 
         return [
@@ -199,7 +190,6 @@ class AttendanceCorrectionBulkApprovalService
         array $items,
         ?string $notes,
         string $roleLabel,
-        string $tz,
         Carbon $now,
         array &$payrollDates,
     ): array {
@@ -208,7 +198,7 @@ class AttendanceCorrectionBulkApprovalService
         $approvalRows = [];
         $approverName = $actor->display_name ?? $actor->name;
 
-        DB::transaction(function () use ($items, $actor, $notes, $roleLabel, $tz, $now, &$correctionIds, &$auditRows, &$approvalRows, &$payrollDates, $approverName) {
+        DB::transaction(function () use ($items, $actor, $notes, $roleLabel, $now, &$correctionIds, &$auditRows, &$approvalRows, &$payrollDates, $approverName) {
             $pendingIds = array_map(static fn (array $item): int => (int) $item['pending']->id, $items);
             OrgApprovalRecord::query()
                 ->whereIn('id', $pendingIds)
@@ -227,22 +217,9 @@ class AttendanceCorrectionBulkApprovalService
                 $dateKey = $correction->date->toDateString();
                 $payrollDates[] = $dateKey;
 
-                $timeIn = $correction->time_in ? $correction->time_in->copy()->timezone($tz) : null;
-                $timeOut = $correction->time_out ? $correction->time_out->copy()->timezone($tz) : null;
                 $previousIn = $correction->time_in;
                 $previousOut = $correction->time_out;
                 $finalNote = $notes ?? 'Final approval (Admin HR).';
-
-                $correction->time_in = $timeIn?->copy()->setTimezone('UTC');
-                $correction->time_out = $timeOut?->copy()->setTimezone('UTC');
-                $correction->pending_approval = false;
-                $correction->approved = true;
-                $correction->approved_by = $actor->id;
-                $correction->approved_at = $now;
-                $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_APPROVED;
-                $correction->second_approver_id = $actor->id;
-                $correction->second_approved_at = $now;
-                $correction->save();
 
                 $correctionIds[] = (int) $correction->id;
 
@@ -274,6 +251,36 @@ class AttendanceCorrectionBulkApprovalService
                 ];
             }
 
+            if ($correctionIds !== []) {
+                AttendanceCorrection::query()
+                    ->whereIn('id', $correctionIds)
+                    ->update([
+                        'pending_approval' => false,
+                        'approved' => true,
+                        'approved_by' => $actor->id,
+                        'approved_at' => $now,
+                        'approval_stage' => AttendanceCorrectionApprovalService::STAGE_APPROVED,
+                        'status' => AttendanceCorrectionStatusService::STATUS_APPROVED,
+                        'final_approved_by' => $actor->id,
+                        'second_approver_id' => $actor->id,
+                        'second_approved_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+
+                OrgApprovalRecord::query()
+                    ->where('module_type', self::MODULE)
+                    ->whereIn('request_id', $correctionIds)
+                    ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->update([
+                        'approval_status' => OrgApprovalRecord::STATUS_APPROVED,
+                        'remarks' => $notes,
+                        'approved_at' => $now,
+                        'approver_id' => $actor->id,
+                        'approver_name' => $approverName,
+                        'updated_at' => $now,
+                    ]);
+            }
+
             if ($auditRows !== []) {
                 AttendanceCorrectionAudit::query()->insert($auditRows);
             }
@@ -281,28 +288,6 @@ class AttendanceCorrectionBulkApprovalService
                 AttendanceCorrectionApproval::query()->insert($approvalRows);
             }
         });
-
-        $freshCorrections = AttendanceCorrection::query()
-            ->with('user')
-            ->whereIn('id', $correctionIds)
-            ->get();
-
-        $syncResults = $this->attendanceLogSyncService->syncApprovedCorrectionsBatch(
-            $freshCorrections,
-            $actor,
-            $roleLabel,
-        );
-
-        foreach ($freshCorrections as $correction) {
-            $sync = $syncResults[(int) $correction->id] ?? null;
-            if ($sync === null) {
-                continue;
-            }
-            $correction->is_incomplete_record = ! (($sync['applied_time_in'] ?? null) && ($sync['applied_time_out'] ?? null));
-            $correction->attendance_logs_synced_at = $now;
-            $correction->attendance_logs_synced_by = $actor->id;
-            $correction->save();
-        }
 
         return $correctionIds;
     }
@@ -350,13 +335,12 @@ class AttendanceCorrectionBulkApprovalService
                     ->orderBy('sequence_order')
                     ->first();
 
-                if ($nextPending?->approver_role === HrRole::AdminHr->value) {
-                    $correction->first_approved_at = $now;
-                    $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_PENDING_SECOND;
-                } else {
-                    $correction->approval_stage = AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST;
-                }
-                $correction->save();
+                $this->correctionStatusService->markFirstStepApproved(
+                    $correction,
+                    $actor,
+                    $nextPending?->approver_role === HrRole::AdminHr->value,
+                    $now,
+                );
 
                 AttendanceCorrectionAudit::query()->insert([
                     'attendance_correction_id' => $correction->id,

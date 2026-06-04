@@ -19,6 +19,8 @@ class AttendanceCorrection extends Model
         'approved_by',
         'approved_at',
         'pending_approval',
+        'status',
+        'final_approved_by',
         'reason_code',
         'manual_presence_reason',
         'filed_at',

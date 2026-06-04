@@ -374,11 +374,15 @@ class PresenceFilingCorrectionFormatter
 
     private function deriveDisplayStatusLabel(AttendanceCorrection $c): string
     {
-        if ($c->rejected_at) {
+        $status = app(AttendanceCorrectionStatusService::class)->resolvedStatus($c);
+        if ($status === AttendanceCorrectionStatusService::STATUS_APPROVED) {
+            return 'Approved';
+        }
+        if ($status === AttendanceCorrectionStatusService::STATUS_REJECTED) {
             return 'Rejected';
         }
-        if ($c->approved) {
-            return 'HR Approved';
+        if ($status === AttendanceCorrectionStatusService::STATUS_CANCELLED) {
+            return 'Cancelled';
         }
         if (! $c->pending_approval) {
             return 'Draft';
@@ -398,16 +402,6 @@ class PresenceFilingCorrectionFormatter
 
     private function deriveStatus(AttendanceCorrection $c): string
     {
-        if ($c->rejected_at) {
-            return 'rejected';
-        }
-        if ($c->approved) {
-            return 'approved';
-        }
-        if ($c->pending_approval) {
-            return 'pending';
-        }
-
-        return 'draft';
+        return app(AttendanceCorrectionStatusService::class)->resolvedStatus($c);
     }
 }

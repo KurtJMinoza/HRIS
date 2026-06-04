@@ -178,7 +178,7 @@ function RequestStatCard({ icon, value, label, hint, tone = 'orange' }) {
 function EmployeeStyleStatusPill({ displayStatus, status }) {
   const ds = displayStatus || ''
   const isRejected = status === 'rejected' || ds === 'Rejected'
-  const isApproved = status === 'approved' || ds === 'HR Approved'
+  const isApproved = status === 'approved' || ds === 'Approved' || ds === 'HR Approved'
 
   if (isRejected) {
     return (
@@ -188,7 +188,7 @@ function EmployeeStyleStatusPill({ displayStatus, status }) {
       </span>
     )
   }
-  if (isApproved) {
+  if (isApproved || ds === 'Approved') {
     return (
       <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/90 bg-gradient-to-br from-emerald-50 to-teal-50 px-3.5 py-1.5 text-sm font-semibold text-emerald-950 shadow-sm ring-1 ring-emerald-100 dark:border-emerald-900/40 dark:from-emerald-950/45 dark:to-teal-950/25 dark:text-emerald-50 dark:ring-emerald-900/30">
         <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
@@ -207,7 +207,7 @@ function EmployeeStyleStatusPill({ displayStatus, status }) {
 /** Map API display_status to badge styles (readable, consistent). */
 function statusBadgeClass(displayStatus) {
   if (!displayStatus) return 'bg-muted text-muted-foreground shadow-sm'
-  if (displayStatus === 'HR Approved') {
+  if (displayStatus === 'Approved' || displayStatus === 'HR Approved') {
     return 'bg-gradient-to-br from-emerald-100 to-teal-50 text-emerald-950 shadow-emerald-500/25 ring-1 ring-emerald-200/90 dark:from-emerald-950/50 dark:to-emerald-950/30 dark:text-emerald-50 dark:ring-emerald-500/15'
   }
   if (displayStatus === 'Rejected') {
@@ -1077,7 +1077,7 @@ export default function AttendanceCorrections() {
 
   const updateCorrectionRowAfterAction = useCallback((requestId, status) => {
     const id = String(requestId)
-    const displayStatus = status === 'approved' ? 'HR Approved' : status === 'rejected' ? 'Rejected' : 'Pending'
+    const displayStatus = status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Pending'
     const update = (item) =>
       String(item?.id ?? item?.request_id) === id
         ? {
@@ -1634,6 +1634,7 @@ export default function AttendanceCorrections() {
                         pageSelectableCount={bulkSelection.pageCount}
                         totalMatchingCount={bulkSelection.totalCount}
                         showPageSelectAllBanner={bulkSelection.showPageSelectAllBanner}
+                        pageAllSelected={bulkSelection.pageAllSelected}
                         onSelectAllMatching={bulkSelection.selectAllMatchingRecords}
                         onClearSelection={bulkSelection.clearSelection}
                         entityLabel="requests"

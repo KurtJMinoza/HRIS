@@ -9,6 +9,7 @@ use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
+use App\Services\BulkApproval\LeaveBulkApprovalService;
 use App\Services\BulkApproval\LeaveBulkApprovalQuery;
 use App\Services\DataScopeService;
 use App\Services\HrApprovalChainResolver;
@@ -47,6 +48,7 @@ class LeaveController extends Controller
         private readonly LeaveCreditService $leaveCreditService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly LeaveBulkApprovalQuery $bulkApprovalQuery,
+        private readonly LeaveBulkApprovalService $bulkApprovalService,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly NotificationService $notificationService,
     ) {}
@@ -729,6 +731,21 @@ class LeaveController extends Controller
             fn (User $user) => $this->hrRoleResolver->isAdminHrAccount($user),
         );
 
+        $fastResult = $this->bulkApprovalService->approveFinalAdminHr(
+            $actor,
+            $ids,
+            $remarks,
+            (bool) $request->boolean('force_insufficient_credits') && $actor->isSuperAdmin(),
+            (bool) ($leaveBulkExtra['bypass_rest_days'] ?? false),
+            isset($leaveBulkExtra['rest_day_bypass_reason']) ? (string) $leaveBulkExtra['rest_day_bypass_reason'] : null,
+        );
+        $approved += $fastResult['approved'];
+        $skipped += $fastResult['skipped'];
+        $failed += $fastResult['failed'];
+        $failedItems = array_merge($failedItems, $fastResult['failed_items']);
+        $approvedIds = array_merge($approvedIds, $fastResult['approved_ids']);
+        $ids = $fastResult['fallback_ids'];
+
         foreach ($ids as $id) {
             try {
                 $single = $this->duplicateBulkApproveRequest($request, $remarks, array_merge($leaveBulkExtra, [
@@ -775,8 +792,13 @@ class LeaveController extends Controller
                 'leave.needs_approval',
             );
             LeaveModuleCache::flush();
-            app()->terminating(static function () use ($approvedIds): void {
-                (new LeaveBulkFollowUpJob($approvedIds))->handle(app(NotificationService::class));
+            $actorId = (int) $actor->id;
+            $forceCredits = (bool) $request->boolean('force_insufficient_credits') && $actor->isSuperAdmin();
+            app()->terminating(static function () use ($approvedIds, $actorId, $forceCredits): void {
+                (new LeaveBulkFollowUpJob($approvedIds, $actorId, $forceCredits))->handle(
+                    app(NotificationService::class),
+                    app(LeaveCreditService::class),
+                );
             });
         }
 

@@ -32,6 +32,7 @@ export function BulkApproveToolbar({
   pageSelectableCount = 0,
   totalMatchingCount = 0,
   showPageSelectAllBanner = false,
+  pageAllSelected = false,
   onSelectAllMatching,
   onClearSelection,
   entityLabel = 'requests',
@@ -66,6 +67,7 @@ export function BulkApproveToolbar({
           totalCount={totalMatchingCount}
           selectAllMatching={selectAllMatching}
           showPageSelectAllBanner={showPageSelectAllBanner}
+          pageAllSelected={pageAllSelected}
           onSelectAllMatching={onSelectAllMatching}
           onClearSelection={onClearSelection}
           entityLabel={entityLabel}

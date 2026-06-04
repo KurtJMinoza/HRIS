@@ -26,7 +26,6 @@ use App\Services\HolidayCalendarService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\OrgApprovalWorkflowService;
-use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PresenceFilingService;
 use App\Support\AdminDashboardCache;
 use App\Support\RequestPerformanceLogger;
@@ -48,7 +47,6 @@ class DashboardController extends Controller
         private readonly EmployeeStatusService $employeeStatusService,
         private readonly HolidayCalendarService $holidayCalendar,
         private readonly HrRoleResolver $hrRoleResolver,
-        private readonly PresenceFilingCorrectionFormatter $correctionFormatter,
         private readonly PresenceFilingService $presenceFilingService,
         private readonly LeaveApprovalService $leaveApprovalService,
     ) {}
@@ -146,9 +144,57 @@ class DashboardController extends Controller
         return response()->json($this->dashboardPendingRequestsPayload($request));
     }
 
+    public function pendingAttendanceCorrections(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        return response()->json($this->pendingCorrectionsForDashboard($actor));
+    }
+
     public function attendanceToday(Request $request): JsonResponse
     {
         return response()->json($this->dashboardAttendanceTodayPayload($request));
+    }
+
+    public function attendanceSummary(Request $request): JsonResponse
+    {
+        $startedAt = microtime(true);
+        $payload = $this->dashboardAttendanceSummaryPayload($request);
+        $companyId = (int) ($request->user()?->getEffectiveCompanyId() ?? $request->user()?->company_id ?? 0);
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $dateKey = Carbon::now($tz)->toDateString();
+        Log::info('admin_dashboard.attendance', [
+            'endpoint' => 'attendance-summary',
+            'company_id' => $companyId,
+            'date' => $dateKey,
+            'cache_hit' => (bool) ($payload['_cache_hit'] ?? false),
+            'response_time_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+        unset($payload['_cache_hit']);
+
+        return response()->json($payload);
+    }
+
+    public function attendanceTodayLite(Request $request): JsonResponse
+    {
+        $startedAt = microtime(true);
+        $payload = $this->dashboardAttendanceTodayLitePayload($request);
+        $companyId = (int) ($request->user()?->getEffectiveCompanyId() ?? $request->user()?->company_id ?? 0);
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $dateKey = Carbon::now($tz)->toDateString();
+        Log::info('admin_dashboard.attendance', [
+            'endpoint' => 'attendance-today-lite',
+            'company_id' => $companyId,
+            'date' => $dateKey,
+            'query_count' => (int) ($payload['_query_count'] ?? 0),
+            'db_time_ms' => (int) ($payload['_db_time_ms'] ?? 0),
+            'cache_hit' => (bool) ($payload['_cache_hit'] ?? false),
+            'response_time_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+        unset($payload['_cache_hit'], $payload['_query_count'], $payload['_db_time_ms']);
+
+        return response()->json($payload);
     }
 
     public function payrollSummary(Request $request): JsonResponse
@@ -328,9 +374,7 @@ class DashboardController extends Controller
     private function pendingCorrectionsForDashboard(User $actor): array
     {
         $baseQuery = AttendanceCorrection::query()
-            ->where('pending_approval', true)
-            ->where('approved', false)
-            ->whereNull('rejected_at');
+            ->where('status', 'pending');
         $this->whereCurrentPendingApprovalForActor(
             $baseQuery,
             OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
@@ -348,21 +392,28 @@ class DashboardController extends Controller
             ];
         }
 
-        $correctionDisplayTz = $this->presenceFilingService->attendanceTimezone();
         $corrections = (clone $baseQuery)
             ->with(['user:id,name,first_name,middle_name,last_name,suffix,employee_code,position,department,profile_image'])
             ->orderByDesc('filed_at')
             ->limit(5)
-            ->get();
+            ->get([
+                'id',
+                'user_id',
+                'date',
+                'time_in',
+                'time_out',
+                'remarks',
+                'issue_kind',
+                'pending_approval',
+                'approved',
+                'status',
+                'filed_at',
+                'approval_stage',
+                'created_at',
+            ]);
 
         $previews = $corrections
-            ->map(fn (AttendanceCorrection $correction) => $this->correctionFormatter->format(
-                $correction,
-                $correctionDisplayTz,
-                includeEmployee: true,
-                actor: $actor,
-                includeDisplayFields: true
-            ))
+            ->map(fn (AttendanceCorrection $correction) => $this->formatDashboardAttendanceCorrection($correction))
             ->values()
             ->all();
 
@@ -384,6 +435,51 @@ class DashboardController extends Controller
             'preview' => $previews[0] ?? null,
             'previews' => $previews,
             'requests' => $requests,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatDashboardAttendanceCorrection(AttendanceCorrection $correction): array
+    {
+        $tz = $this->presenceFilingService->attendanceTimezone();
+        $employee = $correction->user;
+        $timeIn = $correction->time_in?->copy()->setTimezone($tz)->toIso8601String();
+        $timeOut = $correction->time_out?->copy()->setTimezone($tz)->toIso8601String();
+
+        return [
+            'id' => (int) $correction->id,
+            'request_id' => (int) $correction->id,
+            'correction_request_id' => (int) $correction->id,
+            'user_id' => (int) $correction->user_id,
+            'employee_id' => (int) $correction->user_id,
+            'employee_name' => $employee?->display_name,
+            'employee_code' => $employee?->employee_code,
+            'employee_position' => $employee?->position,
+            'employee_profile_image_url' => $employee?->profile_image_url,
+            'department' => $employee?->department,
+            'date' => $correction->date?->toDateString(),
+            'attendance_date' => $correction->date?->toDateString(),
+            'time_in' => $timeIn,
+            'time_out' => $timeOut,
+            'requested_time_in' => $timeIn,
+            'requested_time_out' => $timeOut,
+            'requested_time_start' => $timeIn,
+            'requested_time_end' => $timeOut,
+            'issue_type' => $correction->resolvedIssueKind(),
+            'remarks' => $correction->remarks,
+            'status' => 'pending',
+            'display_status' => 'Pending',
+            'pending_approval' => true,
+            'approved' => false,
+            'approval_stage' => $correction->approval_stage,
+            'current_step' => $correction->approval_stage,
+            'can_review' => true,
+            'actor_can_approve' => true,
+            'actor_can_reject' => true,
+            'filed_at' => $correction->filed_at?->toIso8601String(),
+            'created_at' => $correction->created_at?->toIso8601String(),
         ];
     }
 
@@ -441,24 +537,147 @@ class DashboardController extends Controller
      */
     private function dashboardAttendanceTodayPayload(Request $request): array
     {
-        return $this->cachedDashboardPayload($request, 'attendance', function (User $actor): array {
-            $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
-            $today = Carbon::now($tz)->startOfDay();
-            $activeScopeIds = $this->scopedEmployeeIds($actor, true);
-            $todayDayKey = self::DAY_KEYS[(int) $today->format('w')];
-            $companyId = (int) ($actor->getEffectiveCompanyId() ?? $actor->company_id ?? 0);
-            $dateKey = $today->toDateString();
-            $cacheKey = AdminDashboardCache::attendanceSummaryKey($companyId, $dateKey);
-            $cachedLogs = AdminDashboardCache::rememberRaw(
-                $cacheKey.':logs:'.(int) $actor->id,
-                AdminDashboardCache::TTL_ATTENDANCE,
-                fn () => $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds)
-            );
+        $lite = $this->dashboardAttendanceTodayLitePayload($request);
 
-            return [
-                'today_logs' => is_array($cachedLogs['payload']) ? $cachedLogs['payload'] : [],
-            ];
-        });
+        return [
+            'today_logs' => is_array($lite['data'] ?? null) ? $lite['data'] : [],
+            'meta' => $lite['meta'] ?? null,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardAttendanceSummaryPayload(Request $request): array
+    {
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $today = Carbon::now($tz)->startOfDay();
+        $dateKey = $today->toDateString();
+        $companyId = (int) ($request->user()?->getEffectiveCompanyId() ?? $request->user()?->company_id ?? 0);
+        $cacheKey = sprintf(
+            'admin_dashboard:attendance_summary:%d:%s:v%d',
+            $companyId,
+            $dateKey,
+            AdminDashboardCache::segmentVersion($companyId, 'attendance'),
+        );
+
+        $cached = AdminDashboardCache::rememberRaw(
+            $cacheKey,
+            AdminDashboardCache::TTL_ATTENDANCE,
+            function () use ($request, $today, $tz): array {
+                $actor = $request->user();
+                abort_unless($actor instanceof User, 403);
+                $activeScopeIds = $this->scopedEmployeeIds($actor, true);
+                $activeEmployees = $activeScopeIds === []
+                    ? collect()
+                    : User::query()
+                        ->whereIn('id', $activeScopeIds)
+                        ->with('workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days')
+                        ->get(['id', 'schedule', 'working_schedule_id']);
+                $stats = $this->computeDailyStats(
+                    $today,
+                    self::DAY_KEYS[(int) $today->format('w')],
+                    $activeEmployees,
+                    $activeEmployees->pluck('id')->all(),
+                    (int) config('attendance.undertime_threshold_minutes', 60),
+                    $tz,
+                    Carbon::now($tz),
+                    false,
+                );
+
+                return [
+                    'present_count' => (int) ($stats['present_today'] ?? 0),
+                    'absent_count' => (int) ($stats['absent_today'] ?? 0),
+                    'late_count' => (int) ($stats['late_today'] ?? 0),
+                    'undertime_count' => (int) ($stats['under_time'] ?? 0),
+                    'rest_day_count' => 0,
+                    'leave_count' => (int) ($stats['on_leave'] ?? 0),
+                    'missing_clock_out_count' => 0,
+                    'working_ot_count' => 0,
+                ];
+            },
+        );
+
+        $payload = is_array($cached['payload']) ? $cached['payload'] : [];
+        $payload['_cache_hit'] = (bool) ($cached['cache_hit'] ?? false);
+
+        return $payload;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardAttendanceTodayLitePayload(Request $request): array
+    {
+        $page = max(1, (int) $request->input('page', 1));
+        $perPage = min(100, max(10, (int) $request->input('per_page', 50)));
+        $filter = (string) $request->input('filter', 'all');
+        $filtersHash = md5($filter);
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $today = Carbon::now($tz)->startOfDay();
+        $dateKey = $today->toDateString();
+        $companyId = (int) ($request->user()?->getEffectiveCompanyId() ?? $request->user()?->company_id ?? 0);
+        $cacheKey = sprintf(
+            'admin_dashboard:attendance_today:%d:%s:%d:%s:v%d',
+            $companyId,
+            $dateKey,
+            $page,
+            $filtersHash,
+            AdminDashboardCache::segmentVersion($companyId, 'attendance'),
+        );
+
+        $dbStarted = microtime(true);
+        $cached = AdminDashboardCache::rememberRaw(
+            $cacheKey,
+            AdminDashboardCache::TTL_ATTENDANCE,
+            function () use ($request, $today, $page, $perPage, $filter): array {
+                $actor = $request->user();
+                abort_unless($actor instanceof User, 403);
+                $activeScopeIds = $this->scopedEmployeeIds($actor, true);
+                $todayDayKey = self::DAY_KEYS[(int) $today->format('w')];
+                $rows = $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds, rowLimit: 500);
+                if ($filter === 'late') {
+                    $rows = array_values(array_filter($rows, static fn (array $row): bool => ! empty($row['is_late'])));
+                } elseif ($filter === 'absent') {
+                    $rows = array_values(array_filter($rows, static fn (array $row): bool => ! empty($row['is_absent'])));
+                }
+                $total = count($rows);
+                $offset = ($page - 1) * $perPage;
+                $slice = array_slice($rows, $offset, $perPage);
+                $data = array_map(static function (array $row): array {
+                    return [
+                        'employee_name' => $row['employee_name'] ?? '—',
+                        'department' => $row['department'] ?? '—',
+                        'time_in' => $row['time_in'] ?? null,
+                        'time_out' => $row['time_out'] ?? null,
+                        'status' => ! empty($row['is_absent'])
+                            ? 'absent'
+                            : (! empty($row['is_late']) ? 'late' : (! empty($row['time_in']) ? 'present' : 'pending')),
+                        'late_minutes' => $row['late_minutes'] ?? null,
+                        'undertime_minutes' => null,
+                        'approved_ot_hours' => null,
+                        'payable_ot_hours' => null,
+                    ];
+                }, $slice);
+
+                return [
+                    'data' => $data,
+                    'meta' => [
+                        'total' => $total,
+                        'page' => $page,
+                        'per_page' => $perPage,
+                        'last_page' => max(1, (int) ceil($total / $perPage)),
+                    ],
+                ];
+            },
+        );
+        $dbMs = (int) round((microtime(true) - $dbStarted) * 1000);
+        $payload = is_array($cached['payload']) ? $cached['payload'] : ['data' => [], 'meta' => ['total' => 0, 'page' => $page, 'per_page' => $perPage, 'last_page' => 1]];
+        $payload['_cache_hit'] = (bool) ($cached['cache_hit'] ?? false);
+        $payload['_db_time_ms'] = $dbMs;
+        $payload['_query_count'] = 1;
+
+        return $payload;
     }
 
     /**
@@ -485,8 +704,9 @@ class DashboardController extends Controller
      */
     private function dashboardRecentActivityPayload(Request $request): array
     {
-        return $this->cachedDashboardPayload($request, 'recent', function (User $actor): array {
-            $limit = min(20, max(1, (int) $request->input('limit', 20)));
+        $limit = min(20, max(1, (int) $request->input('limit', 20)));
+
+        return $this->cachedDashboardPayload($request, 'recent', function (User $actor) use ($limit): array {
             $scope = User::query()->visibleEmployees()->select('users.id');
             $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
             $scopedIds = $scope->pluck('id')->all();
@@ -520,7 +740,7 @@ class DashboardController extends Controller
                     ];
                 })->values()->all(),
             ];
-        }, 'recent');
+        }, 'recent:limit:'.$limit);
     }
 
     /**
@@ -3007,7 +3227,7 @@ class DashboardController extends Controller
         ];
     }
 
-    private function todayAttendanceLogs($today, string $dayKey, array $scopedActiveUserIds): array
+    private function todayAttendanceLogs($today, string $dayKey, array $scopedActiveUserIds, ?int $rowLimit = null): array
     {
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($today, $tz);
@@ -3164,6 +3384,9 @@ class DashboardController extends Controller
             ->get();
 
         foreach ($scheduledUsers as $user) {
+            if ($rowLimit !== null && count($grouped) >= $rowLimit) {
+                break;
+            }
             if (isset($grouped[$user->id]) || isset($leaveSet[$user->id])) {
                 continue;
             }

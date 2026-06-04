@@ -29,4 +29,14 @@ class AttendanceCorrectionModuleCache
             ]);
         }
     }
+
+    /**
+     * Bump list/counts cache version and clear related dashboard/sidebar caches.
+     */
+    public static function flushAfterMutation(?\App\Models\User $actor = null, ?int $companyId = null, ?int $correctionId = null): void
+    {
+        self::flush();
+        app(\App\Services\AttendanceCorrectionStatusService::class)
+            ->invalidateCaches($actor, $companyId, $correctionId, bumpModuleVersion: false);
+    }
 }

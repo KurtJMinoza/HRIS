@@ -1480,9 +1480,43 @@ export async function getAdminDashboardRequests(options = {}) {
   return normalizeDashboardSegment(raw, 'requests')
 }
 
+export async function getAdminDashboardPendingAttendanceCorrections(options = {}) {
+  const raw = await fetchAdminDashboardSegment('/admin/dashboard/attendance-corrections-pending', options)
+  return {
+    pending_attendance_corrections: Number(raw?.count ?? 0) || 0,
+    pending_attendance_correction_preview: raw?.preview ?? null,
+    pending_attendance_correction_previews: Array.isArray(raw?.previews) ? raw.previews : [],
+    pending_requests: Array.isArray(raw?.requests) ? raw.requests : [],
+  }
+}
+
 export async function getAdminDashboardAttendanceToday(options = {}) {
   const raw = await fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.attendance, options)
   return normalizeDashboardSegment(raw, 'attendance')
+}
+
+export async function getAdminDashboardAttendanceSummary(options = {}) {
+  const res = await authenticatedFetch('/admin/dashboard/attendance-summary', options)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.message || 'Failed to load attendance summary')
+  }
+  return body.data != null ? body.data : body
+}
+
+export async function getAdminDashboardAttendanceTodayLite(params = {}, options = {}) {
+  const query = new URLSearchParams()
+  if (params.page != null) query.set('page', String(params.page))
+  if (params.per_page != null) query.set('per_page', String(params.per_page))
+  if (params.filter) query.set('filter', String(params.filter))
+  const qs = query.toString()
+  const path = `/admin/dashboard/attendance-today-lite${qs ? `?${qs}` : ''}`
+  const res = await authenticatedFetch(path, options)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.message || 'Failed to load attendance table')
+  }
+  return body.data != null ? body.data : body
 }
 
 export async function getAdminDashboardPayroll(options = {}) {

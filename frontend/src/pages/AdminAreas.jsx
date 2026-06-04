@@ -12,7 +12,7 @@ import {
   ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS,
   ADMIN_FORM_DIALOG_TITLE_CLASS,
 } from '@/lib/adminFormDialogStyles'
-import { createArea, deleteArea, getAreaBranches, getAreas, getBranches, getCompanies, getEmployees, updateArea } from '@/api'
+import { createArea, deleteArea, getAreaBranches, getAreas, getBranches, getCompanies, updateArea } from '@/api'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
@@ -29,7 +29,6 @@ export default function AdminAreas() {
   const [areas, setAreas] = useState([])
   const [companies, setCompanies] = useState([])
   const [branches, setBranches] = useState([])
-  const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(true)
   const [companyFilter, setCompanyFilter] = useState('')
   const [search, setSearch] = useState('')
@@ -46,16 +45,14 @@ export default function AdminAreas() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [areaRes, companyRes, branchRes, employeeRes] = await Promise.all([
+      const [areaRes, companyRes, branchRes] = await Promise.all([
         getAreas(companyFilter ? { company_id: companyFilter } : {}),
         getCompanies(),
         getBranches({ fresh: true }),
-        getEmployees({ for_leadership_assignment: true, per_page: 'all' }),
       ])
       setAreas(areaRes.areas || [])
       setCompanies(companyRes.companies || [])
       setBranches(branchRes.branches || [])
-      setEmployees(employeeRes.employees || [])
     } catch (error) {
       toast({ title: 'Failed to load areas', description: error.message, variant: 'error' })
     } finally {
@@ -83,12 +80,6 @@ export default function AdminAreas() {
   }, [branches, form.company_id])
 
   const selectedBranchSet = useMemo(() => new Set(selectedBranchIds.map(String)), [selectedBranchIds])
-
-  const employeesUnderSelectedBranches = useMemo(() => {
-    if (selectedBranchIds.length === 0) return []
-    const ids = new Set(selectedBranchIds.map(String))
-    return employees.filter((employee) => ids.has(String(employee.branch_id)))
-  }, [employees, selectedBranchIds])
 
   const openCreate = () => {
     setEditing(null)
@@ -202,7 +193,13 @@ export default function AdminAreas() {
           return
         }
       }
-      await load()
+      if (wasEdit && savedArea) {
+        setAreas((current) =>
+          current.map((row) => (row.id === savedArea.id ? { ...row, ...savedArea } : row)),
+        )
+      } else {
+        await load()
+      }
       if (wasEdit) {
         setDialogOpen(false)
         setEditing(null)
@@ -282,8 +279,8 @@ export default function AdminAreas() {
         ))}
       </div>
       <div className="rounded-xl border border-border/70 bg-muted/10 p-3 text-sm">
-        <div className="flex items-center gap-2 font-semibold"><Users className="size-4" /> Employees under selected branches</div>
-        <p className="mt-1 text-muted-foreground">{employeesUnderSelectedBranches.length} employee{employeesUnderSelectedBranches.length === 1 ? '' : 's'} visible through the selected branches.</p>
+        <div className="flex items-center gap-2 font-semibold"><Users className="size-4" /> Branch coverage</div>
+        <p className="mt-1 text-muted-foreground">Employees in these branches follow this area in org routing and head approval scope.</p>
       </div>
     </div>
   )
@@ -417,7 +414,7 @@ export default function AdminAreas() {
               </div>
               {editing?.id ? (
                 <div className="min-h-0 overflow-y-auto bg-muted/10 px-4 py-5 md:px-6">
-                  <LeadershipPositionsSection ref={leadershipRef} legacyType="area" legacyId={editing.id} employeeOptions={employees} canManage />
+                  <LeadershipPositionsSection ref={leadershipRef} legacyType="area" legacyId={editing.id} canManage />
                 </div>
               ) : (
                 <div className="min-h-0 overflow-y-auto bg-muted/10 px-4 py-5 md:px-6">

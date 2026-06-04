@@ -60,7 +60,8 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import {
   getAdminDashboardSummary,
   getAdminDashboardRequests,
-  getAdminDashboardAttendanceToday,
+  getAdminDashboardPendingAttendanceCorrections,
+  getAdminDashboardAttendanceTodayLite,
   getAdminDashboardPayroll,
   getAdminDashboardCharts,
   getAdminDashboardRecentActivity,
@@ -705,9 +706,23 @@ export default function AdminDashboard() {
     refetchOnMount: 'always',
   })
 
+  const pendingAttendanceCorrectionsQuery = useQuery({
+    queryKey: ['admin-dashboard', 'pending-attendance-corrections'],
+    queryFn: ({ signal }) => getAdminDashboardPendingAttendanceCorrections({ signal }),
+    enabled: !authLoading && canApproveAttendanceCorrections,
+    initialData: () => dashboardSnapshotSegment(data, 'requests'),
+    staleTime: 15_000,
+    refetchInterval: 20_000,
+    refetchOnMount: 'always',
+  })
+
   const attendanceQuery = useQuery({
-    queryKey: ['admin-dashboard', 'attendance'],
-    queryFn: ({ signal }) => getAdminDashboardAttendanceToday({ signal }),
+    queryKey: ['admin-dashboard', 'attendance', logsPage, attendanceFilter],
+    queryFn: ({ signal }) =>
+      getAdminDashboardAttendanceTodayLite(
+        { page: logsPage, per_page: LOGS_PER_PAGE, filter: attendanceFilter },
+        { signal },
+      ),
     enabled: !authLoading,
     initialData: () => dashboardSnapshotSegment(data, 'attendance'),
     staleTime: 20_000,
@@ -764,6 +779,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     const onPendingApprovalsChanged = () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-dashboard', 'requests'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-dashboard', 'pending-attendance-corrections'] })
     }
     window.addEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
     return () => window.removeEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
@@ -928,13 +944,32 @@ export default function AdminDashboard() {
   }, [data?.today_logs?.length])
 
   // All useMemo hooks MUST live before any early returns (Rules of Hooks).
-  const todayLogs = useMemo(() => data?.today_logs ?? [], [data?.today_logs])
+  const attendanceTableMeta = attendanceQuery.data?.meta ?? null
+
+  const todayLogs = useMemo(() => {
+    if (Array.isArray(attendanceQuery.data?.data)) {
+      return attendanceQuery.data.data.map((row, index) => ({
+        id: row.id ?? index,
+        employee_name: row.employee_name ?? '—',
+        department: row.department ?? '—',
+        company_name: row.department ?? '—',
+        time_in: row.time_in ?? null,
+        time_out: row.time_out ?? null,
+        is_late: row.status === 'late' || Boolean(row.is_late),
+        is_absent: row.status === 'absent' || Boolean(row.is_absent),
+        late_minutes: row.late_minutes ?? null,
+        profile_image: row.profile_image ?? null,
+      }))
+    }
+
+    return data?.today_logs ?? []
+  }, [attendanceQuery.data, data?.today_logs])
 
   const filteredSortedLogs = useMemo(() => {
     let logs = todayLogs
-    if (attendanceFilter === 'late') {
+    if (!attendanceTableMeta && attendanceFilter === 'late') {
       logs = todayLogs.filter((l) => l.is_late)
-    } else if (attendanceFilter === 'absent') {
+    } else if (!attendanceTableMeta && attendanceFilter === 'absent') {
       logs = todayLogs.filter((l) => l.is_absent)
     }
     if (sortConfig.key) {
@@ -1231,15 +1266,16 @@ export default function AdminDashboard() {
     ? data.upcoming_regularizations
     : []
   const expiringContracts = Array.isArray(data?.expiring_contracts) ? data.expiring_contracts : []
+  const pendingAttendanceCorrectionData = pendingAttendanceCorrectionsQuery.data ?? data
   const pendingAttendanceCorrectionRows =
-    canApproveAttendanceCorrections && Array.isArray(data?.pending_requests)
-      ? data.pending_requests.filter(isPendingDashboardRequest)
-      : canApproveAttendanceCorrections && Array.isArray(data?.pending_attendance_correction_previews)
-        ? data.pending_attendance_correction_previews.filter(isPendingDashboardRequest)
+    canApproveAttendanceCorrections && Array.isArray(pendingAttendanceCorrectionData?.pending_requests)
+      ? pendingAttendanceCorrectionData.pending_requests.filter(isPendingDashboardRequest)
+      : canApproveAttendanceCorrections && Array.isArray(pendingAttendanceCorrectionData?.pending_attendance_correction_previews)
+        ? pendingAttendanceCorrectionData.pending_attendance_correction_previews.filter(isPendingDashboardRequest)
         : []
   const pendingAttendanceCorrectionPreview =
-    canApproveAttendanceCorrections && isPendingDashboardRequest(data?.pending_attendance_correction_preview)
-      ? data.pending_attendance_correction_preview
+    canApproveAttendanceCorrections && isPendingDashboardRequest(pendingAttendanceCorrectionData?.pending_attendance_correction_preview)
+      ? pendingAttendanceCorrectionData.pending_attendance_correction_preview
       : pendingAttendanceCorrectionRows[0] ?? null
   const pendingAttendanceCorrectionPreviews =
     pendingAttendanceCorrectionRows.length > 0
@@ -1249,7 +1285,7 @@ export default function AdminDashboard() {
         : []
   const pendingAttendanceCorrectionsCount = canApproveAttendanceCorrections
     ? pendingAttendanceCorrectionPreviews.length > 0
-      ? Number(data?.pending_attendance_corrections ?? pendingAttendanceCorrectionPreviews.length) || pendingAttendanceCorrectionPreviews.length
+      ? Number(pendingAttendanceCorrectionData?.pending_attendance_corrections ?? pendingAttendanceCorrectionPreviews.length) || pendingAttendanceCorrectionPreviews.length
       : 0
     : 0
   const todayLeavesPreview = todayLeaves.slice(0, 5)
@@ -1263,15 +1299,19 @@ export default function AdminDashboard() {
   const currentlyWorking = todayLogs.filter((l) => l.time_in && !l.time_out).length
   const completedShift = todayLogs.filter((l) => l.time_in && l.time_out).length
 
-  const totalLogs = filteredSortedLogs.length
-  const totalLogsPages = Math.max(1, Math.ceil(totalLogs / LOGS_PER_PAGE))
+  const totalLogs = attendanceTableMeta?.total ?? filteredSortedLogs.length
+  const totalLogsPages = attendanceTableMeta?.last_page ?? Math.max(1, Math.ceil(totalLogs / LOGS_PER_PAGE))
   const effectiveLogsPage = Math.min(logsPage, totalLogsPages)
-  const paginatedLogs = filteredSortedLogs.slice(
-    (effectiveLogsPage - 1) * LOGS_PER_PAGE,
-    effectiveLogsPage * LOGS_PER_PAGE
-  )
+  const paginatedLogs = attendanceTableMeta
+    ? filteredSortedLogs
+    : filteredSortedLogs.slice(
+        (effectiveLogsPage - 1) * LOGS_PER_PAGE,
+        effectiveLogsPage * LOGS_PER_PAGE,
+      )
   const logsStart = totalLogs === 0 ? 0 : (effectiveLogsPage - 1) * LOGS_PER_PAGE + 1
-  const logsEnd = Math.min(effectiveLogsPage * LOGS_PER_PAGE, totalLogs)
+  const logsEnd = attendanceTableMeta
+    ? Math.min(effectiveLogsPage * LOGS_PER_PAGE, totalLogs)
+    : Math.min(effectiveLogsPage * LOGS_PER_PAGE, totalLogs)
   const emptyLogsMessage =
     attendanceFilter === 'late'
       ? 'No late employees today.'
@@ -1947,7 +1987,7 @@ export default function AdminDashboard() {
           <AttendanceCorrectionsCard
             loading={
               (!canApproveAttendanceCorrections && requestsLoading) ||
-              (canApproveAttendanceCorrections && requestsQuery.isLoading && !requestsQuery.data)
+              (canApproveAttendanceCorrections && pendingAttendanceCorrectionsQuery.isLoading && !pendingAttendanceCorrectionsQuery.data)
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
@@ -2435,7 +2475,7 @@ export default function AdminDashboard() {
           <AttendanceCorrectionsCard
             loading={
               (!canApproveAttendanceCorrections && requestsLoading) ||
-              (canApproveAttendanceCorrections && requestsQuery.isLoading && !requestsQuery.data)
+              (canApproveAttendanceCorrections && pendingAttendanceCorrectionsQuery.isLoading && !pendingAttendanceCorrectionsQuery.data)
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}

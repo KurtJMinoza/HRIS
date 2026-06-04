@@ -31,7 +31,7 @@ export function useBulkApprovalSelection({
     pageCount > 0 && pageSelectableRows.every((row) => selectedIds.has(Number(row.id)))
 
   const showPageSelectAllBanner =
-    pageAllSelected && !selectAllMatching && totalCount > pageCount
+    !selectAllMatching && totalCount > pageCount
 
   const effectiveSelectedCount = selectAllMatching ? totalCount : selectedIds.size
 

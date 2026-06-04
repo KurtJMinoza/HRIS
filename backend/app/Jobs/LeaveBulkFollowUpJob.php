@@ -5,6 +5,8 @@ namespace App\Jobs;
 use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
+use App\Services\BulkApproval\LeaveBulkApprovalService;
+use App\Services\LeaveCreditService;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use Illuminate\Bus\Queueable;
@@ -22,13 +24,21 @@ class LeaveBulkFollowUpJob implements ShouldQueue
      */
     public function __construct(
         private readonly array $leaveIds,
+        private readonly ?int $actorId = null,
+        private readonly bool $forceCredits = false,
     ) {}
 
-    public function handle(NotificationService $notificationService): void
+    public function handle(NotificationService $notificationService, ?LeaveCreditService $leaveCreditService = null): void
     {
+        $ids = array_values(array_unique(array_map('intval', $this->leaveIds)));
+
+        if ($this->actorId !== null && $leaveCreditService instanceof LeaveCreditService) {
+            LeaveBulkApprovalService::deductCreditsAfterFastApproval($ids, $this->actorId, $this->forceCredits);
+        }
+
         $leaves = LeaveRequest::query()
             ->with('user')
-            ->whereIn('id', array_values(array_unique(array_map('intval', $this->leaveIds))))
+            ->whereIn('id', $ids)
             ->get();
 
         foreach ($leaves as $leave) {

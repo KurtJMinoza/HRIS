@@ -1934,6 +1934,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   pageSelectableCount={bulkSelection.pageCount}
                   totalMatchingCount={bulkSelection.totalCount}
                   showPageSelectAllBanner={bulkSelection.showPageSelectAllBanner}
+                  pageAllSelected={bulkSelection.pageAllSelected}
                   onSelectAllMatching={bulkSelection.selectAllMatchingRecords}
                   onClearSelection={bulkSelection.clearSelection}
                   entityLabel="requests"

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Crown, Loader2, Plus, RefreshCw, Save, Search, Trash2, UserRound } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -10,7 +10,6 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/use-toast'
 import {
   getOrganizationLeadership,
-  getEmployees,
   profileImageUrl,
   updateOrganizationLeadership,
 } from '@/api'
@@ -72,7 +71,7 @@ function normalizeScopeRequestType(value) {
   return SCOPE_REQUEST_TYPES.some(([optionValue]) => optionValue === key) ? key : 'all'
 }
 
-function normalizeRowsForCompare(rows) {
+function normalizeRowsForCompare(rows, legacyType = '') {
   return (rows || [])
     .filter((row) => row.position_type_id && row.employee_id)
     .map((row) => ({
@@ -80,12 +79,9 @@ function normalizeRowsForCompare(rows) {
       employee_id: String(row.employee_id),
       is_active: Boolean(row.is_active),
       remarks: String(row.remarks || '').trim(),
-      approval_scope_type: row.approval_scope_type || '',
+      approval_scope_type: resolveApprovalScopeType(row, legacyType),
       approval_scope_mode: row.approval_scope_mode || row.department_scope_mode || 'none',
-      approval_scope_ids: (Array.isArray(row.approval_scope_ids) ? row.approval_scope_ids : row.department_scope_ids || [])
-        .map((id) => Number(id))
-        .filter((id) => id > 0)
-        .sort((a, b) => a - b),
+      approval_scope_ids: normalizeScopeIds(row).sort((a, b) => a - b),
       department_scope_mode: row.department_scope_mode || 'none',
       department_scope_ids: (Array.isArray(row.department_scope_ids) ? row.department_scope_ids : [])
         .map((id) => Number(id))
@@ -95,26 +91,95 @@ function normalizeRowsForCompare(rows) {
     }))
 }
 
-function mapAssignmentRows(assignments) {
-  return (assignments || []).map((row) => ({
-    ...row,
-    position_type_id: String(row.position_type_id || ''),
-    employee_id: String(row.employee_id || ''),
-    remarks: row.remarks || '',
-    approval_scope_type: row.approval_scope_type || (row.department_scope_mode && row.department_scope_mode !== 'none' ? 'department' : ''),
-    approval_scope_mode: row.approval_scope_mode || row.department_scope_mode || 'none',
-    approval_scope_ids: Array.isArray(row.approval_scope_ids)
-      ? row.approval_scope_ids
-      : Array.isArray(row.department_scope_ids) ? row.department_scope_ids : [],
-    approval_scope_labels: row.approval_scope_labels || row.department_scope_labels || [],
-    department_scope_mode: row.department_scope_mode || 'none',
-    department_scope_ids: Array.isArray(row.department_scope_ids) ? row.department_scope_ids : [],
-    scope_request_type: normalizeScopeRequestType(row.scope_request_type),
-    department_scope_labels: row.department_scope_labels || [],
-  }))
+function normalizeScopeIds(row) {
+  const raw = Array.isArray(row.approval_scope_ids)
+    ? row.approval_scope_ids
+    : Array.isArray(row.department_scope_ids)
+      ? row.department_scope_ids
+      : []
+
+  return raw.map((id) => Number(id)).filter((id) => id > 0)
 }
 
-function buildAssignmentsPayload(rows, positionTypes) {
+function resolveApprovalScopeType(row, legacyType) {
+  const mode = row.approval_scope_mode || row.department_scope_mode || 'none'
+  if (mode === 'none') {
+    return 'none'
+  }
+
+  const explicit = row.approval_scope_type
+  if (explicit && explicit !== 'none') {
+    return explicit
+  }
+
+  if (row.department_scope_mode && row.department_scope_mode !== 'none') {
+    return 'department'
+  }
+
+  return DEFAULT_SCOPE_TYPES_BY_LEGACY_TYPE[legacyType]?.[0] || 'department'
+}
+
+function inferScopeTypeFromIds(scopeIds, optionsByType, allowedTypes) {
+  if (!Array.isArray(scopeIds) || scopeIds.length === 0) {
+    return ''
+  }
+
+  const idSet = new Set(scopeIds.map((id) => String(id)))
+  for (const type of allowedTypes) {
+    const options = optionsByType[type] || []
+    if (options.length === 0) {
+      continue
+    }
+    if ([...idSet].every((id) => options.some((option) => String(option.id) === id))) {
+      return type
+    }
+  }
+
+  return ''
+}
+
+function resolvePositionTypeId(row, positionTypes) {
+  const id = String(row.position_type_id || '')
+  if (id && positionTypes.some((type) => String(type.id) === id)) {
+    return id
+  }
+  const byName = positionTypes.find(
+    (type) => type.position_name && row.position_name && type.position_name === row.position_name,
+  )
+  if (byName) {
+    return String(byName.id)
+  }
+  if (positionTypes.length === 1) {
+    return String(positionTypes[0].id)
+  }
+  return id
+}
+
+function mapAssignmentRows(assignments, positionTypes = [], legacyType = '') {
+  return (assignments || []).map((row) => {
+    const approvalScopeMode = row.approval_scope_mode || row.department_scope_mode || 'none'
+    const approvalScopeType = resolveApprovalScopeType(row, legacyType)
+    const approvalScopeIds = normalizeScopeIds(row)
+    const isDepartmentScope = approvalScopeType === 'department'
+
+    return {
+      ...row,
+      position_type_id: resolvePositionTypeId(row, positionTypes),
+      employee_id: String(row.employee_id || ''),
+      remarks: row.remarks || '',
+      approval_scope_type: approvalScopeType,
+      approval_scope_mode: approvalScopeMode,
+      approval_scope_ids: approvalScopeIds,
+      approval_scope_labels: row.approval_scope_labels || row.department_scope_labels || [],
+      department_scope_mode: isDepartmentScope ? approvalScopeMode : 'none',
+      department_scope_ids: isDepartmentScope ? approvalScopeIds : [],
+      scope_request_type: normalizeScopeRequestType(row.scope_request_type),
+      department_scope_labels: isDepartmentScope ? (row.department_scope_labels || row.approval_scope_labels || []) : [],
+    }
+  })
+}
+
+function buildAssignmentsPayload(rows, positionTypes, legacyType) {
   return rows
     .filter((row) => row.position_type_id && row.employee_id)
     .map((row) => {
@@ -122,14 +187,8 @@ function buildAssignmentsPayload(rows, positionTypes) {
         (type) => String(type.id) === String(row.position_type_id),
       )
       const mode = row.approval_scope_mode || row.department_scope_mode || 'none'
-      const scopeType = mode === 'none'
-        ? 'none'
-        : row.approval_scope_type || (row.department_scope_mode && row.department_scope_mode !== 'none' ? 'department' : null)
-      const scopeIds = Array.isArray(row.approval_scope_ids)
-        ? row.approval_scope_ids.map(Number).filter((id) => id > 0)
-        : Array.isArray(row.department_scope_ids)
-          ? row.department_scope_ids.map(Number).filter((id) => id > 0)
-          : []
+      const scopeType = resolveApprovalScopeType(row, legacyType)
+      const scopeIds = normalizeScopeIds(row)
       const departmentScopeIds = scopeType === 'department'
         ? scopeIds
         : []
@@ -194,8 +253,21 @@ function findEmployee(roster, employeeId) {
   return (Array.isArray(roster) ? roster : []).find((employee) => String(employee.id) === String(employeeId)) || null
 }
 
-function EmployeeSearchSelect({ value, onChange, roster, disabled, searchFilters = {} }) {
+function EmployeeSearchSelect({ value, onChange, roster, disabled, searchFilters = {}, assignmentHint = null }) {
   const selectedFromRoster = useMemo(() => findEmployee(roster, value), [roster, value])
+  const selectedEmployee = useMemo(() => {
+    if (selectedFromRoster) return selectedFromRoster
+    if (!value) return null
+    const hintId = normalizeLeaderUserId(assignmentHint?.id ?? assignmentHint?.employee_id ?? value)
+    if (!hintId) return null
+    return {
+      id: hintId,
+      employee_id: hintId,
+      name: assignmentHint?.employee_name || assignmentHint?.name || assignmentHint?.display_name || 'Assigned employee',
+      display_name: assignmentHint?.employee_name || assignmentHint?.display_name || assignmentHint?.name || 'Assigned employee',
+    }
+  }, [assignmentHint, selectedFromRoster, value])
+
   const { query, setQuery, results, loading, error } = useHeadAssignmentEmployeeSearch({
     enabled: !disabled,
     searchFilters: {
@@ -203,8 +275,13 @@ function EmployeeSearchSelect({ value, onChange, roster, disabled, searchFilters
       active_only: searchFilters.active_only !== false,
       ...searchFilters,
     },
-    selectedEmployee: selectedFromRoster,
+    selectedEmployee,
   })
+
+  const selectedInResults = useMemo(
+    () => results.some((employee) => normalizeLeaderUserId(employee.id ?? employee.employee_id) === normalizeLeaderUserId(value)),
+    [results, value],
+  )
 
   return (
     <div className="space-y-2">
@@ -229,6 +306,12 @@ function EmployeeSearchSelect({ value, onChange, roster, disabled, searchFilters
         disabled={disabled}
       >
         <option value="">Select employee</option>
+        {value && !selectedInResults && selectedEmployee ? (
+          <option value={normalizeLeaderUserId(value)}>
+            {headAssignmentPrimaryLine(selectedEmployee)}
+            {headAssignmentSecondaryLine(selectedEmployee) ? ` — ${headAssignmentSecondaryLine(selectedEmployee)}` : ''}
+          </option>
+        ) : null}
         {results.map((employee) => {
           const employeeId = normalizeLeaderUserId(employee.id ?? employee.employee_id)
           return (
@@ -246,21 +329,20 @@ function EmployeeSearchSelect({ value, onChange, roster, disabled, searchFilters
   )
 }
 
-function ApprovalScopeEditor({ row, index, legacyType, scopeOptions, canManage, saving, onUpdate }) {
+const ApprovalScopeEditor = memo(function ApprovalScopeEditor({ row, index, legacyType, scopeOptions, canManage, saving, onUpdate }) {
   const configuredTypes = DEFAULT_SCOPE_TYPES_BY_LEGACY_TYPE[legacyType] || []
   const optionTypes = Object.keys(scopeOptions || {}).filter((type) => SCOPE_TYPE_LABELS[type])
   const allowedTypes = [...new Set([...configuredTypes, ...optionTypes])]
   const optionsByType = scopeOptions || {}
-  const savedType = allowedTypes.includes(row.approval_scope_type) ? row.approval_scope_type : ''
-  const currentType = savedType || allowedTypes[0] || 'department'
   const currentMode = row.approval_scope_mode || row.department_scope_mode || 'none'
+  const selectedIds = normalizeScopeIds(row).map(String)
+  const inferredType = inferScopeTypeFromIds(selectedIds, optionsByType, allowedTypes)
+  const savedType = row.approval_scope_type && row.approval_scope_type !== 'none' && allowedTypes.includes(row.approval_scope_type)
+    ? row.approval_scope_type
+    : inferredType
+  const currentType = savedType || allowedTypes[0] || 'department'
   const currentOptions = optionsByType[currentType] || []
   const currentPluralLabel = SCOPE_TYPE_PLURAL_LABELS[currentType] || `${SCOPE_TYPE_LABELS[currentType] || 'Item'}s`
-  const selectedIds = Array.isArray(row.approval_scope_ids)
-    ? row.approval_scope_ids.map(String)
-    : Array.isArray(row.department_scope_ids)
-      ? row.department_scope_ids.map(String)
-    : []
 
   const updateScope = (patch) => {
     const nextMode = patch.approval_scope_mode ?? currentMode
@@ -405,9 +487,9 @@ function ApprovalScopeEditor({ row, index, legacyType, scopeOptions, canManage, 
       </div>
     </div>
   )
-}
+})
 
-function LeadershipAssignmentCard({
+const LeadershipAssignmentCard = memo(function LeadershipAssignmentCard({
   row,
   index,
   canManage,
@@ -517,6 +599,11 @@ function LeadershipAssignmentCard({
                 onChange={(employeeId) => onUpdate(index, { employee_id: employeeId })}
                 roster={roster}
                 disabled={saving}
+                assignmentHint={{
+                  id: row.employee_id,
+                  employee_name: row.employee_name,
+                  name: row.employee_name,
+                }}
               />
             ) : (
               <p className="text-sm font-medium text-foreground">{displayName}</p>
@@ -573,7 +660,7 @@ function LeadershipAssignmentCard({
       </div>
     </article>
   )
-}
+})
 
 const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSection({
   legacyType,
@@ -594,23 +681,18 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
 
   const applyRows = useCallback((nextRows) => {
     setRows(nextRows)
-    savedSnapshotRef.current = JSON.stringify(normalizeRowsForCompare(nextRows))
-  }, [])
+    savedSnapshotRef.current = JSON.stringify(normalizeRowsForCompare(nextRows, legacyType))
+  }, [legacyType])
 
   const load = useCallback(async () => {
     if (!legacyType || !legacyId) return
     setLoading(true)
     try {
-      const [leadership, roster] = await Promise.all([
-        getOrganizationLeadership(legacyType, legacyId),
-        employeeOptions
-          ? Promise.resolve({ employees: employeeOptions })
-          : getEmployees({ for_leadership_assignment: true, per_page: 'all' }),
-      ])
+      const leadership = await getOrganizationLeadership(legacyType, legacyId)
       setPayload(leadership)
-      applyRows(mapAssignmentRows(leadership.assignments))
-      if (!employeeOptions) {
-        setEmployees(Array.isArray(roster?.employees) ? roster.employees : roster?.data || [])
+      applyRows(mapAssignmentRows(leadership.assignments, leadership.position_types || [], legacyType))
+      if (employeeOptions) {
+        setEmployees(Array.isArray(employeeOptions) ? employeeOptions : [])
       }
     } catch (error) {
       toast({ variant: 'destructive', title: 'Failed to load leadership positions', description: error.message })
@@ -650,9 +732,9 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
     ])
   }
 
-  const updateRow = (index, patch) => {
+  const updateRow = useCallback((index, patch) => {
     setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)))
-  }
+  }, [])
 
   const removeRow = (index) => {
     setRows((prev) => prev.filter((_, i) => i !== index))
@@ -662,10 +744,10 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
     if (!canManage) return false
     setSaving(true)
     try {
-      const assignments = buildAssignmentsPayload(rows, positionTypes)
+      const assignments = buildAssignmentsPayload(rows, positionTypes, legacyType)
       const response = await updateOrganizationLeadership(legacyType, legacyId, { assignments })
       setPayload(response)
-      applyRows(mapAssignmentRows(response.assignments))
+      applyRows(mapAssignmentRows(response.assignments, response.position_types || positionTypes, legacyType))
       toast({ title: 'Leadership positions saved' })
       return true
     } catch (error) {
@@ -678,8 +760,8 @@ const LeadershipPositionsSection = forwardRef(function LeadershipPositionsSectio
 
   useImperativeHandle(ref, () => ({
     save,
-    isDirty: () => JSON.stringify(normalizeRowsForCompare(rows)) !== savedSnapshotRef.current,
-  }), [rows, save])
+    isDirty: () => JSON.stringify(normalizeRowsForCompare(rows, legacyType)) !== savedSnapshotRef.current,
+  }), [legacyType, rows, save])
 
   if (!legacyType || !legacyId) return null
 

@@ -11,6 +11,7 @@ use App\Models\OvertimeApprovalAudit;
 use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\User;
+use App\Services\BulkApproval\OvertimeBulkApprovalService;
 use App\Services\BulkApproval\OvertimeBulkApprovalQuery;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
@@ -45,6 +46,7 @@ class OvertimeController extends Controller
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly OvertimeBulkApprovalQuery $bulkApprovalQuery,
+        private readonly OvertimeBulkApprovalService $bulkApprovalService,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly OvertimeService $overtimeService,
         private readonly NotificationService $notificationService,
@@ -758,6 +760,14 @@ class OvertimeController extends Controller
         $approved = 0;
         $failed = 0;
         $approvedIds = [];
+
+        $fastResult = $this->bulkApprovalService->approveFinalAdminHr($actor, $ids, $remarks);
+        $approved += $fastResult['approved'];
+        $skipped += $fastResult['skipped'];
+        $failed += $fastResult['failed'];
+        $failedItems = array_merge($failedItems, $fastResult['failed_items']);
+        $approvedIds = array_merge($approvedIds, $fastResult['approved_ids']);
+        $ids = $fastResult['fallback_ids'];
 
         foreach ($ids as $id) {
             try {

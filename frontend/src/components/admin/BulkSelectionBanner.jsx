@@ -10,6 +10,7 @@ export function BulkSelectionBanner({
   totalCount = 0,
   selectAllMatching = false,
   showPageSelectAllBanner = false,
+  pageAllSelected = false,
   onSelectAllMatching,
   onClearSelection,
   entityLabel = 'requests',
@@ -51,8 +52,17 @@ export function BulkSelectionBanner({
       role="status"
     >
       <p className="text-muted-foreground">
-        All <span className="font-semibold tabular-nums text-foreground">{page}</span> {label} on
-        this page are selected.
+        {pageAllSelected ? (
+          <>
+            All <span className="font-semibold tabular-nums text-foreground">{page}</span> {label} on
+            this page are selected.
+          </>
+        ) : (
+          <>
+            <span className="font-semibold tabular-nums text-foreground">{total}</span> matching {label}
+            are available across all pages.
+          </>
+        )}
       </p>
       <Button type="button" variant="link" size="sm" className="h-8 shrink-0 px-0" onClick={onSelectAllMatching}>
         Select all {total} matching {label}

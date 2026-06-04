@@ -25,8 +25,8 @@ return new class extends Migration
         $this->addIndex('attendance_corrections', ['user_id', 'pending_approval', 'approved', 'date'], 'ac_bulk_user_pending_date_idx');
         $this->addIndex('attendance_corrections', ['pending_approval', 'approved', 'rejected_at', 'filed_at'], 'ac_bulk_pending_state_filed_idx');
 
-        $this->addIndex('users', ['company_id', 'department_id', 'branch_id'], 'users_bulk_company_dept_branch_idx');
-        $this->addIndex('users', ['first_name', 'last_name'], 'users_bulk_first_last_idx');
+        // users: skipped — table is at MySQL's 64-index limit; equivalent indexes already exist
+        // (e.g. pg_users_company_dept_branch_idx, users_speed_name_idx).
     }
 
     public function down(): void
@@ -44,8 +44,6 @@ return new class extends Migration
             ['attendance_corrections', 'ac_bulk_company_pending_date_idx'],
             ['attendance_corrections', 'ac_bulk_user_pending_date_idx'],
             ['attendance_corrections', 'ac_bulk_pending_state_filed_idx'],
-            ['users', 'users_bulk_company_dept_branch_idx'],
-            ['users', 'users_bulk_first_last_idx'],
         ] as [$table, $index]) {
             $this->dropIndexIfExists($table, $index);
         }
