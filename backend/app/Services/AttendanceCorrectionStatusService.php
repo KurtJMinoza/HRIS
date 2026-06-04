@@ -158,6 +158,7 @@ class AttendanceCorrectionStatusService
     public function aggregateStatusCounts($query): array
     {
         $rows = (clone $query)
+            ->reorder()
             ->selectRaw('status, COUNT(*) as aggregate')
             ->groupBy('status')
             ->pluck('aggregate', 'status');
