@@ -3132,10 +3132,10 @@ class AttendanceController extends Controller
                 'user.workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days',
                 'user.companyHeadships:id,name,logo,company_head_id',
                 'user.company:id,name,logo',
-                'user.branch:id,company_id',
+                'user.branch:id,name,company_id',
                 'user.branch.company:id,name,logo',
                 'user.departmentRelation:id,branch_id',
-                'user.departmentRelation.branch:id,company_id',
+                'user.departmentRelation.branch:id,name,company_id',
                 'user.departmentRelation.branch.company:id,name,logo',
             ])
             ->orderByRaw('COALESCE(verified_at, created_at) DESC')
@@ -3146,6 +3146,7 @@ class AttendanceController extends Controller
                 $info = $this->kioskLogStatus($log);
                 $user = $log->user;
                 $company = $user?->companyHeadships->first() ?? $user?->company ?? $user?->branch?->company ?? $user?->departmentRelation?->branch?->company;
+                $branch = $user?->branch ?? $user?->departmentRelation?->branch;
                 $companyLogoUrl = $company && is_string($company->logo) && trim($company->logo) !== ''
                     ? $this->publicMediaUrl($company->logo)
                     : null;
@@ -3158,6 +3159,7 @@ class AttendanceController extends Controller
                     'employee_profile_image_url' => $user?->profile_image_url,
                     'employee_profile_image' => $user?->profile_image,
                     'company' => ['name' => $company?->name, 'logo_url' => $companyLogoUrl],
+                    'branch_name' => $branch?->name,
                     'created_at' => $punchAt->toIso8601String(),
                     'status' => $info['status'] ?? null,
                     'late_minutes' => $info['late_minutes'] ?? null,

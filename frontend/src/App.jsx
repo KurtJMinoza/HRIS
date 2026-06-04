@@ -1039,6 +1039,9 @@ function SmartDTRPreview({ className }) {
                   const isLate = log.status === 'late'
                   const StatusIcon = log.type === 'clock_in' ? LogIn : LogOut
                   const statusIconCls = 'text-[#ff5a14] dark:text-[#fb923c]'
+                  const companyLogo = companyLogoUrl(log.company)
+                  const companyName = log.company?.name
+                  const branchName = log.branch_name || log.branch?.name
                   return (
                     <li
                       key={log.id}
@@ -1072,13 +1075,13 @@ function SmartDTRPreview({ className }) {
                         <p className="flex items-center gap-1.5 text-xs text-[#4b5563] dark:text-muted-foreground">
                           <StatusIcon className={cn('size-3 shrink-0', statusIconCls)} />
                           <span>{log.type === 'clock_in' ? 'Clocked in' : 'Clocked out'}</span>
-                          {log.company?.name && (
+                          {(companyName || branchName) && (
                             <>
                               <span className="opacity-50">·</span>
                               <span className="inline-flex min-w-0 max-w-[min(140px,45vw)] items-center gap-1.5">
-                                {companyLogoUrl(log.company) ? (
+                                {companyLogo ? (
                                   <img
-                                    src={companyLogoUrl(log.company)}
+                                    src={companyLogo}
                                     alt=""
                                     className="size-4 shrink-0 rounded-sm bg-white object-contain ring-1 ring-[#e1e4ea] dark:bg-card dark:ring-border"
                                     loading="lazy"
@@ -1086,7 +1089,9 @@ function SmartDTRPreview({ className }) {
                                     onError={(e) => { e.currentTarget.style.display = 'none' }}
                                   />
                                 ) : null}
-                                <span className="truncate">{log.company.name}</span>
+                                <span className="truncate">
+                                  {[companyName, branchName].filter(Boolean).join(' · ')}
+                                </span>
                               </span>
                             </>
                           )}
