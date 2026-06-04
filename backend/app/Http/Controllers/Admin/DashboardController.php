@@ -609,6 +609,9 @@ class DashboardController extends Controller
      */
     private function dashboardAttendanceTodayLitePayload(Request $request): array
     {
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
         $page = max(1, (int) $request->input('page', 1));
         $perPage = min(100, max(10, (int) $request->input('per_page', 50)));
         $filter = (string) $request->input('filter', 'all');
@@ -618,10 +621,12 @@ class DashboardController extends Controller
         $dateKey = $today->toDateString();
         $companyId = (int) ($request->user()?->getEffectiveCompanyId() ?? $request->user()?->company_id ?? 0);
         $cacheKey = sprintf(
-            'admin_dashboard:attendance_today:%d:%s:%d:%s:v%d',
+            'admin_dashboard:attendance_today:%d:%d:%s:%d:%d:%s:v%d',
+            (int) $actor->id,
             $companyId,
             $dateKey,
             $page,
+            $perPage,
             $filtersHash,
             AdminDashboardCache::segmentVersion($companyId, 'attendance'),
         );
@@ -630,9 +635,7 @@ class DashboardController extends Controller
         $cached = AdminDashboardCache::rememberRaw(
             $cacheKey,
             AdminDashboardCache::TTL_ATTENDANCE,
-            function () use ($request, $today, $page, $perPage, $filter): array {
-                $actor = $request->user();
-                abort_unless($actor instanceof User, 403);
+            function () use ($actor, $today, $page, $perPage, $filter): array {
                 $activeScopeIds = $this->scopedEmployeeIds($actor, true);
                 $todayDayKey = self::DAY_KEYS[(int) $today->format('w')];
                 $rows = $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds, rowLimit: 500);
@@ -646,10 +649,22 @@ class DashboardController extends Controller
                 $slice = array_slice($rows, $offset, $perPage);
                 $data = array_map(static function (array $row): array {
                     return [
+                        'id' => $row['id'] ?? null,
                         'employee_name' => $row['employee_name'] ?? '—',
+                        'employee_sort_key' => $row['employee_sort_key'] ?? null,
                         'department' => $row['department'] ?? '—',
+                        'company_name' => $row['company_name'] ?? null,
+                        'company_logo_url' => $row['company_logo_url'] ?? null,
+                        'profile_image' => $row['profile_image'] ?? null,
                         'time_in' => $row['time_in'] ?? null,
                         'time_out' => $row['time_out'] ?? null,
+                        'is_late' => ! empty($row['is_late']),
+                        'is_absent' => ! empty($row['is_absent']),
+                        'is_half_day' => ! empty($row['is_half_day']),
+                        'late_label' => $row['late_label'] ?? null,
+                        'absent_label' => $row['absent_label'] ?? null,
+                        'attendance_time_out_status' => $row['attendance_time_out_status'] ?? null,
+                        'virtual_time_out_from_ot' => ! empty($row['virtual_time_out_from_ot']),
                         'status' => ! empty($row['is_absent'])
                             ? 'absent'
                             : (! empty($row['is_late']) ? 'late' : (! empty($row['time_in']) ? 'present' : 'pending')),

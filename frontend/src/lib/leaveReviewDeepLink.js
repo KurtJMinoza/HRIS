@@ -13,7 +13,9 @@ export function parseLeaveReviewRequestId(raw) {
 }
 
 /** Shared numeric review id parser for leave, overtime, and attendance corrections. */
-export const parseReviewRequestId = parseLeaveReviewRequestId
+export function parseReviewRequestId(raw) {
+  return parseLeaveReviewRequestId(raw)
+}
 
 /** Remove review deep-link query keys after the target modal has opened. */
 export function clearRequestReviewSearchParams(setSearchParams) {

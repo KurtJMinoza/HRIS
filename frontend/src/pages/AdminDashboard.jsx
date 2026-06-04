@@ -936,12 +936,19 @@ export default function AdminDashboard() {
     return `${hours}h ago`
   })()
 
-  // Keep logs page in valid range when today_logs length changes
+  // Keep logs page in valid range when the server-side attendance page count changes.
   useEffect(() => {
+    const meta = attendanceQuery.data?.meta
+    if (meta) {
+      const maxPage = Math.max(1, Number(meta.last_page) || 1)
+      setLogsPage((p) => Math.min(p, maxPage))
+      return
+    }
+
     const total = data?.today_logs?.length ?? 0
     const maxPage = Math.max(1, Math.ceil(total / LOGS_PER_PAGE))
     setLogsPage((p) => Math.min(p, maxPage))
-  }, [data?.today_logs?.length])
+  }, [attendanceQuery.data?.meta, data?.today_logs?.length])
 
   // All useMemo hooks MUST live before any early returns (Rules of Hooks).
   const attendanceTableMeta = attendanceQuery.data?.meta ?? null
@@ -952,11 +959,18 @@ export default function AdminDashboard() {
         id: row.id ?? index,
         employee_name: row.employee_name ?? '—',
         department: row.department ?? '—',
-        company_name: row.department ?? '—',
+        company_name: row.company_name ?? '—',
+        company_logo_url: row.company_logo_url ?? null,
+        employee_sort_key: row.employee_sort_key ?? row.employee_name ?? '',
         time_in: row.time_in ?? null,
         time_out: row.time_out ?? null,
         is_late: row.status === 'late' || Boolean(row.is_late),
         is_absent: row.status === 'absent' || Boolean(row.is_absent),
+        is_half_day: Boolean(row.is_half_day),
+        late_label: row.late_label ?? null,
+        absent_label: row.absent_label ?? null,
+        attendance_time_out_status: row.attendance_time_out_status ?? null,
+        virtual_time_out_from_ot: Boolean(row.virtual_time_out_from_ot),
         late_minutes: row.late_minutes ?? null,
         profile_image: row.profile_image ?? null,
       }))
@@ -1312,8 +1326,12 @@ export default function AdminDashboard() {
   const logsEnd = attendanceTableMeta
     ? Math.min(effectiveLogsPage * LOGS_PER_PAGE, totalLogs)
     : Math.min(effectiveLogsPage * LOGS_PER_PAGE, totalLogs)
+  const attendanceTableLoading = attendanceQuery.isFetching && todayLogs.length === 0
+  const attendanceTableError = attendanceQuery.error
   const emptyLogsMessage =
-    attendanceFilter === 'late'
+    attendanceTableError
+      ? (attendanceTableError?.message || 'Failed to load today\'s attendance.')
+      : attendanceFilter === 'late'
       ? 'No late employees today.'
       : attendanceFilter === 'absent'
         ? 'No absent employees today.'
@@ -3261,7 +3279,12 @@ export default function AdminDashboard() {
           <CardContent className="p-0">
             {/* Mobile: card list (no horizontal scrolling) */}
             <div className="md:hidden">
-              {paginatedLogs.length === 0 ? (
+              {attendanceTableLoading ? (
+                <div className="flex items-center justify-center gap-2 px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
+                  <RefreshCw className="size-4 animate-spin" />
+                  Loading today&apos;s attendance…
+                </div>
+              ) : paginatedLogs.length === 0 ? (
                 <div className="px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
                   {emptyLogsMessage}
                 </div>
@@ -3397,7 +3420,16 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedLogs.length === 0 ? (
+                  {attendanceTableLoading ? (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
+                        <span className="inline-flex items-center gap-2">
+                          <RefreshCw className="size-4 animate-spin" />
+                          Loading today&apos;s attendance…
+                        </span>
+                      </td>
+                    </tr>
+                  ) : paginatedLogs.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
                         {emptyLogsMessage}
