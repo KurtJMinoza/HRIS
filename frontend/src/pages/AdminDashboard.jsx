@@ -871,7 +871,7 @@ export default function AdminDashboard() {
       return
     }
     let cancelled = false
-    getCompanies()
+    getCompanies({ fresh: true })
       .then((companiesRes) => {
         if (cancelled) return
         setCompaniesList(Array.isArray(companiesRes?.companies) ? companiesRes.companies : [])
@@ -1264,7 +1264,7 @@ export default function AdminDashboard() {
     // Keep backend percentage for reference/debug; UI uses computed attendance_pct above.
     present_pct: c.present_pct ?? 0,
     color: CHART.deptBars[idx % CHART.deptBars.length],
-    logo_url: c.logo_url ?? (c.company_id != null ? companyLogoMap[c.company_id] : null),
+    logo_url: companyLogoUrl(c) ?? (c.company_id != null ? companyLogoMap[c.company_id] : null),
   }))
   const totalCompanyPresent = companyData.reduce((sum, d) => sum + (d.present ?? 0), 0)
   const totalCompanyHeadcount = companyData.reduce((sum, d) => sum + (d.headcount ?? 0), 0)

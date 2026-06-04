@@ -583,7 +583,14 @@ export default function AdminGeneratePayslipsPage() {
     () => companies.find((c) => String(c.id) === String(companyId)),
     [companies, companyId],
   )
-  const selectedCompanyLogo = resolveLogoUrl(selectedCompany?.logo_url)
+  const companyLogoById = useMemo(() => {
+    const map = {}
+    companies.forEach((company) => {
+      if (company?.id != null) map[company.id] = resolveLogoUrl(company)
+    })
+    return map
+  }, [companies])
+  const selectedCompanyLogo = resolveLogoUrl(selectedCompany)
 
   const activeEmployees = Number(preview?.total_employees ?? 0)
   const payrollScopeTotalEmployees = Number(preview?.payroll_scope_total_employees ?? activeEmployees)
@@ -1579,7 +1586,7 @@ export default function AdminGeneratePayslipsPage() {
                     {companyRows.map((r) => {
                       const key = rowGroupKey(r)
                       const isExecomRow = r.payroll_module === 'execom' || String(r.module_label || '').toLowerCase().includes('execom')
-                      const logo = isExecomRow ? null : resolveLogoUrl(r.company_logo_url)
+                      const logo = isExecomRow ? null : (resolveLogoUrl(r) || companyLogoById[r.company_id])
                       const displayCompanyName = isExecomRow ? 'Execom' : (r.company_name ?? '—')
                       const showDelete = Boolean(r.can_delete)
                       const deleteDisabled = !r.can_delete || deletingBatchId === r.payroll_batch_run_id

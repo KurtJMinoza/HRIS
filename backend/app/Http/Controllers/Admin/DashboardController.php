@@ -3094,7 +3094,13 @@ class DashboardController extends Controller
             $companyIds = array_values(array_filter(array_map('intval', $arr)));
         }
 
-        $companies = Company::orderBy('name')->get(['id', 'name', 'logo']);
+        $companies = Company::orderBy('name')->get(['id', 'name', 'logo'])
+            ->map(fn (Company $company): array => [
+                'id' => (int) $company->id,
+                'name' => $company->name,
+                'logo' => $company->logo,
+                'logo_url' => $company->logo ? $this->companyLogoUrl($company->logo) : null,
+            ]);
         $actor = $request->user();
         $rows = $fromDate->equalTo($toDate)
             ? $this->companyAttendanceDistribution($fromDate, $companyIds, $actor)

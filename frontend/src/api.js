@@ -5380,12 +5380,11 @@ export function companyLogoUrl(company) {
     return profileImageUrl(logoUrl)
   }
 
-  const origin = apiOrigin()
-  if (logoUrl.startsWith('/')) return `${origin}${logoUrl}`
-  if (logoUrl.startsWith('api/')) return `${origin}/${logoUrl}`
+  if (logoUrl.startsWith('/') || logoUrl.startsWith('api/') || logoUrl.startsWith('storage/')) {
+    return profileImageUrl(logoUrl.startsWith('api/') ? `/${logoUrl}` : logoUrl)
+  }
 
-  const storagePath = logoUrl.startsWith('storage/') ? logoUrl : `storage/${logoUrl}`
-  return `${origin}/${storagePath}`
+  return profileImageUrl(`storage/${logoUrl}`)
 }
 
 export async function getCompanies(params = {}) {
