@@ -15,7 +15,8 @@ import {
   updateOrganizationLeadership,
 } from '@/api'
 import { formatEmployeeName } from '@/lib/employeeSort'
-import { filterEmployeesByQuery } from '@/lib/employeeSearch'
+import { employeeDisplayName, headAssignmentPrimaryLine, headAssignmentSecondaryLine, normalizeLeaderUserId } from '@/lib/employeeSearch'
+import { useHeadAssignmentEmployeeSearch } from '@/hooks/useHeadAssignmentEmployeeSearch'
 import { cn } from '@/lib/utils'
 
 const EMPTY_ROW = {
@@ -193,28 +194,34 @@ function findEmployee(roster, employeeId) {
   return (Array.isArray(roster) ? roster : []).find((employee) => String(employee.id) === String(employeeId)) || null
 }
 
-function EmployeeSearchSelect({ value, onChange, roster, disabled }) {
-  const [search, setSearch] = useState('')
-
-  const filtered = useMemo(() => {
-    const list = Array.isArray(roster) ? roster : []
-    const q = search.trim().toLowerCase()
-    if (!q) return list.slice(0, 200)
-    return filterEmployeesByQuery(list, q).slice(0, 200)
-  }, [roster, search])
+function EmployeeSearchSelect({ value, onChange, roster, disabled, searchFilters = {} }) {
+  const selectedFromRoster = useMemo(() => findEmployee(roster, value), [roster, value])
+  const { query, setQuery, results, loading, error } = useHeadAssignmentEmployeeSearch({
+    enabled: !disabled,
+    searchFilters: {
+      include_cross_company: searchFilters.include_cross_company !== false,
+      active_only: searchFilters.active_only !== false,
+      ...searchFilters,
+    },
+    selectedEmployee: selectedFromRoster,
+  })
 
   return (
     <div className="space-y-2">
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
           placeholder="Search all active employees…"
           className="h-10 rounded-xl border-border/80 bg-background pl-9 shadow-sm dark:bg-input/35"
           disabled={disabled}
         />
+        {loading ? (
+          <Loader2 className="absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+        ) : null}
       </div>
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <select
         className="h-11 w-full rounded-xl border border-border/80 bg-background px-3 text-sm shadow-sm outline-none transition-colors focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-input/35"
         value={value}
@@ -222,14 +229,19 @@ function EmployeeSearchSelect({ value, onChange, roster, disabled }) {
         disabled={disabled}
       >
         <option value="">Select employee</option>
-        {filtered.map((employee) => (
-          <option key={employee.id} value={employee.id}>
-            {formatEmployeeName(employee, 'employee')}
-            {employee.employee_code ? ` (${employee.employee_code})` : ''}
-            {employee.company_name ? ` — ${employee.company_name}` : ''}
-          </option>
-        ))}
+        {results.map((employee) => {
+          const employeeId = normalizeLeaderUserId(employee.id ?? employee.employee_id)
+          return (
+            <option key={employeeId} value={employeeId}>
+              {headAssignmentPrimaryLine(employee)}
+              {headAssignmentSecondaryLine(employee) ? ` — ${headAssignmentSecondaryLine(employee)}` : ''}
+            </option>
+          )
+        })}
       </select>
+      {!query.trim() && results.length === 0 && !loading ? (
+        <p className="text-xs text-muted-foreground">Type a name, employee number, or email to search.</p>
+      ) : null}
     </div>
   )
 }

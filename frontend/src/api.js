@@ -1324,22 +1324,208 @@ export async function replaceMyEmergencyContacts(contacts) {
 
 // —— Admin: Dashboard ——
 
+const ADMIN_DASHBOARD_SEGMENTS = {
+  summary: '/admin/dashboard/summary',
+  requests: '/admin/dashboard/requests',
+  attendance: '/admin/dashboard/attendance-today',
+  payroll: '/admin/dashboard/payroll',
+  charts: '/admin/dashboard/charts',
+  recent: '/admin/dashboard/recent-activity',
+}
+
+async function fetchAdminDashboardSegment(path, options = {}) {
+  const res = await authenticatedFetch(path, options)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = res.status === 403
+      ? 'You do not have permission to view the dashboard.'
+      : (body.message || 'Failed to load dashboard')
+    throw new Error(msg)
+  }
+
+  return body.data != null ? body.data : body
+}
+
+function isPendingAttendanceCorrection(row) {
+  if (!row || typeof row !== 'object') return false
+  const status = String(row.status || '').toLowerCase()
+  if (status && status !== 'pending') return false
+  if (row.approved === true || row.rejected_at) return false
+  if (row.pending_approval === false) return false
+  return true
+}
+
+function normalizeDashboardData(raw) {
+  return {
+    stats: raw.stats ?? {},
+    stats_prev: raw.stats_prev ?? {},
+    weekly_overview: Array.isArray(raw.weekly_overview) ? raw.weekly_overview : [],
+    upcoming_holidays: Array.isArray(raw.upcoming_holidays) ? raw.upcoming_holidays : [],
+    department_distribution: Array.isArray(raw.department_distribution) ? raw.department_distribution : [],
+    company_distribution: Array.isArray(raw.company_distribution) ? raw.company_distribution : [],
+    today_logs: Array.isArray(raw.today_logs) ? raw.today_logs : [],
+    half_day_summary: raw.half_day_summary ?? { am_today: 0, pm_today: 0, total_today: 0, total_workforce: 0 },
+    today_leaves: Array.isArray(raw.today_leaves)
+      ? raw.today_leaves.filter((row) => String(row?.status || '').toLowerCase() === 'pending')
+      : [],
+    today_birthdays: Array.isArray(raw.today_birthdays) ? raw.today_birthdays : [],
+    current_month_birthdays: Array.isArray(raw.current_month_birthdays) ? raw.current_month_birthdays : [],
+    upcoming_30_days: Array.isArray(raw.upcoming_30_days) ? raw.upcoming_30_days : (Array.isArray(raw.upcoming_birthdays) ? raw.upcoming_birthdays : []),
+    upcoming_90_days: Array.isArray(raw.upcoming_90_days) ? raw.upcoming_90_days : (Array.isArray(raw.upcoming_birthdays_90) ? raw.upcoming_birthdays_90 : []),
+    upcoming_birthdays: Array.isArray(raw.upcoming_birthdays) ? raw.upcoming_birthdays : (Array.isArray(raw.upcoming_30_days) ? raw.upcoming_30_days : []),
+    upcoming_birthdays_90: Array.isArray(raw.upcoming_birthdays_90) ? raw.upcoming_birthdays_90 : (Array.isArray(raw.upcoming_90_days) ? raw.upcoming_90_days : []),
+    birthday_month_label: raw.birthday_month_label ?? '',
+    birthday_month_range_label: raw.birthday_month_range_label ?? '',
+    upcoming_regularizations: Array.isArray(raw.upcoming_regularizations) ? raw.upcoming_regularizations : [],
+    expiring_contracts: Array.isArray(raw.expiring_contracts) ? raw.expiring_contracts : [],
+    employment_settings: raw.employment_settings ?? null,
+    pending_attendance_corrections: Number(raw.pending_attendance_corrections ?? 0) || 0,
+    pending_overtime_request:
+      String(raw.pending_overtime_request?.status || '').toLowerCase() === 'pending'
+        ? raw.pending_overtime_request
+        : null,
+    pending_attendance_correction_preview:
+      isPendingAttendanceCorrection(raw.pending_attendance_correction_preview)
+        ? raw.pending_attendance_correction_preview
+        : null,
+    pending_attendance_correction_previews: Array.isArray(raw.pending_attendance_correction_previews)
+      ? raw.pending_attendance_correction_previews.filter(isPendingAttendanceCorrection)
+      : [],
+    pending_requests: Array.isArray(raw.pending_requests)
+      ? raw.pending_requests.filter(isPendingAttendanceCorrection)
+      : [],
+    pending_counts: raw.pending_counts ?? { leave: 0, overtime: 0, attendance_correction: 0, total: 0 },
+    payroll_summary: raw.payroll_summary ?? { pending_count: 0, finalized_count: 0, failed_count: 0 },
+    recent_activity: Array.isArray(raw.recent_activity) ? raw.recent_activity : [],
+  }
+}
+
+function normalizeDashboardSegment(raw, segment) {
+  const merged = normalizeDashboardData(raw)
+  if (segment === 'summary') {
+    const {
+      stats,
+      stats_prev,
+      half_day_summary,
+      upcoming_holidays,
+      today_birthdays,
+      current_month_birthdays,
+      upcoming_30_days,
+      upcoming_90_days,
+      upcoming_birthdays,
+      upcoming_birthdays_90,
+      birthday_month_label,
+      birthday_month_range_label,
+      upcoming_regularizations,
+      expiring_contracts,
+      employment_settings,
+    } = merged
+    return {
+      stats,
+      stats_prev,
+      half_day_summary,
+      upcoming_holidays,
+      today_birthdays,
+      current_month_birthdays,
+      upcoming_30_days,
+      upcoming_90_days,
+      upcoming_birthdays,
+      upcoming_birthdays_90,
+      birthday_month_label,
+      birthday_month_range_label,
+      upcoming_regularizations,
+      expiring_contracts,
+      employment_settings,
+    }
+  }
+  if (segment === 'requests') {
+    return {
+      pending_counts: merged.pending_counts,
+      overtime_summary: merged.overtime_summary,
+      pending_overtime_request: merged.pending_overtime_request,
+      pending_attendance_corrections: merged.pending_attendance_corrections,
+      pending_attendance_correction_preview: merged.pending_attendance_correction_preview,
+      pending_attendance_correction_previews: merged.pending_attendance_correction_previews,
+      pending_count: merged.pending_count,
+      pending_requests: merged.pending_requests,
+      today_leaves: merged.today_leaves,
+    }
+  }
+  if (segment === 'attendance') {
+    return { today_logs: merged.today_logs }
+  }
+  if (segment === 'payroll') {
+    return { payroll_summary: merged.payroll_summary }
+  }
+  if (segment === 'charts') {
+    return {
+      weekly_overview: merged.weekly_overview,
+      department_distribution: merged.department_distribution,
+      company_distribution: merged.company_distribution,
+    }
+  }
+  if (segment === 'recent') {
+    return { recent_activity: merged.recent_activity }
+  }
+  return merged
+}
+
+export async function getAdminDashboardSummary(options = {}) {
+  const raw = await fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.summary, options)
+  return normalizeDashboardSegment(raw, 'summary')
+}
+
+export async function getAdminDashboardRequests(options = {}) {
+  const raw = await fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.requests, options)
+  return normalizeDashboardSegment(raw, 'requests')
+}
+
+export async function getAdminDashboardAttendanceToday(options = {}) {
+  const raw = await fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.attendance, options)
+  return normalizeDashboardSegment(raw, 'attendance')
+}
+
+export async function getAdminDashboardPayroll(options = {}) {
+  const raw = await fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.payroll, options)
+  return normalizeDashboardSegment(raw, 'payroll')
+}
+
+export async function getAdminDashboardCharts(options = {}) {
+  const raw = await fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.charts, options)
+  return normalizeDashboardSegment(raw, 'charts')
+}
+
+export async function getAdminDashboardRecentActivity(options = {}) {
+  const raw = await fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.recent, options)
+  return normalizeDashboardSegment(raw, 'recent')
+}
+
 /**
  * Fetches admin dashboard data. Returns normalized shape so Overview cards always have stats/today_logs etc.
  * @returns {Promise<{ stats: object, stats_prev: object, weekly_overview: array, upcoming_holidays: array, department_distribution: array, today_logs: array }>}
  */
-export async function getDashboardData() {
-  const [summary, pending, attendance, payroll] = await Promise.all([
-    fetchAdminDashboardSegment('/admin/dashboard/summary'),
-    fetchAdminDashboardSegment('/admin/dashboard/pending-requests'),
-    fetchAdminDashboardSegment('/admin/dashboard/attendance-today'),
-    fetchAdminDashboardSegment('/admin/dashboard/payroll-summary'),
+export async function getDashboardData(options = {}) {
+  const [summary, requests, attendance, payroll, charts, recent] = await Promise.allSettled([
+    fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.summary, options),
+    fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.requests, options),
+    fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.attendance, options),
+    fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.payroll, options),
+    fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.charts, options),
+    fetchAdminDashboardSegment(ADMIN_DASHBOARD_SEGMENTS.recent, options),
   ])
+
+  const unwrap = (result) => (result.status === 'fulfilled' ? result.value : {})
+  if (summary.status === 'rejected') {
+    throw summary.reason
+  }
+
   const raw = {
-    ...summary,
-    ...pending,
-    ...attendance,
-    ...payroll,
+    ...unwrap(summary),
+    ...unwrap(requests),
+    ...unwrap(attendance),
+    ...unwrap(payroll),
+    ...unwrap(charts),
+    ...unwrap(recent),
   }
 
   return normalizeDashboardData(raw)
@@ -1392,73 +1578,6 @@ export async function dismissNotification(id) {
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.message || 'Failed to dismiss notification')
   return body
-}
-
-async function fetchAdminDashboardSegment(path) {
-  const res = await authenticatedFetch(path)
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const msg = res.status === 403
-      ? 'You do not have permission to view the dashboard.'
-      : (body.message || 'Failed to load dashboard')
-    throw new Error(msg)
-  }
-
-  return body.data != null ? body.data : body
-}
-
-function normalizeDashboardData(raw) {
-  return {
-    stats: raw.stats ?? {},
-    stats_prev: raw.stats_prev ?? {},
-    weekly_overview: Array.isArray(raw.weekly_overview) ? raw.weekly_overview : [],
-    upcoming_holidays: Array.isArray(raw.upcoming_holidays) ? raw.upcoming_holidays : [],
-    department_distribution: Array.isArray(raw.department_distribution) ? raw.department_distribution : [],
-    company_distribution: Array.isArray(raw.company_distribution) ? raw.company_distribution : [],
-    today_logs: Array.isArray(raw.today_logs) ? raw.today_logs : [],
-    half_day_summary: raw.half_day_summary ?? { am_today: 0, pm_today: 0, total_today: 0, total_workforce: 0 },
-    today_leaves: Array.isArray(raw.today_leaves)
-      ? raw.today_leaves.filter((row) => String(row?.status || '').toLowerCase() === 'pending')
-      : [],
-    today_birthdays: Array.isArray(raw.today_birthdays) ? raw.today_birthdays : [],
-    current_month_birthdays: Array.isArray(raw.current_month_birthdays) ? raw.current_month_birthdays : [],
-    upcoming_30_days: Array.isArray(raw.upcoming_30_days) ? raw.upcoming_30_days : (Array.isArray(raw.upcoming_birthdays) ? raw.upcoming_birthdays : []),
-    upcoming_90_days: Array.isArray(raw.upcoming_90_days) ? raw.upcoming_90_days : (Array.isArray(raw.upcoming_birthdays_90) ? raw.upcoming_birthdays_90 : []),
-    upcoming_birthdays: Array.isArray(raw.upcoming_birthdays) ? raw.upcoming_birthdays : (Array.isArray(raw.upcoming_30_days) ? raw.upcoming_30_days : []),
-    upcoming_birthdays_90: Array.isArray(raw.upcoming_birthdays_90) ? raw.upcoming_birthdays_90 : (Array.isArray(raw.upcoming_90_days) ? raw.upcoming_90_days : []),
-    birthday_month_label: raw.birthday_month_label ?? '',
-    birthday_month_range_label: raw.birthday_month_range_label ?? '',
-    // Widget payloads (required by dashboard cards).
-    upcoming_regularizations: Array.isArray(raw.upcoming_regularizations) ? raw.upcoming_regularizations : [],
-    expiring_contracts: Array.isArray(raw.expiring_contracts) ? raw.expiring_contracts : [],
-    employment_settings: raw.employment_settings ?? null,
-    pending_attendance_corrections: Number(raw.pending_attendance_corrections ?? 0) || 0,
-    pending_overtime_request:
-      String(raw.pending_overtime_request?.status || '').toLowerCase() === 'pending'
-        ? raw.pending_overtime_request
-        : null,
-    pending_attendance_correction_preview:
-      isPendingAttendanceCorrection(raw.pending_attendance_correction_preview)
-        ? raw.pending_attendance_correction_preview
-        : null,
-    pending_attendance_correction_previews: Array.isArray(raw.pending_attendance_correction_previews)
-      ? raw.pending_attendance_correction_previews.filter(isPendingAttendanceCorrection)
-      : [],
-    pending_requests: Array.isArray(raw.pending_requests)
-      ? raw.pending_requests.filter(isPendingAttendanceCorrection)
-      : [],
-    pending_counts: raw.pending_counts ?? { leave: 0, overtime: 0, attendance_correction: 0, total: 0 },
-    payroll_summary: raw.payroll_summary ?? { pending_count: 0, finalized_count: 0, failed_count: 0 },
-  }
-}
-
-function isPendingAttendanceCorrection(row) {
-  if (!row || typeof row !== 'object') return false
-  const status = String(row.status || '').toLowerCase()
-  if (status && status !== 'pending') return false
-  if (row.approved === true || row.rejected_at) return false
-  if (row.pending_approval === false) return false
-  return true
 }
 
 /**
@@ -2940,6 +3059,29 @@ export async function deleteAdminScheduleRequest(id) {
 // —— Admin: Employees ——
 
 /**
+ * Search employees for organization head assignment (cross-company by default).
+ * @returns {Promise<{ employees: Array<object> }>}
+ */
+export async function searchEmployeesForHeadAssignment(params = {}, options = {}) {
+  const query = new URLSearchParams()
+  if (params.q) query.set('q', String(params.q))
+  if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
+  if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
+  if (params.department_id != null && params.department_id !== '') query.set('department_id', String(params.department_id))
+  if (params.include_cross_company === false) query.set('include_cross_company', '0')
+  if (params.active_only === false) query.set('active_only', '0')
+  if (params.fresh || options.fresh) query.set('_ts', String(Date.now()))
+  const suffix = query.toString()
+  const path = `/employees/search-for-head-assignment${suffix ? `?${suffix}` : ''}`
+  const res = await authenticatedFetch(path, { signal: options.signal })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.message || 'Failed to search employees')
+  }
+  return data
+}
+
+/**
  * Get employees list (admin) with optional simple pagination.
  * @param {{ page?: number, per_page?: number, for_schedule_assignment?: boolean, active_filter?: 'active'|'deactivated'|'all', schedule_filter?: 'scheduled'|'unscheduled', face_filter?: 'registered'|'unregistered' }} [params]
  *   - for_schedule_assignment: true → returns all employees (no pagination, for Assign Schedule modal).
@@ -2953,6 +3095,7 @@ export async function getEmployees(params = {}) {
   const employeesPerPage = normalizePerPage(params.per_page)
   if (employeesPerPage != null) query.set('per_page', String(employeesPerPage))
   if (params.for_schedule_assignment) query.set('for_schedule_assignment', '1')
+  if (params.for_leadership_assignment) query.set('for_leadership_assignment', '1')
   if (params.active_filter) query.set('active_filter', String(params.active_filter))
   if (params.schedule_filter) query.set('schedule_filter', String(params.schedule_filter))
   if (params.face_filter) query.set('face_filter', String(params.face_filter))
@@ -4439,11 +4582,12 @@ export async function approveLeaveRequest(id, notes, opts = {}) {
   return data
 }
 
-export async function bulkApproveLeavePreview(filters = {}) {
+export async function bulkApproveLeavePreview(filters = {}, opts = {}) {
   const res = await authenticatedFetch('/admin/leave/bulk-approve-preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filters }),
+    ...(opts.signal ? { signal: opts.signal } : {}),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to count approvable leave requests')
@@ -4468,6 +4612,33 @@ export async function bulkApproveLeaveRequests(payloadOrIds, remarks = '') {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to approve selected leave requests')
   return data
+}
+
+export async function bulkRejectLeaveRequests(payloadOrIds, remarks = '') {
+  const body =
+    Array.isArray(payloadOrIds) || typeof payloadOrIds === 'number'
+      ? {
+          mode: 'selected_ids',
+          ids: Array.isArray(payloadOrIds) ? payloadOrIds.map(Number) : [Number(payloadOrIds)],
+          remarks: String(remarks || '').trim(),
+        }
+      : payloadOrIds
+  const res = await authenticatedFetch('/leave-requests/bulk-reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to reject selected leave requests')
+  return data
+}
+
+export function bulkApproveFilteredLeaveRequests(filters = {}, remarks = '') {
+  return bulkApproveLeaveRequests({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() || undefined })
+}
+
+export function bulkRejectFilteredLeaveRequests(filters = {}, remarks = '') {
+  return bulkRejectLeaveRequests({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() })
 }
 
 export async function rejectLeaveRequest(id, reason) {
@@ -4875,8 +5046,11 @@ export async function getAllMyOvertimeRequestsInRange(from_date, to_date, option
  * Employee: single overtime request (full detail: approval chain, history).
  * @param {number} id
  */
-export async function getMyOvertimeDetail(id) {
-  const res = await authenticatedFetch(`/overtime/my/${id}`)
+export async function getMyOvertimeDetail(id, options = {}) {
+  const res = await authenticatedFetch(
+    `/overtime/my/${id}`,
+    options.signal ? { signal: options.signal } : undefined,
+  )
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load overtime details')
   return data
@@ -5671,8 +5845,11 @@ export async function getMyPresenceFilings(params = {}) {
   return data
 }
 
-export async function getMyPresenceFilingDetail(id) {
-  const res = await authenticatedFetch(`/employee/presence-filings/${encodeURIComponent(String(id))}`)
+export async function getMyPresenceFilingDetail(id, options = {}) {
+  const res = await authenticatedFetch(
+    `/employee/presence-filings/${encodeURIComponent(String(id))}`,
+    options.signal ? { signal: options.signal } : undefined,
+  )
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load correction request')
   return data
@@ -5718,8 +5895,26 @@ export async function getAdminPresenceFilings(params = {}) {
   return data
 }
 
-export async function getAdminPresenceFilingDetail(id) {
-  const res = await authenticatedFetch(`/attendance-corrections/${encodeURIComponent(String(id))}/review-lite`)
+export async function getAdminPresenceFilingCounts(params = {}) {
+  const q = new URLSearchParams()
+  if (params.status && params.status !== 'all') q.set('status', params.status)
+  if (params.from_date) q.set('from_date', params.from_date)
+  if (params.to_date) q.set('to_date', params.to_date)
+  if (params.issue_type && params.issue_type !== 'all') q.set('issue_type', params.issue_type)
+  if (params.q && String(params.q).trim()) q.set('q', String(params.q).trim())
+  if (params.request_id != null && params.request_id !== '') q.set('request_id', String(params.request_id))
+  const path = `/admin/presence-filings/counts${q.toString() ? `?${q}` : ''}`
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : undefined)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load correction request counts')
+  return data
+}
+
+export async function getAdminPresenceFilingDetail(id, options = {}) {
+  const res = await authenticatedFetch(
+    `/attendance-corrections/${encodeURIComponent(String(id))}/review-lite`,
+    options.signal ? { signal: options.signal } : undefined,
+  )
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load correction request')
   return data
@@ -5786,14 +5981,30 @@ export async function bulkApprovePresenceFilings(payloadOrIds, remarks = '') {
 }
 
 export async function bulkRejectPresenceFilings(ids = [], remarks = '') {
+  const body =
+    Array.isArray(ids) || typeof ids === 'number'
+      ? {
+          mode: 'selected_ids',
+          ids: Array.isArray(ids) ? ids.map(Number) : [Number(ids)],
+          remarks: String(remarks || '').trim(),
+        }
+      : ids
   const res = await authenticatedFetch('/attendance-corrections/bulk-reject', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids: ids.map(Number), remarks: String(remarks || '').trim() }),
+    body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to reject selected attendance corrections')
   return data
+}
+
+export function bulkApproveFilteredPresenceFilings(filters = {}, remarks = '') {
+  return bulkApprovePresenceFilings({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() || undefined })
+}
+
+export function bulkRejectFilteredPresenceFilings(filters = {}, remarks = '') {
+  return bulkRejectPresenceFilings({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() })
 }
 
 export async function rejectPresenceFiling(id, rejectionNote) {
@@ -6080,11 +6291,12 @@ export async function updateAdminOvertimeStatus(id, status, remarks) {
   return data
 }
 
-export async function bulkApproveAdminOvertimePreview(filters = {}) {
+export async function bulkApproveAdminOvertimePreview(filters = {}, opts = {}) {
   const res = await authenticatedFetch('/admin/overtime/bulk-approve-preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filters }),
+    ...(opts.signal ? { signal: opts.signal } : {}),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to count approvable overtime requests')
@@ -6109,6 +6321,33 @@ export async function bulkApproveAdminOvertime(payloadOrIds, remarks = '') {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to approve selected overtime requests')
   return data
+}
+
+export async function bulkRejectAdminOvertime(payloadOrIds, remarks = '') {
+  const body =
+    Array.isArray(payloadOrIds) || typeof payloadOrIds === 'number'
+      ? {
+          mode: 'selected_ids',
+          ids: Array.isArray(payloadOrIds) ? payloadOrIds.map(Number) : [Number(payloadOrIds)],
+          remarks: String(remarks || '').trim(),
+        }
+      : payloadOrIds
+  const res = await authenticatedFetch('/overtime-requests/bulk-reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to reject selected overtime requests')
+  return data
+}
+
+export function bulkApproveFilteredAdminOvertime(filters = {}, remarks = '') {
+  return bulkApproveAdminOvertime({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() || undefined })
+}
+
+export function bulkRejectFilteredAdminOvertime(filters = {}, remarks = '') {
+  return bulkRejectAdminOvertime({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() })
 }
 
 /**

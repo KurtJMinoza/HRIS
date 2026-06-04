@@ -24,6 +24,7 @@ use App\Models\UserAdminActivityLog;
 use App\Models\UserPhoneChangeLog;
 use App\Models\WorkingSchedule;
 use App\Services\DataScopeService;
+use App\Services\HeadAssignmentEmployeeSearchService;
 use App\Services\EmployeeLevelResolver;
 use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\ESignatureService;
@@ -67,7 +68,16 @@ class EmployeeController extends Controller
         private readonly LeaveCreditService $leaveCreditService,
         private readonly PayCycleService $payCycleService,
         private readonly ScheduleRateService $scheduleRateService,
+        private readonly HeadAssignmentEmployeeSearchService $headAssignmentEmployeeSearchService,
     ) {}
+
+    /**
+     * Search active roster employees for organization head assignment (cross-company by default).
+     */
+    public function searchForHeadAssignment(Request $request): JsonResponse
+    {
+        return response()->json($this->headAssignmentEmployeeSearchService->search($request));
+    }
 
     /**
      * List staff roster (employees + Admin HR accounts) with simple pagination.

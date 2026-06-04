@@ -29,6 +29,7 @@ use App\Services\HolidayService;
 use App\Services\LegacyOrganizationMirrorService;
 use App\Support\EmployeeProfileCache;
 use App\Support\AdminDashboardCache;
+use App\Support\HeadAssignmentEmployeeSearchCache;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
@@ -70,8 +71,12 @@ class AppServiceProvider extends ServiceProvider
         });
 
         User::saved(function (User $user): void {
+            HeadAssignmentEmployeeSearchCache::flush();
             EmployeeProfileCache::invalidate((int) $user->id);
-            AdminDashboardCache::flush();
+            AdminDashboardCache::invalidateForUserCompany(
+                (int) ($user->getEffectiveCompanyId() ?? $user->company_id ?? 0) ?: null,
+                ['summary', 'attendance', 'charts', 'requests']
+            );
             Cache::forget('permissions:user:'.(int) $user->id);
             Cache::forget('sidebar:user:'.(int) $user->id);
             if ($user->wasChanged(['schedule', 'working_schedule_id', 'pending_working_schedule_id'])) {
@@ -80,10 +85,14 @@ class AppServiceProvider extends ServiceProvider
             }
         });
         User::deleted(function (User $user): void {
+            HeadAssignmentEmployeeSearchCache::flush();
             EmployeeProfileCache::invalidate((int) $user->id);
             AttendanceCacheService::invalidate((int) $user->id);
             EmployeeDashboardCacheService::invalidate((int) $user->id);
-            AdminDashboardCache::flush();
+            AdminDashboardCache::invalidateForUserCompany(
+                (int) ($user->getEffectiveCompanyId() ?? $user->company_id ?? 0) ?: null,
+                ['summary', 'attendance', 'charts', 'requests']
+            );
             Cache::forget('permissions:user:'.(int) $user->id);
             Cache::forget('sidebar:user:'.(int) $user->id);
         });
@@ -99,13 +108,23 @@ class AppServiceProvider extends ServiceProvider
                 : null;
             AttendanceCacheService::invalidate((int) $log->user_id, $date);
             EmployeeDashboardCacheService::invalidate((int) $log->user_id);
-            AdminDashboardCache::flush();
+            $companyId = User::query()->whereKey($log->user_id)->value('company_id');
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['summary', 'attendance', 'charts', 'recent']
+            );
         };
         AttendanceLog::saved($invalidateAttendanceForLog);
         AttendanceLog::deleted($invalidateAttendanceForLog);
 
         AttendanceCorrection::saved(function (AttendanceCorrection $correction): void {
-            AdminDashboardCache::flush();
+            $companyId = $correction->user_id
+                ? User::query()->whereKey($correction->user_id)->value('company_id')
+                : null;
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['summary', 'attendance', 'charts', 'requests', 'recent']
+            );
             if ($correction->user_id) {
                 $date = $correction->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $correction->user_id, $date);
@@ -113,7 +132,13 @@ class AppServiceProvider extends ServiceProvider
             }
         });
         AttendanceCorrection::deleted(function (AttendanceCorrection $correction): void {
-            AdminDashboardCache::flush();
+            $companyId = $correction->user_id
+                ? User::query()->whereKey($correction->user_id)->value('company_id')
+                : null;
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['summary', 'attendance', 'charts', 'requests', 'recent']
+            );
             if ($correction->user_id) {
                 $date = $correction->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $correction->user_id, $date);
@@ -122,7 +147,12 @@ class AppServiceProvider extends ServiceProvider
         });
 
         LeaveRequest::saved(function (LeaveRequest $leave): void {
-            AdminDashboardCache::flush();
+            $companyId = $leave->company_id
+                ?? ($leave->user_id ? User::query()->whereKey($leave->user_id)->value('company_id') : null);
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['summary', 'attendance', 'charts', 'requests']
+            );
             if (! $leave->user_id) {
                 return;
             }
@@ -132,7 +162,12 @@ class AppServiceProvider extends ServiceProvider
             }
         });
         LeaveRequest::deleted(function (LeaveRequest $leave): void {
-            AdminDashboardCache::flush();
+            $companyId = $leave->company_id
+                ?? ($leave->user_id ? User::query()->whereKey($leave->user_id)->value('company_id') : null);
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['summary', 'attendance', 'charts', 'requests']
+            );
             if ($leave->user_id) {
                 AttendanceCacheService::invalidate((int) $leave->user_id);
                 EmployeeDashboardCacheService::invalidate((int) $leave->user_id);
@@ -140,7 +175,12 @@ class AppServiceProvider extends ServiceProvider
         });
 
         Overtime::saved(function (Overtime $overtime): void {
-            AdminDashboardCache::flush();
+            $companyId = $overtime->company_id
+                ?? ($overtime->user_id ? User::query()->whereKey($overtime->user_id)->value('company_id') : null);
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['summary', 'attendance', 'charts', 'requests']
+            );
             if (! $overtime->user_id) {
                 return;
             }
@@ -151,7 +191,12 @@ class AppServiceProvider extends ServiceProvider
             }
         });
         Overtime::deleted(function (Overtime $overtime): void {
-            AdminDashboardCache::flush();
+            $companyId = $overtime->company_id
+                ?? ($overtime->user_id ? User::query()->whereKey($overtime->user_id)->value('company_id') : null);
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['summary', 'attendance', 'charts', 'requests']
+            );
             if ($overtime->user_id) {
                 $date = $overtime->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $overtime->user_id, $date);
@@ -159,10 +204,34 @@ class AppServiceProvider extends ServiceProvider
             }
         });
 
-        PayrollBatchRun::saved(fn (PayrollBatchRun $run) => AdminDashboardCache::flush());
-        PayrollBatchRun::deleted(fn (PayrollBatchRun $run) => AdminDashboardCache::flush());
-        PayrollEmployee::saved(fn (PayrollEmployee $employee) => AdminDashboardCache::flush());
-        PayrollEmployee::deleted(fn (PayrollEmployee $employee) => AdminDashboardCache::flush());
+        PayrollBatchRun::saved(function (PayrollBatchRun $run): void {
+            AdminDashboardCache::invalidateForUserCompany(
+                $run->company_id !== null ? (int) $run->company_id : null,
+                ['payroll']
+            );
+        });
+        PayrollBatchRun::deleted(function (PayrollBatchRun $run): void {
+            AdminDashboardCache::invalidateForUserCompany(
+                $run->company_id !== null ? (int) $run->company_id : null,
+                ['payroll']
+            );
+        });
+        PayrollEmployee::saved(function (PayrollEmployee $employee): void {
+            $companyId = $employee->company_id
+                ?? ($employee->user_id ? User::query()->whereKey($employee->user_id)->value('company_id') : null);
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['payroll']
+            );
+        });
+        PayrollEmployee::deleted(function (PayrollEmployee $employee): void {
+            $companyId = $employee->company_id
+                ?? ($employee->user_id ? User::query()->whereKey($employee->user_id)->value('company_id') : null);
+            AdminDashboardCache::invalidateForUserCompany(
+                $companyId !== null ? (int) $companyId : null,
+                ['payroll']
+            );
+        });
 
         EmployeeGovernmentId::saved(function (EmployeeGovernmentId $record): void {
             if ($record->user_id) {

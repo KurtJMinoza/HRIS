@@ -149,10 +149,6 @@ export default function AdminDepartments() {
   const [headId, setHeadId] = useState('')
   const [headSubmitting, setHeadSubmitting] = useState(false)
   /** Roster candidates for Assign Head — loaded per department via API (avoid paginated global `employees`). */
-  const [headModalEmployees, setHeadModalEmployees] = useState([])
-  const [headModalLoading, setHeadModalLoading] = useState(false)
-  const [headModalLoadError, setHeadModalLoadError] = useState(null)
-  const headLoadSeqRef = useRef(0)
   const viewEmployeesLoadSeqRef = useRef(0)
 
   const [assignOpen, setAssignOpen] = useState(false)
@@ -525,50 +521,11 @@ export default function AdminDepartments() {
     openAssignDialog(viewEmployeesDept)
   }
 
-  const loadHeadCandidates = useCallback(async (dept) => {
-    if (dept?.id == null) return
-    headLoadSeqRef.current += 1
-    const seq = headLoadSeqRef.current
-    setHeadModalEmployees([])
-    setHeadModalLoadError(null)
-    setHeadModalLoading(true)
-    try {
-      const data = await getEmployees({
-        for_leadership_assignment: true,
-        per_page: 'all',
-        fresh: true,
-      })
-      if (seq !== headLoadSeqRef.current) return
-      let list = (data.employees || []).filter((e) => {
-        if (!isRosterStaffMember(e)) return false
-        const isCurrentHead =
-          dept.department_head_id != null && dept.department_head_id !== '' && sameUserId(e.id, dept.department_head_id)
-        if (!isCurrentHead && e.is_active === false) return false
-        return true
-      })
-      list.sort((a, b) =>
-        employeeDisplayName(a).localeCompare(employeeDisplayName(b), undefined, { sensitivity: 'base' }),
-      )
-      setHeadModalEmployees(list)
-    } catch (err) {
-      if (seq !== headLoadSeqRef.current) return
-      setHeadModalEmployees([])
-      setHeadModalLoadError(err?.message || 'Could not load employees for this department.')
-    } finally {
-      if (seq === headLoadSeqRef.current) {
-        setHeadModalLoading(false)
-      }
-    }
-  }, [])
-
   const openHeadDialog = (dept) => {
     if (dept?.id == null) return
     setHeadDepartment(dept)
     setHeadId(dept.department_head_id ? String(dept.department_head_id) : '')
-    setHeadModalEmployees([])
-    setHeadModalLoadError(null)
     setHeadOpen(true)
-    void loadHeadCandidates(dept)
   }
 
   const departmentHeadRoleNotes = useMemo(() => {
@@ -2114,22 +2071,13 @@ export default function AdminDepartments() {
         onOpenChange={(open) => {
           setHeadOpen(open)
           if (!open) {
-            headLoadSeqRef.current += 1
             setHeadDepartment(null)
             setHeadId('')
-            setHeadModalEmployees([])
-            setHeadModalLoading(false)
-            setHeadModalLoadError(null)
           }
         }}
         title="Assign Department Head"
         unitName={headDepartment?.name}
         fieldLabel="Department Head"
-        loading={headModalLoading}
-        loadingMessage="Loading department members…"
-        loadError={headModalLoadError}
-        onRetry={() => headDepartment && loadHeadCandidates(headDepartment)}
-        employees={headModalEmployees}
         currentHeadId={headDepartment?.department_head_id}
         currentHead={buildOrgCurrentHead({
           id: headDepartment?.department_head_id,

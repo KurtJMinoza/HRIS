@@ -123,7 +123,9 @@ class DashboardController extends Controller
             $this->dashboardSummaryPayload($request),
             $this->dashboardPendingRequestsPayload($request),
             $this->dashboardAttendanceTodayPayload($request),
+            $this->dashboardChartsPayload($request),
             $this->dashboardPayrollSummaryPayload($request),
+            $this->dashboardRecentActivityPayload($request),
         );
 
         return response()->json($response);
@@ -139,6 +141,11 @@ class DashboardController extends Controller
         return response()->json($this->dashboardPendingRequestsPayload($request));
     }
 
+    public function dashboardRequests(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardPendingRequestsPayload($request));
+    }
+
     public function attendanceToday(Request $request): JsonResponse
     {
         return response()->json($this->dashboardAttendanceTodayPayload($request));
@@ -147,6 +154,21 @@ class DashboardController extends Controller
     public function payrollSummary(Request $request): JsonResponse
     {
         return response()->json($this->dashboardPayrollSummaryPayload($request));
+    }
+
+    public function payroll(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardPayrollSummaryPayload($request));
+    }
+
+    public function charts(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardChartsPayload($request));
+    }
+
+    public function recentActivity(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardRecentActivityPayload($request));
     }
 
     /**
@@ -220,7 +242,7 @@ class DashboardController extends Controller
      */
     private function dashboardPendingRequestsPayload(Request $request): array
     {
-        return $this->cachedDashboardPayload($request, 'pending', function (User $actor): array {
+        return $this->cachedDashboardPayload($request, 'requests', function (User $actor): array {
             $scope = User::query()->visibleEmployees();
             $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
             $scopedIds = $scope->select('users.id');
@@ -267,43 +289,15 @@ class DashboardController extends Controller
                 ->latest()
                 ->first();
 
-            $pendingCorrectionsCollection = $this->attendanceCorrectionApprovalService->getPendingForApprover($actor);
-            $pendingAttendanceCorrections = $pendingCorrectionsCollection->count();
-            $correctionDisplayTz = $this->presenceFilingService->attendanceTimezone();
-            $pendingAttendanceCorrectionPreview = null;
-            $pendingAttendanceCorrectionPreviews = [];
-            if ($pendingCorrectionsCollection->isNotEmpty()) {
-                $pendingAttendanceCorrectionPreview = $this->correctionFormatter->format(
-                    $pendingCorrectionsCollection->first(),
-                    $correctionDisplayTz,
-                    includeEmployee: true,
-                    actor: $actor,
-                    includeDisplayFields: true
-                );
-                $pendingAttendanceCorrectionPreviews = $pendingCorrectionsCollection
-                    ->take(5)
-                    ->map(fn ($correction) => $this->correctionFormatter->format(
-                        $correction,
-                        $correctionDisplayTz,
-                        includeEmployee: true,
-                        actor: $actor,
-                        includeDisplayFields: true
-                    ))
-                    ->values()
-                    ->all();
-            }
-            $pendingAttendanceCorrectionRequests = collect($pendingAttendanceCorrectionPreviews)
-                ->map(fn (array $row) => $row + [
-                    'correction_request_id' => $row['id'] ?? null,
-                    'employee_id' => $row['user_id'] ?? null,
-                    'attendance_date' => $row['date'] ?? null,
-                    'requested_time_start' => $row['requested_time_in'] ?? $row['time_in'] ?? null,
-                    'requested_time_end' => $row['requested_time_out'] ?? $row['time_out'] ?? null,
-                    'current_step' => $row['approval_stage'] ?? null,
-                    'can_review' => (bool) ($row['actor_can_approve'] ?? false),
-                ])
-                ->values()
-                ->all();
+            $pendingCorrectionBundle = $this->pendingCorrectionsForDashboard($actor);
+            $pendingAttendanceCorrections = $pendingCorrectionBundle['count'];
+            $pendingAttendanceCorrectionPreview = $pendingCorrectionBundle['preview'];
+            $pendingAttendanceCorrectionPreviews = $pendingCorrectionBundle['previews'];
+            $pendingAttendanceCorrectionRequests = $pendingCorrectionBundle['requests'];
+            $todayLeaves = $this->todayLeaves(
+                Carbon::now(config('attendance.timezone', config('app.timezone', 'UTC')))->startOfDay(),
+                $this->scopedEmployeeIds($actor, true)
+            );
 
             return [
                 'pending_counts' => [
@@ -317,33 +311,107 @@ class DashboardController extends Controller
                     'approved_ot_hours_today' => round($approvedOtTodayHours, 2),
                     'rendered_ot_hours_today' => round($renderedOtTodayHours, 2),
                 ],
-                'pending_overtime_request' => $pendingOvertimeRequest ? [
-                    'id' => (int) $pendingOvertimeRequest->id,
-                    'request_id' => (int) $pendingOvertimeRequest->id,
-                    'employee_id' => (int) $pendingOvertimeRequest->user_id,
-                    'requested_by_id' => (int) $pendingOvertimeRequest->user_id,
-                    'employee_name' => $pendingOvertimeRequest->user?->display_name,
-                    'requested_by_name' => $pendingOvertimeRequest->user?->display_name,
-                    'employee_code' => $pendingOvertimeRequest->user?->employee_code,
-                    'requested_by_position' => $pendingOvertimeRequest->user?->position,
-                    'department' => $pendingOvertimeRequest->user?->department,
-                    'requested_by_profile_image_url' => $pendingOvertimeRequest->user?->profile_image_url,
-                    'date' => $pendingOvertimeRequest->date?->toDateString(),
-                    'schedule_end' => $pendingOvertimeRequest->schedule_end?->format('H:i'),
-                    'expected_end_time' => $pendingOvertimeRequest->expected_end_time?->format('H:i'),
-                    'time_out' => $pendingOvertimeRequest->time_out?->format('H:i'),
-                    'computed_hours' => $pendingOvertimeRequest->computed_hours,
-                    'reason' => $pendingOvertimeRequest->reason,
-                    'remarks' => $pendingOvertimeRequest->remarks,
-                    'status' => $pendingOvertimeRequest->status,
-                ] : null,
+                'pending_overtime_request' => $pendingOvertimeRequest ? $this->formatDashboardOvertimeRequest($pendingOvertimeRequest) : null,
                 'pending_attendance_corrections' => $pendingAttendanceCorrections,
                 'pending_attendance_correction_preview' => $pendingAttendanceCorrectionPreview,
                 'pending_attendance_correction_previews' => $pendingAttendanceCorrectionPreviews,
                 'pending_count' => $pendingAttendanceCorrections,
                 'pending_requests' => $pendingAttendanceCorrectionRequests,
+                'today_leaves' => $todayLeaves,
             ];
         });
+    }
+
+    /**
+     * @return array{count: int, preview: ?array<string, mixed>, previews: array<int, array<string, mixed>>, requests: array<int, array<string, mixed>>}
+     */
+    private function pendingCorrectionsForDashboard(User $actor): array
+    {
+        $baseQuery = AttendanceCorrection::query()
+            ->where('pending_approval', true)
+            ->where('approved', false)
+            ->whereNull('rejected_at');
+        $this->whereCurrentPendingApprovalForActor(
+            $baseQuery,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            (int) $actor->id,
+            'attendance_corrections.id'
+        );
+
+        $count = (clone $baseQuery)->count();
+        if ($count === 0) {
+            return [
+                'count' => 0,
+                'preview' => null,
+                'previews' => [],
+                'requests' => [],
+            ];
+        }
+
+        $correctionDisplayTz = $this->presenceFilingService->attendanceTimezone();
+        $corrections = (clone $baseQuery)
+            ->with(['user:id,name,first_name,middle_name,last_name,suffix,employee_code,position,department,profile_image'])
+            ->orderByDesc('filed_at')
+            ->limit(5)
+            ->get();
+
+        $previews = $corrections
+            ->map(fn (AttendanceCorrection $correction) => $this->correctionFormatter->format(
+                $correction,
+                $correctionDisplayTz,
+                includeEmployee: true,
+                actor: $actor,
+                includeDisplayFields: true
+            ))
+            ->values()
+            ->all();
+
+        $requests = collect($previews)
+            ->map(fn (array $row) => $row + [
+                'correction_request_id' => $row['id'] ?? null,
+                'employee_id' => $row['user_id'] ?? null,
+                'attendance_date' => $row['date'] ?? null,
+                'requested_time_start' => $row['requested_time_in'] ?? $row['time_in'] ?? null,
+                'requested_time_end' => $row['requested_time_out'] ?? $row['time_out'] ?? null,
+                'current_step' => $row['approval_stage'] ?? null,
+                'can_review' => (bool) ($row['actor_can_approve'] ?? false),
+            ])
+            ->values()
+            ->all();
+
+        return [
+            'count' => $count,
+            'preview' => $previews[0] ?? null,
+            'previews' => $previews,
+            'requests' => $requests,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatDashboardOvertimeRequest(Overtime $pendingOvertimeRequest): array
+    {
+        return [
+            'id' => (int) $pendingOvertimeRequest->id,
+            'request_id' => (int) $pendingOvertimeRequest->id,
+            'employee_id' => (int) $pendingOvertimeRequest->user_id,
+            'requested_by_id' => (int) $pendingOvertimeRequest->user_id,
+            'employee_name' => $pendingOvertimeRequest->user?->display_name,
+            'requested_by_name' => $pendingOvertimeRequest->user?->display_name,
+            'employee_code' => $pendingOvertimeRequest->user?->employee_code,
+            'requested_by_position' => $pendingOvertimeRequest->user?->position,
+            'department' => $pendingOvertimeRequest->user?->department,
+            'requested_by_profile_image_url' => $pendingOvertimeRequest->user?->profile_image_url,
+            'date' => $pendingOvertimeRequest->date?->toDateString(),
+            'schedule_end' => $pendingOvertimeRequest->schedule_end?->format('H:i'),
+            'expected_end_time' => $pendingOvertimeRequest->expected_end_time?->format('H:i'),
+            'time_out' => $pendingOvertimeRequest->time_out?->format('H:i'),
+            'computed_hours' => $pendingOvertimeRequest->computed_hours,
+            'reason' => $pendingOvertimeRequest->reason,
+            'remarks' => $pendingOvertimeRequest->remarks,
+            'status' => $pendingOvertimeRequest->status,
+        ];
     }
 
     private function whereCurrentPendingApprovalForActor(Builder $query, string $moduleType, int $actorId, string $requestColumn): Builder
@@ -378,15 +446,81 @@ class DashboardController extends Controller
             $today = Carbon::now($tz)->startOfDay();
             $activeScopeIds = $this->scopedEmployeeIds($actor, true);
             $todayDayKey = self::DAY_KEYS[(int) $today->format('w')];
+            $companyId = (int) ($actor->getEffectiveCompanyId() ?? $actor->company_id ?? 0);
+            $dateKey = $today->toDateString();
+            $cacheKey = AdminDashboardCache::attendanceSummaryKey($companyId, $dateKey);
+            $cachedLogs = AdminDashboardCache::rememberRaw(
+                $cacheKey.':logs:'.(int) $actor->id,
+                AdminDashboardCache::TTL_ATTENDANCE,
+                fn () => $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds)
+            );
+
+            return [
+                'today_logs' => is_array($cachedLogs['payload']) ? $cachedLogs['payload'] : [],
+            ];
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardChartsPayload(Request $request): array
+    {
+        return $this->cachedDashboardPayload($request, 'charts', function (User $actor): array {
+            $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+            $today = Carbon::now($tz)->startOfDay();
+            $activeScopeIds = $this->scopedEmployeeIds($actor, true);
+            $rangeKey = 'week:'.$today->toDateString();
 
             return [
                 'weekly_overview' => $this->weeklyAttendanceOverview($today, $activeScopeIds),
                 'department_distribution' => $this->departmentAttendanceDistribution($today, $actor),
                 'company_distribution' => $this->companyAttendanceDistribution($today, null, $actor),
-                'today_logs' => $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds),
-                'today_leaves' => $this->todayLeaves($today, $activeScopeIds),
             ];
-        });
+        }, 'week:'.Carbon::now(config('attendance.timezone', config('app.timezone', 'UTC')))->toDateString());
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardRecentActivityPayload(Request $request): array
+    {
+        return $this->cachedDashboardPayload($request, 'recent', function (User $actor): array {
+            $limit = min(20, max(1, (int) $request->input('limit', 20)));
+            $scope = User::query()->visibleEmployees()->select('users.id');
+            $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
+            $scopedIds = $scope->pluck('id')->all();
+
+            $rows = AttendanceLog::query()
+                ->with(['user:id,name,first_name,middle_name,last_name,suffix,profile_image,department'])
+                ->when(
+                    $scopedIds !== [],
+                    fn ($q) => $q->whereIn('user_id', $scopedIds),
+                    fn ($q) => $q->whereRaw('1 = 0')
+                )
+                ->orderByDesc(DB::raw($this->attendanceLogEffectivePunchColumnSql()))
+                ->limit($limit)
+                ->get(['id', 'user_id', 'type', 'verified_at', 'created_at']);
+
+            $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+
+            return [
+                'recent_activity' => $rows->map(function (AttendanceLog $log) use ($tz): array {
+                    $punch = $this->attendanceLogPunchInstant($log);
+
+                    return [
+                        'id' => (int) $log->id,
+                        'employee_id' => (int) $log->user_id,
+                        'employee_name' => $log->user?->display_name,
+                        'department' => $log->user?->department,
+                        'profile_image_url' => $log->user?->profile_image_url,
+                        'type' => $log->type,
+                        'occurred_at' => $punch?->timezone($tz)->toIso8601String(),
+                        'action_url' => null,
+                    ];
+                })->values()->all(),
+            ];
+        }, 'recent');
     }
 
     /**
@@ -439,12 +573,14 @@ class DashboardController extends Controller
         Log::info('Admin dashboard endpoint prepared', [
             'endpoint' => 'admin.dashboard.'.$segment,
             'actor_user_id' => (int) $actor->id,
+            'company_id' => (int) ($actor->getEffectiveCompanyId() ?? $actor->company_id ?? 0),
             'cache_hit' => $result['cache_hit'],
             'cache_key' => $result['cache_key'],
             'query_count' => count($queries),
             'db_time_ms' => round(array_sum(array_map(fn (array $query) => (float) ($query['time'] ?? 0), $queries)), 2),
             'response_time_ms' => (int) round((microtime(true) - $startedAt) * 1000),
             'rows_returned' => count($result['payload']),
+            'rows_scanned' => count($queries),
         ]);
 
         return $result['payload'];
@@ -1370,10 +1506,13 @@ class DashboardController extends Controller
         $logsByDayQuery = AttendanceLog::query()
             ->whereIn('user_id', $activeEmployeeIds);
         $logsByDayQuery = $this->attendanceLogEffectivePunchWhereBetween($logsByDayQuery, $rangeStart, $rangeEnd);
-        $logsByUserForDay = $logsByDayQuery
-            ->orderByRaw($this->attendanceLogEffectivePunchColumnSql())
-            ->get()
-            ->groupBy('user_id');
+        $logsByUserForDay = $clockedInUserIds === []
+            ? collect()
+            : (clone $logsByDayQuery)
+                ->whereIn('user_id', $clockedInUserIds)
+                ->orderByRaw($this->attendanceLogEffectivePunchColumnSql())
+                ->get()
+                ->groupBy('user_id');
 
         $underTimeCount = 0;
         foreach ($activeEmployees as $user) {

@@ -29,7 +29,6 @@ class LeaveBulkApprovalQuery
                 'filedBy',
                 'firstApprover',
                 'secondApprover',
-                'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]);
 
         $status = $filters['status'] ?? null;
@@ -80,7 +79,6 @@ class LeaveBulkApprovalQuery
                     'filedBy',
                     'firstApprover',
                     'secondApprover',
-                    'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
                 ])
                 ->whereIn('id', $rows->pluck('id'))
                 ->get();

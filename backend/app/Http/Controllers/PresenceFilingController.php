@@ -841,10 +841,11 @@ class PresenceFilingController extends Controller
 
         if ($statusFilter === 'pending') {
             $query->where('pending_approval', true)
-                ->where('approved', false)
-                ->whereNull('rejected_at');
+                ->whereNull('rejected_at')
+                ->where(fn ($pending) => $this->whereAttendanceCorrectionNotHrApproved($pending));
         } elseif ($statusFilter === 'approved') {
-            $query->where('approved', true);
+            $query->whereNull('rejected_at')
+                ->where(fn ($approved) => $this->whereAttendanceCorrectionHrApproved($approved));
         } elseif ($statusFilter === 'rejected') {
             $query->whereNotNull('rejected_at');
         }
@@ -853,9 +854,17 @@ class PresenceFilingController extends Controller
 
         $paginator = $query->paginate($perPage)->withQueryString();
         $pageRows = $paginator->getCollection();
-        $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageRows->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $pageIds = $pageRows->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageIds);
+        $finalApprovedIds = $this->finalApprovedAttendanceCorrectionIds($pageIds);
         $items = $paginator->getCollection()
-            ->map(fn (AttendanceCorrection $c) => $this->attendanceCorrectionListRow($c, $actor, $tz, $currentApprovals[(int) $c->id] ?? null));
+            ->map(fn (AttendanceCorrection $c) => $this->attendanceCorrectionListRow(
+                $c,
+                $actor,
+                $tz,
+                $currentApprovals[(int) $c->id] ?? null,
+                isset($finalApprovedIds[(int) $c->id]),
+            ));
 
         RequestPerformanceLogger::finish($perf, $request, $items->count(), [
             'scope' => 'admin',
@@ -896,16 +905,63 @@ class PresenceFilingController extends Controller
      */
     private function presenceFilingStatusCounts($query): array
     {
+        $approved = fn ($q) => $this->whereAttendanceCorrectionHrApproved($q);
+        $notApproved = fn ($q) => $this->whereAttendanceCorrectionNotHrApproved($q);
+
         return [
             'total' => (clone $query)->count(),
             'pending' => (clone $query)
                 ->where('pending_approval', true)
-                ->where('approved', false)
                 ->whereNull('rejected_at')
+                ->where($notApproved)
                 ->count(),
-            'approved' => (clone $query)->where('approved', true)->count(),
+            'approved' => (clone $query)->whereNull('rejected_at')->where($approved)->count(),
             'rejected' => (clone $query)->whereNotNull('rejected_at')->count(),
         ];
+    }
+
+    private function whereAttendanceCorrectionHrApproved($query): void
+    {
+        $query->where(function ($approved): void {
+            $approved
+                ->where('attendance_corrections.approved', true)
+                ->orWhere('attendance_corrections.approval_stage', AttendanceCorrectionApprovalService::STAGE_APPROVED)
+                ->orWhereNotNull('attendance_corrections.second_approved_at')
+                ->orWhereExists(function ($approval): void {
+                    $approval
+                        ->selectRaw('1')
+                        ->from('org_approval_records as final_approval')
+                        ->whereColumn('final_approval.request_id', 'attendance_corrections.id')
+                        ->where('final_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                        ->where('final_approval.approver_role', HrRole::AdminHr->value)
+                        ->where('final_approval.approval_status', OrgApprovalRecord::STATUS_APPROVED);
+                });
+        });
+    }
+
+    private function whereAttendanceCorrectionNotHrApproved($query): void
+    {
+        $query->where(function ($notApproved): void {
+            $notApproved
+                ->where(function ($notFlagged): void {
+                    $notFlagged->where('attendance_corrections.approved', false)
+                        ->orWhereNull('attendance_corrections.approved');
+                })
+                ->where(function ($notStage): void {
+                    $notStage->whereNull('attendance_corrections.approval_stage')
+                        ->orWhere('attendance_corrections.approval_stage', '!=', AttendanceCorrectionApprovalService::STAGE_APPROVED);
+                })
+                ->whereNull('attendance_corrections.second_approved_at')
+                ->whereNotExists(function ($approval): void {
+                    $approval
+                        ->selectRaw('1')
+                        ->from('org_approval_records as final_approval')
+                        ->whereColumn('final_approval.request_id', 'attendance_corrections.id')
+                        ->where('final_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                        ->where('final_approval.approver_role', HrRole::AdminHr->value)
+                        ->where('final_approval.approval_status', OrgApprovalRecord::STATUS_APPROVED);
+                });
+        });
     }
 
     public function counts(Request $request): JsonResponse
@@ -917,7 +973,7 @@ class PresenceFilingController extends Controller
         }
 
         $company = (string) ($request->query('company_id') ?? 'all');
-        $cacheKey = 'attendance_correction:counts:'.AttendanceCorrectionModuleCache::version().':'.$actor->id.':'.$company.':'.md5(json_encode($request->query(), JSON_THROW_ON_ERROR));
+        $cacheKey = 'attendance_correction:counts:v3:'.AttendanceCorrectionModuleCache::version().':'.$actor->id.':'.$company.':'.md5(json_encode($request->query(), JSON_THROW_ON_ERROR));
         try {
             $cached = Cache::get($cacheKey);
             if (is_array($cached)) {
@@ -928,15 +984,112 @@ class PresenceFilingController extends Controller
         } catch (\Throwable) {
         }
 
-        $base = AttendanceCorrection::query()->select('id', 'user_id', 'approved', 'pending_approval', 'rejected_at', 'date');
+        $base = AttendanceCorrection::query();
+
+        $requestId = $request->query('request_id');
+        if ($requestId !== null && $requestId !== '' && ctype_digit((string) $requestId)) {
+            $base->whereKey((int) $requestId);
+        }
+
+        $fromDate = $request->query('from_date') ?? $request->query('date_from');
+        $toDate = $request->query('to_date') ?? $request->query('date_to');
+        if (is_string($fromDate) && $fromDate !== '') {
+            $base->whereDate('date', '>=', $fromDate);
+        }
+        if (is_string($toDate) && $toDate !== '') {
+            $base->whereDate('date', '<=', $toDate);
+        }
+
+        $issueType = $request->query('issue_type');
+        if (is_string($issueType) && $issueType !== '' && $issueType !== 'all') {
+            if ($issueType === 'missing_in') {
+                $base->where(function ($q) {
+                    $q->where('issue_kind', 'missing_in')
+                        ->orWhere(function ($q2) {
+                            $q2->whereNull('issue_kind')->whereNull('time_in')->whereNotNull('time_out');
+                        });
+                });
+            } elseif ($issueType === 'missing_out') {
+                $base->where(function ($q) {
+                    $q->where('issue_kind', 'missing_out')
+                        ->orWhere(function ($q2) {
+                            $q2->whereNull('issue_kind')->whereNull('time_out')->whereNotNull('time_in');
+                        });
+                });
+            } elseif ($issueType === 'both') {
+                $base->where(function ($q) {
+                    $q->where('issue_kind', 'both')
+                        ->orWhere(function ($q2) {
+                            $q2->whereNull('issue_kind')->whereNull('time_in')->whereNull('time_out');
+                        });
+                });
+            }
+        }
+
+        $searchQ = $request->query('q') ?? $request->query('search');
+        if (is_string($searchQ) && trim($searchQ) !== '') {
+            $raw = trim($searchQ);
+            $term = '%'.$raw.'%';
+            $base->where(function ($q) use ($term, $raw) {
+                $q->whereHas('user', fn ($u) => $u->where('name', 'like', $term))
+                    ->orWhereHas('filedBy', fn ($u) => $u->where('name', 'like', $term))
+                    ->orWhereHas('user', fn ($u) => $u->where('employee_code', 'like', $term));
+                $idProbe = ltrim($raw, '#');
+                if (ctype_digit($idProbe)) {
+                    $q->orWhere('id', (int) $idProbe);
+                }
+            });
+        }
+
         $this->applyPresenceFilingApprovalVisibility($actor, $base, $request);
         $today = today()->toDateString();
+        $hrApprovedSql = "(
+            attendance_corrections.approved = 1
+            OR attendance_corrections.approval_stage = ?
+            OR attendance_corrections.second_approved_at IS NOT NULL
+            OR EXISTS (
+                SELECT 1
+                FROM org_approval_records AS final_approval
+                WHERE final_approval.request_id = attendance_corrections.id
+                    AND final_approval.module_type = ?
+                    AND final_approval.approver_role = ?
+                    AND final_approval.approval_status = ?
+            )
+        )";
+        $hrApprovedBindings = [
+            AttendanceCorrectionApprovalService::STAGE_APPROVED,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            HrRole::AdminHr->value,
+            OrgApprovalRecord::STATUS_APPROVED,
+        ];
+        $totals = (clone $base)
+            ->selectRaw('COUNT(*) as total')
+            ->selectRaw(
+                "SUM(CASE WHEN pending_approval = 1 AND rejected_at IS NULL AND NOT {$hrApprovedSql} THEN 1 ELSE 0 END) as pending",
+                $hrApprovedBindings,
+            )
+            ->selectRaw(
+                "SUM(CASE WHEN rejected_at IS NULL AND {$hrApprovedSql} THEN 1 ELSE 0 END) as approved",
+                $hrApprovedBindings,
+            )
+            ->selectRaw('SUM(CASE WHEN rejected_at IS NOT NULL THEN 1 ELSE 0 END) as rejected')
+            ->selectRaw(
+                "SUM(CASE WHEN rejected_at IS NULL AND {$hrApprovedSql} AND DATE(COALESCE(approved_at, second_approved_at)) = ? THEN 1 ELSE 0 END) as approved_today",
+                [...$hrApprovedBindings, $today],
+            )
+            ->selectRaw('SUM(CASE WHEN rejected_at IS NOT NULL AND DATE(rejected_at) = ? THEN 1 ELSE 0 END) as rejected_today', [$today])
+            ->selectRaw('SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as my_filings', [(int) $actor->id])
+            ->first();
+
         $payload = [
-            'pending' => (int) (clone $base)->where('pending_approval', true)->where('approved', false)->whereNull('rejected_at')->count(),
-            'approved_today' => (int) (clone $base)->where('approved', true)->whereDate('approved_at', $today)->count(),
-            'rejected_today' => (int) (clone $base)->whereNotNull('rejected_at')->whereDate('rejected_at', $today)->count(),
-            'my_filings' => (int) (clone $base)->where('user_id', (int) $actor->id)->count(),
-            'all_filings' => (int) (clone $base)->count(),
+            'total' => (int) ($totals->total ?? 0),
+            'pending' => (int) ($totals->pending ?? 0),
+            'approved' => (int) ($totals->approved ?? 0),
+            'rejected' => (int) ($totals->rejected ?? 0),
+            'approved_today' => (int) ($totals->approved_today ?? 0),
+            'rejected_today' => (int) ($totals->rejected_today ?? 0),
+            'my_filings' => (int) ($totals->my_filings ?? 0),
+            'all_filings' => (int) ($totals->total ?? 0),
         ];
 
         RequestPerformanceLogger::finish($perf, $request, 1, ['scope' => 'admin', 'cache' => 'miss', 'cache_hit' => false]);
@@ -997,7 +1150,27 @@ class PresenceFilingController extends Controller
             ->all();
     }
 
-    private function attendanceCorrectionListRow(AttendanceCorrection $c, User $actor, string $tz, ?OrgApprovalRecord $currentApproval): array
+    /**
+     * @param  list<int>  $requestIds
+     * @return array<int, true>
+     */
+    private function finalApprovedAttendanceCorrectionIds(array $requestIds): array
+    {
+        if ($requestIds === []) {
+            return [];
+        }
+
+        return OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+            ->where('approver_role', HrRole::AdminHr->value)
+            ->where('approval_status', OrgApprovalRecord::STATUS_APPROVED)
+            ->whereIn('request_id', $requestIds)
+            ->pluck('request_id')
+            ->mapWithKeys(fn ($id): array => [(int) $id => true])
+            ->all();
+    }
+
+    private function attendanceCorrectionListRow(AttendanceCorrection $c, User $actor, string $tz, ?OrgApprovalRecord $currentApproval, bool $hrApprovedByWorkflow = false): array
     {
         $auth = $currentApproval && $c->user
             ? $this->approvalWorkflowService->authorizePendingRecord($actor, $currentApproval, $c->user, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
@@ -1008,7 +1181,11 @@ class PresenceFilingController extends Controller
             && ! $c->hasRequiredTimesForFinalApproval()) {
             $canApprove = false;
         }
-        $status = $c->rejected_at ? 'rejected' : ($c->approved ? 'approved' : 'pending');
+        $isHrApproved = (bool) $c->approved
+            || $c->approval_stage === AttendanceCorrectionApprovalService::STAGE_APPROVED
+            || $c->second_approved_at !== null
+            || $hrApprovedByWorkflow;
+        $status = $c->rejected_at ? 'rejected' : ($isHrApproved ? 'approved' : 'pending');
         $displayStatus = $status === 'approved'
             ? 'HR Approved'
             : ($status === 'rejected' ? 'Rejected' : ($currentApproval ? 'Pending '.rtrim(str_ireplace(' approval', '', $this->approvalRecordStageLabel($currentApproval))).' Approval' : 'Pending'));
@@ -1604,6 +1781,32 @@ class PresenceFilingController extends Controller
         ]);
 
         return $this->bulkApprove($request);
+    }
+
+    public function bulkRejectFiltered(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $filters = $this->normalizeBulkApproveFilters((array) $request->input('filters', []));
+        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+        if ($ids === []) {
+            return response()->json([
+                'rejected_count' => 0,
+                'skipped_count' => 0,
+                'failed_count' => 0,
+                'failed_items' => [],
+                'skipped_reasons' => [],
+            ]);
+        }
+        $request->merge([
+            'ids' => $ids,
+            'remarks' => $request->input('remarks', $request->input('rejection_note')),
+        ]);
+
+        return $this->bulkReject($request);
     }
 
     public function approve(Request $request, int $id): JsonResponse

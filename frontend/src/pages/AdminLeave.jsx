@@ -281,6 +281,12 @@ export default function AdminLeave() {
   const detailAbortRef = useRef(null)
   const detailFetchIdRef = useRef(0)
   const detailRequestIdRef = useRef(null)
+  const detailLeaveRef = useRef(null)
+
+  useEffect(() => {
+    detailLeaveRef.current = detailLeave
+  }, [detailLeave])
+
   const leaveListAbortRef = useRef(null)
   const mineListAbortRef = useRef(null)
   const allListLoadedOnceRef = useRef(false)
@@ -701,8 +707,8 @@ export default function AdminLeave() {
       const keepExistingSeed =
         !isRetry
         && detailRequestIdRef.current === id
-        && detailLeave
-        && String(detailLeave.id ?? detailLeave.request_id ?? '') === String(id)
+        && detailLeaveRef.current
+        && String(detailLeaveRef.current.id ?? detailLeaveRef.current.request_id ?? '') === String(id)
       if (!keepExistingSeed) {
         setDetailLeave(null)
       }
@@ -743,7 +749,7 @@ export default function AdminLeave() {
         }
       }
     },
-    [mapReviewFetchError, searchParams, user, detailLeave],
+    [mapReviewFetchError, searchParams, user],
   )
 
   function openDetailDialog(leave) {
@@ -1075,16 +1081,16 @@ export default function AdminLeave() {
       setTotalMatchingApprovable(0)
       return undefined
     }
-    let cancelled = false
-    bulkApproveLeavePreview(bulkApprovalFilters)
+    const controller = new AbortController()
+    bulkApproveLeavePreview(bulkApprovalFilters, { signal: controller.signal })
       .then((res) => {
-        if (!cancelled) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
+        if (!controller.signal.aborted) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
       })
-      .catch(() => {
-        if (!cancelled) setTotalMatchingApprovable(0)
+      .catch((e) => {
+        if (!controller.signal.aborted && e?.name !== 'AbortError') setTotalMatchingApprovable(0)
       })
     return () => {
-      cancelled = true
+      controller.abort()
     }
   }, [bulkApprovalFilters, bulkFiltersKey, canApproveLeave, tab])
 

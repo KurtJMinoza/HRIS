@@ -58,7 +58,12 @@ import {
 import { DashboardSkeleton } from '@/components/skeletons'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Cell } from 'recharts'
 import {
-  getDashboardData,
+  getAdminDashboardSummary,
+  getAdminDashboardRequests,
+  getAdminDashboardAttendanceToday,
+  getAdminDashboardPayroll,
+  getAdminDashboardCharts,
+  getAdminDashboardRecentActivity,
   getAdminDashboardBirthdays,
   getDashboardCompanyAttendance,
   getCompanies,
@@ -257,6 +262,81 @@ function ChartTooltip({ active, payload, label, labelPrefix = '', valueSuffix = 
 }
 
 const LOGS_PER_PAGE = 10
+const DASHBOARD_SNAPSHOT_KEY = 'admin-dashboard:last-snapshot:v1'
+
+function readDashboardSnapshot() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(DASHBOARD_SNAPSHOT_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function writeDashboardSnapshot(data) {
+  if (typeof window === 'undefined' || !data || typeof data !== 'object') return
+  try {
+    window.localStorage.setItem(
+      DASHBOARD_SNAPSHOT_KEY,
+      JSON.stringify({
+        ...data,
+        __cached_at: new Date().toISOString(),
+      })
+    )
+  } catch {
+    // Ignore storage quota/privacy-mode failures; live queries still hydrate the page.
+  }
+}
+
+function dashboardSnapshotSegment(snapshot, segment) {
+  if (!snapshot || typeof snapshot !== 'object') return undefined
+  if (segment === 'summary') {
+    return {
+      stats: snapshot.stats ?? {},
+      stats_prev: snapshot.stats_prev ?? {},
+      half_day_summary: snapshot.half_day_summary,
+      upcoming_holidays: snapshot.upcoming_holidays,
+      today_birthdays: snapshot.today_birthdays,
+      current_month_birthdays: snapshot.current_month_birthdays,
+      upcoming_30_days: snapshot.upcoming_30_days,
+      upcoming_90_days: snapshot.upcoming_90_days,
+      upcoming_birthdays: snapshot.upcoming_birthdays,
+      upcoming_birthdays_90: snapshot.upcoming_birthdays_90,
+      birthday_month_label: snapshot.birthday_month_label,
+      birthday_month_range_label: snapshot.birthday_month_range_label,
+      upcoming_regularizations: snapshot.upcoming_regularizations,
+      expiring_contracts: snapshot.expiring_contracts,
+      employment_settings: snapshot.employment_settings,
+    }
+  }
+  if (segment === 'requests') {
+    return {
+      pending_counts: snapshot.pending_counts,
+      overtime_summary: snapshot.overtime_summary,
+      pending_overtime_request: snapshot.pending_overtime_request,
+      pending_attendance_corrections: snapshot.pending_attendance_corrections,
+      pending_attendance_correction_preview: snapshot.pending_attendance_correction_preview,
+      pending_attendance_correction_previews: snapshot.pending_attendance_correction_previews,
+      pending_count: snapshot.pending_count,
+      pending_requests: snapshot.pending_requests,
+      today_leaves: snapshot.today_leaves,
+    }
+  }
+  if (segment === 'attendance') return { today_logs: snapshot.today_logs }
+  if (segment === 'payroll') return { payroll_summary: snapshot.payroll_summary }
+  if (segment === 'charts') {
+    return {
+      weekly_overview: snapshot.weekly_overview,
+      department_distribution: snapshot.department_distribution,
+      company_distribution: snapshot.company_distribution,
+    }
+  }
+  if (segment === 'recent') return { recent_activity: snapshot.recent_activity }
+  return undefined
+}
 
 function exportTableCsv(logs, formatTimeFn) {
   const headers = ['Employee', 'Company', 'Time In', 'Time Out', 'Late Status', 'Session']
@@ -547,7 +627,7 @@ export default function AdminDashboard() {
           : null
   const dashboardCompanyLogo = resolveCompanyLogoSrc(user?.company_logo_url)
 
-  const [data, setData] = useState(null)
+  const [data, setData] = useState(() => readDashboardSnapshot())
   const [error, setError] = useState(null)
   const [logsPage, setLogsPage] = useState(1)
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null)
@@ -605,13 +685,64 @@ export default function AdminDashboard() {
     return `${hrPanelPath(hrBase, 'attendance-corrections')}${qs ? `?${qs}` : ''}`
   }, [hrBase])
 
-  const dashboardQuery = useQuery({
-    queryKey: ['admin-dashboard'],
-    queryFn: getDashboardData,
+  const summaryQuery = useQuery({
+    queryKey: ['admin-dashboard', 'summary'],
+    queryFn: ({ signal }) => getAdminDashboardSummary({ signal }),
     enabled: !authLoading,
-    refetchInterval: 15000,
+    initialData: () => dashboardSnapshotSegment(data, 'summary'),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
     refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
+  })
+
+  const requestsQuery = useQuery({
+    queryKey: ['admin-dashboard', 'requests'],
+    queryFn: ({ signal }) => getAdminDashboardRequests({ signal }),
+    enabled: !authLoading,
+    initialData: () => dashboardSnapshotSegment(data, 'requests'),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchOnMount: 'always',
+  })
+
+  const attendanceQuery = useQuery({
+    queryKey: ['admin-dashboard', 'attendance'],
+    queryFn: ({ signal }) => getAdminDashboardAttendanceToday({ signal }),
+    enabled: !authLoading,
+    initialData: () => dashboardSnapshotSegment(data, 'attendance'),
+    staleTime: 20_000,
+    refetchInterval: 15_000,
+    refetchOnMount: 'always',
+  })
+
+  const payrollQuery = useQuery({
+    queryKey: ['admin-dashboard', 'payroll'],
+    queryFn: ({ signal }) => getAdminDashboardPayroll({ signal }),
+    enabled: !authLoading,
+    initialData: () => dashboardSnapshotSegment(data, 'payroll'),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+    refetchOnMount: 'always',
+  })
+
+  const chartsQuery = useQuery({
+    queryKey: ['admin-dashboard', 'charts'],
+    queryFn: ({ signal }) => getAdminDashboardCharts({ signal }),
+    enabled: !authLoading,
+    initialData: () => dashboardSnapshotSegment(data, 'charts'),
+    staleTime: 45_000,
+    refetchInterval: 60_000,
+    refetchOnMount: 'always',
+  })
+
+  const recentActivityQuery = useQuery({
+    queryKey: ['admin-dashboard', 'recent'],
+    queryFn: ({ signal }) => getAdminDashboardRecentActivity({ signal }),
+    enabled: !authLoading,
+    initialData: () => dashboardSnapshotSegment(data, 'recent'),
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+    refetchOnMount: 'always',
   })
 
   const isBrowsingCurrentBirthdayMonth =
@@ -632,13 +763,34 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const onPendingApprovalsChanged = () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-dashboard', 'requests'] })
     }
     window.addEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
     return () => window.removeEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
   }, [queryClient])
 
-  const loading = authLoading || dashboardQuery.isLoading
+  const mergedDashboardData = useMemo(
+    () => ({
+      ...(summaryQuery.data ?? {}),
+      ...(requestsQuery.data ?? {}),
+      ...(attendanceQuery.data ?? {}),
+      ...(payrollQuery.data ?? {}),
+      ...(chartsQuery.data ?? {}),
+      ...(recentActivityQuery.data ?? {}),
+    }),
+    [
+      summaryQuery.data,
+      requestsQuery.data,
+      attendanceQuery.data,
+      payrollQuery.data,
+      chartsQuery.data,
+      recentActivityQuery.data,
+    ],
+  )
+
+  const loading = authLoading
+  const summaryLoading = summaryQuery.isLoading && !summaryQuery.data
+  const requestsLoading = requestsQuery.isLoading && !requestsQuery.data
   const pendingOvertimeRequest =
     String(data?.pending_overtime_request?.status || '').toLowerCase() === 'pending'
       ? data.pending_overtime_request
@@ -648,20 +800,44 @@ export default function AdminDashboard() {
     : 0
 
   const fetchDashboard = useCallback(async () => {
-    const result = await dashboardQuery.refetch()
-    if (result.error) throw result.error
-  }, [dashboardQuery])
+    await Promise.allSettled([
+      summaryQuery.refetch(),
+      requestsQuery.refetch(),
+      attendanceQuery.refetch(),
+      payrollQuery.refetch(),
+      chartsQuery.refetch(),
+      recentActivityQuery.refetch(),
+    ])
+  }, [summaryQuery, requestsQuery, attendanceQuery, payrollQuery, chartsQuery, recentActivityQuery])
 
   useEffect(() => {
-    if (dashboardQuery.data) {
-      setData(dashboardQuery.data)
+    if (mergedDashboardData && Object.keys(mergedDashboardData).length > 0) {
+      setData((previous) => {
+        const nextData = {
+          ...(previous ?? {}),
+          ...mergedDashboardData,
+        }
+        writeDashboardSnapshot(nextData)
+        return nextData
+      })
       setLastUpdatedAt(new Date())
       setError(null)
-    } else if (dashboardQuery.error) {
-      setData(null)
-      setError(dashboardQuery.error?.message || 'Failed to load dashboard')
     }
-  }, [dashboardQuery.data, dashboardQuery.error])
+    const queryError =
+      summaryQuery.error
+      || requestsQuery.error
+      || attendanceQuery.error
+      || chartsQuery.error
+    if (queryError) {
+      setError(queryError?.message || 'Failed to load dashboard')
+    }
+  }, [
+    mergedDashboardData,
+    summaryQuery.error,
+    requestsQuery.error,
+    attendanceQuery.error,
+    chartsQuery.error,
+  ])
 
   useEffect(() => {
     if (authLoading || !canViewCompanyDirectory) {
@@ -935,11 +1111,11 @@ export default function AdminDashboard() {
     },
     [holidayMonth, holidayYearMin, holidayYearMax]
   )
-  if (authLoading || (loading && !data)) {
+  if (authLoading) {
     return <DashboardSkeleton />
   }
 
-  if (error && !data) {
+  if (error && !data && summaryQuery.isError) {
     const isPermError = /missing permission|forbidden/i.test(String(error))
     return (
       <div className="space-y-6">
@@ -1749,7 +1925,7 @@ export default function AdminDashboard() {
         {/* 3. Overtime Requests */}
         <Motion.div variants={itemVariants} className="self-stretch">
           <OvertimeRequestsCard
-            loading={loading}
+            loading={requestsLoading}
             pendingCount={canViewOvertime ? overtimePendingCount : 0}
             request={pendingOvertimeRequest}
             onViewAll={() => navigate(hrPanelPath(hrBase, 'overtime'))}
@@ -1770,8 +1946,8 @@ export default function AdminDashboard() {
         <Motion.div variants={itemVariants} className="self-stretch">
           <AttendanceCorrectionsCard
             loading={
-              (!canApproveAttendanceCorrections && loading) ||
-              (canApproveAttendanceCorrections && dashboardQuery.isLoading)
+              (!canApproveAttendanceCorrections && requestsLoading) ||
+              (canApproveAttendanceCorrections && requestsQuery.isLoading && !requestsQuery.data)
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
@@ -2015,7 +2191,7 @@ export default function AdminDashboard() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-1 flex-col gap-3">
-            {loading && !data ? (
+            {summaryLoading ? (
               <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
                 Loading upcoming milestones...
               </div>
@@ -2177,7 +2353,7 @@ export default function AdminDashboard() {
               </div>
             </CardHeader>
             <CardContent className="flex flex-1 flex-col gap-3">
-              {loading && !data ? (
+              {summaryLoading ? (
                 <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
                   Loading expiring contracts...
                 </div>
@@ -2258,8 +2434,8 @@ export default function AdminDashboard() {
         <Motion.div variants={itemVariants}>
           <AttendanceCorrectionsCard
             loading={
-              (!canApproveAttendanceCorrections && loading) ||
-              (canApproveAttendanceCorrections && dashboardQuery.isLoading)
+              (!canApproveAttendanceCorrections && requestsLoading) ||
+              (canApproveAttendanceCorrections && requestsQuery.isLoading && !requestsQuery.data)
             }
             pendingCount={canApproveAttendanceCorrections ? pendingAttendanceCorrectionsCount : 0}
             request={pendingAttendanceCorrectionPreview}
@@ -2486,7 +2662,7 @@ export default function AdminDashboard() {
               ) : null}
             </div>
             <div className="h-[300px] w-full overflow-hidden rounded-lg bg-background/35 dark:bg-background/25">
-              {loading && !data ? (
+              {summaryLoading ? (
                 <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
                   Loading upcoming holidays…
                 </div>

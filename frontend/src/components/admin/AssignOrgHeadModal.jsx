@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Loader2, Search, UserMinus, UserPlus, X } from 'lucide-react'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -7,9 +7,11 @@ import { Label } from '@/components/ui/label'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
+import { useHeadAssignmentEmployeeSearch } from '@/hooks/useHeadAssignmentEmployeeSearch'
 import {
   employeeDisplayName,
-  filterEmployeesByQuery,
+  headAssignmentPrimaryLine,
+  headAssignmentSecondaryLine,
   normalizeLeaderUserId,
   toDisplayText,
 } from '@/lib/employeeSearch'
@@ -23,11 +25,7 @@ export default function AssignOrgHeadModal({
   title,
   unitName,
   fieldLabel,
-  loading,
-  loadingMessage = 'Loading members…',
-  loadError,
-  onRetry,
-  employees = [],
+  searchFilters = {},
   currentHeadId,
   currentHead = null,
   headId,
@@ -38,13 +36,7 @@ export default function AssignOrgHeadModal({
   initialsFn,
   ariaDescribedBy = 'org-head-desc',
 }) {
-  const [searchQuery, setSearchQuery] = useState('')
   const roleNotes = headRoleNotes instanceof Map ? headRoleNotes : new Map()
-
-  const handleOpenChange = (nextOpen) => {
-    if (!nextOpen) setSearchQuery('')
-    onOpenChange(nextOpen)
-  }
 
   const normalizedCurrentHead = useMemo(() => {
     if (!currentHead) return null
@@ -54,46 +46,51 @@ export default function AssignOrgHeadModal({
     if (!name || name === 'Unknown') return null
     return {
       id,
+      employee_id: id,
       name,
+      full_name: name,
       profile_image_url: toDisplayText(currentHead.profile_image_url || currentHead.profile_image) || null,
+      profile_image: toDisplayText(currentHead.profile_image_url || currentHead.profile_image) || null,
       employee_code: toDisplayText(currentHead.employee_code),
+      employee_number: toDisplayText(currentHead.employee_code),
       position: toDisplayText(currentHead.position),
+      company_name: toDisplayText(currentHead.company_name),
+      department_name: toDisplayText(currentHead.department_name || currentHead.department),
+      is_active: true,
     }
   }, [currentHead])
 
-  const rosterEmployees = useMemo(() => {
-    if (!normalizedCurrentHead) return employees
-    if (employees.some((e) => normalizeLeaderUserId(e.id) === normalizedCurrentHead.id)) return employees
-    return [
-      {
-        id: normalizedCurrentHead.id,
-        name: normalizedCurrentHead.name,
-        profile_image_url: normalizedCurrentHead.profile_image_url,
-        profile_image: normalizedCurrentHead.profile_image_url,
-        employee_code: normalizedCurrentHead.employee_code,
-        position: normalizedCurrentHead.position,
-        is_active: true,
-      },
-      ...employees,
-    ]
-  }, [employees, normalizedCurrentHead])
+  const {
+    query: searchQuery,
+    setQuery: setSearchQuery,
+    results: filteredEmployees,
+    loading,
+    error: loadError,
+    refresh,
+    reset,
+  } = useHeadAssignmentEmployeeSearch({
+    enabled: open,
+    searchFilters: {
+      include_cross_company: searchFilters.include_cross_company !== false,
+      active_only: searchFilters.active_only !== false,
+      ...searchFilters,
+    },
+    selectedEmployee: normalizedCurrentHead,
+  })
 
-  const filteredEmployees = useMemo(
-    () => filterEmployeesByQuery(rosterEmployees, searchQuery),
-    [rosterEmployees, searchQuery],
-  )
+  const handleOpenChange = (nextOpen) => {
+    if (!nextOpen) reset()
+    onOpenChange(nextOpen)
+  }
 
-  const showEmptySearch =
-    !loading &&
-    !loadError &&
-    rosterEmployees.length > 0 &&
-    searchQuery.trim() &&
-    filteredEmployees.length === 0
+  useEffect(() => {
+    if (!open) reset()
+  }, [open, reset])
+
+  const showEmptySearch = !loading && !loadError && searchQuery.trim() && filteredEmployees.length === 0
 
   const assignedHeadName = normalizedCurrentHead?.name || ''
-  const assignedHeadMeta = [normalizedCurrentHead?.employee_code, normalizedCurrentHead?.position]
-    .filter(Boolean)
-    .join(' · ')
+  const assignedHeadMeta = headAssignmentSecondaryLine(normalizedCurrentHead || {})
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -118,6 +115,7 @@ export default function AssignOrgHeadModal({
                 <p id={ariaDescribedBy} className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
                   Select the head for{' '}
                   <strong className="font-extrabold uppercase text-brand">{toDisplayText(unitName)}</strong>.
+                  Cross-company leadership assignments are allowed.
                 </p>
               ) : null}
             </div>
@@ -153,7 +151,7 @@ export default function AssignOrgHeadModal({
                         alt={assignedHeadName}
                       />
                       <AvatarFallback className="bg-brand/15 text-sm font-bold text-brand">
-                        {initialsFn?.(assignedHeadName) ?? '?'}
+                        {initialsFn?.(assignedHeadName) ?? normalizedCurrentHead.initials ?? '?'}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0 flex-1">
@@ -171,42 +169,38 @@ export default function AssignOrgHeadModal({
                 </div>
               ) : null}
 
-              {!loading && !loadError && rosterEmployees.length > 0 && (
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-4 top-1/2 size-[18px] -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    type="text"
-                    placeholder="Search name, email, code, or position…"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-11 rounded-xl border-border/80 bg-background pl-11 pr-11 text-sm shadow-sm transition focus-visible:ring-brand/20 dark:bg-input/25"
-                  />
-                  {searchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                      aria-label="Clear search"
-                    >
-                      <X className="size-4" />
-                    </button>
-                  )}
-                </div>
-              )}
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-4 top-1/2 size-[18px] -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="Search all active employees…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-11 rounded-xl border-border/80 bg-background pl-11 pr-11 text-sm shadow-sm transition focus-visible:ring-brand/20 dark:bg-input/25"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="Clear search"
+                  >
+                    <X className="size-4" />
+                  </button>
+                ) : null}
+              </div>
 
               {loading ? (
                 <div className="flex items-center justify-center gap-2 rounded-xl border border-border/70 py-10 text-sm text-muted-foreground dark:bg-input/20">
                   <Loader2 className="size-5 shrink-0 animate-spin text-brand" />
-                  {loadingMessage}
+                  Searching employees…
                 </div>
               ) : loadError ? (
                 <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                  <p>{toDisplayText(loadError) || 'Could not load members.'}</p>
-                  {onRetry ? (
-                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onRetry}>
-                      Try again
-                    </Button>
-                  ) : null}
+                  <p>{toDisplayText(loadError) || 'Could not search employees.'}</p>
+                  <Button type="button" variant="outline" size="sm" className="mt-3" onClick={refresh}>
+                    Try again
+                  </Button>
                 </div>
               ) : (
                 <div className="max-h-[min(48vh,24rem)] overflow-y-auto rounded-xl border border-border/80 dark:border-border/70">
@@ -230,8 +224,10 @@ export default function AssignOrgHeadModal({
                     <span className="text-sm italic text-muted-foreground">— Remove head —</span>
                   </label>
 
-                  {rosterEmployees.length === 0 && (
-                    <p className="px-3 py-4 text-center text-sm text-muted-foreground">No active employees available.</p>
+                  {!searchQuery.trim() && filteredEmployees.length === 0 && (
+                    <p className="border-t border-border/70 px-3 py-4 text-center text-sm text-muted-foreground dark:border-border/60">
+                      Type a name, employee number, or email to search.
+                    </p>
                   )}
 
                   {showEmptySearch && (
@@ -241,16 +237,17 @@ export default function AssignOrgHeadModal({
                   )}
 
                   {filteredEmployees.map((emp) => {
-                    const empId = normalizeLeaderUserId(emp.id)
+                    const empId = normalizeLeaderUserId(emp.id ?? emp.employee_id)
                     const isCurrentHead = empId !== '' && empId === normalizeLeaderUserId(currentHeadId)
                     const roleNote = roleNotes.get(empId)
                     const isDisabled = emp.is_active === false && !isCurrentHead
-                    const displayName = employeeDisplayName(emp)
-                    const meta = [toDisplayText(emp.employee_code), toDisplayText(emp.position)].filter(Boolean).join(' · ')
+                    const primaryLine = headAssignmentPrimaryLine(emp)
+                    const secondaryLine = headAssignmentSecondaryLine(emp)
+                    const avatarLabel = employeeDisplayName(emp)
                     const isSelected = normalizeLeaderUserId(headId) === empId
                     return (
                       <label
-                        key={empId || displayName}
+                        key={empId || primaryLine}
                         className={cn(
                           'flex items-center gap-4 border-t border-border/70 bg-background px-4 py-3 transition-colors dark:border-border/60 dark:bg-input/20',
                           !isDisabled && 'cursor-pointer hover:bg-muted/40 dark:hover:bg-white/5',
@@ -272,23 +269,23 @@ export default function AssignOrgHeadModal({
                         <Avatar className="size-12 shrink-0">
                           <AvatarImage
                             src={profileImageUrl(emp.profile_image_url || emp.profile_image)}
-                            alt={displayName}
+                            alt={avatarLabel}
                           />
                           <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">
-                            {initialsFn?.(displayName) ?? '?'}
+                            {emp.initials || initialsFn?.(avatarLabel) || '?'}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-base font-extrabold text-foreground">{displayName}</p>
-                          <p className="truncate text-xs text-muted-foreground">{meta || '—'}</p>
-                          {roleNote && (
+                          <p className="truncate text-base font-extrabold text-foreground">{primaryLine}</p>
+                          <p className="truncate text-xs text-muted-foreground">{secondaryLine || '—'}</p>
+                          {roleNote ? (
                             <p
                               className="mt-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
                               title={MULTI_HEAD_INFO}
                             >
                               {roleNote}
                             </p>
-                          )}
+                          ) : null}
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1">
                           {isCurrentHead ? (

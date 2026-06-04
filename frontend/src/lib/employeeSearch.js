@@ -23,12 +23,31 @@ export function employeeDisplayName(employee) {
   )
 }
 
+export function headAssignmentPrimaryLine(employee) {
+  const name = employeeDisplayName(employee)
+  const code = toDisplayText(employee?.employee_number || employee?.employee_code)
+  const company = toDisplayText(employee?.company_name)
+  const codePart = code ? ` (${code})` : ''
+  const companyPart = company ? ` — ${company}` : ''
+  return `${name}${codePart}${companyPart}`
+}
+
+export function headAssignmentSecondaryLine(employee) {
+  return [toDisplayText(employee?.position), toDisplayText(employee?.department_name || employee?.department)]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 export function employeeSearchHaystack(employee) {
   return [
     employee?.name,
     employee?.display_name,
     employee?.formatted_name,
+    employee?.first_name,
+    employee?.middle_name,
+    employee?.last_name,
     employee?.employee_code,
+    employee?.employee_number,
     employee?.email,
     employee?.position,
     employee?.department,

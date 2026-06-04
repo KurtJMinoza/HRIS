@@ -31,6 +31,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetCl
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import LeadershipPositionsSection from '@/components/organization/LeadershipPositionsSection'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useHeadAssignmentEmployeeSearch } from '@/hooks/useHeadAssignmentEmployeeSearch'
+import {
+  headAssignmentPrimaryLine,
+  headAssignmentSecondaryLine,
+  employeeDisplayName,
+  normalizeLeaderUserId,
+} from '@/lib/employeeSearch'
 import {
   getCompanies,
   createCompany,
@@ -40,7 +47,8 @@ import {
   getEmployees,
   getDepartments,
   getBranches,
-  getDashboardData,
+  getAdminDashboardSummary,
+  getAdminDashboardCharts,
   companyLogoUrl,
   departmentLogoUrl,
   profileImageUrl,
@@ -263,10 +271,36 @@ function buildDepartmentStackItems(companyId, departments) {
   }))
 }
 
-function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange, employees, companies, onSubmit, submitting }) {
-  const [search, setSearch] = useState('')
+function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange, companies, onSubmit, submitting }) {
   const [popoverOpen, setPopoverOpen] = useState(false)
   const inputRef = useRef(null)
+
+  const currentHead = useMemo(() => {
+    if (!company?.company_head_id) return null
+    return {
+      id: company.company_head_id,
+      employee_id: company.company_head_id,
+      name: company.company_head_name,
+      full_name: company.company_head_name,
+      employee_code: company.company_head_employee_code,
+      employee_number: company.company_head_employee_code,
+      position: company.company_head_position,
+      profile_image: company.company_head_profile_image,
+      is_active: true,
+    }
+  }, [company])
+
+  const {
+    query: search,
+    setQuery: setSearch,
+    results: filtered,
+    loading: searchLoading,
+    reset,
+  } = useHeadAssignmentEmployeeSearch({
+    enabled: open && popoverOpen,
+    searchFilters: { include_cross_company: true },
+    selectedEmployee: currentHead,
+  })
 
   // Build informational notes for employees with other leadership roles.
   const roleNoteMap = useMemo(() => {
@@ -280,19 +314,16 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
     return map
   }, [companies, company])
 
-  const filtered = useMemo(() => {
-    if (!search.trim()) return employees.slice(0, 50)
-    const q = search.trim().toLowerCase()
-    return employees
-      .filter((e) => (e.name || '').toLowerCase().includes(q) || (e.employee_code || '').toLowerCase().includes(q) || (e.email || '').toLowerCase().includes(q))
-      .slice(0, 30)
-  }, [employees, search])
-
-  const selected = employees.find((e) => String(e.id) === headId)
+  const selected = useMemo(() => {
+    const fromResults = filtered.find((e) => String(e.id ?? e.employee_id) === String(headId))
+    if (fromResults) return fromResults
+    if (currentHead && String(currentHead.id) === String(headId)) return currentHead
+    return null
+  }, [filtered, headId, currentHead])
 
   const handleOpenChange = (nextOpen) => {
     if (!nextOpen) {
-      setSearch('')
+      reset()
       setPopoverOpen(false)
     }
     onOpenChange(nextOpen)
@@ -327,13 +358,15 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                   {selected ? (
                     <>
                       <Avatar className="size-6 shrink-0">
-                        <AvatarImage src={profileImageUrl(selected.profile_image)} />
-                        <AvatarFallback className="text-[10px] font-bold bg-primary/10 text-primary">{initials(selected.name)}</AvatarFallback>
+                        <AvatarImage src={profileImageUrl(selected.profile_image_url || selected.profile_image)} />
+                        <AvatarFallback className="text-[10px] font-bold bg-primary/10 text-primary">
+                          {selected.initials || initials(employeeDisplayName(selected))}
+                        </AvatarFallback>
                       </Avatar>
-                      <span className="flex-1 truncate">{selected.name}{selected.employee_code ? ` (${selected.employee_code})` : ''}</span>
+                      <span className="flex-1 truncate">{headAssignmentPrimaryLine(selected)}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">Search or select employee…</span>
+                    <span className="text-muted-foreground">Search all active employees…</span>
                   )}
                 </button>
               </PopoverTrigger>
@@ -342,7 +375,7 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
-                      placeholder="Search by name, code, email…"
+                      placeholder="Search all active employees…"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                       className="h-9 pl-8"
@@ -358,28 +391,37 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                   >
                     <span className="text-muted-foreground">Not assigned</span>
                   </button>
+                  {searchLoading ? (
+                    <div className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      Searching…
+                    </div>
+                  ) : null}
                   {filtered.map((emp) => {
-                    const roleNote = roleNoteMap.get(String(emp.id))
-                    const isInactive = emp.is_active === false && String(emp.id) !== String(company?.company_head_id)
+                    const empId = normalizeLeaderUserId(emp.id ?? emp.employee_id)
+                    const roleNote = roleNoteMap.get(empId)
+                    const isInactive = emp.is_active === false && empId !== String(company?.company_head_id)
                     return (
                       <button
-                        key={emp.id}
+                        key={empId}
                         type="button"
                         disabled={isInactive}
-                        onClick={() => { if (!isInactive) { onHeadIdChange(String(emp.id)); setPopoverOpen(false) } }}
+                        onClick={() => { if (!isInactive) { onHeadIdChange(empId); setPopoverOpen(false) } }}
                         className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm transition-colors
                           ${isInactive ? 'cursor-not-allowed opacity-60' : 'hover:bg-muted'}
-                          ${headId === String(emp.id) ? 'bg-muted' : ''}`}
+                          ${headId === empId ? 'bg-muted' : ''}`}
                       >
                         <Avatar className="mt-0.5 size-7 shrink-0">
-                          <AvatarImage src={profileImageUrl(emp.profile_image)} />
-                          <AvatarFallback className="text-[10px] font-bold bg-primary/10 text-primary">{initials(emp.name)}</AvatarFallback>
+                          <AvatarImage src={profileImageUrl(emp.profile_image_url || emp.profile_image)} />
+                          <AvatarFallback className="text-[10px] font-bold bg-primary/10 text-primary">
+                            {emp.initials || initials(employeeDisplayName(emp))}
+                          </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium leading-tight">{emp.name}</p>
-                          {(emp.employee_code || emp.position) && (
-                            <p className="truncate text-xs text-muted-foreground">{[emp.employee_code, emp.position].filter(Boolean).join(' · ')}</p>
-                          )}
+                          <p className="truncate font-medium leading-tight">{headAssignmentPrimaryLine(emp)}</p>
+                          {headAssignmentSecondaryLine(emp) ? (
+                            <p className="truncate text-xs text-muted-foreground">{headAssignmentSecondaryLine(emp)}</p>
+                          ) : null}
                           {roleNote && (
                             <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
                               {roleNote}
@@ -389,7 +431,11 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                       </button>
                     )
                   })}
-                  {filtered.length === 0 && <div className="px-3 py-4 text-center text-sm text-muted-foreground">No matches</div>}
+                  {!searchLoading && filtered.length === 0 && (
+                    <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+                      {search.trim() ? 'No matches' : 'Type to search employees'}
+                    </div>
+                  )}
                 </div>
               </PopoverContent>
             </Popover>
@@ -407,7 +453,7 @@ function AssignHeadDialog({ open, onOpenChange, company, headId, onHeadIdChange,
                 </Button>
               </div>
             )}
-            <p className="mt-1 text-xs text-muted-foreground">Type to search. Employees already Company Head of another company cannot be selected.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Search across all active employees. Cross-company leadership is allowed.</p>
           </div>
           </div>
           <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
@@ -1276,7 +1322,12 @@ export default function AdminCompanies() {
         getDepartments().catch(() => ({ departments: [] })),
       ]
       if (isCompanyHead) {
-        promises.push(getDashboardData().catch(() => null))
+        promises.push(
+          Promise.all([
+            getAdminDashboardSummary().catch(() => null),
+            getAdminDashboardCharts().catch(() => null),
+          ]).then(([summary, charts]) => (summary ? { ...summary, ...(charts ?? {}) } : null))
+        )
       }
       const results = await Promise.all(promises)
       const companiesRes = results[0]
@@ -2266,7 +2317,6 @@ export default function AdminCompanies() {
         company={headCompany}
         headId={headId}
         onHeadIdChange={setHeadId}
-        employees={assignableEmployees}
         companies={companies}
         onSubmit={handleAssignHead}
         submitting={headSubmitting}

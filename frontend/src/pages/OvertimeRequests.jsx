@@ -106,7 +106,7 @@ import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
 import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
-import { clearRequestReviewSearchParams } from '@/lib/leaveReviewDeepLink'
+import { clearRequestReviewSearchParams, parseReviewRequestId } from '@/lib/leaveReviewDeepLink'
 
 const OT_TYPE_LABEL = {
   regular: 'Regular Day OT',
@@ -797,7 +797,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setMonthIndex(t.getMonth())
   }
 
-  const initialReviewId = searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id')
+  const initialReviewIdRaw = searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id')
+  const initialReviewId = parseReviewRequestId(initialReviewIdRaw)
   const hasDeepLinkReview = Boolean(isHr && canSeeAllTab && initialReviewId)
   const [tab, setTab] = useState(() => (hasDeepLinkReview || canSeeAllTab ? 'all' : 'mine'))
 
@@ -841,7 +842,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   }, [isHr, dateFromUrl, segmentsFromUrl, searchParams, setSearchParams])
 
   const deepLinkedOtRequestId = isHr && canSeeAllTab
-    ? (searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id'))
+    ? parseReviewRequestId(
+        searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id'),
+      )
     : null
   const handledOtDeepLinkRef = useRef(null)
 
@@ -865,7 +868,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [viewOpen, setViewOpen] = useState(() => hasDeepLinkReview)
   const [detailLoading, setDetailLoading] = useState(() => hasDeepLinkReview)
   const [detail, setDetail] = useState(() => {
-    if (!hasDeepLinkReview || Number(initialReviewId) <= 0) return null
+    if (!hasDeepLinkReview) return null
     const seed = location.state?.overtimeReviewSeed
     const seedId = Number(seed?.id ?? seed?.request_id ?? 0)
     if (seed && seedId === Number(initialReviewId)) return seed
@@ -1206,16 +1209,16 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       setTotalMatchingApprovable(0)
       return undefined
     }
-    let cancelled = false
-    bulkApproveAdminOvertimePreview(bulkApprovalFilters)
+    const controller = new AbortController()
+    bulkApproveAdminOvertimePreview(bulkApprovalFilters, { signal: controller.signal })
       .then((res) => {
-        if (!cancelled) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
+        if (!controller.signal.aborted) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
       })
-      .catch(() => {
-        if (!cancelled) setTotalMatchingApprovable(0)
+      .catch((e) => {
+        if (!controller.signal.aborted && e?.name !== 'AbortError') setTotalMatchingApprovable(0)
       })
     return () => {
-      cancelled = true
+      controller.abort()
     }
   }, [bulkApprovalFilters, bulkFiltersKey, tab, canApproveOvertime])
 
@@ -1312,7 +1315,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     detailAbortRef.current?.abort()
     const controller = new AbortController()
     detailAbortRef.current = controller
-    fetcher(row.id, useAdmin ? { signal: controller.signal } : undefined)
+    fetcher(row.id, { signal: controller.signal })
       .then((res) => {
         if (controller.signal.aborted) return
         const ot = res?.overtime ?? res?.data?.overtime

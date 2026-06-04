@@ -75,6 +75,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {
   getAdminPresenceFilings,
+  getAdminPresenceFilingCounts,
   getAdminPresenceFilingDetail,
   getAdminPresenceFilingAttendanceDetail,
   getMyPresenceFilings,
@@ -113,8 +114,8 @@ import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummar
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
 import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
-import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
-import { clearRequestReviewSearchParams } from '@/lib/leaveReviewDeepLink'
+import { HR_PENDING_APPROVALS_CHANGED, notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
+import { clearRequestReviewSearchParams, parseReviewRequestId } from '@/lib/leaveReviewDeepLink'
 
 const APPROVAL_INFO_SHORT =
   'Multi-step approval: managers first, then HR finalizes and updates attendance.'
@@ -534,9 +535,12 @@ export default function AttendanceCorrections() {
   const isAdminHr = user?.hr_role === 'admin_hr'
   const allFilingsLabel = isAdminHr ? 'All Filings' : 'For My Approval'
 
-  const deepLinkedRequestId = searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id')
+  const deepLinkedRequestIdRaw = searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id')
+  const deepLinkedRequestId = parseReviewRequestId(deepLinkedRequestIdRaw)
   const deepLinkedStatus = searchParams.get('status')
   const handledDeepLinkRef = useRef(null)
+  const detailAbortRef = useRef(null)
+  const detailFetchIdRef = useRef(0)
 
   const [tab, setTab] = useState(() => (canSeeAll ? 'all' : 'mine'))
 
@@ -564,10 +568,12 @@ export default function AttendanceCorrections() {
   const itemsPerPage = 25
   const mineListAbortRef = useRef(null)
   const allListAbortRef = useRef(null)
+  const countsAbortRef = useRef(null)
   const allListLoadedOnceRef = useRef(false)
 
   const [sortKey, setSortKey] = useState('filed_at')
   const [sortDir, setSortDir] = useState('desc')
+  const [allCountsSummary, setAllCountsSummary] = useState(null)
 
   const [viewOpen, setViewOpen] = useState(false)
   const [approveOpen, setApproveOpen] = useState(false)
@@ -662,6 +668,30 @@ export default function AttendanceCorrections() {
     }
   }, [toast, allStatus, allFrom, allTo, allIssue, debouncedAllQ, currentPage])
 
+  const loadAllCounts = useCallback(async (opts = {}) => {
+    if (!canSeeAll) return
+    try {
+      const res = await getAdminPresenceFilingCounts({
+        status: allStatus,
+        from_date: allFrom || undefined,
+        to_date: allTo || undefined,
+        issue_type: allIssue,
+        q: debouncedAllQ || undefined,
+        signal: opts.signal,
+      })
+      if (opts.signal?.aborted) return
+      setAllCountsSummary({
+        total: Number(res?.total ?? res?.all_filings ?? 0) || 0,
+        pending: Number(res?.pending ?? 0) || 0,
+        approved: Number(res?.approved ?? 0) || 0,
+        rejected: Number(res?.rejected ?? 0) || 0,
+      })
+    } catch (e) {
+      if (opts.signal?.aborted || e?.name === 'AbortError') return
+      setAllCountsSummary(null)
+    }
+  }, [canSeeAll, allStatus, allFrom, allTo, allIssue, debouncedAllQ])
+
   useEffect(() => {
     if (tab !== 'mine') return undefined
     mineListAbortRef.current?.abort()
@@ -690,6 +720,29 @@ export default function AttendanceCorrections() {
   }, [tab, canSeeAll, loadAll])
 
   useEffect(() => {
+    if (tab !== 'all' || !canSeeAll) {
+      countsAbortRef.current?.abort()
+      return undefined
+    }
+    countsAbortRef.current?.abort()
+    const controller = new AbortController()
+    countsAbortRef.current = controller
+    loadAllCounts({ signal: controller.signal })
+    return () => {
+      controller.abort()
+    }
+  }, [tab, canSeeAll, loadAllCounts])
+
+  useEffect(() => {
+    if (!canSeeAll) return undefined
+    const onPendingApprovalsChanged = () => {
+      void loadAllCounts()
+    }
+    window.addEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
+    return () => window.removeEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
+  }, [canSeeAll, loadAllCounts])
+
+  useEffect(() => {
     if (!canSeeAll) return
     if (deepLinkedStatus === 'pending') {
       setTab('all')
@@ -703,13 +756,16 @@ export default function AttendanceCorrections() {
       return
     }
     setTab('all')
-    if (handledDeepLinkRef.current === String(deepLinkedRequestId)) return
-    handledDeepLinkRef.current = String(deepLinkedRequestId)
+    if (handledDeepLinkRef.current === deepLinkedRequestId) return
+    handledDeepLinkRef.current = deepLinkedRequestId
     const seed = location.state?.attendanceCorrectionReviewSeed
     const seedId = seed?.id ?? seed?.request_id ?? seed?.correction_request_id
-    openView(seed && String(seedId) === String(deepLinkedRequestId)
-      ? { ...seed, id: deepLinkedRequestId }
-      : { id: deepLinkedRequestId })
+    openView(
+      seed && String(seedId) === deepLinkedRequestId
+        ? { ...seed, id: deepLinkedRequestId }
+        : { id: deepLinkedRequestId },
+      { forceAdmin: true },
+    )
     clearRequestReviewSearchParams(setSearchParams)
     // openView is intentionally excluded so the URL deep-link opens exactly once per id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -778,7 +834,7 @@ export default function AttendanceCorrections() {
     ? loadingMine
     : loadingAll || (tab === 'all' && canSeeAll && !allListLoadedOnceRef.current)
   const activePagination = tab === 'mine' ? minePagination : allPagination
-  const activeSummary = tab === 'mine' ? minePagination?.summary : allPagination?.summary
+  const activeSummary = tab === 'mine' ? minePagination?.summary : allCountsSummary
 
   const requestStats = useMemo(() => {
     if (activeSummary && typeof activeSummary === 'object') {
@@ -919,7 +975,7 @@ export default function AttendanceCorrections() {
     () => ({
       date_from: allFrom || undefined,
       date_to: allTo || undefined,
-      status: allStatus || undefined,
+      status: allStatus !== 'all' ? allStatus : undefined,
       issue_type: allIssue !== 'all' ? allIssue : undefined,
       search: debouncedAllQ || undefined,
     }),
@@ -986,7 +1042,7 @@ export default function AttendanceCorrections() {
     )
   }
 
-  function openView(item) {
+  function openView(item, opts = {}) {
     const hasSeed = item && Object.keys(item).some((key) => key !== 'id')
     setSelectedItem(hasSeed ? item : null)
     setHrNoteText('')
@@ -994,16 +1050,29 @@ export default function AttendanceCorrections() {
     const id = item?.id
     if (!id) return
     setSelectedLoading(true)
-    const loader = tab === 'all' && canSeeAll ? getAdminPresenceFilingDetail : getMyPresenceFilingDetail
-    loader(id)
+
+    detailAbortRef.current?.abort()
+    const controller = new AbortController()
+    detailAbortRef.current = controller
+    const fetchId = ++detailFetchIdRef.current
+
+    const useAdmin = opts.forceAdmin || (tab === 'all' && canSeeAll)
+    const loader = useAdmin ? getAdminPresenceFilingDetail : getMyPresenceFilingDetail
+    loader(id, { signal: controller.signal })
       .then((data) => {
+        if (controller.signal.aborted || fetchId !== detailFetchIdRef.current) return
         const next = data?.presence_filing
         if (next) setSelectedItem(next)
       })
       .catch((e) => {
+        if (e?.name === 'AbortError' || controller.signal.aborted) return
         toast({ title: 'Failed to load request details', description: e.message, variant: 'error' })
       })
-      .finally(() => setSelectedLoading(false))
+      .finally(() => {
+        if (!controller.signal.aborted && fetchId === detailFetchIdRef.current) {
+          setSelectedLoading(false)
+        }
+      })
   }
 
   const updateCorrectionRowAfterAction = useCallback((requestId, status) => {
@@ -1079,6 +1148,7 @@ export default function AttendanceCorrections() {
       setApproveOpen(false)
       setViewOpen(false)
       notifyPendingApprovalsChanged()
+      if (canSeeAll) void loadAllCounts()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -1110,6 +1180,7 @@ export default function AttendanceCorrections() {
       })
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
+      if (approved > 0 && canSeeAll) void loadAllCounts()
       bulkSelection.clearSelection()
       if (bulkSelection.selectAllMatching) {
         setAllItems((items) => items.filter((item) => !(item?.status === 'pending' && item?.actor_can_approve)))
@@ -1137,6 +1208,7 @@ export default function AttendanceCorrections() {
       setHrNoteText('')
       toast({ title: 'Remark saved', description: 'Added to the audit trail.', variant: 'success' })
       await loadAll()
+      if (canSeeAll) void loadAllCounts()
       await loadMine()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
@@ -1158,6 +1230,7 @@ export default function AttendanceCorrections() {
       setRejectOpen(false)
       setViewOpen(false)
       notifyPendingApprovalsChanged()
+      if (canSeeAll) void loadAllCounts()
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -1232,7 +1305,10 @@ export default function AttendanceCorrections() {
       })
       setFileOpen(false)
       await loadMine()
-      if (canSeeAll) await loadAll()
+      if (canSeeAll) {
+        await loadAll()
+        void loadAllCounts()
+      }
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -1256,7 +1332,10 @@ export default function AttendanceCorrections() {
         setSelectedItem(null)
       }
       await loadMine()
-      if (canSeeAll) await loadAll()
+      if (canSeeAll) {
+        await loadAll()
+        void loadAllCounts()
+      }
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -1266,7 +1345,10 @@ export default function AttendanceCorrections() {
 
   async function refresh() {
     if (tab === 'mine') await loadMine()
-    else await loadAll()
+    else {
+      await loadAll()
+      void loadAllCounts()
+    }
   }
 
   function buildExportMatrix(list) {
@@ -1932,6 +2014,7 @@ export default function AttendanceCorrections() {
         onOpenChange={(open) => {
           setViewOpen(open)
           if (!open) {
+            detailAbortRef.current?.abort()
             setSelectedItem(null)
             setSelectedLoading(false)
             clearRequestReviewSearchParams(setSearchParams)

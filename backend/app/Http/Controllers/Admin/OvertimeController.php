@@ -819,6 +819,116 @@ class OvertimeController extends Controller
         return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'overtime request');
     }
 
+    public function bulkReject(Request $request): JsonResponse
+    {
+        $parsed = $this->parseBulkApproveRequest($request);
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $remarks = trim((string) ($parsed['remarks'] ?? $request->input('remarks', '')));
+        if ($remarks === '') {
+            throw ValidationException::withMessages([
+                'remarks' => ['Rejection remarks are required.'],
+            ]);
+        }
+
+        $skipped = 0;
+        $failedItems = [];
+        if ($parsed['mode'] === 'all_matching') {
+            $ids = $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']));
+        } else {
+            $this->assertBulkApproveIdsPresent($parsed['ids']);
+            $resolved = $this->resolveBulkApproveIdsFromCandidates(
+                $parsed['ids'],
+                $this->bulkApprovalQuery->approvableSelectedIds($actor, $parsed['ids']),
+            );
+            $ids = $resolved['ids'];
+            $skipped = $resolved['skipped'];
+            $failedItems = $resolved['failed_items'];
+        }
+
+        $rejected = 0;
+        $failed = 0;
+        $rejectedIds = [];
+
+        foreach (array_chunk($ids, 200) as $chunk) {
+            foreach ($chunk as $id) {
+                try {
+                    $single = $this->duplicateBulkActionRequest($request, [
+                        '_bulk_approval' => true,
+                        'status' => Overtime::STATUS_REJECTED,
+                        'remarks' => $remarks,
+                    ]);
+                    $single->setUserResolver(fn () => $actor);
+                    $response = $this->reject($single, (int) $id);
+                    if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
+                        $rejected++;
+                        $rejectedIds[] = (int) $id;
+                        continue;
+                    }
+
+                    $body = $response->getData(true);
+                    $skipped++;
+                    $failedItems[] = [
+                        'request_id' => (int) $id,
+                        'reason' => (string) ($body['message'] ?? 'Overtime request was skipped.'),
+                    ];
+                } catch (\Throwable $e) {
+                    $failed++;
+                    $failedItems[] = [
+                        'request_id' => (int) $id,
+                        'reason' => $e instanceof ValidationException
+                            ? (string) collect($e->errors())->flatten()->first()
+                            : ($e->getMessage() ?: 'Bulk rejection failed for this overtime request.'),
+                    ];
+                }
+            }
+        }
+
+        if ($rejected > 0) {
+            $this->notificationService->markRelatedReadForEntities(
+                (int) $actor->id,
+                'overtime',
+                $rejectedIds,
+                'overtime.needs_approval',
+            );
+            OvertimeModuleCache::flush();
+        }
+
+        return response()->json([
+            'message' => $rejected > 0 ? 'Bulk overtime request rejection completed.' : 'No overtime requests were rejected.',
+            'rejected_count' => $rejected,
+            'skipped_count' => $skipped,
+            'failed_count' => $failed,
+            'failed_items' => $failedItems,
+            'skipped_reasons' => $failedItems,
+        ]);
+    }
+
+    public function bulkApproveFiltered(Request $request): JsonResponse
+    {
+        $request->merge([
+            'mode' => 'all_matching',
+            'filters' => $request->input('filters', []),
+            'remarks' => $request->input('remarks'),
+        ]);
+
+        return $this->bulkApprove($request);
+    }
+
+    public function bulkRejectFiltered(Request $request): JsonResponse
+    {
+        $request->merge([
+            'mode' => 'all_matching',
+            'filters' => $request->input('filters', []),
+            'remarks' => $request->input('remarks'),
+        ]);
+
+        return $this->bulkReject($request);
+    }
+
     public function approve(Request $request, int $id): JsonResponse
     {
         $request->merge(['status' => Overtime::STATUS_APPROVED]);
@@ -905,18 +1015,18 @@ class OvertimeController extends Controller
             ReviewRequestCache::forget('overtime', (int) $overtime->id);
             if (! $request->boolean('_bulk_approval')) {
                 OvertimeModuleCache::flush();
+                $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
+                $this->notificationService->notifyRequester(
+                    $overtime->user,
+                    $overtime,
+                    'overtime',
+                    'overtime.rejected',
+                    'Overtime request rejected',
+                    'Your overtime request was rejected.',
+                    '/employee/overtime?request_id='.$overtime->id,
+                    'high',
+                );
             }
-            $this->notificationService->markRelatedRead((int) $actor->id, 'overtime', (int) $overtime->id, 'overtime.needs_approval');
-            $this->notificationService->notifyRequester(
-                $overtime->user,
-                $overtime,
-                'overtime',
-                'overtime.rejected',
-                'Overtime request rejected',
-                'Your overtime request was rejected.',
-                '/employee/overtime?request_id='.$overtime->id,
-                'high',
-            );
 
             if ($this->wantsLiteOvertimeMutationResponse($request)) {
                 return response()->json([

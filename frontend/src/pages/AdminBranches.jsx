@@ -24,7 +24,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { getAreas, getBranches, getCompanies, getEmployees, createBranch, updateBranch, deleteBranch, profileImageUrl, departmentLogoUrl } from '@/api'
-import { isRosterStaffMember } from '@/lib/rosterStaff'
+import { useHeadAssignmentEmployeeSearch } from '@/hooks/useHeadAssignmentEmployeeSearch'
+import {
+  employeeDisplayName,
+  headAssignmentPrimaryLine,
+  headAssignmentSecondaryLine,
+  normalizeLeaderUserId,
+} from '@/lib/employeeSearch'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 import {
@@ -58,10 +64,9 @@ function buildBranchManagerMap(branches, excludeBranchId) {
   return map
 }
 
-/** Searchable Branch Manager picker - QA spec: search, avatars, position, assignment status. */
+/** Searchable Branch Manager picker - cross-company active employee search. */
 function BranchManagerPicker({ value, onChange, employees, branches, companies, companyId, excludeBranchId, disabled, triggerClassName }) {
   const [open, setOpen] = useState(false)
-  const [search, setSearch] = useState('')
   const branchManagerMap = useMemo(() => buildBranchManagerMap(branches, excludeBranchId), [branches, excludeBranchId])
   /** Map: userId -> companyName for employees who are company heads */
   const companyHeadMap = useMemo(() => {
@@ -71,19 +76,35 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
     }
     return map
   }, [companies])
-  const filtered = useMemo(() => {
-    const list = (employees || []).filter((e) => isRosterStaffMember(e))
-    const q = search.trim().toLowerCase()
-    if (!q) return list
-    const haystack = (emp) => `${emp.name || ''} ${emp.employee_code || ''} ${emp.email || ''} ${emp.position || ''} ${emp.department || ''}`.toLowerCase()
-    return list.filter((emp) => haystack(emp).includes(q))
-  }, [employees, search])
-  const selected = (employees || []).find((e) => String(e.id) === String(value))
-  const needsCompany = !companyId
-  const emptySearch = filtered.length === 0 && !needsCompany
+
+  const selectedFromRoster = useMemo(
+    () => (employees || []).find((e) => String(e.id) === String(value)) || null,
+    [employees, value],
+  )
+
+  const searchFilters = useMemo(() => ({ include_cross_company: true, active_only: true }), [])
+
+  const {
+    query: search,
+    setQuery: setSearch,
+    results: filtered,
+    loading: searchLoading,
+    reset,
+  } = useHeadAssignmentEmployeeSearch({
+    enabled: open,
+    searchFilters,
+    selectedEmployee: selectedFromRoster,
+  })
+
+  const selected = useMemo(() => {
+    const fromResults = filtered.find((e) => String(e.id ?? e.employee_id) === String(value))
+    return fromResults || selectedFromRoster
+  }, [filtered, selectedFromRoster, value])
+
+  const emptySearch = !searchLoading && filtered.length === 0
 
   return (
-    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setSearch('') }}>
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -96,20 +117,20 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
           {selected ? (
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <Avatar className="size-7 shrink-0">
-                <AvatarImage src={profileImageUrl(selected.profile_image)} />
+                <AvatarImage src={profileImageUrl(selected.profile_image_url || selected.profile_image)} />
                 <AvatarFallback className="text-[10px] font-bold bg-teal-500/20 text-teal-700 dark:bg-teal-400/90 dark:text-teal-950">
-                  {initials(selected.name)}
+                  {selected.initials || initials(employeeDisplayName(selected))}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-foreground">{selected.name}{selected.employee_code ? ` (${selected.employee_code})` : ''}</p>
-                {selected.position && (
-                  <p className="truncate text-[11px] text-muted-foreground">{selected.position}</p>
-                )}
+                <p className="truncate font-medium text-foreground">{headAssignmentPrimaryLine(selected)}</p>
+                {headAssignmentSecondaryLine(selected) ? (
+                  <p className="truncate text-[11px] text-muted-foreground">{headAssignmentSecondaryLine(selected)}</p>
+                ) : null}
               </div>
             </div>
           ) : (
-            <span className="text-muted-foreground">No employee selected</span>
+            <span className="text-muted-foreground">Search all active employees…</span>
           )}
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
         </button>
@@ -119,23 +140,16 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search by name, employee ID, position..."
+              placeholder="Search all active employees…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-9 pl-8 dark:bg-slate-800/60 dark:border-slate-600"
               autoFocus
-              disabled={needsCompany}
             />
           </div>
         </div>
         <div className="max-h-[260px] overflow-y-auto">
-          {needsCompany ? (
-            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-              <p className="text-sm text-muted-foreground">Select a company first</p>
-              <p className="text-[11px] text-muted-foreground/70">Any active employee can be assigned, including cross-company leaders.</p>
-            </div>
-          ) : (
-            <>
+          <>
               {value ? (
                 <div className="border-b border-border/60 p-2 dark:border-slate-700">
                   <Button
@@ -156,16 +170,23 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
               >
                 <span className="text-muted-foreground">No employee selected</span>
               </button>
+              {searchLoading ? (
+                <div className="flex items-center justify-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Searching…
+                </div>
+              ) : null}
               {filtered.map((emp, idx) => {
-                const branchAssignment = branchManagerMap.get(String(emp.id))
-                const companyHeadOf = companyHeadMap.get(String(emp.id))
+                const empId = normalizeLeaderUserId(emp.id ?? emp.employee_id)
+                const branchAssignment = branchManagerMap.get(empId)
+                const companyHeadOf = companyHeadMap.get(empId)
                 const isInactive = emp.is_active === false
                 return (
                   <button
-                    key={emp.id}
+                    key={empId}
                     type="button"
                     disabled={isInactive}
-                    onClick={() => { if (!isInactive) { onChange(String(emp.id)); setOpen(false) } }}
+                    onClick={() => { if (!isInactive) { onChange(empId); setOpen(false) } }}
                     title={
                       branchAssignment
                         ? `Also Branch Manager — ${branchAssignment.companyName} / ${branchAssignment.branchName}`
@@ -173,18 +194,18 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
                         ? `Also Company Head of ${companyHeadOf}`
                         : undefined
                     }
-                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${!isInactive ? 'hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer' : 'opacity-60 cursor-not-allowed'} ${value === String(emp.id) ? 'bg-slate-100 dark:bg-slate-800/60 dark:border-l-2 dark:border-l-teal-500' : ''} ${idx % 2 === 1 ? 'dark:bg-slate-900/30' : ''}`}
+                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${!isInactive ? 'hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer' : 'opacity-60 cursor-not-allowed'} ${value === empId ? 'bg-slate-100 dark:bg-slate-800/60 dark:border-l-2 dark:border-l-teal-500' : ''} ${idx % 2 === 1 ? 'dark:bg-slate-900/30' : ''}`}
                   >
                     <Avatar className="size-8 shrink-0">
-                      <AvatarImage src={profileImageUrl(emp.profile_image)} />
+                      <AvatarImage src={profileImageUrl(emp.profile_image_url || emp.profile_image)} />
                       <AvatarFallback className="text-[11px] font-bold bg-teal-500/20 text-teal-700 dark:bg-teal-400/90 dark:text-teal-950">
-                        {initials(emp.name)}
+                        {emp.initials || initials(employeeDisplayName(emp))}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium text-foreground">{emp.name}{emp.employee_code ? ` (${emp.employee_code})` : ''}</p>
+                      <p className="truncate font-medium text-foreground">{headAssignmentPrimaryLine(emp)}</p>
                       <p className="truncate text-[11px] text-muted-foreground">
-                        {emp.position || emp.department || '-'}
+                        {headAssignmentSecondaryLine(emp) || '-'}
                       </p>
                       {companyHeadOf && (
                         <Badge variant="secondary" className="mt-1 h-5 text-[10px] bg-amber-500/20 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 border-0">
@@ -202,12 +223,13 @@ function BranchManagerPicker({ value, onChange, employees, branches, companies, 
               })}
               {emptySearch && (
                 <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-                  <p className="text-sm text-muted-foreground">No employees found</p>
-                  <p className="text-[11px] text-muted-foreground/70">Try a different name, ID, or position</p>
+                  <p className="text-sm text-muted-foreground">
+                    {search.trim() ? 'No employees found' : 'Type to search employees'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground/70">Cross-company leaders are allowed</p>
                 </div>
               )}
-            </>
-          )}
+          </>
         </div>
       </PopoverContent>
     </Popover>

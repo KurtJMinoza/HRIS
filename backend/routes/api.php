@@ -218,8 +218,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:dashboard.view')->group(function () {
             Route::get('/admin/dashboard', [DashboardController::class, 'index']);
             Route::get('/admin/dashboard/summary', [DashboardController::class, 'summary']);
-            Route::get('/admin/dashboard/pending-requests', [DashboardController::class, 'dashboardPendingRequests']);
             Route::get('/admin/dashboard/attendance-today', [DashboardController::class, 'attendanceToday']);
+            Route::get('/admin/dashboard/requests', [DashboardController::class, 'dashboardRequests']);
+            Route::get('/admin/dashboard/payroll', [DashboardController::class, 'payroll']);
+            Route::get('/admin/dashboard/charts', [DashboardController::class, 'charts']);
+            Route::get('/admin/dashboard/recent-activity', [DashboardController::class, 'recentActivity']);
+            Route::get('/admin/dashboard/pending-requests', [DashboardController::class, 'dashboardPendingRequests']);
             Route::get('/admin/dashboard/payroll-summary', [DashboardController::class, 'payrollSummary']);
             Route::get('/dashboard/request-summary', [DashboardController::class, 'requestSummary']);
             Route::get('/dashboard/pending-requests', [DashboardController::class, 'pendingRequests']);
@@ -253,6 +257,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/attendance-corrections/bulk-approve', [PresenceFilingController::class, 'bulkApprove']);
             Route::post('/attendance-corrections/bulk-reject', [PresenceFilingController::class, 'bulkReject']);
             Route::post('/attendance-corrections/bulk-approve-filtered', [PresenceFilingController::class, 'bulkApproveFiltered']);
+            Route::post('/attendance-corrections/bulk-reject-filtered', [PresenceFilingController::class, 'bulkRejectFiltered']);
             Route::post('/admin/presence-filings/{id}/approve', [PresenceFilingController::class, 'approve']);
             Route::post('/admin/presence-filings/{id}/reject', [PresenceFilingController::class, 'reject']);
             Route::post('/attendance-corrections/{id}/approve', [PresenceFilingController::class, 'approve'])->whereNumber('id');
@@ -287,6 +292,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:approve-schedule|manage-schedules')->post('/admin/schedule-requests/{id}/approve', [ScheduleRequestController::class, 'approve']);
         Route::middleware('permission:approve-schedule|manage-schedules')->post('/admin/schedule-requests/{id}/reject', [ScheduleRequestController::class, 'reject']);
         Route::middleware('permission:approve-schedule|manage-schedules')->delete('/admin/schedule-requests/{id}', [ScheduleRequestController::class, 'destroy']);
+
+        Route::middleware('permission:org.company.view|org.branch.view|org.division.view|org.department.view|org.section_unit.view|area.view|employees.view')->group(function () {
+            Route::get('/employees/search-for-head-assignment', [EmployeeController::class, 'searchForHeadAssignment']);
+            Route::get('/admin/employees/search-for-head-assignment', [EmployeeController::class, 'searchForHeadAssignment']);
+        });
 
         Route::middleware('permission:employees.view')->group(function () {
             Route::get('/admin/employees', [EmployeeController::class, 'index']);
@@ -427,6 +437,9 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/leave/bulk-approve-preview', [LeaveController::class, 'bulkApprovePreview']);
             Route::post('/admin/leave/bulk-approve', [LeaveController::class, 'bulkApprove']);
             Route::post('/leave-requests/bulk-approve', [LeaveController::class, 'bulkApprove']);
+            Route::post('/leave-requests/bulk-reject', [LeaveController::class, 'bulkReject']);
+            Route::post('/leave-requests/bulk-approve-filtered', [LeaveController::class, 'bulkApproveFiltered']);
+            Route::post('/leave-requests/bulk-reject-filtered', [LeaveController::class, 'bulkRejectFiltered']);
             Route::post('/admin/leave/{id}/approve', [LeaveController::class, 'approve']);
             Route::post('/admin/leave/{id}/reject', [LeaveController::class, 'reject']);
             Route::post('/leave-requests/{id}/approve', [LeaveController::class, 'approve'])->whereNumber('id');
@@ -452,6 +465,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:overtime.approve')->post('/admin/overtime/bulk-approve-preview', [OvertimeController::class, 'bulkApprovePreview']);
         Route::middleware('permission:overtime.approve')->post('/admin/overtime/bulk-approve', [OvertimeController::class, 'bulkApprove']);
         Route::middleware('permission:overtime.approve')->post('/overtime-requests/bulk-approve', [OvertimeController::class, 'bulkApprove']);
+        Route::middleware('permission:overtime.approve')->post('/overtime-requests/bulk-reject', [OvertimeController::class, 'bulkReject']);
+        Route::middleware('permission:overtime.approve')->post('/overtime-requests/bulk-approve-filtered', [OvertimeController::class, 'bulkApproveFiltered']);
+        Route::middleware('permission:overtime.approve')->post('/overtime-requests/bulk-reject-filtered', [OvertimeController::class, 'bulkRejectFiltered']);
         Route::middleware('permission:overtime.approve')->post('/overtime-requests/{id}/approve', [OvertimeController::class, 'approve'])->whereNumber('id');
         Route::middleware('permission:overtime.approve')->post('/overtime-requests/{id}/reject', [OvertimeController::class, 'reject'])->whereNumber('id');
         Route::middleware('permission:overtime.approve')->patch('/admin/overtime/{id}/status', [OvertimeController::class, 'updateStatus']);

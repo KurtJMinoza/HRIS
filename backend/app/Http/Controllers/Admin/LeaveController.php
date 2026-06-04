@@ -783,6 +783,115 @@ class LeaveController extends Controller
         return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'leave request');
     }
 
+    public function bulkReject(Request $request): JsonResponse
+    {
+        $parsed = $this->parseBulkApproveRequest($request);
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $reason = trim((string) ($parsed['remarks'] ?? $request->input('reason', '')));
+        if ($reason === '') {
+            throw ValidationException::withMessages([
+                'remarks' => ['Rejection remarks are required.'],
+            ]);
+        }
+
+        $skipped = 0;
+        $failedItems = [];
+        if ($parsed['mode'] === 'all_matching') {
+            $ids = $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']));
+        } else {
+            $this->assertBulkApproveIdsPresent($parsed['ids']);
+            $resolved = $this->resolveBulkApproveIdsFromCandidates(
+                $parsed['ids'],
+                $this->bulkApprovalQuery->approvableSelectedIds($actor, $parsed['ids']),
+            );
+            $ids = $resolved['ids'];
+            $skipped = $resolved['skipped'];
+            $failedItems = $resolved['failed_items'];
+        }
+
+        $rejected = 0;
+        $failed = 0;
+        $rejectedIds = [];
+
+        foreach (array_chunk($ids, 200) as $chunk) {
+            foreach ($chunk as $id) {
+                try {
+                    $single = $this->duplicateBulkActionRequest($request, [
+                        '_bulk_approval' => true,
+                        'reason' => $reason,
+                    ]);
+                    $single->setUserResolver(fn () => $actor);
+                    $response = $this->reject($single, (int) $id);
+                    if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
+                        $rejected++;
+                        $rejectedIds[] = (int) $id;
+                        continue;
+                    }
+
+                    $body = $response->getData(true);
+                    $skipped++;
+                    $failedItems[] = [
+                        'request_id' => (int) $id,
+                        'reason' => (string) ($body['message'] ?? 'Leave request was skipped.'),
+                    ];
+                } catch (\Throwable $e) {
+                    $failed++;
+                    $failedItems[] = [
+                        'request_id' => (int) $id,
+                        'reason' => $e instanceof ValidationException
+                            ? (string) collect($e->errors())->flatten()->first()
+                            : ($e->getMessage() ?: 'Bulk rejection failed for this leave request.'),
+                    ];
+                }
+            }
+        }
+
+        if ($rejected > 0) {
+            $this->notificationService->markRelatedReadForEntities(
+                (int) $actor->id,
+                'leave',
+                $rejectedIds,
+                'leave.needs_approval',
+            );
+            LeaveModuleCache::flush();
+        }
+
+        return response()->json([
+            'message' => $rejected > 0 ? 'Bulk leave request rejection completed.' : 'No leave requests were rejected.',
+            'rejected_count' => $rejected,
+            'skipped_count' => $skipped,
+            'failed_count' => $failed,
+            'failed_items' => $failedItems,
+            'skipped_reasons' => $failedItems,
+        ]);
+    }
+
+    public function bulkApproveFiltered(Request $request): JsonResponse
+    {
+        $request->merge([
+            'mode' => 'all_matching',
+            'filters' => $request->input('filters', []),
+            'remarks' => $request->input('remarks'),
+        ]);
+
+        return $this->bulkApprove($request);
+    }
+
+    public function bulkRejectFiltered(Request $request): JsonResponse
+    {
+        $request->merge([
+            'mode' => 'all_matching',
+            'filters' => $request->input('filters', []),
+            'remarks' => $request->input('remarks', $request->input('reason')),
+        ]);
+
+        return $this->bulkReject($request);
+    }
+
     public function approve(Request $request, int $id): JsonResponse
     {
         $validated = $request->validate([
@@ -1084,18 +1193,20 @@ class LeaveController extends Controller
         });
 
         ReviewRequestCache::forget('leave', (int) $leave->id);
-        LeaveModuleCache::flush();
-        $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
-        $this->notificationService->notifyRequester(
-            $leave->user,
-            $leave,
-            'leave',
-            'leave.rejected',
-            'Leave request rejected',
-            'Your leave request was rejected.',
-            '/employee/requests?request_id='.$leave->id,
-            'high',
-        );
+        if (! $request->boolean('_bulk_approval')) {
+            LeaveModuleCache::flush();
+            $this->notificationService->markRelatedRead((int) $actor->id, 'leave', (int) $leave->id, 'leave.needs_approval');
+            $this->notificationService->notifyRequester(
+                $leave->user,
+                $leave,
+                'leave',
+                'leave.rejected',
+                'Leave request rejected',
+                'Your leave request was rejected.',
+                '/employee/requests?request_id='.$leave->id,
+                'high',
+            );
+        }
 
         if ($this->wantsLiteLeaveMutationResponse($request)) {
             return response()->json([
