@@ -1509,9 +1509,17 @@ export async function getAdminDashboardAttendanceTodayLite(params = {}, options 
   if (params.page != null) query.set('page', String(params.page))
   if (params.per_page != null) query.set('per_page', String(params.per_page))
   if (params.filter) query.set('filter', String(params.filter))
+  if (params.fresh) query.set('_ts', String(Date.now()))
   const qs = query.toString()
   const path = `/admin/dashboard/attendance-today-lite${qs ? `?${qs}` : ''}`
-  const res = await authenticatedFetch(path, options)
+  const res = await authenticatedFetch(path, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
+  })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
     throw new Error(body.message || 'Failed to load attendance table')

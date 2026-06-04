@@ -727,10 +727,10 @@ export default function AdminDashboard() {
   })
 
   const attendanceQuery = useQuery({
-    queryKey: ['admin-dashboard', 'attendance', logsPage, attendanceFilter],
+    queryKey: ['admin-dashboard', 'attendance', attendanceFilter],
     queryFn: ({ signal }) =>
       getAdminDashboardAttendanceTodayLite(
-        { page: logsPage, per_page: LOGS_PER_PAGE, filter: attendanceFilter },
+        { page: 1, per_page: 500, filter: attendanceFilter, fresh: true },
         { signal },
       ),
     enabled: !authLoading,
@@ -946,22 +946,17 @@ export default function AdminDashboard() {
     return `${hours}h ago`
   })()
 
-  // Keep logs page in valid range when the server-side attendance page count changes.
+  // Keep logs page in valid range when the live attendance row count changes.
   useEffect(() => {
-    const meta = attendanceQuery.data?.meta
-    if (meta) {
-      const maxPage = Math.max(1, Number(meta.last_page) || 1)
-      setLogsPage((p) => Math.min(p, maxPage))
-      return
-    }
-
-    const total = data?.today_logs?.length ?? 0
+    const total = Array.isArray(attendanceQuery.data?.data)
+      ? attendanceQuery.data.data.length
+      : (data?.today_logs?.length ?? 0)
     const maxPage = Math.max(1, Math.ceil(total / LOGS_PER_PAGE))
     setLogsPage((p) => Math.min(p, maxPage))
-  }, [attendanceQuery.data?.meta, data?.today_logs?.length])
+  }, [attendanceQuery.data?.data, data?.today_logs?.length])
 
   // All useMemo hooks MUST live before any early returns (Rules of Hooks).
-  const attendanceTableMeta = attendanceQuery.data?.meta ?? null
+  const attendanceTableMeta = null
 
   const todayLogs = useMemo(() => {
     if (Array.isArray(attendanceQuery.data?.data)) {

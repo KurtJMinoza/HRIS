@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useAuth } from '@/contexts/AuthContext'
-import { getMyQr, regenerateMyQr, registerMyFace, removeMyFace, getMyFace } from '@/api'
+import { companyLogoUrl as resolveCompanyLogoUrl, getMyQr, regenerateMyQr, registerMyFace, removeMyFace, getMyFace } from '@/api'
 import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
 import { toast } from 'sonner'
 
@@ -49,7 +49,7 @@ export default function EmployeeMyQr() {
       const data = await getMyQr()
       setQrToken(data.qr_token || '')
       setGeneratedAt(data.qr_token_generated_at || null)
-      setCompanyLogoUrl(data.company_logo_url || user?.company_logo_url || null)
+      setCompanyLogoUrl(resolveCompanyLogoUrl(data.company_logo_url || user?.company_logo_url) || null)
     } catch (e) {
       setError(e.message)
       setQrToken('')
@@ -69,7 +69,7 @@ export default function EmployeeMyQr() {
       const data = await regenerateMyQr()
       setQrToken(data.qr_token || '')
       setGeneratedAt(data.qr_token_generated_at || null)
-      setCompanyLogoUrl(data.company_logo_url || user?.company_logo_url || null)
+      setCompanyLogoUrl(resolveCompanyLogoUrl(data.company_logo_url || user?.company_logo_url) || null)
     } catch (e) {
       setError(e.message)
     } finally {

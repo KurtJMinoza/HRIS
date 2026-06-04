@@ -114,7 +114,7 @@ function orgSubtitle(item, fallback) {
 function OrganizationLogo({ item, icon = Building2 }) {
   const IconComponent = icon
   const profile = userProfileImageSrc(item)
-  const logo = profile || item?.logo_url || item?.company_logo_url || companyLogoUrl(item)
+  const logo = profile || companyLogoUrl(item?.logo_url || item?.company_logo_url || item)
   return logo ? (
     <img
       src={logo}

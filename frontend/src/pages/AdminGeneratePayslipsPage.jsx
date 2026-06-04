@@ -18,7 +18,7 @@ import {
   getPayCycles,
   getPayrollRunCompanyPayrollReportPdfBlob,
   getExecomPayrollReportPdfBlob,
-  apiOrigin,
+  companyLogoUrl,
 } from '@/api'
 import { useHrBasePath } from '@/contexts/HrAppPathContext'
 import { useAuth } from '@/contexts/AuthContext'
@@ -194,13 +194,7 @@ function savePdfBlob(blob, filename) {
 }
 
 function resolveLogoUrl(logoUrl) {
-  if (logoUrl == null || logoUrl === '') return null
-  if (typeof logoUrl === 'string' && (logoUrl.startsWith('http://') || logoUrl.startsWith('https://'))) return logoUrl
-  if (typeof logoUrl === 'string' && logoUrl.startsWith('/')) {
-    const origin = apiOrigin()
-    return origin ? `${origin}${logoUrl}` : logoUrl
-  }
-  return logoUrl
+  return companyLogoUrl(logoUrl) || null
 }
 
 function CircularProgress({ value = 0, size = 160, strokeWidth = 10, children, className }) {

@@ -654,7 +654,7 @@ export default function AdminEmployees() {
     try {
       const data = await getEmployeeQr(emp.id)
       setQrToken(data.qr_token || '')
-      setQrCompanyLogoUrl(data.company_logo_url || null)
+      setQrCompanyLogoUrl(companyLogoUrl(data.company_logo_url) || null)
     } catch (e) {
       setError(e.message)
       closeQr()
@@ -673,7 +673,7 @@ export default function AdminEmployees() {
     try {
       const data = await regenerateEmployeeQr(emp.id)
       setQrToken(data.qr_token || '')
-      setQrCompanyLogoUrl(data.company_logo_url || null)
+      setQrCompanyLogoUrl(companyLogoUrl(data.company_logo_url) || null)
       await queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })
       await fetchEmployees()
     } catch (e) {
@@ -722,7 +722,7 @@ export default function AdminEmployees() {
       setPendingQrDownload({
         token,
         fileName: (emp.name || 'employee').replace(/[^a-z0-9-_]/gi, '-'),
-        companyLogoUrl: data.company_logo_url || null,
+        companyLogoUrl: companyLogoUrl(data.company_logo_url) || null,
       })
     } catch (e) {
       setError(e.message)

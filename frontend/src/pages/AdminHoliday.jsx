@@ -422,7 +422,7 @@ function holidayTargetLabel(holiday) {
 }
 
 function targetLogoUrl(holiday) {
-  return holiday?.company_logo_url || companyLogoUrl({ logo_url: holiday?.company_logo_url })
+  return companyLogoUrl(holiday?.company_logo_url || { logo_url: holiday?.company_logo_url }) || null
 }
 
 function groupHolidayRows(rows) {

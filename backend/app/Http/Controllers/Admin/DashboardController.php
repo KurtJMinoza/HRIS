@@ -613,9 +613,10 @@ class DashboardController extends Controller
         abort_unless($actor instanceof User, 403);
 
         $page = max(1, (int) $request->input('page', 1));
-        $perPage = min(100, max(10, (int) $request->input('per_page', 50)));
+        $perPage = min(500, max(10, (int) $request->input('per_page', 50)));
         $filter = (string) $request->input('filter', 'all');
         $filtersHash = md5($filter);
+        $freshToken = trim((string) $request->input('_ts', ''));
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         $today = Carbon::now($tz)->startOfDay();
         $dateKey = $today->toDateString();
@@ -634,61 +635,61 @@ class DashboardController extends Controller
             $globalAttendanceVersion,
         );
 
-        $dbStarted = microtime(true);
-        $cached = AdminDashboardCache::rememberRaw(
-            $cacheKey,
-            AdminDashboardCache::TTL_ATTENDANCE,
-            function () use ($actor, $today, $page, $perPage, $filter): array {
-                $activeScopeIds = $this->scopedEmployeeIds($actor, true);
-                $todayDayKey = self::DAY_KEYS[(int) $today->format('w')];
-                $rows = $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds, rowLimit: 500);
-                if ($filter === 'late') {
-                    $rows = array_values(array_filter($rows, static fn (array $row): bool => ! empty($row['is_late'])));
-                } elseif ($filter === 'absent') {
-                    $rows = array_values(array_filter($rows, static fn (array $row): bool => ! empty($row['is_absent'])));
-                }
-                $total = count($rows);
-                $offset = ($page - 1) * $perPage;
-                $slice = array_slice($rows, $offset, $perPage);
-                $data = array_map(static function (array $row): array {
-                    return [
-                        'id' => $row['id'] ?? null,
-                        'employee_name' => $row['employee_name'] ?? '—',
-                        'employee_sort_key' => $row['employee_sort_key'] ?? null,
-                        'department' => $row['department'] ?? '—',
-                        'company_name' => $row['company_name'] ?? null,
-                        'company_logo_url' => $row['company_logo_url'] ?? null,
-                        'profile_image' => $row['profile_image'] ?? null,
-                        'time_in' => $row['time_in'] ?? null,
-                        'time_out' => $row['time_out'] ?? null,
-                        'is_late' => ! empty($row['is_late']),
-                        'is_absent' => ! empty($row['is_absent']),
-                        'is_half_day' => ! empty($row['is_half_day']),
-                        'late_label' => $row['late_label'] ?? null,
-                        'absent_label' => $row['absent_label'] ?? null,
-                        'attendance_time_out_status' => $row['attendance_time_out_status'] ?? null,
-                        'virtual_time_out_from_ot' => ! empty($row['virtual_time_out_from_ot']),
-                        'status' => ! empty($row['is_absent'])
-                            ? 'absent'
-                            : (! empty($row['is_late']) ? 'late' : (! empty($row['time_in']) ? 'present' : 'pending')),
-                        'late_minutes' => $row['late_minutes'] ?? null,
-                        'undertime_minutes' => null,
-                        'approved_ot_hours' => null,
-                        'payable_ot_hours' => null,
-                    ];
-                }, $slice);
-
+        $resolver = function () use ($actor, $today, $page, $perPage, $filter): array {
+            $activeScopeIds = $this->scopedEmployeeIds($actor, true);
+            $todayDayKey = self::DAY_KEYS[(int) $today->format('w')];
+            $rows = $this->todayAttendanceLogs($today, $todayDayKey, $activeScopeIds, rowLimit: 500);
+            if ($filter === 'late') {
+                $rows = array_values(array_filter($rows, static fn (array $row): bool => ! empty($row['is_late'])));
+            } elseif ($filter === 'absent') {
+                $rows = array_values(array_filter($rows, static fn (array $row): bool => ! empty($row['is_absent'])));
+            }
+            $total = count($rows);
+            $offset = ($page - 1) * $perPage;
+            $slice = array_slice($rows, $offset, $perPage);
+            $data = array_map(static function (array $row): array {
                 return [
-                    'data' => $data,
-                    'meta' => [
-                        'total' => $total,
-                        'page' => $page,
-                        'per_page' => $perPage,
-                        'last_page' => max(1, (int) ceil($total / $perPage)),
-                    ],
+                    'id' => $row['id'] ?? null,
+                    'employee_name' => $row['employee_name'] ?? '—',
+                    'employee_sort_key' => $row['employee_sort_key'] ?? null,
+                    'department' => $row['department'] ?? '—',
+                    'company_name' => $row['company_name'] ?? null,
+                    'company_logo_url' => $row['company_logo_url'] ?? null,
+                    'profile_image' => $row['profile_image'] ?? null,
+                    'time_in' => $row['time_in'] ?? null,
+                    'time_out' => $row['time_out'] ?? null,
+                    'is_late' => ! empty($row['is_late']),
+                    'is_absent' => ! empty($row['is_absent']),
+                    'is_half_day' => ! empty($row['is_half_day']),
+                    'late_label' => $row['late_label'] ?? null,
+                    'absent_label' => $row['absent_label'] ?? null,
+                    'attendance_time_out_status' => $row['attendance_time_out_status'] ?? null,
+                    'virtual_time_out_from_ot' => ! empty($row['virtual_time_out_from_ot']),
+                    'status' => ! empty($row['is_absent'])
+                        ? 'absent'
+                        : (! empty($row['is_late']) ? 'late' : (! empty($row['time_in']) ? 'present' : 'pending')),
+                    'late_minutes' => $row['late_minutes'] ?? null,
+                    'undertime_minutes' => null,
+                    'approved_ot_hours' => null,
+                    'payable_ot_hours' => null,
                 ];
-            },
-        );
+            }, $slice);
+
+            return [
+                'data' => $data,
+                'meta' => [
+                    'total' => $total,
+                    'page' => $page,
+                    'per_page' => $perPage,
+                    'last_page' => max(1, (int) ceil($total / $perPage)),
+                ],
+            ];
+        };
+
+        $dbStarted = microtime(true);
+        $cached = $freshToken !== ''
+            ? ['payload' => $resolver(), 'cache_hit' => false]
+            : AdminDashboardCache::rememberRaw($cacheKey, AdminDashboardCache::TTL_ATTENDANCE, $resolver);
         $dbMs = (int) round((microtime(true) - $dbStarted) * 1000);
         $payload = is_array($cached['payload']) ? $cached['payload'] : ['data' => [], 'meta' => ['total' => 0, 'page' => $page, 'per_page' => $perPage, 'last_page' => 1]];
         $payload['_cache_hit'] = (bool) ($cached['cache_hit'] ?? false);

@@ -70,7 +70,7 @@ function emptyForm() {
 
 function OrganizationLogo({ item, icon: Icon = Building2 }) {
   const profile = userProfileImageSrc(item)
-  const logo = profile || item?.logo_url || item?.company_logo_url || companyLogoUrl(item)
+  const logo = profile || companyLogoUrl(item?.logo_url || item?.company_logo_url || item)
   return logo ? (
     <img
       src={logo}
