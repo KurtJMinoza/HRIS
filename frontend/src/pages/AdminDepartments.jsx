@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from '@/components/ui/sheet'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { getDepartments, createDepartment, updateDepartment, deleteDepartment, assignEmployeesToDepartment, unassignEmployeesFromDepartment, getEmployees, getDepartmentEmployees, getBranches, getCompanies, getDivisions, departmentLogoUrl, profileImageUrl } from '@/api'
+import { getDepartments, createDepartment, updateDepartment, deleteDepartment, assignEmployeesToDepartment, unassignEmployeesFromDepartment, getEmployees, getDepartmentEmployees, getBranches, getCompanies, getDivisions, companyLogoUrl, departmentLogoUrl, profileImageUrl } from '@/api'
 import { RoleBadge } from '@/components/RoleBadge'
 import { useToast } from '@/components/ui/use-toast'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
@@ -1565,7 +1565,7 @@ export default function AdminDepartments() {
                         {selectedCreateBranch ? (
                           <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
                             <Avatar className="size-8 shrink-0 rounded-lg border border-border/50">
-                              <AvatarImage src={selectedCreateBranch.logo_url || undefined} alt="" />
+                              <AvatarImage src={companyLogoUrl(selectedCreateBranch)} alt="" />
                               <AvatarFallback className="rounded-md text-[10px]">
                                 {initials(selectedCreateBranch.company_name || selectedCreateBranch.name)}
                               </AvatarFallback>
@@ -1614,7 +1614,7 @@ export default function AdminDepartments() {
                                 )}
                               >
                                 <Avatar className="size-9 shrink-0 rounded-md border border-border/50">
-                                  <AvatarImage src={b.logo_url || undefined} alt="" />
+                                  <AvatarImage src={companyLogoUrl(b)} alt="" />
                                   <AvatarFallback className="rounded-md text-[10px]">{initials(b.company_name || b.name)}</AvatarFallback>
                                 </Avatar>
                                 <span className="min-w-0 flex-1">

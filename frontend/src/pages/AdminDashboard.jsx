@@ -535,8 +535,7 @@ function birthdayMonthShortLabel(monthLabel) {
 }
 
 function resolveCompanyLogoSrc(logoUrl, company = null) {
-  if (typeof logoUrl === 'string' && logoUrl.trim() !== '') return logoUrl.trim()
-  return companyLogoUrl(company) || undefined
+  return companyLogoUrl(logoUrl || company) || undefined
 }
 
 const BIRTHDAY_TAB_LIST_CLASS =
@@ -735,10 +734,10 @@ export default function AdminDashboard() {
         { signal },
       ),
     enabled: !authLoading,
-    initialData: () => dashboardSnapshotSegment(data, 'attendance'),
-    staleTime: 20_000,
+    staleTime: 0,
     refetchInterval: 15_000,
     refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
 
   const payrollQuery = useQuery({
@@ -3511,9 +3510,9 @@ export default function AdminDashboard() {
                             </td>
                             <td className={`${compact ? 'px-4 py-2' : 'px-5 py-3'} align-middle`}>
                               <div className="flex items-center gap-2">
-                                {log.company_logo_url ? (
+                                {resolveCompanyLogoSrc(log.company_logo_url) ? (
                                   <img
-                                    src={log.company_logo_url}
+                                    src={resolveCompanyLogoSrc(log.company_logo_url)}
                                     alt=""
                                     className="size-8 shrink-0 rounded object-contain border border-border/50 bg-background"
                                   />

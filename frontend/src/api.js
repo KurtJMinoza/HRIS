@@ -5357,16 +5357,27 @@ export async function unassignEmployeesFromSectionOrUnit(sectionUnitId, employee
 
 export function companyLogoUrl(company) {
   if (!company) return undefined
-  if (Object.prototype.hasOwnProperty.call(company, 'logo_url')) {
-    if (typeof company.logo_url !== 'string' || company.logo_url.trim() === '') return undefined
-    const logoUrl = company.logo_url.trim()
-    if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) return logoUrl
-    const origin = apiOrigin()
-    return logoUrl.startsWith('/') ? `${origin}${logoUrl}` : `${origin}/${logoUrl}`
+  const rawLogo = typeof company === 'string'
+    ? company
+    : firstNonEmptyString([
+      company.company_logo_url,
+      company.logo_url,
+      company.logo,
+    ])
+
+  if (!rawLogo) return undefined
+
+  const logoUrl = rawLogo.trim()
+  if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) {
+    return profileImageUrl(logoUrl)
   }
-  if (!company.logo || typeof company.logo !== 'string') return undefined
-  const path = company.logo.startsWith('storage/') ? company.logo : `storage/${company.logo}`
-  return `${apiOrigin()}/${path}`
+
+  const origin = apiOrigin()
+  if (logoUrl.startsWith('/')) return `${origin}${logoUrl}`
+  if (logoUrl.startsWith('api/')) return `${origin}/${logoUrl}`
+
+  const storagePath = logoUrl.startsWith('storage/') ? logoUrl : `storage/${logoUrl}`
+  return `${origin}/${storagePath}`
 }
 
 export async function getCompanies(params = {}) {

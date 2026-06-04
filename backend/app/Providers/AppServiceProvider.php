@@ -113,6 +113,7 @@ class AppServiceProvider extends ServiceProvider
                 $companyId !== null ? (int) $companyId : null,
                 ['summary', 'attendance', 'charts', 'recent']
             );
+            AdminDashboardCache::invalidateCompany(0, ['summary', 'attendance', 'charts', 'recent']);
         };
         AttendanceLog::saved($invalidateAttendanceForLog);
         AttendanceLog::deleted($invalidateAttendanceForLog);

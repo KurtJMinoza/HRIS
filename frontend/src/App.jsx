@@ -15,6 +15,7 @@ import {
   createAttendanceAttemptMeta,
   getKioskRecentAttendance,
   getPublicSettings,
+  companyLogoUrl,
 } from './api'
 import { playSuccess, playError } from '@/lib/attendanceSounds'
 import {
@@ -1075,9 +1076,9 @@ function SmartDTRPreview({ className }) {
                             <>
                               <span className="opacity-50">·</span>
                               <span className="inline-flex min-w-0 max-w-[min(140px,45vw)] items-center gap-1.5">
-                                {log.company?.logo_url ? (
+                                {companyLogoUrl(log.company) ? (
                                   <img
-                                    src={log.company.logo_url}
+                                    src={companyLogoUrl(log.company)}
                                     alt=""
                                     className="size-4 shrink-0 rounded-sm bg-white object-contain ring-1 ring-[#e1e4ea] dark:bg-card dark:ring-border"
                                     loading="lazy"

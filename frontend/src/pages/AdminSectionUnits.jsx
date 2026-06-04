@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from '@/components/ui/sheet'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { getSectionsOrUnits, createSectionOrUnit, updateSectionOrUnit, deleteSectionOrUnit, assignEmployeesToSectionOrUnit, unassignEmployeesFromSectionOrUnit, getEmployees, getSectionOrUnitEmployees, getBranches, getCompanies, getDepartments, getDivisions, departmentLogoUrl, profileImageUrl } from '@/api'
+import { getSectionsOrUnits, createSectionOrUnit, updateSectionOrUnit, deleteSectionOrUnit, assignEmployeesToSectionOrUnit, unassignEmployeesFromSectionOrUnit, getEmployees, getSectionOrUnitEmployees, getBranches, getCompanies, getDepartments, getDivisions, companyLogoUrl, departmentLogoUrl, profileImageUrl } from '@/api'
 import { RoleBadge } from '@/components/RoleBadge'
 import { useToast } from '@/components/ui/use-toast'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
@@ -1832,7 +1832,7 @@ export default function AdminSectionUnits() {
                         {selectedCreateCompany ? (
                           <span className="flex min-w-0 flex-1 items-center gap-2 text-left">
                             <Avatar className="size-8 shrink-0 rounded-lg border border-border/50">
-                              <AvatarImage src={selectedCreateCompany.logo_url || undefined} alt="" />
+                              <AvatarImage src={companyLogoUrl(selectedCreateCompany)} alt="" />
                               <AvatarFallback className="rounded-md text-[10px]">{initials(selectedCreateCompany.name)}</AvatarFallback>
                             </Avatar>
                             <span className="truncate text-sm font-medium">{selectedCreateCompany.name}</span>
@@ -1869,7 +1869,7 @@ export default function AdminSectionUnits() {
                                 className={cn('flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted', selected && 'bg-muted')}
                               >
                                 <Avatar className="size-9 shrink-0 rounded-md border border-border/50">
-                                  <AvatarImage src={c.logo_url || undefined} alt="" />
+                                  <AvatarImage src={companyLogoUrl(c)} alt="" />
                                   <AvatarFallback className="rounded-md text-[10px]">{initials(c.name)}</AvatarFallback>
                                 </Avatar>
                                 <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>

@@ -251,7 +251,7 @@ function buildBranchStackItems(companyId, branches) {
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }))
   return list.slice(0, 32).map((b) => ({
     key: `b-${b.id}`,
-    src: b.branch_manager_profile_image || b.logo_url || undefined,
+    src: profileImageUrl(b.branch_manager_profile_image) || companyLogoUrl(b),
     initials: initials(b.name),
     name: b.name || '',
     fallbackClassName: 'bg-sky-500/15 text-sky-800 dark:text-sky-200',

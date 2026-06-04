@@ -620,15 +620,18 @@ class DashboardController extends Controller
         $today = Carbon::now($tz)->startOfDay();
         $dateKey = $today->toDateString();
         $companyId = (int) ($request->user()?->getEffectiveCompanyId() ?? $request->user()?->company_id ?? 0);
+        $attendanceVersion = AdminDashboardCache::segmentVersion($companyId, 'attendance');
+        $globalAttendanceVersion = AdminDashboardCache::segmentVersion(0, 'attendance');
         $cacheKey = sprintf(
-            'admin_dashboard:attendance_today:%d:%d:%s:%d:%d:%s:v%d',
+            'admin_dashboard:attendance_today:%d:%d:%s:%d:%d:%s:v%d:g%d',
             (int) $actor->id,
             $companyId,
             $dateKey,
             $page,
             $perPage,
             $filtersHash,
-            AdminDashboardCache::segmentVersion($companyId, 'attendance'),
+            $attendanceVersion,
+            $globalAttendanceVersion,
         );
 
         $dbStarted = microtime(true);
@@ -3220,7 +3223,7 @@ class DashboardController extends Controller
     {
         $company = $user->companyHeadships->first() ?? $user->company ?? $user->branch?->company ?? $user->departmentRelation?->branch?->company;
         $companyName = $company?->name ?? null;
-        $companyLogoUrl = $company?->logo ? $this->departmentLogoUrl($company->logo) : null;
+        $companyLogoUrl = $company?->logo ? $this->companyLogoUrl($company->logo) : null;
 
         return [
             'id' => $user->id,
@@ -3275,7 +3278,7 @@ class DashboardController extends Controller
                 $profileImageUrl = $user->profile_image_url;
                 $company = $user->companyHeadships->first() ?? $user->company ?? $user->branch?->company ?? $user->departmentRelation?->branch?->company;
                 $companyName = $company?->name ?? null;
-                $companyLogoUrl = $company?->logo ? $this->departmentLogoUrl($company->logo) : null;
+                $companyLogoUrl = $company?->logo ? $this->companyLogoUrl($company->logo) : null;
                 $grouped[$userId] = [
                     'id' => $userId,
                     'employee_name' => $user->display_name ?: '—',
@@ -3343,7 +3346,7 @@ class DashboardController extends Controller
             if (! isset($grouped[$userId])) {
                 $company = $user->companyHeadships->first() ?? $user->company ?? $user->branch?->company ?? $user->departmentRelation?->branch?->company;
                 $companyName = $company?->name ?? null;
-                $companyLogoUrl = $company?->logo ? $this->departmentLogoUrl($company->logo) : null;
+                $companyLogoUrl = $company?->logo ? $this->companyLogoUrl($company->logo) : null;
                 $grouped[$userId] = [
                     'id' => $userId,
                     'employee_name' => $user->display_name ?: '—',

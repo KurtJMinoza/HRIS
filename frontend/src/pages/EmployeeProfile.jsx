@@ -76,6 +76,7 @@ import {
   uploadProfilePhoto,
   removeProfilePhoto,
   updateProfile,
+  companyLogoUrl,
 } from '@/api'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
@@ -3125,9 +3126,9 @@ export default function EmployeeProfile() {
                 </p>
                 {displayUser?.company_name ? (
                   <div className="flex items-center gap-2">
-                    {displayUser.company_logo_url ? (
+                    {companyLogoUrl(displayUser.company_logo_url) ? (
                       <img
-                        src={displayUser.company_logo_url}
+                        src={companyLogoUrl(displayUser.company_logo_url)}
                         alt=""
                         className="size-5 rounded object-contain shrink-0"
                         onError={(e) => { e.currentTarget.style.display = 'none' }}
