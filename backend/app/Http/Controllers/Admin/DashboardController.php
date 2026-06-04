@@ -3446,8 +3446,12 @@ class DashboardController extends Controller
 
             $row['virtual_time_out_from_ot'] = false;
 
-            $row['time_in'] = $row['time_in'] ? $row['time_in']->toIso8601String() : null;
-            $row['time_out'] = $row['time_out'] ? $row['time_out']->toIso8601String() : null;
+            $row['time_in'] = $row['time_in']
+                ? ($row['time_in'] instanceof Carbon ? $row['time_in'] : Carbon::parse($row['time_in'], $tz))->toIso8601String()
+                : null;
+            $row['time_out'] = $row['time_out']
+                ? ($row['time_out'] instanceof Carbon ? $row['time_out'] : Carbon::parse($row['time_out'], $tz))->toIso8601String()
+                : null;
         }
         unset($row);
 

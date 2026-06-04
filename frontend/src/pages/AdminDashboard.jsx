@@ -326,7 +326,18 @@ function dashboardSnapshotSegment(snapshot, segment) {
       today_leaves: snapshot.today_leaves,
     }
   }
-  if (segment === 'attendance') return { today_logs: snapshot.today_logs }
+  if (segment === 'attendance') {
+    const rows = Array.isArray(snapshot.today_logs) ? snapshot.today_logs : []
+    return {
+      data: rows,
+      meta: {
+        total: rows.length,
+        page: 1,
+        per_page: LOGS_PER_PAGE,
+        last_page: Math.max(1, Math.ceil(rows.length / LOGS_PER_PAGE)),
+      },
+    }
+  }
   if (segment === 'payroll') return { payroll_summary: snapshot.payroll_summary }
   if (segment === 'charts') {
     return {

@@ -1516,7 +1516,15 @@ export async function getAdminDashboardAttendanceTodayLite(params = {}, options 
   if (!res.ok) {
     throw new Error(body.message || 'Failed to load attendance table')
   }
-  return body.data != null ? body.data : body
+  return {
+    data: Array.isArray(body.data) ? body.data : [],
+    meta: body.meta ?? {
+      total: Array.isArray(body.data) ? body.data.length : 0,
+      page: Number(params.page || 1),
+      per_page: Number(params.per_page || 50),
+      last_page: 1,
+    },
+  }
 }
 
 export async function getAdminDashboardPayroll(options = {}) {
