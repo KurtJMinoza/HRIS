@@ -245,9 +245,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/geofencing', [GeofenceController::class, 'index']);
             Route::get('/admin/branches/{id}/geofences', [GeofenceController::class, 'branch'])->whereNumber('id');
             Route::post('/admin/geofencing/search-location', [GeofenceController::class, 'searchLocation']);
+            Route::post('/admin/geofencing/osm/search', [GeofenceController::class, 'osmPoiSearch']);
+            Route::post('/admin/geofencing/osm/nearby', [GeofenceController::class, 'osmPoiNearby']);
             Route::get('/geofencing/branches', [GeofenceController::class, 'index']);
             Route::get('/geofencing/branches/{id}/geofences', [GeofenceController::class, 'branch'])->whereNumber('id');
             Route::post('/geofencing/search-location', [GeofenceController::class, 'searchLocation']);
+            Route::post('/geofencing/osm/search', [GeofenceController::class, 'osmPoiSearch']);
+            Route::post('/geofencing/osm/nearby', [GeofenceController::class, 'osmPoiNearby']);
         });
         Route::middleware('permission:geofence.create')->post('/admin/branches/{id}/geofences', [GeofenceController::class, 'store'])->whereNumber('id');
         Route::middleware('permission:geofence.create')->post('/geofencing/geofences', [GeofenceController::class, 'storeFromPayload']);

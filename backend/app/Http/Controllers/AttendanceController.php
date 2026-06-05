@@ -611,7 +611,8 @@ class AttendanceController extends Controller
         $officialClockAt = $this->officialClockTimestamp($request, $serverReceivedAt);
         $validationCompletedAt = now();
         $authenticationMethod = $faceContext['authentication_method'] ?? null;
-        $this->assertGeofenceAllowsAttendanceSave($request, $user);
+        $attendanceMethod = $this->attendanceMethodFromRequest($request, $authenticationMethod);
+        $this->assertGeofenceAllowsAttendanceSave($request, $user, $type, $attendanceMethod);
 
         $data = [
             'user_id' => $user->id,
@@ -619,7 +620,7 @@ class AttendanceController extends Controller
             'verified_at' => $officialClockAt,
             'server_received_at' => $serverReceivedAt,
             'validation_completed_at' => $validationCompletedAt,
-            'method' => $this->attendanceMethodFromRequest($request, $authenticationMethod),
+            'method' => $attendanceMethod,
             'processing_delay_seconds' => max(0, (int) $officialClockAt->diffInSeconds($serverReceivedAt, false)),
             'client_attempt_id' => $this->validateClientAttemptId($request),
             'ip_address' => $request->ip(),
@@ -665,7 +666,7 @@ class AttendanceController extends Controller
         return $data;
     }
 
-    private function assertGeofenceAllowsAttendanceSave(Request $request, User $user): void
+    private function assertGeofenceAllowsAttendanceSave(Request $request, User $user, string $type, ?string $attendanceMethod): void
     {
         if (! Schema::hasTable('branch_geofences')) {
             return;
@@ -716,6 +717,22 @@ class AttendanceController extends Controller
 
         if ($isStrictInside && ((bool) $validation->is_inside !== true || $validation->validation_status !== 'passed')) {
             abort(403, 'You are outside the allowed attendance geofence.');
+        }
+
+        if ((int) ($validation->employee_id ?? 0) !== (int) $user->id) {
+            abort(403, 'Geofence validation does not match this employee.');
+        }
+
+        if ($branch && (int) ($validation->branch_id ?? 0) !== (int) $branch->id) {
+            abort(403, 'Geofence validation does not match this branch.');
+        }
+
+        if (Schema::hasColumn('geofence_validation_logs', 'clock_type') && $validation->clock_type && $validation->clock_type !== $type) {
+            abort(403, 'Geofence validation does not match this attendance action.');
+        }
+
+        if (Schema::hasColumn('geofence_validation_logs', 'method') && $validation->method && $attendanceMethod && $validation->method !== $attendanceMethod) {
+            abort(403, 'Geofence validation does not match this attendance method.');
         }
     }
 
@@ -846,7 +863,7 @@ class AttendanceController extends Controller
 
         $user = $this->refreshUserForScheduleCheck($user);
         $type = $validated['type'];
-        $this->geofenceValidation->enforceForRequest($user, $request, 'qr');
+        $this->geofenceValidation->enforceForRequest($user, $request, $qrToken !== '' ? 'qr' : 'credentials');
         $this->enforceLeaveRestrictionsForToday($user, $type);
         $this->ensureUserHasScheduleForToday($user);
         $this->ensureNotHolidayForAttendance();

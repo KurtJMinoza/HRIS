@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -246,6 +247,74 @@ class GeofenceController extends Controller
             'query' => $query,
             'provider' => 'nominatim',
             'results' => collect([...$localResults, ...$placeResults])->unique('id')->take(8)->values()->all(),
+        ]);
+    }
+
+    public function osmPoiSearch(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'query' => ['required', 'string', 'min:3', 'max:120'],
+            'lat' => ['nullable', 'numeric', 'between:-90,90'],
+            'lng' => ['nullable', 'numeric', 'between:-180,180'],
+            'radius' => ['nullable', 'integer', 'min:100', 'max:10000'],
+        ]);
+
+        $query = trim(preg_replace('/\s+/', ' ', (string) $validated['query']));
+        $center = $this->requestMapCenter($validated);
+        $radius = (int) ($validated['radius'] ?? 5000);
+        $bbox = $this->bboxAround($center['lat'], $center['lng'], $radius);
+        $bboxHash = sha1(implode(',', array_map(static fn (float $value): string => number_format($value, 5, '.', ''), $bbox)));
+
+        $branchResults = collect($this->localBranchSearch($request, $query))
+            ->map(fn (array $row): array => $this->branchPoiPayload($row, $center))
+            ->all();
+
+        $cacheKey = 'overpass:search:'.sha1(mb_strtolower($query)).':'.$bboxHash;
+        $osmResults = Cache::remember(
+            $cacheKey,
+            now()->addHours(12),
+            fn (): array => $this->overpassPoiSearch($query, $bbox, $center)
+        );
+
+        return response()->json([
+            'query' => $query,
+            'center' => $center,
+            'radius' => $radius,
+            'provider' => 'overpass',
+            'results' => collect([...$branchResults, ...$osmResults])
+                ->unique('id')
+                ->take(10)
+                ->values()
+                ->all(),
+        ]);
+    }
+
+    public function osmPoiNearby(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'lat' => ['required', 'numeric', 'between:-90,90'],
+            'lng' => ['required', 'numeric', 'between:-180,180'],
+            'radius' => ['nullable', 'integer', 'min:100', 'max:2000'],
+        ]);
+
+        $center = [
+            'lat' => (float) $validated['lat'],
+            'lng' => (float) $validated['lng'],
+        ];
+        $radius = (int) ($validated['radius'] ?? 500);
+        $cacheKey = 'overpass:nearby:'.sha1(number_format($center['lat'], 5, '.', '').'|'.number_format($center['lng'], 5, '.', '').'|'.$radius);
+
+        $results = Cache::remember(
+            $cacheKey,
+            now()->addHours(12),
+            fn (): array => $this->overpassPoiNearby($center, $radius)
+        );
+
+        return response()->json([
+            'center' => $center,
+            'radius' => $radius,
+            'provider' => 'overpass',
+            'results' => $results,
         ]);
     }
 
@@ -529,6 +598,301 @@ class GeofenceController extends Controller
         return $score;
     }
 
+    /**
+     * @param  array<string, mixed>  $validated
+     * @return array{lat: float, lng: float}
+     */
+    private function requestMapCenter(array $validated): array
+    {
+        $lat = isset($validated['lat']) ? (float) $validated['lat'] : null;
+        $lng = isset($validated['lng']) ? (float) $validated['lng'] : null;
+
+        if ($lat !== null && $lng !== null && $lat !== 0.0 && $lng !== 0.0) {
+            return ['lat' => $lat, 'lng' => $lng];
+        }
+
+        // Davao City fallback keeps Overpass searches bounded and avoids slow global scans.
+        return ['lat' => 7.0731, 'lng' => 125.6128];
+    }
+
+    /**
+     * @return array{0: float, 1: float, 2: float, 3: float}
+     */
+    private function bboxAround(float $lat, float $lng, int $radiusMeters): array
+    {
+        $latDelta = $radiusMeters / 111320;
+        $lngDelta = $radiusMeters / (111320 * max(0.2, cos(deg2rad($lat))));
+
+        return [
+            max(-90, $lat - $latDelta),
+            max(-180, $lng - $lngDelta),
+            min(90, $lat + $latDelta),
+            min(180, $lng + $lngDelta),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $center
+     * @return list<array<string, mixed>>
+     */
+    private function overpassPoiSearch(string $query, array $bbox, array $center): array
+    {
+        $safeQuery = str_replace(['\\', '"'], ['\\\\', '\\"'], $query);
+        [$south, $west, $north, $east] = $bbox;
+        $bboxText = implode(',', [
+            number_format($south, 7, '.', ''),
+            number_format($west, 7, '.', ''),
+            number_format($north, 7, '.', ''),
+            number_format($east, 7, '.', ''),
+        ]);
+        $categoryClauses = $this->overpassCategoryClauses($query, $bboxText);
+
+        $overpass = <<<OVERPASS
+[out:json][timeout:25];
+(
+  node["name"~"{$safeQuery}",i]({$bboxText});
+  way["name"~"{$safeQuery}",i]({$bboxText});
+  relation["name"~"{$safeQuery}",i]({$bboxText});
+{$categoryClauses}
+);
+out center tags 30;
+OVERPASS;
+
+        return $this->runOverpassQuery($overpass, $center);
+    }
+
+    private function overpassCategoryClauses(string $query, string $bboxText): string
+    {
+        $normalized = mb_strtolower($query);
+        $clauses = [];
+        $add = static function (string $selector) use (&$clauses, $bboxText): void {
+            $clauses[] = "  node{$selector}({$bboxText});";
+            $clauses[] = "  way{$selector}({$bboxText});";
+            $clauses[] = "  relation{$selector}({$bboxText});";
+        };
+
+        if (str_contains($normalized, 'restaurant') || str_contains($normalized, 'cafe') || str_contains($normalized, 'jollibee') || str_contains($normalized, 'food')) {
+            $add('["amenity"~"restaurant|cafe|fast_food"]');
+        }
+        if (str_contains($normalized, 'bank')) {
+            $add('["amenity"="bank"]');
+        }
+        if (str_contains($normalized, 'school')) {
+            $add('["amenity"="school"]');
+            $add('["building"="school"]');
+        }
+        if (str_contains($normalized, 'hospital') || str_contains($normalized, 'doctor') || str_contains($normalized, 'clinic')) {
+            $add('["amenity"~"hospital|clinic"]');
+            $add('["healthcare"~"hospital|clinic"]');
+            $add('["building"="hospital"]');
+        }
+        if (str_contains($normalized, 'mall') || str_contains($normalized, 'gaisano') || str_contains($normalized, 'abreeza') || str_contains($normalized, 'sm ')) {
+            $add('["shop"="mall"]');
+            $add('["building"~"retail|commercial"]');
+        }
+        if (str_contains($normalized, 'fuel') || str_contains($normalized, 'gas')) {
+            $add('["amenity"="fuel"]');
+        }
+        if (str_contains($normalized, 'hotel')) {
+            $add('["tourism"="hotel"]');
+        }
+        if (str_contains($normalized, 'office') || str_contains($normalized, 'government')) {
+            $add('["office"]');
+        }
+        if (str_contains($normalized, 'building') || str_contains($normalized, 'commercial')) {
+            $add('["building"]');
+        }
+
+        return implode("\n", array_unique($clauses));
+    }
+
+    /**
+     * @param  array<string, float>  $center
+     * @return list<array<string, mixed>>
+     */
+    private function overpassPoiNearby(array $center, int $radius): array
+    {
+        $lat = number_format((float) $center['lat'], 7, '.', '');
+        $lng = number_format((float) $center['lng'], 7, '.', '');
+
+        $overpass = <<<OVERPASS
+[out:json][timeout:25];
+(
+  node["name"](around:{$radius},{$lat},{$lng});
+  way["name"](around:{$radius},{$lat},{$lng});
+  relation["name"](around:{$radius},{$lat},{$lng});
+  node["amenity"](around:{$radius},{$lat},{$lng});
+  way["amenity"](around:{$radius},{$lat},{$lng});
+  node["shop"](around:{$radius},{$lat},{$lng});
+  way["shop"](around:{$radius},{$lat},{$lng});
+  node["office"](around:{$radius},{$lat},{$lng});
+  way["office"](around:{$radius},{$lat},{$lng});
+  node["tourism"="hotel"](around:{$radius},{$lat},{$lng});
+  way["tourism"="hotel"](around:{$radius},{$lat},{$lng});
+  node["healthcare"](around:{$radius},{$lat},{$lng});
+  way["healthcare"](around:{$radius},{$lat},{$lng});
+  way["building"](around:{$radius},{$lat},{$lng});
+);
+out center tags 80;
+OVERPASS;
+
+        return $this->runOverpassQuery($overpass, $center);
+    }
+
+    /**
+     * @param  array<string, float>  $center
+     * @return list<array<string, mixed>>
+     */
+    private function runOverpassQuery(string $query, array $center): array
+    {
+        try {
+            $response = Http::timeout(28)
+                ->connectTimeout(6)
+                ->asForm()
+                ->withHeaders([
+                    'User-Agent' => config('app.name', 'HRIS').'/geofence-overpass-poi-search',
+                ])
+                ->post('https://overpass-api.de/api/interpreter', ['data' => $query]);
+
+            if (! $response->successful()) {
+                return [];
+            }
+
+            return collect($response->json('elements') ?: [])
+                ->map(fn (array $element): ?array => $this->overpassElementPayload($element, $center))
+                ->filter()
+                ->unique('id')
+                ->sortBy([
+                    ['has_name', 'desc'],
+                    ['distance_meters', 'asc'],
+                ])
+                ->take(10)
+                ->map(function (array $row): array {
+                    unset($row['has_name']);
+
+                    return $row;
+                })
+                ->values()
+                ->all();
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $element
+     * @param  array<string, float>  $center
+     * @return array<string, mixed>|null
+     */
+    private function overpassElementPayload(array $element, array $center): ?array
+    {
+        $tags = is_array($element['tags'] ?? null) ? $element['tags'] : [];
+        $lat = isset($element['lat'])
+            ? (float) $element['lat']
+            : (isset($element['center']['lat']) ? (float) $element['center']['lat'] : null);
+        $lng = isset($element['lon'])
+            ? (float) $element['lon']
+            : (isset($element['center']['lon']) ? (float) $element['center']['lon'] : null);
+
+        if ($lat === null || $lng === null) {
+            return null;
+        }
+
+        $name = trim((string) ($tags['name'] ?? $tags['brand'] ?? $tags['operator'] ?? ''));
+        $category = $this->osmCategory($tags, (string) ($element['type'] ?? 'osm'));
+
+        return [
+            'id' => 'osm_poi:'.($element['type'] ?? 'element').':'.($element['id'] ?? md5((string) json_encode($element))),
+            'osm_id' => $element['id'] ?? null,
+            'osm_type' => $element['type'] ?? null,
+            'label' => $name !== '' ? $name : $category['label'],
+            'name' => $name !== '' ? $name : null,
+            'category' => $category['key'],
+            'category_label' => $category['label'],
+            'address' => $this->osmAddress($tags),
+            'latitude' => $lat,
+            'longitude' => $lng,
+            'distance_meters' => round($this->haversineMeters((float) $center['lat'], (float) $center['lng'], $lat, $lng)),
+            'tags' => $tags,
+            'source' => 'overpass',
+            'has_name' => $name !== '',
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @param  array<string, float>  $center
+     * @return array<string, mixed>
+     */
+    private function branchPoiPayload(array $row, array $center): array
+    {
+        $lat = (float) $row['latitude'];
+        $lng = (float) $row['longitude'];
+
+        return [
+            ...$row,
+            'name' => $row['label'] ?? null,
+            'category' => 'branch',
+            'category_label' => 'Branch',
+            'distance_meters' => round($this->haversineMeters((float) $center['lat'], (float) $center['lng'], $lat, $lng)),
+            'osm_id' => null,
+            'osm_type' => 'branch',
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $tags
+     * @return array{key: string, label: string}
+     */
+    private function osmCategory(array $tags, string $osmType): array
+    {
+        $amenity = strtolower((string) ($tags['amenity'] ?? ''));
+        $shop = strtolower((string) ($tags['shop'] ?? ''));
+        $office = strtolower((string) ($tags['office'] ?? ''));
+        $tourism = strtolower((string) ($tags['tourism'] ?? ''));
+        $healthcare = strtolower((string) ($tags['healthcare'] ?? ''));
+        $building = strtolower((string) ($tags['building'] ?? ''));
+
+        if (in_array($amenity, ['restaurant', 'cafe', 'fast_food'], true)) return ['key' => 'restaurant', 'label' => 'Restaurant'];
+        if ($amenity === 'bank') return ['key' => 'bank', 'label' => 'Bank'];
+        if ($amenity === 'school' || $building === 'school') return ['key' => 'school', 'label' => 'School'];
+        if (in_array($amenity, ['hospital', 'clinic'], true) || in_array($healthcare, ['hospital', 'clinic'], true) || $building === 'hospital') return ['key' => 'hospital', 'label' => 'Hospital'];
+        if ($amenity === 'fuel') return ['key' => 'fuel', 'label' => 'Fuel Station'];
+        if ($tourism === 'hotel') return ['key' => 'hotel', 'label' => 'Hotel'];
+        if (in_array($shop, ['mall', 'supermarket', 'convenience'], true) || in_array($building, ['retail', 'commercial'], true)) return ['key' => 'mall', 'label' => $shop === 'mall' ? 'Mall' : 'Shop'];
+        if ($office !== '') return ['key' => 'office', 'label' => 'Office'];
+        if ($building !== '') return ['key' => 'building', 'label' => 'Building'];
+
+        return ['key' => $osmType === 'way' ? 'building' : 'landmark', 'label' => $osmType === 'way' ? 'Building' : 'Landmark'];
+    }
+
+    /**
+     * @param  array<string, mixed>  $tags
+     */
+    private function osmAddress(array $tags): ?string
+    {
+        $parts = array_filter([
+            $tags['addr:housename'] ?? null,
+            $tags['addr:housenumber'] ?? null,
+            $tags['addr:street'] ?? null,
+            $tags['addr:suburb'] ?? null,
+            $tags['addr:city'] ?? null,
+        ], static fn (mixed $value): bool => is_scalar($value) && trim((string) $value) !== '');
+
+        return $parts === [] ? null : implode(', ', array_map('strval', $parts));
+    }
+
+    private function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): float
+    {
+        $earthRadius = 6371000;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLon = deg2rad($lon2 - $lon1);
+        $a = sin($dLat / 2) ** 2
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
+
+        return $earthRadius * 2 * atan2(sqrt($a), sqrt(1 - $a));
+    }
+
     private function audit(Request $request, string $action, ?Branch $branch, ?BranchGeofence $geofence = null, array $extra = []): void
     {
         $actorId = $request->user()?->id;
@@ -565,6 +929,9 @@ class GeofenceController extends Controller
         $normalized = ltrim($normalized, '/');
         if (str_starts_with($normalized, 'storage/')) {
             $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+        if (! Storage::disk('public')->exists($normalized)) {
+            return null;
         }
 
         $segments = explode('/', trim($normalized, '/'));

@@ -143,15 +143,16 @@ export async function getAttendanceLocationDiagnostics() {
   }
 }
 
-export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enableHighAccuracy } = {}) {
+export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enableHighAccuracy, attempts = 3, desiredAccuracyMeters } = {}) {
   const deviceType = attendanceDeviceType()
   const permission = await geolocationPermissionState()
   const hasGeolocation = typeof navigator !== 'undefined' && Boolean(navigator.geolocation)
   const options = {
     enableHighAccuracy: enableHighAccuracy ?? true,
-    timeout: timeoutMs ?? (deviceType === 'mobile' ? 15000 : 10000),
+    timeout: timeoutMs ?? 15000,
     maximumAge: maximumAgeMs ?? 0,
   }
+  const targetAccuracy = desiredAccuracyMeters ?? (deviceType === 'mobile' ? 50 : 100)
 
   if (!hasGeolocation) {
     logAttendanceGeolocationDiagnostics({
@@ -259,27 +260,45 @@ export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enabl
     })
   }
 
-  try {
-    return locationFromPosition(await readPosition(), permission, 'initial')
-  } catch (error) {
-    logLocationError(error, permission, 'initial')
-    if (permission === 'granted' && error?.code === error?.PERMISSION_DENIED) {
-      await new Promise((resolve) => setTimeout(resolve, 350))
-      const retryPermission = await geolocationPermissionState()
-      try {
-        return locationFromPosition(await readPosition(), retryPermission, 'retry_after_granted_denial')
-      } catch (retryError) {
-        logLocationError(retryError, retryPermission, 'retry_after_granted_denial')
-        try {
-          return locationFromPosition(await watchPositionOnce(), retryPermission, 'watch_after_granted_denial')
-        } catch (watchError) {
-          logLocationError(watchError, retryPermission, 'watch_after_granted_denial')
-          throw makeGeolocationError(watchError, retryPermission, true)
-        }
+  let bestLocation = null
+  let lastError = null
+  const maxAttempts = Math.max(1, Math.min(3, Number(attempts) || 3))
+
+  for (let attemptNo = 1; attemptNo <= maxAttempts; attemptNo += 1) {
+    try {
+      const location = locationFromPosition(await readPosition(), permission, attemptNo === 1 ? 'initial' : `accuracy_retry_${attemptNo}`)
+      if (!bestLocation || Number(location.accuracy_meters ?? Infinity) < Number(bestLocation.accuracy_meters ?? Infinity)) {
+        bestLocation = location
       }
+      if (Number(location.accuracy_meters ?? Infinity) <= targetAccuracy) {
+        return location
+      }
+      if (attemptNo < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 450))
+      }
+    } catch (error) {
+      lastError = error
+      logLocationError(error, permission, attemptNo === 1 ? 'initial' : `accuracy_retry_${attemptNo}`)
+      if (error?.code === error?.PERMISSION_DENIED) break
     }
-    throw makeGeolocationError(error, permission)
   }
+
+  if (bestLocation) {
+    return bestLocation
+  }
+
+  if (permission === 'granted' && lastError?.code === lastError?.PERMISSION_DENIED) {
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const retryPermission = await geolocationPermissionState()
+    try {
+      return locationFromPosition(await watchPositionOnce(), retryPermission, 'watch_after_granted_denial')
+    } catch (watchError) {
+      logLocationError(watchError, retryPermission, 'watch_after_granted_denial')
+      throw makeGeolocationError(watchError, retryPermission, true)
+    }
+  }
+
+  throw makeGeolocationError(lastError, permission)
 }
 
 function geolocationPayload(location) {
@@ -306,7 +325,10 @@ export async function validateAttendanceGeofence(payload = {}) {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to validate location')
   if (data.allowed === false) {
-    const err = new Error(data.failure_reason || 'You are outside the allowed attendance geofence.')
+    const reason = data.failure_reason || 'You are outside the allowed attendance geofence.'
+    const err = new Error(/accuracy/i.test(reason)
+      ? `${reason} Please enable WiFi/location services or move closer to the branch area.`
+      : reason)
     err.geofence = data
     throw err
   }
@@ -7322,6 +7344,39 @@ export async function searchGeofenceLocation(query, options = {}) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to search location')
+  return data
+}
+
+export async function searchGeofenceOsmPoi(query, options = {}) {
+  const res = await authenticatedFetch('/admin/geofencing/osm/search', {
+    method: 'POST',
+    body: JSON.stringify({
+      query,
+      lat: options.lat,
+      lng: options.lng,
+      radius: options.radius || 5000,
+    }),
+    signal: options.signal,
+    timeoutMs: 35000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'OSM search unavailable. You can still pin manually.')
+  return data
+}
+
+export async function getNearbyGeofenceOsmPoi(options = {}) {
+  const res = await authenticatedFetch('/admin/geofencing/osm/nearby', {
+    method: 'POST',
+    body: JSON.stringify({
+      lat: options.lat,
+      lng: options.lng,
+      radius: options.radius || 500,
+    }),
+    signal: options.signal,
+    timeoutMs: 35000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'OSM search unavailable. You can still pin manually.')
   return data
 }
 

@@ -3,7 +3,6 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import * as turf from '@turf/turf'
 import {
-  Building2,
   ChevronLeft,
   ChevronRight,
   Circle,
@@ -22,8 +21,9 @@ import {
   createBranchGeofence,
   getAdminGeofencing,
   getBranchGeofences,
+  getNearbyGeofenceOsmPoi,
   searchGeofenceLocation,
-  testAttendanceGeofence,
+  searchGeofenceOsmPoi,
   updateBranchGeofence,
   updateBranchGeofenceSettings,
 } from '@/api'
@@ -39,12 +39,38 @@ import { cn } from '@/lib/utils'
 const DEFAULT_CENTER = [14.5995, 120.9842]
 const PAGE_SIZE = 5
 const ORANGE = '#f04414'
+const POI_RADIUS_OPTIONS = [
+  { value: 100, label: '100m' },
+  { value: 250, label: '250m' },
+  { value: 500, label: '500m' },
+  { value: 1000, label: '1km' },
+  { value: 2000, label: '2km' },
+]
+const POI_CATEGORIES = [
+  { value: 'all', label: 'All' },
+  { value: 'building', label: 'Buildings' },
+  { value: 'restaurant', label: 'Restaurants' },
+  { value: 'bank', label: 'Banks' },
+  { value: 'school', label: 'Schools' },
+  { value: 'hospital', label: 'Hospitals' },
+  { value: 'office', label: 'Offices' },
+  { value: 'mall', label: 'Malls' },
+  { value: 'fuel', label: 'Fuel Stations' },
+  { value: 'hotel', label: 'Hotels' },
+]
 
 const orangePinIcon = L.divIcon({
   className: 'geofence-pin-icon',
   html: '<span class="block size-8 rounded-full bg-[#f04414] p-1 shadow-lg shadow-orange-900/25 ring-4 ring-[#f04414]/20"><span class="block size-full rounded-full border-2 border-white bg-[#f04414]"></span></span>',
   iconSize: [32, 32],
   iconAnchor: [16, 16],
+})
+
+const poiIcon = L.divIcon({
+  className: 'geofence-poi-icon',
+  html: '<span class="block size-6 rounded-full border-2 border-white bg-blue-600 shadow ring-4 ring-blue-500/20"></span>',
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
 })
 
 function blankForm(branchId = null, branchName = '') {
@@ -248,6 +274,27 @@ function geofenceMapLabel(status, name) {
   return `<div class="rounded bg-white/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wide shadow">${status.toUpperCase()}${name ? ` · ${name}` : ''}</div>`
 }
 
+function poiMatchesCategory(poi, category) {
+  if (category === 'all') return true
+  if (category === 'building') return ['building', 'mall', 'office'].includes(poi?.category)
+  return poi?.category === category
+}
+
+function formatDistanceMeters(value) {
+  const distance = Number(value)
+  if (!Number.isFinite(distance)) return null
+  return distance >= 1000 ? `${(distance / 1000).toFixed(1)}km` : `${Math.round(distance)}m`
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
 function SegmentButton({ active, icon, children, onClick, disabled = false }) {
   return (
     <Button
@@ -284,14 +331,35 @@ function SelectBox({ value, onChange, children, className, disabled = false }) {
 }
 
 function CompanyLogo({ branch }) {
-  const logoUrl = companyLogoUrl(branch)
+  const logoUrl = branch?.company_logo_url || branch?.logo_url
+    ? companyLogoUrl({ company_logo_url: branch.company_logo_url, logo_url: branch.logo_url })
+    : undefined
+  const [logoFailed, setLogoFailed] = useState(false)
+  useEffect(() => {
+    setLogoFailed(false)
+  }, [logoUrl])
+  const companyName = branch?.company_name || branch?.branch_name || ''
+  const initials = companyName
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 3)
+    .toUpperCase() || 'CO'
 
   return (
     <span className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-background">
-      {logoUrl ? (
-        <img src={logoUrl} alt="" className="size-full object-contain p-1.5" />
+      {logoUrl && !logoFailed ? (
+        <img
+          src={logoUrl}
+          alt=""
+          className="size-full object-contain p-1.5"
+          onError={() => setLogoFailed(true)}
+        />
       ) : (
-        <Building2 className="size-5 text-slate-400" />
+        <span className="flex size-full items-center justify-center bg-orange-50 px-1 text-[10px] font-black leading-none text-[#f04414] dark:bg-orange-500/10 dark:text-orange-300">
+          {initials}
+        </span>
       )}
     </span>
   )
@@ -306,11 +374,16 @@ function GeofenceMapOptimized({
   drawMode,
   focusKey,
   focusPoint,
+  poiResults = [],
+  poiCategory = 'all',
+  selectedPoiId = null,
+  onUsePoi,
 }) {
   const mapEl = useRef(null)
   const mapRef = useRef(null)
   const staticLayerRef = useRef(null)
   const activeLayerRef = useRef(null)
+  const poiLayerRef = useRef(null)
   const fitKeyRef = useRef('')
   const focusKeyRef = useRef('')
 
@@ -325,12 +398,14 @@ function GeofenceMapOptimized({
     mapRef.current = map
     staticLayerRef.current = L.featureGroup().addTo(map)
     activeLayerRef.current = L.featureGroup().addTo(map)
+    poiLayerRef.current = L.featureGroup().addTo(map)
 
     return () => {
       map.remove()
       mapRef.current = null
       staticLayerRef.current = null
       activeLayerRef.current = null
+      poiLayerRef.current = null
     }
   }, [])
 
@@ -371,6 +446,49 @@ function GeofenceMapOptimized({
     focusKeyRef.current = focusKey
     map.setView([lat, lng], 18, { animate: true })
   }, [focusKey, focusPoint])
+
+  useEffect(() => {
+    const map = mapRef.current
+    const group = poiLayerRef.current
+    if (!map || !group) return
+
+    group.clearLayers()
+    const visiblePois = poiResults.filter((poi) => poiMatchesCategory(poi, poiCategory))
+    visiblePois.forEach((poi) => {
+      const lat = Number(poi.latitude)
+      const lng = Number(poi.longitude)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+
+      const popup = L.DomUtil.create('div', 'space-y-1 text-xs')
+      popup.innerHTML = `
+        <div class="font-bold">${escapeHtml(poi.name || poi.label || 'OSM place')}</div>
+        <div>Category: ${escapeHtml(poi.category_label || poi.category || 'Place')}</div>
+        ${poi.address ? `<div>${escapeHtml(poi.address)}</div>` : ''}
+        <div>Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
+        <div>OSM: ${escapeHtml(poi.osm_type || poi.source || 'osm')}${poi.osm_id ? `/${escapeHtml(poi.osm_id)}` : ''}</div>
+      `
+      const button = L.DomUtil.create('button', 'mt-2 rounded bg-[#f04414] px-2 py-1 text-[11px] font-semibold text-white', popup)
+      button.type = 'button'
+      button.textContent = 'Use as Geofence Center'
+      L.DomEvent.on(button, 'click', (event) => {
+        L.DomEvent.stop(event)
+        onUsePoi?.(poi)
+      })
+
+      const marker = L.marker([lat, lng], { icon: poiIcon })
+        .bindPopup(popup)
+        .bindTooltip(poi.name || poi.label || 'OSM place', { direction: 'top' })
+      if (String(selectedPoiId || '') === String(poi.id || '')) {
+        marker.openPopup()
+      }
+      group.addLayer(marker)
+    })
+
+    const bounds = group.getBounds()
+    if (bounds.isValid() && visiblePois.length > 1) {
+      map.fitBounds(bounds.pad(0.18), { maxZoom: 18, animate: false })
+    }
+  }, [onUsePoi, poiCategory, poiResults, selectedPoiId])
 
   useEffect(() => {
     const map = mapRef.current
@@ -550,11 +668,16 @@ export default function AdminGeofencing() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [testPoint, setTestPoint] = useState({ latitude: '', longitude: '' })
-  const [testResult, setTestResult] = useState(null)
-  const [testingPoint, setTestingPoint] = useState(false)
+  const [poiSearch, setPoiSearch] = useState('')
+  const [poiResults, setPoiResults] = useState([])
+  const [poiLoading, setPoiLoading] = useState(false)
+  const [poiRadius, setPoiRadius] = useState(500)
+  const [poiCategory, setPoiCategory] = useState('all')
+  const [selectedPoiId, setSelectedPoiId] = useState(null)
   const mapSearchCacheRef = useRef(new Map())
   const mapSearchAbortRef = useRef(null)
+  const poiSearchCacheRef = useRef(new Map())
+  const poiSearchAbortRef = useRef(null)
   const { toast } = useToast()
 
   const selectedBranch = useMemo(
@@ -580,6 +703,14 @@ export default function AdminGeofencing() {
   const rangeEnd = Math.min(page * PAGE_SIZE, filteredBranches.length)
 
   const shapeEditable = canEditGeofenceShape(form)
+  const poiCenter = useMemo(
+    () => validLatLngPair(geofenceCenter(form)) || validLatLngPair(branchLocation(selectedBranch)) || DEFAULT_CENTER,
+    [form, selectedBranch],
+  )
+  const filteredPoiResults = useMemo(
+    () => poiResults.filter((poi) => poiMatchesCategory(poi, poiCategory)),
+    [poiCategory, poiResults],
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -619,8 +750,6 @@ export default function AdminGeofencing() {
         setBranches((list) => list.map((branch) => (String(branch.id) === String(data.branch.id) ? { ...branch, ...data.branch } : branch)))
       }
       setForm({ ...nextForm, center_lat: center[0], center_lng: center[1] })
-      setTestPoint({ latitude: center[0], longitude: center[1] })
-      setTestResult(null)
       setDrawMode(selectedGeofence?.type || 'circle')
       setFocusPoint({ latitude: center[0], longitude: center[1] })
       setFocusKey((key) => key + 1)
@@ -715,6 +844,66 @@ export default function AdminGeofencing() {
     }
   }, [form, geofences, mapSearch, mapSearchMode, selectedBranch, toast])
 
+  useEffect(() => {
+    const query = poiSearch.trim()
+    const normalizedQuery = query.toLowerCase()
+    poiSearchAbortRef.current?.abort()
+
+    if (query.length < 3) {
+      setPoiLoading(false)
+      return undefined
+    }
+
+    const center = poiCenter
+    const cacheKey = `${normalizedQuery}:${center[0].toFixed(4)}:${center[1].toFixed(4)}:5000`
+    const cached = poiSearchCacheRef.current.get(cacheKey)
+    if (cached) {
+      setPoiResults(cached)
+      setPoiLoading(false)
+      return undefined
+    }
+
+    const controller = new AbortController()
+    poiSearchAbortRef.current = controller
+    const timeout = window.setTimeout(async () => {
+      setPoiLoading(true)
+      try {
+        const data = await searchGeofenceOsmPoi(query, {
+          lat: center[0],
+          lng: center[1],
+          radius: 5000,
+          signal: controller.signal,
+        })
+        const results = data.results || []
+        poiSearchCacheRef.current.set(cacheKey, results)
+        setPoiResults(results)
+        setSelectedPoiId(results[0]?.id || null)
+        if (results.length === 0) {
+          toast({
+            title: 'No OSM places found',
+            description: 'Try another building, business, landmark, or nearby street name.',
+            variant: 'error',
+          })
+        }
+      } catch (error) {
+        if (error?.name !== 'AbortError') {
+          toast({
+            title: 'OSM search unavailable',
+            description: 'OpenStreetMap search is taking longer than expected. Try narrowing your search or pin manually.',
+            variant: 'error',
+          })
+        }
+      } finally {
+        if (!controller.signal.aborted) setPoiLoading(false)
+      }
+    }, 500)
+
+    return () => {
+      window.clearTimeout(timeout)
+      controller.abort()
+    }
+  }, [poiCenter, poiSearch, toast])
+
   async function saveGeofence(options = {}) {
     if (!selectedBranchId) return
     setSaving(true)
@@ -799,35 +988,60 @@ export default function AdminGeofencing() {
     }
   }
 
-  async function runGeofenceTest() {
-    const employee = branchEmployees.find((item) => item.active) || branchEmployees[0]
-    const latitude = Number(testPoint.latitude)
-    const longitude = Number(testPoint.longitude)
-    if (!selectedBranchId || !employee?.id) {
-      toast({ title: 'Cannot test geofence', description: 'Select a branch with at least one assigned employee.', variant: 'error' })
-      return
-    }
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-      toast({ title: 'Invalid test coordinates', description: 'Enter valid latitude and longitude values.', variant: 'error' })
-      return
-    }
-    setTestingPoint(true)
+  async function loadNearbyPois() {
+    const center = poiCenter
+    if (!center) return
+    setPoiLoading(true)
     try {
-      const result = await testAttendanceGeofence({
-        employee_id: employee.id,
-        branch_id: selectedBranchId,
-        latitude,
-        longitude,
-        accuracy_meters: Number(form.accuracy_threshold_meters || 100),
-        method: 'admin_test',
+      const data = await getNearbyGeofenceOsmPoi({
+        lat: center[0],
+        lng: center[1],
+        radius: Number(poiRadius) || 500,
       })
-      setTestResult(result)
+      const results = data.results || []
+      setPoiResults(results)
+      setSelectedPoiId(results[0]?.id || null)
+      if (results.length === 0) {
+        toast({
+          title: 'No nearby OSM places found',
+          description: 'Try increasing the radius or search by a specific building/business name.',
+          variant: 'error',
+        })
+      }
     } catch (error) {
-      toast({ title: 'Geofence test failed', description: error.message, variant: 'error' })
+      toast({
+        title: 'OSM search unavailable',
+        description: error.message || 'You can still pin manually.',
+        variant: 'error',
+      })
     } finally {
-      setTestingPoint(false)
+      setPoiLoading(false)
     }
   }
+
+  const usePoiAsCenter = useCallback((poi) => {
+    if (!canEditGeofenceShape(form)) {
+      toast({
+        title: 'Active geofence is locked',
+        description: 'Disable it first to save as draft before moving its center.',
+        variant: 'error',
+      })
+      return
+    }
+    const lat = Number(poi?.latitude)
+    const lng = Number(poi?.longitude)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+    setSelectedPoiId(poi.id || null)
+    setForm((s) => ({
+      ...s,
+      center_lat: Number(lat.toFixed(7)),
+      center_lng: Number(lng.toFixed(7)),
+      name: s.name || poi.name || poi.label || s.name,
+      notes: s.notes || (poi.address ? `OSM address: ${poi.address}` : s.notes),
+    }))
+    setFocusPoint({ latitude: lat, longitude: lng })
+    setFocusKey((key) => key + 1)
+  }, [form, toast])
 
   async function applySearchResult(result) {
     if (!canEditGeofenceShape(form)) {
@@ -949,6 +1163,66 @@ export default function AdminGeofencing() {
                 <Search className="size-5" />
               </Button>
             </div>
+            <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-border dark:bg-muted/30">
+              <div className="flex flex-col gap-2 lg:flex-row">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    value={poiSearch}
+                    onChange={(e) => setPoiSearch(e.target.value)}
+                    placeholder="Search buildings, businesses, landmarks..."
+                    className="h-9 rounded-md border-slate-200 pl-9 text-xs shadow-sm placeholder:text-slate-500 focus-visible:ring-orange-100 dark:border-border"
+                  />
+                </div>
+                <SelectBox className="lg:w-28" value={poiRadius} onChange={(e) => setPoiRadius(Number(e.target.value))}>
+                  {POI_RADIUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </SelectBox>
+                <Button type="button" variant="outline" size="sm" className="h-9 rounded-md text-xs" disabled={poiLoading} onClick={loadNearbyPois}>
+                  {poiLoading ? 'Loading...' : 'Load Nearby Places'}
+                </Button>
+              </div>
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                {POI_CATEGORIES.map((category) => (
+                  <button
+                    key={category.value}
+                    type="button"
+                    className={cn(
+                      'shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-orange-50 dark:border-border dark:bg-background dark:text-muted-foreground',
+                      poiCategory === category.value && 'border-[#f04414] bg-orange-50 text-[#f04414] dark:border-orange-500 dark:bg-orange-500/10 dark:text-orange-300',
+                    )}
+                    onClick={() => setPoiCategory(category.value)}
+                  >
+                    {category.label}
+                  </button>
+                ))}
+              </div>
+              {(poiLoading || filteredPoiResults.length > 0) ? (
+                <div className="mt-2 max-h-44 overflow-auto rounded-md border border-slate-200 bg-white text-xs dark:border-border dark:bg-background">
+                  {poiLoading ? <div className="px-3 py-2 text-slate-500">Searching OpenStreetMap places...</div> : null}
+                  {filteredPoiResults.map((poi) => (
+                    <button
+                      key={poi.id || `${poi.latitude}:${poi.longitude}`}
+                      type="button"
+                      className={cn(
+                        'block w-full border-t border-slate-100 px-3 py-2 text-left first:border-t-0 hover:bg-orange-50 dark:border-border dark:hover:bg-orange-500/10',
+                        String(selectedPoiId || '') === String(poi.id || '') && 'bg-orange-50 text-[#f04414] dark:bg-orange-500/10 dark:text-orange-300',
+                      )}
+                      onClick={() => usePoiAsCenter(poi)}
+                    >
+                      <span className="block font-semibold text-slate-900 dark:text-foreground">{poi.name || poi.label || 'OSM place'}</span>
+                      <span className="block truncate text-[11px] text-slate-500 dark:text-muted-foreground">
+                        {[poi.category_label, poi.address, formatDistanceMeters(poi.distance_meters)].filter(Boolean).join(' - ')}
+                      </span>
+                      <span className="block text-[10px] text-slate-400">
+                        {Number(poi.latitude).toFixed(6)}, {Number(poi.longitude).toFixed(6)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
           <GeofenceMapOptimized
             branch={selectedBranch}
@@ -959,6 +1233,10 @@ export default function AdminGeofencing() {
             drawMode={drawMode}
             focusKey={focusKey}
             focusPoint={focusPoint}
+            poiResults={filteredPoiResults}
+            poiCategory={poiCategory}
+            selectedPoiId={selectedPoiId}
+            onUsePoi={usePoiAsCenter}
           />
         </section>
 
@@ -1204,39 +1482,6 @@ export default function AdminGeofencing() {
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Allow other company branches</span>
               <Switch checked={Boolean(selectedBranch?.geofence_allow_cross_branch)} onCheckedChange={(checked) => updateSettings({ geofence_allow_cross_branch: checked })} />
-            </div>
-            <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-border dark:bg-muted/30">
-              <h3 className="text-xs font-bold text-slate-950 dark:text-foreground">Geofence Test Tool</h3>
-              <p className="mt-1 text-[11px] text-slate-500 dark:text-muted-foreground">Enter a GPS point to confirm distance and enforcement before employees clock in.</p>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <Label className="text-[11px] font-semibold text-slate-700 dark:text-muted-foreground">
-                  Latitude
-                  <Input className="mt-1 h-8 text-xs" type="number" value={testPoint.latitude} onChange={(e) => setTestPoint((s) => ({ ...s, latitude: e.target.value }))} />
-                </Label>
-                <Label className="text-[11px] font-semibold text-slate-700 dark:text-muted-foreground">
-                  Longitude
-                  <Input className="mt-1 h-8 text-xs" type="number" value={testPoint.longitude} onChange={(e) => setTestPoint((s) => ({ ...s, longitude: e.target.value }))} />
-                </Label>
-              </div>
-              <Button type="button" variant="outline" size="sm" className="mt-3 h-8 w-full rounded-md text-xs" disabled={testingPoint} onClick={runGeofenceTest}>
-                {testingPoint ? 'Testing...' : 'Test location'}
-              </Button>
-              {testResult ? (
-                <div className="mt-3 grid grid-cols-2 gap-1 rounded-md bg-white p-2 text-[11px] text-slate-600 dark:bg-background dark:text-muted-foreground">
-                  <span>Branch</span>
-                  <b className="text-right text-slate-900 dark:text-foreground">{testResult.branch?.name || '-'}</b>
-                  <span>Geofence</span>
-                  <b className="text-right text-slate-900 dark:text-foreground">{testResult.matched_geofence?.name || '-'}</b>
-                  <span>Distance</span>
-                  <b className="text-right text-slate-900 dark:text-foreground">{testResult.distance_meters != null ? `${Math.round(Number(testResult.distance_meters))}m` : '-'}</b>
-                  <span>Radius</span>
-                  <b className="text-right text-slate-900 dark:text-foreground">{testResult.matched_geofence?.radius_meters != null ? `${Math.round(Number(testResult.matched_geofence.radius_meters))}m` : '-'}</b>
-                  <span>Status</span>
-                  <b className={testResult.status === 'inside' ? 'text-right text-emerald-600' : 'text-right text-red-600'}>
-                    {(testResult.status || 'outside').toUpperCase()}
-                  </b>
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
