@@ -58,12 +58,26 @@ const OSM_RASTER_STYLE = {
       tileSize: 256,
       attribution: '&copy; OpenStreetMap contributors',
     },
+    esriWorldImagery: {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    },
   },
   layers: [
     {
       id: 'osm',
       type: 'raster',
       source: 'osm',
+    },
+    {
+      id: 'esri-world-imagery',
+      type: 'raster',
+      source: 'esriWorldImagery',
+      layout: {
+        visibility: 'none',
+      },
     },
   ],
 }
@@ -694,6 +708,7 @@ function GeofenceMapOptimized({
   const focusKeyRef = useRef('')
   const [mapReady, setMapReady] = useState(false)
   const [mapillaryVisible, setMapillaryVisible] = useState(Boolean(MAPILLARY_TILE_URL))
+  const [baseMap, setBaseMap] = useState('osm')
 
   const visiblePois = useMemo(
     () => poiResults.filter((poi) => poiMatchesCategory(poi, poiCategory)),
@@ -858,6 +873,18 @@ function GeofenceMapOptimized({
       mapRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return undefined
+
+    if (map.getLayer('osm')) {
+      map.setLayoutProperty('osm', 'visibility', baseMap === 'osm' ? 'visible' : 'none')
+    }
+    if (map.getLayer('esri-world-imagery')) {
+      map.setLayoutProperty('esri-world-imagery', 'visibility', baseMap === 'satellite' ? 'visible' : 'none')
+    }
+  }, [baseMap, mapReady])
 
   useEffect(() => {
     const map = mapRef.current
@@ -1189,9 +1216,35 @@ function GeofenceMapOptimized({
     <div className="relative h-[520px] min-h-[420px] w-full overflow-hidden rounded-b-lg border-t border-slate-200 bg-slate-100 dark:border-border dark:bg-muted">
       <div ref={mapEl} className="h-full w-full" />
       <div className="pointer-events-none absolute left-3 top-3 z-500 rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
-        OpenStreetMap + MapLibre GL
+        {baseMap === 'satellite' ? 'Esri World Imagery + MapLibre GL' : 'OpenStreetMap + MapLibre GL'}
+      </div>
+      <div className="absolute right-14 top-3 z-500 flex overflow-hidden rounded-md border border-slate-200 bg-white/95 text-[11px] font-bold uppercase tracking-wide text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
+        <button
+          type="button"
+          className={cn(
+            'px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-muted',
+            baseMap === 'osm' && 'bg-orange-50 text-[#f04414] dark:bg-orange-500/10 dark:text-orange-300',
+          )}
+          onClick={() => setBaseMap('osm')}
+        >
+          OSM
+        </button>
+        <button
+          type="button"
+          className={cn(
+            'border-l border-slate-200 px-3 py-1.5 hover:bg-slate-50 dark:border-border dark:hover:bg-muted',
+            baseMap === 'satellite' && 'bg-orange-50 text-[#f04414] dark:bg-orange-500/10 dark:text-orange-300',
+          )}
+          onClick={() => setBaseMap('satellite')}
+        >
+          Satellite
+        </button>
       </div>
       <div className="absolute bottom-3 left-3 z-500 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white/95 px-3 py-2 text-[11px] font-semibold text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
+        <span className="flex items-center gap-1.5">
+          <span className={cn('size-2 rounded-full', baseMap === 'satellite' ? 'bg-sky-500' : 'bg-slate-500')} />
+          {baseMap === 'satellite' ? 'Esri satellite imagery' : 'OpenStreetMap streets'}
+        </span>
         <span className="flex items-center gap-1.5">
           <span className="size-2 rounded-full bg-[#05cb63]" />
           Mapillary streetview coverage
