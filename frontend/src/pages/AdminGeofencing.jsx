@@ -64,6 +64,18 @@ const OSM_RASTER_STYLE = {
       tileSize: 256,
       attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
     },
+    esriWorldTransportation: {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      attribution: 'Transportation &copy; Esri',
+    },
+    esriWorldBoundariesAndPlaces: {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      attribution: 'Labels &copy; Esri',
+    },
   },
   layers: [
     {
@@ -75,6 +87,22 @@ const OSM_RASTER_STYLE = {
       id: 'esri-world-imagery',
       type: 'raster',
       source: 'esriWorldImagery',
+      layout: {
+        visibility: 'none',
+      },
+    },
+    {
+      id: 'esri-world-transportation',
+      type: 'raster',
+      source: 'esriWorldTransportation',
+      layout: {
+        visibility: 'none',
+      },
+    },
+    {
+      id: 'esri-world-boundaries-places',
+      type: 'raster',
+      source: 'esriWorldBoundariesAndPlaces',
       layout: {
         visibility: 'none',
       },
@@ -884,6 +912,12 @@ function GeofenceMapOptimized({
     if (map.getLayer('esri-world-imagery')) {
       map.setLayoutProperty('esri-world-imagery', 'visibility', baseMap === 'satellite' ? 'visible' : 'none')
     }
+    if (map.getLayer('esri-world-transportation')) {
+      map.setLayoutProperty('esri-world-transportation', 'visibility', baseMap === 'satellite' ? 'visible' : 'none')
+    }
+    if (map.getLayer('esri-world-boundaries-places')) {
+      map.setLayoutProperty('esri-world-boundaries-places', 'visibility', baseMap === 'satellite' ? 'visible' : 'none')
+    }
   }, [baseMap, mapReady])
 
   useEffect(() => {
@@ -1216,7 +1250,7 @@ function GeofenceMapOptimized({
     <div className="relative h-[520px] min-h-[420px] w-full overflow-hidden rounded-b-lg border-t border-slate-200 bg-slate-100 dark:border-border dark:bg-muted">
       <div ref={mapEl} className="h-full w-full" />
       <div className="pointer-events-none absolute left-3 top-3 z-500 rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
-        {baseMap === 'satellite' ? 'Esri World Imagery + MapLibre GL' : 'OpenStreetMap + MapLibre GL'}
+        {baseMap === 'satellite' ? 'Esri World Imagery + Labels + MapLibre GL' : 'OpenStreetMap + MapLibre GL'}
       </div>
       <div className="absolute right-14 top-3 z-500 flex overflow-hidden rounded-md border border-slate-200 bg-white/95 text-[11px] font-bold uppercase tracking-wide text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
         <button
@@ -1243,7 +1277,7 @@ function GeofenceMapOptimized({
       <div className="absolute bottom-3 left-3 z-500 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white/95 px-3 py-2 text-[11px] font-semibold text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
         <span className="flex items-center gap-1.5">
           <span className={cn('size-2 rounded-full', baseMap === 'satellite' ? 'bg-sky-500' : 'bg-slate-500')} />
-          {baseMap === 'satellite' ? 'Esri satellite imagery' : 'OpenStreetMap streets'}
+          {baseMap === 'satellite' ? 'Esri satellite + road/place labels' : 'OpenStreetMap streets'}
         </span>
         <span className="flex items-center gap-1.5">
           <span className="size-2 rounded-full bg-[#05cb63]" />
