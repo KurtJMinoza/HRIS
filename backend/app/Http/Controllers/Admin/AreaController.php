@@ -428,6 +428,7 @@ class AreaController extends Controller
             'id' => (int) $area->id,
             'company_id' => (int) $area->company_id,
             'company_name' => $area->company?->name,
+            'company_logo_url' => $this->publicMediaUrl($area->company?->logo),
             'area_name' => $area->area_name,
             'area_code' => $area->area_code,
             'area_manager_employee_id' => $area->area_manager_employee_id,
@@ -449,6 +450,26 @@ class AreaController extends Controller
     {
         $companyName = $area->company?->name;
         return trim(implode(' > ', array_filter([$companyName, $area->area_name])));
+    }
+
+    private function publicMediaUrl(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+        $normalized = trim($path);
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            return $normalized;
+        }
+        $normalized = ltrim($normalized, '/');
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+
+        $segments = explode('/', trim($normalized, '/'));
+        $encoded = array_map(static fn (string $segment): string => rawurlencode($segment), $segments);
+
+        return url('/api/media/public/'.implode('/', $encoded));
     }
 
     /**

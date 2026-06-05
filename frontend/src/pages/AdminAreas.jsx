@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, MapPin, Network, Pencil, Plus, Search, Trash2, Users } from 'lucide-react'
+import { Building2, Loader2, MapPin, Network, Pencil, Plus, Search, Trash2, UserRound, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import LeadershipPositionsSection from '@/components/organization/LeadershipPositionsSection'
 import {
   ADMIN_FORM_DIALOG_FOOTER_CLASS,
@@ -12,7 +13,7 @@ import {
   ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS,
   ADMIN_FORM_DIALOG_TITLE_CLASS,
 } from '@/lib/adminFormDialogStyles'
-import { createArea, deleteArea, getAreaBranches, getAreas, getBranches, getCompanies, updateArea } from '@/api'
+import { companyLogoUrl, createArea, deleteArea, getAreaBranches, getAreas, getBranches, getCompanies, profileImageUrl, updateArea } from '@/api'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
@@ -22,6 +23,15 @@ const EMPTY_FORM = {
   area_code: '',
   description: '',
   status: 'active',
+}
+
+function areaHeadInitials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (parts.length === 0) return 'AH'
+  return parts.map((part) => part[0]).join('').toUpperCase().slice(0, 2)
 }
 
 export default function AdminAreas() {
@@ -314,18 +324,18 @@ export default function AdminAreas() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+      <div className="overflow-hidden rounded-3xl border border-border/80 bg-card shadow-sm ring-1 ring-black/2 dark:ring-white/3">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="border-b border-border/70 bg-muted/30 text-left">
+            <thead className="border-b border-border/70 bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-4 py-3 font-semibold">Area</th>
-                <th className="px-4 py-3 font-semibold">Company</th>
-                <th className="px-4 py-3 font-semibold">Area Heads</th>
-                <th className="px-4 py-3 font-semibold">Selected Branches</th>
-                <th className="px-4 py-3 font-semibold">Employees</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
-                <th className="px-4 py-3 text-right font-semibold">Actions</th>
+                <th className="px-5 py-4 font-bold">Area</th>
+                <th className="px-5 py-4 font-bold">Company</th>
+                <th className="px-5 py-4 font-bold">Area Head</th>
+                <th className="px-5 py-4 font-bold">Branches</th>
+                <th className="px-5 py-4 font-bold">Employees</th>
+                <th className="px-5 py-4 font-bold">Status</th>
+                <th className="px-5 py-4 text-right font-bold">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -333,25 +343,81 @@ export default function AdminAreas() {
                 <tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">Loading areas...</td></tr>
               ) : filteredAreas.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">No areas found.</td></tr>
-              ) : filteredAreas.map((area) => (
-                <tr key={area.id} className="border-b border-border/60 last:border-b-0">
-                  <td className="px-4 py-3">
-                    <div className="font-bold">{area.area_name}</div>
-                    {area.area_code ? <Badge variant="secondary" className="mt-1">{area.area_code}</Badge> : null}
-                  </td>
-                  <td className="px-4 py-3">{area.company_name || '—'}</td>
-                  <td className="px-4 py-3">{area.area_manager_name || 'Use Assign Head'}</td>
-                  <td className="px-4 py-3">{area.branches_count || 0}</td>
-                  <td className="px-4 py-3">{area.employees_count || 0}</td>
-                  <td className="px-4 py-3"><Badge variant={area.status === 'inactive' ? 'outline' : 'secondary'} className="capitalize">{area.status || 'active'}</Badge></td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="icon" className="size-8" onClick={() => openEdit(area)}><Pencil className="size-4" /></Button>
-                      <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => setDeactivateTarget(area)}><Trash2 className="size-4" /></Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              ) : filteredAreas.map((area) => {
+                const areaHeadName = area.area_manager_name || ''
+                const areaHeadPhoto = profileImageUrl(area.area_manager_profile_image)
+                const companyLogo = companyLogoUrl(area)
+                return (
+                  <tr key={area.id} className="group border-b border-border/60 transition-colors last:border-b-0 hover:bg-muted/20">
+                    <td className="px-5 py-4 align-middle">
+                      <div className="flex items-center gap-3">
+                        <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-brand/10 text-brand ring-1 ring-brand/15">
+                          <MapPin className="size-5" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-extrabold text-foreground">{area.area_name}</span>
+                          {area.area_code ? <Badge variant="secondary" className="mt-1 rounded-full px-2.5 text-[11px]">{area.area_code}</Badge> : null}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 align-middle">
+                      <span className="inline-flex max-w-48 items-center gap-2 rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm">
+                        {companyLogo ? (
+                          <img
+                            src={companyLogo}
+                            alt=""
+                            className="size-5 shrink-0 rounded bg-white object-contain ring-1 ring-border/70 dark:bg-card"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={(event) => { event.currentTarget.style.display = 'none' }}
+                          />
+                        ) : (
+                          <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
+                        )}
+                        <span className="truncate">{area.company_name || 'Unassigned'}</span>
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 align-middle">
+                      {areaHeadName ? (
+                        <div className="flex min-w-52 items-center gap-3">
+                          <Avatar className="size-11 shrink-0 rounded-full border border-brand/20 bg-brand/10 ring-2 ring-brand/10">
+                            <AvatarImage src={areaHeadPhoto || undefined} alt="" className="object-cover" />
+                            <AvatarFallback className="rounded-full bg-brand/10 text-xs font-extrabold text-brand">
+                              {areaHeadInitials(areaHeadName)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="min-w-0">
+                            <span className="block truncate font-bold text-foreground">{areaHeadName}</span>
+                            <span className="block text-xs text-muted-foreground">Area Head</span>
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openEdit(area)}
+                          className="inline-flex items-center gap-2 rounded-full border border-dashed border-border bg-muted/20 px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-brand/40 hover:bg-brand/5 hover:text-brand"
+                        >
+                          <UserRound className="size-3.5" />
+                          Assign head
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-5 py-4 align-middle">
+                      <span className="text-base font-extrabold tabular-nums">{area.branches_count || 0}</span>
+                    </td>
+                    <td className="px-5 py-4 align-middle">
+                      <span className="text-base font-extrabold tabular-nums">{area.employees_count || 0}</span>
+                    </td>
+                    <td className="px-5 py-4 align-middle"><Badge variant={area.status === 'inactive' ? 'outline' : 'secondary'} className="capitalize">{area.status || 'active'}</Badge></td>
+                    <td className="px-5 py-4 align-middle">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="icon" className="size-8" onClick={() => openEdit(area)}><Pencil className="size-4" /></Button>
+                        <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => setDeactivateTarget(area)}><Trash2 className="size-4" /></Button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
