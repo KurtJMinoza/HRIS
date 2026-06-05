@@ -1,12 +1,16 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { Viewer as MapillaryViewer } from 'mapillary-js'
+import 'mapillary-js/dist/mapillary.css'
 import * as turf from '@turf/turf'
 import {
+  Camera,
   ChevronLeft,
   ChevronRight,
   Circle,
   Edit3,
+  ImageOff,
   Pentagon,
   Plus,
   Power,
@@ -40,6 +44,10 @@ const DEFAULT_CENTER = [14.5995, 120.9842]
 const PAGE_SIZE = 5
 const ORANGE = '#f04414'
 const EMPTY_FEATURE_COLLECTION = { type: 'FeatureCollection', features: [] }
+const MAPILLARY_ACCESS_TOKEN = import.meta.env.VITE_MAPILLARY_ACCESS_TOKEN || ''
+const MAPILLARY_TILE_URL = MAPILLARY_ACCESS_TOKEN
+  ? `https://tiles.mapillary.com/maps/vtp/mly1_public/2/{z}/{x}/{y}?access_token=${encodeURIComponent(MAPILLARY_ACCESS_TOKEN)}`
+  : null
 const OSM_RASTER_STYLE = {
   version: 8,
   glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
@@ -104,6 +112,14 @@ function formatDate(value) {
   return date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric' })
 }
 
+function formatMapillaryCaptureDate(value) {
+  const timestamp = Number(value)
+  if (!Number.isFinite(timestamp)) return null
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function branchCode(branch) {
   return branch?.branch_code || `BR-${String(branch?.id || '').padStart(4, '0')}`
 }
@@ -144,6 +160,39 @@ function validLatLngPair(point) {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null
   if (lat === 0 && lng === 0) return null
   return [lat, lng]
+}
+
+function mapillaryGraphUrl(point, radiusMeters = 50) {
+  const latLng = validLatLngPair(point)
+  if (!latLng || !MAPILLARY_ACCESS_TOKEN) return null
+  const radius = Math.max(1, Math.min(50, Number(radiusMeters) || 50))
+  const params = new URLSearchParams({
+    access_token: MAPILLARY_ACCESS_TOKEN,
+    fields: 'id,geometry,computed_compass_angle,captured_at,is_pano,thumb_256_url',
+    lat: String(latLng[0]),
+    lng: String(latLng[1]),
+    radius: String(radius),
+    limit: '1',
+  })
+  return `https://graph.mapillary.com/images?${params.toString()}`
+}
+
+function mapillaryFeatureImageId(feature) {
+  const properties = feature?.properties || {}
+  return properties.id || properties.image_id || properties.key || null
+}
+
+function mapillaryFeaturePayload(feature) {
+  const coordinates = feature?.geometry?.coordinates
+  const lng = Array.isArray(coordinates) ? Number(coordinates[0]) : null
+  const lat = Array.isArray(coordinates) ? Number(coordinates[1]) : null
+  return {
+    imageId: mapillaryFeatureImageId(feature),
+    latitude: Number.isFinite(lat) ? lat : null,
+    longitude: Number.isFinite(lng) ? lng : null,
+    capturedAt: feature?.properties?.captured_at ?? null,
+    source: 'Mapillary coverage',
+  }
 }
 
 function polygonPoints(geojson) {
@@ -441,6 +490,29 @@ function createPoiPopupContent(poi, onUsePoi) {
   return popup
 }
 
+function createMapillaryPopupContent(image, onViewImage) {
+  const lat = Number(image.latitude)
+  const lng = Number(image.longitude)
+  const popup = document.createElement('div')
+  popup.className = 'space-y-1 text-xs'
+  const captured = formatMapillaryCaptureDate(image.capturedAt)
+  popup.innerHTML = `
+    <div class="font-bold">Mapillary streetview</div>
+    ${captured ? `<div>Captured: ${escapeHtml(captured)}</div>` : ''}
+    ${Number.isFinite(lat) && Number.isFinite(lng) ? `<div>Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}</div>` : ''}
+  `
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'mt-2 rounded bg-[#05cb63] px-2 py-1 text-[11px] font-semibold text-slate-950'
+  button.textContent = 'Open Streetview'
+  button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    onViewImage?.(image)
+  })
+  popup.appendChild(button)
+  return popup
+}
+
 function SegmentButton({ active, icon, children, onClick, disabled = false }) {
   return (
     <Button
@@ -509,6 +581,95 @@ function CompanyLogo({ branch }) {
   )
 }
 
+function MapillaryStreetviewPanel({
+  image,
+  loading,
+  error,
+  target,
+  onOpenTarget,
+  onClose,
+}) {
+  const containerRef = useRef(null)
+  const viewerRef = useRef(null)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || !MAPILLARY_ACCESS_TOKEN || !image?.imageId) return undefined
+
+    viewerRef.current?.remove()
+    viewerRef.current = new MapillaryViewer({
+      accessToken: MAPILLARY_ACCESS_TOKEN,
+      container,
+      imageId: image.imageId,
+    })
+
+    return () => {
+      viewerRef.current?.remove()
+      viewerRef.current = null
+    }
+  }, [image?.imageId])
+
+  return (
+    <div className="border-t border-slate-200 bg-white p-3 dark:border-border dark:bg-card">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-950 dark:text-foreground">
+            <Camera className="size-4 text-[#05cb63]" />
+            Mapillary Streetview
+          </div>
+          <p className="text-xs text-slate-500 dark:text-muted-foreground">
+            Review street-level imagery for the selected branch or geofence boundary.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-md text-xs"
+            disabled={loading || !target || !MAPILLARY_ACCESS_TOKEN}
+            onClick={onOpenTarget}
+          >
+            {loading ? 'Finding imagery...' : 'View selected location'}
+          </Button>
+          {image ? (
+            <Button type="button" size="sm" variant="ghost" className="h-8 rounded-md text-xs" onClick={onClose}>
+              Close
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {!MAPILLARY_ACCESS_TOKEN ? (
+        <div className="mt-3 rounded-md border border-dashed border-slate-200 p-4 text-xs text-slate-500 dark:border-border dark:text-muted-foreground">
+          Add <code>VITE_MAPILLARY_ACCESS_TOKEN</code> in <code>frontend/.env</code> to enable Mapillary streetview.
+        </div>
+      ) : error ? (
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <ImageOff className="mt-0.5 size-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {image?.imageId ? (
+        <div className="mt-3 overflow-hidden rounded-md border border-slate-200 bg-slate-950 dark:border-border">
+          <div ref={containerRef} className="h-[340px] w-full" />
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 bg-slate-950 px-3 py-2 text-[11px] text-slate-300">
+            <span>Image {image.imageId}</span>
+            <span>
+              {[formatMapillaryCaptureDate(image.capturedAt), image.source].filter(Boolean).join(' - ') || 'Mapillary'}
+            </span>
+          </div>
+        </div>
+      ) : !error ? (
+        <div className="mt-3 rounded-md border border-dashed border-slate-200 p-4 text-xs text-slate-500 dark:border-border dark:text-muted-foreground">
+          Click a green Mapillary image dot on the map or use "View selected location" to find the nearest streetview image.
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function GeofenceMapOptimized({
   branch,
   geofences,
@@ -522,14 +683,17 @@ function GeofenceMapOptimized({
   poiCategory = 'all',
   selectedPoiId = null,
   onUsePoi,
+  onSelectMapillaryImage,
 }) {
   const mapEl = useRef(null)
   const mapRef = useRef(null)
   const editMarkersRef = useRef([])
   const poiPopupRef = useRef(null)
+  const mapillaryPopupRef = useRef(null)
   const fitKeyRef = useRef('')
   const focusKeyRef = useRef('')
   const [mapReady, setMapReady] = useState(false)
+  const [mapillaryVisible, setMapillaryVisible] = useState(Boolean(MAPILLARY_TILE_URL))
 
   const visiblePois = useMemo(
     () => poiResults.filter((poi) => poiMatchesCategory(poi, poiCategory)),
@@ -599,6 +763,47 @@ function GeofenceMapOptimized({
         },
       })
     }
+    const addMapillaryLayers = () => {
+      if (!MAPILLARY_TILE_URL) return
+      map.addSource('mapillary-coverage', {
+        type: 'vector',
+        tiles: [MAPILLARY_TILE_URL],
+        minzoom: 6,
+        maxzoom: 14,
+      })
+      map.addLayer({
+        id: 'mapillary-sequences',
+        type: 'line',
+        source: 'mapillary-coverage',
+        'source-layer': 'sequence',
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+          visibility: 'visible',
+        },
+        paint: {
+          'line-color': '#05cb63',
+          'line-opacity': 0.65,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.2, 18, 3],
+        },
+      })
+      map.addLayer({
+        id: 'mapillary-images',
+        type: 'circle',
+        source: 'mapillary-coverage',
+        'source-layer': 'image',
+        layout: {
+          visibility: 'visible',
+        },
+        paint: {
+          'circle-color': '#05cb63',
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 3, 18, 6],
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1.5,
+          'circle-opacity': 0.9,
+        },
+      })
+    }
 
     map.on('load', () => {
       addSource('static-geofence-shapes')
@@ -606,6 +811,7 @@ function GeofenceMapOptimized({
       addSource('selected-geofence-shapes')
       addSource('selected-geofence-labels')
       addSource('poi-points')
+      addMapillaryLayers()
       addGeofenceLayers('static-geofence-shapes', 'static-geofence')
       addGeofenceLayers('selected-geofence-shapes', 'selected-geofence', true)
       addLabelLayer('static-geofence-labels', 'static-geofence-labels')
@@ -647,10 +853,56 @@ function GeofenceMapOptimized({
       editMarkersRef.current.forEach((marker) => marker.remove())
       editMarkersRef.current = []
       poiPopupRef.current?.remove()
+      mapillaryPopupRef.current?.remove()
       map.remove()
       mapRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return undefined
+
+    if (map.getLayer('mapillary-sequences')) {
+      map.setLayoutProperty('mapillary-sequences', 'visibility', mapillaryVisible ? 'visible' : 'none')
+    }
+    if (map.getLayer('mapillary-images')) {
+      map.setLayoutProperty('mapillary-images', 'visibility', mapillaryVisible ? 'visible' : 'none')
+    }
+  }, [mapReady, mapillaryVisible])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady || !MAPILLARY_TILE_URL) return undefined
+
+    const onMapillaryImageClick = (event) => {
+      const feature = event.features?.[0]
+      const image = mapillaryFeaturePayload(feature)
+      if (!image.imageId) return
+      event.preventDefault?.()
+      mapillaryPopupRef.current?.remove()
+      mapillaryPopupRef.current = new maplibregl.Popup({ offset: 16 })
+        .setLngLat(event.lngLat)
+        .setDOMContent(createMapillaryPopupContent(image, onSelectMapillaryImage))
+        .addTo(map)
+      onSelectMapillaryImage?.(image)
+    }
+    const showPointer = () => { map.getCanvas().style.cursor = 'pointer' }
+    const hidePointer = () => { map.getCanvas().style.cursor = '' }
+
+    map.on('click', 'mapillary-images', onMapillaryImageClick)
+    map.on('mouseenter', 'mapillary-images', showPointer)
+    map.on('mouseleave', 'mapillary-images', hidePointer)
+    map.on('mouseenter', 'mapillary-sequences', showPointer)
+    map.on('mouseleave', 'mapillary-sequences', hidePointer)
+    return () => {
+      map.off('click', 'mapillary-images', onMapillaryImageClick)
+      map.off('mouseenter', 'mapillary-images', showPointer)
+      map.off('mouseleave', 'mapillary-images', hidePointer)
+      map.off('mouseenter', 'mapillary-sequences', showPointer)
+      map.off('mouseleave', 'mapillary-sequences', hidePointer)
+    }
+  }, [mapReady, onSelectMapillaryImage])
 
   useEffect(() => {
     const map = mapRef.current
@@ -672,6 +924,8 @@ function GeofenceMapOptimized({
         'selected-geofence-line-inactive',
         'selected-geofence-line-draft',
         'poi-points',
+        'mapillary-images',
+        'mapillary-sequences',
       ].filter((layer) => map.getLayer(layer))
       if (map.queryRenderedFeatures(event.point, { layers }).length) return
 
@@ -935,7 +1189,21 @@ function GeofenceMapOptimized({
     <div className="relative h-[520px] min-h-[420px] w-full overflow-hidden rounded-b-lg border-t border-slate-200 bg-slate-100 dark:border-border dark:bg-muted">
       <div ref={mapEl} className="h-full w-full" />
       <div className="pointer-events-none absolute left-3 top-3 z-500 rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
-        OpenStreetMap
+        OpenStreetMap + MapLibre GL
+      </div>
+      <div className="absolute bottom-3 left-3 z-500 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white/95 px-3 py-2 text-[11px] font-semibold text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
+        <span className="flex items-center gap-1.5">
+          <span className="size-2 rounded-full bg-[#05cb63]" />
+          Mapillary streetview coverage
+        </span>
+        <button
+          type="button"
+          className="rounded border border-slate-200 px-2 py-1 text-[10px] font-bold uppercase tracking-wide hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-border dark:hover:bg-muted"
+          disabled={!MAPILLARY_TILE_URL}
+          onClick={() => setMapillaryVisible((visible) => !visible)}
+        >
+          {mapillaryVisible ? 'Hide' : 'Show'}
+        </button>
       </div>
     </div>
   )
@@ -963,10 +1231,14 @@ export default function AdminGeofencing() {
   const [poiRadius, setPoiRadius] = useState(500)
   const [poiCategory, setPoiCategory] = useState('all')
   const [selectedPoiId, setSelectedPoiId] = useState(null)
+  const [mapillaryImage, setMapillaryImage] = useState(null)
+  const [mapillaryLoading, setMapillaryLoading] = useState(false)
+  const [mapillaryError, setMapillaryError] = useState('')
   const mapSearchCacheRef = useRef(new Map())
   const mapSearchAbortRef = useRef(null)
   const poiSearchCacheRef = useRef(new Map())
   const poiSearchAbortRef = useRef(null)
+  const mapillaryAbortRef = useRef(null)
   const { toast } = useToast()
 
   const selectedBranch = useMemo(
@@ -999,6 +1271,10 @@ export default function AdminGeofencing() {
   const filteredPoiResults = useMemo(
     () => poiResults.filter((poi) => poiMatchesCategory(poi, poiCategory)),
     [poiCategory, poiResults],
+  )
+  const streetviewTarget = useMemo(
+    () => validLatLngPair(geofenceCenter(form)) || validLatLngPair(branchLocation(selectedBranch)),
+    [form, selectedBranch],
   )
 
   const load = useCallback(async () => {
@@ -1048,6 +1324,71 @@ export default function AdminGeofencing() {
       return null
     }
   }, [toast])
+
+  const selectMapillaryImage = useCallback((image) => {
+    if (!image?.imageId) return
+    setMapillaryError('')
+    setMapillaryImage({
+      imageId: image.imageId,
+      latitude: image.latitude ?? null,
+      longitude: image.longitude ?? null,
+      capturedAt: image.capturedAt ?? null,
+      source: image.source || 'Mapillary',
+    })
+  }, [])
+
+  const openMapillaryStreetview = useCallback(async (point = streetviewTarget, label = 'selected geofence') => {
+    const latLng = validLatLngPair(point)
+    if (!MAPILLARY_ACCESS_TOKEN) {
+      setMapillaryError('Missing Mapillary access token. Add VITE_MAPILLARY_ACCESS_TOKEN in frontend/.env.')
+      return
+    }
+    if (!latLng) {
+      setMapillaryError('Select a branch or geofence with valid coordinates before opening streetview.')
+      return
+    }
+
+    mapillaryAbortRef.current?.abort()
+    const controller = new AbortController()
+    mapillaryAbortRef.current = controller
+    setMapillaryLoading(true)
+    setMapillaryError('')
+
+    try {
+      const url = mapillaryGraphUrl(latLng, 50)
+      const response = await fetch(url, { signal: controller.signal })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.error?.message || data?.message || 'Mapillary imagery lookup failed.')
+      }
+
+      const nearest = data?.data?.[0]
+      if (!nearest?.id) {
+        setMapillaryImage(null)
+        setMapillaryError(`No Mapillary streetview imagery was found within 50m of the ${label}. Try a nearby green image dot on the map.`)
+        return
+      }
+
+      const coordinates = nearest.geometry?.coordinates
+      selectMapillaryImage({
+        imageId: nearest.id,
+        latitude: Array.isArray(coordinates) ? coordinates[1] : latLng[0],
+        longitude: Array.isArray(coordinates) ? coordinates[0] : latLng[1],
+        capturedAt: nearest.captured_at,
+        source: 'Nearest Mapillary image',
+      })
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        setMapillaryError(error.message || 'Mapillary streetview is unavailable right now.')
+      }
+    } finally {
+      if (!controller.signal.aborted) setMapillaryLoading(false)
+    }
+  }, [selectMapillaryImage, streetviewTarget])
+
+  useEffect(() => () => {
+    mapillaryAbortRef.current?.abort()
+  }, [])
 
   useEffect(() => {
     load()
@@ -1526,6 +1867,18 @@ export default function AdminGeofencing() {
             poiCategory={poiCategory}
             selectedPoiId={selectedPoiId}
             onUsePoi={applyPoiAsCenter}
+            onSelectMapillaryImage={selectMapillaryImage}
+          />
+          <MapillaryStreetviewPanel
+            image={mapillaryImage}
+            loading={mapillaryLoading}
+            error={mapillaryError}
+            target={streetviewTarget}
+            onOpenTarget={() => openMapillaryStreetview(streetviewTarget, form?.name || selectedBranch?.branch_name || 'selected geofence')}
+            onClose={() => {
+              setMapillaryImage(null)
+              setMapillaryError('')
+            }}
           />
         </section>
 
