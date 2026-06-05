@@ -1,6 +1,6 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import maplibregl from 'maplibre-gl'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import * as turf from '@turf/turf'
 import {
   ChevronLeft,
@@ -39,6 +39,26 @@ import { cn } from '@/lib/utils'
 const DEFAULT_CENTER = [14.5995, 120.9842]
 const PAGE_SIZE = 5
 const ORANGE = '#f04414'
+const EMPTY_FEATURE_COLLECTION = { type: 'FeatureCollection', features: [] }
+const OSM_RASTER_STYLE = {
+  version: 8,
+  glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+  sources: {
+    osm: {
+      type: 'raster',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '&copy; OpenStreetMap contributors',
+    },
+  },
+  layers: [
+    {
+      id: 'osm',
+      type: 'raster',
+      source: 'osm',
+    },
+  ],
+}
 const POI_RADIUS_OPTIONS = [
   { value: 100, label: '100m' },
   { value: 250, label: '250m' },
@@ -58,20 +78,6 @@ const POI_CATEGORIES = [
   { value: 'fuel', label: 'Fuel Stations' },
   { value: 'hotel', label: 'Hotels' },
 ]
-
-const orangePinIcon = L.divIcon({
-  className: 'geofence-pin-icon',
-  html: '<span class="block size-8 rounded-full bg-[#f04414] p-1 shadow-lg shadow-orange-900/25 ring-4 ring-[#f04414]/20"><span class="block size-full rounded-full border-2 border-white bg-[#f04414]"></span></span>',
-  iconSize: [32, 32],
-  iconAnchor: [16, 16],
-})
-
-const poiIcon = L.divIcon({
-  className: 'geofence-poi-icon',
-  html: '<span class="block size-6 rounded-full border-2 border-white bg-blue-600 shadow ring-4 ring-blue-500/20"></span>',
-  iconSize: [24, 24],
-  iconAnchor: [12, 12],
-})
 
 function blankForm(branchId = null, branchName = '') {
   return {
@@ -175,13 +181,6 @@ function polygonFeatureFromPoints(points) {
   return feature
 }
 
-function radiusHandleLatLng(map, center, radiusMeters) {
-  const centerPoint = map.latLngToLayerPoint(center)
-  const edgeLatLng = L.latLng(center.lat, center.lng + 0.001)
-  const metersPerPixel = map.distance(center, edgeLatLng) / Math.max(1, map.latLngToLayerPoint(edgeLatLng).distanceTo(centerPoint))
-  return map.layerPointToLatLng([centerPoint.x + (Number(radiusMeters) || 100) / Math.max(metersPerPixel, 0.01), centerPoint.y])
-}
-
 function formFromGeofence(branchId, branchName, geofence) {
   if (!geofence) return blankForm(branchId, branchName)
   return {
@@ -258,22 +257,6 @@ function geofenceMapStatus(geofence, selected = false) {
   return selected ? 'draft' : 'inactive'
 }
 
-function geofenceMapStyle(status, selected = false) {
-  const styles = {
-    active: { color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.12, dashArray: null },
-    inactive: { color: '#94a3b8', fillColor: '#cbd5e1', fillOpacity: 0.09, dashArray: '5 5' },
-    draft: { color: ORANGE, fillColor: ORANGE, fillOpacity: 0.16, dashArray: '6 5' },
-  }
-  return {
-    ...styles[status],
-    weight: selected ? 4 : 2,
-  }
-}
-
-function geofenceMapLabel(status, name) {
-  return `<div class="rounded bg-white/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wide shadow">${status.toUpperCase()}${name ? ` · ${name}` : ''}</div>`
-}
-
 function poiMatchesCategory(poi, category) {
   if (category === 'all') return true
   if (category === 'building') return ['building', 'mall', 'office'].includes(poi?.category)
@@ -293,6 +276,169 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
+}
+
+function geofenceMapText(status, name) {
+  return `${status.toUpperCase()}${name ? ` - ${name}` : ''}`
+}
+
+function toLngLat(point) {
+  const latLng = validLatLngPair(point)
+  return latLng ? [latLng[1], latLng[0]] : null
+}
+
+function circleFeature(center, radiusMeters, properties = {}) {
+  const lngLat = toLngLat(center)
+  const radius = Math.max(5, Number(radiusMeters) || 100)
+  if (!lngLat) return null
+  return turf.circle(lngLat, radius, { steps: 96, units: 'meters', properties })
+}
+
+function geofenceFeature(geofence, selected = false) {
+  const status = geofenceMapStatus(geofence, selected)
+  const properties = {
+    geofenceId: geofence?.id ?? geofence?.draft_key ?? 'selected',
+    status,
+    name: geofence?.name || 'Geofence',
+    label: geofenceMapText(status, geofence?.name || 'Geofence'),
+  }
+
+  if (geofence?.type === 'circle' && geofence.center_lat != null && geofence.center_lng != null) {
+    return circleFeature([Number(geofence.center_lat), Number(geofence.center_lng)], geofence.radius_meters, properties)
+  }
+
+  if (geofence?.type === 'polygon') {
+    const feature = geofence.polygon_geojson
+    const points = polygonPoints(feature)
+    if (feature?.geometry?.type === 'Polygon' && points.length >= 3) {
+      return {
+        ...feature,
+        properties: {
+          ...(feature.properties || {}),
+          ...properties,
+        },
+      }
+    }
+  }
+
+  return null
+}
+
+function geofenceLabelFeature(geofence, selected = false) {
+  const center = geofenceCenter(geofence)
+  const lngLat = toLngLat(center)
+  if (!lngLat) return null
+  const status = geofenceMapStatus(geofence, selected)
+  return {
+    type: 'Feature',
+    properties: {
+      geofenceId: geofence?.id ?? geofence?.draft_key ?? 'selected',
+      status,
+      label: geofenceMapText(status, geofence?.name || 'Geofence'),
+    },
+    geometry: { type: 'Point', coordinates: lngLat },
+  }
+}
+
+function geofenceFeatureCollection(items, selected = false) {
+  return {
+    type: 'FeatureCollection',
+    features: items.map((item) => geofenceFeature(item, selected)).filter(Boolean),
+  }
+}
+
+function geofenceLabelCollection(items, selected = false) {
+  return {
+    type: 'FeatureCollection',
+    features: items.map((item) => geofenceLabelFeature(item, selected)).filter(Boolean),
+  }
+}
+
+function poiFeatureCollection(pois) {
+  return {
+    type: 'FeatureCollection',
+    features: pois.map((poi) => {
+      const lat = Number(poi.latitude)
+      const lng = Number(poi.longitude)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+      return {
+        type: 'Feature',
+        properties: {
+          id: String(poi.id || ''),
+          name: poi.name || poi.label || 'OSM place',
+          category: poi.category_label || poi.category || 'Place',
+        },
+        geometry: { type: 'Point', coordinates: [lng, lat] },
+      }
+    }).filter(Boolean),
+  }
+}
+
+function markerElement(kind = 'handle') {
+  const element = document.createElement('span')
+  if (kind === 'center') {
+    element.className = 'block size-8 rounded-full bg-[#f04414] p-1 shadow-lg shadow-orange-900/25 ring-4 ring-[#f04414]/20'
+    element.innerHTML = '<span class="block size-full rounded-full border-2 border-white bg-[#f04414]"></span>'
+    return element
+  }
+  element.className = kind === 'poi'
+    ? 'block size-6 rounded-full border-2 border-white bg-blue-600 shadow ring-4 ring-blue-500/20'
+    : 'block size-4 rounded-full border-2 border-white bg-[#f04414] shadow ring-2 ring-[#f04414]/30'
+  return element
+}
+
+function radiusHandleLngLat(center, radiusMeters) {
+  const lngLat = toLngLat(center)
+  if (!lngLat) return null
+  return turf.destination(lngLat, Math.max(5, Number(radiusMeters) || 100), 90, { units: 'meters' }).geometry.coordinates
+}
+
+function distanceMeters(a, b) {
+  const from = toLngLat(a)
+  const to = toLngLat(b)
+  if (!from || !to) return 0
+  return turf.distance(from, to, { units: 'meters' })
+}
+
+function geojsonBounds(featureCollection) {
+  if (!featureCollection?.features?.length) return null
+  const [west, south, east, north] = turf.bbox(featureCollection)
+  if (![west, south, east, north].every(Number.isFinite)) return null
+  return [[west, south], [east, north]]
+}
+
+function pointBounds(points) {
+  const validPoints = points.map(toLngLat).filter(Boolean)
+  if (!validPoints.length) return null
+  const west = Math.min(...validPoints.map(([lng]) => lng))
+  const east = Math.max(...validPoints.map(([lng]) => lng))
+  const south = Math.min(...validPoints.map(([, lat]) => lat))
+  const north = Math.max(...validPoints.map(([, lat]) => lat))
+  return [[west, south], [east, north]]
+}
+
+function createPoiPopupContent(poi, onUsePoi) {
+  const lat = Number(poi.latitude)
+  const lng = Number(poi.longitude)
+  const popup = document.createElement('div')
+  popup.className = 'space-y-1 text-xs'
+  popup.innerHTML = `
+    <div class="font-bold">${escapeHtml(poi.name || poi.label || 'OSM place')}</div>
+    <div>Category: ${escapeHtml(poi.category_label || poi.category || 'Place')}</div>
+    ${poi.address ? `<div>${escapeHtml(poi.address)}</div>` : ''}
+    <div>Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
+    <div>OSM: ${escapeHtml(poi.osm_type || poi.source || 'osm')}${poi.osm_id ? `/${escapeHtml(poi.osm_id)}` : ''}</div>
+  `
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'mt-2 rounded bg-[#f04414] px-2 py-1 text-[11px] font-semibold text-white'
+  button.textContent = 'Use as Geofence Center'
+  button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    onUsePoi?.(poi)
+  })
+  popup.appendChild(button)
+  return popup
 }
 
 function SegmentButton({ active, icon, children, onClick, disabled = false }) {
@@ -334,10 +480,8 @@ function CompanyLogo({ branch }) {
   const logoUrl = branch?.company_logo_url || branch?.logo_url
     ? companyLogoUrl({ company_logo_url: branch.company_logo_url, logo_url: branch.logo_url })
     : undefined
-  const [logoFailed, setLogoFailed] = useState(false)
-  useEffect(() => {
-    setLogoFailed(false)
-  }, [logoUrl])
+  const [failedLogoUrl, setFailedLogoUrl] = useState(null)
+  const logoFailed = Boolean(logoUrl && failedLogoUrl === logoUrl)
   const companyName = branch?.company_name || branch?.branch_name || ''
   const initials = companyName
     .split(/\s+/)
@@ -354,7 +498,7 @@ function CompanyLogo({ branch }) {
           src={logoUrl}
           alt=""
           className="size-full object-contain p-1.5"
-          onError={() => setLogoFailed(true)}
+          onError={() => setFailedLogoUrl(logoUrl)}
         />
       ) : (
         <span className="flex size-full items-center justify-center bg-orange-50 px-1 text-[10px] font-black leading-none text-[#f04414] dark:bg-orange-500/10 dark:text-orange-300">
@@ -381,43 +525,158 @@ function GeofenceMapOptimized({
 }) {
   const mapEl = useRef(null)
   const mapRef = useRef(null)
-  const staticLayerRef = useRef(null)
-  const activeLayerRef = useRef(null)
-  const poiLayerRef = useRef(null)
+  const editMarkersRef = useRef([])
+  const poiPopupRef = useRef(null)
   const fitKeyRef = useRef('')
   const focusKeyRef = useRef('')
+  const [mapReady, setMapReady] = useState(false)
+
+  const visiblePois = useMemo(
+    () => poiResults.filter((poi) => poiMatchesCategory(poi, poiCategory)),
+    [poiCategory, poiResults],
+  )
 
   useEffect(() => {
     if (!mapEl.current || mapRef.current) return undefined
 
-    const map = L.map(mapEl.current, { zoomControl: true }).setView(DEFAULT_CENTER, 16)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(map)
-
+    const map = new maplibregl.Map({
+      container: mapEl.current,
+      style: OSM_RASTER_STYLE,
+      center: [DEFAULT_CENTER[1], DEFAULT_CENTER[0]],
+      zoom: 16,
+    })
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right')
     mapRef.current = map
-    staticLayerRef.current = L.featureGroup().addTo(map)
-    activeLayerRef.current = L.featureGroup().addTo(map)
-    poiLayerRef.current = L.featureGroup().addTo(map)
+
+    const mapStyles = {
+      active: { line: '#16a34a', fill: '#22c55e', opacity: 0.12, dash: null },
+      inactive: { line: '#94a3b8', fill: '#cbd5e1', opacity: 0.09, dash: [2, 2] },
+      draft: { line: ORANGE, fill: ORANGE, opacity: 0.16, dash: [3, 2] },
+    }
+    const addSource = (id) => map.addSource(id, { type: 'geojson', data: EMPTY_FEATURE_COLLECTION })
+    const addGeofenceLayers = (sourceId, prefix, selected = false) => {
+      Object.entries(mapStyles).forEach(([status, style]) => {
+        map.addLayer({
+          id: `${prefix}-fill-${status}`,
+          type: 'fill',
+          source: sourceId,
+          filter: ['==', ['get', 'status'], status],
+          paint: {
+            'fill-color': style.fill,
+            'fill-opacity': style.opacity,
+          },
+        })
+        map.addLayer({
+          id: `${prefix}-line-${status}`,
+          type: 'line',
+          source: sourceId,
+          filter: ['==', ['get', 'status'], status],
+          paint: {
+            'line-color': style.line,
+            'line-width': selected ? 4 : 2,
+            ...(style.dash ? { 'line-dasharray': style.dash } : {}),
+          },
+        })
+      })
+    }
+    const addLabelLayer = (sourceId, id) => {
+      map.addLayer({
+        id,
+        type: 'symbol',
+        source: sourceId,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': 10,
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-offset': [0, -1.4],
+          'text-anchor': 'top',
+          'text-allow-overlap': false,
+        },
+        paint: {
+          'text-color': '#334155',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 2,
+        },
+      })
+    }
+
+    map.on('load', () => {
+      addSource('static-geofence-shapes')
+      addSource('static-geofence-labels')
+      addSource('selected-geofence-shapes')
+      addSource('selected-geofence-labels')
+      addSource('poi-points')
+      addGeofenceLayers('static-geofence-shapes', 'static-geofence')
+      addGeofenceLayers('selected-geofence-shapes', 'selected-geofence', true)
+      addLabelLayer('static-geofence-labels', 'static-geofence-labels')
+      addLabelLayer('selected-geofence-labels', 'selected-geofence-labels')
+      map.addLayer({
+        id: 'poi-points',
+        type: 'circle',
+        source: 'poi-points',
+        paint: {
+          'circle-radius': 7,
+          'circle-color': '#2563eb',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      })
+      map.addLayer({
+        id: 'poi-labels',
+        type: 'symbol',
+        source: 'poi-points',
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-size': 11,
+          'text-offset': [0, 1.2],
+          'text-anchor': 'top',
+          'text-optional': true,
+        },
+        paint: {
+          'text-color': '#1e3a8a',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 1.5,
+        },
+      })
+      setMapReady(true)
+      window.setTimeout(() => map.resize(), 0)
+    })
 
     return () => {
+      setMapReady(false)
+      editMarkersRef.current.forEach((marker) => marker.remove())
+      editMarkersRef.current = []
+      poiPopupRef.current?.remove()
       map.remove()
       mapRef.current = null
-      staticLayerRef.current = null
-      activeLayerRef.current = null
-      poiLayerRef.current = null
     }
   }, [])
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map) return undefined
+    if (!map || !mapReady) return undefined
 
     const onClick = (event) => {
       if (!canEditGeofenceShape(form)) return
+      const layers = [
+        'static-geofence-fill-active',
+        'static-geofence-fill-inactive',
+        'static-geofence-fill-draft',
+        'static-geofence-line-active',
+        'static-geofence-line-inactive',
+        'static-geofence-line-draft',
+        'selected-geofence-fill-active',
+        'selected-geofence-fill-inactive',
+        'selected-geofence-fill-draft',
+        'selected-geofence-line-active',
+        'selected-geofence-line-inactive',
+        'selected-geofence-line-draft',
+        'poi-points',
+      ].filter((layer) => map.getLayer(layer))
+      if (map.queryRenderedFeatures(event.point, { layers }).length) return
 
-      const lat = Number(event.latlng.lat.toFixed(7))
-      const lng = Number(event.latlng.lng.toFixed(7))
+      const lat = Number(event.lngLat.lat.toFixed(7))
+      const lng = Number(event.lngLat.lng.toFixed(7))
 
       if (drawMode === 'circle') {
         setForm((s) => ({ ...s, type: 'circle', center_lat: lat, center_lng: lng }))
@@ -435,222 +694,252 @@ function GeofenceMapOptimized({
 
     map.on('click', onClick)
     return () => map.off('click', onClick)
-  }, [drawMode, form, setForm])
+  }, [drawMode, form, mapReady, setForm])
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !focusPoint || focusKeyRef.current === focusKey) return
+    if (!map || !mapReady || !focusPoint || focusKeyRef.current === focusKey) return
     const lat = Number(focusPoint.latitude)
     const lng = Number(focusPoint.longitude)
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
     focusKeyRef.current = focusKey
-    map.setView([lat, lng], 18, { animate: true })
-  }, [focusKey, focusPoint])
+    map.flyTo({ center: [lng, lat], zoom: 18, essential: true })
+  }, [focusKey, focusPoint, mapReady])
 
   useEffect(() => {
     const map = mapRef.current
-    const group = poiLayerRef.current
-    if (!map || !group) return
+    if (!map || !mapReady) return
+    map.getSource('poi-points')?.setData(poiFeatureCollection(visiblePois))
 
-    group.clearLayers()
-    const visiblePois = poiResults.filter((poi) => poiMatchesCategory(poi, poiCategory))
-    visiblePois.forEach((poi) => {
-      const lat = Number(poi.latitude)
-      const lng = Number(poi.longitude)
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
-
-      const popup = L.DomUtil.create('div', 'space-y-1 text-xs')
-      popup.innerHTML = `
-        <div class="font-bold">${escapeHtml(poi.name || poi.label || 'OSM place')}</div>
-        <div>Category: ${escapeHtml(poi.category_label || poi.category || 'Place')}</div>
-        ${poi.address ? `<div>${escapeHtml(poi.address)}</div>` : ''}
-        <div>Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
-        <div>OSM: ${escapeHtml(poi.osm_type || poi.source || 'osm')}${poi.osm_id ? `/${escapeHtml(poi.osm_id)}` : ''}</div>
-      `
-      const button = L.DomUtil.create('button', 'mt-2 rounded bg-[#f04414] px-2 py-1 text-[11px] font-semibold text-white', popup)
-      button.type = 'button'
-      button.textContent = 'Use as Geofence Center'
-      L.DomEvent.on(button, 'click', (event) => {
-        L.DomEvent.stop(event)
-        onUsePoi?.(poi)
-      })
-
-      const marker = L.marker([lat, lng], { icon: poiIcon })
-        .bindPopup(popup)
-        .bindTooltip(poi.name || poi.label || 'OSM place', { direction: 'top' })
-      if (String(selectedPoiId || '') === String(poi.id || '')) {
-        marker.openPopup()
-      }
-      group.addLayer(marker)
-    })
-
-    const bounds = group.getBounds()
-    if (bounds.isValid() && visiblePois.length > 1) {
-      map.fitBounds(bounds.pad(0.18), { maxZoom: 18, animate: false })
+    const bounds = pointBounds(visiblePois.map((poi) => [Number(poi.latitude), Number(poi.longitude)]))
+    if (bounds && visiblePois.length > 1) {
+      map.fitBounds(bounds, { padding: 70, maxZoom: 18, animate: false })
     }
-  }, [onUsePoi, poiCategory, poiResults, selectedPoiId])
+  }, [mapReady, visiblePois])
 
   useEffect(() => {
     const map = mapRef.current
-    const group = staticLayerRef.current
-    if (!map || !group) return
+    if (!map || !mapReady) return undefined
 
-    group.clearLayers()
-    geofences.forEach((geofence) => {
-      if (geofence.id === form.id) return
+    const onPoiClick = (event) => {
+      const feature = event.features?.[0]
+      const poi = visiblePois.find((item) => String(item.id || '') === String(feature?.properties?.id || ''))
+      if (!poi) return
+      poiPopupRef.current?.remove()
+      poiPopupRef.current = new maplibregl.Popup({ offset: 16 })
+        .setLngLat(event.lngLat)
+        .setDOMContent(createPoiPopupContent(poi, onUsePoi))
+        .addTo(map)
+    }
+    const showPointer = () => { map.getCanvas().style.cursor = 'pointer' }
+    const hidePointer = () => { map.getCanvas().style.cursor = '' }
 
-      const status = geofenceMapStatus(geofence)
-      const style = geofenceMapStyle(status)
-      const label = geofenceMapLabel(status, geofence.name || 'Geofence')
+    map.on('click', 'poi-points', onPoiClick)
+    map.on('mouseenter', 'poi-points', showPointer)
+    map.on('mouseleave', 'poi-points', hidePointer)
+    return () => {
+      map.off('click', 'poi-points', onPoiClick)
+      map.off('mouseenter', 'poi-points', showPointer)
+      map.off('mouseleave', 'poi-points', hidePointer)
+    }
+  }, [mapReady, onUsePoi, visiblePois])
 
-      if (geofence.type === 'circle' && geofence.center_lat != null && geofence.center_lng != null) {
-        const layer = L.circle([geofence.center_lat, geofence.center_lng], {
-          ...style,
-          radius: Number(geofence.radius_meters || 0),
-        }).bindTooltip(label, { permanent: true, direction: 'top', opacity: 0.92, className: 'geofence-map-label' })
-        layer.on('click', (event) => {
-          L.DomEvent.stopPropagation(event.originalEvent)
-          setForm(formFromGeofence(geofence.branch_id, branch?.branch_name || '', geofence))
-          setDrawMode('circle')
-        })
-        group.addLayer(layer)
-      }
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady || !selectedPoiId) return
+    const poi = visiblePois.find((item) => String(item.id || '') === String(selectedPoiId || ''))
+    const lat = Number(poi?.latitude)
+    const lng = Number(poi?.longitude)
+    if (!poi || !Number.isFinite(lat) || !Number.isFinite(lng)) return
+    poiPopupRef.current?.remove()
+    poiPopupRef.current = new maplibregl.Popup({ offset: 16 })
+      .setLngLat([lng, lat])
+      .setDOMContent(createPoiPopupContent(poi, onUsePoi))
+      .addTo(map)
+  }, [mapReady, onUsePoi, selectedPoiId, visiblePois])
 
-      if (geofence.type === 'polygon') {
-        const points = polygonPoints(geofence.polygon_geojson)
-        if (points.length >= 3) {
-          const layer = L.polygon(points, style).bindTooltip(label, { permanent: true, direction: 'top', opacity: 0.92, className: 'geofence-map-label' })
-          layer.on('click', (event) => {
-            L.DomEvent.stopPropagation(event.originalEvent)
-            setForm(formFromGeofence(geofence.branch_id, branch?.branch_name || '', geofence))
-            setDrawMode('polygon')
-          })
-          group.addLayer(layer)
-        }
-      }
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return undefined
+
+    const layers = [
+      'static-geofence-fill-active',
+      'static-geofence-fill-inactive',
+      'static-geofence-fill-draft',
+      'static-geofence-line-active',
+      'static-geofence-line-inactive',
+      'static-geofence-line-draft',
+    ].filter((layer) => map.getLayer(layer))
+    const selectGeofenceFromMap = (event) => {
+      const id = event.features?.[0]?.properties?.geofenceId
+      const geofence = geofences.find((item) => String(item.id) === String(id))
+      if (!geofence) return
+      event.preventDefault?.()
+      setForm(formFromGeofence(geofence.branch_id, branch?.branch_name || '', geofence))
+      setDrawMode(geofence.type === 'polygon' ? 'polygon' : 'circle')
+    }
+    const showPointer = () => { map.getCanvas().style.cursor = 'pointer' }
+    const hidePointer = () => { map.getCanvas().style.cursor = '' }
+
+    layers.forEach((layer) => {
+      map.on('click', layer, selectGeofenceFromMap)
+      map.on('mouseenter', layer, showPointer)
+      map.on('mouseleave', layer, hidePointer)
     })
+    return () => {
+      layers.forEach((layer) => {
+        map.off('click', layer, selectGeofenceFromMap)
+        map.off('mouseenter', layer, showPointer)
+        map.off('mouseleave', layer, hidePointer)
+      })
+    }
+  }, [branch, geofences, mapReady, setDrawMode, setForm])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+
+    const staticGeofences = form.id == null
+      ? geofences
+      : geofences.filter((geofence) => String(geofence.id) !== String(form.id))
+    const shapes = geofenceFeatureCollection(staticGeofences)
+    const labels = geofenceLabelCollection(staticGeofences)
+    map.getSource('static-geofence-shapes')?.setData(shapes)
+    map.getSource('static-geofence-labels')?.setData(labels)
 
     const fitKey = `${branch?.id || 'none'}:${geofences.map((g) => `${g.id}:${g.updated_at || ''}`).join('|')}`
     if (fitKeyRef.current === fitKey) return
 
     fitKeyRef.current = fitKey
-    const bounds = group.getBounds()
+    const bounds = geojsonBounds(shapes)
     const fallbackCenter = geofences.map(geofenceCenter).find(Boolean)
-    if (bounds.isValid()) map.fitBounds(bounds.pad(0.25), { maxZoom: 17, animate: false })
-    else if (fallbackCenter) map.setView(fallbackCenter, Math.max(map.getZoom(), 16), { animate: false })
-    else if (branch) map.setView(DEFAULT_CENTER, 15, { animate: false })
-  }, [branch, geofences, form.id, setDrawMode, setForm])
+    if (bounds) map.fitBounds(bounds, { padding: 80, maxZoom: 17, animate: false })
+    else if (fallbackCenter) {
+      const center = toLngLat(fallbackCenter)
+      if (center) map.jumpTo({ center, zoom: Math.max(map.getZoom(), 16) })
+    } else if (branch) {
+      map.jumpTo({ center: [DEFAULT_CENTER[1], DEFAULT_CENTER[0]], zoom: 15 })
+    }
+  }, [branch, geofences, form.id, mapReady])
 
   useEffect(() => {
     const map = mapRef.current
-    const group = activeLayerRef.current
-    if (!map || !group) return
+    if (!map || !mapReady) return undefined
 
-    group.clearLayers()
+    editMarkersRef.current.forEach((marker) => marker.remove())
+    editMarkersRef.current = []
+
     const editableShape = canEditGeofenceShape(form)
-    const selectedStatus = geofenceMapStatus(form, true)
-    const selectedStyle = geofenceMapStyle(selectedStatus, true)
-    const selectedLabel = geofenceMapLabel(selectedStatus, form.name || 'Selected geofence')
+    const selectedShape = geofenceFeature(form, true)
+    const selectedLabel = geofenceLabelFeature(form, true)
+    map.getSource('selected-geofence-shapes')?.setData(selectedShape ? { type: 'FeatureCollection', features: [selectedShape] } : EMPTY_FEATURE_COLLECTION)
+    map.getSource('selected-geofence-labels')?.setData(selectedLabel ? { type: 'FeatureCollection', features: [selectedLabel] } : EMPTY_FEATURE_COLLECTION)
+
+    if (!editableShape) return undefined
 
     if (form.type === 'circle' && form.center_lat != null && form.center_lng != null) {
-      const center = L.latLng(Number(form.center_lat), Number(form.center_lng))
-      const radius = Math.max(5, Number(form.radius_meters) || 100)
-      const circle = L.circle(center, {
-        radius,
-        ...selectedStyle,
-      }).bindTooltip(selectedLabel, { permanent: true, direction: 'top', opacity: 0.95, className: 'geofence-map-label' })
+      const center = [Number(form.center_lat), Number(form.center_lng)]
+      const centerLngLat = toLngLat(center)
+      const handleLngLat = radiusHandleLngLat(center, form.radius_meters)
+      if (!centerLngLat || !handleLngLat) return undefined
 
-      group.addLayer(circle)
-
-      if (!editableShape) {
-        return
+      const syncCircleSource = (nextCenter, nextRadius) => {
+        const feature = circleFeature(nextCenter, nextRadius, {
+          geofenceId: form.id ?? form.draft_key ?? 'selected',
+          status: geofenceMapStatus(form, true),
+          name: form.name || 'Selected geofence',
+          label: geofenceMapText(geofenceMapStatus(form, true), form.name || 'Selected geofence'),
+        })
+        map.getSource('selected-geofence-shapes')?.setData(feature ? { type: 'FeatureCollection', features: [feature] } : EMPTY_FEATURE_COLLECTION)
       }
 
-      const centerMarker = L.marker(center, { draggable: true, icon: orangePinIcon })
-      const resizeMarker = L.marker(radiusHandleLatLng(map, center, radius), {
-        draggable: true,
-        icon: L.divIcon({
-          className: 'geofence-radius-handle',
-          html: '<span class="block size-4 rounded-full border-2 border-white bg-[#f04414] shadow ring-2 ring-[#f04414]/30"></span>',
-          iconSize: [16, 16],
-          iconAnchor: [8, 8],
-        }),
-      })
+      const centerMarker = new maplibregl.Marker({ element: markerElement('center'), draggable: true })
+        .setLngLat(centerLngLat)
+        .addTo(map)
+      const resizeMarker = new maplibregl.Marker({ element: markerElement('handle'), draggable: true })
+        .setLngLat(handleLngLat)
+        .addTo(map)
 
-      centerMarker.on('drag', (event) => {
-        const nextCenter = event.target.getLatLng()
-        circle.setLatLng(nextCenter)
-        resizeMarker.setLatLng(radiusHandleLatLng(map, nextCenter, circle.getRadius()))
+      centerMarker.on('drag', () => {
+        const ll = centerMarker.getLngLat()
+        const nextCenter = [ll.lat, ll.lng]
+        syncCircleSource(nextCenter, form.radius_meters)
+        const nextHandle = radiusHandleLngLat(nextCenter, form.radius_meters)
+        if (nextHandle) resizeMarker.setLngLat(nextHandle)
       })
-      centerMarker.on('dragend', (event) => {
-        const ll = event.target.getLatLng()
+      centerMarker.on('dragend', () => {
+        const ll = centerMarker.getLngLat()
         setForm((s) => ({ ...s, center_lat: Number(ll.lat.toFixed(7)), center_lng: Number(ll.lng.toFixed(7)) }))
       })
-      resizeMarker.on('drag', (event) => {
-        circle.setRadius(Math.max(5, Math.round(map.distance(circle.getLatLng(), event.target.getLatLng()))))
+      resizeMarker.on('drag', () => {
+        const centerLl = centerMarker.getLngLat()
+        const handleLl = resizeMarker.getLngLat()
+        const nextRadius = Math.max(5, Math.round(distanceMeters([centerLl.lat, centerLl.lng], [handleLl.lat, handleLl.lng])))
+        syncCircleSource([centerLl.lat, centerLl.lng], nextRadius)
       })
-      resizeMarker.on('dragend', (event) => {
-        const nextRadius = Math.max(5, Math.round(map.distance(circle.getLatLng(), event.target.getLatLng())))
-        circle.setRadius(nextRadius)
-        resizeMarker.setLatLng(radiusHandleLatLng(map, circle.getLatLng(), nextRadius))
+      resizeMarker.on('dragend', () => {
+        const centerLl = centerMarker.getLngLat()
+        const handleLl = resizeMarker.getLngLat()
+        const nextRadius = Math.max(5, Math.round(distanceMeters([centerLl.lat, centerLl.lng], [handleLl.lat, handleLl.lng])))
+        const nextHandle = radiusHandleLngLat([centerLl.lat, centerLl.lng], nextRadius)
+        if (nextHandle) resizeMarker.setLngLat(nextHandle)
         setForm((s) => ({ ...s, radius_meters: nextRadius }))
       })
 
-      group.addLayer(centerMarker)
-      group.addLayer(resizeMarker)
+      editMarkersRef.current = [centerMarker, resizeMarker]
     }
 
     if (form.type === 'polygon') {
       const openPoints = editablePolygonPoints(form.polygon_geojson)
-      if (openPoints.length) {
-        const shape = openPoints.length >= 3
-          ? L.polygon(openPoints, selectedStyle).bindTooltip(selectedLabel, { permanent: true, direction: 'top', opacity: 0.95, className: 'geofence-map-label' })
-          : L.polyline(openPoints, selectedStyle)
-
-        const markers = []
-        const syncPolygon = () => {
-          const nextPoints = markers.map((marker) => {
-            const ll = marker.getLatLng()
-            return [Number(ll.lat.toFixed(7)), Number(ll.lng.toFixed(7))]
-          })
-          shape.setLatLngs(openPoints.length >= 3 ? [nextPoints] : nextPoints)
-          return nextPoints
-        }
-
-        group.addLayer(shape)
-        if (!editableShape) {
-          return
-        }
-
-        openPoints.forEach((point) => {
-          const marker = L.marker(point, {
-            draggable: true,
-            icon: L.divIcon({
-              className: 'geofence-polygon-handle',
-              html: '<span class="block size-4 rounded-full border-2 border-white bg-[#f04414] shadow ring-2 ring-[#f04414]/30"></span>',
-              iconSize: [16, 16],
-              iconAnchor: [8, 8],
-            }),
-          })
-          markers.push(marker)
-          marker.on('drag', syncPolygon)
-          marker.on('dragend', () => {
-            setForm((s) => ({ ...s, polygon_geojson: polygonFeatureFromPoints(syncPolygon()) }))
-          })
-          group.addLayer(marker)
+      if (!openPoints.length) return undefined
+      const markers = openPoints.map((point) => new maplibregl.Marker({ element: markerElement('handle'), draggable: true })
+        .setLngLat([point[1], point[0]])
+        .addTo(map))
+      const syncPolygonSource = () => {
+        const nextPoints = markers.map((marker) => {
+          const ll = marker.getLngLat()
+          return [Number(ll.lat.toFixed(7)), Number(ll.lng.toFixed(7))]
         })
+        const feature = polygonFeatureFromPoints(nextPoints)
+        map.getSource('selected-geofence-shapes')?.setData(feature ? {
+          type: 'FeatureCollection',
+          features: [{
+            ...feature,
+            properties: {
+              ...(feature.properties || {}),
+              geofenceId: form.id ?? form.draft_key ?? 'selected',
+              status: geofenceMapStatus(form, true),
+              name: form.name || 'Selected geofence',
+              label: geofenceMapText(geofenceMapStatus(form, true), form.name || 'Selected geofence'),
+            },
+          }],
+        } : EMPTY_FEATURE_COLLECTION)
+        return nextPoints
       }
+      markers.forEach((marker) => {
+        marker.on('drag', syncPolygonSource)
+        marker.on('dragend', () => {
+          setForm((s) => ({ ...s, polygon_geojson: polygonFeatureFromPoints(syncPolygonSource()) }))
+        })
+      })
+      editMarkersRef.current = markers
     }
-  }, [form, setForm])
+
+    return () => {
+      editMarkersRef.current.forEach((marker) => marker.remove())
+      editMarkersRef.current = []
+    }
+  }, [form, mapReady, setForm])
 
   return (
-    <div
-      ref={mapEl}
-      className="h-[520px] min-h-[420px] w-full overflow-hidden rounded-b-lg border-t border-slate-200 bg-slate-100 dark:border-border dark:bg-muted"
-    />
+    <div className="relative h-[520px] min-h-[420px] w-full overflow-hidden rounded-b-lg border-t border-slate-200 bg-slate-100 dark:border-border dark:bg-muted">
+      <div ref={mapEl} className="h-full w-full" />
+      <div className="pointer-events-none absolute left-3 top-3 z-500 rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
+        OpenStreetMap
+      </div>
+    </div>
   )
 }
-
 export default function AdminGeofencing() {
   const [branches, setBranches] = useState([])
   const [selectedBranchId, setSelectedBranchId] = useState(null)
@@ -1019,7 +1308,7 @@ export default function AdminGeofencing() {
     }
   }
 
-  const usePoiAsCenter = useCallback((poi) => {
+  const applyPoiAsCenter = useCallback((poi) => {
     if (!canEditGeofenceShape(form)) {
       toast({
         title: 'Active geofence is locked',
@@ -1209,7 +1498,7 @@ export default function AdminGeofencing() {
                         'block w-full border-t border-slate-100 px-3 py-2 text-left first:border-t-0 hover:bg-orange-50 dark:border-border dark:hover:bg-orange-500/10',
                         String(selectedPoiId || '') === String(poi.id || '') && 'bg-orange-50 text-[#f04414] dark:bg-orange-500/10 dark:text-orange-300',
                       )}
-                      onClick={() => usePoiAsCenter(poi)}
+                      onClick={() => applyPoiAsCenter(poi)}
                     >
                       <span className="block font-semibold text-slate-900 dark:text-foreground">{poi.name || poi.label || 'OSM place'}</span>
                       <span className="block truncate text-[11px] text-slate-500 dark:text-muted-foreground">
@@ -1236,7 +1525,7 @@ export default function AdminGeofencing() {
             poiResults={filteredPoiResults}
             poiCategory={poiCategory}
             selectedPoiId={selectedPoiId}
-            onUsePoi={usePoiAsCenter}
+            onUsePoi={applyPoiAsCenter}
           />
         </section>
 
