@@ -8,7 +8,7 @@ import { ThemeProvider } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
 import { Loader2 } from 'lucide-react'
 import { Amplify } from 'aws-amplify'
-import { createAttendanceAttemptMeta, createLivenessSession, getAttendanceLocationDiagnostics, loginWithFace, prepareAttendanceLocation, recordAttendanceKioskFace } from '@/api'
+import { createAttendanceAttemptMeta, createLivenessSession, getAttendanceLocationDiagnostics, getToken, loginWithFace, prepareAttendanceLocation, recordAttendanceKioskFace } from '@/api'
 import { playSuccess, playError } from '@/lib/attendanceSounds'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -54,6 +54,7 @@ export function FaceRekognitionLiveness({
   const [error, setError] = useState(null)
   const [locationDiagnostic, setLocationDiagnostic] = useState(null)
   const [locationBrowserMessage, setLocationBrowserMessage] = useState(null)
+  const [geofenceDebug, setGeofenceDebug] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [kioskSuccess, setKioskSuccess] = useState(false)
   const [kioskSuccessData, setKioskSuccessData] = useState(null)
@@ -101,12 +102,35 @@ export function FaceRekognitionLiveness({
         setError(null)
         setLocationDiagnostic(null)
         setLocationBrowserMessage(null)
+        setGeofenceDebug(null)
         setLoading(true)
       } else {
         setSilentSessionRefresh(true)
       }
       try {
-        if (!onVerified) {
+        const canPrevalidateAttendanceLocation = !onVerified && !kioskMode && Boolean(getToken())
+        if (canPrevalidateAttendanceLocation) {
+          const prepared = await prepareAttendanceLocation({
+            method: attemptMetaRef.current?.method || 'face',
+            clock_type: kioskType || undefined,
+          })
+          attemptMetaRef.current = {
+            ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
+            ...(prepared.location || {}),
+            geofence_validation_id: prepared.result?.geofence_validation_id,
+            geofence_status: prepared.result?.status,
+          }
+          setGeofenceDebug({
+            latitude: prepared.location?.latitude,
+            longitude: prepared.location?.longitude,
+            accuracy: prepared.location?.accuracy_meters,
+            branch: prepared.result?.branch?.name,
+            geofence: prepared.result?.matched_geofence?.name,
+            distance: prepared.result?.distance_meters ?? prepared.result?.distance,
+            radius: prepared.result?.matched_geofence?.radius_meters,
+            status: prepared.result?.status,
+          })
+        } else if (!onVerified) {
           const prepared = await prepareAttendanceLocation({
             method: attemptMetaRef.current?.method || 'face',
             validate: false,
@@ -132,7 +156,7 @@ export function FaceRekognitionLiveness({
         else setSilentSessionRefresh(false)
       }
     },
-    [ensureAmplifyConfig, onVerified]
+    [ensureAmplifyConfig, kioskMode, kioskType, onVerified]
   )
 
   useEffect(() => {
@@ -313,7 +337,7 @@ export function FaceRekognitionLiveness({
     } finally {
       setSubmitting(false)
     }
-  }, [session, submitting, kioskMode, kioskType, onKioskSuccess, onKioskAttendanceCorrection, onVerified, onSuccess, fetchSession])
+  }, [session, submitting, kioskMode, kioskType, onKioskSuccess, onKioskAttendanceCorrection, onVerified, onSuccess])
 
   const handleError = useCallback(async (err) => {
     console.error('Liveness error:', err)
@@ -345,6 +369,7 @@ export function FaceRekognitionLiveness({
 
   if (error && !session) {
     const locationError = /location|geolocation|position|permission|denied/i.test(error)
+    const sessionError = /session expired|unauthenticated|sign in again/i.test(error)
     const permissionGranted = locationDiagnostic?.permission === 'granted'
     const permissionDenied = locationDiagnostic?.permission === 'denied' || (!permissionGranted && /blocked|denied/i.test(error))
     return (
@@ -361,6 +386,8 @@ export function FaceRekognitionLiveness({
                 : permissionGranted
                   ? 'The site permission is allowed, but Chrome or Windows still refused this location request. Confirm Windows Location access for desktop apps/Chrome, then retry.'
                   : 'Allow location access, then try again before starting face liveness.'
+              : sessionError
+                ? 'Your login session is no longer valid. Sign in again, then retry face attendance.'
               : 'Ensure AWS Rekognition is configured and the backend can create liveness sessions.'}
           </p>
           {locationError && locationDiagnostic ? (
@@ -424,6 +451,30 @@ export function FaceRekognitionLiveness({
                 ? 'Face the camera straight, align your face in the frame, and hold still in good lighting.'
                 : 'Complete the face liveness check to sign in. Use even lighting in front of your face.')}
         </p>
+      )}
+      {!onVerified && geofenceDebug && (
+        <div className="mb-3 mt-2 grid grid-cols-2 gap-2 rounded-md border border-white/10 bg-black/25 p-3 text-[11px] text-white/60">
+          <span>Current GPS</span>
+          <b className="text-right text-white/80">
+            {geofenceDebug.latitude != null && geofenceDebug.longitude != null
+              ? `${Number(geofenceDebug.latitude).toFixed(6)}, ${Number(geofenceDebug.longitude).toFixed(6)}`
+              : '-'}
+          </b>
+          <span>Accuracy</span>
+          <b className="text-right text-white/80">{geofenceDebug.accuracy != null ? `${Math.round(Number(geofenceDebug.accuracy))}m` : '-'}</b>
+          <span>Branch</span>
+          <b className="text-right text-white/80">{geofenceDebug.branch || '-'}</b>
+          <span>Geofence</span>
+          <b className="text-right text-white/80">{geofenceDebug.geofence || '-'}</b>
+          <span>Distance</span>
+          <b className="text-right text-white/80">{geofenceDebug.distance != null ? `${Math.round(Number(geofenceDebug.distance))}m` : '-'}</b>
+          <span>Radius</span>
+          <b className="text-right text-white/80">{geofenceDebug.radius != null ? `${Math.round(Number(geofenceDebug.radius))}m` : '-'}</b>
+          <span>Result</span>
+          <b className={geofenceDebug.status === 'inside' ? 'text-right text-emerald-300' : 'text-right text-amber-300'}>
+            {(geofenceDebug.status || 'unknown').toUpperCase()}
+          </b>
+        </div>
       )}
       {!apiError && (
         <div className="relative w-full overflow-hidden rounded-lg border border-white/10 bg-black/20">

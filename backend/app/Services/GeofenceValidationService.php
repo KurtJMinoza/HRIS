@@ -152,7 +152,7 @@ class GeofenceValidationService
                 $bestDistance = $bestDistance === null ? $result['distance'] : min($bestDistance, $result['distance']);
             }
             if ($result['inside']) {
-                if ($poorAccuracy && $this->branchPoorAccuracyAction($branch) === 'block' && $enforcementMode === 'enforce') {
+                if ($poorAccuracy && $enforcementMode === 'enforce') {
                     return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
                         ...$context,
                         'allowed' => false,
@@ -169,7 +169,7 @@ class GeofenceValidationService
                 return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
                     ...$context,
                     'allowed' => true,
-                    'validation_status' => $poorAccuracy ? ($enforcementMode === 'warn_only' ? 'warn_only' : 'warning') : 'passed',
+                    'validation_status' => $poorAccuracy ? 'warn_only' : 'passed',
                     'enforcement_mode' => $enforcementMode,
                     'warning' => $poorAccuracy ? 'GPS accuracy is low, but coordinates are inside the branch geofence.' : null,
                     'matched_geofence' => $this->publicGeofencePayload($geofence),
@@ -240,9 +240,7 @@ class GeofenceValidationService
         $request->attributes->set('geofence_result', $result);
 
         if (! ($result['allowed'] ?? false)) {
-            throw ValidationException::withMessages([
-                'geofence' => [$result['failure_reason'] ?? 'Attendance location is outside the allowed geofence.'],
-            ]);
+            abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
         }
 
         return $result;
@@ -447,10 +445,9 @@ class GeofenceValidationService
                 return ['inside' => false, 'distance' => null, 'distance_to_center' => null];
             }
             $distance = $this->haversineMeters($centerLat, $centerLng, $latitude, $longitude);
-            $allowance = $this->accuracyAllowance($branch, $accuracyMeters, (int) ($geofence['accuracy_threshold_meters'] ?? self::DEFAULT_ACCURACY_THRESHOLD_METERS));
 
             return [
-                'inside' => $distance <= ($radius + $allowance),
+                'inside' => $distance <= $radius,
                 'distance' => $distance,
                 'distance_to_center' => $distance,
             ];
@@ -473,17 +470,6 @@ class GeofenceValidationService
         }
 
         return ['inside' => false, 'distance' => null, 'distance_to_center' => null];
-    }
-
-    private function accuracyAllowance(Branch $branch, ?float $accuracyMeters, int $threshold): float
-    {
-        $accuracy = max(0.0, (float) ($accuracyMeters ?? 0));
-
-        return match ($this->branchAccuracyPolicy($branch)) {
-            'strict' => 0.0,
-            'lenient' => $accuracy,
-            default => min($accuracy, max(0, $threshold)),
-        };
     }
 
     private function branchNoActivePolicy(Branch $branch): string
@@ -604,6 +590,7 @@ class GeofenceValidationService
             'name' => $geofence['name'],
             'type' => $geofence['type'],
             'priority' => (int) ($geofence['priority'] ?? 1),
+            'radius_meters' => isset($geofence['radius_meters']) ? (int) $geofence['radius_meters'] : null,
         ];
     }
 

@@ -1104,6 +1104,7 @@ function SmartDTRPreview({ className }) {
                               </span>
                             ) : null}
                             {log.accuracy_meters != null ? <span>Accuracy {Math.round(Number(log.accuracy_meters))}m</span> : null}
+                            {log.geofence_distance_meters != null ? <span>Distance {Math.round(Number(log.geofence_distance_meters))}m</span> : null}
                             {log.geofence_label ? (
                               <span className={cn(
                                 'font-bold',

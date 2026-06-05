@@ -611,6 +611,7 @@ class AttendanceController extends Controller
         $officialClockAt = $this->officialClockTimestamp($request, $serverReceivedAt);
         $validationCompletedAt = now();
         $authenticationMethod = $faceContext['authentication_method'] ?? null;
+        $this->assertGeofenceAllowsAttendanceSave($request, $user);
 
         $data = [
             'user_id' => $user->id,
@@ -662,6 +663,60 @@ class AttendanceController extends Controller
         }
 
         return $data;
+    }
+
+    private function assertGeofenceAllowsAttendanceSave(Request $request, User $user): void
+    {
+        if (! Schema::hasTable('branch_geofences')) {
+            return;
+        }
+
+        $branch = $this->geofenceValidation->resolveBranchForEmployee(
+            $user,
+            $request->input('branch_id') !== null ? (int) $request->input('branch_id') : null,
+        );
+
+        if ($branch && Schema::hasColumn('branches', 'geofence_enabled') && ! (bool) ($branch->geofence_enabled ?? true)) {
+            return;
+        }
+
+        $result = $request->attributes->get('geofence_result');
+        if (! is_array($result)) {
+            abort(403, 'Geofence validation is required before attendance can be saved.');
+        }
+
+        $enforcementMode = $result['enforcement_mode'] ?? null;
+        if ($enforcementMode === 'disabled') {
+            return;
+        }
+
+        $status = $result['validation_status'] ?? null;
+        $publicStatus = $result['status'] ?? null;
+        $allowed = (bool) ($result['allowed'] ?? false);
+
+        if (! $allowed) {
+            abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
+        }
+
+        $isStrictInside = $status === 'passed' && $publicStatus === 'inside' && ! empty($result['matched_geofence_id']);
+        $isExplicitWarnOnly = $enforcementMode === 'warn_only' && $status === 'warn_only';
+        if (! $isStrictInside && ! $isExplicitWarnOnly) {
+            abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
+        }
+
+        $validationId = $result['geofence_validation_id'] ?? null;
+        if (! $validationId || ! Schema::hasTable('geofence_validation_logs')) {
+            abort(403, 'A valid geofence validation record is required before attendance can be saved.');
+        }
+
+        $validation = GeofenceValidationLog::query()->find((int) $validationId);
+        if (! $validation || ! $validation->created_at || $validation->created_at->lt(now()->subMinutes(2))) {
+            abort(403, 'Geofence validation expired. Please try attendance again.');
+        }
+
+        if ($isStrictInside && ((bool) $validation->is_inside !== true || $validation->validation_status !== 'passed')) {
+            abort(403, 'You are outside the allowed attendance geofence.');
+        }
     }
 
     private function linkGeofenceValidationLog(Request $request, AttendanceLog $log): void

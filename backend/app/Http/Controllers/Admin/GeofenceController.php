@@ -238,14 +238,14 @@ class GeofenceController extends Controller
         $placeResults = [];
 
         if ($mode !== 'branch') {
-            $cacheKey = 'geofence:map_search:'.sha1(mb_strtolower($query).'|'.$mode);
+            $cacheKey = 'geofence:map_search:v2:'.sha1(mb_strtolower($query).'|'.$mode);
             $placeResults = Cache::remember($cacheKey, now()->addHour(), fn (): array => $this->nominatimSearch($query, $mode));
         }
 
         return response()->json([
             'query' => $query,
             'provider' => 'nominatim',
-            'results' => collect([...$localResults, ...$placeResults])->take(5)->values()->all(),
+            'results' => collect([...$localResults, ...$placeResults])->unique('id')->take(8)->values()->all(),
         ]);
     }
 
@@ -411,19 +411,29 @@ class GeofenceController extends Controller
      */
     private function nominatimSearch(string $query, string $mode): array
     {
+        $normalized = mb_strtolower($query);
         $queries = array_values(array_unique(array_filter([
+            str_contains($normalized, 'davao') || str_contains($normalized, 'philippines')
+                ? $query
+                : $query.' Davao City Philippines',
             $query,
-            str_contains(mb_strtolower($query), 'davao') ? null : $query.' Davao City Philippines',
+            str_contains($normalized, 'philippines') ? null : $query.' Philippines',
         ])));
 
+        $merged = collect();
         foreach ($queries as $candidate) {
             $results = $this->nominatimRequest($candidate, $mode);
             if ($results !== []) {
-                return $results;
+                $merged = $merged->merge($results);
             }
         }
 
-        return [];
+        return $merged
+            ->unique('id')
+            ->sortByDesc(fn (array $row): int => $this->searchResultScore($row, $query))
+            ->take(8)
+            ->values()
+            ->all();
     }
 
     /**
@@ -435,7 +445,8 @@ class GeofenceController extends Controller
             $params = [
                 'format' => 'jsonv2',
                 'addressdetails' => 1,
-                'limit' => 5,
+                'dedupe' => 1,
+                'limit' => 8,
                 'countrycodes' => 'ph',
                 'q' => $query,
             ];
@@ -445,8 +456,12 @@ class GeofenceController extends Controller
             }
 
             $response = Http::timeout(8)
+                ->connectTimeout(3)
                 ->acceptJson()
-                ->withHeaders(['User-Agent' => config('app.name', 'HRIS').'/geofence-leaflet-search'])
+                ->withHeaders([
+                    'Accept-Language' => 'en',
+                    'User-Agent' => config('app.name', 'HRIS').'/geofence-leaflet-search',
+                ])
                 ->get('https://nominatim.openstreetmap.org/search', $params);
 
             if (! $response->successful()) {
@@ -471,6 +486,7 @@ class GeofenceController extends Controller
                         'city' => $address['city'] ?? $address['town'] ?? $address['municipality'] ?? null,
                         'province' => $address['state'] ?? $address['province'] ?? null,
                         'country' => $address['country'] ?? null,
+                        'importance' => isset($row['importance']) ? (float) $row['importance'] : null,
                         'source' => 'leaflet_search',
                     ];
                 })
@@ -480,6 +496,37 @@ class GeofenceController extends Controller
         } catch (\Throwable) {
             return [];
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    private function searchResultScore(array $row, string $query): int
+    {
+        $haystack = mb_strtolower(implode(' ', array_filter([
+            $row['label'] ?? null,
+            $row['address'] ?? null,
+            $row['city'] ?? null,
+            $row['province'] ?? null,
+            $row['country'] ?? null,
+        ])));
+        $score = (int) round(((float) ($row['importance'] ?? 0)) * 100);
+
+        foreach (preg_split('/\s+/', mb_strtolower($query)) ?: [] as $token) {
+            $token = trim($token);
+            if (mb_strlen($token) >= 3 && str_contains($haystack, $token)) {
+                $score += 10;
+            }
+        }
+
+        if (str_contains($haystack, 'davao')) {
+            $score += 20;
+        }
+        if (($row['source'] ?? null) === 'branch') {
+            $score += 50;
+        }
+
+        return $score;
     }
 
     private function audit(Request $request, string $action, ?Branch $branch, ?BranchGeofence $geofence = null, array $extra = []): void

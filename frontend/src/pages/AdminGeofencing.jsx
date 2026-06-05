@@ -23,6 +23,7 @@ import {
   getAdminGeofencing,
   getBranchGeofences,
   searchGeofenceLocation,
+  testAttendanceGeofence,
   updateBranchGeofence,
   updateBranchGeofenceSettings,
 } from '@/api'
@@ -549,6 +550,9 @@ export default function AdminGeofencing() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [testPoint, setTestPoint] = useState({ latitude: '', longitude: '' })
+  const [testResult, setTestResult] = useState(null)
+  const [testingPoint, setTestingPoint] = useState(false)
   const mapSearchCacheRef = useRef(new Map())
   const mapSearchAbortRef = useRef(null)
   const { toast } = useToast()
@@ -615,6 +619,8 @@ export default function AdminGeofencing() {
         setBranches((list) => list.map((branch) => (String(branch.id) === String(data.branch.id) ? { ...branch, ...data.branch } : branch)))
       }
       setForm({ ...nextForm, center_lat: center[0], center_lng: center[1] })
+      setTestPoint({ latitude: center[0], longitude: center[1] })
+      setTestResult(null)
       setDrawMode(selectedGeofence?.type || 'circle')
       setFocusPoint({ latitude: center[0], longitude: center[1] })
       setFocusKey((key) => key + 1)
@@ -684,13 +690,13 @@ export default function AdminGeofencing() {
         }
 
         const data = await searchGeofenceLocation(query, { signal: controller.signal, mode: mapSearchMode })
-        const results = [...localResults, ...(data.results || [])].slice(0, 5)
+        const results = [...localResults, ...(data.results || [])].slice(0, 8)
         mapSearchCacheRef.current.set(cacheKey, results)
         setMapSearchResults(results)
         if (results.length === 0) {
           toast({
             title: 'No map search results',
-            description: 'Try adding “Davao” or a nearby street/landmark, then click the map if needed.',
+            description: 'Try a building, street, barangay, city, or nearby landmark, then click the map if needed.',
             variant: 'error',
           })
         }
@@ -793,6 +799,36 @@ export default function AdminGeofencing() {
     }
   }
 
+  async function runGeofenceTest() {
+    const employee = branchEmployees.find((item) => item.active) || branchEmployees[0]
+    const latitude = Number(testPoint.latitude)
+    const longitude = Number(testPoint.longitude)
+    if (!selectedBranchId || !employee?.id) {
+      toast({ title: 'Cannot test geofence', description: 'Select a branch with at least one assigned employee.', variant: 'error' })
+      return
+    }
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      toast({ title: 'Invalid test coordinates', description: 'Enter valid latitude and longitude values.', variant: 'error' })
+      return
+    }
+    setTestingPoint(true)
+    try {
+      const result = await testAttendanceGeofence({
+        employee_id: employee.id,
+        branch_id: selectedBranchId,
+        latitude,
+        longitude,
+        accuracy_meters: Number(form.accuracy_threshold_meters || 100),
+        method: 'admin_test',
+      })
+      setTestResult(result)
+    } catch (error) {
+      toast({ title: 'Geofence test failed', description: error.message, variant: 'error' })
+    } finally {
+      setTestingPoint(false)
+    }
+  }
+
   async function applySearchResult(result) {
     if (!canEditGeofenceShape(form)) {
       toast({
@@ -884,7 +920,7 @@ export default function AdminGeofencing() {
                 <Input
                   value={mapSearch}
                   onChange={(e) => setMapSearch(e.target.value)}
-                  placeholder={shapeEditable ? 'Search address on map' : 'Disable current geofence to move pin'}
+                  placeholder={shapeEditable ? 'Search address, building, street, barangay, or landmark' : 'Disable current geofence to move pin'}
                   disabled={!shapeEditable}
                   className="h-10 rounded-md border-slate-200 pl-9 text-xs shadow-sm placeholder:text-slate-500 focus-visible:ring-orange-100 dark:border-border"
                 />
@@ -1168,6 +1204,39 @@ export default function AdminGeofencing() {
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Allow other company branches</span>
               <Switch checked={Boolean(selectedBranch?.geofence_allow_cross_branch)} onCheckedChange={(checked) => updateSettings({ geofence_allow_cross_branch: checked })} />
+            </div>
+            <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-border dark:bg-muted/30">
+              <h3 className="text-xs font-bold text-slate-950 dark:text-foreground">Geofence Test Tool</h3>
+              <p className="mt-1 text-[11px] text-slate-500 dark:text-muted-foreground">Enter a GPS point to confirm distance and enforcement before employees clock in.</p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Label className="text-[11px] font-semibold text-slate-700 dark:text-muted-foreground">
+                  Latitude
+                  <Input className="mt-1 h-8 text-xs" type="number" value={testPoint.latitude} onChange={(e) => setTestPoint((s) => ({ ...s, latitude: e.target.value }))} />
+                </Label>
+                <Label className="text-[11px] font-semibold text-slate-700 dark:text-muted-foreground">
+                  Longitude
+                  <Input className="mt-1 h-8 text-xs" type="number" value={testPoint.longitude} onChange={(e) => setTestPoint((s) => ({ ...s, longitude: e.target.value }))} />
+                </Label>
+              </div>
+              <Button type="button" variant="outline" size="sm" className="mt-3 h-8 w-full rounded-md text-xs" disabled={testingPoint} onClick={runGeofenceTest}>
+                {testingPoint ? 'Testing...' : 'Test location'}
+              </Button>
+              {testResult ? (
+                <div className="mt-3 grid grid-cols-2 gap-1 rounded-md bg-white p-2 text-[11px] text-slate-600 dark:bg-background dark:text-muted-foreground">
+                  <span>Branch</span>
+                  <b className="text-right text-slate-900 dark:text-foreground">{testResult.branch?.name || '-'}</b>
+                  <span>Geofence</span>
+                  <b className="text-right text-slate-900 dark:text-foreground">{testResult.matched_geofence?.name || '-'}</b>
+                  <span>Distance</span>
+                  <b className="text-right text-slate-900 dark:text-foreground">{testResult.distance_meters != null ? `${Math.round(Number(testResult.distance_meters))}m` : '-'}</b>
+                  <span>Radius</span>
+                  <b className="text-right text-slate-900 dark:text-foreground">{testResult.matched_geofence?.radius_meters != null ? `${Math.round(Number(testResult.matched_geofence.radius_meters))}m` : '-'}</b>
+                  <span>Status</span>
+                  <b className={testResult.status === 'inside' ? 'text-right text-emerald-600' : 'text-right text-red-600'}>
+                    {(testResult.status || 'outside').toUpperCase()}
+                  </b>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

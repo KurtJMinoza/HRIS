@@ -148,9 +148,9 @@ export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enabl
   const permission = await geolocationPermissionState()
   const hasGeolocation = typeof navigator !== 'undefined' && Boolean(navigator.geolocation)
   const options = {
-    enableHighAccuracy: enableHighAccuracy ?? deviceType === 'mobile',
-    timeout: timeoutMs ?? (deviceType === 'mobile' ? 15000 : 15000),
-    maximumAge: maximumAgeMs ?? (deviceType === 'mobile' ? 30000 : 60000),
+    enableHighAccuracy: enableHighAccuracy ?? true,
+    timeout: timeoutMs ?? (deviceType === 'mobile' ? 15000 : 10000),
+    maximumAge: maximumAgeMs ?? 0,
   }
 
   if (!hasGeolocation) {
@@ -310,6 +310,19 @@ export async function validateAttendanceGeofence(payload = {}) {
     err.geofence = data
     throw err
   }
+  return data
+}
+
+export async function testAttendanceGeofence(payload = {}) {
+  const res = await authenticatedFetch('/attendance/geofence/validate', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...payload,
+      ...geolocationPayload(payload),
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to test geofence location')
   return data
 }
 
