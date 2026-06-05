@@ -8,7 +8,7 @@ import { ThemeProvider } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
 import { Loader2 } from 'lucide-react'
 import { Amplify } from 'aws-amplify'
-import { createAttendanceAttemptMeta, createLivenessSession, loginWithFace, recordAttendanceKioskFace } from '@/api'
+import { createAttendanceAttemptMeta, createLivenessSession, getAttendanceLocationDiagnostics, loginWithFace, prepareAttendanceLocation, recordAttendanceKioskFace } from '@/api'
 import { playSuccess, playError } from '@/lib/attendanceSounds'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -52,6 +52,8 @@ export function FaceRekognitionLiveness({
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [locationDiagnostic, setLocationDiagnostic] = useState(null)
+  const [locationBrowserMessage, setLocationBrowserMessage] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [kioskSuccess, setKioskSuccess] = useState(false)
   const [kioskSuccessData, setKioskSuccessData] = useState(null)
@@ -97,15 +99,32 @@ export function FaceRekognitionLiveness({
     async ({ silent = false } = {}) => {
       if (!silent) {
         setError(null)
+        setLocationDiagnostic(null)
+        setLocationBrowserMessage(null)
         setLoading(true)
       } else {
         setSilentSessionRefresh(true)
       }
       try {
+        if (!onVerified) {
+          const prepared = await prepareAttendanceLocation({
+            method: attemptMetaRef.current?.method || 'face',
+            validate: false,
+          })
+          attemptMetaRef.current = {
+            ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
+            ...(prepared.location || {}),
+          }
+        }
         const data = await createLivenessSession()
         setSession(data)
         ensureAmplifyConfig(data)
       } catch (e) {
+        const maybeLocationError = /location|geolocation|position|permission|denied/i.test(e?.message || '')
+        if (maybeLocationError) {
+          setLocationBrowserMessage(e?.browserMessage || null)
+          setLocationDiagnostic(e?.diagnostics || await getAttendanceLocationDiagnostics().catch(() => null))
+        }
         setError(e?.message || 'Could not create liveness session')
         if (!silent) setSession(null)
       } finally {
@@ -113,7 +132,7 @@ export function FaceRekognitionLiveness({
         else setSilentSessionRefresh(false)
       }
     },
-    [ensureAmplifyConfig]
+    [ensureAmplifyConfig, onVerified]
   )
 
   useEffect(() => {
@@ -325,13 +344,39 @@ export function FaceRekognitionLiveness({
   }
 
   if (error && !session) {
+    const locationError = /location|geolocation|position|permission|denied/i.test(error)
+    const permissionGranted = locationDiagnostic?.permission === 'granted'
+    const permissionDenied = locationDiagnostic?.permission === 'denied' || (!permissionGranted && /blocked|denied/i.test(error))
     return (
       <div className={className}>
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-center">
           <p className="text-sm text-amber-200">{error}</p>
+          {locationBrowserMessage ? (
+            <p className="mt-1 text-xs text-white/55">Browser message: {locationBrowserMessage}</p>
+          ) : null}
           <p className="mt-2 text-xs text-white/60">
-            Ensure AWS Rekognition is configured and the backend can create liveness sessions.
+            {locationError
+              ? permissionDenied
+                ? 'Location is blocked in this browser for this HRIS site. Change the site permission to Allow, then retry.'
+                : permissionGranted
+                  ? 'The site permission is allowed, but Chrome or Windows still refused this location request. Confirm Windows Location access for desktop apps/Chrome, then retry.'
+                  : 'Allow location access, then try again before starting face liveness.'
+              : 'Ensure AWS Rekognition is configured and the backend can create liveness sessions.'}
           </p>
+          {locationError && locationDiagnostic ? (
+            <div className="mx-auto mt-3 grid max-w-md grid-cols-2 gap-2 rounded-md border border-white/10 bg-black/20 p-3 text-left text-[11px] text-white/60">
+              <span>Permission</span>
+              <b className="text-right text-white/80">{locationDiagnostic.permission || 'unknown'}</b>
+              <span>Geolocation</span>
+              <b className="text-right text-white/80">{locationDiagnostic.geolocationAvailable ? 'available' : 'unavailable'}</b>
+              <span>HTTPS/local</span>
+              <b className="text-right text-white/80">{locationDiagnostic.https ? 'yes' : 'no'}</b>
+              <span>Browser</span>
+              <b className="text-right text-white/80">{locationDiagnostic.browser || 'unknown'}</b>
+              <span>OS</span>
+              <b className="text-right text-white/80">{locationDiagnostic.operatingSystem || 'unknown'}</b>
+            </div>
+          ) : null}
           <Button variant="outline" size="sm" className="mt-3" onClick={fetchSession}>
             Retry
           </Button>

@@ -1096,6 +1096,28 @@ function SmartDTRPreview({ className }) {
                             </>
                           )}
                         </p>
+                        {(log.latitude != null || log.longitude != null || log.geofence_label || log.accuracy_meters != null) && (
+                          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-medium text-[#6b7280] dark:text-muted-foreground">
+                            {log.latitude != null && log.longitude != null ? (
+                              <span>
+                                Lat {Number(log.latitude).toFixed(6)} · Lng {Number(log.longitude).toFixed(6)}
+                              </span>
+                            ) : null}
+                            {log.accuracy_meters != null ? <span>Accuracy {Math.round(Number(log.accuracy_meters))}m</span> : null}
+                            {log.geofence_label ? (
+                              <span className={cn(
+                                'font-bold',
+                                /inside|warning/i.test(log.geofence_label) ? 'text-[#ff5a14] dark:text-[#fb923c]' : 'text-red-600 dark:text-red-400',
+                              )}>
+                                Geofence: {log.geofence_label}
+                              </span>
+                            ) : null}
+                            {log.attendance_method ? <span>{String(log.attendance_method).toUpperCase()}</span> : null}
+                          </p>
+                        )}
+                        {log.geofence_reason ? (
+                          <p className="mt-0.5 truncate text-[10px] text-red-600 dark:text-red-400">{log.geofence_reason}</p>
+                        ) : null}
                       </div>
                       {/* Date + time + status badge */}
                       <div className="flex shrink-0 flex-col items-end gap-1">

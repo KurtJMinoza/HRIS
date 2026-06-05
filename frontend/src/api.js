@@ -35,6 +35,300 @@ function browserTimezone() {
   }
 }
 
+export function attendanceDeviceType() {
+  if (typeof navigator === 'undefined') return 'desktop'
+  const ua = String(navigator.userAgent || '').toLowerCase()
+  return /android|iphone|ipad|ipod|mobile/.test(ua) ? 'mobile' : 'desktop'
+}
+
+function browserName() {
+  if (typeof navigator === 'undefined') return 'unknown'
+  const ua = String(navigator.userAgent || '')
+  if (/Edg\//.test(ua)) return 'Microsoft Edge'
+  if (/OPR\//.test(ua)) return 'Opera'
+  if (/Chrome\//.test(ua)) return 'Chrome'
+  if (/Firefox\//.test(ua)) return 'Firefox'
+  if (/Safari\//.test(ua)) return 'Safari'
+  return 'unknown'
+}
+
+function operatingSystemName() {
+  if (typeof navigator === 'undefined') return 'unknown'
+  const ua = String(navigator.userAgent || '')
+  if (/Windows/i.test(ua)) return 'Windows'
+  if (/Android/i.test(ua)) return 'Android'
+  if (/(iPhone|iPad|iPod)/i.test(ua)) return 'iOS'
+  if (/Mac OS X/i.test(ua)) return 'macOS'
+  if (/Linux/i.test(ua)) return 'Linux'
+  return 'unknown'
+}
+
+function secureGeolocationContext() {
+  if (typeof window === 'undefined') return true
+  const protocol = window.location?.protocol
+  const host = window.location?.hostname
+  return protocol === 'https:' || host === 'localhost' || host === '127.0.0.1' || host === '::1'
+}
+
+async function geolocationPermissionState() {
+  if (typeof navigator === 'undefined' || !navigator.permissions?.query) return 'unknown'
+  try {
+    const result = await navigator.permissions.query({ name: 'geolocation' })
+    return result?.state || 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+function geolocationErrorMessage(error, permission) {
+  const browserMessage = String(error?.message || '').trim()
+  if (error?.code === error?.PERMISSION_DENIED) {
+    if (permission === 'granted') {
+      return 'The browser could not return a location even though this site is allowed.'
+    }
+    return 'Location access is blocked for this site.'
+  }
+  if (error?.code === error?.TIMEOUT) {
+    return browserMessage || 'Location request timed out. Please try again or move closer to a window.'
+  }
+  if (error?.code === error?.POSITION_UNAVAILABLE) {
+    return browserMessage || 'Position unavailable. Check Windows Location and browser site permissions, then try again.'
+  }
+  return browserMessage || 'Could not get your current location.'
+}
+
+function makeGeolocationError(error, permission, retryAttempted = false) {
+  const err = new Error(geolocationErrorMessage(error, permission))
+  err.errorCode = error?.code
+  err.browserMessage = String(error?.message || '').trim() || null
+  err.permission = permission
+  err.diagnostics = {
+    ...attendanceBrowserDiagnostics(),
+    permission,
+    geolocationErrorCode: error?.code,
+    geolocationErrorMessage: err.browserMessage,
+    retryAttempted,
+  }
+  return err
+}
+
+function logAttendanceGeolocationDiagnostics(details) {
+  try {
+    console.log({
+      type: 'attendance_geolocation_diagnostics',
+      browser: browserName(),
+      operatingSystem: operatingSystemName(),
+      https: secureGeolocationContext(),
+      ...details,
+    })
+  } catch {
+    // ignore logging failures
+  }
+}
+
+export function attendanceBrowserDiagnostics() {
+  return {
+    browser: browserName(),
+    operatingSystem: operatingSystemName(),
+    https: secureGeolocationContext(),
+    geolocationAvailable: typeof navigator !== 'undefined' && Boolean(navigator.geolocation),
+    deviceType: attendanceDeviceType(),
+  }
+}
+
+export async function getAttendanceLocationDiagnostics() {
+  return {
+    ...attendanceBrowserDiagnostics(),
+    permission: await geolocationPermissionState(),
+  }
+}
+
+export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enableHighAccuracy } = {}) {
+  const deviceType = attendanceDeviceType()
+  const permission = await geolocationPermissionState()
+  const hasGeolocation = typeof navigator !== 'undefined' && Boolean(navigator.geolocation)
+  const options = {
+    enableHighAccuracy: enableHighAccuracy ?? deviceType === 'mobile',
+    timeout: timeoutMs ?? (deviceType === 'mobile' ? 15000 : 15000),
+    maximumAge: maximumAgeMs ?? (deviceType === 'mobile' ? 30000 : 60000),
+  }
+
+  if (!hasGeolocation) {
+    logAttendanceGeolocationDiagnostics({
+      permission,
+      geolocationAvailable: false,
+      options,
+    })
+    throw new Error('This browser does not support geolocation.')
+  }
+
+  if (!secureGeolocationContext()) {
+    logAttendanceGeolocationDiagnostics({
+      permission,
+      geolocationAvailable: true,
+      options,
+    })
+    throw new Error('Location requires HTTPS or localhost. Open HRIS over HTTPS and try again.')
+  }
+
+  const readPosition = () => new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      reject(new Error('This browser does not support geolocation.'))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      resolve,
+      reject,
+      options,
+    )
+  })
+
+  const watchPositionOnce = () => new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      reject(new Error('This browser does not support geolocation.'))
+      return
+    }
+
+    let watchId = null
+    const cleanup = () => {
+      if (watchId != null) {
+        navigator.geolocation.clearWatch(watchId)
+        watchId = null
+      }
+    }
+    const timeoutId = setTimeout(() => {
+      cleanup()
+      reject(new Error('Location watch timed out before coordinates were returned.'))
+    }, Math.max(5000, options.timeout))
+
+    watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        clearTimeout(timeoutId)
+        cleanup()
+        resolve(position)
+      },
+      (error) => {
+        clearTimeout(timeoutId)
+        cleanup()
+        reject(error)
+      },
+      options,
+    )
+  })
+
+  const locationFromPosition = (position, permissionState, attempt = 'initial') => {
+    const latitude = position.coords.latitude
+    const longitude = position.coords.longitude
+    const accuracy = position.coords.accuracy
+    logAttendanceGeolocationDiagnostics({
+      permission: permissionState,
+      geolocationAvailable: true,
+      latitude,
+      longitude,
+      accuracy,
+      timeoutReached: false,
+      attempt,
+      options,
+    })
+    if (latitude == null || longitude == null) {
+      throw new Error('Coordinates were not returned by the browser. Please try again.')
+    }
+    return {
+      latitude,
+      longitude,
+      accuracy_meters: accuracy ?? null,
+      device_type: deviceType,
+      location_permission: permissionState,
+      browser: browserName(),
+      operating_system: operatingSystemName(),
+    }
+  }
+
+  const logLocationError = (error, permissionState, attempt) => {
+    logAttendanceGeolocationDiagnostics({
+      permission: permissionState,
+      geolocationAvailable: true,
+      latitude: null,
+      longitude: null,
+      accuracy: null,
+      timeoutReached: error?.code === error?.TIMEOUT,
+      errorCode: error?.code,
+      errorMessage: error?.message,
+      attempt,
+      options,
+    })
+  }
+
+  try {
+    return locationFromPosition(await readPosition(), permission, 'initial')
+  } catch (error) {
+    logLocationError(error, permission, 'initial')
+    if (permission === 'granted' && error?.code === error?.PERMISSION_DENIED) {
+      await new Promise((resolve) => setTimeout(resolve, 350))
+      const retryPermission = await geolocationPermissionState()
+      try {
+        return locationFromPosition(await readPosition(), retryPermission, 'retry_after_granted_denial')
+      } catch (retryError) {
+        logLocationError(retryError, retryPermission, 'retry_after_granted_denial')
+        try {
+          return locationFromPosition(await watchPositionOnce(), retryPermission, 'watch_after_granted_denial')
+        } catch (watchError) {
+          logLocationError(watchError, retryPermission, 'watch_after_granted_denial')
+          throw makeGeolocationError(watchError, retryPermission, true)
+        }
+      }
+    }
+    throw makeGeolocationError(error, permission)
+  }
+}
+
+function geolocationPayload(location) {
+  if (!location || typeof location !== 'object') return {}
+  const latitude = location.latitude ?? location.lat
+  const longitude = location.longitude ?? location.lng
+  if (latitude == null || longitude == null) return {}
+  return {
+    latitude,
+    longitude,
+    accuracy_meters: location.accuracy_meters ?? location.accuracy ?? null,
+    device_type: location.device_type ?? attendanceDeviceType(),
+  }
+}
+
+export async function validateAttendanceGeofence(payload = {}) {
+  const res = await authenticatedFetch('/attendance/geofence/validate', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...payload,
+      ...geolocationPayload(payload),
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to validate location')
+  if (data.allowed === false) {
+    const err = new Error(data.failure_reason || 'You are outside the allowed attendance geofence.')
+    err.geofence = data
+    throw err
+  }
+  return data
+}
+
+export async function prepareAttendanceLocation(options = {}) {
+  const location = options.location ? geolocationPayload(options.location) : await captureAttendanceLocation(options)
+  if (options.validate !== false) {
+    const result = await validateAttendanceGeofence({
+      employee_id: options.employee_id,
+      branch_id: options.branch_id,
+      clock_type: options.clock_type || options.type,
+      clicked_at: options.clicked_at || options.attemptMeta?.clicked_at,
+      method: options.method,
+      ...location,
+    })
+    return { location, result }
+  }
+  return { location, result: null }
+}
+
 function attendanceAttemptId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -761,14 +1055,18 @@ export async function fetchLivenessSessionResults(sessionId) {
  */
 export async function loginWithFace(payload, options = {}) {
   const attempt = attendanceAttemptPayload(payload || {}, 'face')
+  const location = payload?.latitude == null && payload?.longitude == null
+    ? geolocationPayload((await prepareAttendanceLocation({ method: 'face', validate: false })).location)
+    : geolocationPayload(payload)
   const body =
     typeof payload === 'string'
-      ? { image_base64: payload, ...attempt }
+      ? { image_base64: payload, ...attempt, ...location }
       : {
           liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
           client_capture_started_at_ms: payload?.client_capture_started_at_ms,
           ...attempt,
+          ...location,
         }
   const res = await fetchWithSanctumCsrf('/login/face', {
     method: 'POST',
@@ -5682,7 +5980,28 @@ export const NO_SCHEDULE_MESSAGE = 'No schedule assigned. Please contact the adm
  */
 export async function recordAttendanceScan(type, qrToken, options = {}) {
   const { authenticated = false } = options
-  const body = JSON.stringify({ type, qr_token: qrToken, ...attendanceAttemptPayload(options, 'qr') })
+  let location = geolocationPayload(options.location || options)
+  const attempt = attendanceAttemptPayload(options, options.method || 'qr')
+  if (options.geofence !== false && (location.latitude == null || location.longitude == null)) {
+    location = (await prepareAttendanceLocation({
+      method: options.method || 'qr',
+      validate: authenticated,
+      employee_id: options.employee_id,
+      branch_id: options.branch_id,
+      clock_type: type,
+      clicked_at: attempt.clicked_at,
+    })).location
+  } else if (authenticated && options.validateGeofence !== false && location.latitude != null && location.longitude != null) {
+    await validateAttendanceGeofence({
+      employee_id: options.employee_id,
+      branch_id: options.branch_id,
+      clock_type: type,
+      clicked_at: attempt.clicked_at,
+      method: options.method || 'qr',
+      ...location,
+    })
+  }
+  const body = JSON.stringify({ type, qr_token: qrToken, ...attempt, ...location })
   const kioskHeaders = authenticated ? {} : { 'X-Kiosk-Attendance': '1' }
   const res = await wrapNetworkError(
     authenticated
@@ -6194,9 +6513,13 @@ export async function getHalfDayAvailability(date) {
 export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) {
   const { useLoginFallback = false } = options
   if (useLoginFallback) {
+    let location = geolocationPayload(options.location || options)
+    if (options.geofence !== false && (location.latitude == null || location.longitude == null)) {
+      location = (await prepareAttendanceLocation({ method: 'credentials', validate: false, clock_type: type, clicked_at: options.clicked_at || options.attemptMeta?.clicked_at })).location
+    }
     const res = await fetchWithSanctumCsrf('/attendance/kiosk', {
       method: 'POST',
-      body: JSON.stringify({ type, login: qrTokenOrLogin, ...attendanceAttemptPayload(options, 'credentials') }),
+      body: JSON.stringify({ type, login: qrTokenOrLogin, ...attendanceAttemptPayload(options, 'credentials'), ...location }),
       headers: { 'X-Kiosk-Attendance': '1' },
     })
     const data = await res.json().catch(() => ({}))
@@ -6219,11 +6542,15 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
  */
 export async function recordAttendanceKioskFace(type, payload) {
   const attempt = attendanceAttemptPayload(payload || {}, 'face')
+  const location = payload?.latitude == null && payload?.longitude == null
+    ? geolocationPayload((await prepareAttendanceLocation({ method: 'face', validate: false })).location)
+    : geolocationPayload(payload)
   const body =
     typeof payload === 'string'
-      ? { type, image_base64: payload, ...attempt }
+      ? { type, clock_type: type, image_base64: payload, ...attempt, ...location }
       : {
           type,
+          clock_type: type,
           login: payload?.login,
           liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
@@ -6232,6 +6559,7 @@ export async function recordAttendanceKioskFace(type, payload) {
           camera_info: payload?.camera_info,
           client_capture_started_at_ms: payload?.client_capture_started_at_ms,
           ...attempt,
+          ...location,
         }
   const res = await fetchWithSanctumCsrf('/attendance/kiosk/face', {
     method: 'POST',
@@ -6917,3 +7245,70 @@ export async function updateApprovalWorkflowSettings(payload) {
   if (!res.ok) throw new Error(data.message || 'Failed to update approval workflow settings')
   return data
 }
+
+export async function getAdminGeofencing(params = {}) {
+  const query = new URLSearchParams()
+  if (params.company_id) query.set('company_id', String(params.company_id))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/geofencing${suffix}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load geofencing')
+  return data
+}
+
+export async function getBranchGeofences(branchId) {
+  const res = await authenticatedFetch(`/admin/branches/${branchId}/geofences`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load branch geofences')
+  return data
+}
+
+export async function createBranchGeofence(branchId, payload) {
+  const res = await authenticatedFetch(`/admin/branches/${branchId}/geofences`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to create geofence')
+  return data
+}
+
+export async function updateBranchGeofence(branchId, geofenceId, payload) {
+  const res = await authenticatedFetch(`/admin/branches/${branchId}/geofences/${geofenceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update geofence')
+  return data
+}
+
+export async function deleteBranchGeofence(branchId, geofenceId) {
+  const res = await authenticatedFetch(`/admin/branches/${branchId}/geofences/${geofenceId}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to delete geofence')
+  return data
+}
+
+export async function updateBranchGeofenceSettings(branchId, payload) {
+  const res = await authenticatedFetch(`/admin/branches/${branchId}/geofence-settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update geofence settings')
+  return data
+}
+
+export async function searchGeofenceLocation(query, options = {}) {
+  const res = await authenticatedFetch('/admin/geofencing/search-location', {
+    method: 'POST',
+    body: JSON.stringify({ query, mode: options.mode || 'address' }),
+    signal: options.signal,
+    timeoutMs: 15000,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to search location')
+  return data
+}
+

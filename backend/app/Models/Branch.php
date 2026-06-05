@@ -17,13 +17,44 @@ class Branch extends Model
         'company_id',
         'area_id',
         'address',
+        'branch_latitude',
+        'branch_longitude',
+        'branch_address',
+        'branch_city',
+        'branch_province',
+        'branch_postal_code',
         'branch_manager_id',
         'default_pay_cycle_id',
+        'geofence_enabled',
+        'geofence_enforcement_mode',
+        'geofence_no_active_policy',
+        'geofence_accuracy_policy',
+        'geofence_poor_accuracy_action',
+        'geofence_default_accuracy_threshold_meters',
+        'geofence_allow_cross_branch',
     ];
 
     protected static function booted(): void
     {
         static::saved(function (self $branch): void {
+            if ($branch->wasChanged([
+                'geofence_enabled',
+                'geofence_enforcement_mode',
+                'geofence_no_active_policy',
+                'geofence_accuracy_policy',
+                'geofence_poor_accuracy_action',
+                'geofence_default_accuracy_threshold_meters',
+                'geofence_allow_cross_branch',
+                'branch_latitude',
+                'branch_longitude',
+                'branch_address',
+                'branch_city',
+                'branch_province',
+                'branch_postal_code',
+            ])) {
+                \App\Services\GeofenceValidationService::forgetBranchCache((int) $branch->id);
+            }
+
             foreach (array_filter([$branch->branch_manager_id, $branch->getOriginal('branch_manager_id')]) as $employeeId) {
                 try {
                     app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $employeeId, 'branch_head_changed');
@@ -52,6 +83,22 @@ class Branch extends Model
     public function defaultPayCycle(): BelongsTo
     {
         return $this->belongsTo(PayCycle::class, 'default_pay_cycle_id');
+    }
+
+    protected function casts(): array
+    {
+        return [
+            'geofence_enabled' => 'boolean',
+            'branch_latitude' => 'float',
+            'branch_longitude' => 'float',
+            'geofence_default_accuracy_threshold_meters' => 'integer',
+            'geofence_allow_cross_branch' => 'boolean',
+        ];
+    }
+
+    public function geofences(): HasMany
+    {
+        return $this->hasMany(BranchGeofence::class, 'branch_id');
     }
 
     public function departments(): HasMany

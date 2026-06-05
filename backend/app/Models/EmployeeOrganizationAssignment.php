@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Services\EmployeeLevelResolver;
+use App\Services\BranchEmployeeResolver;
 use App\Services\HolidayService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -50,6 +51,11 @@ class EmployeeOrganizationAssignment extends Model
                 app(EmployeeLevelResolver::class)->syncCachedLevel((int) $assignment->employee_id, 'employee_organization_assignment_changed');
             } catch (\Throwable) {
                 // Employee level cache refresh should never block assignment maintenance.
+            }
+            try {
+                app(BranchEmployeeResolver::class)->forgetForAssignment($assignment);
+            } catch (\Throwable) {
+                // Geofence branch counts should refresh when possible without blocking saves.
             }
         };
 

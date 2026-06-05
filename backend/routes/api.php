@@ -23,6 +23,7 @@ use App\Http\Controllers\Admin\EmployeeGovernmentDeductionSettingController;
 use App\Http\Controllers\Admin\EmployeeSkillController as AdminEmployeeSkillController;
 use App\Http\Controllers\Admin\EmployeeStatusController;
 use App\Http\Controllers\Admin\GovernmentContributionController;
+use App\Http\Controllers\Admin\GeofenceController;
 use App\Http\Controllers\Admin\HolidayController;
 use App\Http\Controllers\Admin\ImportEmployeeController;
 use App\Http\Controllers\Admin\LeaveController;
@@ -146,6 +147,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/skills/suggestions', [SkillSuggestionController::class, 'index']);
 
     Route::post('/attendance', [AttendanceController::class, 'record']);
+    Route::post('/attendance/geofence/validate', [GeofenceController::class, 'validateAttendance']);
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::get('/attendance/summary', [AttendanceController::class, 'summary']);
     Route::get('/employee/presence-filing/attendance-detail', [PresenceFilingController::class, 'attendanceDetail']);
@@ -239,6 +241,21 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/attendance', [AttendanceMonitoringController::class, 'index']);
             Route::get('/admin/attendance/export', [AttendanceMonitoringController::class, 'export']);
         });
+        Route::middleware('permission:geofence.view')->group(function () {
+            Route::get('/admin/geofencing', [GeofenceController::class, 'index']);
+            Route::get('/admin/branches/{id}/geofences', [GeofenceController::class, 'branch'])->whereNumber('id');
+            Route::post('/admin/geofencing/search-location', [GeofenceController::class, 'searchLocation']);
+            Route::get('/geofencing/branches', [GeofenceController::class, 'index']);
+            Route::get('/geofencing/branches/{id}/geofences', [GeofenceController::class, 'branch'])->whereNumber('id');
+            Route::post('/geofencing/search-location', [GeofenceController::class, 'searchLocation']);
+        });
+        Route::middleware('permission:geofence.create')->post('/admin/branches/{id}/geofences', [GeofenceController::class, 'store'])->whereNumber('id');
+        Route::middleware('permission:geofence.create')->post('/geofencing/geofences', [GeofenceController::class, 'storeFromPayload']);
+        Route::middleware('permission:geofence.update|geofence.enable_disable')->patch('/admin/branches/{id}/geofence-settings', [GeofenceController::class, 'updateBranchSettings'])->whereNumber('id');
+        Route::middleware('permission:geofence.update|geofence.enable_disable')->patch('/admin/branches/{branchId}/geofences/{geofenceId}', [GeofenceController::class, 'update'])->whereNumber('branchId')->whereNumber('geofenceId');
+        Route::middleware('permission:geofence.update|geofence.enable_disable')->put('/geofencing/geofences/{geofenceId}', [GeofenceController::class, 'updateFlat'])->whereNumber('geofenceId');
+        Route::middleware('permission:geofence.delete')->delete('/admin/branches/{branchId}/geofences/{geofenceId}', [GeofenceController::class, 'destroy'])->whereNumber('branchId')->whereNumber('geofenceId');
+        Route::middleware('permission:geofence.delete')->delete('/geofencing/geofences/{geofenceId}', [GeofenceController::class, 'destroyFlat'])->whereNumber('geofenceId');
         Route::middleware('permission:attendance.corrections.create')->post('/admin/attendance/corrections', [AttendanceCorrectionController::class, 'store']);
         Route::middleware('permission:attendance.corrections.delete')->delete('/admin/attendance/corrections/{id}', [AttendanceCorrectionController::class, 'destroy']);
 

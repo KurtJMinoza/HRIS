@@ -32,6 +32,10 @@ class AttendanceLog extends Model
         'user_agent',
         'latitude',
         'longitude',
+        'accuracy_meters',
+        'geofence_validation_id',
+        'geofence_status',
+        'matched_geofence_id',
         'similarity_score',
         'liveness_score',
         'authentication_method',
@@ -54,6 +58,9 @@ class AttendanceLog extends Model
             'validation_completed_at' => 'datetime',
             'overtime_hours' => 'float',
             'night_hours' => 'float',
+            'latitude' => 'float',
+            'longitude' => 'float',
+            'accuracy_meters' => 'float',
             'processing_delay_seconds' => 'integer',
             'calculated_pay_factor' => 'array',
         ];
@@ -62,5 +69,15 @@ class AttendanceLog extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function geofenceValidation(): BelongsTo
+    {
+        return $this->belongsTo(GeofenceValidationLog::class, 'geofence_validation_id');
+    }
+
+    public function matchedGeofence(): BelongsTo
+    {
+        return $this->belongsTo(BranchGeofence::class, 'matched_geofence_id');
     }
 }

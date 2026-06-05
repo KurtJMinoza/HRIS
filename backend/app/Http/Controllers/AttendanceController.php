@@ -6,6 +6,7 @@ use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\Company;
 use App\Models\FailedFaceAttempt;
+use App\Models\GeofenceValidationLog;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
@@ -18,6 +19,7 @@ use App\Services\FaceAuthService;
 use App\Services\FaceRecognitionAuditService;
 use App\Services\FaceVerificationService;
 use App\Services\FaceVerificationResultCacheService;
+use App\Services\GeofenceValidationService;
 use App\Services\LeaveCreditService;
 use App\Services\NotificationService;
 use App\Services\OtDetectionService;
@@ -46,6 +48,7 @@ class AttendanceController extends Controller
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly AttendanceRollupService $attendanceRollup,
         private readonly NotificationService $notificationService,
+        private readonly GeofenceValidationService $geofenceValidation,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -632,6 +635,22 @@ class AttendanceController extends Controller
             $data['latitude'] = $lat;
             $data['longitude'] = $lng;
         }
+        if ($request->input('accuracy_meters') !== null && Schema::hasColumn('attendance_logs', 'accuracy_meters')) {
+            $data['accuracy_meters'] = $request->input('accuracy_meters');
+        }
+
+        $geofence = $request->attributes->get('geofence_result');
+        if (is_array($geofence)) {
+            if (Schema::hasColumn('attendance_logs', 'geofence_validation_id') && isset($geofence['geofence_validation_id'])) {
+                $data['geofence_validation_id'] = (int) $geofence['geofence_validation_id'];
+            }
+            if (Schema::hasColumn('attendance_logs', 'geofence_status')) {
+                $data['geofence_status'] = $geofence['status'] ?? $geofence['validation_status'] ?? null;
+            }
+            if (Schema::hasColumn('attendance_logs', 'matched_geofence_id') && isset($geofence['matched_geofence_id'])) {
+                $data['matched_geofence_id'] = (int) $geofence['matched_geofence_id'];
+            }
+        }
         if (isset($faceContext['similarity_score'])) {
             $data['similarity_score'] = $faceContext['similarity_score'];
         }
@@ -643,6 +662,28 @@ class AttendanceController extends Controller
         }
 
         return $data;
+    }
+
+    private function linkGeofenceValidationLog(Request $request, AttendanceLog $log): void
+    {
+        $geofence = $request->attributes->get('geofence_result');
+        $validationId = is_array($geofence) ? ($geofence['geofence_validation_id'] ?? null) : null;
+        if (! $validationId || ! Schema::hasTable('geofence_validation_logs')) {
+            return;
+        }
+
+        try {
+            GeofenceValidationLog::query()
+                ->whereKey((int) $validationId)
+                ->whereNull('attendance_log_id')
+                ->update(['attendance_log_id' => (int) $log->id]);
+        } catch (\Throwable $e) {
+            Log::warning('Unable to link geofence validation to attendance log', [
+                'geofence_validation_id' => $validationId,
+                'attendance_log_id' => $log->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -727,6 +768,9 @@ class AttendanceController extends Controller
             'login' => ['nullable', 'string', 'max:255', 'required_without:qr_token'],
             'latitude' => ['nullable', 'numeric'],
             'longitude' => ['nullable', 'numeric'],
+            'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
+            'device_type' => ['nullable', 'string', 'max:32'],
+            'method' => ['nullable', 'string', 'max:32'],
         ]);
 
         $qrToken = trim((string) ($validated['qr_token'] ?? ''));
@@ -747,6 +791,7 @@ class AttendanceController extends Controller
 
         $user = $this->refreshUserForScheduleCheck($user);
         $type = $validated['type'];
+        $this->geofenceValidation->enforceForRequest($user, $request, 'qr');
         $this->enforceLeaveRestrictionsForToday($user, $type);
         $this->ensureUserHasScheduleForToday($user);
         $this->ensureNotHolidayForAttendance();
@@ -783,6 +828,7 @@ class AttendanceController extends Controller
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
             'authentication_method' => $qrToken !== '' ? AttendanceLog::AUTH_METHOD_QR : AttendanceLog::AUTH_METHOD_CREDENTIALS,
         ]));
+        $this->linkGeofenceValidationLog($request, $log);
         $punchAt = $this->attendanceLogPunchInstant($log);
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
@@ -938,6 +984,9 @@ class AttendanceController extends Controller
             'qr_token' => ['required', 'string', 'min:8'],
             'latitude' => ['nullable', 'numeric'],
             'longitude' => ['nullable', 'numeric'],
+            'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
+            'device_type' => ['nullable', 'string', 'max:32'],
+            'method' => ['nullable', 'string', 'max:32'],
         ]);
 
         $qrToken = trim($validated['qr_token']);
@@ -960,6 +1009,7 @@ class AttendanceController extends Controller
 
         $user = $this->refreshUserForScheduleCheck($user);
         $type = $validated['type'];
+        $this->geofenceValidation->enforceForRequest($user, $request, 'qr');
         $this->enforceLeaveRestrictionsForToday($user, $type);
         $this->ensureUserHasScheduleForToday($user);
         $this->ensureNotHolidayForAttendance();
@@ -998,6 +1048,7 @@ class AttendanceController extends Controller
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
             'authentication_method' => AttendanceLog::AUTH_METHOD_QR,
         ]));
+        $this->linkGeofenceValidationLog($request, $log);
         $punchAt = $this->attendanceLogPunchInstant($log);
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
@@ -1084,7 +1135,15 @@ class AttendanceController extends Controller
             $type = $user->canClockOutToday()
                 ? AttendanceLog::TYPE_CLOCK_OUT
                 : AttendanceLog::TYPE_CLOCK_IN;
+            if (! $request->input('clock_type')) {
+                $request->merge(['clock_type' => $type]);
+            }
 
+            $this->geofenceValidation->enforceForRequest(
+                $user,
+                $request,
+                ($faceContext['authentication_method'] ?? null) === AttendanceLog::AUTH_METHOD_FACE ? 'face' : null
+            );
             $this->enforceLeaveRestrictionsForToday($user, $type);
             $this->ensureUserHasScheduleForToday($user);
             $this->ensureNotHolidayForAttendance();
@@ -1098,6 +1157,7 @@ class AttendanceController extends Controller
             }
 
             $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
+            $this->linkGeofenceValidationLog($request, $log);
             $punchAt = $this->attendanceLogPunchInstant($log);
             $attendanceTime = $punchAt->copy()->timezone($this->attendanceTimezone());
             $timeOnly = $attendanceTime->format('g:i A');
@@ -1188,6 +1248,9 @@ class AttendanceController extends Controller
             'qr_token' => ['required', 'string', 'min:8'],
             'latitude' => ['nullable', 'numeric'],
             'longitude' => ['nullable', 'numeric'],
+            'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
+            'device_type' => ['nullable', 'string', 'max:32'],
+            'method' => ['nullable', 'string', 'max:32'],
         ]);
 
         $qrToken = trim($validated['qr_token']);
@@ -1204,6 +1267,7 @@ class AttendanceController extends Controller
         $type = $validated['type'];
         $isKioskFlow = $this->isKioskAttendanceClient($request);
 
+        $this->geofenceValidation->enforceForRequest($user, $request, 'qr');
         $this->enforceLeaveRestrictionsForToday($user, $type);
         $this->ensureUserHasScheduleForToday($user);
         $this->ensureNotHolidayForAttendance();
@@ -1243,6 +1307,7 @@ class AttendanceController extends Controller
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, [
             'authentication_method' => AttendanceLog::AUTH_METHOD_QR,
         ]));
+        $this->linkGeofenceValidationLog($request, $log);
         $punchAt = $this->attendanceLogPunchInstant($log);
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
@@ -1419,6 +1484,10 @@ class AttendanceController extends Controller
             'timezone' => ['nullable', 'string', 'max:80'],
             'method' => ['nullable', 'string', 'max:32'],
             'client_attempt_id' => ['nullable', 'string', 'max:80'],
+            'latitude' => ['nullable', 'numeric'],
+            'longitude' => ['nullable', 'numeric'],
+            'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
+            'device_type' => ['nullable', 'string', 'max:32'],
         ]);
         $login = trim((string) ($validated['login'] ?? ''));
         $sessionId = $validated['liveness_session_id'] ?? null;
@@ -1741,6 +1810,7 @@ class AttendanceController extends Controller
         ];
 
         try {
+            $this->geofenceValidation->enforceForRequest($user, $request, 'face');
             $this->enforceLeaveRestrictionsForToday($user, $type);
             $this->ensureUserHasScheduleForToday($user);
             $this->ensureNotHolidayForAttendance();
@@ -1789,6 +1859,7 @@ class AttendanceController extends Controller
         $suggestCorrectionAfterClockOut = $type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->hasTimedInToday();
 
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
+        $this->linkGeofenceValidationLog($request, $log);
         $punchAt = $this->attendanceLogPunchInstant($log);
         FaceRecognitionAuditService::record($request, [
             'employee_id' => $claimedUser?->id,
@@ -3137,6 +3208,8 @@ class AttendanceController extends Controller
                 'user.departmentRelation:id,branch_id',
                 'user.departmentRelation.branch:id,name,company_id',
                 'user.departmentRelation.branch.company:id,name,logo',
+                'geofenceValidation:id,branch_id,validation_status,failure_reason,enforcement_mode,matched_geofence_id,distance_meters',
+                'geofenceValidation.branch:id,name,company_id',
             ])
             ->orderByRaw('COALESCE(verified_at, created_at) DESC')
             ->limit(80)
@@ -3147,6 +3220,9 @@ class AttendanceController extends Controller
                 $user = $log->user;
                 $company = $user?->companyHeadships->first() ?? $user?->company ?? $user?->branch?->company ?? $user?->departmentRelation?->branch?->company;
                 $branch = $user?->branch ?? $user?->departmentRelation?->branch;
+                $geofenceStatus = $log->geofence_status
+                    ?? $log->geofenceValidation?->validation_status
+                    ?? null;
                 $companyLogoUrl = $company && is_string($company->logo) && trim($company->logo) !== ''
                     ? $this->publicMediaUrl($company->logo)
                     : null;
@@ -3159,7 +3235,16 @@ class AttendanceController extends Controller
                     'employee_profile_image_url' => $user?->profile_image_url,
                     'employee_profile_image' => $user?->profile_image,
                     'company' => ['name' => $company?->name, 'logo_url' => $companyLogoUrl],
-                    'branch_name' => $branch?->name,
+                    'branch_name' => $log->geofenceValidation?->branch?->name ?? $branch?->name,
+                    'latitude' => $log->latitude,
+                    'longitude' => $log->longitude,
+                    'accuracy_meters' => $log->accuracy_meters,
+                    'geofence_validation_id' => $log->geofence_validation_id,
+                    'geofence_status' => $geofenceStatus,
+                    'geofence_label' => $this->kioskGeofenceLabel($geofenceStatus),
+                    'geofence_reason' => $log->geofenceValidation?->failure_reason,
+                    'geofence_distance_meters' => $log->geofenceValidation?->distance_meters,
+                    'attendance_method' => $log->method ?? $log->authentication_method,
                     'created_at' => $punchAt->toIso8601String(),
                     'status' => $info['status'] ?? null,
                     'late_minutes' => $info['late_minutes'] ?? null,
@@ -3204,6 +3289,18 @@ class AttendanceController extends Controller
         $encodedPath = implode('/', $encoded);
 
         return url('/api/media/public/'.$encodedPath);
+    }
+
+    private function kioskGeofenceLabel(?string $status): ?string
+    {
+        return match ($status) {
+            'passed', 'inside' => 'Inside',
+            'warning', 'warn_only' => 'Warning',
+            'failed', 'outside' => 'Outside',
+            'disabled' => 'Disabled',
+            'no_geofence_allowed' => 'No geofence',
+            default => $status ? ucfirst(str_replace('_', ' ', $status)) : null,
+        };
     }
 
     /**

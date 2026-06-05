@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Casts\EncryptedArray;
+use App\Services\BranchEmployeeResolver;
 use App\Services\EmployeeLevelResolver;
 use App\Services\FaceEmbeddingCacheService;
 use App\Services\FaceVerificationService;
@@ -491,6 +492,22 @@ class User extends Authenticatable
                     app(EmployeeLevelResolver::class)->syncCachedLevel($user, 'user_profile_or_role_changed');
                 } catch (\Throwable) {
                     // Employee save should not fail because a derived cache could not refresh.
+                }
+            }
+
+            if ($user->wasChanged([
+                'is_active',
+                'employment_status',
+                'company_id',
+                'branch_id',
+                'department_id',
+                'division_id',
+                'section_unit_id',
+            ])) {
+                try {
+                    app(BranchEmployeeResolver::class)->forgetForUser($user);
+                } catch (\Throwable) {
+                    // Geofence branch count cache invalidation should never block employee saves.
                 }
             }
         });

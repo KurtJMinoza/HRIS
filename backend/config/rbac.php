@@ -31,6 +31,12 @@ return [
         ['slug' => 'attendance.corrections.create', 'module' => 'attendance', 'label' => 'Create corrections', 'description' => 'Submit DTR corrections'],
         ['slug' => 'attendance.corrections.approve', 'module' => 'attendance', 'label' => 'Approve attendance corrections', 'description' => 'Multi-level approval of manual attendance filings (remarks at each step)'],
         ['slug' => 'attendance.corrections.delete', 'module' => 'attendance', 'label' => 'Delete corrections', 'description' => 'Remove pending corrections'],
+        ['slug' => 'geofence.view', 'module' => 'attendance', 'label' => 'View geofencing', 'description' => 'View branch geofences and validation logs'],
+        ['slug' => 'geofence.create', 'module' => 'attendance', 'label' => 'Create geofences', 'description' => 'Add branch circle or polygon geofences'],
+        ['slug' => 'geofence.update', 'module' => 'attendance', 'label' => 'Update geofences', 'description' => 'Edit branch geofence geometry and settings'],
+        ['slug' => 'geofence.delete', 'module' => 'attendance', 'label' => 'Delete geofences', 'description' => 'Remove branch geofences'],
+        ['slug' => 'geofence.test', 'module' => 'attendance', 'label' => 'Test geofences', 'description' => 'Test employee coordinates against branch geofences'],
+        ['slug' => 'geofence.enable_disable', 'module' => 'attendance', 'label' => 'Enable geofences', 'description' => 'Enable or disable branch geofence enforcement'],
 
         // 4. Overtime
         ['slug' => 'overtime.view', 'module' => 'overtime', 'label' => 'View OT', 'description' => 'List overtime requests in scope'],

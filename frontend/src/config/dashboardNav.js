@@ -6,6 +6,7 @@ import {
   CalendarClock,
   CalendarRange,
   CalendarOff,
+  MapPinned,
   Banknote,
   Calculator,
   ClipboardList,
@@ -111,6 +112,7 @@ export const adminNavItems = [
     children: [
       { to: '/admin/holiday', end: false, label: 'Holiday', icon: Calendar },
       { to: '/admin/attendance', end: false, label: 'Attendance', icon: CalendarCheck },
+      { to: '/admin/geofencing', end: false, label: 'Geofencing', icon: MapPinned },
       { to: '/admin/corrections', end: false, label: 'Correction Requests', icon: ClipboardList },
       { to: '/admin/overtime', end: false, label: 'Overtime', icon: Timer },
       { to: '/admin/leave', end: false, label: 'Leave', icon: CalendarOff },

@@ -315,6 +315,11 @@ class AuthController extends Controller
             'timezone' => ['nullable', 'string', 'max:80'],
             'method' => ['nullable', 'string', 'max:32'],
             'client_attempt_id' => ['nullable', 'string', 'max:80'],
+            'latitude' => ['nullable', 'numeric'],
+            'longitude' => ['nullable', 'numeric'],
+            'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
+            'device_type' => ['nullable', 'string', 'max:32'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
         ], [
             'liveness_session_id.required_without' => 'Either liveness session or face image is required.',
         ]);
