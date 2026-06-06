@@ -1087,52 +1087,38 @@ function SmartDTRPreview({ className }) {
                       {/* Name + action with icon */}
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-bold leading-tight text-[#111827] dark:text-foreground">{log.employee_name || '—'}</p>
-                        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-[#4b5563] dark:text-muted-foreground">
-                          <StatusIcon className={cn('size-3 shrink-0', statusIconCls)} />
-                          <span>{log.type === 'clock_in' ? 'Clocked in' : 'Clocked out'}</span>
+                        <p className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#374151] dark:text-zinc-300">
+                          <span className="inline-flex items-center gap-1.5">
+                            <StatusIcon className={cn('size-3.5 shrink-0', statusIconCls)} />
+                            <span>{log.type === 'clock_in' ? 'Clocked in' : 'Clocked out'}</span>
+                          </span>
                           {locationUrl ? (
-                            <>
-                              <span className="opacity-50">·</span>
-                              <a
-                                href={locationUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                title={`Open location in Google Maps (${Number(log.latitude).toFixed(6)}, ${Number(log.longitude).toFixed(6)})`}
-                                aria-label="Open attendance location in Google Maps"
-                                className="inline-flex items-center rounded-full text-[#ff5a14] transition-colors hover:text-[#db3f04] dark:text-[#fb923c] dark:hover:text-orange-300"
-                              >
-                                <MapPin className="size-3.5" aria-hidden />
-                              </a>
-                            </>
+                            <a
+                              href={locationUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={`Open location in Google Maps (${Number(log.latitude).toFixed(6)}, ${Number(log.longitude).toFixed(6)})`}
+                              aria-label="Open attendance location in Google Maps"
+                              className="inline-flex size-6 items-center justify-center rounded-full border border-orange-200 bg-orange-50 text-[#ff5a14] shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-100 hover:text-[#db3f04] dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-[#fb923c] dark:hover:bg-orange-500/15"
+                            >
+                              <MapPin className="size-3.5" aria-hidden />
+                            </a>
                           ) : null}
                           {companyLogo ? (
-                            <>
-                              <span className="opacity-50">·</span>
+                            <span className="inline-flex size-6 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-zinc-900">
                               <img
                                 src={companyLogo}
                                 alt=""
-                                className="size-4 shrink-0 rounded-sm bg-white object-contain ring-1 ring-[#e1e4ea] dark:bg-card dark:ring-border"
+                                className="size-4 shrink-0 rounded-sm object-contain"
                                 loading="lazy"
                                 referrerPolicy="no-referrer"
                                 onError={(e) => { e.currentTarget.style.display = 'none' }}
                               />
-                            </>
+                            </span>
                           ) : null}
-                          {log.geofence_label ? (
-                            <>
-                              <span className="opacity-50">·</span>
-                              <span className={cn(
-                                'text-[10px] font-bold',
-                                /inside|warning/i.test(log.geofence_label) ? 'text-[#ff5a14] dark:text-[#fb923c]' : 'text-red-600 dark:text-red-400',
-                              )}>
-                                Geofence: {log.geofence_label}
-                              </span>
-                            </>
-                          ) : null}
-                          {log.matched_geofence_name ? <span className="text-[10px] font-semibold">{log.matched_geofence_name}</span> : null}
                           {log.geofence_device_type ? (
                             <span
-                              className="inline-flex items-center"
+                              className="inline-flex size-6 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-700 shadow-sm dark:border-border dark:bg-muted/40 dark:text-zinc-300"
                               title={String(log.geofence_device_type)}
                               aria-label={`Device: ${String(log.geofence_device_type)}`}
                             >
