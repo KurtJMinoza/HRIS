@@ -1055,7 +1055,6 @@ function SmartDTRPreview({ className }) {
                   const StatusIcon = log.type === 'clock_in' ? LogIn : LogOut
                   const statusIconCls = 'text-[#ff5a14] dark:text-[#fb923c]'
                   const companyLogo = companyLogoUrl(log.company)
-                  const companyName = log.company?.name
                   const locationUrl = kioskMapLink(log.latitude, log.longitude)
                   const DeviceIcon = kioskDeviceIcon(log.geofence_device_type)
                   return (
@@ -1088,65 +1087,59 @@ function SmartDTRPreview({ className }) {
                       {/* Name + action with icon */}
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-bold leading-tight text-[#111827] dark:text-foreground">{log.employee_name || '—'}</p>
-                        <p className="flex items-center gap-1.5 text-xs text-[#4b5563] dark:text-muted-foreground">
+                        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-[#4b5563] dark:text-muted-foreground">
                           <StatusIcon className={cn('size-3 shrink-0', statusIconCls)} />
                           <span>{log.type === 'clock_in' ? 'Clocked in' : 'Clocked out'}</span>
-                          {(companyName || companyLogo) && (
+                          {locationUrl ? (
                             <>
                               <span className="opacity-50">·</span>
-                              <span className="inline-flex min-w-0 max-w-[min(140px,45vw)] items-center gap-1.5">
-                                {companyLogo ? (
-                                  <img
-                                    src={companyLogo}
-                                    alt=""
-                                    className="size-4 shrink-0 rounded-sm bg-white object-contain ring-1 ring-[#e1e4ea] dark:bg-card dark:ring-border"
-                                    loading="lazy"
-                                    referrerPolicy="no-referrer"
-                                    onError={(e) => { e.currentTarget.style.display = 'none' }}
-                                  />
-                                ) : null}
-                                <span className="truncate">
-                                  {companyName}
-                                </span>
-                              </span>
-                            </>
-                          )}
-                        </p>
-                        {(locationUrl || log.geofence_label || log.geofence_device_type || log.attendance_method) && (
-                          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-medium text-[#6b7280] dark:text-muted-foreground">
-                            {locationUrl ? (
                               <a
                                 href={locationUrl}
                                 target="_blank"
                                 rel="noreferrer"
                                 title={`Open location in Google Maps (${Number(log.latitude).toFixed(6)}, ${Number(log.longitude).toFixed(6)})`}
-                                className="inline-flex items-center gap-1 font-bold text-[#ff5a14] transition-colors hover:text-[#db3f04] dark:text-[#fb923c] dark:hover:text-orange-300"
+                                aria-label="Open attendance location in Google Maps"
+                                className="inline-flex items-center rounded-full text-[#ff5a14] transition-colors hover:text-[#db3f04] dark:text-[#fb923c] dark:hover:text-orange-300"
                               >
-                                <MapPin className="size-3" aria-hidden />
-                                <span>Google Maps</span>
+                                <MapPin className="size-3.5" aria-hidden />
                               </a>
-                            ) : null}
-                            {log.geofence_label ? (
+                            </>
+                          ) : null}
+                          {companyLogo ? (
+                            <>
+                              <span className="opacity-50">·</span>
+                              <img
+                                src={companyLogo}
+                                alt=""
+                                className="size-4 shrink-0 rounded-sm bg-white object-contain ring-1 ring-[#e1e4ea] dark:bg-card dark:ring-border"
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => { e.currentTarget.style.display = 'none' }}
+                              />
+                            </>
+                          ) : null}
+                          {log.geofence_label ? (
+                            <>
+                              <span className="opacity-50">·</span>
                               <span className={cn(
-                                'font-bold',
+                                'text-[10px] font-bold',
                                 /inside|warning/i.test(log.geofence_label) ? 'text-[#ff5a14] dark:text-[#fb923c]' : 'text-red-600 dark:text-red-400',
                               )}>
                                 Geofence: {log.geofence_label}
                               </span>
-                            ) : null}
-                            {log.geofence_device_type ? (
-                              <span
-                                className="inline-flex items-center"
-                                title={String(log.geofence_device_type)}
-                                aria-label={`Device: ${String(log.geofence_device_type)}`}
-                              >
-                                <DeviceIcon className="size-3.5" aria-hidden />
-                              </span>
-                            ) : null}
-                            {log.matched_geofence_name ? <span>{log.matched_geofence_name}</span> : null}
-                            {log.attendance_method ? <span>{String(log.attendance_method).toUpperCase()}</span> : null}
-                          </p>
-                        )}
+                            </>
+                          ) : null}
+                          {log.matched_geofence_name ? <span className="text-[10px] font-semibold">{log.matched_geofence_name}</span> : null}
+                          {log.geofence_device_type ? (
+                            <span
+                              className="inline-flex items-center"
+                              title={String(log.geofence_device_type)}
+                              aria-label={`Device: ${String(log.geofence_device_type)}`}
+                            >
+                              <DeviceIcon className="size-3.5" aria-hidden />
+                            </span>
+                          ) : null}
+                        </p>
                         {log.geofence_reason ? (
                           <p className="mt-0.5 truncate text-[10px] text-red-600 dark:text-red-400">{log.geofence_reason}</p>
                         ) : null}
