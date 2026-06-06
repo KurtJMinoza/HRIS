@@ -1427,6 +1427,13 @@ export default function AdminGeofencing() {
       }
 
       if (!selectedGeofence) {
+        const { form: nextForm, center } = draftFormForBranch(branchId, data.branch, nextGeofences)
+        setForm(nextForm)
+        setDrawMode(nextForm.type || 'circle')
+        if (focusMap) {
+          setFocusPoint({ latitude: center[0], longitude: center[1] })
+          setFocusKey((key) => key + 1)
+        }
         return { branch: data.branch, geofences: nextGeofences }
       }
 
@@ -1657,25 +1664,26 @@ export default function AdminGeofencing() {
   async function saveGeofence(options = {}) {
     if (!selectedBranchId) return
     setSaving(true)
+    const payload = {
+      name: form.name || selectedBranch?.branch_name || (form.type === 'circle' ? 'Office radius' : 'Branch polygon'),
+      type: form.type,
+      center_lat: form.type === 'circle' ? Number(form.center_lat) : null,
+      center_lng: form.type === 'circle' ? Number(form.center_lng) : null,
+      radius_meters: form.type === 'circle' ? Number(form.radius_meters) : null,
+      polygon_geojson: form.type === 'polygon' ? form.polygon_geojson : null,
+      is_active: normalizeBoolean(form.is_active),
+      enforcement_mode: form.enforcement_mode || 'enforce',
+      priority: Number(form.priority) || 1,
+      accuracy_threshold_meters: Number(form.accuracy_threshold_meters) || 100,
+      notes: form.notes || null,
+    }
     try {
-      const payload = {
-        name: form.name || selectedBranch?.branch_name || (form.type === 'circle' ? 'Office radius' : 'Branch polygon'),
-        type: form.type,
-        center_lat: form.type === 'circle' ? Number(form.center_lat) : null,
-        center_lng: form.type === 'circle' ? Number(form.center_lng) : null,
-        radius_meters: form.type === 'circle' ? Number(form.radius_meters) : null,
-        polygon_geojson: form.type === 'polygon' ? form.polygon_geojson : null,
-        is_active: normalizeBoolean(form.is_active),
-        enforcement_mode: form.enforcement_mode || 'enforce',
-        priority: Number(form.priority) || 1,
-        accuracy_threshold_meters: Number(form.accuracy_threshold_meters) || 100,
-        notes: form.notes || null,
-      }
-      const data = form.id
+      const shouldUpdate = form.id && geofences.some((geofence) => String(geofence.id) === String(form.id))
+      const data = shouldUpdate
         ? await updateBranchGeofence(selectedBranchId, form.id, payload)
         : await createBranchGeofence(selectedBranchId, payload)
-      const savedGeofenceId = data?.geofence?.id || form.id
-      toast({ title: form.id ? 'Geofence updated' : 'Geofence created', variant: 'success' })
+      const savedGeofenceId = data?.geofence?.id || (shouldUpdate ? form.id : null)
+      toast({ title: shouldUpdate ? 'Geofence updated' : 'Geofence created', variant: 'success' })
       const branchData = await loadBranch(selectedBranchId, { preferredGeofenceId: savedGeofenceId, focusMap: false })
       await load()
       if (options.addAnother && branchData) {
@@ -1687,7 +1695,16 @@ export default function AdminGeofencing() {
       }
     } catch (error) {
       if (/geofence not found/i.test(error.message || '')) {
-        await loadBranch(selectedBranchId, { focusMap: false })
+        try {
+          const data = await createBranchGeofence(selectedBranchId, payload)
+          const savedGeofenceId = data?.geofence?.id || null
+          toast({ title: 'Geofence created', variant: 'success' })
+          await loadBranch(selectedBranchId, { preferredGeofenceId: savedGeofenceId, focusMap: false })
+          await load()
+          return
+        } catch {
+          await loadBranch(selectedBranchId, { focusMap: false })
+        }
       }
       toast({ title: 'Save failed', description: error.message, variant: 'error' })
     } finally {
