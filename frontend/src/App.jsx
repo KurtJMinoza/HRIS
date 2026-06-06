@@ -4,7 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from
 /** Matches Vite `base` (e.g. `/HR/` → `/HR`) so routes work when deployed under a subpath */
 const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, '') || undefined
 import { Toaster, toast } from 'sonner'
-import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, CheckCircle2, Home, Eye, EyeOff, ClipboardList, User, LockKeyhole, Sun, Moon } from 'lucide-react'
+import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, CheckCircle2, Home, Eye, EyeOff, ClipboardList, User, LockKeyhole, Sun, Moon, MapPin, Monitor, Smartphone, Tablet, Laptop } from 'lucide-react'
 import {
   login,
   loginWithFace,
@@ -196,6 +196,21 @@ function formatKioskDateLabel(iso) {
     day: 'numeric',
     ...(sameYear ? {} : { year: 'numeric' }),
   })
+}
+
+function kioskMapLink(latitude, longitude) {
+  const lat = Number(latitude)
+  const lng = Number(longitude)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return `https://www.google.com/maps?q=${lat},${lng}`
+}
+
+function kioskDeviceIcon(deviceType) {
+  const type = String(deviceType || '').toLowerCase()
+  if (type.includes('tablet') || type.includes('ipad')) return Tablet
+  if (type.includes('phone') || type.includes('mobile') || type.includes('android') || type.includes('iphone')) return Smartphone
+  if (type.includes('laptop') || type.includes('notebook')) return Laptop
+  return Monitor
 }
 
 const SOUND_FEEDBACK_ENABLED = true
@@ -1041,7 +1056,8 @@ function SmartDTRPreview({ className }) {
                   const statusIconCls = 'text-[#ff5a14] dark:text-[#fb923c]'
                   const companyLogo = companyLogoUrl(log.company)
                   const companyName = log.company?.name
-                  const branchName = log.branch_name || log.branch?.name
+                  const locationUrl = kioskMapLink(log.latitude, log.longitude)
+                  const DeviceIcon = kioskDeviceIcon(log.geofence_device_type)
                   return (
                     <li
                       key={log.id}
@@ -1075,7 +1091,7 @@ function SmartDTRPreview({ className }) {
                         <p className="flex items-center gap-1.5 text-xs text-[#4b5563] dark:text-muted-foreground">
                           <StatusIcon className={cn('size-3 shrink-0', statusIconCls)} />
                           <span>{log.type === 'clock_in' ? 'Clocked in' : 'Clocked out'}</span>
-                          {(companyName || branchName) && (
+                          {(companyName || companyLogo) && (
                             <>
                               <span className="opacity-50">·</span>
                               <span className="inline-flex min-w-0 max-w-[min(140px,45vw)] items-center gap-1.5">
@@ -1090,22 +1106,26 @@ function SmartDTRPreview({ className }) {
                                   />
                                 ) : null}
                                 <span className="truncate">
-                                  {[companyName, branchName].filter(Boolean).join(' · ')}
+                                  {companyName}
                                 </span>
                               </span>
                             </>
                           )}
                         </p>
-                        {(log.latitude != null || log.longitude != null || log.geofence_label || log.accuracy_meters != null) && (
+                        {(locationUrl || log.geofence_label || log.geofence_device_type || log.attendance_method) && (
                           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-medium text-[#6b7280] dark:text-muted-foreground">
-                            {log.latitude != null && log.longitude != null ? (
-                              <span>
-                                Lat {Number(log.latitude).toFixed(6)} · Lng {Number(log.longitude).toFixed(6)}
-                              </span>
+                            {locationUrl ? (
+                              <a
+                                href={locationUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={`Open location in Google Maps (${Number(log.latitude).toFixed(6)}, ${Number(log.longitude).toFixed(6)})`}
+                                className="inline-flex items-center gap-1 font-bold text-[#ff5a14] transition-colors hover:text-[#db3f04] dark:text-[#fb923c] dark:hover:text-orange-300"
+                              >
+                                <MapPin className="size-3" aria-hidden />
+                                <span>Google Maps</span>
+                              </a>
                             ) : null}
-                            {log.accuracy_meters != null ? <span>Accuracy {Math.round(Number(log.accuracy_meters))}m</span> : null}
-                            {log.geofence_distance_meters != null ? <span>Distance {Math.round(Number(log.geofence_distance_meters))}m</span> : null}
-                            {log.geofence_radius_meters != null ? <span>Radius {Math.round(Number(log.geofence_radius_meters))}m</span> : null}
                             {log.geofence_label ? (
                               <span className={cn(
                                 'font-bold',
@@ -1114,7 +1134,15 @@ function SmartDTRPreview({ className }) {
                                 Geofence: {log.geofence_label}
                               </span>
                             ) : null}
-                            {log.geofence_device_type ? <span>{String(log.geofence_device_type).toUpperCase()}</span> : null}
+                            {log.geofence_device_type ? (
+                              <span
+                                className="inline-flex items-center"
+                                title={String(log.geofence_device_type)}
+                                aria-label={`Device: ${String(log.geofence_device_type)}`}
+                              >
+                                <DeviceIcon className="size-3.5" aria-hidden />
+                              </span>
+                            ) : null}
                             {log.matched_geofence_name ? <span>{log.matched_geofence_name}</span> : null}
                             {log.attendance_method ? <span>{String(log.attendance_method).toUpperCase()}</span> : null}
                           </p>
