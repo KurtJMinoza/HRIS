@@ -1686,6 +1686,9 @@ export default function AdminGeofencing() {
         setFocusKey((key) => key + 1)
       }
     } catch (error) {
+      if (/geofence not found/i.test(error.message || '')) {
+        await loadBranch(selectedBranchId, { focusMap: false })
+      }
       toast({ title: 'Save failed', description: error.message, variant: 'error' })
     } finally {
       setSaving(false)
@@ -1715,6 +1718,9 @@ export default function AdminGeofencing() {
       await loadBranch(selectedBranchId, { preferredGeofenceId: form.id, focusMap: false })
       await load()
     } catch (error) {
+      if (/geofence not found/i.test(error.message || '')) {
+        await loadBranch(selectedBranchId, { focusMap: false })
+      }
       toast({ title: 'Update failed', description: error.message, variant: 'error' })
     }
   }
@@ -1728,6 +1734,9 @@ export default function AdminGeofencing() {
       await load()
       toast({ title: nextActive ? 'Geofence enabled' : 'Geofence saved as draft', variant: 'success' })
     } catch (error) {
+      if (/geofence not found/i.test(error.message || '')) {
+        await loadBranch(selectedBranchId, { focusMap: false })
+      }
       toast({ title: 'Update failed', description: error.message, variant: 'error' })
     }
   }

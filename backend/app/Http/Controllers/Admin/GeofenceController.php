@@ -123,7 +123,12 @@ class GeofenceController extends Controller
     public function update(Request $request, int $branchId, int $geofenceId): JsonResponse
     {
         $branch = $this->scopedBranch($request, $branchId);
-        $geofence = $branch->geofences()->whereKey($geofenceId)->firstOrFail();
+        $geofence = $branch->geofences()->whereKey($geofenceId)->first();
+        if (! $geofence) {
+            return response()->json([
+                'message' => 'Geofence not found. Please refresh this branch and try again.',
+            ], 404);
+        }
         $payload = $this->validatedGeofencePayload($request, partial: true);
 
         DB::transaction(function () use ($request, $branch, $geofence, $payload): void {
@@ -142,7 +147,12 @@ class GeofenceController extends Controller
 
     public function updateFlat(Request $request, int $geofenceId): JsonResponse
     {
-        $geofence = BranchGeofence::query()->findOrFail($geofenceId);
+        $geofence = BranchGeofence::query()->find($geofenceId);
+        if (! $geofence) {
+            return response()->json([
+                'message' => 'Geofence not found. Please refresh this branch and try again.',
+            ], 404);
+        }
 
         return $this->update($request, (int) $geofence->branch_id, $geofenceId);
     }
@@ -150,7 +160,12 @@ class GeofenceController extends Controller
     public function destroy(Request $request, int $branchId, int $geofenceId): JsonResponse
     {
         $branch = $this->scopedBranch($request, $branchId);
-        $geofence = $branch->geofences()->whereKey($geofenceId)->firstOrFail();
+        $geofence = $branch->geofences()->whereKey($geofenceId)->first();
+        if (! $geofence) {
+            return response()->json([
+                'message' => 'Geofence not found. Please refresh this branch and try again.',
+            ], 404);
+        }
 
         DB::transaction(function () use ($request, $branch, $geofence): void {
             $this->audit($request, 'geofence_deleted', $branch, $geofence);
@@ -162,7 +177,12 @@ class GeofenceController extends Controller
 
     public function destroyFlat(Request $request, int $geofenceId): JsonResponse
     {
-        $geofence = BranchGeofence::query()->findOrFail($geofenceId);
+        $geofence = BranchGeofence::query()->find($geofenceId);
+        if (! $geofence) {
+            return response()->json([
+                'message' => 'Geofence not found. Please refresh this branch and try again.',
+            ], 404);
+        }
 
         return $this->destroy($request, (int) $geofence->branch_id, $geofenceId);
     }
