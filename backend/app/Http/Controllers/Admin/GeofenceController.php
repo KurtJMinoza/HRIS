@@ -49,10 +49,17 @@ class GeofenceController extends Controller
             'branches' => $branches,
             'defaults' => [
                 'accuracy_threshold_meters' => GeofenceValidationService::DEFAULT_ACCURACY_THRESHOLD_METERS,
+                'mobile_accuracy_threshold_meters' => GeofenceValidationService::DEFAULT_MOBILE_ACCURACY_THRESHOLD_METERS,
+                'desktop_accuracy_threshold_meters' => GeofenceValidationService::DEFAULT_DESKTOP_ACCURACY_THRESHOLD_METERS,
                 'enforcement_mode' => 'enforce',
                 'no_active_policy' => 'block',
                 'accuracy_policy' => 'balanced',
+                'accuracy_buffer_mode' => 'strict',
                 'poor_accuracy_action' => 'block',
+                'minimum_samples' => 3,
+                'maximum_samples' => 5,
+                'sample_timeout_seconds' => 15,
+                'require_backend_validation' => true,
             ],
         ]);
     }
@@ -168,10 +175,24 @@ class GeofenceController extends Controller
             'geofence_enforcement_mode' => ['sometimes', 'string', Rule::in(['disabled', 'warn_only', 'enforce'])],
             'geofence_no_active_policy' => ['sometimes', 'string', Rule::in(['allow', 'block'])],
             'geofence_accuracy_policy' => ['sometimes', 'string', Rule::in(['strict', 'balanced', 'lenient'])],
+            'geofence_accuracy_buffer_mode' => ['sometimes', 'string', Rule::in(['strict', 'balanced', 'lenient'])],
             'geofence_poor_accuracy_action' => ['sometimes', 'string', Rule::in(['warn', 'block'])],
             'geofence_default_accuracy_threshold_meters' => ['sometimes', 'integer', 'min:5', 'max:5000'],
+            'geofence_mobile_accuracy_threshold_meters' => ['sometimes', 'integer', 'min:5', 'max:5000'],
+            'geofence_desktop_accuracy_threshold_meters' => ['sometimes', 'integer', 'min:5', 'max:5000'],
+            'geofence_minimum_samples' => ['sometimes', 'integer', 'min:1', 'max:5'],
+            'geofence_maximum_samples' => ['sometimes', 'integer', 'min:1', 'max:5'],
+            'geofence_sample_timeout_seconds' => ['sometimes', 'integer', 'min:5', 'max:30'],
             'geofence_allow_cross_branch' => ['sometimes', 'boolean'],
+            'geofence_require_backend_validation' => ['sometimes', 'boolean'],
         ]);
+
+        if (isset($validated['geofence_minimum_samples'], $validated['geofence_maximum_samples'])
+            && (int) $validated['geofence_minimum_samples'] > (int) $validated['geofence_maximum_samples']) {
+            throw ValidationException::withMessages([
+                'geofence_maximum_samples' => ['Maximum samples must be greater than or equal to minimum samples.'],
+            ]);
+        }
 
         $branch->fill($validated)->save();
         GeofenceValidationService::forgetBranchCache((int) $branch->id);
@@ -200,6 +221,8 @@ class GeofenceController extends Controller
             'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
             'device_type' => ['nullable', 'string', 'max:32'],
             'method' => ['nullable', 'string', 'max:32'],
+            'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $employee = isset($validated['employee_id']) && $actor?->isAdmin()
@@ -220,6 +243,8 @@ class GeofenceController extends Controller
                 'clock_type' => $validated['clock_type'] ?? null,
                 'device_type' => $validated['device_type'] ?? $this->geofenceValidation->deviceTypeFromRequest($request),
                 'method' => $validated['method'] ?? 'face',
+                'sampled_readings_count' => $validated['sampled_readings_count'] ?? null,
+                'selected_best_accuracy' => $validated['selected_best_accuracy'] ?? ($validated['accuracy_meters'] ?? null),
             ],
         );
 
@@ -353,9 +378,15 @@ class GeofenceController extends Controller
                     throw ValidationException::withMessages([$field => ['This field is required for circle geofences.']]);
                 }
             }
+            if (array_key_exists('center_lat', $validated) || array_key_exists('center_lng', $validated) || ! $partial) {
+                $this->validatePhilippinesCoordinatePair($validated['center_lat'] ?? null, $validated['center_lng'] ?? null);
+            }
         }
         if ($type === 'polygon' && ! $partial && empty($validated['polygon_geojson'])) {
             throw ValidationException::withMessages(['polygon_geojson' => ['Draw polygon boundaries before saving.']]);
+        }
+        if ($type === 'polygon' && array_key_exists('polygon_geojson', $validated) && ! empty($validated['polygon_geojson'])) {
+            $this->validatePolygonCoordinates($validated['polygon_geojson']);
         }
 
         if (isset($validated['name'])) {
@@ -372,6 +403,62 @@ class GeofenceController extends Controller
         }
 
         return $validated;
+    }
+
+    private function validatePhilippinesCoordinatePair(mixed $latitude, mixed $longitude): void
+    {
+        if ($latitude === null || $longitude === null) {
+            throw ValidationException::withMessages([
+                'center_lat' => ['Latitude and longitude are required.'],
+            ]);
+        }
+
+        $lat = (float) $latitude;
+        $lng = (float) $longitude;
+        if (! is_finite($lat) || ! is_finite($lng) || ($lat == 0.0 && $lng == 0.0)) {
+            throw ValidationException::withMessages([
+                'center_lat' => ['Coordinates must be valid and cannot be 0,0.'],
+            ]);
+        }
+
+        if (! $this->withinPhilippinesBounds($lat, $lng)) {
+            $swappedLooksValid = $this->withinPhilippinesBounds($lng, $lat);
+            throw ValidationException::withMessages([
+                'center_lat' => [$swappedLooksValid
+                    ? 'Coordinates look swapped. Latitude must be first and longitude second.'
+                    : 'Coordinates must be within the expected Philippines bounds.'],
+            ]);
+        }
+    }
+
+    private function validatePolygonCoordinates(array $geojson): void
+    {
+        $geometry = ($geojson['type'] ?? null) === 'Feature' ? ($geojson['geometry'] ?? null) : $geojson;
+        $coordinates = is_array($geometry) ? ($geometry['coordinates'] ?? null) : null;
+        if (($geometry['type'] ?? null) !== 'Polygon' || ! is_array($coordinates)) {
+            throw ValidationException::withMessages([
+                'polygon_geojson' => ['Polygon geofence must contain valid GeoJSON polygon coordinates.'],
+            ]);
+        }
+
+        foreach ($coordinates as $ring) {
+            if (! is_array($ring)) {
+                continue;
+            }
+            foreach ($ring as $point) {
+                if (! is_array($point) || count($point) < 2) {
+                    throw ValidationException::withMessages([
+                        'polygon_geojson' => ['Polygon contains an invalid coordinate point.'],
+                    ]);
+                }
+                $this->validatePhilippinesCoordinatePair($point[1], $point[0]);
+            }
+        }
+    }
+
+    private function withinPhilippinesBounds(float $lat, float $lng): bool
+    {
+        return $lat >= 4.0 && $lat <= 22.0 && $lng >= 116.0 && $lng <= 127.5;
     }
 
     private function branchPayload(Branch $branch): array
@@ -403,9 +490,16 @@ class GeofenceController extends Controller
             'geofence_status' => (bool) ($branch->geofence_enabled ?? true) ? 'enabled' : 'disabled',
             'geofence_no_active_policy' => $branch->geofence_no_active_policy ?? 'block',
             'geofence_accuracy_policy' => $branch->geofence_accuracy_policy ?? 'balanced',
+            'geofence_accuracy_buffer_mode' => $branch->geofence_accuracy_buffer_mode ?? 'strict',
             'geofence_poor_accuracy_action' => $branch->geofence_poor_accuracy_action ?? 'block',
             'geofence_default_accuracy_threshold_meters' => (int) ($branch->geofence_default_accuracy_threshold_meters ?? GeofenceValidationService::DEFAULT_ACCURACY_THRESHOLD_METERS),
+            'geofence_mobile_accuracy_threshold_meters' => (int) ($branch->geofence_mobile_accuracy_threshold_meters ?? GeofenceValidationService::DEFAULT_MOBILE_ACCURACY_THRESHOLD_METERS),
+            'geofence_desktop_accuracy_threshold_meters' => (int) ($branch->geofence_desktop_accuracy_threshold_meters ?? GeofenceValidationService::DEFAULT_DESKTOP_ACCURACY_THRESHOLD_METERS),
+            'geofence_minimum_samples' => (int) ($branch->geofence_minimum_samples ?? 3),
+            'geofence_maximum_samples' => (int) ($branch->geofence_maximum_samples ?? 5),
+            'geofence_sample_timeout_seconds' => (int) ($branch->geofence_sample_timeout_seconds ?? 15),
             'geofence_allow_cross_branch' => (bool) ($branch->geofence_allow_cross_branch ?? false),
+            'geofence_require_backend_validation' => (bool) ($branch->geofence_require_backend_validation ?? true),
             'last_updated' => $branch->updated_at?->toIso8601String(),
         ];
     }

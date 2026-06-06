@@ -631,17 +631,20 @@ class AttendanceController extends Controller
         } elseif ($type === AttendanceLog::TYPE_CLOCK_OUT) {
             $data['time_out_clicked_at'] = $officialClockAt;
         }
-        $lat = $request->input('latitude');
-        $lng = $request->input('longitude');
+        $geofence = $request->attributes->get('geofence_result');
+        $lat = is_array($geofence) && isset($geofence['latitude']) ? $geofence['latitude'] : $request->input('latitude');
+        $lng = is_array($geofence) && isset($geofence['longitude']) ? $geofence['longitude'] : $request->input('longitude');
         if ($lat !== null && $lng !== null) {
             $data['latitude'] = $lat;
             $data['longitude'] = $lng;
         }
-        if ($request->input('accuracy_meters') !== null && Schema::hasColumn('attendance_logs', 'accuracy_meters')) {
-            $data['accuracy_meters'] = $request->input('accuracy_meters');
+        $accuracyMeters = is_array($geofence) && array_key_exists('accuracy_meters', $geofence)
+            ? $geofence['accuracy_meters']
+            : $request->input('accuracy_meters');
+        if ($accuracyMeters !== null && Schema::hasColumn('attendance_logs', 'accuracy_meters')) {
+            $data['accuracy_meters'] = $accuracyMeters;
         }
 
-        $geofence = $request->attributes->get('geofence_result');
         if (is_array($geofence)) {
             if (Schema::hasColumn('attendance_logs', 'geofence_validation_id') && isset($geofence['geofence_validation_id'])) {
                 $data['geofence_validation_id'] = (int) $geofence['geofence_validation_id'];
@@ -699,7 +702,7 @@ class AttendanceController extends Controller
             abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
         }
 
-        $isStrictInside = $status === 'passed' && $publicStatus === 'inside' && ! empty($result['matched_geofence_id']);
+        $isStrictInside = in_array($status, ['inside', 'passed'], true) && $publicStatus === 'inside' && ! empty($result['matched_geofence_id']);
         $isExplicitWarnOnly = $enforcementMode === 'warn_only' && $status === 'warn_only';
         if (! $isStrictInside && ! $isExplicitWarnOnly) {
             abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
@@ -711,11 +714,15 @@ class AttendanceController extends Controller
         }
 
         $validation = GeofenceValidationLog::query()->find((int) $validationId);
-        if (! $validation || ! $validation->created_at || $validation->created_at->lt(now()->subMinutes(2))) {
+        if (! $validation || ! $validation->created_at || $validation->created_at->lt(now()->subMinutes(2)) || ($validation->expires_at && $validation->expires_at->lt(now()))) {
             abort(403, 'Geofence validation expired. Please try attendance again.');
         }
 
-        if ($isStrictInside && ((bool) $validation->is_inside !== true || $validation->validation_status !== 'passed')) {
+        if ($validation->attendance_log_id !== null) {
+            abort(403, 'Geofence validation has already been used. Please try attendance again.');
+        }
+
+        if ($isStrictInside && ((bool) $validation->is_inside !== true || ! in_array($validation->validation_status, ['inside', 'passed'], true))) {
             abort(403, 'You are outside the allowed attendance geofence.');
         }
 
@@ -733,6 +740,21 @@ class AttendanceController extends Controller
 
         if (Schema::hasColumn('geofence_validation_logs', 'method') && $validation->method && $attendanceMethod && $validation->method !== $attendanceMethod) {
             abort(403, 'Geofence validation does not match this attendance method.');
+        }
+
+        $requestLat = $request->input('latitude');
+        $requestLng = $request->input('longitude');
+        if ($requestLat !== null && $requestLng !== null && $validation->latitude !== null && $validation->longitude !== null) {
+            $driftMeters = $this->haversineMeters(
+                (float) $validation->latitude,
+                (float) $validation->longitude,
+                (float) $requestLat,
+                (float) $requestLng,
+            );
+            $allowedDrift = min(25.0, max(5.0, (float) ($validation->accuracy_meters ?? 25.0)));
+            if ($driftMeters > $allowedDrift) {
+                abort(403, 'Submitted location does not match the validated geofence reading.');
+            }
         }
     }
 
@@ -843,6 +865,9 @@ class AttendanceController extends Controller
             'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
             'device_type' => ['nullable', 'string', 'max:32'],
             'method' => ['nullable', 'string', 'max:32'],
+            'geofence_validation_id' => ['nullable', 'integer', 'exists:geofence_validation_logs,id'],
+            'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $qrToken = trim((string) ($validated['qr_token'] ?? ''));
@@ -1059,6 +1084,9 @@ class AttendanceController extends Controller
             'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
             'device_type' => ['nullable', 'string', 'max:32'],
             'method' => ['nullable', 'string', 'max:32'],
+            'geofence_validation_id' => ['nullable', 'integer', 'exists:geofence_validation_logs,id'],
+            'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $qrToken = trim($validated['qr_token']);
@@ -1323,6 +1351,9 @@ class AttendanceController extends Controller
             'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
             'device_type' => ['nullable', 'string', 'max:32'],
             'method' => ['nullable', 'string', 'max:32'],
+            'geofence_validation_id' => ['nullable', 'integer', 'exists:geofence_validation_logs,id'],
+            'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $qrToken = trim($validated['qr_token']);
@@ -1560,6 +1591,9 @@ class AttendanceController extends Controller
             'longitude' => ['nullable', 'numeric'],
             'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
             'device_type' => ['nullable', 'string', 'max:32'],
+            'geofence_validation_id' => ['nullable', 'integer', 'exists:geofence_validation_logs,id'],
+            'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
         ]);
         $login = trim((string) ($validated['login'] ?? ''));
         $sessionId = $validated['liveness_session_id'] ?? null;
@@ -3280,8 +3314,9 @@ class AttendanceController extends Controller
                 'user.departmentRelation:id,branch_id',
                 'user.departmentRelation.branch:id,name,company_id',
                 'user.departmentRelation.branch.company:id,name,logo',
-                'geofenceValidation:id,branch_id,validation_status,failure_reason,enforcement_mode,matched_geofence_id,distance_meters',
+                'geofenceValidation:id,branch_id,validation_status,failure_reason,enforcement_mode,matched_geofence_id,distance_meters,radius_meters,geofence_type,device_type,accuracy_threshold_meters',
                 'geofenceValidation.branch:id,name,company_id',
+                'geofenceValidation.matchedGeofence:id,name,type,radius_meters',
             ])
             ->orderByRaw('COALESCE(verified_at, created_at) DESC')
             ->limit(80)
@@ -3316,6 +3351,12 @@ class AttendanceController extends Controller
                     'geofence_label' => $this->kioskGeofenceLabel($geofenceStatus),
                     'geofence_reason' => $log->geofenceValidation?->failure_reason,
                     'geofence_distance_meters' => $log->geofenceValidation?->distance_meters,
+                    'geofence_radius_meters' => $log->geofenceValidation?->radius_meters ?? $log->geofenceValidation?->matchedGeofence?->radius_meters,
+                    'geofence_type' => $log->geofenceValidation?->geofence_type ?? $log->geofenceValidation?->matchedGeofence?->type,
+                    'geofence_device_type' => $log->geofenceValidation?->device_type,
+                    'matched_geofence_id' => $log->geofenceValidation?->matched_geofence_id,
+                    'matched_geofence_name' => $log->geofenceValidation?->matchedGeofence?->name,
+                    'geofence_accuracy_threshold_meters' => $log->geofenceValidation?->accuracy_threshold_meters,
                     'attendance_method' => $log->method ?? $log->authentication_method,
                     'created_at' => $punchAt->toIso8601String(),
                     'status' => $info['status'] ?? null,

@@ -16,7 +16,13 @@ class GeofenceValidationService
 {
     public const DEFAULT_ACCURACY_THRESHOLD_METERS = 100;
 
+    public const DEFAULT_MOBILE_ACCURACY_THRESHOLD_METERS = 50;
+
+    public const DEFAULT_DESKTOP_ACCURACY_THRESHOLD_METERS = 100;
+
     public const CACHE_TTL_SECONDS = 1200;
+
+    public const VALIDATION_TTL_MINUTES = 2;
 
     public static function branchCacheKey(int $branchId): string
     {
@@ -96,6 +102,8 @@ class GeofenceValidationService
             'clock_type' => $this->normalizeClockType($options['clock_type'] ?? null),
             'attendance_log_id' => $options['attendance_log_id'] ?? null,
             'log' => $options['log'] ?? true,
+            'sampled_readings_count' => isset($options['sampled_readings_count']) ? (int) $options['sampled_readings_count'] : null,
+            'selected_best_accuracy' => isset($options['selected_best_accuracy']) ? (float) $options['selected_best_accuracy'] : $accuracyMeters,
         ];
 
         if (! $branch) {
@@ -136,7 +144,7 @@ class GeofenceValidationService
             ]);
         }
 
-        $threshold = $this->branchAccuracyThreshold($branch, $geofences);
+        $threshold = $this->branchAccuracyThreshold($branch, $geofences, $context['device_type'] ?? null);
         $poorAccuracy = $accuracyMeters !== null && $accuracyMeters > $threshold;
 
         $bestDistance = null;
@@ -158,24 +166,30 @@ class GeofenceValidationService
                         'allowed' => false,
                         'validation_status' => 'failed',
                         'enforcement_mode' => $enforcementMode,
-                        'failure_reason' => 'Location accuracy is too low for attendance validation.',
+                        'failure_reason' => 'Location accuracy is too low. Please enable WiFi/location services and try again.',
                         'matched_geofence' => $this->publicGeofencePayload($geofence),
                         'matched_geofence_id' => (int) $geofence['id'],
                         'distance' => $result['distance'],
                         'distance_to_center' => $result['distance_to_center'],
+                        'radius_meters' => $result['radius_meters'],
+                        'geofence_type' => $result['geofence_type'],
+                        'accuracy_threshold_meters' => $threshold,
                     ]);
                 }
 
                 return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
                     ...$context,
                     'allowed' => true,
-                    'validation_status' => $poorAccuracy ? 'warn_only' : 'passed',
+                    'validation_status' => $poorAccuracy ? 'warn_only' : 'inside',
                     'enforcement_mode' => $enforcementMode,
                     'warning' => $poorAccuracy ? 'GPS accuracy is low, but coordinates are inside the branch geofence.' : null,
                     'matched_geofence' => $this->publicGeofencePayload($geofence),
                     'matched_geofence_id' => (int) $geofence['id'],
                     'distance' => $result['distance'],
                     'distance_to_center' => $result['distance_to_center'],
+                    'radius_meters' => $result['radius_meters'],
+                    'geofence_type' => $result['geofence_type'],
+                    'accuracy_threshold_meters' => $threshold,
                 ]);
             }
         }
@@ -193,6 +207,7 @@ class GeofenceValidationService
             'failure_reason' => $outsideReason,
             'distance' => $bestDistance,
             'distance_to_center' => $bestCenterDistance,
+            'accuracy_threshold_meters' => $threshold,
         ]);
     }
 
@@ -224,6 +239,37 @@ class GeofenceValidationService
             return null;
         }
 
+        $branch = $this->resolveBranchForEmployee(
+            $employee,
+            $request->input('branch_id') !== null ? (int) $request->input('branch_id') : null,
+        );
+        $enforcementMode = $branch ? $this->branchEnforcementMode($branch) : 'enforce';
+        $validationId = $request->input('geofence_validation_id');
+        $allowInlineValidation = $request->headers->has('X-Kiosk-Attendance')
+            || $request->attributes->get('allow_inline_geofence_validation') === true;
+        if ($validationId !== null) {
+            $result = $this->consumeValidationLog(
+                $employee,
+                (int) $validationId,
+                $this->normalizeClockType($request->input('clock_type') ?: $request->input('type')),
+                $method ?? $request->input('method'),
+                $branch,
+            );
+            $request->attributes->set('geofence_result', $result);
+
+            if (! ($result['allowed'] ?? false)) {
+                abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
+            }
+
+            return $result;
+        }
+
+        if ($branch && $enforcementMode !== 'disabled' && $this->branchRequiresBackendValidation($branch) && ! $allowInlineValidation) {
+            throw ValidationException::withMessages([
+                'geofence_validation_id' => ['A valid geofence validation record is required before attendance can be saved.'],
+            ]);
+        }
+
         $result = $this->validateForEmployee(
             $employee,
             (float) $lat,
@@ -253,6 +299,140 @@ class GeofenceValidationService
         return str_contains($ua, 'mobile') || str_contains($ua, 'android') || str_contains($ua, 'iphone')
             ? 'mobile'
             : 'desktop';
+    }
+
+    public function consumeValidationLog(User $employee, int $validationId, ?string $clockType, ?string $method, ?Branch $branch = null): array
+    {
+        $validation = GeofenceValidationLog::query()->find($validationId);
+        if (! $validation) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => 'A valid geofence validation record is required before attendance can be saved.',
+            ];
+        }
+
+        if ($validation->attendance_log_id !== null) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => 'Geofence validation has already been used. Please try attendance again.',
+            ];
+        }
+
+        $expiresAt = $validation->expires_at ?? $validation->created_at?->copy()->addMinutes(self::VALIDATION_TTL_MINUTES);
+        if (! $expiresAt || $expiresAt->lt(now())) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => 'Geofence validation expired. Please try attendance again.',
+            ];
+        }
+
+        if ((int) ($validation->employee_id ?? $validation->user_id ?? 0) !== (int) $employee->id) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => 'Geofence validation does not match this employee.',
+            ];
+        }
+
+        $branch ??= $this->resolveBranchForEmployee($employee, $validation->attempted_branch_id ? (int) $validation->attempted_branch_id : null);
+        if ($branch && (int) ($validation->branch_id ?? 0) !== (int) $branch->id) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => 'Geofence validation does not match this branch.',
+            ];
+        }
+
+        if ($validation->clock_type && $clockType && $validation->clock_type !== $clockType) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => 'Geofence validation does not match this attendance action.',
+            ];
+        }
+
+        if ($validation->method && $method && $validation->method !== $method) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => 'Geofence validation does not match this attendance method.',
+            ];
+        }
+
+        $validInsideStatus = in_array((string) $validation->validation_status, ['inside', 'passed'], true);
+        if (! $validInsideStatus || ! (bool) $validation->is_inside) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => $validation->failure_reason ?: 'You are outside the allowed attendance geofence.',
+            ];
+        }
+
+        $threshold = $validation->accuracy_threshold_meters !== null
+            ? (int) $validation->accuracy_threshold_meters
+            : ($branch ? $this->deviceAccuracyThreshold($branch, $validation->device_type) : self::DEFAULT_DESKTOP_ACCURACY_THRESHOLD_METERS);
+        if ($validation->accuracy_meters !== null && (float) $validation->accuracy_meters > $threshold) {
+            return [
+                'allowed' => false,
+                'validation_status' => 'failed',
+                'status' => 'outside',
+                'failure_reason' => 'Location accuracy is too low. Please enable WiFi/location services and try again.',
+            ];
+        }
+
+        $revalidated = $this->validateForEmployee(
+            $employee,
+            (float) $validation->latitude,
+            (float) $validation->longitude,
+            $validation->accuracy_meters !== null ? (float) $validation->accuracy_meters : null,
+            [
+                'branch_id' => $branch?->id,
+                'clock_type' => $clockType,
+                'device_type' => $validation->device_type,
+                'method' => $method ?? $validation->method,
+                'sampled_readings_count' => $validation->sampled_readings_count,
+                'selected_best_accuracy' => $validation->selected_best_accuracy,
+                'log' => false,
+            ],
+        );
+
+        if (! ($revalidated['allowed'] ?? false) || ! in_array((string) ($revalidated['validation_status'] ?? ''), ['inside', 'passed', 'warn_only'], true)) {
+            return [
+                ...$revalidated,
+                'allowed' => false,
+                'failure_reason' => $revalidated['failure_reason'] ?? 'You are outside the allowed attendance geofence.',
+            ];
+        }
+
+        return [
+            ...$revalidated,
+            'geofence_validation_id' => (int) $validation->id,
+            'id' => (int) $validation->id,
+        ];
+    }
+
+    public function branchLocationSettings(?Branch $branch): array
+    {
+        return [
+            'mobile_accuracy_threshold_meters' => $branch ? $this->deviceAccuracyThreshold($branch, 'mobile') : self::DEFAULT_MOBILE_ACCURACY_THRESHOLD_METERS,
+            'desktop_accuracy_threshold_meters' => $branch ? $this->deviceAccuracyThreshold($branch, 'desktop') : self::DEFAULT_DESKTOP_ACCURACY_THRESHOLD_METERS,
+            'accuracy_buffer_mode' => $branch ? $this->branchAccuracyBufferMode($branch) : 'strict',
+            'minimum_samples' => $branch ? $this->branchMinimumSamples($branch) : 3,
+            'maximum_samples' => $branch ? $this->branchMaximumSamples($branch) : 5,
+            'sample_timeout_seconds' => $branch ? $this->branchSampleTimeoutSeconds($branch) : 15,
+            'require_backend_validation' => $branch ? $this->branchRequiresBackendValidation($branch) : true,
+        ];
     }
 
     public function resolveBranchForEmployee(User $employee, ?int $selectedBranchId = null): ?Branch
@@ -359,6 +539,13 @@ class GeofenceValidationService
             'warning' => $result['warning'] ?? null,
             'validation_status' => $status,
             'enforcement_mode' => $result['enforcement_mode'] ?? ($branch ? $this->branchEnforcementMode($branch) : null),
+            'accuracy_threshold_meters' => $result['accuracy_threshold_meters'] ?? null,
+            'radius_meters' => $result['radius_meters'] ?? null,
+            'geofence_type' => $result['geofence_type'] ?? null,
+            'sampled_readings_count' => $result['sampled_readings_count'] ?? null,
+            'selected_best_accuracy' => $result['selected_best_accuracy'] ?? $accuracyMeters,
+            'expires_at' => now()->addMinutes(self::VALIDATION_TTL_MINUTES)->toIso8601String(),
+            'location_settings' => $branch ? $this->branchLocationSettings($branch) : null,
             'branch' => $branch ? [
                 'id' => (int) $branch->id,
                 'name' => $branch->name,
@@ -394,6 +581,12 @@ class GeofenceValidationService
                     'clock_type' => $result['clock_type'] ?? null,
                     'enforcement_mode' => $payload['enforcement_mode'],
                     'distance_meters' => $payload['distance_meters'],
+                    'radius_meters' => $payload['radius_meters'],
+                    'geofence_type' => $payload['geofence_type'],
+                    'sampled_readings_count' => $payload['sampled_readings_count'],
+                    'selected_best_accuracy' => $payload['selected_best_accuracy'],
+                    'accuracy_threshold_meters' => $payload['accuracy_threshold_meters'],
+                    'expires_at' => now()->addMinutes(self::VALIDATION_TTL_MINUTES),
                 ] as $column => $value) {
                     if (Schema::hasColumn('geofence_validation_logs', $column)) {
                         $logPayload[$column] = $value;
@@ -432,7 +625,7 @@ class GeofenceValidationService
 
     /**
      * @param  array<string, mixed>  $geofence
-     * @return array{inside: bool, distance: ?float, distance_to_center: ?float}
+     * @return array{inside: bool, distance: ?float, distance_to_center: ?float, radius_meters: ?float, geofence_type: ?string}
      */
     private function checkGeofence(array $geofence, float $latitude, float $longitude, ?float $accuracyMeters, Branch $branch): array
     {
@@ -442,21 +635,24 @@ class GeofenceValidationService
             $centerLng = isset($geofence['center_lng']) ? (float) $geofence['center_lng'] : null;
             $radius = isset($geofence['radius_meters']) ? (float) $geofence['radius_meters'] : null;
             if ($centerLat === null || $centerLng === null || $radius === null) {
-                return ['inside' => false, 'distance' => null, 'distance_to_center' => null];
+                return ['inside' => false, 'distance' => null, 'distance_to_center' => null, 'radius_meters' => $radius, 'geofence_type' => 'circle'];
             }
             $distance = $this->haversineMeters($centerLat, $centerLng, $latitude, $longitude);
+            $allowedDistance = $radius + $this->accuracyBufferMeters($branch, $accuracyMeters);
 
             return [
-                'inside' => $distance <= $radius,
+                'inside' => $distance <= $allowedDistance,
                 'distance' => $distance,
                 'distance_to_center' => $distance,
+                'radius_meters' => $radius,
+                'geofence_type' => 'circle',
             ];
         }
 
         if ($type === 'polygon') {
             $rings = $this->polygonRings($geofence['polygon_geojson'] ?? null);
             if ($rings === []) {
-                return ['inside' => false, 'distance' => null, 'distance_to_center' => null];
+                return ['inside' => false, 'distance' => null, 'distance_to_center' => null, 'radius_meters' => null, 'geofence_type' => 'polygon'];
             }
 
             $inside = $this->pointInPolygon($latitude, $longitude, $rings);
@@ -466,10 +662,12 @@ class GeofenceValidationService
                 'inside' => $inside,
                 'distance' => $distance,
                 'distance_to_center' => $distance,
+                'radius_meters' => null,
+                'geofence_type' => 'polygon',
             ];
         }
 
-        return ['inside' => false, 'distance' => null, 'distance_to_center' => null];
+        return ['inside' => false, 'distance' => null, 'distance_to_center' => null, 'radius_meters' => null, 'geofence_type' => $type ?: null];
     }
 
     private function branchNoActivePolicy(Branch $branch): string
@@ -488,6 +686,28 @@ class GeofenceValidationService
             : 'balanced';
 
         return in_array($value, ['strict', 'balanced', 'lenient'], true) ? $value : 'balanced';
+    }
+
+    private function branchAccuracyBufferMode(Branch $branch): string
+    {
+        $value = Schema::hasColumn('branches', 'geofence_accuracy_buffer_mode')
+            ? strtolower((string) ($branch->geofence_accuracy_buffer_mode ?? 'strict'))
+            : 'strict';
+
+        return in_array($value, ['strict', 'balanced', 'lenient'], true) ? $value : 'strict';
+    }
+
+    private function accuracyBufferMeters(Branch $branch, ?float $accuracyMeters): float
+    {
+        if ($accuracyMeters === null) {
+            return 0.0;
+        }
+
+        return match ($this->branchAccuracyBufferMode($branch)) {
+            'balanced' => min($accuracyMeters, 25.0),
+            'lenient' => min($accuracyMeters, 50.0),
+            default => 0.0,
+        };
     }
 
     private function branchPoorAccuracyAction(Branch $branch): string
@@ -528,7 +748,7 @@ class GeofenceValidationService
     private function publicStatus(string $status, bool $isInside): string
     {
         return match ($status) {
-            'passed' => 'inside',
+            'passed', 'inside' => 'inside',
             'warning' => 'warning',
             'warn_only' => $isInside ? 'warning' : 'outside',
             'disabled' => 'disabled',
@@ -539,16 +759,14 @@ class GeofenceValidationService
     /**
      * @param  list<array<string, mixed>>  $geofences
      */
-    private function branchAccuracyThreshold(Branch $branch, array $geofences): int
+    private function branchAccuracyThreshold(Branch $branch, array $geofences, ?string $deviceType = null): int
     {
         $policyThreshold = match ($this->branchAccuracyPolicy($branch)) {
             'strict' => 50,
-            'lenient' => 300,
-            default => 150,
+            'lenient' => 150,
+            default => 100,
         };
-        $branchDefault = Schema::hasColumn('branches', 'geofence_default_accuracy_threshold_meters')
-            ? (int) ($branch->geofence_default_accuracy_threshold_meters ?? $policyThreshold)
-            : $policyThreshold;
+        $branchDefault = $this->deviceAccuracyThreshold($branch, $deviceType);
         $thresholds = array_values(array_filter(array_map(
             static fn (array $row): int => (int) ($row['accuracy_threshold_meters'] ?? 0),
             $geofences,
@@ -558,9 +776,49 @@ class GeofenceValidationService
 
         return match ($this->branchAccuracyPolicy($branch)) {
             'strict' => min($configuredThreshold, $policyThreshold),
-            'lenient' => max($configuredThreshold, $policyThreshold),
-            default => max($configuredThreshold, $policyThreshold),
+            'lenient' => min(max($configuredThreshold, $policyThreshold), 150),
+            default => min(max($configuredThreshold, $policyThreshold), 100),
         };
+    }
+
+    private function deviceAccuracyThreshold(Branch $branch, ?string $deviceType): int
+    {
+        $isMobile = strtolower((string) $deviceType) === 'mobile';
+        $column = $isMobile ? 'geofence_mobile_accuracy_threshold_meters' : 'geofence_desktop_accuracy_threshold_meters';
+        $fallback = $isMobile ? self::DEFAULT_MOBILE_ACCURACY_THRESHOLD_METERS : self::DEFAULT_DESKTOP_ACCURACY_THRESHOLD_METERS;
+        if (Schema::hasColumn('branches', $column)) {
+            return max(5, min((int) ($branch->{$column} ?? $fallback), 5000));
+        }
+
+        return max(5, min((int) ($branch->geofence_default_accuracy_threshold_meters ?? $fallback), 5000));
+    }
+
+    private function branchMinimumSamples(Branch $branch): int
+    {
+        $value = Schema::hasColumn('branches', 'geofence_minimum_samples') ? (int) ($branch->geofence_minimum_samples ?? 3) : 3;
+
+        return max(1, min($value, 5));
+    }
+
+    private function branchMaximumSamples(Branch $branch): int
+    {
+        $min = $this->branchMinimumSamples($branch);
+        $value = Schema::hasColumn('branches', 'geofence_maximum_samples') ? (int) ($branch->geofence_maximum_samples ?? 5) : 5;
+
+        return max($min, min($value, 5));
+    }
+
+    private function branchSampleTimeoutSeconds(Branch $branch): int
+    {
+        $value = Schema::hasColumn('branches', 'geofence_sample_timeout_seconds') ? (int) ($branch->geofence_sample_timeout_seconds ?? 15) : 15;
+
+        return max(5, min($value, 30));
+    }
+
+    private function branchRequiresBackendValidation(Branch $branch): bool
+    {
+        return ! Schema::hasColumn('branches', 'geofence_require_backend_validation')
+            || (bool) ($branch->geofence_require_backend_validation ?? true);
     }
 
     private function mayUseCrossBranch(User $employee, ?Branch $assignedBranch, Branch $selected): bool

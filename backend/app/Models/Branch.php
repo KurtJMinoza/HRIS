@@ -29,9 +29,16 @@ class Branch extends Model
         'geofence_enforcement_mode',
         'geofence_no_active_policy',
         'geofence_accuracy_policy',
+        'geofence_accuracy_buffer_mode',
         'geofence_poor_accuracy_action',
         'geofence_default_accuracy_threshold_meters',
+        'geofence_mobile_accuracy_threshold_meters',
+        'geofence_desktop_accuracy_threshold_meters',
+        'geofence_minimum_samples',
+        'geofence_maximum_samples',
+        'geofence_sample_timeout_seconds',
         'geofence_allow_cross_branch',
+        'geofence_require_backend_validation',
     ];
 
     protected static function booted(): void
@@ -42,9 +49,16 @@ class Branch extends Model
                 'geofence_enforcement_mode',
                 'geofence_no_active_policy',
                 'geofence_accuracy_policy',
+                'geofence_accuracy_buffer_mode',
                 'geofence_poor_accuracy_action',
                 'geofence_default_accuracy_threshold_meters',
+                'geofence_mobile_accuracy_threshold_meters',
+                'geofence_desktop_accuracy_threshold_meters',
+                'geofence_minimum_samples',
+                'geofence_maximum_samples',
+                'geofence_sample_timeout_seconds',
                 'geofence_allow_cross_branch',
+                'geofence_require_backend_validation',
                 'branch_latitude',
                 'branch_longitude',
                 'branch_address',
@@ -92,7 +106,13 @@ class Branch extends Model
             'branch_latitude' => 'float',
             'branch_longitude' => 'float',
             'geofence_default_accuracy_threshold_meters' => 'integer',
+            'geofence_mobile_accuracy_threshold_meters' => 'integer',
+            'geofence_desktop_accuracy_threshold_meters' => 'integer',
+            'geofence_minimum_samples' => 'integer',
+            'geofence_maximum_samples' => 'integer',
+            'geofence_sample_timeout_seconds' => 'integer',
             'geofence_allow_cross_branch' => 'boolean',
+            'geofence_require_backend_validation' => 'boolean',
         ];
     }
 

@@ -1105,6 +1105,7 @@ function SmartDTRPreview({ className }) {
                             ) : null}
                             {log.accuracy_meters != null ? <span>Accuracy {Math.round(Number(log.accuracy_meters))}m</span> : null}
                             {log.geofence_distance_meters != null ? <span>Distance {Math.round(Number(log.geofence_distance_meters))}m</span> : null}
+                            {log.geofence_radius_meters != null ? <span>Radius {Math.round(Number(log.geofence_radius_meters))}m</span> : null}
                             {log.geofence_label ? (
                               <span className={cn(
                                 'font-bold',
@@ -1113,6 +1114,8 @@ function SmartDTRPreview({ className }) {
                                 Geofence: {log.geofence_label}
                               </span>
                             ) : null}
+                            {log.geofence_device_type ? <span>{String(log.geofence_device_type).toUpperCase()}</span> : null}
+                            {log.matched_geofence_name ? <span>{log.matched_geofence_name}</span> : null}
                             {log.attendance_method ? <span>{String(log.attendance_method).toUpperCase()}</span> : null}
                           </p>
                         )}

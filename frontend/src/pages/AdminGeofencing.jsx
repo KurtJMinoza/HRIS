@@ -21,6 +21,7 @@ import {
   Users,
 } from 'lucide-react'
 import {
+  captureAttendanceLocation,
   companyLogoUrl,
   createBranchGeofence,
   getAdminGeofencing,
@@ -28,6 +29,7 @@ import {
   getNearbyGeofenceOsmPoi,
   searchGeofenceLocation,
   searchGeofenceOsmPoi,
+  testAttendanceGeofence,
   updateBranchGeofence,
   updateBranchGeofenceSettings,
 } from '@/api'
@@ -732,7 +734,7 @@ function GeofenceMapOptimized({
   const editMarkersRef = useRef([])
   const poiPopupRef = useRef(null)
   const mapillaryPopupRef = useRef(null)
-  const fitKeyRef = useRef('')
+  const fittedBranchRef = useRef('')
   const focusKeyRef = useRef('')
   const [mapReady, setMapReady] = useState(false)
   const [mapillaryVisible, setMapillaryVisible] = useState(Boolean(MAPILLARY_TILE_URL))
@@ -1111,31 +1113,45 @@ function GeofenceMapOptimized({
   }, [branch, geofences, mapReady, setDrawMode, setForm])
 
   useEffect(() => {
+    fittedBranchRef.current = ''
+  }, [branch?.id])
+
+  useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady) return
 
     const staticGeofences = form.id == null
       ? geofences
       : geofences.filter((geofence) => String(geofence.id) !== String(form.id))
-    const shapes = geofenceFeatureCollection(staticGeofences)
-    const labels = geofenceLabelCollection(staticGeofences)
-    map.getSource('static-geofence-shapes')?.setData(shapes)
-    map.getSource('static-geofence-labels')?.setData(labels)
+    map.getSource('static-geofence-shapes')?.setData(geofenceFeatureCollection(staticGeofences))
+    map.getSource('static-geofence-labels')?.setData(geofenceLabelCollection(staticGeofences))
+  }, [branch, geofences, form.id, mapReady])
 
-    const fitKey = `${branch?.id || 'none'}:${geofences.map((g) => `${g.id}:${g.updated_at || ''}`).join('|')}`
-    if (fitKeyRef.current === fitKey) return
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady || !branch?.id) return
 
-    fitKeyRef.current = fitKey
-    const bounds = geojsonBounds(shapes)
-    const fallbackCenter = geofences.map(geofenceCenter).find(Boolean)
-    if (bounds) map.fitBounds(bounds, { padding: 80, maxZoom: 17, animate: false })
-    else if (fallbackCenter) {
+    const branchKey = String(branch.id)
+    if (fittedBranchRef.current === branchKey) return
+
+    const fallbackCenter = geofences.map(geofenceCenter).find(Boolean) || branchLocation(branch)
+    if (!geofences.length) {
       const center = toLngLat(fallbackCenter)
       if (center) map.jumpTo({ center, zoom: Math.max(map.getZoom(), 16) })
-    } else if (branch) {
-      map.jumpTo({ center: [DEFAULT_CENTER[1], DEFAULT_CENTER[0]], zoom: 15 })
+      fittedBranchRef.current = branchKey
+      return
     }
-  }, [branch, geofences, form.id, mapReady])
+
+    fittedBranchRef.current = branchKey
+    const bounds = geojsonBounds(geofenceFeatureCollection(geofences))
+    if (bounds) {
+      map.fitBounds(bounds, { padding: 80, maxZoom: 17, animate: false })
+      return
+    }
+
+    const center = toLngLat(fallbackCenter)
+    if (center) map.jumpTo({ center, zoom: Math.max(map.getZoom(), 16) })
+  }, [branch, geofences, mapReady])
 
   useEffect(() => {
     const map = mapRef.current
@@ -1321,12 +1337,17 @@ export default function AdminGeofencing() {
   const [mapillaryImage, setMapillaryImage] = useState(null)
   const [mapillaryLoading, setMapillaryLoading] = useState(false)
   const [mapillaryError, setMapillaryError] = useState('')
+  const [locationTestLoading, setLocationTestLoading] = useState(false)
+  const [locationTestResult, setLocationTestResult] = useState(null)
   const mapSearchCacheRef = useRef(new Map())
   const mapSearchAbortRef = useRef(null)
   const poiSearchCacheRef = useRef(new Map())
   const poiSearchAbortRef = useRef(null)
   const mapillaryAbortRef = useRef(null)
+  const formGeofenceIdRef = useRef(null)
   const { toast } = useToast()
+
+  formGeofenceIdRef.current = form.id
 
   const selectedBranch = useMemo(
     () => branches.find((branch) => String(branch.id) === String(selectedBranchId)) || null,
@@ -1379,6 +1400,7 @@ export default function AdminGeofencing() {
   }, [toast])
 
   const loadBranch = useCallback(async (branchId, options = {}) => {
+    const focusMap = options.focusMap !== false
     if (!branchId) {
       setGeofences([])
       setBranchEmployees([])
@@ -1393,18 +1415,29 @@ export default function AdminGeofencing() {
       const preferredGeofence = options.preferredGeofenceId
         ? nextGeofences.find((geofence) => String(geofence.id) === String(options.preferredGeofenceId))
         : null
-      const selectedGeofence = preferredGeofence || nextGeofences[0]
-      const nextForm = formFromGeofence(branchId, branchName, selectedGeofence)
-      const center = geofenceCenter(selectedGeofence) || branchLocation(data.branch) || geofenceCenter(nextForm) || DEFAULT_CENTER
+      const currentGeofence = !preferredGeofence && formGeofenceIdRef.current
+        ? nextGeofences.find((geofence) => String(geofence.id) === String(formGeofenceIdRef.current))
+        : null
+      const selectedGeofence = preferredGeofence || (focusMap ? nextGeofences[0] : currentGeofence)
+
       setGeofences(nextGeofences)
       setBranchEmployees(nextEmployees)
       if (data.branch) {
         setBranches((list) => list.map((branch) => (String(branch.id) === String(data.branch.id) ? { ...branch, ...data.branch } : branch)))
       }
+
+      if (!selectedGeofence) {
+        return { branch: data.branch, geofences: nextGeofences }
+      }
+
+      const nextForm = formFromGeofence(branchId, branchName, selectedGeofence)
+      const center = geofenceCenter(selectedGeofence) || branchLocation(data.branch) || geofenceCenter(nextForm) || DEFAULT_CENTER
       setForm({ ...nextForm, center_lat: center[0], center_lng: center[1] })
       setDrawMode(selectedGeofence?.type || 'circle')
-      setFocusPoint({ latitude: center[0], longitude: center[1] })
-      setFocusKey((key) => key + 1)
+      if (focusMap) {
+        setFocusPoint({ latitude: center[0], longitude: center[1] })
+        setFocusKey((key) => key + 1)
+      }
       return { branch: data.branch, geofences: nextGeofences }
     } catch (error) {
       toast({ title: 'Failed to load branch geofences', description: error.message, variant: 'error' })
@@ -1482,7 +1515,7 @@ export default function AdminGeofencing() {
   }, [load])
 
   useEffect(() => {
-    loadBranch(selectedBranchId)
+    loadBranch(selectedBranchId, { focusMap: true })
   }, [selectedBranchId, loadBranch])
 
   useEffect(() => {
@@ -1643,7 +1676,7 @@ export default function AdminGeofencing() {
         : await createBranchGeofence(selectedBranchId, payload)
       const savedGeofenceId = data?.geofence?.id || form.id
       toast({ title: form.id ? 'Geofence updated' : 'Geofence created', variant: 'success' })
-      const branchData = await loadBranch(selectedBranchId, { preferredGeofenceId: savedGeofenceId })
+      const branchData = await loadBranch(selectedBranchId, { preferredGeofenceId: savedGeofenceId, focusMap: false })
       await load()
       if (options.addAnother && branchData) {
         const { form: nextForm, center } = draftFormForBranch(selectedBranchId, branchData.branch || selectedBranch, branchData.geofences || [], geofenceCenter(form))
@@ -1679,7 +1712,7 @@ export default function AdminGeofencing() {
     if (!selectedBranchId || !form.id) return
     try {
       await updateBranchGeofence(selectedBranchId, form.id, { is_active: !normalizeBoolean(form.is_active) })
-      await loadBranch(selectedBranchId, { preferredGeofenceId: form.id })
+      await loadBranch(selectedBranchId, { preferredGeofenceId: form.id, focusMap: false })
       await load()
     } catch (error) {
       toast({ title: 'Update failed', description: error.message, variant: 'error' })
@@ -1691,11 +1724,42 @@ export default function AdminGeofencing() {
     try {
       const nextActive = !normalizeBoolean(geofence.is_active)
       await updateBranchGeofence(selectedBranchId, geofence.id, { is_active: nextActive })
-      await loadBranch(selectedBranchId, { preferredGeofenceId: geofence.id })
+      await loadBranch(selectedBranchId, { preferredGeofenceId: geofence.id, focusMap: false })
       await load()
       toast({ title: nextActive ? 'Geofence enabled' : 'Geofence saved as draft', variant: 'success' })
     } catch (error) {
       toast({ title: 'Update failed', description: error.message, variant: 'error' })
+    }
+  }
+
+  async function testCurrentLocation() {
+    if (!selectedBranchId) return
+    setLocationTestLoading(true)
+    setLocationTestResult(null)
+    try {
+      const location = await captureAttendanceLocation({
+        minimumSamples: Number(selectedBranch?.geofence_minimum_samples || 3),
+        maximumSamples: Number(selectedBranch?.geofence_maximum_samples || 5),
+        timeoutMs: Number(selectedBranch?.geofence_sample_timeout_seconds || 15) * 1000,
+        desiredAccuracyMeters: Number(
+          selectedBranch?.geofence_desktop_accuracy_threshold_meters
+          || selectedBranch?.geofence_default_accuracy_threshold_meters
+          || 100,
+        ),
+      })
+      const result = await testAttendanceGeofence({
+        branch_id: selectedBranchId,
+        clock_type: 'clock_in',
+        method: 'admin_test',
+        ...location,
+      })
+      setLocationTestResult({ location, result })
+      toast({ title: result.allowed ? 'Current location is inside' : 'Current location is outside', variant: result.allowed ? 'success' : 'error' })
+    } catch (error) {
+      setLocationTestResult({ error: error.message })
+      toast({ title: 'Location test failed', description: error.message, variant: 'error' })
+    } finally {
+      setLocationTestLoading(false)
     }
   }
 
@@ -2007,6 +2071,9 @@ export default function AdminGeofencing() {
                       <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" value={form.center_lng} disabled={!shapeEditable} onChange={(e) => setForm((s) => ({ ...s, center_lng: e.target.value }))} />
                     </Label>
                   </div>
+                  <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600 dark:border-border dark:bg-muted/30 dark:text-muted-foreground">
+                    Saved pin: Lat <span className="font-mono font-semibold">{form.center_lat || 'not set'}</span> · Lng <span className="font-mono font-semibold">{form.center_lng || 'not set'}</span> · Radius <span className="font-mono font-semibold">{form.radius_meters || 0}m</span>
+                  </div>
                   <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
                     Radius: <span className="font-bold text-slate-950 dark:text-foreground">{form.radius_meters}m</span>
                     <input
@@ -2202,6 +2269,38 @@ export default function AdminGeofencing() {
               </SelectBox>
             </div>
             <div className="grid grid-cols-[116px_1fr] items-center gap-3">
+              <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Accuracy buffer</span>
+              <SelectBox value={selectedBranch?.geofence_accuracy_buffer_mode || 'strict'} onChange={(e) => updateSettings({ geofence_accuracy_buffer_mode: e.target.value })}>
+                <option value="strict">Strict: no buffer</option>
+                <option value="balanced">Balanced: + max 25m</option>
+                <option value="lenient">Lenient: + max 50m</option>
+              </SelectBox>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                Mobile threshold
+                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="5000" value={selectedBranch?.geofence_mobile_accuracy_threshold_meters ?? 50} onChange={(e) => updateSettings({ geofence_mobile_accuracy_threshold_meters: Number(e.target.value) })} />
+              </Label>
+              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                Desktop threshold
+                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="5000" value={selectedBranch?.geofence_desktop_accuracy_threshold_meters ?? 100} onChange={(e) => updateSettings({ geofence_desktop_accuracy_threshold_meters: Number(e.target.value) })} />
+              </Label>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                Min samples
+                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="1" max="5" value={selectedBranch?.geofence_minimum_samples ?? 3} onChange={(e) => updateSettings({ geofence_minimum_samples: Number(e.target.value) })} />
+              </Label>
+              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                Max samples
+                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="1" max="5" value={selectedBranch?.geofence_maximum_samples ?? 5} onChange={(e) => updateSettings({ geofence_maximum_samples: Number(e.target.value) })} />
+              </Label>
+              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                Timeout sec
+                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="30" value={selectedBranch?.geofence_sample_timeout_seconds ?? 15} onChange={(e) => updateSettings({ geofence_sample_timeout_seconds: Number(e.target.value) })} />
+              </Label>
+            </div>
+            <div className="grid grid-cols-[116px_1fr] items-center gap-3">
               <span className="text-xs font-semibold leading-tight text-slate-700 dark:text-muted-foreground">Poor GPS accuracy</span>
               <SelectBox value={selectedBranch?.geofence_poor_accuracy_action || 'block'} onChange={(e) => updateSettings({ geofence_poor_accuracy_action: e.target.value })}>
                 <option value="block">Block</option>
@@ -2211,6 +2310,28 @@ export default function AdminGeofencing() {
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Allow other company branches</span>
               <Switch checked={Boolean(selectedBranch?.geofence_allow_cross_branch)} onCheckedChange={(checked) => updateSettings({ geofence_allow_cross_branch: checked })} />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Require backend validation</span>
+              <Switch checked={selectedBranch?.geofence_require_backend_validation !== false} onCheckedChange={(checked) => updateSettings({ geofence_require_backend_validation: checked })} />
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-border dark:bg-muted/30 dark:text-muted-foreground">
+              <Button type="button" variant="outline" className="h-9 w-full gap-2 rounded-md bg-white text-xs shadow-sm dark:bg-background" onClick={testCurrentLocation} disabled={locationTestLoading || !selectedBranchId}>
+                <RefreshCw className={cn('size-4', locationTestLoading && 'animate-spin')} />
+                Test Current Location
+              </Button>
+              {locationTestResult?.error ? (
+                <p className="mt-2 text-[11px] text-red-600 dark:text-red-300">{locationTestResult.error}</p>
+              ) : locationTestResult ? (
+                <div className="mt-2 grid gap-1 text-[11px]">
+                  <div>Lat <span className="font-mono">{Number(locationTestResult.location?.latitude || 0).toFixed(6)}</span> · Lng <span className="font-mono">{Number(locationTestResult.location?.longitude || 0).toFixed(6)}</span></div>
+                  <div>Accuracy <span className="font-semibold">{Math.round(Number(locationTestResult.location?.accuracy_meters || 0))}m</span> · Best of <span className="font-semibold">{locationTestResult.location?.sampled_readings_count || 1}</span> samples · Device <span className="font-semibold">{locationTestResult.location?.device_type || 'desktop'}</span></div>
+                  <div>Distance <span className="font-semibold">{Math.round(Number(locationTestResult.result?.distance_meters || 0))}m</span> · Radius <span className="font-semibold">{locationTestResult.result?.radius_meters ?? locationTestResult.result?.matched_geofence?.radius_meters ?? 'n/a'}m</span> · Status <span className={cn('font-bold', locationTestResult.result?.allowed ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-600 dark:text-red-300')}>{locationTestResult.result?.status || 'outside'}</span></div>
+                  {!locationTestResult.result?.allowed && (
+                    <p className="text-amber-700 dark:text-amber-300">Desktop/laptop location may be inaccurate. Turn on WiFi, enable Windows/Mac location services, and avoid VPN.</p>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

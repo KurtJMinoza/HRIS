@@ -320,6 +320,9 @@ class AuthController extends Controller
             'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
             'device_type' => ['nullable', 'string', 'max:32'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'geofence_validation_id' => ['nullable', 'integer', 'exists:geofence_validation_logs,id'],
+            'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
         ], [
             'liveness_session_id.required_without' => 'Either liveness session or face image is required.',
         ]);
@@ -485,6 +488,7 @@ class AuthController extends Controller
             'liveness_score' => $livenessScore,
             'authentication_method' => AttendanceLog::AUTH_METHOD_FACE,
         ];
+        $request->attributes->set('allow_inline_geofence_validation', true);
         $attendanceResult = app(AttendanceController::class)->recordClockInForUser($user, $request, $faceContext);
         FaceRecognitionAuditService::record($request, [
             'matched_employee_id' => $user->id,

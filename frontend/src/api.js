@@ -143,7 +143,7 @@ export async function getAttendanceLocationDiagnostics() {
   }
 }
 
-export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enableHighAccuracy, attempts = 3, desiredAccuracyMeters } = {}) {
+export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enableHighAccuracy, attempts = 5, desiredAccuracyMeters, minimumSamples = 3, maximumSamples = 5 } = {}) {
   const deviceType = attendanceDeviceType()
   const permission = await geolocationPermissionState()
   const hasGeolocation = typeof navigator !== 'undefined' && Boolean(navigator.geolocation)
@@ -261,17 +261,24 @@ export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enabl
   }
 
   let bestLocation = null
+  const readings = []
   let lastError = null
-  const maxAttempts = Math.max(1, Math.min(3, Number(attempts) || 3))
+  const minAttempts = Math.max(1, Math.min(5, Number(minimumSamples) || 3))
+  const maxAttempts = Math.max(minAttempts, Math.min(5, Number(maximumSamples ?? attempts) || 5))
 
   for (let attemptNo = 1; attemptNo <= maxAttempts; attemptNo += 1) {
     try {
       const location = locationFromPosition(await readPosition(), permission, attemptNo === 1 ? 'initial' : `accuracy_retry_${attemptNo}`)
+      readings.push(location)
       if (!bestLocation || Number(location.accuracy_meters ?? Infinity) < Number(bestLocation.accuracy_meters ?? Infinity)) {
         bestLocation = location
       }
-      if (Number(location.accuracy_meters ?? Infinity) <= targetAccuracy) {
-        return location
+      if (attemptNo >= minAttempts && Number(bestLocation.accuracy_meters ?? Infinity) <= targetAccuracy) {
+        return {
+          ...bestLocation,
+          sampled_readings_count: readings.length,
+          selected_best_accuracy: bestLocation.accuracy_meters ?? null,
+        }
       }
       if (attemptNo < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, 450))
@@ -284,7 +291,11 @@ export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enabl
   }
 
   if (bestLocation) {
-    return bestLocation
+    return {
+      ...bestLocation,
+      sampled_readings_count: readings.length,
+      selected_best_accuracy: bestLocation.accuracy_meters ?? null,
+    }
   }
 
   if (permission === 'granted' && lastError?.code === lastError?.PERMISSION_DENIED) {
@@ -311,6 +322,9 @@ function geolocationPayload(location) {
     longitude,
     accuracy_meters: location.accuracy_meters ?? location.accuracy ?? null,
     device_type: location.device_type ?? attendanceDeviceType(),
+    geofence_validation_id: location.geofence_validation_id ?? null,
+    sampled_readings_count: location.sampled_readings_count ?? null,
+    selected_best_accuracy: location.selected_best_accuracy ?? location.accuracy_meters ?? location.accuracy ?? null,
   }
 }
 
@@ -327,7 +341,7 @@ export async function validateAttendanceGeofence(payload = {}) {
   if (data.allowed === false) {
     const reason = data.failure_reason || 'You are outside the allowed attendance geofence.'
     const err = new Error(/accuracy/i.test(reason)
-      ? `${reason} Please enable WiFi/location services or move closer to the branch area.`
+      ? 'Location accuracy is too low. Please enable WiFi/location services and try again.'
       : reason)
     err.geofence = data
     throw err
@@ -359,7 +373,13 @@ export async function prepareAttendanceLocation(options = {}) {
       method: options.method,
       ...location,
     })
-    return { location, result }
+    return {
+      location: {
+        ...location,
+        geofence_validation_id: result?.geofence_validation_id ?? result?.id ?? location.geofence_validation_id ?? null,
+      },
+      result,
+    }
   }
   return { location, result: null }
 }
@@ -6027,7 +6047,7 @@ export async function recordAttendanceScan(type, qrToken, options = {}) {
       clicked_at: attempt.clicked_at,
     })).location
   } else if (authenticated && options.validateGeofence !== false && location.latitude != null && location.longitude != null) {
-    await validateAttendanceGeofence({
+    const result = await validateAttendanceGeofence({
       employee_id: options.employee_id,
       branch_id: options.branch_id,
       clock_type: type,
@@ -6035,6 +6055,10 @@ export async function recordAttendanceScan(type, qrToken, options = {}) {
       method: options.method || 'qr',
       ...location,
     })
+    location = {
+      ...location,
+      geofence_validation_id: result?.geofence_validation_id ?? result?.id ?? location.geofence_validation_id ?? null,
+    }
   }
   const body = JSON.stringify({ type, qr_token: qrToken, ...attempt, ...location })
   const kioskHeaders = authenticated ? {} : { 'X-Kiosk-Attendance': '1' }

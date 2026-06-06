@@ -22,11 +22,17 @@ class GeofenceValidationLog extends Model
         'is_inside',
         'distance_to_center',
         'distance_meters',
+        'radius_meters',
+        'geofence_type',
         'validation_status',
         'enforcement_mode',
         'failure_reason',
         'device_type',
         'method',
+        'sampled_readings_count',
+        'selected_best_accuracy',
+        'accuracy_threshold_meters',
+        'expires_at',
     ];
 
     protected function casts(): array
@@ -38,6 +44,8 @@ class GeofenceValidationLog extends Model
             'is_inside' => 'boolean',
             'distance_to_center' => 'float',
             'distance_meters' => 'float',
+            'selected_best_accuracy' => 'float',
+            'expires_at' => 'datetime',
         ];
     }
 
