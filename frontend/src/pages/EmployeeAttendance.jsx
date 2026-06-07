@@ -63,6 +63,9 @@ import {
   getMyAttendanceSummary,
   recordAttendance,
   getStoredUser,
+  configuredAttendanceDeviceType,
+  detectedAttendanceDeviceType,
+  setAttendanceDeviceType,
   EMPLOYEE_ATTENDANCE_PAGE_SIZE,
   ATTENDANCE_PAGE_SIZE_OPTIONS,
   normalizeAttendancePerPage,
@@ -224,6 +227,9 @@ export default function EmployeeAttendance() {
   const [successMessage, setSuccessMessage] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [modalType, setModalType] = useState('clock_in')
+  const [attendanceDeviceProfile, setAttendanceDeviceProfile] = useState(
+    () => configuredAttendanceDeviceType() || detectedAttendanceDeviceType() || '',
+  )
   const [submitting, setSubmitting] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailRow, setDetailRow] = useState(null)
@@ -440,6 +446,12 @@ export default function EmployeeAttendance() {
 
   async function handleScan(text, attemptMeta) {
     if (!text || submitting) return
+    if (!attendanceDeviceProfile) {
+      const message = 'Select whether this computer is a desktop or laptop before scanning.'
+      setError(message)
+      toast({ title: 'Device type required', description: message, variant: 'error' })
+      return
+    }
     const now = Date.now()
     const last = lastScanRef.current
     if (last.text === text && now - last.at < 2500) return
@@ -466,6 +478,9 @@ export default function EmployeeAttendance() {
 
   const openModal = (type) => {
     setModalType(type)
+    setAttendanceDeviceProfile(
+      configuredAttendanceDeviceType() || detectedAttendanceDeviceType() || '',
+    )
     setError(null)
     setSuccessMessage(null)
     setModalOpen(true)
@@ -1048,14 +1063,39 @@ export default function EmployeeAttendance() {
             </DialogHeader>
           </div>
           <div className={ADMIN_FORM_DIALOG_BODY_CLASS}>
-            {modalOpen && (
+            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-border dark:bg-muted/30">
+              <label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                This device
+              </label>
+              <Select
+                value={attendanceDeviceProfile}
+                onValueChange={(value) => {
+                  setAttendanceDeviceProfile(setAttendanceDeviceType(value))
+                  setError(null)
+                }}
+              >
+                <SelectTrigger className="mt-1.5 h-9 bg-white dark:bg-background">
+                  <SelectValue placeholder="Select desktop or laptop" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="desktop">Desktop computer</SelectItem>
+                  <SelectItem value="laptop">Laptop computer</SelectItem>
+                  <SelectItem value="mobile">Mobile phone</SelectItem>
+                  <SelectItem value="tablet">Tablet</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-muted-foreground">
+                Browsers identify desktops and laptops the same way, so choose the physical device once for correct geofence matching.
+              </p>
+            </div>
+            {modalOpen && attendanceDeviceProfile ? (
               <ScannerInput
                 onScan={handleScan}
                 submitting={submitting}
                 error={error}
                 theme="light"
               />
-            )}
+            ) : null}
           </div>
           <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
             <Button type="button" variant="outline" onClick={() => { setModalOpen(false); setError(null); }}>

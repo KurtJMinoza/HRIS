@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\BranchGeofence;
+use App\Models\BranchGeofenceSetting;
+use App\Models\GeofenceGlobalSetting;
 use App\Models\User;
 use App\Models\UserAdminActivityLog;
 use App\Services\DataScopeService;
@@ -31,10 +33,10 @@ class GeofenceController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = Branch::query()
-            ->with(['company:id,name,logo', 'area:id,area_name,company_id'])
+            ->with(['company:id,name,logo', 'area:id,area_name,company_id', 'geofenceSettings'])
             ->withCount([
                 'geofences',
-                'geofences as active_geofences_count' => fn ($q) => $q->where('is_active', true),
+                'geofences as active_geofences_count' => fn ($q) => $q->where('status', 'active'),
             ]);
 
         if ($request->filled('company_id')) {
@@ -47,6 +49,13 @@ class GeofenceController extends Controller
 
         return response()->json([
             'branches' => $branches,
+            'attendance_without_geofence' => [
+                'enabled' => (bool) (GeofenceGlobalSetting::query()->find(1)?->attendance_without_geofence_enabled ?? true),
+                'branch_ids' => $branches
+                    ->filter(fn (array $branch): bool => (bool) $branch['allowed_without_geofence'])
+                    ->pluck('id')
+                    ->values(),
+            ],
             'defaults' => [
                 'accuracy_threshold_meters' => GeofenceValidationService::DEFAULT_ACCURACY_THRESHOLD_METERS,
                 'mobile_accuracy_threshold_meters' => GeofenceValidationService::DEFAULT_MOBILE_ACCURACY_THRESHOLD_METERS,
@@ -71,7 +80,7 @@ class GeofenceController extends Controller
         return response()->json([
             'branch' => $this->branchPayload($branch->loadCount([
                 'geofences',
-                'geofences as active_geofences_count' => fn ($q) => $q->where('is_active', true),
+                'geofences as active_geofences_count' => fn ($q) => $q->where('status', 'active'),
             ])),
             'geofences' => $branch->geofences()
                 ->orderBy('priority')
@@ -205,7 +214,11 @@ class GeofenceController extends Controller
             'geofence_sample_timeout_seconds' => ['sometimes', 'integer', 'min:5', 'max:30'],
             'geofence_allow_cross_branch' => ['sometimes', 'boolean'],
             'geofence_require_backend_validation' => ['sometimes', 'boolean'],
+            'allow_without_geofence' => ['sometimes', 'boolean'],
         ]);
+
+        $allowWithoutGeofence = $validated['allow_without_geofence'] ?? null;
+        unset($validated['allow_without_geofence']);
 
         if (isset($validated['geofence_minimum_samples'], $validated['geofence_maximum_samples'])
             && (int) $validated['geofence_minimum_samples'] > (int) $validated['geofence_maximum_samples']) {
@@ -215,6 +228,15 @@ class GeofenceController extends Controller
         }
 
         $branch->fill($validated)->save();
+        if ($allowWithoutGeofence !== null) {
+            BranchGeofenceSetting::query()->updateOrCreate(
+                ['branch_id' => (int) $branch->id],
+                [
+                    'allow_without_geofence' => (bool) $allowWithoutGeofence,
+                    'updated_by' => $request->user()?->id,
+                ],
+            );
+        }
         GeofenceValidationService::forgetBranchCache((int) $branch->id);
 
         $this->audit($request, 'geofence_branch_settings_updated', $branch, null, $validated);
@@ -223,8 +245,61 @@ class GeofenceController extends Controller
             'message' => 'Geofence settings updated.',
             'branch' => $this->branchPayload($branch->loadCount([
                 'geofences',
-                'geofences as active_geofences_count' => fn ($q) => $q->where('is_active', true),
+                'geofences as active_geofences_count' => fn ($q) => $q->where('status', 'active'),
             ])),
+        ]);
+    }
+
+    public function updateAttendanceWithoutGeofence(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'branch_ids' => ['present', 'array'],
+            'branch_ids.*' => ['integer', 'exists:branches,id'],
+        ]);
+
+        $branchQuery = Branch::query()->whereIn('id', $validated['branch_ids']);
+        $this->dataScopeService->restrictBranchQuery($request->user(), $branchQuery);
+        $accessibleIds = $branchQuery->pluck('id')->map(fn ($id): int => (int) $id)->all();
+        $requestedIds = collect($validated['branch_ids'])->map(fn ($id): int => (int) $id)->unique()->values()->all();
+        if (count($accessibleIds) !== count($requestedIds)) {
+            abort(403, 'One or more selected branches are outside your data scope.');
+        }
+
+        DB::transaction(function () use ($request, $validated, $requestedIds): void {
+            GeofenceGlobalSetting::query()->updateOrCreate(
+                ['id' => 1],
+                [
+                    'attendance_without_geofence_enabled' => (bool) $validated['enabled'],
+                    'updated_by' => $request->user()?->id,
+                ],
+            );
+
+            $scopedBranches = Branch::query();
+            $this->dataScopeService->restrictBranchQuery($request->user(), $scopedBranches);
+            $scopedIds = $scopedBranches->pluck('id')->map(fn ($id): int => (int) $id);
+            foreach ($scopedIds as $branchId) {
+                BranchGeofenceSetting::query()->updateOrCreate(
+                    ['branch_id' => $branchId],
+                    [
+                        'allow_without_geofence' => in_array($branchId, $requestedIds, true),
+                        'updated_by' => $request->user()?->id,
+                    ],
+                );
+            }
+        });
+
+        $this->audit($request, 'geofence_attendance_without_geofence_updated', null, null, [
+            'enabled' => (bool) $validated['enabled'],
+            'branch_ids' => $requestedIds,
+        ]);
+
+        return response()->json([
+            'message' => 'Attendance without geofence settings updated.',
+            'attendance_without_geofence' => [
+                'enabled' => (bool) $validated['enabled'],
+                'branch_ids' => $requestedIds,
+            ],
         ]);
     }
 
@@ -236,10 +311,10 @@ class GeofenceController extends Controller
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'clock_type' => ['nullable', 'string', Rule::in(['clock_in', 'clock_out', 'in', 'out'])],
             'clicked_at' => ['nullable', 'date'],
-            'latitude' => ['required', 'numeric'],
-            'longitude' => ['required', 'numeric'],
+            'latitude' => ['nullable', 'numeric'],
+            'longitude' => ['nullable', 'numeric'],
             'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
-            'device_type' => ['nullable', 'string', 'max:32'],
+            'device_type' => ['nullable', 'string', Rule::in(GeofenceValidationService::DEVICE_TYPES)],
             'method' => ['nullable', 'string', 'max:32'],
             'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
             'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
@@ -255,8 +330,8 @@ class GeofenceController extends Controller
 
         $result = $this->geofenceValidation->validateForEmployee(
             $employee,
-            (float) $validated['latitude'],
-            (float) $validated['longitude'],
+            isset($validated['latitude']) ? (float) $validated['latitude'] : null,
+            isset($validated['longitude']) ? (float) $validated['longitude'] : null,
             isset($validated['accuracy_meters']) ? (float) $validated['accuracy_meters'] : null,
             [
                 'branch_id' => isset($validated['branch_id']) ? (int) $validated['branch_id'] : null,
@@ -380,11 +455,13 @@ class GeofenceController extends Controller
         $validated = $request->validate([
             'name' => [$required, 'string', 'max:255'],
             'type' => [$required, 'string', Rule::in(['circle', 'polygon'])],
+            'device_scope' => [$required, 'string', Rule::in(GeofenceValidationService::DEVICE_SCOPES)],
             'center_lat' => ['nullable', 'numeric', 'between:-90,90'],
             'center_lng' => ['nullable', 'numeric', 'between:-180,180'],
             'radius_meters' => ['nullable', 'integer', 'min:5', 'max:50000'],
             'polygon_geojson' => ['nullable', 'array'],
             'is_active' => ['sometimes', 'boolean'],
+            'status' => ['sometimes', 'string', Rule::in(['draft', 'active', 'inactive'])],
             'enforcement_mode' => ['nullable', 'string', Rule::in(['disabled', 'warn_only', 'enforce'])],
             'priority' => ['nullable', 'integer', 'min:1', 'max:1000'],
             'accuracy_threshold_meters' => ['nullable', 'integer', 'min:5', 'max:5000'],
@@ -411,6 +488,14 @@ class GeofenceController extends Controller
 
         if (isset($validated['name'])) {
             $validated['name'] = trim((string) $validated['name']);
+        }
+        if (array_key_exists('status', $validated)) {
+            $validated['is_active'] = $validated['status'] === 'active';
+        } elseif (array_key_exists('is_active', $validated)) {
+            $validated['status'] = $validated['is_active'] ? 'active' : 'inactive';
+        } elseif (! $partial) {
+            $validated['status'] = 'draft';
+            $validated['is_active'] = false;
         }
         if (array_key_exists('priority', $validated) || ! $partial) {
             $validated['priority'] = (int) ($validated['priority'] ?? 1);
@@ -501,7 +586,7 @@ class GeofenceController extends Controller
             'branch_city' => $branch->branch_city,
             'branch_province' => $branch->branch_province,
             'branch_postal_code' => $branch->branch_postal_code,
-            'active_geofences_count' => (int) ($branch->active_geofences_count ?? $branch->geofences()->where('is_active', true)->count()),
+            'active_geofences_count' => (int) ($branch->active_geofences_count ?? $branch->geofences()->where('status', 'active')->count()),
             'geofences_count' => (int) ($branch->geofences_count ?? $branch->geofences()->count()),
             'employee_count' => $this->branchEmployeeResolver->countEmployeesByBranch((int) $branch->id),
             'assigned_employees_preview' => $this->branchEmployeeResolver->previewEmployeesByBranch((int) $branch->id),
@@ -520,6 +605,9 @@ class GeofenceController extends Controller
             'geofence_sample_timeout_seconds' => (int) ($branch->geofence_sample_timeout_seconds ?? 15),
             'geofence_allow_cross_branch' => (bool) ($branch->geofence_allow_cross_branch ?? false),
             'geofence_require_backend_validation' => (bool) ($branch->geofence_require_backend_validation ?? true),
+            'allowed_without_geofence' => (bool) ($branch->geofenceSettings?->allow_without_geofence
+                ?? $branch->geofenceSettings()->value('allow_without_geofence')
+                ?? false),
             'last_updated' => $branch->updated_at?->toIso8601String(),
         ];
     }
@@ -532,11 +620,13 @@ class GeofenceController extends Controller
             'branch_id' => (int) $geofence->branch_id,
             'name' => $geofence->name,
             'type' => $geofence->type,
+            'device_scope' => $geofence->device_scope ?? 'all_devices',
             'center_lat' => $geofence->center_lat,
             'center_lng' => $geofence->center_lng,
             'radius_meters' => $geofence->radius_meters,
             'polygon_geojson' => $geofence->polygon_geojson,
             'is_active' => (bool) $geofence->is_active,
+            'status' => $geofence->status ?? ((bool) $geofence->is_active ? 'active' : 'inactive'),
             'enforcement_mode' => $geofence->enforcement_mode ?? 'enforce',
             'priority' => (int) $geofence->priority,
             'accuracy_threshold_meters' => (int) $geofence->accuracy_threshold_meters,

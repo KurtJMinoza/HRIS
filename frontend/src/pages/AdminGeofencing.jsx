@@ -30,6 +30,7 @@ import {
   searchGeofenceLocation,
   searchGeofenceOsmPoi,
   testAttendanceGeofence,
+  updateAttendanceWithoutGeofenceSettings,
   updateBranchGeofence,
   updateBranchGeofenceSettings,
 } from '@/api'
@@ -45,6 +46,16 @@ import { cn } from '@/lib/utils'
 const DEFAULT_CENTER = [14.5995, 120.9842]
 const PAGE_SIZE = 5
 const ORANGE = '#f04414'
+const DEVICE_SCOPE_OPTIONS = [
+  { value: 'all_devices', label: 'All Devices', mapLabel: 'All Devices', color: '#f97316' },
+  { value: 'desktop_laptop', label: 'Desktop / Laptop only', mapLabel: 'Desktop/Laptop', color: '#2563eb' },
+  { value: 'mobile_tablet', label: 'Mobile / Tablet only', mapLabel: 'Mobile/Tablet', color: '#16a34a' },
+  { value: 'desktop', label: 'Desktop only', mapLabel: 'Desktop', color: '#2563eb' },
+  { value: 'laptop', label: 'Laptop only', mapLabel: 'Laptop', color: '#3b82f6' },
+  { value: 'mobile', label: 'Mobile only', mapLabel: 'Mobile', color: '#16a34a' },
+  { value: 'tablet', label: 'Tablet only', mapLabel: 'Tablet', color: '#22c55e' },
+  { value: 'kiosk', label: 'Kiosk only', mapLabel: 'Kiosk', color: '#9333ea' },
+]
 const EMPTY_FEATURE_COLLECTION = { type: 'FeatureCollection', features: [] }
 const MAPILLARY_ACCESS_TOKEN = import.meta.env.VITE_MAPILLARY_ACCESS_TOKEN || ''
 const MAPILLARY_TILE_URL = MAPILLARY_ACCESS_TOKEN
@@ -137,11 +148,13 @@ function blankForm(branchId = null, branchName = '') {
     branch_id: branchId,
     name: branchName || '',
     type: 'circle',
+    device_scope: '',
     center_lat: DEFAULT_CENTER[0],
     center_lng: DEFAULT_CENTER[1],
     radius_meters: 100,
     polygon_geojson: null,
     is_active: false,
+    status: 'draft',
     enforcement_mode: 'enforce',
     priority: 1,
     accuracy_threshold_meters: 100,
@@ -282,7 +295,8 @@ function formFromGeofence(branchId, branchName, geofence) {
     center_lat: geofence.center_lat ?? DEFAULT_CENTER[0],
     center_lng: geofence.center_lng ?? DEFAULT_CENTER[1],
     radius_meters: geofence.radius_meters ?? 100,
-    is_active: normalizeBoolean(geofence.is_active),
+    status: geofence.status || (normalizeBoolean(geofence.is_active) ? 'active' : 'inactive'),
+    is_active: (geofence.status || (normalizeBoolean(geofence.is_active) ? 'active' : 'inactive')) === 'active',
     accuracy_threshold_meters: geofence.accuracy_threshold_meters ?? 100,
     priority: geofence.priority ?? 1,
     notes: geofence.notes ?? '',
@@ -298,7 +312,7 @@ function normalizeBoolean(value) {
 
 function canEditGeofenceShape(form) {
   if (form?.draft_key) return true
-  return !normalizeBoolean(form?.is_active)
+  return form?.status !== 'active'
 }
 
 function offsetLatLngMeters(center, meters = 10) {
@@ -346,8 +360,13 @@ function draftFormForBranch(branchId, branch, geofences, fallbackCenter = null) 
 
 function geofenceMapStatus(geofence, selected = false) {
   if (!geofence?.id || geofence?.draft_key) return 'draft'
-  if (normalizeBoolean(geofence.is_active)) return 'active'
-  return selected ? 'draft' : 'inactive'
+  if (geofence.status === 'draft') return 'draft'
+  if (geofence.status === 'active' || normalizeBoolean(geofence.is_active)) return 'active'
+  return selected && geofence.status !== 'inactive' ? 'draft' : 'inactive'
+}
+
+function deviceScopeMeta(scope) {
+  return DEVICE_SCOPE_OPTIONS.find((option) => option.value === scope) || DEVICE_SCOPE_OPTIONS[0]
 }
 
 function poiMatchesCategory(poi, category) {
@@ -371,8 +390,9 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;')
 }
 
-function geofenceMapText(status, name) {
-  return `${status.toUpperCase()}${name ? ` - ${name}` : ''}`
+function geofenceMapText(status, name, deviceScope) {
+  const scope = deviceScopeMeta(deviceScope).mapLabel
+  return `${name || 'Geofence'} - ${scope} - ${status.toUpperCase()}`
 }
 
 function toLngLat(point) {
@@ -392,8 +412,9 @@ function geofenceFeature(geofence, selected = false) {
   const properties = {
     geofenceId: geofence?.id ?? geofence?.draft_key ?? 'selected',
     status,
+    scopeColor: deviceScopeMeta(geofence?.device_scope).color,
     name: geofence?.name || 'Geofence',
-    label: geofenceMapText(status, geofence?.name || 'Geofence'),
+    label: geofenceMapText(status, geofence?.name || 'Geofence', geofence?.device_scope),
   }
 
   if (geofence?.type === 'circle' && geofence.center_lat != null && geofence.center_lng != null) {
@@ -427,7 +448,7 @@ function geofenceLabelFeature(geofence, selected = false) {
     properties: {
       geofenceId: geofence?.id ?? geofence?.draft_key ?? 'selected',
       status,
-      label: geofenceMapText(status, geofence?.name || 'Geofence'),
+      label: geofenceMapText(status, geofence?.name || 'Geofence', geofence?.device_scope),
     },
     geometry: { type: 'Point', coordinates: lngLat },
   }
@@ -758,9 +779,9 @@ function GeofenceMapOptimized({
     mapRef.current = map
 
     const mapStyles = {
-      active: { line: '#16a34a', fill: '#22c55e', opacity: 0.12, dash: null },
+      active: { line: ['get', 'scopeColor'], fill: ['get', 'scopeColor'], opacity: 0.12, dash: null },
       inactive: { line: '#94a3b8', fill: '#cbd5e1', opacity: 0.09, dash: [2, 2] },
-      draft: { line: ORANGE, fill: ORANGE, opacity: 0.16, dash: [3, 2] },
+      draft: { line: ['get', 'scopeColor'], fill: ['get', 'scopeColor'], opacity: 0.16, dash: [3, 2] },
     }
     const addSource = (id) => map.addSource(id, { type: 'geojson', data: EMPTY_FEATURE_COLLECTION })
     const addGeofenceLayers = (sourceId, prefix, selected = false) => {
@@ -1313,6 +1334,9 @@ function GeofenceMapOptimized({
 }
 export default function AdminGeofencing() {
   const [branches, setBranches] = useState([])
+  const [attendanceWithoutGeofenceEnabled, setAttendanceWithoutGeofenceEnabled] = useState(true)
+  const [allowedWithoutGeofenceBranchIds, setAllowedWithoutGeofenceBranchIds] = useState([])
+  const [bypassSaving, setBypassSaving] = useState(false)
   const [selectedBranchId, setSelectedBranchId] = useState(null)
   const [geofences, setGeofences] = useState([])
   const [branchEmployees, setBranchEmployees] = useState([])
@@ -1391,6 +1415,8 @@ export default function AdminGeofencing() {
       const data = await getAdminGeofencing()
       const nextBranches = data.branches || []
       setBranches(nextBranches)
+      setAttendanceWithoutGeofenceEnabled(data.attendance_without_geofence?.enabled !== false)
+      setAllowedWithoutGeofenceBranchIds(data.attendance_without_geofence?.branch_ids || [])
       setSelectedBranchId((current) => current || nextBranches[0]?.id || null)
     } catch (error) {
       toast({ title: 'Failed to load geofencing', description: error.message, variant: 'error' })
@@ -1663,15 +1689,22 @@ export default function AdminGeofencing() {
 
   async function saveGeofence(options = {}) {
     if (!selectedBranchId) return
+    if (!form.device_scope) {
+      toast({ title: 'Select a device scope', description: 'Each geofence must target a device scope before it can be saved.', variant: 'error' })
+      return
+    }
     setSaving(true)
+    const status = form.status || (normalizeBoolean(form.is_active) ? 'active' : 'draft')
     const payload = {
       name: form.name || selectedBranch?.branch_name || (form.type === 'circle' ? 'Office radius' : 'Branch polygon'),
       type: form.type,
+      device_scope: form.device_scope,
       center_lat: form.type === 'circle' ? Number(form.center_lat) : null,
       center_lng: form.type === 'circle' ? Number(form.center_lng) : null,
       radius_meters: form.type === 'circle' ? Number(form.radius_meters) : null,
       polygon_geojson: form.type === 'polygon' ? form.polygon_geojson : null,
-      is_active: normalizeBoolean(form.is_active),
+      status,
+      is_active: status === 'active',
       enforcement_mode: form.enforcement_mode || 'enforce',
       priority: Number(form.priority) || 1,
       accuracy_threshold_meters: Number(form.accuracy_threshold_meters) || 100,
@@ -1688,7 +1721,7 @@ export default function AdminGeofencing() {
       await load()
       if (options.addAnother && branchData) {
         const { form: nextForm, center } = draftFormForBranch(selectedBranchId, branchData.branch || selectedBranch, branchData.geofences || [], geofenceCenter(form))
-        setForm({ ...nextForm, id: null, is_active: false })
+        setForm({ ...nextForm, id: null, status: 'draft', is_active: false })
         setDrawMode('circle')
         setFocusPoint({ latitude: center[0], longitude: center[1] })
         setFocusKey((key) => key + 1)
@@ -1731,7 +1764,8 @@ export default function AdminGeofencing() {
   async function toggleCurrentGeofence() {
     if (!selectedBranchId || !form.id) return
     try {
-      await updateBranchGeofence(selectedBranchId, form.id, { is_active: !normalizeBoolean(form.is_active) })
+      const status = form.status === 'active' ? 'inactive' : 'active'
+      await updateBranchGeofence(selectedBranchId, form.id, { status })
       await loadBranch(selectedBranchId, { preferredGeofenceId: form.id, focusMap: false })
       await load()
     } catch (error) {
@@ -1745,8 +1779,8 @@ export default function AdminGeofencing() {
   async function toggleGeofenceActive(geofence) {
     if (!selectedBranchId || !geofence?.id) return
     try {
-      const nextActive = !normalizeBoolean(geofence.is_active)
-      await updateBranchGeofence(selectedBranchId, geofence.id, { is_active: nextActive })
+      const nextActive = geofence.status !== 'active'
+      await updateBranchGeofence(selectedBranchId, geofence.id, { status: nextActive ? 'active' : 'inactive' })
       await loadBranch(selectedBranchId, { preferredGeofenceId: geofence.id, focusMap: false })
       await load()
       toast({ title: nextActive ? 'Geofence enabled' : 'Geofence saved as draft', variant: 'success' })
@@ -1756,6 +1790,34 @@ export default function AdminGeofencing() {
       }
       toast({ title: 'Update failed', description: error.message, variant: 'error' })
     }
+  }
+
+  async function saveAttendanceWithoutGeofence(enabled, branchIds) {
+    setBypassSaving(true)
+    try {
+      const data = await updateAttendanceWithoutGeofenceSettings({
+        enabled,
+        branch_ids: branchIds,
+      })
+      setAttendanceWithoutGeofenceEnabled(data.attendance_without_geofence?.enabled !== false)
+      setAllowedWithoutGeofenceBranchIds(data.attendance_without_geofence?.branch_ids || [])
+      setBranches((list) => list.map((branch) => ({
+        ...branch,
+        allowed_without_geofence: (data.attendance_without_geofence?.branch_ids || []).some((id) => String(id) === String(branch.id)),
+      })))
+      toast({ title: 'Attendance without geofence settings updated', variant: 'success' })
+    } catch (error) {
+      toast({ title: 'Settings failed', description: error.message, variant: 'error' })
+    } finally {
+      setBypassSaving(false)
+    }
+  }
+
+  function toggleAllowedWithoutGeofenceBranch(branchId, checked) {
+    const nextIds = checked
+      ? [...new Set([...allowedWithoutGeofenceBranchIds, branchId])]
+      : allowedWithoutGeofenceBranchIds.filter((id) => String(id) !== String(branchId))
+    saveAttendanceWithoutGeofence(attendanceWithoutGeofenceEnabled, nextIds)
   }
 
   async function testCurrentLocation() {
@@ -1887,7 +1949,7 @@ export default function AdminGeofencing() {
 
   function startNewGeofence() {
     const { form: nextForm, center } = draftFormForBranch(selectedBranchId, selectedBranch, geofences, geofenceCenter(form))
-    setForm({ ...nextForm, id: null, is_active: false })
+    setForm({ ...nextForm, id: null, status: 'draft', is_active: false })
     setDrawMode('circle')
     setFocusPoint({ latitude: center[0], longitude: center[1] })
     setFocusKey((key) => key + 1)
@@ -2085,6 +2147,16 @@ export default function AdminGeofencing() {
                 </Label>
               </div>
 
+              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                Device scope
+                <SelectBox className="mt-1" value={form.device_scope || ''} onChange={(e) => setForm((s) => ({ ...s, device_scope: e.target.value }))}>
+                  <option value="" disabled>Select device scope</option>
+                  {DEVICE_SCOPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </SelectBox>
+              </Label>
+
               {form.type === 'circle' ? (
                 <>
                   <div className="grid grid-cols-2 gap-3">
@@ -2126,17 +2198,19 @@ export default function AdminGeofencing() {
                 </div>
               )}
 
-              <div className="grid grid-cols-[1fr_95px] gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
                   Accuracy threshold
                   <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" value={form.accuracy_threshold_meters} onChange={(e) => setForm((s) => ({ ...s, accuracy_threshold_meters: e.target.value }))} />
                 </Label>
-                <div className="pt-5">
-                  <div className="flex h-9 items-center justify-between gap-2 rounded-md px-1 text-xs font-semibold text-slate-700 dark:text-muted-foreground">
-                    <span>Active</span>
-                    <Switch checked={normalizeBoolean(form.is_active)} onCheckedChange={(checked) => setForm((s) => ({ ...s, is_active: checked }))} />
-                  </div>
-                </div>
+                <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                  Status
+                  <SelectBox className="mt-1" value={form.status || 'draft'} onChange={(e) => setForm((s) => ({ ...s, status: e.target.value, is_active: e.target.value === 'active' }))}>
+                    <option value="draft">Draft</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </SelectBox>
+                </Label>
               </div>
 
               <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
@@ -2161,16 +2235,16 @@ export default function AdminGeofencing() {
               <div className="grid gap-2">
                 <Button className="h-10 gap-2 rounded-md bg-[#f04414] text-sm font-semibold text-white shadow-none hover:bg-[#e33a12]" onClick={() => saveGeofence()} disabled={saving || !selectedBranchId}>
                   <Save className="size-4" />
-                  {normalizeBoolean(form.is_active) ? 'Save geofence' : 'Save draft'}
+                  {form.status === 'draft' ? 'Save draft' : 'Save geofence'}
                 </Button>
-                <Button variant="outline" className="h-9 gap-2 rounded-md border-slate-200 text-xs shadow-sm" onClick={() => saveGeofence({ addAnother: true })} disabled={saving || !selectedBranchId || normalizeBoolean(form.is_active)}>
+                <Button variant="outline" className="h-9 gap-2 rounded-md border-slate-200 text-xs shadow-sm" onClick={() => saveGeofence({ addAnother: true })} disabled={saving || !selectedBranchId || form.status !== 'draft'}>
                   <Plus className="size-4" />
                   Save draft & add another
                 </Button>
                 {form.id ? (
                   <Button variant="outline" className="h-9 gap-2 rounded-md border-slate-200 text-xs shadow-sm" onClick={toggleCurrentGeofence}>
                     <Power className="size-4" />
-                    {normalizeBoolean(form.is_active) ? 'Disable current geofence' : 'Enable current geofence'}
+                    {form.status === 'active' ? 'Set current geofence inactive' : 'Activate current geofence'}
                   </Button>
                 ) : null}
               </div>
@@ -2180,8 +2254,8 @@ export default function AdminGeofencing() {
         </section>
       </div>
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+      <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.8fr)_minmax(320px,1fr)]">
+        <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-border dark:bg-card">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Branch geofences</h2>
@@ -2191,44 +2265,50 @@ export default function AdminGeofencing() {
                 {geofences.length}
               </Badge>
             </div>
-            <div className="mt-3 grid gap-2">
+            <div className="mt-3 overflow-x-auto">
               {geofences.length === 0 ? (
                 <div className="rounded-md border border-dashed border-slate-200 p-3 text-xs text-slate-500 dark:border-border dark:text-muted-foreground">
                   No saved geofences yet. Use Add geofence to create a draft.
                 </div>
-              ) : geofences.map((geofence) => {
-                const selected = String(form.id || '') === String(geofence.id)
-                return (
-                  <div
-                    key={geofence.id}
-                    className={cn(
-                      'grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border border-slate-200 px-3 py-2 text-left text-xs transition hover:bg-orange-50 dark:border-border dark:hover:bg-orange-500/10',
-                      selected && 'border-[#f04414] bg-orange-50 text-[#f04414] dark:border-orange-500 dark:bg-orange-500/10 dark:text-orange-300',
-                    )}
-                  >
-                    <button type="button" className="min-w-0 text-left" onClick={() => selectGeofence(geofence)}>
-                      <span className="block truncate font-bold">{geofence.name || 'Geofence'}</span>
-                      <span className="block text-[11px] text-slate-500 dark:text-muted-foreground">
-                        {geofence.type === 'circle' ? `Circle · ${Number(geofence.radius_meters || 0)}m` : `Polygon · ${polygonPoints(geofence.polygon_geojson).filter((_, index, arr) => index !== arr.length - 1).length} points`}
-                      </span>
-                    </button>
-                    <div className="flex items-center gap-2">
-                      <Badge variant={normalizeBoolean(geofence.is_active) ? 'default' : 'secondary'} className={cn('h-6 rounded-md', normalizeBoolean(geofence.is_active) ? 'bg-emerald-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-200')}>
-                        {normalizeBoolean(geofence.is_active) ? 'Active' : 'Draft'}
-                      </Badge>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 rounded-md px-2 text-[11px]"
-                        onClick={() => toggleGeofenceActive(geofence)}
-                      >
-                        {normalizeBoolean(geofence.is_active) ? 'Disable' : 'Enable'}
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })}
+              ) : (
+                <table className="w-full min-w-[1050px] text-left text-xs">
+                  <thead className="bg-slate-50 text-[10px] uppercase text-slate-600 dark:bg-muted/40 dark:text-muted-foreground">
+                    <tr>
+                      {['Name', 'Type', 'Device Scope', 'Radius', 'Status', 'Accuracy Threshold', 'Enforcement', 'Last Updated', 'Actions'].map((heading) => (
+                        <th key={heading} className="px-3 py-2 font-bold">{heading}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-border">
+                    {geofences.map((geofence) => {
+                      const selected = String(form.id || '') === String(geofence.id)
+                      const status = geofence.status || (normalizeBoolean(geofence.is_active) ? 'active' : 'inactive')
+                      return (
+                        <tr key={geofence.id} className={cn('hover:bg-orange-50/50 dark:hover:bg-orange-500/5', selected && 'bg-orange-50 dark:bg-orange-500/10')}>
+                          <td className="px-3 py-2 font-bold">
+                            <button type="button" className="text-left hover:text-[#f04414]" onClick={() => selectGeofence(geofence)}>{geofence.name || 'Geofence'}</button>
+                          </td>
+                          <td className="px-3 py-2 capitalize">{geofence.type}</td>
+                          <td className="px-3 py-2 font-semibold" style={{ color: deviceScopeMeta(geofence.device_scope).color }}>{deviceScopeMeta(geofence.device_scope).mapLabel}</td>
+                          <td className="px-3 py-2">{geofence.type === 'circle' ? `${Number(geofence.radius_meters || 0)}m` : '-'}</td>
+                          <td className="px-3 py-2 capitalize">{status}</td>
+                          <td className="px-3 py-2">{Number(geofence.accuracy_threshold_meters || 0)}m</td>
+                          <td className="px-3 py-2">{geofence.enforcement_mode || 'enforce'}</td>
+                          <td className="px-3 py-2">{formatDate(geofence.updated_at)}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex gap-2">
+                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => selectGeofence(geofence)}>Edit</Button>
+                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => toggleGeofenceActive(geofence)}>
+                                {status === 'active' ? 'Inactive' : 'Activate'}
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
 
@@ -2280,11 +2360,15 @@ export default function AdminGeofencing() {
               </SelectBox>
             </div>
             <div className="grid grid-cols-[116px_1fr] items-center gap-3">
-              <span className="text-xs font-semibold leading-tight text-slate-700 dark:text-muted-foreground">No active geofence</span>
-              <SelectBox value={selectedBranch?.geofence_no_active_policy || 'block'} onChange={(e) => updateSettings({ geofence_no_active_policy: e.target.value })}>
-                <option value="block">Block attendance</option>
-                <option value="allow">Allow attendance</option>
-              </SelectBox>
+              <span className="text-xs font-semibold leading-tight text-slate-700 dark:text-muted-foreground">Allow without geofence</span>
+              <div className="flex h-9 items-center justify-between rounded-md border border-slate-200 px-3 dark:border-border">
+                <span className="text-[11px]">{allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(selectedBranchId)) ? 'Allowed' : 'Required'}</span>
+                <Switch
+                  checked={allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(selectedBranchId))}
+                  disabled={bypassSaving || !selectedBranchId}
+                  onCheckedChange={(checked) => toggleAllowedWithoutGeofenceBranch(selectedBranchId, checked)}
+                />
+              </div>
             </div>
             <div className="grid grid-cols-[116px_1fr] items-center gap-3">
               <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Desktop accuracy mode</span>
@@ -2360,6 +2444,70 @@ export default function AdminGeofencing() {
               ) : null}
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Attendance Without Geofence Settings</h2>
+            <p className="text-xs text-slate-500 dark:text-muted-foreground">Selected branches skip location validation while face liveness and identity checks continue.</p>
+          </div>
+          <div className="flex items-center gap-3 text-xs font-semibold">
+            <span>Allow for selected branches</span>
+            <Switch
+              checked={attendanceWithoutGeofenceEnabled}
+              disabled={bypassSaving}
+              onCheckedChange={(checked) => saveAttendanceWithoutGeofence(checked, allowedWithoutGeofenceBranchIds)}
+            />
+          </div>
+        </div>
+        <div className="max-h-[360px] overflow-auto">
+          <table className="w-full min-w-[900px] text-left text-xs">
+            <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase text-slate-600 dark:bg-muted dark:text-muted-foreground">
+              <tr>
+                {['Select', 'Branch', 'Company', 'Geofence Required', 'Active Geofences Count', 'Allowed Without Geofence', 'Actions'].map((heading) => (
+                  <th key={heading} className="px-4 py-3 font-bold">{heading}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 dark:divide-border">
+              {branches.map((branch) => {
+                const allowed = allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(branch.id))
+                return (
+                  <tr key={branch.id}>
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-[#f04414]"
+                        checked={allowed}
+                        disabled={bypassSaving}
+                        onChange={(event) => toggleAllowedWithoutGeofenceBranch(branch.id, event.target.checked)}
+                        aria-label={`Allow ${branch.branch_name} without geofence`}
+                      />
+                    </td>
+                    <td className="px-4 py-3 font-bold">{branch.branch_name}</td>
+                    <td className="px-4 py-3">{branch.company_name || '-'}</td>
+                    <td className="px-4 py-3">{attendanceWithoutGeofenceEnabled && allowed ? 'No' : 'Yes'}</td>
+                    <td className="px-4 py-3">{Number(branch.active_geofences_count || 0)}</td>
+                    <td className="px-4 py-3">{attendanceWithoutGeofenceEnabled && allowed ? 'Yes' : 'No'}</td>
+                    <td className="px-4 py-3">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={bypassSaving}
+                        onClick={() => toggleAllowedWithoutGeofenceBranch(branch.id, !allowed)}
+                      >
+                        {allowed ? 'Require geofence' : 'Allow without'}
+                      </Button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       </section>
 

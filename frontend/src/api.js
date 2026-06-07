@@ -12,6 +12,8 @@ const GET_RETRY_ATTEMPTS = 2
 const GET_RETRY_BASE_DELAY_MS = 350
 
 const TOKEN_KEY = 'hris_token'
+const ATTENDANCE_DEVICE_TYPE_KEY = 'hris_device_type'
+const ATTENDANCE_DEVICE_TYPES = ['desktop', 'laptop', 'mobile', 'tablet', 'kiosk']
 const USE_SANCTUM_SESSION = String(import.meta.env.VITE_USE_SANCTUM_SESSION ?? 'true') !== 'false'
 let csrfCookieBootPromise = null
 
@@ -35,10 +37,38 @@ function browserTimezone() {
   }
 }
 
-export function attendanceDeviceType() {
-  if (typeof navigator === 'undefined') return 'desktop'
+export function configuredAttendanceDeviceType() {
+  try {
+    const configured = String(window.localStorage?.getItem(ATTENDANCE_DEVICE_TYPE_KEY) || '').toLowerCase()
+    return ATTENDANCE_DEVICE_TYPES.includes(configured) ? configured : null
+  } catch {
+    // Browser storage may be unavailable in private or restricted contexts.
+    return null
+  }
+}
+
+export function detectedAttendanceDeviceType() {
+  if (typeof navigator === 'undefined') return null
   const ua = String(navigator.userAgent || '').toLowerCase()
-  return /android|iphone|ipad|ipod|mobile/.test(ua) ? 'mobile' : 'desktop'
+  if (/ipad|tablet/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) return 'tablet'
+  return /android|iphone|ipod|mobile/.test(ua) ? 'mobile' : null
+}
+
+export function setAttendanceDeviceType(deviceType) {
+  const normalized = String(deviceType || '').toLowerCase()
+  if (!ATTENDANCE_DEVICE_TYPES.includes(normalized)) {
+    throw new Error('Select a valid attendance device type.')
+  }
+  try {
+    window.localStorage?.setItem(ATTENDANCE_DEVICE_TYPE_KEY, normalized)
+  } catch {
+    // The selected value still applies to the current attempt through component state.
+  }
+  return normalized
+}
+
+export function attendanceDeviceType() {
+  return configuredAttendanceDeviceType() || detectedAttendanceDeviceType() || 'desktop'
 }
 
 function browserName() {
@@ -316,16 +346,18 @@ function geolocationPayload(location) {
   if (!location || typeof location !== 'object') return {}
   const latitude = location.latitude ?? location.lat
   const longitude = location.longitude ?? location.lng
-  if (latitude == null || longitude == null) return {}
-  return {
-    latitude,
-    longitude,
-    accuracy_meters: location.accuracy_meters ?? location.accuracy ?? null,
+  const payload = {
     device_type: location.device_type ?? attendanceDeviceType(),
     geofence_validation_id: location.geofence_validation_id ?? null,
     sampled_readings_count: location.sampled_readings_count ?? null,
     selected_best_accuracy: location.selected_best_accuracy ?? location.accuracy_meters ?? location.accuracy ?? null,
   }
+  if (latitude != null && longitude != null) {
+    payload.latitude = latitude
+    payload.longitude = longitude
+    payload.accuracy_meters = location.accuracy_meters ?? location.accuracy ?? null
+  }
+  return payload
 }
 
 export async function validateAttendanceGeofence(payload = {}) {
@@ -363,7 +395,32 @@ export async function testAttendanceGeofence(payload = {}) {
 }
 
 export async function prepareAttendanceLocation(options = {}) {
-  const location = options.location ? geolocationPayload(options.location) : await captureAttendanceLocation(options)
+  let location
+  try {
+    location = options.location ? geolocationPayload(options.location) : await captureAttendanceLocation(options)
+  } catch (locationError) {
+    location = { device_type: attendanceDeviceType() }
+    if (options.validate === false) {
+      return { location, result: null, locationError }
+    }
+
+    const result = await validateAttendanceGeofence({
+      employee_id: options.employee_id,
+      branch_id: options.branch_id,
+      clock_type: options.clock_type || options.type,
+      clicked_at: options.clicked_at || options.attemptMeta?.clicked_at,
+      method: options.method,
+      device_type: location.device_type,
+    })
+    return {
+      location: {
+        ...location,
+        geofence_validation_id: result?.geofence_validation_id ?? result?.id ?? null,
+      },
+      result,
+      locationError,
+    }
+  }
   if (options.validate !== false) {
     const result = await validateAttendanceGeofence({
       employee_id: options.employee_id,
@@ -7356,6 +7413,16 @@ export async function updateBranchGeofenceSettings(branchId, payload) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update geofence settings')
+  return data
+}
+
+export async function updateAttendanceWithoutGeofenceSettings(payload) {
+  const res = await authenticatedFetch('/admin/geofencing/attendance-without-geofence', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update attendance without geofence settings')
   return data
 }
 

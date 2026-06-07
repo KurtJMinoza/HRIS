@@ -8,7 +8,18 @@ import { ThemeProvider } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
 import { Loader2 } from 'lucide-react'
 import { Amplify } from 'aws-amplify'
-import { createAttendanceAttemptMeta, createLivenessSession, getAttendanceLocationDiagnostics, getToken, loginWithFace, prepareAttendanceLocation, recordAttendanceKioskFace } from '@/api'
+import {
+  configuredAttendanceDeviceType,
+  createAttendanceAttemptMeta,
+  createLivenessSession,
+  detectedAttendanceDeviceType,
+  getAttendanceLocationDiagnostics,
+  getToken,
+  loginWithFace,
+  prepareAttendanceLocation,
+  recordAttendanceKioskFace,
+  setAttendanceDeviceType,
+} from '@/api'
 import { playSuccess, playError } from '@/lib/attendanceSounds'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -51,6 +62,9 @@ export function FaceRekognitionLiveness({
 }) {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [attendanceDeviceProfile, setAttendanceDeviceProfile] = useState(
+    () => configuredAttendanceDeviceType() || detectedAttendanceDeviceType() || '',
+  )
   const [error, setError] = useState(null)
   const [locationDiagnostic, setLocationDiagnostic] = useState(null)
   const [locationBrowserMessage, setLocationBrowserMessage] = useState(null)
@@ -98,6 +112,11 @@ export function FaceRekognitionLiveness({
 
   const fetchSession = useCallback(
     async ({ silent = false } = {}) => {
+      if (!onVerified && !kioskMode && !attendanceDeviceProfile) {
+        setLoading(false)
+        setSession(null)
+        return
+      }
       if (!silent) {
         setError(null)
         setLocationDiagnostic(null)
@@ -156,7 +175,7 @@ export function FaceRekognitionLiveness({
         else setSilentSessionRefresh(false)
       }
     },
-    [ensureAmplifyConfig, kioskMode, kioskType, onVerified]
+    [attendanceDeviceProfile, ensureAmplifyConfig, kioskMode, kioskType, onVerified]
   )
 
   useEffect(() => {
@@ -356,6 +375,30 @@ export function FaceRekognitionLiveness({
     onSuccess?.()
   }, [onSuccess])
 
+  if (!onVerified && !kioskMode && !attendanceDeviceProfile) {
+    return (
+      <div className={className}>
+        <div className="rounded-lg border border-white/10 bg-black/20 p-5">
+          <p className="text-sm font-semibold text-white">Select this device</p>
+          <p className="mt-1 text-xs text-white/60">
+            Browsers cannot reliably distinguish a desktop from a laptop. Choose the physical device so the correct geofence is enforced.
+          </p>
+          <select
+            value={attendanceDeviceProfile}
+            onChange={(event) => setAttendanceDeviceProfile(setAttendanceDeviceType(event.target.value))}
+            className="mt-4 h-10 w-full rounded-md border border-white/15 bg-slate-950 px-3 text-sm text-white outline-none focus:border-emerald-400"
+          >
+            <option value="">Select desktop or laptop</option>
+            <option value="desktop">Desktop computer</option>
+            <option value="laptop">Laptop computer</option>
+            <option value="mobile">Mobile phone</option>
+            <option value="tablet">Tablet</option>
+          </select>
+        </div>
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className={className}>
@@ -442,6 +485,22 @@ export function FaceRekognitionLiveness({
 
   return (
     <div className={className || ''}>
+      {!onVerified && !kioskMode && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-md border border-white/10 bg-black/20 px-3 py-2">
+          <span className="text-xs text-white/60">This device</span>
+          <select
+            value={attendanceDeviceProfile}
+            onChange={(event) => setAttendanceDeviceProfile(setAttendanceDeviceType(event.target.value))}
+            disabled={submitting || silentSessionRefresh}
+            className="h-8 rounded-md border border-white/15 bg-slate-950 px-2 text-xs text-white outline-none focus:border-emerald-400 disabled:opacity-60"
+          >
+            <option value="desktop">Desktop</option>
+            <option value="laptop">Laptop</option>
+            <option value="mobile">Mobile</option>
+            <option value="tablet">Tablet</option>
+          </select>
+        </div>
+      )}
       {!hideInstruction && (
         <p className="text-center text-[11px] text-white/60">
           {instructionText ??

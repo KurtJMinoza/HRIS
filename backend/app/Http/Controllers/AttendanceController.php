@@ -680,10 +680,6 @@ class AttendanceController extends Controller
             $request->input('branch_id') !== null ? (int) $request->input('branch_id') : null,
         );
 
-        if ($branch && Schema::hasColumn('branches', 'geofence_enabled') && ! (bool) ($branch->geofence_enabled ?? true)) {
-            return;
-        }
-
         $result = $request->attributes->get('geofence_result');
         if (! is_array($result)) {
             abort(403, 'Geofence validation is required before attendance can be saved.');
@@ -702,9 +698,14 @@ class AttendanceController extends Controller
             abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
         }
 
+        $isAuthorizedSkip = $status === 'skipped'
+            && ($result['skip_reason'] ?? null) === 'branch_allowed_without_geofence'
+            && $branch
+            && $this->geofenceValidation->branchAllowsWithoutGeofence($branch);
+
         $isStrictInside = in_array($status, ['inside', 'passed'], true) && $publicStatus === 'inside' && ! empty($result['matched_geofence_id']);
         $isExplicitWarnOnly = $enforcementMode === 'warn_only' && $status === 'warn_only';
-        if (! $isStrictInside && ! $isExplicitWarnOnly) {
+        if (! $isStrictInside && ! $isExplicitWarnOnly && ! $isAuthorizedSkip) {
             abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
         }
 
@@ -724,6 +725,9 @@ class AttendanceController extends Controller
 
         if ($isStrictInside && ((bool) $validation->is_inside !== true || ! in_array($validation->validation_status, ['inside', 'passed'], true))) {
             abort(403, 'You are outside the allowed attendance geofence.');
+        }
+        if ($isAuthorizedSkip && ($validation->validation_status !== 'skipped' || $validation->skip_reason !== 'branch_allowed_without_geofence')) {
+            abort(403, 'Attendance without geofence is not authorized for this branch.');
         }
 
         if ((int) ($validation->employee_id ?? 0) !== (int) $user->id) {
@@ -3314,7 +3318,7 @@ class AttendanceController extends Controller
                 'user.departmentRelation:id,branch_id',
                 'user.departmentRelation.branch:id,name,company_id',
                 'user.departmentRelation.branch.company:id,name,logo',
-                'geofenceValidation:id,branch_id,validation_status,failure_reason,enforcement_mode,matched_geofence_id,distance_meters,radius_meters,geofence_type,device_type,accuracy_threshold_meters',
+                'geofenceValidation:id,branch_id,validation_status,failure_reason,skip_reason,enforcement_mode,matched_geofence_id,geofence_name,distance_meters,radius_meters,geofence_type,device_type,device_scope_matched,accuracy_threshold_meters',
                 'geofenceValidation.branch:id,name,company_id',
                 'geofenceValidation.matchedGeofence:id,name,type,radius_meters',
             ])
@@ -3350,12 +3354,14 @@ class AttendanceController extends Controller
                     'geofence_status' => $geofenceStatus,
                     'geofence_label' => $this->kioskGeofenceLabel($geofenceStatus),
                     'geofence_reason' => $log->geofenceValidation?->failure_reason,
+                    'geofence_skip_reason' => $log->geofenceValidation?->skip_reason,
                     'geofence_distance_meters' => $log->geofenceValidation?->distance_meters,
                     'geofence_radius_meters' => $log->geofenceValidation?->radius_meters ?? $log->geofenceValidation?->matchedGeofence?->radius_meters,
                     'geofence_type' => $log->geofenceValidation?->geofence_type ?? $log->geofenceValidation?->matchedGeofence?->type,
                     'geofence_device_type' => $log->geofenceValidation?->device_type,
+                    'geofence_device_scope_matched' => $log->geofenceValidation?->device_scope_matched,
                     'matched_geofence_id' => $log->geofenceValidation?->matched_geofence_id,
-                    'matched_geofence_name' => $log->geofenceValidation?->matchedGeofence?->name,
+                    'matched_geofence_name' => $log->geofenceValidation?->geofence_name ?? $log->geofenceValidation?->matchedGeofence?->name,
                     'geofence_accuracy_threshold_meters' => $log->geofenceValidation?->accuracy_threshold_meters,
                     'attendance_method' => $log->method ?? $log->authentication_method,
                     'created_at' => $punchAt->toIso8601String(),

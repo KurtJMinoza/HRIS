@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Branch extends Model
 {
@@ -119,6 +120,11 @@ class Branch extends Model
     public function geofences(): HasMany
     {
         return $this->hasMany(BranchGeofence::class, 'branch_id');
+    }
+
+    public function geofenceSettings(): HasOne
+    {
+        return $this->hasOne(BranchGeofenceSetting::class, 'branch_id');
     }
 
     public function departments(): HasMany
