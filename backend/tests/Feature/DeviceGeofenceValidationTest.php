@@ -71,6 +71,44 @@ class DeviceGeofenceValidationTest extends TestCase
         $this->assertSame('mobile_tablet', $result['device_scope_matched']);
     }
 
+    public function test_tablet_only_scope_matches_tablet_device(): void
+    {
+        $this->createCircle('Tablet only', 50, 'tablet');
+
+        $tablet = $this->validate(7.0, 'tablet');
+        $mobile = $this->validate(7.0, 'mobile');
+
+        $this->assertTrue($tablet['allowed']);
+        $this->assertSame('tablet', $tablet['device_type']);
+        $this->assertSame('tablet', $tablet['device_scope_matched']);
+        $this->assertFalse($mobile['allowed']);
+        $this->assertSame('blocked', $mobile['validation_status']);
+    }
+
+    public function test_device_type_aliases_normalize_to_accurate_scopes(): void
+    {
+        $this->assertSame('tablet', $this->service->normalizeDeviceType('iPad'));
+        $this->assertSame('tablet', $this->service->normalizeDeviceType('android-tablet'));
+        $this->assertSame('mobile', $this->service->normalizeDeviceType('phone'));
+        $this->assertSame('laptop', $this->service->normalizeDeviceType('notebook'));
+        $this->assertSame('desktop', $this->service->normalizeDeviceType('workstation'));
+    }
+
+    public function test_device_scope_matrix_keeps_each_device_specific_scope_separate(): void
+    {
+        $this->assertTrue($this->service->deviceScopeMatches('all_devices', 'tablet'));
+        $this->assertTrue($this->service->deviceScopeMatches('mobile_tablet', 'tablet'));
+        $this->assertTrue($this->service->deviceScopeMatches('mobile_tablet', 'mobile'));
+        $this->assertTrue($this->service->deviceScopeMatches('desktop_laptop', 'desktop'));
+        $this->assertTrue($this->service->deviceScopeMatches('desktop_laptop', 'laptop'));
+
+        $this->assertFalse($this->service->deviceScopeMatches('tablet', 'mobile'));
+        $this->assertFalse($this->service->deviceScopeMatches('mobile', 'tablet'));
+        $this->assertFalse($this->service->deviceScopeMatches('desktop', 'laptop'));
+        $this->assertFalse($this->service->deviceScopeMatches('laptop', 'desktop'));
+        $this->assertFalse($this->service->deviceScopeMatches('kiosk', 'tablet'));
+    }
+
     public function test_laptop_is_blocked_when_only_mobile_scope_exists(): void
     {
         $this->createCircle('Mobile only', 50, 'mobile');

@@ -30,7 +30,6 @@ import {
   employeeTypeReasonLabel,
   employeeActivityLine,
   attendanceRecordRef,
-  formatTimeHhMm,
   formatDayName,
 } from '@/components/attendance/attendanceRecordUtils'
 import {
@@ -367,28 +366,6 @@ export default function EmployeeAttendance() {
     todayRow.status !== 'leave' &&
     todayRow.status !== 'absent'
 
-  const dtrStatusLabel = (() => {
-    if (!todayRow) return 'No attendance recorded yet today.'
-    if (isClockedIn) {
-      return `Clocked in at ${formatTimeHhMm(todayRow.time_in)} — waiting for clock out.`
-    }
-    if (todayRow.time_in && todayRow.time_out) {
-      return `Completed: ${formatTimeHhMm(todayRow.time_in)} – ${formatTimeHhMm(todayRow.time_out)}.`
-    }
-    if (todayRow.status === 'leave') {
-      if (todayRow.leave_pay_status === 'paid') return 'On approved paid leave today.'
-      if (todayRow.leave_pay_status === 'unpaid') return 'On approved unpaid leave today.'
-      return 'On approved leave today.'
-    }
-    if (todayRow.status === 'absent') {
-      return 'Marked absent for today.'
-    }
-    if (todayRow.status === 'upcoming') {
-      return 'Upcoming workday. Your attendance will appear here once you clock in.'
-    }
-    return `Today: ${todayRow.status || '—'}`
-  })()
-
   const targetDailyHours = useMemo(() => {
     const scheduledDays = rows.filter(
       (r) =>
@@ -460,7 +437,11 @@ export default function EmployeeAttendance() {
     setError(null)
     setSubmitting(true)
     try {
-      const data = await recordAttendance(modalType, text, { attemptMeta, method: 'qr' })
+      const data = await recordAttendance(modalType, text, {
+        attemptMeta,
+        method: 'qr',
+        device_type: attendanceDeviceProfile,
+      })
       setModalOpen(false)
       let msg = data.message ?? 'Recorded.'
       if (modalType === 'clock_in' && data.attendance?.late_label) {

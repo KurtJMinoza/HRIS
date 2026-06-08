@@ -132,6 +132,7 @@ export function FaceRekognitionLiveness({
           const prepared = await prepareAttendanceLocation({
             method: attemptMetaRef.current?.method || 'face',
             clock_type: kioskType || undefined,
+            device_type: attendanceDeviceProfile,
           })
           attemptMetaRef.current = {
             ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
@@ -152,6 +153,7 @@ export function FaceRekognitionLiveness({
         } else if (!onVerified) {
           const prepared = await prepareAttendanceLocation({
             method: attemptMetaRef.current?.method || 'face',
+            device_type: attendanceDeviceProfile,
             validate: false,
           })
           attemptMetaRef.current = {
@@ -235,6 +237,7 @@ export function FaceRekognitionLiveness({
         const data = await withTimeout(
           recordAttendanceKioskFace(kioskType, {
             liveness_session_id: session.sessionId,
+            device_type: attendanceDeviceProfile,
             ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
           }),
           FACE_MATCH_TIMEOUT_MS,
@@ -250,6 +253,7 @@ export function FaceRekognitionLiveness({
       const data = await withTimeout(
         loginWithFace({
           liveness_session_id: session.sessionId,
+          device_type: attendanceDeviceProfile,
           ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
         }),
         FACE_MATCH_TIMEOUT_MS,
@@ -356,7 +360,7 @@ export function FaceRekognitionLiveness({
     } finally {
       setSubmitting(false)
     }
-  }, [session, submitting, kioskMode, kioskType, onKioskSuccess, onKioskAttendanceCorrection, onVerified, onSuccess])
+  }, [session, submitting, kioskMode, kioskType, attendanceDeviceProfile, onKioskSuccess, onKioskAttendanceCorrection, onVerified, onSuccess])
 
   const handleError = useCallback(async (err) => {
     console.error('Liveness error:', err)

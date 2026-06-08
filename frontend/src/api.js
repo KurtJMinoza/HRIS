@@ -17,6 +17,16 @@ const ATTENDANCE_DEVICE_TYPES = ['desktop', 'laptop', 'mobile', 'tablet', 'kiosk
 const USE_SANCTUM_SESSION = String(import.meta.env.VITE_USE_SANCTUM_SESSION ?? 'true') !== 'false'
 let csrfCookieBootPromise = null
 
+function normalizeAttendanceDeviceType(deviceType) {
+  const normalized = String(deviceType || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (ATTENDANCE_DEVICE_TYPES.includes(normalized)) return normalized
+  if (['ipad', 'android_tablet', 'tablet_pc'].includes(normalized)) return 'tablet'
+  if (['phone', 'smartphone', 'iphone', 'android_phone', 'cellphone'].includes(normalized)) return 'mobile'
+  if (['notebook', 'macbook', 'portable_computer'].includes(normalized)) return 'laptop'
+  if (['pc', 'computer', 'workstation'].includes(normalized)) return 'desktop'
+  return null
+}
+
 function firstValidationMessage(data) {
   if (!data || typeof data !== 'object') return null
   const errs = data.errors
@@ -39,8 +49,7 @@ function browserTimezone() {
 
 export function configuredAttendanceDeviceType() {
   try {
-    const configured = String(window.localStorage?.getItem(ATTENDANCE_DEVICE_TYPE_KEY) || '').toLowerCase()
-    return ATTENDANCE_DEVICE_TYPES.includes(configured) ? configured : null
+    return normalizeAttendanceDeviceType(window.localStorage?.getItem(ATTENDANCE_DEVICE_TYPE_KEY))
   } catch {
     // Browser storage may be unavailable in private or restricted contexts.
     return null
@@ -50,13 +59,26 @@ export function configuredAttendanceDeviceType() {
 export function detectedAttendanceDeviceType() {
   if (typeof navigator === 'undefined') return null
   const ua = String(navigator.userAgent || '').toLowerCase()
-  if (/ipad|tablet/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) return 'tablet'
-  return /android|iphone|ipod|mobile/.test(ua) ? 'mobile' : null
+  const platform = String(navigator.platform || '').toLowerCase()
+  const maxTouchPoints = Number(navigator.maxTouchPoints || 0)
+  const screenWidth = typeof window !== 'undefined' ? Math.min(window.screen?.width || 0, window.screen?.height || 0) : 0
+  const hasCoarsePointer = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches
+  const looksLikeTabletSize = screenWidth >= 600
+
+  // iPadOS 13+ can identify itself as Macintosh in Safari/Chrome unless touch is considered.
+  if (/ipad|tablet/.test(ua) || (/macintosh/.test(ua) && maxTouchPoints > 1)) return 'tablet'
+  if (/android/.test(ua)) return /mobile/.test(ua) && !looksLikeTabletSize ? 'mobile' : 'tablet'
+  if (/iphone|ipod/.test(ua)) return 'mobile'
+  if (/mobile/.test(ua)) return looksLikeTabletSize && (maxTouchPoints > 1 || hasCoarsePointer) ? 'tablet' : 'mobile'
+  if ((/win/.test(platform) || /linux/.test(platform)) && (maxTouchPoints > 1 || hasCoarsePointer) && looksLikeTabletSize) {
+    return 'tablet'
+  }
+  return null
 }
 
 export function setAttendanceDeviceType(deviceType) {
-  const normalized = String(deviceType || '').toLowerCase()
-  if (!ATTENDANCE_DEVICE_TYPES.includes(normalized)) {
+  const normalized = normalizeAttendanceDeviceType(deviceType)
+  if (!normalized) {
     throw new Error('Select a valid attendance device type.')
   }
   try {
@@ -173,8 +195,18 @@ export async function getAttendanceLocationDiagnostics() {
   }
 }
 
-export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enableHighAccuracy, attempts = 5, desiredAccuracyMeters, minimumSamples = 3, maximumSamples = 5 } = {}) {
-  const deviceType = attendanceDeviceType()
+export async function captureAttendanceLocation({
+  timeoutMs,
+  maximumAgeMs,
+  enableHighAccuracy,
+  attempts = 5,
+  desiredAccuracyMeters,
+  minimumSamples = 3,
+  maximumSamples = 5,
+  device_type,
+  deviceType: requestedDeviceType,
+} = {}) {
+  const deviceType = normalizeAttendanceDeviceType(device_type ?? requestedDeviceType) || attendanceDeviceType()
   const permission = await geolocationPermissionState()
   const hasGeolocation = typeof navigator !== 'undefined' && Boolean(navigator.geolocation)
   const options = {
@@ -182,7 +214,7 @@ export async function captureAttendanceLocation({ timeoutMs, maximumAgeMs, enabl
     timeout: timeoutMs ?? 15000,
     maximumAge: maximumAgeMs ?? 0,
   }
-  const targetAccuracy = desiredAccuracyMeters ?? (deviceType === 'mobile' ? 50 : 100)
+  const targetAccuracy = desiredAccuracyMeters ?? (['mobile', 'tablet'].includes(deviceType) ? 50 : 100)
 
   if (!hasGeolocation) {
     logAttendanceGeolocationDiagnostics({
@@ -347,7 +379,7 @@ function geolocationPayload(location) {
   const latitude = location.latitude ?? location.lat
   const longitude = location.longitude ?? location.lng
   const payload = {
-    device_type: location.device_type ?? attendanceDeviceType(),
+    device_type: normalizeAttendanceDeviceType(location.device_type ?? location.deviceType) || attendanceDeviceType(),
     geofence_validation_id: location.geofence_validation_id ?? null,
     sampled_readings_count: location.sampled_readings_count ?? null,
     selected_best_accuracy: location.selected_best_accuracy ?? location.accuracy_meters ?? location.accuracy ?? null,
@@ -397,9 +429,19 @@ export async function testAttendanceGeofence(payload = {}) {
 export async function prepareAttendanceLocation(options = {}) {
   let location
   try {
-    location = options.location ? geolocationPayload(options.location) : await captureAttendanceLocation(options)
+    if (options.location) {
+      const suppliedLocation = geolocationPayload(options.location)
+      location = {
+        ...suppliedLocation,
+        device_type:
+          normalizeAttendanceDeviceType(options.device_type ?? options.deviceType ?? options.location?.device_type) ||
+          suppliedLocation.device_type,
+      }
+    } else {
+      location = await captureAttendanceLocation(options)
+    }
   } catch (locationError) {
-    location = { device_type: attendanceDeviceType() }
+    location = { device_type: normalizeAttendanceDeviceType(options.device_type ?? options.deviceType) || attendanceDeviceType() }
     if (options.validate === false) {
       return { location, result: null, locationError }
     }
@@ -410,7 +452,7 @@ export async function prepareAttendanceLocation(options = {}) {
       clock_type: options.clock_type || options.type,
       clicked_at: options.clicked_at || options.attemptMeta?.clicked_at,
       method: options.method,
-      device_type: location.device_type,
+      device_type: normalizeAttendanceDeviceType(options.device_type ?? options.deviceType ?? location.device_type) || location.device_type,
     })
     return {
       location: {
@@ -423,12 +465,13 @@ export async function prepareAttendanceLocation(options = {}) {
   }
   if (options.validate !== false) {
     const result = await validateAttendanceGeofence({
+      ...location,
       employee_id: options.employee_id,
       branch_id: options.branch_id,
       clock_type: options.clock_type || options.type,
       clicked_at: options.clicked_at || options.attemptMeta?.clicked_at,
       method: options.method,
-      ...location,
+      device_type: normalizeAttendanceDeviceType(options.device_type ?? options.deviceType ?? location.device_type) || location.device_type,
     })
     return {
       location: {
@@ -1168,7 +1211,7 @@ export async function fetchLivenessSessionResults(sessionId) {
 export async function loginWithFace(payload, options = {}) {
   const attempt = attendanceAttemptPayload(payload || {}, 'face')
   const location = payload?.latitude == null && payload?.longitude == null
-    ? geolocationPayload((await prepareAttendanceLocation({ method: 'face', validate: false })).location)
+    ? geolocationPayload((await prepareAttendanceLocation({ method: 'face', validate: false, device_type: payload?.device_type ?? payload?.deviceType })).location)
     : geolocationPayload(payload)
   const body =
     typeof payload === 'string'
@@ -6102,6 +6145,7 @@ export async function recordAttendanceScan(type, qrToken, options = {}) {
       branch_id: options.branch_id,
       clock_type: type,
       clicked_at: attempt.clicked_at,
+      device_type: options.device_type ?? options.deviceType ?? location.device_type,
     })).location
   } else if (authenticated && options.validateGeofence !== false && location.latitude != null && location.longitude != null) {
     const result = await validateAttendanceGeofence({
@@ -6631,7 +6675,13 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
   if (useLoginFallback) {
     let location = geolocationPayload(options.location || options)
     if (options.geofence !== false && (location.latitude == null || location.longitude == null)) {
-      location = (await prepareAttendanceLocation({ method: 'credentials', validate: false, clock_type: type, clicked_at: options.clicked_at || options.attemptMeta?.clicked_at })).location
+      location = (await prepareAttendanceLocation({
+        method: 'credentials',
+        validate: false,
+        clock_type: type,
+        clicked_at: options.clicked_at || options.attemptMeta?.clicked_at,
+        device_type: options.device_type ?? options.deviceType ?? location.device_type,
+      })).location
     }
     const res = await fetchWithSanctumCsrf('/attendance/kiosk', {
       method: 'POST',
@@ -6659,7 +6709,7 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
 export async function recordAttendanceKioskFace(type, payload) {
   const attempt = attendanceAttemptPayload(payload || {}, 'face')
   const location = payload?.latitude == null && payload?.longitude == null
-    ? geolocationPayload((await prepareAttendanceLocation({ method: 'face', validate: false })).location)
+    ? geolocationPayload((await prepareAttendanceLocation({ method: 'face', validate: false, device_type: payload?.device_type ?? payload?.deviceType })).location)
     : geolocationPayload(payload)
   const body =
     typeof payload === 'string'

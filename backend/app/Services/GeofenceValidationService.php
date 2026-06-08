@@ -676,7 +676,26 @@ class GeofenceValidationService
 
     public function normalizeDeviceType(mixed $deviceType): string
     {
-        $normalized = strtolower(trim((string) $deviceType));
+        $normalized = str_replace(['-', ' '], '_', strtolower(trim((string) $deviceType)));
+
+        $aliases = [
+            'ipad' => 'tablet',
+            'android_tablet' => 'tablet',
+            'tablet_pc' => 'tablet',
+            'phone' => 'mobile',
+            'smartphone' => 'mobile',
+            'iphone' => 'mobile',
+            'android_phone' => 'mobile',
+            'cellphone' => 'mobile',
+            'notebook' => 'laptop',
+            'macbook' => 'laptop',
+            'portable_computer' => 'laptop',
+            'pc' => 'desktop',
+            'computer' => 'desktop',
+            'workstation' => 'desktop',
+        ];
+
+        $normalized = $aliases[$normalized] ?? $normalized;
 
         return in_array($normalized, self::DEVICE_TYPES, true) ? $normalized : 'desktop';
     }

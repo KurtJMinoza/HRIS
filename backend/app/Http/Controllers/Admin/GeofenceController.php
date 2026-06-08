@@ -314,7 +314,7 @@ class GeofenceController extends Controller
             'latitude' => ['nullable', 'numeric'],
             'longitude' => ['nullable', 'numeric'],
             'accuracy_meters' => ['nullable', 'numeric', 'min:0'],
-            'device_type' => ['nullable', 'string', Rule::in(GeofenceValidationService::DEVICE_TYPES)],
+            'device_type' => ['nullable', 'string', 'max:32'],
             'method' => ['nullable', 'string', 'max:32'],
             'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
             'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
@@ -336,7 +336,9 @@ class GeofenceController extends Controller
             [
                 'branch_id' => isset($validated['branch_id']) ? (int) $validated['branch_id'] : null,
                 'clock_type' => $validated['clock_type'] ?? null,
-                'device_type' => $validated['device_type'] ?? $this->geofenceValidation->deviceTypeFromRequest($request),
+                'device_type' => $this->geofenceValidation->normalizeDeviceType(
+                    $validated['device_type'] ?? $this->geofenceValidation->deviceTypeFromRequest($request)
+                ),
                 'method' => $validated['method'] ?? 'face',
                 'sampled_readings_count' => $validated['sampled_readings_count'] ?? null,
                 'selected_best_accuracy' => $validated['selected_best_accuracy'] ?? ($validated['accuracy_meters'] ?? null),
