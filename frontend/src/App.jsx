@@ -56,11 +56,11 @@ const FaceRekognitionLiveness = lazy(() =>
 )
 
 /**
- * Duo figures + optional tile. `minimal` aligns with kiosk login reference (icon beside HRIS title).
+ * Single HR figure + optional tile. `minimal` aligns with kiosk login reference (icon beside HRIS title).
  */
-function LoginHrDualFigureMark({ className, presentation = 'tile' }) {
+function LoginHrFigureMark({ className, presentation = 'tile' }) {
   const gid = useId().replace(/:/g, '')
-  const gradId = `hrisLoginDuoGrad-${gid}`
+  const gradId = `hrisLoginFigureGrad-${gid}`
   const svg = (
     <svg
       viewBox="0 0 88 76"
@@ -75,13 +75,9 @@ function LoginHrDualFigureMark({ className, presentation = 'tile' }) {
           <stop offset="1" stopColor="#ea4a12" />
         </linearGradient>
       </defs>
-      <g fill={`url(#${gradId})`} opacity="0.95">
-        <ellipse cx={28} cy={27} rx={12} ry={13} />
-        <path d="M16 71V55Q28 44 41 52V71H16z" />
-      </g>
       <g fill={`url(#${gradId})`}>
-        <ellipse cx={53} cy={25} rx={13} ry={14} />
-        <path d="M35 71V53Q53 46 68 53V71H35z" />
+        <circle cx={44} cy={22} r={14} />
+        <path d="M17 66.5c2.4-17.1 13.1-26 27-26s24.6 8.9 27 26c.4 2.8-1.8 5.5-4.7 5.5H21.7c-2.9 0-5.1-2.7-4.7-5.5z" />
       </g>
     </svg>
   )
@@ -1684,8 +1680,8 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
         {/* Kiosk-login brand — tight vertical rhythm */}
         <div className="mb-6 flex flex-col items-center px-2">
           <div className="flex flex-col items-center gap-2 text-center">
-            <div className="flex flex-wrap items-center justify-center gap-4 md:gap-5">
-              <LoginHrDualFigureMark presentation="minimal" />
+            <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3">
+              <LoginHrFigureMark presentation="minimal" />
               <h1 className="text-[clamp(2.6rem,8vw,3.875rem)] font-black uppercase leading-none tracking-[-0.02em] text-foreground md:tracking-normal">
                 HRIS
               </h1>
