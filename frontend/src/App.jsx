@@ -1092,18 +1092,6 @@ function SmartDTRPreview({ className }) {
                             <StatusIcon className={cn('size-3.5 shrink-0', statusIconCls)} />
                             <span>{log.type === 'clock_in' ? 'Clocked in' : 'Clocked out'}</span>
                           </span>
-                          {locationUrl ? (
-                            <a
-                              href={locationUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={`Open location in Google Maps (${Number(log.latitude).toFixed(6)}, ${Number(log.longitude).toFixed(6)})`}
-                              aria-label="Open attendance location in Google Maps"
-                              className="inline-flex size-6 items-center justify-center rounded-full border border-orange-200 bg-orange-50 text-[#ff5a14] shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-100 hover:text-[#db3f04] dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-[#fb923c] dark:hover:bg-orange-500/15"
-                            >
-                              <MapPin className="size-3.5" aria-hidden />
-                            </a>
-                          ) : null}
                           {companyLogo ? (
                             <span className="inline-flex size-6 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-zinc-900">
                               <img
@@ -1115,6 +1103,18 @@ function SmartDTRPreview({ className }) {
                                 onError={(e) => { e.currentTarget.style.display = 'none' }}
                               />
                             </span>
+                          ) : null}
+                          {locationUrl ? (
+                            <a
+                              href={locationUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={`Open location in Google Maps (${Number(log.latitude).toFixed(6)}, ${Number(log.longitude).toFixed(6)})`}
+                              aria-label="Open attendance location in Google Maps"
+                              className="inline-flex size-6 items-center justify-center rounded-full border border-orange-200 bg-orange-50 text-[#ff5a14] shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-100 hover:text-[#db3f04] dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-[#fb923c] dark:hover:bg-orange-500/15"
+                            >
+                              <MapPin className="size-3.5" aria-hidden />
+                            </a>
                           ) : null}
                           {log.geofence_device_type ? (
                             <span
