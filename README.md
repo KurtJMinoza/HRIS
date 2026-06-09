@@ -174,6 +174,16 @@ npm run dev
 
 Default Vite dev URL: `http://localhost:5173`.
 
+### CloudFront / Amplify Hosting
+
+For production, put CloudFront in front of the SPA and Laravel API:
+
+- Serve the Vite build from Amplify Hosting or an S3/static origin.
+- Route `/api/*` and `/sanctum/*` to the Laravel origin with all HTTP methods, query strings, `Authorization`, `Cookie`, `X-XSRF-TOKEN`, and `Origin` forwarded. Do not cache these API paths.
+- Keep the frontend API base as same-origin `/api` (`VITE_API_URL=/api`, or leave it unset).
+- Add the CloudFront/custom domain to backend `APP_URL`, `SANCTUM_STATEFUL_DOMAINS`, `CORS_ALLOWED_ORIGINS`, and `SESSION_DOMAIN` as appropriate for your domain.
+- Keep Rekognition Face Liveness and Cognito Identity Pool in `us-east-1` or `us-east-2`. CloudFront improves app/API delivery, but the Amplify `FaceLivenessDetector` video stream still goes directly from the browser to the regional Rekognition liveness endpoint.
+
 ### 5. Face embedding service (optional local)
 
 ```bash

@@ -14,6 +14,7 @@ import {
   createLivenessSession,
   detectedAttendanceDeviceType,
   getAttendanceLocationDiagnostics,
+  getStoredUser,
   getToken,
   loginWithFace,
   prepareAttendanceLocation,
@@ -27,6 +28,23 @@ import { CheckCircle2, Home, LogOut } from 'lucide-react'
 
 const SOUND_FEEDBACK_ENABLED = true
 const FACE_MATCH_TIMEOUT_MS = 12000
+const ATTENDANCE_FLOW_STATE = {
+  LOCATION_REQUESTING: 'LOCATION_REQUESTING',
+  LOCATION_RECEIVED: 'LOCATION_RECEIVED',
+  GEOFENCE_VALIDATING: 'GEOFENCE_VALIDATING',
+  GEOFENCE_PASSED: 'GEOFENCE_PASSED',
+  LIVENESS_CREATING: 'LIVENESS_CREATING',
+  LIVENESS_READY: 'LIVENESS_READY',
+}
+const ATTENDANCE_FLOW_LABEL = {
+  [ATTENDANCE_FLOW_STATE.LOCATION_REQUESTING]: 'Obtaining precise location...',
+  [ATTENDANCE_FLOW_STATE.LOCATION_RECEIVED]: 'Location received...',
+  [ATTENDANCE_FLOW_STATE.GEOFENCE_VALIDATING]: 'Validating geofence...',
+  [ATTENDANCE_FLOW_STATE.GEOFENCE_PASSED]: 'Geofence passed...',
+  [ATTENDANCE_FLOW_STATE.LIVENESS_CREATING]: 'Creating liveness session...',
+  [ATTENDANCE_FLOW_STATE.LIVENESS_READY]: 'Liveness session ready...',
+}
+
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   return Promise.race([
     promise,
@@ -62,6 +80,7 @@ export function FaceRekognitionLiveness({
 }) {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [flowState, setFlowState] = useState(ATTENDANCE_FLOW_STATE.LOCATION_REQUESTING)
   const [attendanceDeviceProfile, setAttendanceDeviceProfile] = useState(
     () => configuredAttendanceDeviceType() || detectedAttendanceDeviceType() || '',
   )
@@ -128,41 +147,62 @@ export function FaceRekognitionLiveness({
       }
       try {
         const canPrevalidateAttendanceLocation = !onVerified && !kioskMode && Boolean(getToken())
+        const existingLocation = attemptMetaRef.current?.latitude != null && attemptMetaRef.current?.longitude != null
+          ? attemptMetaRef.current
+          : null
         if (canPrevalidateAttendanceLocation) {
-          const prepared = await prepareAttendanceLocation({
-            method: attemptMetaRef.current?.method || 'face',
-            clock_type: kioskType || undefined,
-            device_type: attendanceDeviceProfile,
-          })
-          attemptMetaRef.current = {
-            ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
-            ...(prepared.location || {}),
-            geofence_validation_id: prepared.result?.geofence_validation_id,
-            geofence_status: prepared.result?.status,
+          if (existingLocation?.geofence_validation_id) {
+            setFlowState(ATTENDANCE_FLOW_STATE.GEOFENCE_PASSED)
+          } else {
+            const prepared = await prepareAttendanceLocation({
+              location: existingLocation,
+              method: attemptMetaRef.current?.method || 'face',
+              clock_type: kioskType || undefined,
+              device_type: attendanceDeviceProfile,
+              onStateChange: setFlowState,
+            })
+            attemptMetaRef.current = {
+              ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
+              ...(prepared.location || {}),
+              geofence_validation_id: prepared.result?.geofence_validation_id,
+              geofence_status: prepared.result?.status,
+            }
+            setGeofenceDebug({
+              latitude: prepared.location?.latitude,
+              longitude: prepared.location?.longitude,
+              accuracy: prepared.location?.accuracy_meters,
+              branch: prepared.result?.branch?.name,
+              geofence: prepared.result?.matched_geofence?.name,
+              distance: prepared.result?.distance_meters ?? prepared.result?.distance,
+              radius: prepared.result?.matched_geofence?.radius_meters,
+              status: prepared.result?.status,
+            })
           }
-          setGeofenceDebug({
-            latitude: prepared.location?.latitude,
-            longitude: prepared.location?.longitude,
-            accuracy: prepared.location?.accuracy_meters,
-            branch: prepared.result?.branch?.name,
-            geofence: prepared.result?.matched_geofence?.name,
-            distance: prepared.result?.distance_meters ?? prepared.result?.distance,
-            radius: prepared.result?.matched_geofence?.radius_meters,
-            status: prepared.result?.status,
-          })
         } else if (!onVerified) {
-          const prepared = await prepareAttendanceLocation({
-            method: attemptMetaRef.current?.method || 'face',
-            device_type: attendanceDeviceProfile,
-            validate: false,
-          })
-          attemptMetaRef.current = {
-            ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
-            ...(prepared.location || {}),
+          if (!existingLocation) {
+            const prepared = await prepareAttendanceLocation({
+              method: attemptMetaRef.current?.method || 'face',
+              device_type: attendanceDeviceProfile,
+              validate: false,
+              onStateChange: setFlowState,
+            })
+            if (prepared.locationError) throw prepared.locationError
+            attemptMetaRef.current = {
+              ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
+              ...(prepared.location || {}),
+            }
+          } else {
+            setFlowState(ATTENDANCE_FLOW_STATE.LOCATION_RECEIVED)
           }
         }
-        const data = await createLivenessSession()
+        setFlowState(ATTENDANCE_FLOW_STATE.LIVENESS_CREATING)
+        const data = await createLivenessSession({
+          employee_id: getStoredUser()?.id ?? null,
+          device_type: attendanceDeviceProfile,
+          attendance_method: attemptMetaRef.current?.method || 'face',
+        })
         setSession(data)
+        setFlowState(ATTENDANCE_FLOW_STATE.LIVENESS_READY)
         ensureAmplifyConfig(data)
       } catch (e) {
         const maybeLocationError = /location|geolocation|position|permission|denied/i.test(e?.message || '')
@@ -379,6 +419,15 @@ export function FaceRekognitionLiveness({
     onSuccess?.()
   }, [onSuccess])
 
+  const selectAttendanceDeviceProfile = useCallback((deviceType) => {
+    const selected = setAttendanceDeviceType(deviceType)
+    setAttendanceDeviceProfile(selected)
+    attemptMetaRef.current = createAttendanceAttemptMeta(attemptMetaRef.current?.method || 'face')
+    setSession(null)
+    setGeofenceDebug(null)
+    setFlowState(ATTENDANCE_FLOW_STATE.LOCATION_REQUESTING)
+  }, [])
+
   if (!onVerified && !kioskMode && !attendanceDeviceProfile) {
     return (
       <div className={className}>
@@ -389,7 +438,7 @@ export function FaceRekognitionLiveness({
           </p>
           <select
             value={attendanceDeviceProfile}
-            onChange={(event) => setAttendanceDeviceProfile(setAttendanceDeviceType(event.target.value))}
+            onChange={(event) => selectAttendanceDeviceProfile(event.target.value)}
             className="mt-4 h-10 w-full rounded-md border border-white/15 bg-slate-950 px-3 text-sm text-white outline-none focus:border-emerald-400"
           >
             <option value="">Select desktop or laptop</option>
@@ -408,7 +457,9 @@ export function FaceRekognitionLiveness({
       <div className={className}>
         <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-white/10 bg-black/20 p-8">
           <Loader2 className="size-10 animate-spin text-emerald-400" aria-hidden />
-          <span className="text-sm text-white/80">Creating liveness session…</span>
+          <span className="text-sm text-white/80">
+            {ATTENDANCE_FLOW_LABEL[flowState] || 'Preparing attendance...'}
+          </span>
         </div>
       </div>
     )
@@ -494,7 +545,7 @@ export function FaceRekognitionLiveness({
           <span className="text-xs text-white/60">This device</span>
           <select
             value={attendanceDeviceProfile}
-            onChange={(event) => setAttendanceDeviceProfile(setAttendanceDeviceType(event.target.value))}
+            onChange={(event) => selectAttendanceDeviceProfile(event.target.value)}
             disabled={submitting || silentSessionRefresh}
             className="h-8 rounded-md border border-white/15 bg-slate-950 px-2 text-xs text-white outline-none focus:border-emerald-400 disabled:opacity-60"
           >

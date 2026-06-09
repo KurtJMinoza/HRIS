@@ -1,10 +1,9 @@
 /**
- * API root. In Vite dev, default to same-origin `/api` so requests go through vite.config.js proxy
- * (avoids CORS). Override with VITE_API_URL when the API is on another host/port.
+ * API root. Defaults to same-origin `/api` so production can sit behind
+ * CloudFront/Amplify Hosting and dev can go through vite.config.js proxy.
+ * Override with VITE_API_URL when the API is on another host/port.
  */
-const API_BASE =
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? '/api' : 'http://localhost:8000/api')
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 // Some HR endpoints (preview/finalize payroll, large list loads) can legitimately run longer.
 // Keep a conservative default of 60s for all authenticated API requests.
 const REQUEST_TIMEOUT_MS = 60000
@@ -14,6 +13,7 @@ const GET_RETRY_BASE_DELAY_MS = 350
 const TOKEN_KEY = 'hris_token'
 const ATTENDANCE_DEVICE_TYPE_KEY = 'hris_device_type'
 const ATTENDANCE_DEVICE_TYPES = ['desktop', 'laptop', 'mobile', 'tablet', 'kiosk']
+const ATTENDANCE_LOCATION_TIMEOUT_MS = 10000
 const USE_SANCTUM_SESSION = String(import.meta.env.VITE_USE_SANCTUM_SESSION ?? 'true') !== 'false'
 let csrfCookieBootPromise = null
 
@@ -49,31 +49,80 @@ function browserTimezone() {
 
 export function configuredAttendanceDeviceType() {
   try {
-    return normalizeAttendanceDeviceType(window.localStorage?.getItem(ATTENDANCE_DEVICE_TYPE_KEY))
+    const configured = normalizeAttendanceDeviceType(window.localStorage?.getItem(ATTENDANCE_DEVICE_TYPE_KEY))
+    if (!configured || typeof navigator === 'undefined') return configured
+
+    const detected = detectAttendanceDeviceTypeFromSignals()
+    const computerBrowser = isComputerBrowser()
+    const handheldBrowser = detected === 'mobile' || detected === 'tablet'
+
+    // Clear classifications inferred by older touch-only logic when the current browser
+    // clearly belongs to a different device family.
+    if (computerBrowser && ['mobile', 'tablet'].includes(configured)) {
+      window.localStorage?.removeItem(ATTENDANCE_DEVICE_TYPE_KEY)
+      return null
+    }
+    if (handheldBrowser && ['desktop', 'laptop'].includes(configured)) {
+      window.localStorage?.removeItem(ATTENDANCE_DEVICE_TYPE_KEY)
+      return detected
+    }
+    return configured
   } catch {
     // Browser storage may be unavailable in private or restricted contexts.
     return null
   }
 }
 
-export function detectedAttendanceDeviceType() {
-  if (typeof navigator === 'undefined') return null
-  const ua = String(navigator.userAgent || '').toLowerCase()
-  const platform = String(navigator.platform || '').toLowerCase()
-  const maxTouchPoints = Number(navigator.maxTouchPoints || 0)
-  const screenWidth = typeof window !== 'undefined' ? Math.min(window.screen?.width || 0, window.screen?.height || 0) : 0
-  const hasCoarsePointer = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches
-  const looksLikeTabletSize = screenWidth >= 600
+function attendanceDeviceSignals() {
+  const hasNavigator = typeof navigator !== 'undefined'
+  const hasWindow = typeof window !== 'undefined'
+  return {
+    userAgent: hasNavigator ? String(navigator.userAgent || '') : '',
+    platform: hasNavigator ? String(navigator.userAgentData?.platform || navigator.platform || '') : '',
+    maxTouchPoints: hasNavigator ? Number(navigator.maxTouchPoints || 0) : 0,
+    screenWidth: hasWindow ? Number(window.screen?.width || 0) : 0,
+    screenHeight: hasWindow ? Number(window.screen?.height || 0) : 0,
+    hasCoarsePointer: Boolean(hasWindow && window.matchMedia?.('(pointer: coarse)').matches),
+    hasFinePointer: Boolean(hasWindow && window.matchMedia?.('(pointer: fine)').matches),
+    deviceMemory: hasNavigator ? Number(navigator.deviceMemory || 0) || null : null,
+  }
+}
+
+function isExplicitTablet(signals = attendanceDeviceSignals()) {
+  const ua = String(signals.userAgent || '').toLowerCase()
+  const maxTouchPoints = Number(signals.maxTouchPoints || 0)
+  return /ipad|tablet|kindle|silk|playbook/.test(ua)
+    || (/android/.test(ua) && !/mobile/.test(ua))
+    || (/macintosh/.test(ua) && maxTouchPoints > 1)
+}
+
+function isComputerBrowser(signals = attendanceDeviceSignals()) {
+  const ua = String(signals.userAgent || '').toLowerCase()
+  const platform = String(signals.platform || '').toLowerCase()
+  if (isExplicitTablet(signals) || /android|iphone|ipod/.test(ua)) return false
+  return /windows|macintosh|cros|x11|linux/.test(ua) || /win|mac|linux|cros/.test(platform)
+}
+
+export function detectAttendanceDeviceTypeFromSignals(signals = attendanceDeviceSignals()) {
+  const ua = String(signals.userAgent || '').toLowerCase()
+  const maxTouchPoints = Number(signals.maxTouchPoints || 0)
+  const hasCoarsePointer = Boolean(signals.hasCoarsePointer)
 
   // iPadOS 13+ can identify itself as Macintosh in Safari/Chrome unless touch is considered.
-  if (/ipad|tablet/.test(ua) || (/macintosh/.test(ua) && maxTouchPoints > 1)) return 'tablet'
-  if (/android/.test(ua)) return /mobile/.test(ua) && !looksLikeTabletSize ? 'mobile' : 'tablet'
+  if (isExplicitTablet(signals)) return 'tablet'
+  if (/android/.test(ua)) return /mobile/.test(ua) ? 'mobile' : 'tablet'
   if (/iphone|ipod/.test(ua)) return 'mobile'
-  if (/mobile/.test(ua)) return looksLikeTabletSize && (maxTouchPoints > 1 || hasCoarsePointer) ? 'tablet' : 'mobile'
-  if ((/win/.test(platform) || /linux/.test(platform)) && (maxTouchPoints > 1 || hasCoarsePointer) && looksLikeTabletSize) {
-    return 'tablet'
-  }
+  if (/mobile/.test(ua)) return 'mobile'
+
+  // Touch is only a portability hint after the UA/platform has established that this
+  // is a computer. A Windows/Linux touch screen must never become a tablet.
+  if (isComputerBrowser(signals) && (maxTouchPoints > 0 || hasCoarsePointer)) return 'laptop'
   return null
+}
+
+export function detectedAttendanceDeviceType() {
+  if (typeof navigator === 'undefined') return null
+  return detectAttendanceDeviceTypeFromSignals()
 }
 
 export function setAttendanceDeviceType(deviceType) {
@@ -178,13 +227,38 @@ function logAttendanceGeolocationDiagnostics(details) {
   }
 }
 
+export function logAttendanceFlowTiming(event, details = {}) {
+  try {
+    console.info({
+      type: 'attendance_flow_timing',
+      event,
+      recorded_at: new Date().toISOString(),
+      ...details,
+    })
+  } catch {
+    // ignore logging failures
+  }
+}
+
 export function attendanceBrowserDiagnostics() {
+  const signals = attendanceDeviceSignals()
   return {
     browser: browserName(),
     operatingSystem: operatingSystemName(),
     https: secureGeolocationContext(),
     geolocationAvailable: typeof navigator !== 'undefined' && Boolean(navigator.geolocation),
     deviceType: attendanceDeviceType(),
+    device_type_detected: detectedAttendanceDeviceType(),
+    user_agent: signals.userAgent,
+    platform: signals.platform,
+    touch_enabled: signals.maxTouchPoints > 0,
+    max_touch_points: signals.maxTouchPoints,
+    screen_width: signals.screenWidth,
+    screen_height: signals.screenHeight,
+    coarse_pointer: signals.hasCoarsePointer,
+    fine_pointer: signals.hasFinePointer,
+    device_memory: signals.deviceMemory,
+    battery_available: typeof navigator !== 'undefined' && typeof navigator.getBattery === 'function',
   }
 }
 
@@ -199,10 +273,6 @@ export async function captureAttendanceLocation({
   timeoutMs,
   maximumAgeMs,
   enableHighAccuracy,
-  attempts = 5,
-  desiredAccuracyMeters,
-  minimumSamples = 3,
-  maximumSamples = 5,
   device_type,
   deviceType: requestedDeviceType,
 } = {}) {
@@ -211,10 +281,17 @@ export async function captureAttendanceLocation({
   const hasGeolocation = typeof navigator !== 'undefined' && Boolean(navigator.geolocation)
   const options = {
     enableHighAccuracy: enableHighAccuracy ?? true,
-    timeout: timeoutMs ?? 15000,
+    timeout: Math.min(Math.max(Number(timeoutMs) || ATTENDANCE_LOCATION_TIMEOUT_MS, 1000), ATTENDANCE_LOCATION_TIMEOUT_MS),
     maximumAge: maximumAgeMs ?? 0,
   }
-  const targetAccuracy = desiredAccuracyMeters ?? (['mobile', 'tablet'].includes(deviceType) ? 50 : 100)
+  const requestedAtMs = Date.now()
+  const locationRequestedAt = new Date(requestedAtMs).toISOString()
+  logAttendanceFlowTiming('LOCATION_REQUESTING', {
+    location_requested_at: locationRequestedAt,
+    device_type: deviceType,
+    options,
+    ...attendanceBrowserDiagnostics(),
+  })
 
   if (!hasGeolocation) {
     logAttendanceGeolocationDiagnostics({
@@ -239,50 +316,34 @@ export async function captureAttendanceLocation({
       reject(new Error('This browser does not support geolocation.'))
       return
     }
+
+    let settled = false
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(hardTimeoutId)
+      callback(value)
+    }
+    const hardTimeoutId = setTimeout(() => {
+      const timeoutError = new Error('Unable to obtain precise location.')
+      timeoutError.code = 3
+      timeoutError.TIMEOUT = 3
+      finish(reject, timeoutError)
+    }, options.timeout)
+
     navigator.geolocation.getCurrentPosition(
-      resolve,
-      reject,
+      (position) => finish(resolve, position),
+      (error) => finish(reject, error),
       options,
     )
   })
 
-  const watchPositionOnce = () => new Promise((resolve, reject) => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      reject(new Error('This browser does not support geolocation.'))
-      return
-    }
-
-    let watchId = null
-    const cleanup = () => {
-      if (watchId != null) {
-        navigator.geolocation.clearWatch(watchId)
-        watchId = null
-      }
-    }
-    const timeoutId = setTimeout(() => {
-      cleanup()
-      reject(new Error('Location watch timed out before coordinates were returned.'))
-    }, Math.max(5000, options.timeout))
-
-    watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        clearTimeout(timeoutId)
-        cleanup()
-        resolve(position)
-      },
-      (error) => {
-        clearTimeout(timeoutId)
-        cleanup()
-        reject(error)
-      },
-      options,
-    )
-  })
-
-  const locationFromPosition = (position, permissionState, attempt = 'initial') => {
+  const locationFromPosition = (position, permissionState) => {
     const latitude = position.coords.latitude
     const longitude = position.coords.longitude
     const accuracy = position.coords.accuracy
+    const receivedAtMs = Date.now()
+    const locationReceivedAt = new Date(receivedAtMs).toISOString()
     logAttendanceGeolocationDiagnostics({
       permission: permissionState,
       geolocationAvailable: true,
@@ -290,8 +351,14 @@ export async function captureAttendanceLocation({
       longitude,
       accuracy,
       timeoutReached: false,
-      attempt,
       options,
+    })
+    logAttendanceFlowTiming('LOCATION_RECEIVED', {
+      location_requested_at: locationRequestedAt,
+      location_received_at: locationReceivedAt,
+      location_request_duration: receivedAtMs - requestedAtMs,
+      location_accuracy: accuracy ?? null,
+      device_type: deviceType,
     })
     if (latitude == null || longitude == null) {
       throw new Error('Coordinates were not returned by the browser. Please try again.')
@@ -304,10 +371,13 @@ export async function captureAttendanceLocation({
       location_permission: permissionState,
       browser: browserName(),
       operating_system: operatingSystemName(),
+      sampled_readings_count: 1,
+      selected_best_accuracy: accuracy ?? null,
     }
   }
 
-  const logLocationError = (error, permissionState, attempt) => {
+  const logLocationError = (error, permissionState) => {
+    const failedAtMs = Date.now()
     logAttendanceGeolocationDiagnostics({
       permission: permissionState,
       geolocationAvailable: true,
@@ -317,61 +387,29 @@ export async function captureAttendanceLocation({
       timeoutReached: error?.code === error?.TIMEOUT,
       errorCode: error?.code,
       errorMessage: error?.message,
-      attempt,
       options,
+    })
+    logAttendanceFlowTiming('LOCATION_FAILED', {
+      location_requested_at: locationRequestedAt,
+      location_failed_at: new Date(failedAtMs).toISOString(),
+      location_request_duration: failedAtMs - requestedAtMs,
+      error_code: error?.code ?? null,
+      error_message: error?.message || 'Unable to obtain precise location.',
+      device_type: deviceType,
     })
   }
 
-  let bestLocation = null
-  const readings = []
-  let lastError = null
-  const minAttempts = Math.max(1, Math.min(5, Number(minimumSamples) || 3))
-  const maxAttempts = Math.max(minAttempts, Math.min(5, Number(maximumSamples ?? attempts) || 5))
-
-  for (let attemptNo = 1; attemptNo <= maxAttempts; attemptNo += 1) {
-    try {
-      const location = locationFromPosition(await readPosition(), permission, attemptNo === 1 ? 'initial' : `accuracy_retry_${attemptNo}`)
-      readings.push(location)
-      if (!bestLocation || Number(location.accuracy_meters ?? Infinity) < Number(bestLocation.accuracy_meters ?? Infinity)) {
-        bestLocation = location
-      }
-      if (attemptNo >= minAttempts && Number(bestLocation.accuracy_meters ?? Infinity) <= targetAccuracy) {
-        return {
-          ...bestLocation,
-          sampled_readings_count: readings.length,
-          selected_best_accuracy: bestLocation.accuracy_meters ?? null,
-        }
-      }
-      if (attemptNo < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 450))
-      }
-    } catch (error) {
-      lastError = error
-      logLocationError(error, permission, attemptNo === 1 ? 'initial' : `accuracy_retry_${attemptNo}`)
-      if (error?.code === error?.PERMISSION_DENIED) break
+  try {
+    return locationFromPosition(await readPosition(), permission)
+  } catch (error) {
+    logLocationError(error, permission)
+    if (error?.code === 3) {
+      const timeoutError = makeGeolocationError(error, permission)
+      timeoutError.message = 'Unable to obtain precise location.'
+      throw timeoutError
     }
+    throw makeGeolocationError(error, permission)
   }
-
-  if (bestLocation) {
-    return {
-      ...bestLocation,
-      sampled_readings_count: readings.length,
-      selected_best_accuracy: bestLocation.accuracy_meters ?? null,
-    }
-  }
-
-  if (permission === 'granted' && lastError?.code === lastError?.PERMISSION_DENIED) {
-    await new Promise((resolve) => setTimeout(resolve, 350))
-    const retryPermission = await geolocationPermissionState()
-    try {
-      return locationFromPosition(await watchPositionOnce(), retryPermission, 'watch_after_granted_denial')
-    } catch (watchError) {
-      logLocationError(watchError, retryPermission, 'watch_after_granted_denial')
-      throw makeGeolocationError(watchError, retryPermission, true)
-    }
-  }
-
-  throw makeGeolocationError(lastError, permission)
 }
 
 function geolocationPayload(location) {
@@ -393,14 +431,44 @@ function geolocationPayload(location) {
 }
 
 export async function validateAttendanceGeofence(payload = {}) {
-  const res = await authenticatedFetch('/attendance/geofence/validate', {
-    method: 'POST',
-    body: JSON.stringify({
-      ...payload,
-      ...geolocationPayload(payload),
-    }),
+  const startedAtMs = Date.now()
+  const startedAt = new Date(startedAtMs).toISOString()
+  const deviceType = normalizeAttendanceDeviceType(payload.device_type ?? payload.deviceType) || attendanceDeviceType()
+  logAttendanceFlowTiming('GEOFENCE_VALIDATING', {
+    geofence_validation_started_at: startedAt,
+    device_type: deviceType,
+    location_accuracy: payload.accuracy_meters ?? payload.accuracy ?? null,
   })
+  let res
+  try {
+    res = await authenticatedFetch('/attendance/geofence/validate', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...payload,
+        ...geolocationPayload(payload),
+      }),
+    })
+  } catch (error) {
+    const finishedAtMs = Date.now()
+    logAttendanceFlowTiming('GEOFENCE_FAILED', {
+      geofence_validation_started_at: startedAt,
+      geofence_validation_finished_at: new Date(finishedAtMs).toISOString(),
+      geofence_duration: finishedAtMs - startedAtMs,
+      device_type: deviceType,
+      allowed: false,
+      error_message: error?.message || 'Failed to validate location',
+    })
+    throw error
+  }
   const data = await res.json().catch(() => ({}))
+  const finishedAtMs = Date.now()
+  logAttendanceFlowTiming(data.allowed === false || !res.ok ? 'GEOFENCE_FAILED' : 'GEOFENCE_PASSED', {
+    geofence_validation_started_at: startedAt,
+    geofence_validation_finished_at: new Date(finishedAtMs).toISOString(),
+    geofence_duration: finishedAtMs - startedAtMs,
+    device_type: deviceType,
+    allowed: res.ok && data.allowed !== false,
+  })
   if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to validate location')
   if (data.allowed === false) {
     const reason = data.failure_reason || 'You are outside the allowed attendance geofence.'
@@ -437,33 +505,21 @@ export async function prepareAttendanceLocation(options = {}) {
           normalizeAttendanceDeviceType(options.device_type ?? options.deviceType ?? options.location?.device_type) ||
           suppliedLocation.device_type,
       }
+      options.onStateChange?.('LOCATION_RECEIVED', location)
     } else {
+      options.onStateChange?.('LOCATION_REQUESTING')
       location = await captureAttendanceLocation(options)
+      options.onStateChange?.('LOCATION_RECEIVED', location)
     }
   } catch (locationError) {
     location = { device_type: normalizeAttendanceDeviceType(options.device_type ?? options.deviceType) || attendanceDeviceType() }
     if (options.validate === false) {
       return { location, result: null, locationError }
     }
-
-    const result = await validateAttendanceGeofence({
-      employee_id: options.employee_id,
-      branch_id: options.branch_id,
-      clock_type: options.clock_type || options.type,
-      clicked_at: options.clicked_at || options.attemptMeta?.clicked_at,
-      method: options.method,
-      device_type: normalizeAttendanceDeviceType(options.device_type ?? options.deviceType ?? location.device_type) || location.device_type,
-    })
-    return {
-      location: {
-        ...location,
-        geofence_validation_id: result?.geofence_validation_id ?? result?.id ?? null,
-      },
-      result,
-      locationError,
-    }
+    throw locationError
   }
   if (options.validate !== false) {
+    options.onStateChange?.('GEOFENCE_VALIDATING', location)
     const result = await validateAttendanceGeofence({
       ...location,
       employee_id: options.employee_id,
@@ -473,6 +529,7 @@ export async function prepareAttendanceLocation(options = {}) {
       method: options.method,
       device_type: normalizeAttendanceDeviceType(options.device_type ?? options.deviceType ?? location.device_type) || location.device_type,
     })
+    options.onStateChange?.('GEOFENCE_PASSED', result)
     return {
       location: {
         ...location,
@@ -1176,9 +1233,47 @@ export async function loginWithQr(qrToken, options = {}) {
  * Create Amazon Rekognition Face Liveness session for Amplify FaceLivenessDetector.
  * @returns {{ sessionId: string, region: string }}
  */
-export async function createLivenessSession() {
-  const res = await fetchWithSanctumCsrf('/face/liveness/session', { method: 'POST' })
+export async function createLivenessSession(options = {}) {
+  const requestedAtMs = Date.now()
+  const requestedAt = new Date(requestedAtMs).toISOString()
+  const deviceType = normalizeAttendanceDeviceType(options.device_type ?? options.deviceType) || attendanceDeviceType()
+  const attendanceMethod = String(options.attendance_method ?? options.method ?? 'face')
+  logAttendanceFlowTiming('LIVENESS_CREATING', {
+    liveness_session_requested_at: requestedAt,
+    device_type: deviceType,
+    attendance_method: attendanceMethod,
+  })
+  let res
+  try {
+    res = await fetchWithSanctumCsrf('/face/liveness/session', {
+      method: 'POST',
+      body: JSON.stringify({
+        employee_id: options.employee_id ?? null,
+        device_type: deviceType,
+        attendance_method: attendanceMethod,
+      }),
+    })
+  } catch (error) {
+    const failedAtMs = Date.now()
+    logAttendanceFlowTiming('LIVENESS_FAILED', {
+      liveness_session_requested_at: requestedAt,
+      liveness_session_finished_at: new Date(failedAtMs).toISOString(),
+      liveness_session_duration: failedAtMs - requestedAtMs,
+      device_type: deviceType,
+      attendance_method: attendanceMethod,
+      error_message: error?.message || 'Could not create liveness session',
+    })
+    throw error
+  }
   const data = await res.json().catch(() => ({}))
+  const createdAtMs = Date.now()
+  logAttendanceFlowTiming(res.ok && data.sessionId ? 'LIVENESS_READY' : 'LIVENESS_FAILED', {
+    liveness_session_requested_at: requestedAt,
+    liveness_session_created_at: new Date(createdAtMs).toISOString(),
+    liveness_session_duration: createdAtMs - requestedAtMs,
+    device_type: deviceType,
+    attendance_method: attendanceMethod,
+  })
   if (!res.ok) throw new Error(data.message || 'Could not create liveness session')
   if (!data.sessionId) throw new Error('Invalid liveness session response')
   return {

@@ -15,9 +15,27 @@ class LivenessController extends Controller
      */
     public function createSession(Request $request): JsonResponse
     {
+        $startedAt = microtime(true);
+        $validated = $request->validate([
+            'employee_id' => ['nullable', 'integer'],
+            'device_type' => ['nullable', 'string', 'in:mobile,tablet,laptop,desktop,kiosk'],
+            'attendance_method' => ['nullable', 'string', 'max:32'],
+        ]);
+
+        Log::info('Face liveness session requested', [
+            'employee_id' => $validated['employee_id'] ?? $request->user()?->id,
+            'device_type_detected' => $validated['device_type'] ?? null,
+            'attendance_method' => $validated['attendance_method'] ?? 'face',
+            'liveness_session_requested_at' => now()->toIso8601String(),
+            'user_agent' => $request->userAgent(),
+        ]);
+
         $data = RekognitionLivenessService::createSession();
         if ($data === null) {
-            Log::warning('Face liveness: createSession returned null (check AWS credentials)');
+            Log::warning('Face liveness: createSession returned null (check AWS credentials)', [
+                'liveness_session_finished_at' => now()->toIso8601String(),
+                'liveness_session_duration' => (int) round((microtime(true) - $startedAt) * 1000),
+            ]);
 
             return response()->json([
                 'message' => 'Face liveness service unavailable. Please try again later.',
@@ -25,7 +43,11 @@ class LivenessController extends Controller
             ], 503);
         }
         if (isset($data['error'])) {
-            Log::warning('Face liveness: createSession error', ['error' => $data['error']]);
+            Log::warning('Face liveness: createSession error', [
+                'error' => $data['error'],
+                'liveness_session_finished_at' => now()->toIso8601String(),
+                'liveness_session_duration' => (int) round((microtime(true) - $startedAt) * 1000),
+            ]);
 
             return response()->json([
                 'message' => $data['error'],
@@ -46,6 +68,14 @@ class LivenessController extends Controller
             $response['cognitoRegion'] = config('services.cognito.region');
             $response['cognitoId'] = $identityPoolId; // alias for frontend hasCognitoId check
         }
+
+        Log::info('Face liveness session created', [
+            'employee_id' => $validated['employee_id'] ?? $request->user()?->id,
+            'device_type_detected' => $validated['device_type'] ?? null,
+            'attendance_method' => $validated['attendance_method'] ?? 'face',
+            'liveness_session_created_at' => now()->toIso8601String(),
+            'liveness_session_duration' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
 
         return response()->json($response);
     }
