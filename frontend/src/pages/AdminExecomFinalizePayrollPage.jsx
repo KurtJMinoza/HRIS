@@ -22,7 +22,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { saveBulkPayslipZipBlob } from '@/lib/bulkPayslipDownload'
 import { cn } from '@/lib/utils'
 import {

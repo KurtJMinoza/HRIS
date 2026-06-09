@@ -63,7 +63,7 @@ import {
 import { RegularizationStatusBadge } from '@/components/regularization/RegularizationStatusBadge'
 import { RegularizationRecommendationViewDialog } from '@/components/regularization/RegularizationRecommendationViewDialog'
 import { useAuth } from '@/contexts/AuthContext'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import {
   getAdminUpcomingRegularizations,

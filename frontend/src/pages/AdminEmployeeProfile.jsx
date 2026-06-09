@@ -34,7 +34,7 @@ import {
   getFolderChecklistTeaser,
 } from '@/lib/employeeDocumentsUi'
 import { useAuth } from '@/contexts/AuthContext'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { cn } from '@/lib/utils'
 import { formatEmployeeName } from '@/lib/employeeSort'

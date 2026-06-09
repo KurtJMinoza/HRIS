@@ -26,7 +26,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { getEmployeeLoanRequestContext, getEmployeeLoanRequestDetail, getEmployeeMyDeductions, getEmployeeNextDeductionDates } from '@/api'
 import { formatDeductionScheduleTypeShort } from '@/components/salary/salaryTabFormatters'
 import { useAuth } from '@/contexts/AuthContext'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { cn } from '@/lib/utils'
 
 const MotionDiv = motion.div

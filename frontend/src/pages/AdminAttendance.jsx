@@ -17,7 +17,7 @@ import {
   Download,
 } from 'lucide-react'
 import { exportRowsToXlsx } from '@/lib/excelExport'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import AttendanceCorrections from '@/pages/AttendanceCorrections'
 import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRecordsDataTable'

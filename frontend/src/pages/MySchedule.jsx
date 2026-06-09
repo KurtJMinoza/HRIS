@@ -27,7 +27,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { ApprovalChainDetailView } from '@/components/approval/ApprovalChainDetailView'
 import { createMyScheduleRequest, deleteMyScheduleRequest, getMySchedule, getMyScheduleRequestContext } from '@/api'
 import { cn } from '@/lib/utils'

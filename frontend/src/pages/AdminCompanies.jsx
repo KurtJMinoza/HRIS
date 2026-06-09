@@ -54,7 +54,7 @@ import {
   profileImageUrl,
 } from '@/api'
 import { useAuth } from '@/contexts/AuthContext'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { isAdminHrUser, hrPanelPath } from '@/lib/hrRoutes'
 import { useToast } from '@/components/ui/use-toast'
 import { Skeleton } from '@/components/ui/skeleton'

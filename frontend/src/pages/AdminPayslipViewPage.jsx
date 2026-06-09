@@ -11,7 +11,7 @@ import {
 import PayslipHtmlDocument from '@/components/payslips/PayslipHtmlDocument'
 import { PAYSLIP_PAGE_PRINT_STYLES } from '@/components/payslips/payslipPrintStyles'
 import { useAuth } from '@/contexts/AuthContext'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/use-toast'
 

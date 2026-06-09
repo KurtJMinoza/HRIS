@@ -39,7 +39,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/use-toast'
 import { createPayComponent, deletePayComponent, getPayComponents, updatePayComponent } from '@/api'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { cn } from '@/lib/utils'
 import {
   APP_MODAL_DESCRIPTION_CLASS,

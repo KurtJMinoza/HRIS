@@ -46,7 +46,7 @@ import { cn } from '@/lib/utils'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
 import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
 import { useAuth } from '@/contexts/AuthContext'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import {

@@ -39,7 +39,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { cn } from '@/lib/utils'

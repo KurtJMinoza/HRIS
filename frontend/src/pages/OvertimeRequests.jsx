@@ -48,7 +48,7 @@ import {
 } from '@/lib/requestModuleTable'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'

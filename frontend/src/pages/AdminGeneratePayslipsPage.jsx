@@ -20,7 +20,7 @@ import {
   getExecomPayrollReportPdfBlob,
   companyLogoUrl,
 } from '@/api'
-import { useHrBasePath } from '@/contexts/HrAppPathContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { useAuth } from '@/contexts/AuthContext'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
 import { Badge } from '@/components/ui/badge'
