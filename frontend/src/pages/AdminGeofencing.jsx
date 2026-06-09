@@ -24,6 +24,7 @@ import {
   captureAttendanceLocation,
   companyLogoUrl,
   createBranchGeofence,
+  deleteBranchGeofence,
   getAdminGeofencing,
   getBranchGeofences,
   getNearbyGeofenceOsmPoi,
@@ -1352,6 +1353,7 @@ export default function AdminGeofencing() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [deletingGeofenceId, setDeletingGeofenceId] = useState(null)
   const [poiSearch, setPoiSearch] = useState('')
   const [poiResults, setPoiResults] = useState([])
   const [poiLoading, setPoiLoading] = useState(false)
@@ -1792,6 +1794,29 @@ export default function AdminGeofencing() {
     }
   }
 
+  async function deleteGeofence(geofence) {
+    if (!selectedBranchId || !geofence?.id || geofence?.draft_key) return
+    const name = geofence.name || 'this geofence'
+    if (!window.confirm(`Delete ${name}? Attendance validation will no longer use this branch geofence.`)) {
+      return
+    }
+
+    setDeletingGeofenceId(geofence.id)
+    try {
+      await deleteBranchGeofence(selectedBranchId, geofence.id)
+      toast({ title: 'Geofence deleted', variant: 'success' })
+      await loadBranch(selectedBranchId, { focusMap: false })
+      await load()
+    } catch (error) {
+      if (/geofence not found/i.test(error.message || '')) {
+        await loadBranch(selectedBranchId, { focusMap: false })
+      }
+      toast({ title: 'Delete failed', description: error.message, variant: 'error' })
+    } finally {
+      setDeletingGeofenceId(null)
+    }
+  }
+
   async function saveAttendanceWithoutGeofence(enabled, branchIds) {
     setBypassSaving(true)
     try {
@@ -1933,6 +1958,18 @@ export default function AdminGeofencing() {
     setFocusKey((key) => key + 1)
     setMapSearch(result.address || result.label || mapSearch)
     setMapSearchResults([])
+  }
+
+  function updateManualCircleCoordinate(field, value) {
+    const nextForm = { ...form, type: 'circle', [field]: value }
+    setForm((s) => ({ ...s, type: 'circle', [field]: value }))
+
+    const center = validLatLngPair([nextForm.center_lat, nextForm.center_lng])
+    if (!center) return
+
+    setDrawMode('circle')
+    setFocusPoint({ latitude: center[0], longitude: center[1] })
+    setFocusKey((key) => key + 1)
   }
 
   function selectGeofence(geofence) {
@@ -2162,11 +2199,11 @@ export default function AdminGeofencing() {
                   <div className="grid grid-cols-2 gap-3">
                     <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
                       Latitude
-                      <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" value={form.center_lat} disabled={!shapeEditable} onChange={(e) => setForm((s) => ({ ...s, center_lat: e.target.value }))} />
+                      <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" value={form.center_lat} disabled={!shapeEditable} onChange={(e) => updateManualCircleCoordinate('center_lat', e.target.value)} />
                     </Label>
                     <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
                       Longitude
-                      <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" value={form.center_lng} disabled={!shapeEditable} onChange={(e) => setForm((s) => ({ ...s, center_lng: e.target.value }))} />
+                      <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" value={form.center_lng} disabled={!shapeEditable} onChange={(e) => updateManualCircleCoordinate('center_lng', e.target.value)} />
                     </Label>
                   </div>
                   <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600 dark:border-border dark:bg-muted/30 dark:text-muted-foreground">
@@ -2247,6 +2284,18 @@ export default function AdminGeofencing() {
                     {form.status === 'active' ? 'Set current geofence inactive' : 'Activate current geofence'}
                   </Button>
                 ) : null}
+                {form.id ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="h-9 gap-2 rounded-md text-xs shadow-sm"
+                    onClick={() => deleteGeofence(form)}
+                    disabled={deletingGeofenceId != null}
+                  >
+                    <Trash2 className="size-4" />
+                    {String(deletingGeofenceId) === String(form.id) ? 'Deleting geofence...' : 'Delete current geofence'}
+                  </Button>
+                ) : null}
               </div>
             </div>
           </div>
@@ -2283,6 +2332,7 @@ export default function AdminGeofencing() {
                     {geofences.map((geofence) => {
                       const selected = String(form.id || '') === String(geofence.id)
                       const status = geofence.status || (normalizeBoolean(geofence.is_active) ? 'active' : 'inactive')
+                      const deleting = String(deletingGeofenceId || '') === String(geofence.id)
                       return (
                         <tr key={geofence.id} className={cn('hover:bg-orange-50/50 dark:hover:bg-orange-500/5', selected && 'bg-orange-50 dark:bg-orange-500/10')}>
                           <td className="px-3 py-2 font-bold">
@@ -2297,9 +2347,13 @@ export default function AdminGeofencing() {
                           <td className="px-3 py-2">{formatDate(geofence.updated_at)}</td>
                           <td className="px-3 py-2">
                             <div className="flex gap-2">
-                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => selectGeofence(geofence)}>Edit</Button>
-                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => toggleGeofenceActive(geofence)}>
+                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => selectGeofence(geofence)} disabled={deleting}>Edit</Button>
+                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => toggleGeofenceActive(geofence)} disabled={deleting}>
                                 {status === 'active' ? 'Inactive' : 'Activate'}
+                              </Button>
+                              <Button type="button" size="sm" variant="destructive" className="h-7 px-2 text-[11px]" onClick={() => deleteGeofence(geofence)} disabled={deletingGeofenceId != null}>
+                                <Trash2 className="size-3.5" />
+                                {deleting ? 'Deleting' : 'Delete'}
                               </Button>
                             </div>
                           </td>
