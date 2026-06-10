@@ -19,7 +19,7 @@ export function OvertimeRequestsCard({
   const employeeName = activeRequest?.requested_by_name || activeRequest?.employee_name || 'Employee'
   const employeePosition = activeRequest?.requested_by_position || activeRequest?.position || activeRequest?.department || 'Employee'
   const employeeId = activeRequest?.employee_id || activeRequest?.requested_by_id
-  const employeeCode = activeRequest?.employee_code || (employeeId ? `EMP-${employeeId}` : 'EMP-—')
+  const employeeCode = activeRequest?.employee_code || (employeeId ? `EMP-${employeeId}` : 'EMP--')
   const employeeMeta = buildEmployeeMeta(activeRequest)
   const avatarSrc = activeRequest?.requested_by_profile_image_url || activeRequest?.employee_profile_image || undefined
   const startTime = activeRequest?.start_time || activeRequest?.schedule_end
@@ -202,9 +202,9 @@ function initials(name) {
 }
 
 function formatDate(dateStr) {
-  if (!dateStr) return '—'
+  if (!dateStr) return '-'
   const date = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`)
-  if (Number.isNaN(date.getTime())) return '—'
+  if (Number.isNaN(date.getTime())) return '-'
   return date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
@@ -218,12 +218,12 @@ function formatWeekday(dateStr) {
 function formatTimeRange(start, end) {
   const a = formatTime(start)
   const b = formatTime(end)
-  if (a === '—' && b === '—') return '—'
+  if (a === '-' && b === '-') return '-'
   return `${a} - ${b}`
 }
 
 function formatTime(value) {
-  if (!value) return '—'
+  if (!value) return '-'
   const [hhRaw, mmRaw = '00'] = String(value).split(':')
   const hh = Number(hhRaw)
   const mm = Number(mmRaw)
@@ -256,5 +256,5 @@ function buildEmployeeMeta(row) {
   ]
     .map((value) => String(value || '').trim())
     .filter(Boolean)
-  return chunks.join(' • ')
+  return chunks.join(' | ')
 }

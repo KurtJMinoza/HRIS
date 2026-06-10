@@ -589,7 +589,7 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, futur
               {name}
             </p>
             <p className="mt-1 line-clamp-2 text-[11px] font-medium uppercase leading-relaxed tracking-wide text-muted-foreground @md:text-xs">
-              {person?.department || 'Unassigned'} · {person?.position || 'Unassigned'}
+              {person?.department || 'Unassigned'} - {person?.position || 'Unassigned'}
             </p>
           </div>
           <span className={cn('shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-bold @md:px-3 @md:text-xs', badgeClass)}>
@@ -602,7 +602,7 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, futur
             {person?.day_name ? (
               <>
                 {' '}
-                <span className="text-muted-foreground">·</span>
+                <span className="text-muted-foreground">|</span>
                 {' '}
                 {person.day_name}
               </>
@@ -962,9 +962,9 @@ export default function AdminDashboard() {
     if (Array.isArray(attendanceQuery.data?.data)) {
       return attendanceQuery.data.data.map((row, index) => ({
         id: row.id ?? index,
-        employee_name: row.employee_name ?? '—',
-        department: row.department ?? '—',
-        company_name: row.company_name ?? '—',
+        employee_name: row.employee_name ?? EMPTY_PLACEHOLDER,
+        department: row.department ?? EMPTY_PLACEHOLDER,
+        company_name: row.company_name ?? EMPTY_PLACEHOLDER,
         company_logo_url: row.company_logo_url ?? null,
         employee_sort_key: row.employee_sort_key ?? row.employee_name ?? '',
         time_in: row.time_in ?? null,
@@ -1179,7 +1179,7 @@ export default function AdminDashboard() {
             <p className="text-destructive">{error}</p>
             <p className="mt-1 text-sm text-muted-foreground">
               {isPermError
-                ? 'If you just signed in, try Retry. If this persists, contact HR — your account may need the correct role permissions.'
+                ? 'If you just signed in, try Retry. If this persists, contact HR - your account may need the correct role permissions.'
                 : 'Check that the backend is running and you are signed in with an account that has dashboard access.'}
             </p>
             <Button
@@ -1517,7 +1517,7 @@ export default function AdminDashboard() {
           <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 border-l-[3px] border-l-amber-500 bg-amber-500/8 px-3.5 py-2.5 dark:bg-amber-500/10">
             <AlertCircle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <p className="flex-1 text-sm text-foreground">
-              <span className="font-semibold text-amber-700 dark:text-amber-300">Low attendance — </span>
+              <span className="font-semibold text-amber-700 dark:text-amber-300">Low attendance: </span>
               Only{' '}
               <span className="font-bold">{Math.round(todaysAttendanceRate * 100)}%</span>{' '}
               of employees have clocked in. Follow up with managers.
@@ -1537,7 +1537,7 @@ export default function AdminDashboard() {
               <AlertCircle className="relative size-4 text-rose-600 dark:text-rose-400" />
             </span>
             <p className="flex-1 text-sm text-foreground">
-              <span className="font-semibold text-rose-700 dark:text-rose-300">High late activity — </span>
+              <span className="font-semibold text-rose-700 dark:text-rose-300">High late activity: </span>
               <span className="font-bold">{lateTodayCount} employees</span>{' '}
               marked late today. Consider sending reminders.
             </p>
@@ -1656,7 +1656,7 @@ export default function AdminDashboard() {
                           ) : deltaPct < 0 ? (
                             <span>-{formattedDelta}%</span>
                           ) : (
-                            <span>·</span>
+                            <span>0</span>
                           )
                         ) : labelKind === 'count' ? (
                           deltaCount > 0 ? (
@@ -1664,13 +1664,13 @@ export default function AdminDashboard() {
                           ) : deltaCount < 0 ? (
                             <span>{formattedCount}</span>
                           ) : (
-                            <span>·</span>
+                            <span>0</span>
                           )
                         ) : (
-                          <span>·</span>  
+                          <span>0</span>  
                         )
                       ) : (
-                        <span className="text-[11px] font-normal">·</span>
+                        <span className="text-[11px] font-normal">-</span>
                       )}
                     </div>
                   </div>
@@ -1710,7 +1710,7 @@ export default function AdminDashboard() {
         })}
       </Motion.div>
 
-      {/* -- Insight row: Today's Leaves · Half-Day Summary · Quick Actions -- */}
+      {/* -- Insight row: Today's Leaves - Half-Day Summary - Quick Actions -- */}
       <Motion.div
         className="mt-4 grid items-stretch gap-3 @sm:grid-cols-2 @xl:grid-cols-3"
         variants={containerVariants}
@@ -1790,7 +1790,7 @@ export default function AdminDashboard() {
                               <span className="text-[11px] font-medium text-muted-foreground">{leave.duration_label || 'Full day'}</span>
                               {leave.start_date ? (
                                 <span className="text-[11px] font-medium text-muted-foreground">
-                                  {leave.start_date === leave.end_date ? leave.start_date : `${leave.start_date} – ${leave.end_date}`}
+                                  {leave.start_date === leave.end_date ? leave.start_date : `${leave.start_date} - ${leave.end_date}`}
                                 </span>
                               ) : null}
                               <span
@@ -1842,7 +1842,7 @@ export default function AdminDashboard() {
           </Card>
         </Motion.div>
 
-        {/* 2. Half-Day Summary — clickable drill-down */}
+        {/* 2. Half-Day Summary - clickable drill-down */}
         <Motion.div
           variants={itemVariants}
           whileHover={{ y: -2, scale: 1.02, transition: { duration: 0.15 } }}
@@ -2156,7 +2156,7 @@ export default function AdminDashboard() {
                     ) : null}
                     {birthdayMonthBrowseLoading ? (
                       <Motion.div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
-                        Loading birthdays for {browsedBirthdayMonthLabel}…
+                        Loading birthdays for {browsedBirthdayMonthLabel}...
                       </Motion.div>
                     ) : visibleBirthdayRows.length === 0 ? (
                       <Motion.div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
@@ -2276,7 +2276,7 @@ export default function AdminDashboard() {
                       : 'border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300'
                 const employmentTypeLabel = formatEmploymentTypeLabel(emp.employment_type)
                 const deptBranchLabel = `${emp.department || 'Unassigned'}${emp.branch ? ` / ${emp.branch}` : ''}`
-                const statusBadgeText = `${emp.status_label || emp.indicator_label || 'Status'} · ${formatDaysLabel(emp.days_remaining_label)}`
+                const statusBadgeText = `${emp.status_label || emp.indicator_label || 'Status'} - ${formatDaysLabel(emp.days_remaining_label)}`
 
                 return (
                   <div
@@ -2463,7 +2463,7 @@ export default function AdminDashboard() {
                               {emp.branch ? ` / ${emp.branch}` : ''}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              Start: {formatDate(emp.contract_start_date)} · End: {formatDate(emp.contract_end_date)}
+                              Start: {formatDate(emp.contract_start_date)} - End: {formatDate(emp.contract_end_date)}
                             </p>
                           </div>
                         </button>
@@ -2515,7 +2515,7 @@ export default function AdminDashboard() {
         </Motion.div>
       </Motion.div>
 
-      {/* Charts row — redesigned UI */}
+      {/* Charts row - redesigned UI */}
       <Motion.div
         className="mt-4 grid gap-3 @lg:grid-cols-2 @lg:items-stretch"
         variants={containerVariants}
@@ -2524,7 +2524,7 @@ export default function AdminDashboard() {
         viewport={scrollViewport}
         transition={scrollRevealTransition}
       >
-        {/* Weekly Attendance — vertical bars, stronger contrast */}
+        {/* Weekly Attendance - vertical bars, stronger contrast */}
         <Motion.div variants={chartCardVariants} className="h-full" whileHover={{ y: -2, transition: { duration: 0.15 } }}>
           <Card className="admin-dashboard-card flex h-full flex-col overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
           <CardHeader className="px-5 pb-5 pt-6">
@@ -2609,7 +2609,7 @@ export default function AdminDashboard() {
         </Card>
         </Motion.div>
 
-        {/* Upcoming Holidays — Holiday Module (matched height to Weekly Attendance) */}
+        {/* Upcoming Holidays - Holiday Module (matched height to Weekly Attendance) */}
         <Motion.div variants={chartCardVariants} className="h-full" whileHover={{ y: -2, transition: { duration: 0.15 } }}>
           <Card className="admin-dashboard-card flex h-full flex-col overflow-hidden py-0 transition-all duration-150 hover:shadow-md">
           <CardHeader className="px-5 pb-5 pt-6">
@@ -2727,7 +2727,7 @@ export default function AdminDashboard() {
             <div className="h-[300px] w-full overflow-hidden rounded-lg bg-background/35 dark:bg-background/25">
               {summaryLoading ? (
                 <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
-                  Loading upcoming holidays…
+                  Loading upcoming holidays...
                 </div>
               ) : error ? (
                 <div className="flex h-full flex-col items-center justify-center px-4 text-center">
@@ -2865,7 +2865,7 @@ export default function AdminDashboard() {
         </Motion.div>
       </Motion.div>
 
-      {/* Company Attendance Comparison — horizontal bars with date + company filters */}
+      {/* Company Attendance Comparison - horizontal bars with date + company filters */}
       <Motion.div
         variants={chartCardVariants}
         initial="hidden"
@@ -2894,7 +2894,7 @@ export default function AdminDashboard() {
               <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
                 {isSingleCompany
                   ? `Attendance summary for ${companyData[0]?.company ?? 'company'}`
-                  : 'Present employees by company · Attendance metrics per company'}
+                  : 'Present employees by company - Attendance metrics per company'}
               </CardDescription>
             </div>
             {topCompany && topCompany.present > 0 && !isSingleCompany && (
@@ -2904,7 +2904,7 @@ export default function AdminDashboard() {
                   Top company
                 </span>
                 <span className="text-[11px] font-semibold text-foreground">
-                  {topCompany.company} · {topCompany.present} present
+                  {topCompany.company} - {topCompany.present} present
                 </span>
               </div>
             )}
@@ -2986,7 +2986,7 @@ export default function AdminDashboard() {
                   )
                 })}
                 {companiesList.length === 0 && (
-                  <span className="text-[11px] text-muted-foreground">Loading…</span>
+                  <span className="text-[11px] text-muted-foreground">Loading...</span>
                 )}
               </div>
             </div>
@@ -3003,10 +3003,10 @@ export default function AdminDashboard() {
           {isSingleCompany && companyData[0] && (
             <p className="mt-1.5 text-[11px] text-muted-foreground">
               {companyData[0].company}: {companyData[0].present ?? 0} present ({companyData[0].attendance_pct ?? 0}%)
-              {(companyData[0].headcount ?? 0) > 0 && ` · ${companyData[0].headcount} total staff`}
+              {(companyData[0].headcount ?? 0) > 0 && ` - ${companyData[0].headcount} total staff`}
             </p>
           )}
-          {/* Company legend · plain text, scrollable when many */}
+          {/* Company legend - plain text, scrollable when many */}
           {companyData.length > 0 && !isSingleCompany && (
             <div className="mt-3 overflow-x-auto overflow-y-hidden scrollbar-thin">
               <div className="flex flex-nowrap gap-3 pb-1 min-w-0">
@@ -3031,7 +3031,7 @@ export default function AdminDashboard() {
                       <span
                         className={`text-[11px] font-medium whitespace-nowrap ${isUnassigned ? 'text-muted-foreground italic' : ''}`}
                       >
-                        {cd.company} · {cd.headcount ?? 0} staff
+                        {cd.company} - {cd.headcount ?? 0} staff
                       </span>
                     </div>
                   )
@@ -3044,7 +3044,7 @@ export default function AdminDashboard() {
           <div className="h-[260px] w-full rounded-lg bg-background/35 px-1.5 pt-2 dark:bg-background/25 @sm:h-[280px] @md:h-[300px] @md:px-2">
             {companyChartLoading ? (
               <div className="flex h-full items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
-                Loading…
+                Loading...
               </div>
             ) : companyData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -3075,7 +3075,7 @@ export default function AdminDashboard() {
                     tickFormatter={(value, index) => {
                       const item = companyData[index]
                       if (item?.headcount) {
-                        return `${value} · ${item.headcount} staff`
+                        return `${value} - ${item.headcount} staff`
                       }
                       return value
                     }}
@@ -3123,7 +3123,7 @@ export default function AdminDashboard() {
                           {headcount !== null && headcount > 0 && (
                             <>
                               <p className="mt-0.5 tabular-nums text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                                Late: {row.late} · Absent: {row.absent} · On leave: {row.on_leave}
+                                Late: {row.late} - Absent: {row.absent} - On leave: {row.on_leave}
                               </p>
                               <p className="mt-0.5 tabular-nums" style={{ color: 'var(--muted-foreground)' }}>
                                 Share: <span className="font-semibold">{shareOfToday}%</span>
@@ -3172,7 +3172,7 @@ export default function AdminDashboard() {
       </Card>
       </Motion.div>
 
-      {/* Data tables — Today's Attendance Logs (real-time) */}
+      {/* Data tables - Today's Attendance Logs (real-time) */}
       <Motion.div
         className="space-y-3"
         variants={itemVariants}
@@ -3193,7 +3193,7 @@ export default function AdminDashboard() {
                   Today&apos;s Attendance
                 </CardTitle>
                 <CardDescription className="mt-0 text-sm font-normal leading-[1.55] text-muted-foreground">
-                  Live clock in / out activity · Auto-refresh 15s
+                  Live clock in / out activity - Auto-refresh 15s
                 </CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -3203,7 +3203,7 @@ export default function AdminDashboard() {
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
                   </span>
                   <span className="font-extrabold tracking-wide text-emerald-700 dark:text-emerald-400">Live</span>
-                  <span className="text-[11px] font-medium text-muted-foreground">· {updatedAgoLabel}</span>
+                  <span className="text-[11px] font-medium text-muted-foreground">| {updatedAgoLabel}</span>
                 </div>
                 <Button
                   variant="outline"
@@ -3287,7 +3287,7 @@ export default function AdminDashboard() {
               {attendanceTableLoading ? (
                 <div className="flex items-center justify-center gap-2 px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
                   <RefreshCw className="size-4 animate-spin" />
-                  Loading today&apos;s attendance…
+                  Loading today&apos;s attendance...
                 </div>
               ) : paginatedLogs.length === 0 ? (
                 <div className="px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
@@ -3430,7 +3430,7 @@ export default function AdminDashboard() {
                       <td colSpan={6} className="px-5 py-10 text-center text-base font-normal leading-relaxed text-muted-foreground">
                         <span className="inline-flex items-center gap-2">
                           <RefreshCw className="size-4 animate-spin" />
-                          Loading today&apos;s attendance…
+                          Loading today&apos;s attendance...
                         </span>
                       </td>
                     </tr>
@@ -3588,7 +3588,7 @@ export default function AdminDashboard() {
                                   <p className="font-semibold text-foreground">
                                     {log.employee_name}{' '}
                                     {log.company_name && (
-                                      <span className="text-xs text-muted-foreground">· {log.company_name}</span>
+                                      <span className="text-xs text-muted-foreground"> {log.company_name}</span>
                                     )}
                                   </p>
                                   <p>
@@ -3854,7 +3854,7 @@ export default function AdminDashboard() {
           <div className="flex-1 overflow-auto min-h-0 px-5 py-4">
             {halfDayListLoading ? (
               <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-                Loading…
+                Loading...
               </div>
             ) : halfDayList?.employees?.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -3900,7 +3900,7 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
                 <p className="text-xs text-muted-foreground mt-3">
-                  {halfDayList.am_count ?? 0} AM · {halfDayList.pm_count ?? 0} PM · {halfDayList.total ?? 0} total
+                  {halfDayList.am_count ?? 0} AM | {halfDayList.pm_count ?? 0} PM | {halfDayList.total ?? 0} total
                 </p>
               </div>
             ) : (

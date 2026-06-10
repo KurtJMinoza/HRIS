@@ -115,7 +115,7 @@ function PendingCorrectionItem({ request, onReviewRequest }) {
   const employeeName = request?.employee_name || request?.requested_by_name || 'Employee'
   const employeePosition = request?.employee_position || request?.requested_by_position || 'Employee'
   const employeeId = request?.user_id ?? request?.employee_id
-  const employeeCode = request?.employee_code || (employeeId ? `EMP-${employeeId}` : 'EMP-—')
+  const employeeCode = request?.employee_code || (employeeId ? `EMP-${employeeId}` : 'EMP--')
   const employeeMeta = buildEmployeeMeta(request)
   const avatarSrcRaw = request?.employee_profile_image_url || request?.requested_by_profile_image_url || undefined
   const avatarSrc = avatarSrcRaw ? profileImageUrl(avatarSrcRaw) : undefined
@@ -228,9 +228,9 @@ function initials(name) {
 }
 
 function formatDate(dateStr) {
-  if (!dateStr) return '—'
+  if (!dateStr) return '-'
   const date = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`)
-  if (Number.isNaN(date.getTime())) return '—'
+  if (Number.isNaN(date.getTime())) return '-'
   return date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
@@ -253,12 +253,12 @@ function timeFromIso(iso) {
 function formatTimeRange(start, end) {
   const a = formatClock(start)
   const b = formatClock(end)
-  if (a === '—' && b === '—') return '—'
+  if (a === '-' && b === '-') return '-'
   return `${a} - ${b}`
 }
 
 function formatClock(value) {
-  if (!value) return '—'
+  if (!value) return '-'
   if (/^\d{1,2}:\d{2}/.test(String(value))) {
     const [hhRaw, mmRaw = '00'] = String(value).split(':')
     const hh = Number(hhRaw)
@@ -268,7 +268,7 @@ function formatClock(value) {
     date.setHours(hh, mm, 0, 0)
     return date.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })
   }
-  return '—'
+  return '-'
 }
 
 function formatHoursSpan(startIso, endIso) {
@@ -290,12 +290,12 @@ function buildEmployeeMeta(row) {
   const chunks = [row.employee_role_label, row.department, row.branch, row.company]
     .map((value) => String(value || '').trim())
     .filter(Boolean)
-  return chunks.join(' • ')
+  return chunks.join(' | ')
 }
 
 function truncateText(s, max) {
   const t = String(s || '').trim()
   if (!t) return ''
   if (t.length <= max) return t
-  return `${t.slice(0, Math.max(0, max - 1))}…`
+  return `${t.slice(0, Math.max(0, max - 3))}...`
 }

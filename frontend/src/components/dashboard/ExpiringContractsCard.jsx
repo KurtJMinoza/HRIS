@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
  *
  * UX goals:
  * - "Quiet luxury" (no alarming fills); urgency conveyed via a refined status chip.
- * - Strong hierarchy: Title → subtitle → person → org → dates → actions.
+ * - Strong hierarchy: Title > subtitle > person > org > dates > actions.
  * - Responsive: actions stack on mobile, sit side-by-side on >=sm.
  * - A11y: clear focus rings and button labels; avatar alt left empty (decorative).
  *
@@ -88,11 +88,11 @@ export function ExpiringContractsCard({
         ) : (
           <div className="space-y-5">
             {previewRows.map((c) => {
-              const name = c?.name || '—'
+              const name = c?.name || '-'
               const type = c?.contract_type || 'Contractual'
               const org = `${c?.department || 'Unassigned'}${c?.branch ? ` / ${c.branch}` : ''}`
-              const startEnd = `Start: ${formatShortDate(c?.contract_start_date)} • End: ${formatShortDate(c?.contract_end_date)}`
-              const statusLabel = c?.days_remaining_label || '—' // e.g. "Expired today"
+              const startEnd = `Start: ${formatShortDate(c?.contract_start_date)} | End: ${formatShortDate(c?.contract_end_date)}`
+              const statusLabel = c?.days_remaining_label || '-' // e.g. "Expired today"
 
               // Refined urgency chip palette (subtle but clear).
               const tone = c?.days_tone || 'neutral' // backend: red/orange/neutral
@@ -193,13 +193,13 @@ export function ExpiringContractsCard({
 }
 
 function formatShortDate(iso) {
-  if (!iso) return '—'
+  if (!iso) return '-'
   try {
     const d = new Date(`${String(iso).trim()}T12:00:00`)
-    if (Number.isNaN(d.getTime())) return '—'
+    if (Number.isNaN(d.getTime())) return '-'
     // Keep existing dashboard style (short, readable).
     return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
   } catch {
-    return '—'
+    return '-'
   }
 }
