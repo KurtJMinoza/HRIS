@@ -92,7 +92,7 @@ export function AttendanceRecordsDataTable({
   hideDepartmentColumn = false,
 }) {
   const isAdmin = mode === 'admin'
-  const [sorting, setSorting] = useState(() => [{ id: 'date', desc: true }])
+  const [sorting, setSorting] = useState(() => [{ id: 'date', desc: false }])
 
   const columns = useMemo(() => {
     const employeeColumn = {
