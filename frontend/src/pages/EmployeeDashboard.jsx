@@ -1240,6 +1240,19 @@ export default function EmployeeDashboard() {
     return lines
   }
 
+  function calendarTileTimeLines(record) {
+    if (!record) return []
+
+    const timeIn = record.formatted_time_in || record.time_in
+    const timeOut = record.formatted_time_out || record.time_out
+    const rows = []
+
+    if (timeIn) rows.push({ label: 'In', value: formatTime(timeIn) })
+    if (timeOut) rows.push({ label: 'Out', value: formatTime(timeOut) })
+
+    return rows.filter((row) => row.value && row.value !== '—')
+  }
+
   function getAttendanceTotalHours(record) {
     const hours =
       typeof record?.total_rendered_hours === 'number'
@@ -1914,6 +1927,7 @@ export default function EmployeeDashboard() {
                       }
                       const visual = getCalendarDayVisual(record, key, ctx)
                       const lines = tileTooltipLines(record, key)
+                      const timeLines = calendarTileTimeLines(record)
                       const monthShort = MONTHS[cell.month]?.slice(0, 3) ?? ''
                       const isToday = key === todayKeyNow
                       const isSelected = selectedDay != null && formatLocalDateKey(selectedDay) === key
@@ -1956,8 +1970,18 @@ export default function EmployeeDashboard() {
                               )}
                             </div>
                             {visual.badge ? (
-                              <div className="mt-auto pt-1">
+                              <div className="mt-auto space-y-1 pt-1">
                                 <span className={visual.badgeClass}>{visual.badge}</span>
+                                {timeLines.length > 0 && (
+                                  <div className="space-y-0.5 text-left text-[9px] font-semibold leading-tight text-muted-foreground @sm:text-[10px]">
+                                    {timeLines.map((row) => (
+                                      <div key={row.label} className="truncate tabular-nums">
+                                        <span className="uppercase tracking-wide">{row.label}:</span>{' '}
+                                        <span className="text-foreground/75">{row.value}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <div className="mt-auto min-h-4" aria-hidden />
