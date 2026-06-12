@@ -312,6 +312,17 @@ function formatTableDate(iso) {
   return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function formatTableDateTimeShort(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
 function formatDetailDate(date) {
   if (!date) return '—'
   const d = new Date(`${date}T12:00:00`)
@@ -1044,7 +1055,7 @@ export default function AttendanceCorrections() {
         type="button"
         variant="ghost"
         size="sm"
-        className="-ml-2 h-9 gap-1.5 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+        className="-ml-1 h-7 gap-1 rounded-md px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/80 hover:text-foreground"
         onClick={() => toggleSort(col)}
       >
         {label}
@@ -1438,7 +1449,7 @@ export default function AttendanceCorrections() {
     )
   }
 
-  const cellPad = tableDensity === 'compact' ? '!p-2' : '!p-3.5'
+  const cellPad = tableDensity === 'compact' ? 'p-1.5!' : 'px-1.5! py-2.5!'
 
   return (
     <Motion.div
@@ -1863,11 +1874,11 @@ export default function AttendanceCorrections() {
                   </div>
 
                   <div className="hidden w-full min-w-0 overflow-hidden bg-card px-4 pb-8 pt-2 sm:px-6 md:px-8 lg:block">
-                    <Table className="w-full min-w-0 table-fixed">
+                    <Table className="w-full min-w-0 table-fixed text-[12px]">
                       <TableHeader>
                         <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25 dark:hover:bg-muted/25">
                           {tab === 'all' && canSeeAll ? (
-                            <TableHead className="w-[3%] py-3.5 pl-2 sm:pl-3">
+                            <TableHead className="w-[3%] px-1.5 py-2.5">
                               <Checkbox
                                 checked={
                                   bulkSelection.headerCheckboxIndeterminate
@@ -1880,35 +1891,35 @@ export default function AttendanceCorrections() {
                               />
                             </TableHead>
                           ) : null}
-                          <TableHead className="w-[16%] py-3.5 pl-2 sm:pl-3">
+                          <TableHead className="w-[13%] px-1.5 py-2.5">
                             <SortHead col="employee_name" label="Employee" />
                           </TableHead>
-                          <TableHead className="w-[9%] py-3.5">
+                          <TableHead className="w-[7%] px-1.5 py-2.5">
                             <SortHead col="date" label="Date" />
                           </TableHead>
-                          <TableHead className="w-[7%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <TableHead className="w-[5%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                             Day
                           </TableHead>
-                          <TableHead className="w-[11%] py-3.5">
+                          <TableHead className="w-[12%] px-1.5 py-2.5">
                             <SortHead col="issue_type" label="Issue type" />
                           </TableHead>
-                          <TableHead className="w-[7%] py-3.5">
+                          <TableHead className="w-[7%] px-1.5 py-2.5">
                             <SortHead col="time_in" label="Time in" />
                           </TableHead>
-                          <TableHead className="w-[7%] py-3.5">
+                          <TableHead className="w-[7%] px-1.5 py-2.5">
                             <SortHead col="time_out" label="Time out" />
                           </TableHead>
-                          <TableHead className="w-[13%] py-3.5">
+                          <TableHead className="w-[13%] px-1.5 py-2.5">
                             <SortHead col="review_status" label="Status" />
                           </TableHead>
-                          <TableHead className="hidden w-[11%] py-3.5 xl:table-cell">
+                          <TableHead className="hidden w-[10%] px-1.5 py-2.5 xl:table-cell">
                             <SortHead col="remarks" label="Remarks" />
                           </TableHead>
-                          <TableHead className="hidden w-[8%] py-3.5 xl:table-cell">
+                          <TableHead className="hidden w-[10%] px-1.5 py-2.5 xl:table-cell">
                             <SortHead col="filed_at" label="Date filed" />
                           </TableHead>
-                          <TableHead className="w-[8%] py-3.5 pr-2 text-right sm:pr-3">
-                            <span className="pr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          <TableHead className="w-[14%] px-1.5 py-2.5 text-right">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                               Actions
                             </span>
                           </TableHead>
@@ -1930,7 +1941,7 @@ export default function AttendanceCorrections() {
                             <TableRow
                               key={item.id}
                               className={cn(
-                                'border-b border-border/50 text-[15px] leading-snug transition-colors',
+                                'border-b border-border/50 text-[12px] leading-snug transition-colors',
                                 'hover:bg-muted/25',
                                 rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10'
                               )}
@@ -1945,7 +1956,7 @@ export default function AttendanceCorrections() {
                                   />
                                 </TableCell>
                               ) : null}
-                              <TableCell className={cn('align-top', cellPad)}>
+                              <TableCell className={cn('align-middle', cellPad)}>
                                 <EmployeeAvatarNameRoleCell
                                   name={empName}
                                   imageUrl={empImg}
@@ -1961,7 +1972,7 @@ export default function AttendanceCorrections() {
                               <TableCell className={cn('align-middle text-foreground', cellPad)}>
                                 {formatDayName(item.date, item.day_name)}
                               </TableCell>
-                              <TableCell className={cn('align-top', cellPad)}>
+                              <TableCell className={cn('align-middle', cellPad)}>
                                 <IssueTypeCell issueType={item.issue_type} reasonCode={item.reason_code} />
                               </TableCell>
                               <TableCell className={cn('align-middle', cellPad)}>
@@ -1970,25 +1981,26 @@ export default function AttendanceCorrections() {
                               <TableCell className={cn('align-middle', cellPad)}>
                                 <TimeCell iso={tOut} />
                               </TableCell>
-                              <TableCell className={cn('max-w-[14rem] align-top', cellPad)}>
+                              <TableCell className={cn('max-w-[14rem] align-middle', cellPad)}>
                                 <ReviewStatusTableBadge item={item} />
                               </TableCell>
                               <TableCell
-                                className={cn('hidden max-w-[14rem] align-top xl:table-cell', cellPad)}
+                                className={cn('hidden max-w-[14rem] align-middle xl:table-cell', cellPad)}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <RemarksPreviewCell text={item.remarks} />
                               </TableCell>
                               <TableCell
                                 className={cn(
-                                  'hidden align-middle text-sm tabular-nums text-foreground xl:table-cell',
+                                  'hidden align-middle whitespace-nowrap text-[11px] tabular-nums text-foreground xl:table-cell',
                                   cellPad
                                 )}
                               >
-                                {item.filed_at ? formatDateTime(item.filed_at) : '—'}
+                                {item.filed_at ? formatTableDateTimeShort(item.filed_at) : '—'}
                               </TableCell>
                               <TableCell className={cn('text-right align-middle', cellPad)}>
                                 <AdminDataTableActions
+                                  dense
                                   onView={() => openView(item)}
                                   showApprove={tab === 'all' && item.actor_can_approve}
                                   onApprove={() => openApprove(item)}

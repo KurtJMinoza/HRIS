@@ -23,16 +23,23 @@ export function AdminDataTableActions({
   showSubmitRecommendation = false,
   onSubmitRecommendation,
   disabled = false,
+  dense = false,
 }) {
   const stop = (fn) => (e) => {
     e.stopPropagation()
     fn?.(e)
   }
+  const actionButtonClass = dense
+    ? 'size-7 shrink-0 gap-0 rounded-md p-0 text-[10px] font-semibold shadow-sm'
+    : 'h-8 shrink-0 gap-1.5 rounded-lg px-2 text-xs font-semibold shadow-sm'
+  const actionLabelClass = dense ? 'sr-only' : 'hidden sm:inline'
 
   return (
     <div
       className={cn(
-        'flex max-w-full flex-nowrap items-center justify-end gap-1.5 overflow-hidden',
+        dense
+          ? 'flex max-w-full flex-nowrap items-center justify-end gap-1 overflow-visible'
+          : 'flex max-w-full flex-nowrap items-center justify-end gap-1.5 overflow-hidden',
         className,
       )}
       role="group"
@@ -44,7 +51,8 @@ export function AdminDataTableActions({
           variant="outline"
           size="sm"
           className={cn(
-            'h-8 shrink-0 gap-1.5 rounded-lg border-border/80 px-2 text-xs font-semibold shadow-sm',
+            actionButtonClass,
+            'border-border/80',
             'bg-background hover:bg-muted/70 hover:text-foreground',
             'focus-visible:ring-2 focus-visible:ring-ring/40',
           )}
@@ -54,7 +62,7 @@ export function AdminDataTableActions({
           aria-label={viewAriaLabel}
         >
           <Eye className="size-3.5 shrink-0 opacity-90" aria-hidden />
-          <span className="hidden sm:inline">{viewLabel}</span>
+          <span className={actionLabelClass}>{viewLabel}</span>
         </Button>
       )}
 
@@ -63,7 +71,8 @@ export function AdminDataTableActions({
           variant="outline"
           size="sm"
           className={cn(
-            'h-8 shrink-0 gap-1.5 rounded-lg border-border/80 px-2 text-xs font-semibold shadow-sm',
+            actionButtonClass,
+            'border-border/80',
             'bg-background hover:bg-muted/70',
           )}
           asChild
@@ -76,7 +85,7 @@ export function AdminDataTableActions({
             className="inline-flex items-center justify-center"
           >
             <ExternalLink className="size-3.5 shrink-0 opacity-90" aria-hidden />
-            <span className="hidden sm:inline">{profileLabel}</span>
+            <span className={actionLabelClass}>{profileLabel}</span>
           </Link>
         </Button>
       ) : null}
@@ -88,7 +97,8 @@ export function AdminDataTableActions({
           size="sm"
           disabled={disabled}
           className={cn(
-            'h-8 shrink-0 gap-1.5 rounded-lg border-violet-200/90 bg-violet-50 px-2 text-xs font-semibold shadow-sm',
+            actionButtonClass,
+            'border-violet-200/90 bg-violet-50',
             'text-violet-950 hover:bg-violet-100 dark:border-violet-500/35 dark:bg-violet-950/40 dark:text-violet-50 dark:hover:bg-violet-950/55',
             'focus-visible:ring-2 focus-visible:ring-violet-500/35',
           )}
@@ -97,7 +107,7 @@ export function AdminDataTableActions({
           aria-label="Submit regularization recommendation"
         >
           <Sparkles className="size-3.5 shrink-0 opacity-90" aria-hidden />
-          <span className="hidden sm:inline">Submit</span>
+          <span className={actionLabelClass}>Submit</span>
         </Button>
       ) : null}
 
@@ -107,7 +117,8 @@ export function AdminDataTableActions({
           size="sm"
           disabled={disabled}
           className={cn(
-            'h-8 shrink-0 gap-1.5 rounded-lg border-0 px-2 text-xs font-semibold shadow-sm',
+            actionButtonClass,
+            'border-0',
             'bg-emerald-600 text-white hover:bg-emerald-700',
             'focus-visible:ring-2 focus-visible:ring-emerald-500/40',
           )}
@@ -116,7 +127,7 @@ export function AdminDataTableActions({
           aria-label="Approve"
         >
           <Check className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-          <span className="hidden sm:inline">Approve</span>
+          <span className={actionLabelClass}>Approve</span>
         </Button>
       ) : null}
 
@@ -127,7 +138,7 @@ export function AdminDataTableActions({
           size="sm"
           disabled={disabled}
           className={cn(
-            'h-8 shrink-0 gap-1.5 rounded-lg px-2 text-xs font-semibold shadow-sm',
+            actionButtonClass,
             'focus-visible:ring-2 focus-visible:ring-destructive/30',
           )}
           onClick={stop(onReject)}
@@ -135,7 +146,7 @@ export function AdminDataTableActions({
           aria-label="Reject"
         >
           <X className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-          <span className="hidden sm:inline">Reject</span>
+          <span className={actionLabelClass}>Reject</span>
         </Button>
       ) : null}
 
@@ -146,7 +157,7 @@ export function AdminDataTableActions({
           size="sm"
           disabled={disabled}
           className={cn(
-            'h-8 shrink-0 gap-1.5 rounded-lg px-2 text-xs font-semibold shadow-sm',
+            actionButtonClass,
             'focus-visible:ring-2 focus-visible:ring-destructive/30',
           )}
           onClick={stop(onDelete)}
@@ -154,7 +165,7 @@ export function AdminDataTableActions({
           aria-label="Delete"
         >
           <Trash2 className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
-          <span className="hidden sm:inline">Delete</span>
+          <span className={actionLabelClass}>Delete</span>
         </Button>
       ) : null}
     </div>

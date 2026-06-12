@@ -239,25 +239,27 @@ export function RemarksPreviewCell({ text }) {
 /** Time in / time out in tables: monospace time or muted em dash. */
 export function TimeCell({ iso }) {
   if (!iso) {
-    return <span className="font-mono text-sm text-muted-foreground">{EMPTY_PLACEHOLDER}</span>
+    return <span className="whitespace-nowrap font-mono text-[12px] text-muted-foreground">{EMPTY_PLACEHOLDER}</span>
   }
   return (
-    <span className="font-mono text-sm tabular-nums text-foreground">{formatTimeOnly(iso)}</span>
+    <span className="whitespace-nowrap font-mono text-[12px] tabular-nums text-foreground">{formatTimeOnly(iso)}</span>
   )
 }
 
 export function IssueTypeCell({ issueType, reasonCode }) {
   const sub = reasonLabel(reasonCode)
+  const label = issueLabel(issueType)
   return (
-    <div className="flex min-w-0 max-w-[14rem] flex-col gap-1">
+    <div className="flex min-w-0 max-w-full flex-col gap-1">
       <Badge
         variant="outline"
-        className="w-fit rounded-lg border-slate-200/90 bg-white px-2.5 py-0.5 text-xs font-medium shadow-sm dark:border-slate-700 dark:bg-slate-900/40"
+        className="max-w-full justify-start rounded-lg border-slate-200/90 bg-white px-2 py-0.5 text-[11px] font-medium shadow-sm dark:border-slate-700 dark:bg-slate-900/40"
+        title={label}
       >
-        {issueLabel(issueType)}
+        <span className="min-w-0 truncate">{label}</span>
       </Badge>
       {sub ? (
-        <span className="block text-[11px] leading-snug text-muted-foreground" title={sub}>
+        <span className="block max-w-full truncate text-[11px] leading-snug text-muted-foreground" title={sub}>
           {sub}
         </span>
       ) : null}

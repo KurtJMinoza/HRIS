@@ -722,7 +722,7 @@ export default function EmployeeCorrectionRequests() {
     return (
       <button
         type="button"
-        className="-ml-2 inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-extrabold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        className="-ml-1 inline-flex h-7 items-center gap-1 rounded-md px-1 text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground"
         onClick={() => toggleSort(col)}
       >
         {label}
@@ -1029,37 +1029,37 @@ export default function EmployeeCorrectionRequests() {
 
                 {/* Desktop / tablet table; optional detail columns are shown only when there is room. */}
                 <div className="hidden w-full min-w-0 overflow-hidden border-t border-border bg-card lg:block">
-                  <Table className="w-full min-w-0 table-fixed">
+                  <Table className="w-full min-w-0 table-fixed text-[12px]">
                     <TableHeader className="[&_tr]:border-b-0">
                       <TableRow className="border-0 bg-muted/30">
-                        <TableHead className="w-[16%] py-3.5 pl-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[14%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="employee_name" label="Employee" />
                         </TableHead>
-                        <TableHead className="w-[9%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[8%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="date" label="Date" />
                         </TableHead>
-                        <TableHead className="w-[7%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[6%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           Day
                         </TableHead>
-                        <TableHead className="w-[11%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[10%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="issue_type" label="Issue type" />
                         </TableHead>
-                        <TableHead className="w-[7%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[7%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="time_in" label="Time in" />
                         </TableHead>
-                        <TableHead className="w-[7%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[7%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="time_out" label="Time out" />
                         </TableHead>
-                        <TableHead className="w-[13%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[12%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="review_status" label="Status" />
                         </TableHead>
-                        <TableHead className="hidden w-[12%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:table-cell">
+                        <TableHead className="hidden w-[12%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground xl:table-cell">
                           <SortHead col="remarks" label="Remarks" />
                         </TableHead>
-                        <TableHead className="hidden w-[9%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:table-cell">
+                        <TableHead className="hidden w-[8%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground xl:table-cell">
                           <SortHead col="filed_at" label="Date filed" />
                         </TableHead>
-                        <TableHead className="w-[9%] py-3.5 pr-4 text-right text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[16%] px-1.5 py-2.5 text-right text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           Actions
                         </TableHead>
                       </TableRow>
@@ -1089,7 +1089,7 @@ export default function EmployeeCorrectionRequests() {
                               rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/15'
                             )}
                           >
-                            <TableCell className="pl-4 align-top">
+                            <TableCell className="px-1.5! py-2.5! align-top">
                               <EmployeeAvatarNameRoleCell
                                 name={empName}
                                 imageUrl={empImg}
@@ -1099,35 +1099,36 @@ export default function EmployeeCorrectionRequests() {
                                 hrRole={empHrRole}
                               />
                             </TableCell>
-                            <TableCell className="align-middle tabular-nums text-foreground">
+                            <TableCell className="px-1.5! py-2.5! align-middle tabular-nums text-foreground">
                               {row.date ? formatTableDateShort(row.date) : '—'}
                             </TableCell>
-                            <TableCell className="align-middle text-foreground">
+                            <TableCell className="px-1.5! py-2.5! align-middle text-foreground">
                               {formatDayName(row.date, row.day_name)}
                             </TableCell>
-                            <TableCell className="align-top">
+                            <TableCell className="px-1.5! py-2.5! align-top">
                               <IssueTypeCell issueType={row.issue_type} reasonCode={row.reason_code} />
                             </TableCell>
-                            <TableCell className="align-middle">
+                            <TableCell className="px-1.5! py-2.5! align-middle">
                               <TimeCell iso={tIn} />
                             </TableCell>
-                            <TableCell className="align-middle">
+                            <TableCell className="px-1.5! py-2.5! align-middle">
                               <TimeCell iso={tOut} />
                             </TableCell>
-                            <TableCell className="align-top">
+                            <TableCell className="px-1.5! py-2.5! align-top">
                               <ReviewStatusTableBadge item={row} />
                             </TableCell>
                             <TableCell
-                              className="hidden max-w-[14rem] align-top xl:table-cell"
+                              className="hidden max-w-48 px-1.5! py-2.5! align-top xl:table-cell"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <RemarksPreviewCell text={row.remarks} />
                             </TableCell>
-                            <TableCell className="hidden align-middle text-sm tabular-nums text-foreground xl:table-cell">
+                            <TableCell className="hidden px-1.5! py-2.5! align-middle text-[12px] tabular-nums text-foreground xl:table-cell">
                               {row.filed_at ? formatDateTime(row.filed_at) : '—'}
                             </TableCell>
-                            <TableCell className="pr-4 text-right align-middle" onClick={(e) => e.stopPropagation()}>
+                            <TableCell className="px-1.5! py-2.5! text-right align-middle" onClick={(e) => e.stopPropagation()}>
                               <AdminDataTableActions
+                                dense
                                 onView={() => openDetail(row)}
                                 viewAriaLabel="View correction request details"
                                 showDelete={Boolean(row.actor_can_delete)}

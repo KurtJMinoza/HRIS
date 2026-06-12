@@ -464,7 +464,7 @@ function OvertimeStatusCell({ row }) {
 
 function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelete, onApprove, onReject }) {
   const baseActionButtonClass =
-    'h-9 gap-1.5 rounded-full px-3.5 text-xs font-bold shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-offset-2'
+    'h-7 gap-1 rounded-md px-1.5 text-[10px] font-bold shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-offset-2'
 
   return (
     <div className={requestModuleActionsWrapRowClass}>
