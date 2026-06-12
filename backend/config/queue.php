@@ -17,6 +17,7 @@ return [
     | Example workers:
     |   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=2
     |   php artisan queue:work redis --queue=payslip --timeout=300 --sleep=1 --tries=2
+    |   php artisan queue:work redis --queue=attendance-corrections,default --timeout=120 --sleep=1 --tries=1
     |   php artisan queue:work redis --queue=face-registration --timeout=180 --sleep=1 --tries=2
     |   php artisan queue:work redis --queue=default --timeout=120 --sleep=1 --tries=2
     | See .env.example and deployment/supervisor-face-registration.conf.example.

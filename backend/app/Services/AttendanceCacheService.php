@@ -157,6 +157,42 @@ class AttendanceCacheService
         self::invalidate($employeeId, $date);
     }
 
+    /**
+     * @param  array<int, array{employee_id: int, date: string}>  $affectedRows
+     */
+    public static function invalidateMany(array $affectedRows): void
+    {
+        $pairs = [];
+        foreach ($affectedRows as $row) {
+            $employeeId = (int) ($row['employee_id'] ?? 0);
+            $date = trim((string) ($row['date'] ?? ''));
+            if ($employeeId > 0 && $date !== '') {
+                $pairs[$employeeId.'|'.$date] = ['employee_id' => $employeeId, 'date' => $date];
+            }
+        }
+        if ($pairs === []) {
+            return;
+        }
+
+        self::bumpAdminVersion();
+        $employeeIds = array_values(array_unique(array_column($pairs, 'employee_id')));
+        foreach ($employeeIds as $employeeId) {
+            self::bumpEmployeeVersion((int) $employeeId);
+        }
+
+        $repo = self::repository();
+        if (self::supportsTags($repo)) {
+            $repo->tags(['attendance', 'attendance:admin'])->flush();
+            foreach ($employeeIds as $employeeId) {
+                $repo->tags(['attendance', 'attendance:employee:'.(int) $employeeId])->flush();
+            }
+        }
+
+        foreach ($pairs as $pair) {
+            ReportsCacheService::invalidate((int) $pair['employee_id'], (string) $pair['date']);
+        }
+    }
+
     private static function repository(): Repository
     {
         $store = config('cache.attendance_store');

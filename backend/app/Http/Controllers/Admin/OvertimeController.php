@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
+use App\Jobs\BulkRejectionFollowUpJob;
 use App\Jobs\OvertimeBulkFollowUpJob;
 use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
@@ -11,8 +12,9 @@ use App\Models\OvertimeApprovalAudit;
 use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\User;
-use App\Services\BulkApproval\OvertimeBulkApprovalService;
+use App\Services\BulkApproval\BulkApprovalCacheService;
 use App\Services\BulkApproval\OvertimeBulkApprovalQuery;
+use App\Services\BulkApproval\OvertimeBulkApprovalService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\NotificationService;
@@ -24,6 +26,7 @@ use App\Services\ReportsCacheService;
 use App\Support\HrApprovalStages;
 use App\Support\OvertimeModuleCache;
 use App\Support\PhPayrollReference;
+use App\Support\RequestModuleCacheInvalidator;
 use App\Support\RequestPerformanceLogger;
 use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
@@ -47,6 +50,7 @@ class OvertimeController extends Controller
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly OvertimeBulkApprovalQuery $bulkApprovalQuery,
         private readonly OvertimeBulkApprovalService $bulkApprovalService,
+        private readonly BulkApprovalCacheService $bulkApprovalCache,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly OvertimeService $overtimeService,
         private readonly NotificationService $notificationService,
@@ -711,14 +715,30 @@ class OvertimeController extends Controller
 
         $validated = $request->validate([
             'filters' => ['required', 'array'],
+            'action' => ['sometimes', 'string', 'in:approve,reject'],
         ]);
 
         $filters = $this->normalizeBulkApproveFilters($validated['filters']);
-        $count = $this->bulkApprovalQuery->approvableCount($actor, $filters);
+        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters, 10000);
+        $totalMatching = $this->bulkApprovalQuery->matchingPendingCount($actor, $filters);
+        $preview = $this->bulkApprovalCache->storePreview(
+            'overtime',
+            $actor,
+            $filters,
+            $ids,
+            $totalMatching,
+            $totalMatching > count($ids) ? ['not_eligible_or_not_current_approver' => $totalMatching - count($ids)] : [],
+        );
 
         return response()->json([
-            'approvable_count' => $count,
+            'approvable_count' => $preview['eligible_count'],
+            ...$preview,
         ]);
+    }
+
+    public function bulkProgress(Request $request, string $bulkToken): JsonResponse
+    {
+        return $this->bulkProgressResponse('overtime', $request, $bulkToken);
     }
 
     public function bulkApprove(Request $request): JsonResponse
@@ -734,8 +754,9 @@ class OvertimeController extends Controller
         $failedItems = [];
 
         if ($parsed['mode'] === 'all_matching') {
-            $filters = $this->normalizeBulkApproveFilters($parsed['filters']);
-            $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+            $ids = $parsed['bulk_token']
+                ? $this->idsFromBulkToken('overtime', $actor, $parsed['bulk_token'])
+                : $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']), 10000);
         } else {
             $this->assertBulkApproveIdsPresent($parsed['ids']);
             if (count($parsed['ids']) > 500) {
@@ -756,57 +777,33 @@ class OvertimeController extends Controller
             return $this->bulkApproveJsonResponse(0, $skipped, 0, $failedItems, 'overtime request');
         }
 
+        $bulkToken = $parsed['bulk_token'] ?: $this->bulkApprovalCache->storePreview(
+            'overtime',
+            $actor,
+            ['selected_ids' => $ids],
+            $ids,
+            count($ids),
+        )['bulk_token'];
+        $this->bulkApprovalCache->beginProgress('overtime', $bulkToken, count($ids));
+
         $remarks = $parsed['remarks'];
         $approved = 0;
         $failed = 0;
         $approvedIds = [];
 
-        $fastResult = $this->bulkApprovalService->approveFinalAdminHr($actor, $ids, $remarks);
-        $approved += $fastResult['approved'];
-        $skipped += $fastResult['skipped'];
-        $failed += $fastResult['failed'];
-        $failedItems = array_merge($failedItems, $fastResult['failed_items']);
-        $approvedIds = array_merge($approvedIds, $fastResult['approved_ids']);
-        $ids = $fastResult['fallback_ids'];
-
-        foreach ($ids as $id) {
-            try {
-                $single = $this->duplicateBulkApproveRequest($request, null, array_filter([
-                    '_bulk_approval' => true,
-                    'status' => Overtime::STATUS_APPROVED,
-                    'remarks' => $remarks,
-                ], static fn ($value) => $value !== null));
-                $single->setUserResolver(fn () => $actor);
-                $response = $this->updateStatus($single, $id);
-                $status = $response->getStatusCode();
-
-                if ($status >= 200 && $status < 300) {
-                    $approved++;
-                    $approvedIds[] = (int) $id;
-                    continue;
-                }
-
-                $body = $response->getData(true);
-                $skipped++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => (string) ($body['message'] ?? 'Overtime request was skipped.'),
-                ];
-            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
-                $skipped++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => 'Overtime request was not found.',
-                ];
-            } catch (\Throwable $e) {
-                $failed++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => $e instanceof ValidationException
-                        ? (string) collect($e->errors())->flatten()->first()
-                        : ($e->getMessage() ?: 'Bulk approval failed for this overtime request.'),
-                ];
-            }
+        foreach (array_chunk($ids, 200) as $chunk) {
+            $chunkResult = $this->bulkApprovalService->approveFinalAdminHr($actor, $chunk, $remarks);
+            $approved += $chunkResult['approved'];
+            $skipped += $chunkResult['skipped'];
+            $failed += $chunkResult['failed'];
+            $failedItems = array_merge($failedItems, $chunkResult['failed_items']);
+            $approvedIds = array_merge($approvedIds, $chunkResult['approved_ids']);
+            $this->bulkApprovalCache->advanceProgress('overtime', $bulkToken, [
+                'processed' => count($chunk),
+                'approved' => $chunkResult['approved'],
+                'skipped' => $chunkResult['skipped'],
+                'failed' => $chunkResult['failed'],
+            ]);
         }
 
         if ($approved > 0) {
@@ -817,6 +814,7 @@ class OvertimeController extends Controller
                 'overtime.needs_approval',
             );
             OvertimeModuleCache::flush();
+            RequestModuleCacheInvalidator::afterBulk('overtime', $approvedIds, $actor);
             $actorId = (int) $actor->id;
             app()->terminating(static function () use ($approvedIds, $actorId): void {
                 (new OvertimeBulkFollowUpJob($approvedIds, $actorId))->handle(
@@ -826,7 +824,14 @@ class OvertimeController extends Controller
             });
         }
 
-        return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'overtime request');
+        $this->bulkApprovalCache->finishProgress('overtime', $bulkToken);
+        $response = $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'overtime request');
+        $response->setData(array_merge($response->getData(true), [
+            'bulk_token' => $bulkToken,
+            'approved_ids' => array_values(array_unique(array_map('intval', $approvedIds))),
+        ]));
+
+        return $response;
     }
 
     public function bulkReject(Request $request): JsonResponse
@@ -847,7 +852,9 @@ class OvertimeController extends Controller
         $skipped = 0;
         $failedItems = [];
         if ($parsed['mode'] === 'all_matching') {
-            $ids = $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']));
+            $ids = $parsed['bulk_token']
+                ? $this->idsFromBulkToken('overtime', $actor, $parsed['bulk_token'])
+                : $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']), 10000);
         } else {
             $this->assertBulkApproveIdsPresent($parsed['ids']);
             $resolved = $this->resolveBulkApproveIdsFromCandidates(
@@ -862,39 +869,28 @@ class OvertimeController extends Controller
         $rejected = 0;
         $failed = 0;
         $rejectedIds = [];
+        $bulkToken = $parsed['bulk_token'] ?: $this->bulkApprovalCache->storePreview(
+            'overtime',
+            $actor,
+            ['selected_ids' => $ids, 'action' => 'reject'],
+            $ids,
+            count($ids),
+        )['bulk_token'];
+        $this->bulkApprovalCache->beginProgress('overtime', $bulkToken, count($ids));
 
         foreach (array_chunk($ids, 200) as $chunk) {
-            foreach ($chunk as $id) {
-                try {
-                    $single = $this->duplicateBulkActionRequest($request, [
-                        '_bulk_approval' => true,
-                        'status' => Overtime::STATUS_REJECTED,
-                        'remarks' => $remarks,
-                    ]);
-                    $single->setUserResolver(fn () => $actor);
-                    $response = $this->reject($single, (int) $id);
-                    if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
-                        $rejected++;
-                        $rejectedIds[] = (int) $id;
-                        continue;
-                    }
-
-                    $body = $response->getData(true);
-                    $skipped++;
-                    $failedItems[] = [
-                        'request_id' => (int) $id,
-                        'reason' => (string) ($body['message'] ?? 'Overtime request was skipped.'),
-                    ];
-                } catch (\Throwable $e) {
-                    $failed++;
-                    $failedItems[] = [
-                        'request_id' => (int) $id,
-                        'reason' => $e instanceof ValidationException
-                            ? (string) collect($e->errors())->flatten()->first()
-                            : ($e->getMessage() ?: 'Bulk rejection failed for this overtime request.'),
-                    ];
-                }
-            }
+            $chunkResult = $this->bulkApprovalService->rejectMany($actor, $chunk, $remarks);
+            $rejected += $chunkResult['rejected'];
+            $skipped += $chunkResult['skipped'];
+            $failed += $chunkResult['failed'];
+            $rejectedIds = array_merge($rejectedIds, $chunkResult['rejected_ids']);
+            $failedItems = array_merge($failedItems, $chunkResult['failed_items']);
+            $this->bulkApprovalCache->advanceProgress('overtime', $bulkToken, [
+                'processed' => count($chunk),
+                'rejected' => $chunkResult['rejected'],
+                'skipped' => $chunkResult['skipped'],
+                'failed' => $chunkResult['failed'],
+            ]);
         }
 
         if ($rejected > 0) {
@@ -905,7 +901,11 @@ class OvertimeController extends Controller
                 'overtime.needs_approval',
             );
             OvertimeModuleCache::flush();
+            RequestModuleCacheInvalidator::afterBulk('overtime', $rejectedIds, $actor);
+            BulkRejectionFollowUpJob::dispatch('overtime', $rejectedIds)->afterResponse();
         }
+
+        $this->bulkApprovalCache->finishProgress('overtime', $bulkToken);
 
         return response()->json([
             'message' => $rejected > 0 ? 'Bulk overtime request rejection completed.' : 'No overtime requests were rejected.',
@@ -914,6 +914,8 @@ class OvertimeController extends Controller
             'failed_count' => $failed,
             'failed_items' => $failedItems,
             'skipped_reasons' => $failedItems,
+            'bulk_token' => $bulkToken,
+            'rejected_ids' => array_values(array_unique(array_map('intval', $rejectedIds))),
         ]);
     }
 
@@ -1511,20 +1513,20 @@ class OvertimeController extends Controller
         if ($overtime->status === Overtime::STATUS_PENDING
             && $overtime->pending_approval
             && OrgApprovalRecord::query()
-            ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
-            ->where('request_id', (int) $overtime->id)
-            ->where('approver_id', $actorId)
-            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
-            ->whereNotExists(function ($earlier): void {
-                $earlier
-                    ->selectRaw('1')
-                    ->from('org_approval_records as earlier_approval')
-                    ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
-                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
-                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
-                    ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
-            })
-            ->exists()) {
+                ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                ->where('request_id', (int) $overtime->id)
+                ->where('approver_id', $actorId)
+                ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->whereNotExists(function ($earlier): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
+                        ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
+                })
+                ->exists()) {
             return true;
         }
 

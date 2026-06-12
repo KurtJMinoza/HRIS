@@ -48,6 +48,7 @@ import {
   approveLeaveRequest,
   bulkApproveLeaveRequests,
   bulkApproveLeavePreview,
+  getLeaveBulkProgress,
   rejectLeaveRequest,
   getEmployees,
   updateLeaveNotes,
@@ -244,6 +245,8 @@ export default function AdminLeave() {
   const [approveSubmitting, setApproveSubmitting] = useState(false)
   const [bulkApproveRemarks, setBulkApproveRemarks] = useState('')
   const [totalMatchingApprovable, setTotalMatchingApprovable] = useState(0)
+  const [bulkPreviewToken, setBulkPreviewToken] = useState('')
+  const [bulkProgress, setBulkProgress] = useState(null)
   const [bulkApproving, setBulkApproving] = useState(false)
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
   const [bulkSummaryOpen, setBulkSummaryOpen] = useState(false)
@@ -900,9 +903,18 @@ export default function AdminLeave() {
     if (bulkSelection.effectiveSelectedCount === 0) return
     setBulkConfirmOpen(false)
     setBulkApproving(true)
+    setBulkProgress(null)
     setError(null)
+    let progressTimer = null
     try {
       const payload = bulkSelection.buildBulkApprovePayload(bulkApproveRemarks)
+      if (payload.bulk_token) {
+        progressTimer = window.setInterval(() => {
+          getLeaveBulkProgress(payload.bulk_token)
+            .then(setBulkProgress)
+            .catch(() => {})
+        }, 300)
+      }
       const res = await bulkApproveLeaveRequests(payload)
       const approved = Number(res?.approved_count || 0)
       const skipped = Number(res?.skipped_count || 0)
@@ -921,18 +933,19 @@ export default function AdminLeave() {
       })
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
+      const approvedIds = new Set((res?.approved_ids || []).map((id) => String(id)))
       bulkSelection.clearSelection()
-      if (bulkSelection.selectAllMatching) {
+      if (approvedIds.size > 0) {
         setLeaveRequests((rows) =>
           statusFilter === 'pending'
-            ? rows.filter((leave) => !(leave?.status === 'pending' && leave?.actor_can_approve))
+            ? rows.filter((leave) => !approvedIds.has(String(leave?.id)))
             : rows.map((leave) =>
-                leave?.status === 'pending' && leave?.actor_can_approve
+                approvedIds.has(String(leave?.id))
                   ? { ...leave, status: 'approved', display_status: 'HR Approved', actor_can_approve: false, actor_can_reject: false }
                   : leave
               )
         )
-      } else {
+      } else if (!bulkSelection.selectAllMatching) {
         const selectedIds = new Set([...bulkSelection.selectedIds].map((id) => String(id)))
         setLeaveRequests((rows) =>
           statusFilter === 'pending'
@@ -948,6 +961,7 @@ export default function AdminLeave() {
       setError(e.message)
       toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
     } finally {
+      if (progressTimer) window.clearInterval(progressTimer)
       setBulkApproving(false)
     }
   }
@@ -1079,15 +1093,22 @@ export default function AdminLeave() {
   useEffect(() => {
     if (!canApproveLeave || tab !== 'all') {
       setTotalMatchingApprovable(0)
+      setBulkPreviewToken('')
       return undefined
     }
     const controller = new AbortController()
     bulkApproveLeavePreview(bulkApprovalFilters, { signal: controller.signal })
       .then((res) => {
-        if (!controller.signal.aborted) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
+        if (!controller.signal.aborted) {
+          setTotalMatchingApprovable(Number(res?.eligible_count ?? res?.approvable_count) || 0)
+          setBulkPreviewToken(String(res?.bulk_token || ''))
+        }
       })
       .catch((e) => {
-        if (!controller.signal.aborted && e?.name !== 'AbortError') setTotalMatchingApprovable(0)
+        if (!controller.signal.aborted && e?.name !== 'AbortError') {
+          setTotalMatchingApprovable(0)
+          setBulkPreviewToken('')
+        }
       })
     return () => {
       controller.abort()
@@ -1106,6 +1127,7 @@ export default function AdminLeave() {
     pageRows: pageBulkRows,
     totalMatchingCount: totalMatchingApprovable,
     bulkFilters: bulkApprovalFilters,
+    bulkToken: bulkPreviewToken,
     filtersKey: bulkFiltersKey,
   })
 
@@ -1420,6 +1442,7 @@ export default function AdminLeave() {
               entityLabel="requests"
               onApproveClick={() => setBulkConfirmOpen(true)}
               approving={bulkApproving}
+              progress={bulkProgress}
             />
           </div>
           ) : null}

@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use Illuminate\Cache\RedisStore;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -320,6 +321,73 @@ class ReviewRequestCache
                 'request_id' => $id,
                 'message' => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * @param  array<int, int|string>  $ids
+     */
+    public static function forgetMany(string $module, array $ids): void
+    {
+        $ids = array_values(array_unique(array_filter(
+            array_map('intval', $ids),
+            static fn (int $id): bool => $id > 0,
+        )));
+        if ($ids === []) {
+            return;
+        }
+
+        try {
+            $store = Cache::store()->getStore();
+            if (! $store instanceof RedisStore) {
+                foreach ($ids as $id) {
+                    self::forget($module, $id);
+                }
+
+                return;
+            }
+
+            $primaryKeys = array_map(fn (int $id): string => self::key($module, $id), $ids);
+            $indexKeys = match ($module) {
+                'leave' => array_map(fn (int $id): string => self::leaveReviewLiteIndexKey($id), $ids),
+                'overtime' => array_map(fn (int $id): string => self::overtimeReviewLiteIndexKey($id), $ids),
+                'attendance_correction' => array_map(fn (int $id): string => self::attendanceCorrectionReviewLiteIndexKey($id), $ids),
+                default => [],
+            };
+            $indexedUsers = $indexKeys !== [] ? $store->many($indexKeys) : [];
+            $keys = [...$primaryKeys, ...$indexKeys];
+
+            foreach ($ids as $offset => $id) {
+                $userIds = $indexedUsers[$indexKeys[$offset] ?? ''] ?? [];
+                if (! is_array($userIds)) {
+                    continue;
+                }
+                foreach (array_unique(array_map('intval', $userIds)) as $userId) {
+                    $keys[] = match ($module) {
+                        'leave' => self::leaveReviewLiteKey($id, $userId),
+                        'overtime' => self::overtimeReviewLiteKey($id, $userId),
+                        'attendance_correction' => self::attendanceCorrectionReviewLiteKey($id, $userId),
+                        default => '',
+                    };
+                }
+            }
+
+            $keys = array_values(array_unique(array_filter($keys)));
+            $prefix = $store->getPrefix();
+            $store->connection()->pipeline(static function ($pipe) use ($keys, $prefix): void {
+                foreach ($keys as $key) {
+                    $pipe->del($prefix.$key);
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::warning('review_request.cache_forget_many_failed', [
+                'module' => $module,
+                'request_count' => count($ids),
+                'message' => $e->getMessage(),
+            ]);
+            foreach ($ids as $id) {
+                self::forget($module, $id);
+            }
         }
     }
 

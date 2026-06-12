@@ -2,11 +2,11 @@
 
 namespace App\Services\BulkApproval;
 
-use App\Services\BulkApproval\Contracts\ApprovableBulkQuery;
 use App\Enums\HrRole;
 use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
 use App\Models\User;
+use App\Services\BulkApproval\Contracts\ApprovableBulkQuery;
 use App\Services\DataScopeService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeApprovalService;
@@ -136,6 +136,17 @@ class OvertimeBulkApprovalQuery implements ApprovableBulkQuery
         }
 
         return count($this->approvableIds($actor, $filters));
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    public function matchingPendingCount(User $actor, array $filters): int
+    {
+        return (int) $this->baseQuery($actor, array_merge($filters, ['status' => Overtime::STATUS_PENDING]))
+            ->setEagerLoads([])
+            ->where('overtimes.status', Overtime::STATUS_PENDING)
+            ->count('overtimes.id');
     }
 
     /**

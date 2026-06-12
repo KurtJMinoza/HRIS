@@ -7,17 +7,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
  * @param {object[]} options.pageRows - Approvable rows visible on the current page
  * @param {number} options.totalMatchingCount - Total approvable rows matching current filters (all pages)
  * @param {object} options.bulkFilters - Filters snapshot sent to backend for all_matching mode
+ * @param {string} [options.bulkToken] - Server token for the current filters
  * @param {string} [options.filtersKey] - Changes reset selection when filters change
  */
 export function useBulkApprovalSelection({
   pageRows = [],
   totalMatchingCount = 0,
   bulkFilters = {},
+  bulkToken = '',
   filtersKey = '',
 }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [selectAllMatching, setSelectAllMatching] = useState(false)
   const [storedFilters, setStoredFilters] = useState(bulkFilters)
+  const [storedBulkToken, setStoredBulkToken] = useState('')
 
   const pageSelectableRows = useMemo(
     () => (Array.isArray(pageRows) ? pageRows.filter((row) => row?.id != null) : []),
@@ -38,13 +41,15 @@ export function useBulkApprovalSelection({
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set())
     setSelectAllMatching(false)
+    setStoredBulkToken('')
   }, [])
 
   const selectAllMatchingRecords = useCallback(() => {
     setStoredFilters(bulkFilters)
+    setStoredBulkToken(bulkToken)
     setSelectAllMatching(true)
     setSelectedIds(new Set())
-  }, [bulkFilters])
+  }, [bulkFilters, bulkToken])
 
   const toggleRow = useCallback((row) => {
     const id = Number(row?.id)
@@ -76,6 +81,8 @@ export function useBulkApprovalSelection({
   useEffect(() => {
     if (prevFiltersKey.current !== filtersKey) {
       prevFiltersKey.current = filtersKey
+      // Selection is intentionally invalidated when the server-side filter snapshot changes.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       clearSelection()
     }
   }, [filtersKey, clearSelection])
@@ -87,6 +94,7 @@ export function useBulkApprovalSelection({
         return {
           mode: 'all_matching',
           filters: storedFilters,
+          bulk_token: storedBulkToken || undefined,
           remarks: trimmedRemarks || undefined,
         }
       }
@@ -96,7 +104,7 @@ export function useBulkApprovalSelection({
         remarks: trimmedRemarks || undefined,
       }
     },
-    [selectAllMatching, selectedIds, storedFilters],
+    [selectAllMatching, selectedIds, storedBulkToken, storedFilters],
   )
 
   return {

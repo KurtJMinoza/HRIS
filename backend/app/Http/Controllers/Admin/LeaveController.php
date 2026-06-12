@@ -4,13 +4,15 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
+use App\Jobs\BulkRejectionFollowUpJob;
 use App\Jobs\LeaveBulkFollowUpJob;
 use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
-use App\Services\BulkApproval\LeaveBulkApprovalService;
+use App\Services\BulkApproval\BulkApprovalCacheService;
 use App\Services\BulkApproval\LeaveBulkApprovalQuery;
+use App\Services\BulkApproval\LeaveBulkApprovalService;
 use App\Services\DataScopeService;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
@@ -20,9 +22,10 @@ use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
-use App\Support\LeaveModuleCache;
 use App\Support\LeaveFilingRules;
+use App\Support\LeaveModuleCache;
 use App\Support\LeaveScheduleSupport;
+use App\Support\RequestModuleCacheInvalidator;
 use App\Support\RequestPerformanceLogger;
 use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
@@ -49,6 +52,7 @@ class LeaveController extends Controller
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly LeaveBulkApprovalQuery $bulkApprovalQuery,
         private readonly LeaveBulkApprovalService $bulkApprovalService,
+        private readonly BulkApprovalCacheService $bulkApprovalCache,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly NotificationService $notificationService,
     ) {}
@@ -676,14 +680,30 @@ class LeaveController extends Controller
 
         $validated = $request->validate([
             'filters' => ['required', 'array'],
+            'action' => ['sometimes', 'string', 'in:approve,reject'],
         ]);
 
         $filters = $this->normalizeBulkApproveFilters($validated['filters']);
-        $count = $this->bulkApprovalQuery->approvableCount($actor, $filters);
+        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters, 10000);
+        $totalMatching = $this->bulkApprovalQuery->matchingPendingCount($actor, $filters);
+        $preview = $this->bulkApprovalCache->storePreview(
+            'leave',
+            $actor,
+            $filters,
+            $ids,
+            $totalMatching,
+            $totalMatching > count($ids) ? ['not_eligible_or_not_current_approver' => $totalMatching - count($ids)] : [],
+        );
 
         return response()->json([
-            'approvable_count' => $count,
+            'approvable_count' => $preview['eligible_count'],
+            ...$preview,
         ]);
+    }
+
+    public function bulkProgress(Request $request, string $bulkToken): JsonResponse
+    {
+        return $this->bulkProgressResponse('leave', $request, $bulkToken);
     }
 
     public function bulkApprove(Request $request): JsonResponse
@@ -699,8 +719,9 @@ class LeaveController extends Controller
         $failedItems = [];
 
         if ($parsed['mode'] === 'all_matching') {
-            $filters = $this->normalizeBulkApproveFilters($parsed['filters']);
-            $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+            $ids = $parsed['bulk_token']
+                ? $this->idsFromBulkToken('leave', $actor, $parsed['bulk_token'])
+                : $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']), 10000);
         } else {
             $this->assertBulkApproveIdsPresent($parsed['ids']);
             if (count($parsed['ids']) > 500) {
@@ -721,6 +742,15 @@ class LeaveController extends Controller
             return $this->bulkApproveJsonResponse(0, $skipped, 0, $failedItems, 'leave request');
         }
 
+        $bulkToken = $parsed['bulk_token'] ?: $this->bulkApprovalCache->storePreview(
+            'leave',
+            $actor,
+            ['selected_ids' => $ids],
+            $ids,
+            count($ids),
+        )['bulk_token'];
+        $this->bulkApprovalCache->beginProgress('leave', $bulkToken, count($ids));
+
         $remarks = $parsed['remarks'];
         $approved = 0;
         $failed = 0;
@@ -731,57 +761,26 @@ class LeaveController extends Controller
             fn (User $user) => $this->hrRoleResolver->isAdminHrAccount($user),
         );
 
-        $fastResult = $this->bulkApprovalService->approveFinalAdminHr(
-            $actor,
-            $ids,
-            $remarks,
-            (bool) $request->boolean('force_insufficient_credits') && $actor->isSuperAdmin(),
-            (bool) ($leaveBulkExtra['bypass_rest_days'] ?? false),
-            isset($leaveBulkExtra['rest_day_bypass_reason']) ? (string) $leaveBulkExtra['rest_day_bypass_reason'] : null,
-        );
-        $approved += $fastResult['approved'];
-        $skipped += $fastResult['skipped'];
-        $failed += $fastResult['failed'];
-        $failedItems = array_merge($failedItems, $fastResult['failed_items']);
-        $approvedIds = array_merge($approvedIds, $fastResult['approved_ids']);
-        $ids = $fastResult['fallback_ids'];
-
-        foreach ($ids as $id) {
-            try {
-                $single = $this->duplicateBulkApproveRequest($request, $remarks, array_merge($leaveBulkExtra, [
-                    '_bulk_approval' => true,
-                ]));
-                $single->setUserResolver(fn () => $actor);
-                $response = $this->approve($single, $id);
-                $status = $response->getStatusCode();
-
-                if ($status >= 200 && $status < 300) {
-                    $approved++;
-                    $approvedIds[] = (int) $id;
-                    continue;
-                }
-
-                $body = $response->getData(true);
-                $skipped++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => (string) ($body['message'] ?? 'Leave request was skipped.'),
-                ];
-            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
-                $skipped++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => 'Leave request was not found.',
-                ];
-            } catch (\Throwable $e) {
-                $failed++;
-                $failedItems[] = [
-                    'request_id' => $id,
-                    'reason' => $e instanceof ValidationException
-                        ? (string) collect($e->errors())->flatten()->first()
-                        : ($e->getMessage() ?: 'Bulk approval failed for this leave request.'),
-                ];
-            }
+        foreach (array_chunk($ids, 200) as $chunk) {
+            $chunkResult = $this->bulkApprovalService->approveFinalAdminHr(
+                $actor,
+                $chunk,
+                $remarks,
+                (bool) $request->boolean('force_insufficient_credits') && $actor->isSuperAdmin(),
+                (bool) ($leaveBulkExtra['bypass_rest_days'] ?? false),
+                isset($leaveBulkExtra['rest_day_bypass_reason']) ? (string) $leaveBulkExtra['rest_day_bypass_reason'] : null,
+            );
+            $approved += $chunkResult['approved'];
+            $skipped += $chunkResult['skipped'];
+            $failed += $chunkResult['failed'];
+            $failedItems = array_merge($failedItems, $chunkResult['failed_items']);
+            $approvedIds = array_merge($approvedIds, $chunkResult['approved_ids']);
+            $this->bulkApprovalCache->advanceProgress('leave', $bulkToken, [
+                'processed' => count($chunk),
+                'approved' => $chunkResult['approved'],
+                'skipped' => $chunkResult['skipped'],
+                'failed' => $chunkResult['failed'],
+            ]);
         }
 
         if ($approved > 0) {
@@ -792,6 +791,7 @@ class LeaveController extends Controller
                 'leave.needs_approval',
             );
             LeaveModuleCache::flush();
+            RequestModuleCacheInvalidator::afterBulk('leave', $approvedIds, $actor);
             $actorId = (int) $actor->id;
             $forceCredits = (bool) $request->boolean('force_insufficient_credits') && $actor->isSuperAdmin();
             app()->terminating(static function () use ($approvedIds, $actorId, $forceCredits): void {
@@ -802,7 +802,14 @@ class LeaveController extends Controller
             });
         }
 
-        return $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'leave request');
+        $this->bulkApprovalCache->finishProgress('leave', $bulkToken);
+        $response = $this->bulkApproveJsonResponse($approved, $skipped, $failed, $failedItems, 'leave request');
+        $response->setData(array_merge($response->getData(true), [
+            'bulk_token' => $bulkToken,
+            'approved_ids' => array_values(array_unique(array_map('intval', $approvedIds))),
+        ]));
+
+        return $response;
     }
 
     public function bulkReject(Request $request): JsonResponse
@@ -823,7 +830,9 @@ class LeaveController extends Controller
         $skipped = 0;
         $failedItems = [];
         if ($parsed['mode'] === 'all_matching') {
-            $ids = $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']));
+            $ids = $parsed['bulk_token']
+                ? $this->idsFromBulkToken('leave', $actor, $parsed['bulk_token'])
+                : $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']), 10000);
         } else {
             $this->assertBulkApproveIdsPresent($parsed['ids']);
             $resolved = $this->resolveBulkApproveIdsFromCandidates(
@@ -838,38 +847,28 @@ class LeaveController extends Controller
         $rejected = 0;
         $failed = 0;
         $rejectedIds = [];
+        $bulkToken = $parsed['bulk_token'] ?: $this->bulkApprovalCache->storePreview(
+            'leave',
+            $actor,
+            ['selected_ids' => $ids, 'action' => 'reject'],
+            $ids,
+            count($ids),
+        )['bulk_token'];
+        $this->bulkApprovalCache->beginProgress('leave', $bulkToken, count($ids));
 
         foreach (array_chunk($ids, 200) as $chunk) {
-            foreach ($chunk as $id) {
-                try {
-                    $single = $this->duplicateBulkActionRequest($request, [
-                        '_bulk_approval' => true,
-                        'reason' => $reason,
-                    ]);
-                    $single->setUserResolver(fn () => $actor);
-                    $response = $this->reject($single, (int) $id);
-                    if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
-                        $rejected++;
-                        $rejectedIds[] = (int) $id;
-                        continue;
-                    }
-
-                    $body = $response->getData(true);
-                    $skipped++;
-                    $failedItems[] = [
-                        'request_id' => (int) $id,
-                        'reason' => (string) ($body['message'] ?? 'Leave request was skipped.'),
-                    ];
-                } catch (\Throwable $e) {
-                    $failed++;
-                    $failedItems[] = [
-                        'request_id' => (int) $id,
-                        'reason' => $e instanceof ValidationException
-                            ? (string) collect($e->errors())->flatten()->first()
-                            : ($e->getMessage() ?: 'Bulk rejection failed for this leave request.'),
-                    ];
-                }
-            }
+            $chunkResult = $this->bulkApprovalService->rejectMany($actor, $chunk, $reason);
+            $rejected += $chunkResult['rejected'];
+            $skipped += $chunkResult['skipped'];
+            $failed += $chunkResult['failed'];
+            $rejectedIds = array_merge($rejectedIds, $chunkResult['rejected_ids']);
+            $failedItems = array_merge($failedItems, $chunkResult['failed_items']);
+            $this->bulkApprovalCache->advanceProgress('leave', $bulkToken, [
+                'processed' => count($chunk),
+                'rejected' => $chunkResult['rejected'],
+                'skipped' => $chunkResult['skipped'],
+                'failed' => $chunkResult['failed'],
+            ]);
         }
 
         if ($rejected > 0) {
@@ -880,7 +879,11 @@ class LeaveController extends Controller
                 'leave.needs_approval',
             );
             LeaveModuleCache::flush();
+            RequestModuleCacheInvalidator::afterBulk('leave', $rejectedIds, $actor);
+            BulkRejectionFollowUpJob::dispatch('leave', $rejectedIds)->afterResponse();
         }
+
+        $this->bulkApprovalCache->finishProgress('leave', $bulkToken);
 
         return response()->json([
             'message' => $rejected > 0 ? 'Bulk leave request rejection completed.' : 'No leave requests were rejected.',
@@ -889,6 +892,8 @@ class LeaveController extends Controller
             'failed_count' => $failed,
             'failed_items' => $failedItems,
             'skipped_reasons' => $failedItems,
+            'bulk_token' => $bulkToken,
+            'rejected_ids' => array_values(array_unique(array_map('intval', $rejectedIds))),
         ]);
     }
 
@@ -1793,20 +1798,20 @@ class LeaveController extends Controller
         if ($leave->status === LeaveRequest::STATUS_PENDING
             && $leave->pending_approval
             && OrgApprovalRecord::query()
-            ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
-            ->where('request_id', (int) $leave->id)
-            ->where('approver_id', $actorId)
-            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
-            ->whereNotExists(function ($earlier): void {
-                $earlier
-                    ->selectRaw('1')
-                    ->from('org_approval_records as earlier_approval')
-                    ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
-                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
-                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
-                    ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
-            })
-            ->exists()) {
+                ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+                ->where('request_id', (int) $leave->id)
+                ->where('approver_id', $actorId)
+                ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->whereNotExists(function ($earlier): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
+                        ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
+                })
+                ->exists()) {
             return true;
         }
 

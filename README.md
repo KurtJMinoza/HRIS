@@ -6,7 +6,7 @@ Full-stack **HRIS** for workforce management, attendance (including face-verifie
 
 ---
 
-## Tech stack (versions — see lockfiles for exact pins)
+## Tech stack (versions — see lockfiles for exact pins) 
 
 ### Runtime & language
 

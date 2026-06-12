@@ -10,7 +10,6 @@ use App\Services\AttendanceCorrectionApprovalService;
 use App\Services\DataScopeService;
 use App\Services\OrgApprovalWorkflowService;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Http\Request;
 
 class PresenceFilingBulkApprovalQuery
 {
@@ -190,6 +189,21 @@ class PresenceFilingBulkApprovalQuery
         }
 
         return count($this->approvableIds($actor, $filters));
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    public function matchingPendingCount(User $actor, array $filters): int
+    {
+        $query = $this->baseQuery($actor, array_merge($filters, ['status' => 'pending']));
+        $query->setEagerLoads([]);
+
+        return (int) $query
+            ->where('attendance_corrections.pending_approval', true)
+            ->where('attendance_corrections.approved', false)
+            ->whereNull('attendance_corrections.rejected_at')
+            ->count('attendance_corrections.id');
     }
 
     /**

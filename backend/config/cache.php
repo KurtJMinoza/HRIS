@@ -60,6 +60,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Bulk approval selection and progress cache
+    |--------------------------------------------------------------------------
+    |
+    | Use Redis in production so selections and progress are shared by every
+    | application worker. Tests may inherit CACHE_STORE=array.
+    |
+    */
+    'bulk_approval_store' => env(
+        'CACHE_BULK_APPROVAL_STORE',
+        env('APP_ENV') === 'testing' ? env('CACHE_STORE', 'array') : 'redis',
+    ),
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports detailed list cache (Admin + Employee reports modules)
     |--------------------------------------------------------------------------
     */

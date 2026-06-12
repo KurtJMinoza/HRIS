@@ -1,7 +1,7 @@
 ; Copy to e.g. /etc/supervisor/conf.d/laravel-face-registration.conf
 ; Adjust paths and user to match your server.
 ;
-; Keep payroll, payslip PDFs, face registration, and default jobs on separate Redis workers.
+; Keep payroll, payslip PDFs, attendance correction, face registration, and default jobs on separate Redis workers.
 ; queue:work --tries should be >= the job's $tries so backoff/retries behave as intended.
 ; Scale concurrency by increasing numprocs (example: 8, 20, 50).
 ; One worker can process one job at a time.
@@ -30,6 +30,19 @@ user=www-data
 numprocs=1
 redirect_stderr=true
 stdout_logfile=/var/www/HR/backend/storage/logs/worker-payslip-pdf.log
+stopwaitsecs=3700
+
+[program:laravel-worker-attendance-corrections]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/HR/backend/artisan queue:work redis --queue=attendance-corrections,default --timeout=120 --sleep=1 --tries=1 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/www/HR/backend/storage/logs/worker-attendance-corrections.log
 stopwaitsecs=3700
 
 [program:laravel-worker-face-registration]

@@ -5239,6 +5239,15 @@ export function bulkRejectFilteredLeaveRequests(filters = {}, remarks = '') {
   return bulkRejectLeaveRequests({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() })
 }
 
+export async function getLeaveBulkProgress(bulkToken, opts = {}) {
+  const res = await authenticatedFetch(`/leave-requests/bulk-progress/${encodeURIComponent(bulkToken)}`, {
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load leave bulk progress')
+  return data
+}
+
 export async function rejectLeaveRequest(id, reason) {
   const res = await authenticatedFetch(`/leave-requests/${id}/reject`, {
     method: 'POST',
@@ -6641,6 +6650,15 @@ export function bulkRejectFilteredPresenceFilings(filters = {}, remarks = '') {
   return bulkRejectPresenceFilings({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() })
 }
 
+export async function getPresenceFilingBulkProgress(bulkToken, opts = {}) {
+  const res = await authenticatedFetch(`/attendance-corrections/bulk-progress/${encodeURIComponent(bulkToken)}`, {
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load attendance correction bulk progress')
+  return data
+}
+
 export async function rejectPresenceFiling(id, rejectionNote) {
   const res = await authenticatedFetch(`/attendance-corrections/${id}/reject`, {
     method: 'POST',
@@ -6997,6 +7015,15 @@ export function bulkApproveFilteredAdminOvertime(filters = {}, remarks = '') {
 
 export function bulkRejectFilteredAdminOvertime(filters = {}, remarks = '') {
   return bulkRejectAdminOvertime({ mode: 'all_matching', filters, remarks: String(remarks || '').trim() })
+}
+
+export async function getOvertimeBulkProgress(bulkToken, opts = {}) {
+  const res = await authenticatedFetch(`/overtime-requests/bulk-progress/${encodeURIComponent(bulkToken)}`, {
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load overtime bulk progress')
+  return data
 }
 
 /**

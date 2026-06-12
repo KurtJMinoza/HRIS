@@ -7,6 +7,7 @@ use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
+use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
 use App\Services\OrgApprovalWorkflowService;
@@ -21,6 +22,8 @@ class LeaveBulkApprovalService
     public function __construct(
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
+        private readonly DataScopeService $dataScopeService,
     ) {}
 
     /**
@@ -35,10 +38,6 @@ class LeaveBulkApprovalService
         bool $bypassRestDays = false,
         ?string $restDayBypassReason = null,
     ): array {
-        if (! $this->hrRoleResolver->isAdminHrAccount($actor)) {
-            return $this->emptyResult($ids);
-        }
-
         $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn (int $id): bool => $id > 0)));
         if ($ids === []) {
             return $this->emptyResult();
@@ -53,43 +52,56 @@ class LeaveBulkApprovalService
             ->get()
             ->keyBy('id');
 
-        $pendingRecords = OrgApprovalRecord::query()
+        $pendingRecordGroups = OrgApprovalRecord::query()
             ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
             ->whereIn('request_id', $ids)
             ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
             ->orderBy('sequence_order')
             ->get()
-            ->unique('request_id')
+            ->groupBy('request_id');
+        $pendingRecords = $pendingRecordGroups
+            ->map(fn ($records) => $records->first())
             ->keyBy('request_id');
 
         $approvedIds = [];
-        $fallbackIds = [];
+        $finalApprovedIds = [];
         $failedItems = [];
         $skipped = 0;
         $approvalRecordIds = [];
         $auditRows = [];
+        $firstStepRows = [];
         $bypassIds = [];
         $now = now();
         $roleLabel = $this->hrRoleResolver->resolve($actor)->badgeLabel();
         $approverName = $actor->display_name ?? $actor->name;
         $bypassReason = trim((string) $restDayBypassReason);
+        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
+        $scopedEmployees = is_array($scopedEmployeeIds)
+            ? array_fill_keys(array_map('intval', $scopedEmployeeIds), true)
+            : null;
+        $lockedWindows = $this->payrollPeriodMutationGuard->lockedWindowErrors(
+            $leaves->map(fn (LeaveRequest $leave): array => [
+                'key' => (int) $leave->id,
+                'user_id' => (int) $leave->user_id,
+                'from' => Carbon::parse($leave->start_date)->startOfDay(),
+                'to' => Carbon::parse($leave->end_date)->startOfDay(),
+            ])->values()->all(),
+        );
 
         foreach ($ids as $id) {
             $leave = $leaves->get($id);
             if (! $leave instanceof LeaveRequest) {
                 $skipped++;
                 $failedItems[] = ['request_id' => $id, 'reason' => 'Leave request is not pending or was not found.'];
+
                 continue;
             }
 
             $pending = $pendingRecords->get($id);
             if (! $pending instanceof OrgApprovalRecord) {
-                $fallbackIds[] = $id;
-                continue;
-            }
+                $skipped++;
+                $failedItems[] = ['request_id' => $id, 'reason' => 'No pending approval step was found.'];
 
-            if ($pending->approver_role !== HrRole::AdminHr->value) {
-                $fallbackIds[] = $id;
                 continue;
             }
 
@@ -97,18 +109,33 @@ class LeaveBulkApprovalService
             if (! $employee instanceof User) {
                 $skipped++;
                 $failedItems[] = ['request_id' => $id, 'reason' => 'Employee was not found.'];
+
+                continue;
+            }
+            if (is_array($scopedEmployees) && ! isset($scopedEmployees[(int) $employee->id])) {
+                $skipped++;
+                $failedItems[] = ['request_id' => $id, 'reason' => 'This request is outside your approval scope.'];
+
                 continue;
             }
 
-            try {
-                $this->payrollPeriodMutationGuard->assertMutableForUserWindow(
-                    (int) $leave->user_id,
-                    Carbon::parse($leave->start_date)->startOfDay(),
-                    Carbon::parse($leave->end_date)->startOfDay(),
-                );
-            } catch (\RuntimeException $e) {
+            $authorization = $this->approvalWorkflowService->authorizePendingRecord(
+                $actor,
+                $pending,
+                $employee,
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+            );
+            if (! $authorization['allowed']) {
                 $skipped++;
-                $failedItems[] = ['request_id' => $id, 'reason' => $e->getMessage()];
+                $failedItems[] = ['request_id' => $id, 'reason' => 'You are not authorized to approve at this stage.'];
+
+                continue;
+            }
+
+            if (isset($lockedWindows[$id])) {
+                $skipped++;
+                $failedItems[] = ['request_id' => $id, 'reason' => $lockedWindows[$id]];
+
                 continue;
             }
 
@@ -125,6 +152,7 @@ class LeaveBulkApprovalService
                         'reason' => LeaveScheduleSupport::formatRestDayViolationMessage($restDay)
                             .' HR administrators may approve with a documented rest-day override.',
                     ];
+
                     continue;
                 }
                 $bypassIds[] = $id;
@@ -132,6 +160,34 @@ class LeaveBulkApprovalService
 
             $approvedIds[] = $id;
             $approvalRecordIds[] = (int) $pending->id;
+            $isFinal = $pending->approver_role === HrRole::AdminHr->value;
+            if ($isFinal) {
+                $finalApprovedIds[] = $id;
+            } else {
+                $nextPending = $pendingRecordGroups->get($id)?->first(
+                    fn (OrgApprovalRecord $record): bool => (int) $record->id !== (int) $pending->id,
+                );
+                if (! $nextPending instanceof OrgApprovalRecord) {
+                    array_pop($approvedIds);
+                    array_pop($approvalRecordIds);
+                    $skipped++;
+                    $failedItems[] = ['request_id' => $id, 'reason' => 'The next approval step could not be resolved.'];
+
+                    continue;
+                }
+
+                $firstStepRows[] = [
+                    'id' => $id,
+                    'first_approver_id' => $leave->first_approver_id ?: $actor->id,
+                    'first_approved_at' => $nextPending->approver_role === HrRole::AdminHr->value
+                        ? $now
+                        : $leave->first_approved_at,
+                    'approval_stage' => $nextPending->approver_role === HrRole::AdminHr->value
+                        ? HrApprovalStages::PENDING_SECOND
+                        : HrApprovalStages::PENDING_FIRST,
+                    'updated_at' => $now,
+                ];
+            }
             $finalDetails = $notes;
             if (in_array($id, $bypassIds, true)) {
                 $finalDetails = trim(($finalDetails ? $finalDetails.' — ' : '').'Rest-day approval override: '.$bypassReason);
@@ -140,7 +196,7 @@ class LeaveBulkApprovalService
                 'leave_request_id' => $id,
                 'actor_id' => $actor->id,
                 'employee_id' => $leave->user_id,
-                'action' => 'approve_final',
+                'action' => $isFinal ? 'approve_final' : 'approve_first',
                 'details' => $finalDetails,
                 'approver_role' => $roleLabel,
                 'created_at' => $now,
@@ -149,7 +205,7 @@ class LeaveBulkApprovalService
         }
 
         if ($approvedIds !== []) {
-            DB::transaction(function () use ($approvedIds, $approvalRecordIds, $actor, $notes, $now, $approverName, $auditRows, $bypassIds, $bypassReason): void {
+            DB::transaction(function () use ($finalApprovedIds, $firstStepRows, $approvalRecordIds, $actor, $notes, $now, $approverName, $auditRows, $bypassIds, $bypassReason): void {
                 OrgApprovalRecord::query()
                     ->whereIn('id', $approvalRecordIds)
                     ->update([
@@ -175,9 +231,19 @@ class LeaveBulkApprovalService
                     $leaveUpdate['notes'] = $notes;
                 }
 
-                LeaveRequest::query()
-                    ->whereIn('id', $approvedIds)
-                    ->update($leaveUpdate);
+                if ($finalApprovedIds !== []) {
+                    LeaveRequest::query()
+                        ->whereIn('id', $finalApprovedIds)
+                        ->update($leaveUpdate);
+                }
+
+                if ($firstStepRows !== []) {
+                    DB::table('leave_requests')->upsert(
+                        $firstStepRows,
+                        ['id'],
+                        ['first_approver_id', 'first_approved_at', 'approval_stage', 'updated_at'],
+                    );
+                }
 
                 if ($bypassIds !== []) {
                     LeaveRequest::query()
@@ -203,7 +269,116 @@ class LeaveBulkApprovalService
             'failed' => 0,
             'failed_items' => $failedItems,
             'approved_ids' => $approvedIds,
-            'fallback_ids' => $fallbackIds,
+            'fallback_ids' => [],
+        ];
+    }
+
+    /**
+     * @param  int[]  $ids
+     * @return array{rejected: int, skipped: int, failed: int, failed_items: array<int, array{request_id: int, reason: string}>, rejected_ids: int[]}
+     */
+    public function rejectMany(User $actor, array $ids, string $reason): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn (int $id): bool => $id > 0)));
+        $leaves = LeaveRequest::query()
+            ->with(['user', 'filedBy'])
+            ->whereIn('id', $ids)
+            ->where('status', LeaveRequest::STATUS_PENDING)
+            ->where('pending_approval', true)
+            ->whereNull('rejected_at')
+            ->get()
+            ->keyBy('id');
+        $pending = OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+            ->whereIn('request_id', $ids)
+            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+            ->orderBy('sequence_order')
+            ->get()
+            ->unique('request_id')
+            ->keyBy('request_id');
+
+        $rejectedIds = [];
+        $recordIds = [];
+        $auditRows = [];
+        $failedItems = [];
+        $now = now();
+        $roleLabel = $this->hrRoleResolver->resolve($actor)->badgeLabel();
+        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
+        $scopedEmployees = is_array($scopedEmployeeIds)
+            ? array_fill_keys(array_map('intval', $scopedEmployeeIds), true)
+            : null;
+
+        foreach ($ids as $id) {
+            $leave = $leaves->get($id);
+            $record = $pending->get($id);
+            if (! $leave instanceof LeaveRequest || ! $leave->user instanceof User || ! $record instanceof OrgApprovalRecord) {
+                $failedItems[] = ['request_id' => $id, 'reason' => 'Leave request is no longer pending or was not found.'];
+
+                continue;
+            }
+            if (is_array($scopedEmployees) && ! isset($scopedEmployees[(int) $leave->user_id])) {
+                $failedItems[] = ['request_id' => $id, 'reason' => 'This request is outside your approval scope.'];
+
+                continue;
+            }
+
+            $authorization = $this->approvalWorkflowService->authorizePendingRecord(
+                $actor,
+                $record,
+                $leave->user,
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+            );
+            if (! $authorization['allowed']) {
+                $failedItems[] = ['request_id' => $id, 'reason' => 'You are not authorized to reject at this stage.'];
+
+                continue;
+            }
+
+            $rejectedIds[] = $id;
+            $recordIds[] = (int) $record->id;
+            $auditRows[] = [
+                'leave_request_id' => $id,
+                'actor_id' => $actor->id,
+                'employee_id' => $leave->user_id,
+                'action' => 'reject',
+                'details' => $reason,
+                'approver_role' => $roleLabel,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        if ($rejectedIds !== []) {
+            DB::transaction(function () use ($recordIds, $rejectedIds, $actor, $reason, $now, $auditRows): void {
+                OrgApprovalRecord::query()->whereIn('id', $recordIds)->update([
+                    'approval_status' => OrgApprovalRecord::STATUS_REJECTED,
+                    'remarks' => $reason,
+                    'approved_at' => $now,
+                    'approver_id' => $actor->id,
+                    'approver_name' => $actor->display_name ?? $actor->name,
+                    'updated_at' => $now,
+                ]);
+                LeaveRequest::query()->whereIn('id', $rejectedIds)->update([
+                    'status' => LeaveRequest::STATUS_REJECTED,
+                    'pending_approval' => false,
+                    'approval_stage' => HrApprovalStages::REJECTED,
+                    'rejected_at' => $now,
+                    'rejected_by' => $actor->id,
+                    'rejection_note' => $reason,
+                    'reviewed_at' => $now,
+                    'reviewed_by' => $actor->id,
+                    'updated_at' => $now,
+                ]);
+                LeaveApprovalAudit::query()->insert($auditRows);
+            });
+        }
+
+        return [
+            'rejected' => count($rejectedIds),
+            'skipped' => count($failedItems),
+            'failed' => 0,
+            'failed_items' => $failedItems,
+            'rejected_ids' => $rejectedIds,
         ];
     }
 

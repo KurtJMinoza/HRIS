@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Concerns;
 
 use App\Models\User;
+use App\Services\BulkApproval\BulkApprovalCacheService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -10,7 +11,7 @@ use Illuminate\Validation\ValidationException;
 trait ProcessesBulkApproval
 {
     /**
-     * @return array{mode: string, ids: int[], filters: array<string, mixed>, remarks: ?string}
+     * @return array{mode: string, ids: int[], filters: array<string, mixed>, remarks: ?string, bulk_token: ?string}
      */
     protected function parseBulkApproveRequest(Request $request): array
     {
@@ -22,6 +23,7 @@ trait ProcessesBulkApproval
             'request_ids.*' => ['integer'],
             'filters' => ['sometimes', 'array'],
             'remarks' => ['nullable', 'string', 'max:2000'],
+            'bulk_token' => ['nullable', 'string', 'max:128'],
         ]);
 
         $remarks = isset($data['remarks']) ? (string) $data['remarks'] : null;
@@ -44,6 +46,7 @@ trait ProcessesBulkApproval
                 'ids' => [],
                 'filters' => is_array($data['filters'] ?? null) ? $data['filters'] : [],
                 'remarks' => $remarks,
+                'bulk_token' => isset($data['bulk_token']) ? (string) $data['bulk_token'] : null,
             ];
         }
 
@@ -55,7 +58,48 @@ trait ProcessesBulkApproval
             'ids' => $ids,
             'filters' => [],
             'remarks' => $remarks,
+            'bulk_token' => isset($data['bulk_token']) ? (string) $data['bulk_token'] : null,
         ];
+    }
+
+    /**
+     * @return int[]
+     */
+    protected function idsFromBulkToken(string $module, User $actor, ?string $token): array
+    {
+        if ($token === null || trim($token) === '') {
+            throw ValidationException::withMessages([
+                'bulk_token' => ['A valid bulk token is required for all matching requests.'],
+            ]);
+        }
+
+        $selection = app(BulkApprovalCacheService::class)->selection($module, $actor, trim($token));
+        if ($selection === null) {
+            throw ValidationException::withMessages([
+                'bulk_token' => ['This bulk selection expired or is no longer valid. Preview the matching requests again.'],
+            ]);
+        }
+
+        return array_values(array_map('intval', $selection['ids']));
+    }
+
+    protected function bulkProgressResponse(string $module, Request $request, string $token): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        if (app(BulkApprovalCacheService::class)->selection($module, $actor, $token) === null) {
+            return response()->json(['message' => 'Bulk token not found or expired.'], 404);
+        }
+
+        $progress = app(BulkApprovalCacheService::class)->progress($module, $token);
+        if ($progress === null) {
+            return response()->json(['message' => 'Bulk progress is not available yet.'], 404);
+        }
+
+        return response()->json($progress);
     }
 
     /**
@@ -155,6 +199,7 @@ trait ProcessesBulkApproval
             }
             if ($canApproveId($id)) {
                 $ids[] = $id;
+
                 continue;
             }
             $skipped++;
@@ -185,6 +230,7 @@ trait ProcessesBulkApproval
         foreach ($requested as $id) {
             if (isset($allowed[$id])) {
                 $ids[] = $id;
+
                 continue;
             }
 

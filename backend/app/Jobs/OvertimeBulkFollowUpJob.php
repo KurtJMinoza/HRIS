@@ -2,11 +2,13 @@
 
 namespace App\Jobs;
 
+use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
 use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\User;
 use App\Services\NotificationService;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeService;
 use App\Services\ReportsCacheService;
 use Illuminate\Bus\Queueable;
@@ -46,14 +48,13 @@ class OvertimeBulkFollowUpJob implements ShouldQueue
                 continue;
             }
 
-            $dateKey = $overtime->date?->toDateString();
-            if ($dateKey !== null) {
-                ReportsCacheService::invalidateAttendanceCache((int) $overtime->user_id, $dateKey);
-                $overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $overtime->time_out, $actor);
-                $this->clearAffectedDraftPayrollSnapshots($overtime, $dateKey);
-            }
-
             if ($overtime->status === Overtime::STATUS_APPROVED) {
+                $dateKey = $overtime->date?->toDateString();
+                if ($dateKey !== null) {
+                    ReportsCacheService::invalidateAttendanceCache((int) $overtime->user_id, $dateKey);
+                    $overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $overtime->time_out, $actor);
+                    $this->clearAffectedDraftPayrollSnapshots($overtime, $dateKey);
+                }
                 $notificationService->notifyRequester(
                     $employee,
                     $overtime,
@@ -63,6 +64,28 @@ class OvertimeBulkFollowUpJob implements ShouldQueue
                     'Your overtime request has been approved.',
                     '/employee/overtime?request_id='.$overtime->id,
                 );
+
+                continue;
+            }
+
+            if ($overtime->status === Overtime::STATUS_PENDING && $overtime->pending_approval) {
+                $nextPending = OrgApprovalRecord::query()
+                    ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                    ->where('request_id', $overtime->id)
+                    ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->orderBy('sequence_order')
+                    ->first();
+                if ($nextPending instanceof OrgApprovalRecord) {
+                    $notificationService->notifyApprovalRecord(
+                        $nextPending,
+                        $overtime,
+                        'overtime',
+                        'overtime.needs_approval',
+                        'Overtime request needs approval',
+                        ($employee->display_name ?? $employee->name ?? 'An employee').' needs the next overtime approval step.',
+                        '/admin/overtime?review_id='.$overtime->id,
+                    );
+                }
             }
         }
     }

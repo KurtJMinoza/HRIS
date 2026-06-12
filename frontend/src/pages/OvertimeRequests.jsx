@@ -86,6 +86,7 @@ import {
   updateAdminOvertimeStatus,
   bulkApproveAdminOvertime,
   bulkApproveAdminOvertimePreview,
+  getOvertimeBulkProgress,
   deleteAdminOvertimeRequest,
   exportAdminOvertimeCsv,
 } from '@/api'
@@ -882,6 +883,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [actionSubmitting, setActionSubmitting] = useState(false)
   const [bulkApproveRemarks, setBulkApproveRemarks] = useState('')
   const [totalMatchingApprovable, setTotalMatchingApprovable] = useState(0)
+  const [bulkPreviewToken, setBulkPreviewToken] = useState('')
+  const [bulkProgress, setBulkProgress] = useState(null)
   const [bulkApproving, setBulkApproving] = useState(false)
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
   const [bulkSummaryOpen, setBulkSummaryOpen] = useState(false)
@@ -1207,15 +1210,22 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   useEffect(() => {
     if (tab !== 'all' || !canApproveOvertime) {
       setTotalMatchingApprovable(0)
+      setBulkPreviewToken('')
       return undefined
     }
     const controller = new AbortController()
     bulkApproveAdminOvertimePreview(bulkApprovalFilters, { signal: controller.signal })
       .then((res) => {
-        if (!controller.signal.aborted) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
+        if (!controller.signal.aborted) {
+          setTotalMatchingApprovable(Number(res?.eligible_count ?? res?.approvable_count) || 0)
+          setBulkPreviewToken(String(res?.bulk_token || ''))
+        }
       })
       .catch((e) => {
-        if (!controller.signal.aborted && e?.name !== 'AbortError') setTotalMatchingApprovable(0)
+        if (!controller.signal.aborted && e?.name !== 'AbortError') {
+          setTotalMatchingApprovable(0)
+          setBulkPreviewToken('')
+        }
       })
     return () => {
       controller.abort()
@@ -1234,6 +1244,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     pageRows: pageBulkRows,
     totalMatchingCount: totalMatchingApprovable,
     bulkFilters: bulkApprovalFilters,
+    bulkToken: bulkPreviewToken,
     filtersKey: bulkFiltersKey,
   })
 
@@ -1406,8 +1417,17 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     if (bulkSelection.effectiveSelectedCount === 0) return
     setBulkConfirmOpen(false)
     setBulkApproving(true)
+    setBulkProgress(null)
+    let progressTimer = null
     try {
       const payload = bulkSelection.buildBulkApprovePayload(bulkApproveRemarks)
+      if (payload.bulk_token) {
+        progressTimer = window.setInterval(() => {
+          getOvertimeBulkProgress(payload.bulk_token)
+            .then(setBulkProgress)
+            .catch(() => {})
+        }, 300)
+      }
       const res = await bulkApproveAdminOvertime(payload)
       const approved = Number(res?.approved_count || 0)
       const skipped = Number(res?.skipped_count || 0)
@@ -1426,18 +1446,19 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       })
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
+      const approvedIds = new Set((res?.approved_ids || []).map((id) => String(id)))
       bulkSelection.clearSelection()
-      if (bulkSelection.selectAllMatching) {
+      if (approvedIds.size > 0) {
         setAllItems((rows) =>
           allStatus === 'pending'
-            ? rows.filter((row) => !(row?.status === 'pending' && row?.actor_can_approve))
+            ? rows.filter((row) => !approvedIds.has(String(row?.id)))
             : rows.map((row) =>
-                row?.status === 'pending' && row?.actor_can_approve
+                approvedIds.has(String(row?.id))
                   ? { ...row, status: 'approved', display_status: 'HR Approved', actor_can_approve: false, actor_can_reject: false }
                   : row
               )
         )
-      } else {
+      } else if (!bulkSelection.selectAllMatching) {
         const selectedIds = new Set([...bulkSelection.selectedIds].map((id) => String(id)))
         setAllItems((rows) =>
           allStatus === 'pending'
@@ -1452,6 +1473,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     } catch (e) {
       toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
     } finally {
+      if (progressTimer) window.clearInterval(progressTimer)
       setBulkApproving(false)
     }
   }
@@ -1940,6 +1962,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   entityLabel="requests"
                   onApproveClick={() => setBulkConfirmOpen(true)}
                   approving={bulkApproving}
+                  progress={bulkProgress}
                 />
               </div>
             )}

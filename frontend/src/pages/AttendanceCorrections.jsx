@@ -85,6 +85,7 @@ import {
   approvePresenceFiling,
   bulkApprovePresenceFilings,
   bulkApprovePresenceFilingsPreview,
+  getPresenceFilingBulkProgress,
   rejectPresenceFiling,
   submitAdminPresenceFiling,
   submitPresenceFiling,
@@ -587,6 +588,8 @@ export default function AttendanceCorrections() {
   const [submitting, setSubmitting] = useState(false)
   const [bulkApproveRemarks, setBulkApproveRemarks] = useState('')
   const [totalMatchingApprovable, setTotalMatchingApprovable] = useState(0)
+  const [bulkPreviewToken, setBulkPreviewToken] = useState('')
+  const [bulkProgress, setBulkProgress] = useState(null)
   const [bulkApproving, setBulkApproving] = useState(false)
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
   const [bulkSummaryOpen, setBulkSummaryOpen] = useState(false)
@@ -986,15 +989,22 @@ export default function AttendanceCorrections() {
   useEffect(() => {
     if (tab !== 'all' || !canSeeAll) {
       setTotalMatchingApprovable(0)
+      setBulkPreviewToken('')
       return undefined
     }
     const controller = new AbortController()
     bulkApprovePresenceFilingsPreview(bulkApprovalFilters, { signal: controller.signal })
       .then((res) => {
-        if (!controller.signal.aborted) setTotalMatchingApprovable(Number(res?.approvable_count) || 0)
+        if (!controller.signal.aborted) {
+          setTotalMatchingApprovable(Number(res?.eligible_count ?? res?.approvable_count) || 0)
+          setBulkPreviewToken(String(res?.bulk_token || ''))
+        }
       })
       .catch((e) => {
-        if (!controller.signal.aborted && e?.name !== 'AbortError') setTotalMatchingApprovable(0)
+        if (!controller.signal.aborted && e?.name !== 'AbortError') {
+          setTotalMatchingApprovable(0)
+          setBulkPreviewToken('')
+        }
       })
     return () => {
       controller.abort()
@@ -1013,6 +1023,7 @@ export default function AttendanceCorrections() {
     pageRows: pageBulkRows,
     totalMatchingCount: totalMatchingApprovable,
     bulkFilters: bulkApprovalFilters,
+    bulkToken: bulkPreviewToken,
     filtersKey: bulkFiltersKey,
   })
 
@@ -1159,17 +1170,32 @@ export default function AttendanceCorrections() {
   async function submitBulkApprove() {
     if (bulkSelection.effectiveSelectedCount === 0) return
     setBulkConfirmOpen(false)
+    setBulkProgress(null)
+    let progressTimer = null
     try {
       setBulkApproving(true)
       const payload = bulkSelection.buildBulkApprovePayload(bulkApproveRemarks)
+      if (payload.bulk_token) {
+        progressTimer = window.setInterval(() => {
+          getPresenceFilingBulkProgress(payload.bulk_token)
+            .then(setBulkProgress)
+            .catch(() => {})
+        }, 2000)
+      }
       const res = await bulkApprovePresenceFilings(payload)
-      const approved = Number(res?.approved_count || 0)
-      const skipped = Number(res?.skipped_count || 0)
-      const failed = Number(res?.failed_count || 0)
+      const approved = Number(res?.approved ?? res?.approved_count ?? 0)
+      const skipped = Number(res?.skipped ?? res?.skipped_count ?? 0)
+      const failed = Number(res?.failed ?? res?.failed_count ?? 0)
       const failedItems = Array.isArray(res?.failed_items) ? res.failed_items : []
       toast({
-        title: 'Bulk approval complete',
-        description: `${approved} approved${skipped || failed ? `, ${skipped + failed} skipped/failed` : ''}.`,
+        title:
+          approved > 0
+            ? `${approved} Attendance Corrections Approved Successfully`
+            : 'No Attendance Corrections Approved',
+        description:
+          skipped || failed
+            ? `${Number(res?.processed ?? approved + skipped + failed)} processed, ${skipped + failed} skipped/failed.`
+            : `${Number(res?.processed ?? approved)} processed.`,
         variant: approved > 0 ? 'success' : 'default',
       })
       setBulkSummary({
@@ -1181,16 +1207,19 @@ export default function AttendanceCorrections() {
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
       if (approved > 0 && canSeeAll) void loadAllCounts()
+      const approvedIds = new Set((res?.approved_ids || []).map((id) => Number(id)))
       bulkSelection.clearSelection()
-      if (bulkSelection.selectAllMatching) {
-        setAllItems((items) => items.filter((item) => !(item?.status === 'pending' && item?.actor_can_approve)))
-      } else {
+      if (approvedIds.size > 0) {
+        setAllItems((items) => items.filter((item) => !approvedIds.has(Number(item.id))))
+        setMineItems((items) => items.filter((item) => !approvedIds.has(Number(item.id))))
+      } else if (!bulkSelection.selectAllMatching) {
         setAllItems((items) => items.filter((item) => !bulkSelection.selectedIds.has(Number(item.id))))
         setMineItems((items) => items.filter((item) => !bulkSelection.selectedIds.has(Number(item.id))))
       }
     } catch (e) {
       toast({ title: 'Bulk approval failed', description: e.message, variant: 'error' })
     } finally {
+      if (progressTimer) window.clearInterval(progressTimer)
       setBulkApproving(false)
     }
   }
@@ -1640,6 +1669,7 @@ export default function AttendanceCorrections() {
                         entityLabel="requests"
                         onApproveClick={() => setBulkConfirmOpen(true)}
                         approving={bulkApproving}
+                        progress={bulkProgress}
                       />
                     ) : null}
                     </div>

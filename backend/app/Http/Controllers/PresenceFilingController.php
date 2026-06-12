@@ -2,29 +2,31 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Enums\HrRole;
+use App\Http\Controllers\Concerns\ProcessesBulkApproval;
+use App\Jobs\BulkRejectionFollowUpJob;
 use App\Jobs\ProcessDailyPayrollJob;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceCorrectionApproval;
 use App\Models\AttendanceCorrectionAudit;
-use App\Models\OrgApprovalRecord;
 use App\Models\AttendanceLog;
+use App\Models\OrgApprovalRecord;
 use App\Models\User;
-use App\Services\AttendanceCorrectionApprovalService;
-use App\Services\AttendanceCorrectionStatusService;
 use App\Services\ApprovalWorkflowSettingService;
+use App\Services\AttendanceCorrectionApprovalService;
 use App\Services\AttendanceCorrectionDetailService;
+use App\Services\AttendanceCorrectionStatusService;
+use App\Services\BulkApproval\AttendanceCorrectionBulkApprovalService;
+use App\Services\BulkApproval\BulkApprovalCacheService;
+use App\Services\BulkApproval\PresenceFilingBulkApprovalQuery;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeService;
+use App\Services\PayrollPeriodMutationGuard;
 use App\Services\PresenceFilingAttendanceLogSyncService;
 use App\Services\PresenceFilingCorrectionFormatter;
-use App\Services\PayrollPeriodMutationGuard;
-use App\Services\BulkApproval\AttendanceCorrectionBulkApprovalService;
-use App\Services\BulkApproval\PresenceFilingBulkApprovalQuery;
 use App\Services\PresenceFilingService;
 use App\Support\AttendanceCorrectionModuleCache;
 use App\Support\RequestPerformanceLogger;
@@ -33,9 +35,9 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -54,6 +56,7 @@ class PresenceFilingController extends Controller
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly PresenceFilingBulkApprovalQuery $bulkApprovalQuery,
         private readonly AttendanceCorrectionBulkApprovalService $bulkApprovalService,
+        private readonly BulkApprovalCacheService $bulkApprovalCache,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly OvertimeService $overtimeService,
         private readonly NotificationService $notificationService,
@@ -1299,20 +1302,20 @@ class PresenceFilingController extends Controller
             && ! $correction->approved
             && $correction->rejected_at === null
             && OrgApprovalRecord::query()
-            ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
-            ->where('request_id', (int) $correction->id)
-            ->where('approver_id', $actorId)
-            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
-            ->whereNotExists(function ($earlier): void {
-                $earlier
-                    ->selectRaw('1')
-                    ->from('org_approval_records as earlier_approval')
-                    ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
-                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
-                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
-                    ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
-            })
-            ->exists()) {
+                ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                ->where('request_id', (int) $correction->id)
+                ->where('approver_id', $actorId)
+                ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->whereNotExists(function ($earlier): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'org_approval_records.request_id')
+                        ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
+                })
+                ->exists()) {
             return true;
         }
 
@@ -1638,14 +1641,30 @@ class PresenceFilingController extends Controller
 
         $validated = $request->validate([
             'filters' => ['required', 'array'],
+            'action' => ['sometimes', 'string', 'in:approve,reject'],
         ]);
 
         $filters = $this->normalizeBulkApproveFilters($validated['filters']);
-        $count = $this->bulkApprovalQuery->approvableCount($actor, $filters);
+        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters, 10000);
+        $totalMatching = $this->bulkApprovalQuery->matchingPendingCount($actor, $filters);
+        $preview = $this->bulkApprovalCache->storePreview(
+            'attendance_correction',
+            $actor,
+            $filters,
+            $ids,
+            $totalMatching,
+            $totalMatching > count($ids) ? ['not_eligible_or_not_current_approver' => $totalMatching - count($ids)] : [],
+        );
 
         return response()->json([
-            'approvable_count' => $count,
+            'approvable_count' => $preview['eligible_count'],
+            ...$preview,
         ]);
+    }
+
+    public function bulkProgress(Request $request, string $bulkToken): JsonResponse
+    {
+        return $this->bulkProgressResponse('attendance_correction', $request, $bulkToken);
     }
 
     public function bulkApprove(Request $request): JsonResponse
@@ -1661,8 +1680,9 @@ class PresenceFilingController extends Controller
         $failedItems = [];
 
         if ($parsed['mode'] === 'all_matching') {
-            $filters = $this->normalizeBulkApproveFilters($parsed['filters']);
-            $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
+            $ids = $parsed['bulk_token']
+                ? $this->idsFromBulkToken('attendance_correction', $actor, $parsed['bulk_token'])
+                : $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']), 10000);
         } else {
             $this->assertBulkApproveIdsPresent($parsed['ids']);
             if (count($parsed['ids']) > 500) {
@@ -1680,71 +1700,166 @@ class PresenceFilingController extends Controller
         }
 
         if (count($ids) === 0) {
-            return $this->bulkApproveJsonResponse(0, $skipped, 0, $failedItems, 'attendance correction');
+            return response()->json([
+                'success' => true,
+                'message' => 'No attendance corrections were approved.',
+                'total_selected' => $skipped,
+                'processed' => $skipped,
+                'approved' => 0,
+                'skipped' => $skipped,
+                'failed' => 0,
+                'approved_count' => 0,
+                'skipped_count' => $skipped,
+                'failed_count' => 0,
+                'failed_items' => $failedItems,
+                'approved_ids' => [],
+            ]);
         }
 
+        $totalSelected = count($ids) + $skipped;
         $remarks = $parsed['remarks'];
+        $bulkToken = $parsed['bulk_token'] ?: $this->bulkApprovalCache->storePreview(
+            'attendance_correction',
+            $actor,
+            ['selected_ids' => $ids],
+            $ids,
+            count($ids),
+        )['bulk_token'];
+        $this->bulkApprovalCache->beginProgress('attendance_correction', $bulkToken, count($ids));
 
-        $result = $this->bulkApprovalService->approveMany($actor, $ids, $remarks);
+        $result = [
+            'approved' => 0,
+            'skipped' => 0,
+            'failed' => 0,
+            'failed_items' => [],
+            'approved_ids' => [],
+        ];
+        foreach (array_chunk($ids, 200) as $chunk) {
+            $chunkResult = $this->bulkApprovalService->approveMany($actor, $chunk, $remarks);
+            foreach (['approved', 'skipped', 'failed'] as $field) {
+                $result[$field] += $chunkResult[$field];
+            }
+            $result['failed_items'] = array_merge($result['failed_items'], $chunkResult['failed_items']);
+            $result['approved_ids'] = array_merge($result['approved_ids'], $chunkResult['approved_ids']);
+            $this->bulkApprovalCache->advanceProgress('attendance_correction', $bulkToken, [
+                'processed' => count($chunk),
+                'approved' => $chunkResult['approved'],
+                'skipped' => $chunkResult['skipped'],
+                'failed' => $chunkResult['failed'],
+            ]);
+        }
 
         if ($result['approved'] > 0) {
-            $this->notificationService->markRelatedReadForEntities(
-                (int) $actor->id,
-                'attendance_correction',
+            $this->bulkApprovalService->finalizeApprovals(
+                $actor,
                 $result['approved_ids'],
-                'attendance_correction.needs_approval',
             );
         }
 
-        return $this->bulkApproveJsonResponse(
-            $result['approved'],
-            $skipped + $result['skipped'],
-            $result['failed'],
-            array_merge($failedItems, $result['failed_items']),
-            'attendance correction',
-        );
+        $this->bulkApprovalCache->finishProgress('attendance_correction', $bulkToken);
+        $approved = (int) $result['approved'];
+        $skippedTotal = $skipped + (int) $result['skipped'];
+        $failed = (int) $result['failed'];
+        $processed = $approved + $skippedTotal + $failed;
+
+        return response()->json([
+            'success' => true,
+            'message' => $approved > 0
+                ? "{$approved} Attendance Corrections Approved Successfully"
+                : 'No attendance corrections were approved.',
+            'total_selected' => $totalSelected,
+            'processed' => $processed,
+            'approved' => $approved,
+            'skipped' => $skippedTotal,
+            'failed' => $failed,
+            'approved_count' => $approved,
+            'skipped_count' => $skippedTotal,
+            'failed_count' => $failed,
+            'failed_items' => array_merge($failedItems, $result['failed_items']),
+            'bulk_token' => $bulkToken,
+            'approved_ids' => array_values(array_unique(array_map('intval', $result['approved_ids']))),
+        ]);
     }
 
     public function bulkReject(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => ['required', 'array', 'min:1'],
-            'ids.*' => ['integer'],
-            'remarks' => ['required', 'string', 'max:2000'],
-        ]);
+        $parsed = $this->parseBulkApproveRequest($request);
         $actor = $request->user();
         if (! $actor) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
-        $rejected = 0;
+
+        $remarks = trim((string) ($parsed['remarks'] ?? $request->input('rejection_note', '')));
+        if ($remarks === '') {
+            throw ValidationException::withMessages([
+                'remarks' => ['Rejection remarks are required.'],
+            ]);
+        }
+
         $skipped = 0;
         $failedItems = [];
-        foreach (array_values(array_unique(array_map('intval', $validated['ids']))) as $id) {
-            try {
-                $single = $this->duplicateBulkApproveRequest($request, null, [
-                    'rejection_note' => $validated['remarks'],
-                ]);
-                $single->setUserResolver(fn () => $actor);
-                $response = $this->reject($single, $id);
-                if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
-                    $rejected++;
-                } else {
-                    $skipped++;
-                    $failedItems[] = ['request_id' => $id, 'reason' => (string) ($response->getData(true)['message'] ?? 'Skipped')];
-                }
-            } catch (\Throwable $e) {
-                $skipped++;
-                $failedItems[] = ['request_id' => $id, 'reason' => $e->getMessage()];
-            }
+        if ($parsed['mode'] === 'all_matching') {
+            $ids = $parsed['bulk_token']
+                ? $this->idsFromBulkToken('attendance_correction', $actor, $parsed['bulk_token'])
+                : $this->bulkApprovalQuery->approvableIds($actor, $this->normalizeBulkApproveFilters($parsed['filters']), 10000);
+        } else {
+            $this->assertBulkApproveIdsPresent($parsed['ids']);
+            $resolved = $this->resolveBulkApproveIdsFromCandidates(
+                $parsed['ids'],
+                $this->bulkApprovalQuery->approvableSelectedIds($actor, $parsed['ids']),
+            );
+            $ids = $resolved['ids'];
+            $skipped = $resolved['skipped'];
+            $failedItems = $resolved['failed_items'];
         }
-        AttendanceCorrectionModuleCache::flush();
+
+        $bulkToken = $parsed['bulk_token'] ?: $this->bulkApprovalCache->storePreview(
+            'attendance_correction',
+            $actor,
+            ['selected_ids' => $ids, 'action' => 'reject'],
+            $ids,
+            count($ids),
+        )['bulk_token'];
+        $this->bulkApprovalCache->beginProgress('attendance_correction', $bulkToken, count($ids));
+
+        $rejected = 0;
+        $failed = 0;
+        $rejectedIds = [];
+        foreach (array_chunk($ids, 200) as $chunk) {
+            $chunkResult = $this->bulkApprovalService->rejectMany($actor, $chunk, $remarks);
+            $rejected += $chunkResult['rejected'];
+            $skipped += $chunkResult['skipped'];
+            $failed += $chunkResult['failed'];
+            $rejectedIds = array_merge($rejectedIds, $chunkResult['rejected_ids']);
+            $failedItems = array_merge($failedItems, $chunkResult['failed_items']);
+            $this->bulkApprovalCache->advanceProgress('attendance_correction', $bulkToken, [
+                'processed' => count($chunk),
+                'rejected' => $chunkResult['rejected'],
+                'skipped' => $chunkResult['skipped'],
+                'failed' => $chunkResult['failed'],
+            ]);
+        }
+
+        if ($rejectedIds !== []) {
+            $this->bulkApprovalService->finalizeRejections($actor, $rejectedIds);
+            $this->notificationService->markRelatedReadForEntities(
+                (int) $actor->id,
+                'attendance_correction',
+                $rejectedIds,
+                'attendance_correction.needs_approval',
+            );
+            BulkRejectionFollowUpJob::dispatch('attendance_correction', $rejectedIds)->afterResponse();
+        }
+        $this->bulkApprovalCache->finishProgress('attendance_correction', $bulkToken);
 
         return response()->json([
             'rejected_count' => $rejected,
             'skipped_count' => $skipped,
-            'failed_count' => 0,
+            'failed_count' => $failed,
             'failed_items' => $failedItems,
             'skipped_reasons' => $failedItems,
+            'bulk_token' => $bulkToken,
+            'rejected_ids' => array_values(array_unique(array_map('intval', $rejectedIds))),
         ]);
     }
 
@@ -1761,24 +1876,9 @@ class PresenceFilingController extends Controller
 
     public function bulkRejectFiltered(Request $request): JsonResponse
     {
-        $actor = $request->user();
-        if (! $actor) {
-            return response()->json(['message' => 'Unauthenticated.'], 401);
-        }
-
-        $filters = $this->normalizeBulkApproveFilters((array) $request->input('filters', []));
-        $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters);
-        if ($ids === []) {
-            return response()->json([
-                'rejected_count' => 0,
-                'skipped_count' => 0,
-                'failed_count' => 0,
-                'failed_items' => [],
-                'skipped_reasons' => [],
-            ]);
-        }
         $request->merge([
-            'ids' => $ids,
+            'mode' => 'all_matching',
+            'filters' => $request->input('filters', []),
             'remarks' => $request->input('remarks', $request->input('rejection_note')),
         ]);
 
@@ -1931,10 +2031,10 @@ class PresenceFilingController extends Controller
 
         $timeIn = $correction->time_in ? $correction->time_in->copy()->timezone($tz) : null;
         $timeOut = $correction->time_out ? $correction->time_out->copy()->timezone($tz) : null;
-        
+
         // Ensure issue_kind is properly set for sync service
         $issueKind = $this->normalizeIssueKind($correction);
-        
+
         if ($issueKind === 'missing_in' && $timeIn === null) {
             return response()->json(['message' => 'Missing clock-in request requires a clock-in time.'], 422);
         }

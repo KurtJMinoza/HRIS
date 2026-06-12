@@ -143,6 +143,17 @@ class LeaveBulkApprovalQuery
 
     /**
      * @param  array<string, mixed>  $filters
+     */
+    public function matchingPendingCount(User $actor, array $filters): int
+    {
+        return (int) $this->baseQuery($actor, array_merge($filters, ['status' => LeaveRequest::STATUS_PENDING]))
+            ->setEagerLoads([])
+            ->where('leave_requests.status', LeaveRequest::STATUS_PENDING)
+            ->count('leave_requests.id');
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
      * @return int[]
      */
     private function fastAdminHrApprovableIds(User $actor, array $filters, int $max): array

@@ -38,6 +38,7 @@ export function BulkApproveToolbar({
   entityLabel = 'requests',
   onApproveClick,
   approving = false,
+  progress = null,
   leftExtra = null,
   selectionBanner = null,
 }) {
@@ -73,6 +74,24 @@ export function BulkApproveToolbar({
           entityLabel={entityLabel}
         />
       )}
+      {approving && progress ? (
+        <div className="mb-4" role="status" aria-live="polite">
+          <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
+            <span>Processing approvals</span>
+            <span className="tabular-nums">
+              {Number(progress.processed || 0)} / {Number(progress.total || count)}
+            </span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-brand transition-[width] duration-300"
+              style={{
+                width: `${Math.min(100, Math.round((Number(progress.processed || 0) / Math.max(1, Number(progress.total || count))) * 100))}%`,
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
           <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:max-w-[9.5rem]">
