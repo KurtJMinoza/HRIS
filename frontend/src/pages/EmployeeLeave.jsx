@@ -925,17 +925,17 @@ function EmployeeLeaveSelfService() {
 
   function renderLeaveTable() {
     return (
-      <div className="overflow-x-auto">
+      <div className="w-full min-w-0 overflow-hidden">
         <table className={leaveEmployeeTableClass}>
           <colgroup>
-            <col className="w-[9rem]" />
-            <col className="w-[12rem]" />
-            <col className="w-[7rem]" />
-            <col className="w-[11rem]" />
-            <col className="w-[14rem]" />
-            <col className="w-[14rem]" />
-            <col className="w-[9.5rem]" />
-            <col className="w-[10rem]" />
+            <col className="w-[11%]" />
+            <col className="w-[14%]" />
+            <col className="w-[9%]" />
+            <col className="w-[13%]" />
+            <col className="w-[18%]" />
+            <col className="w-[14%]" />
+            <col className="w-[10%]" />
+            <col className="w-[11%]" />
           </colgroup>
           <thead>
             <tr className={requestModuleHeadRowClass}>

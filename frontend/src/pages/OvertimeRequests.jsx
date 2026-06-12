@@ -1994,20 +1994,20 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             ) : (
               <AnimatedSection delay={0.05}>
                 <div className="px-4 pb-8 pt-2 @sm:px-5 md:px-6">
-                  <div className="overflow-x-auto rounded-2xl border border-border/70 bg-card shadow-sm dark:border-white/10">
+                  <div className="min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm dark:border-white/10">
                   <Table className={overtimeTableClass}>
                     <colgroup>
-                      {showBulkCheckbox ? <col className="w-10" /> : null}
-                      <col className="w-[4.5rem]" />
-                      {showRequesterColumn ? <col className="w-[15rem]" /> : null}
-                      <col className="w-[9rem]" />
-                      <col className="w-[10rem]" />
-                      <col className="w-[7rem]" />
-                      <col className="w-[8.5rem]" />
-                      <col className="w-[14rem]" />
-                      <col className="w-[13rem]" />
-                      <col className="w-[9rem]" />
-                      <col className="w-[12rem]" />
+                      {showBulkCheckbox ? <col className="w-[3%]" /> : null}
+                      <col className={showRequesterColumn ? 'w-[5%]' : 'w-[7%]'} />
+                      {showRequesterColumn ? <col className="w-[14%]" /> : null}
+                      <col className={showRequesterColumn ? 'w-[9%]' : 'w-[10%]'} />
+                      <col className={showRequesterColumn ? 'w-[10%]' : 'w-[12%]'} />
+                      <col className={showRequesterColumn ? 'w-[7%]' : 'w-[8%]'} />
+                      <col className={showRequesterColumn ? 'w-[8%]' : 'w-[10%]'} />
+                      <col className={showRequesterColumn ? 'w-[13%]' : 'w-[17%]'} />
+                      <col className={showRequesterColumn ? 'w-[13%]' : 'w-[16%]'} />
+                      <col className={showRequesterColumn ? 'w-[8%]' : 'w-[10%]'} />
+                      <col className="w-[10%]" />
                     </colgroup>
                     <TableHeader>
                       <TableRow className={cn(requestModuleHeadRowClass, 'sticky top-0 z-10 backdrop-blur supports-backdrop-filter:bg-muted/80 hover:bg-muted/60 dark:supports-backdrop-filter:bg-card/90 dark:hover:bg-card/80')}>

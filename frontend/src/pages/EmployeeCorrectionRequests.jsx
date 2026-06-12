@@ -1027,39 +1027,39 @@ export default function EmployeeCorrectionRequests() {
                   </div>
                 </div>
 
-                {/* Desktop / tablet: scrollable table; Remarks + Date filed only at xl+ */}
-                <div className="hidden w-full min-w-0 touch-pan-x overflow-x-auto border-t border-border bg-card lg:block">
-                  <Table className="w-full min-w-[820px] xl:min-w-[1060px]">
+                {/* Desktop / tablet table; optional detail columns are shown only when there is room. */}
+                <div className="hidden w-full min-w-0 overflow-hidden border-t border-border bg-card lg:block">
+                  <Table className="w-full min-w-0 table-fixed">
                     <TableHeader className="[&_tr]:border-b-0">
                       <TableRow className="border-0 bg-muted/30">
-                        <TableHead className="min-w-[200px] py-3.5 pl-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[16%] py-3.5 pl-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="employee_name" label="Employee" />
                         </TableHead>
-                        <TableHead className="min-w-[7.5rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[9%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="date" label="Date" />
                         </TableHead>
-                        <TableHead className="min-w-[7rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[7%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           Day
                         </TableHead>
-                        <TableHead className="min-w-[9rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[11%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="issue_type" label="Issue type" />
                         </TableHead>
-                        <TableHead className="min-w-[5.5rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[7%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="time_in" label="Time in" />
                         </TableHead>
-                        <TableHead className="min-w-[5.5rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[7%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="time_out" label="Time out" />
                         </TableHead>
-                        <TableHead className="min-w-[10rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <TableHead className="w-[13%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           <SortHead col="review_status" label="Status" />
                         </TableHead>
-                        <TableHead className="hidden min-w-[12rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:table-cell">
+                        <TableHead className="hidden w-[12%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:table-cell">
                           <SortHead col="remarks" label="Remarks" />
                         </TableHead>
-                        <TableHead className="hidden min-w-[9rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:table-cell">
+                        <TableHead className="hidden w-[9%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:table-cell">
                           <SortHead col="filed_at" label="Date filed" />
                         </TableHead>
-                        <TableHead className="w-[7.5rem] min-w-[7.5rem] py-3.5 pr-5 text-right text-[11px] font-bold uppercase tracking-wider text-muted-foreground xl:w-[8rem] xl:min-w-[8rem]">
+                        <TableHead className="w-[9%] py-3.5 pr-4 text-right text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                           Actions
                         </TableHead>
                       </TableRow>
@@ -1089,7 +1089,7 @@ export default function EmployeeCorrectionRequests() {
                               rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/15'
                             )}
                           >
-                            <TableCell className="pl-5 align-top">
+                            <TableCell className="pl-4 align-top">
                               <EmployeeAvatarNameRoleCell
                                 name={empName}
                                 imageUrl={empImg}
@@ -1126,7 +1126,7 @@ export default function EmployeeCorrectionRequests() {
                             <TableCell className="hidden align-middle text-sm tabular-nums text-foreground xl:table-cell">
                               {row.filed_at ? formatDateTime(row.filed_at) : '—'}
                             </TableCell>
-                            <TableCell className="pr-5 text-right align-middle" onClick={(e) => e.stopPropagation()}>
+                            <TableCell className="pr-4 text-right align-middle" onClick={(e) => e.stopPropagation()}>
                               <AdminDataTableActions
                                 onView={() => openDetail(row)}
                                 viewAriaLabel="View correction request details"

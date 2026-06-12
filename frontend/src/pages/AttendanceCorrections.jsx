@@ -1862,12 +1862,12 @@ export default function AttendanceCorrections() {
                     })}
                   </div>
 
-                  <div className="hidden w-full min-w-0 touch-pan-x overflow-x-auto bg-card px-4 pb-8 pt-2 sm:px-6 md:px-8 lg:block">
-                    <Table className="w-full min-w-[820px] xl:min-w-[1060px]">
+                  <div className="hidden w-full min-w-0 overflow-hidden bg-card px-4 pb-8 pt-2 sm:px-6 md:px-8 lg:block">
+                    <Table className="w-full min-w-0 table-fixed">
                       <TableHeader>
                         <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25 dark:hover:bg-muted/25">
                           {tab === 'all' && canSeeAll ? (
-                            <TableHead className="w-10 py-3.5 pl-2 sm:pl-3">
+                            <TableHead className="w-[3%] py-3.5 pl-2 sm:pl-3">
                               <Checkbox
                                 checked={
                                   bulkSelection.headerCheckboxIndeterminate
@@ -1880,34 +1880,34 @@ export default function AttendanceCorrections() {
                               />
                             </TableHead>
                           ) : null}
-                          <TableHead className="min-w-[200px] py-3.5 pl-2 sm:pl-3 xl:min-w-[220px]">
+                          <TableHead className="w-[16%] py-3.5 pl-2 sm:pl-3">
                             <SortHead col="employee_name" label="Employee" />
                           </TableHead>
-                          <TableHead className="min-w-[7.5rem] py-3.5">
+                          <TableHead className="w-[9%] py-3.5">
                             <SortHead col="date" label="Date" />
                           </TableHead>
-                          <TableHead className="min-w-[7rem] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <TableHead className="w-[7%] py-3.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                             Day
                           </TableHead>
-                          <TableHead className="min-w-[9rem] py-3.5 xl:min-w-[10rem]">
+                          <TableHead className="w-[11%] py-3.5">
                             <SortHead col="issue_type" label="Issue type" />
                           </TableHead>
-                          <TableHead className="min-w-[5.5rem] py-3.5">
+                          <TableHead className="w-[7%] py-3.5">
                             <SortHead col="time_in" label="Time in" />
                           </TableHead>
-                          <TableHead className="min-w-[5.5rem] py-3.5">
+                          <TableHead className="w-[7%] py-3.5">
                             <SortHead col="time_out" label="Time out" />
                           </TableHead>
-                          <TableHead className="min-w-[10rem] py-3.5">
+                          <TableHead className="w-[13%] py-3.5">
                             <SortHead col="review_status" label="Status" />
                           </TableHead>
-                          <TableHead className="hidden min-w-[12rem] py-3.5 xl:table-cell">
+                          <TableHead className="hidden w-[11%] py-3.5 xl:table-cell">
                             <SortHead col="remarks" label="Remarks" />
                           </TableHead>
-                          <TableHead className="hidden min-w-[9rem] py-3.5 xl:table-cell">
+                          <TableHead className="hidden w-[8%] py-3.5 xl:table-cell">
                             <SortHead col="filed_at" label="Date filed" />
                           </TableHead>
-                          <TableHead className="w-[13rem] min-w-[13rem] py-3.5 pr-2 text-right sm:pr-3 xl:w-[14rem] xl:min-w-[14rem]">
+                          <TableHead className="w-[8%] py-3.5 pr-2 text-right sm:pr-3">
                             <span className="pr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                               Actions
                             </span>

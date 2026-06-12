@@ -1501,17 +1501,17 @@ export default function AdminLeave() {
               ) : null}
             </div>
           ) : isMineTab ? (
-            <div className="flex-1 overflow-x-auto">
+            <div className="min-w-0 flex-1 overflow-hidden">
               <table className={leaveEmployeeTableClass}>
                 <colgroup>
-                  <col className="w-[9rem]" />
-                  <col className="w-[12rem]" />
-                  <col className="w-[7rem]" />
-                  <col className="w-[11rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[10rem]" />
-                  <col className="w-[9.5rem]" />
-                  <col className="w-[9rem]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[11%]" />
                 </colgroup>
                 <thead>
                   <tr className={requestModuleHeadRowClass}>
@@ -1616,19 +1616,19 @@ export default function AdminLeave() {
               </table>
             </div>
           ) : (
-            <div className="flex-1 overflow-x-auto">
+            <div className="min-w-0 flex-1 overflow-hidden">
               <table className={leaveAdminTableClass}>
                 <colgroup>
-                  {canApproveLeave ? <col className="w-10" /> : null}
-                  <col className="w-[12rem]" />
-                  <col className="w-[8rem]" />
-                  <col className="w-[11rem]" />
-                  <col className="w-[7rem]" />
-                  <col className="w-[11rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[9rem]" />
-                  <col className="w-[15rem]" />
+                  {canApproveLeave ? <col className="w-[3%]" /> : null}
+                  <col className={canApproveLeave ? 'w-[14%]' : 'w-[15%]'} />
+                  <col className={canApproveLeave ? 'w-[8%]' : 'w-[9%]'} />
+                  <col className={canApproveLeave ? 'w-[11%]' : 'w-[12%]'} />
+                  <col className="w-[7%]" />
+                  <col className={canApproveLeave ? 'w-[10%]' : 'w-[11%]'} />
+                  <col className={canApproveLeave ? 'w-[13%]' : 'w-[15%]'} />
+                  <col className={canApproveLeave ? 'w-[14%]' : 'w-[15%]'} />
+                  <col className="w-[9%]" />
+                  <col className="w-[11%]" />
                 </colgroup>
                 <thead>
                   <tr className={requestModuleHeadRowClass}>
