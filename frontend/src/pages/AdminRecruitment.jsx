@@ -960,7 +960,7 @@ export default function AdminRecruitment() {
             <RefreshCw className={cn('size-4', (refreshing || backgroundRefreshing) && 'animate-spin')} />
             Refresh
           </Button>
-          <Button className="h-9 gap-2 bg-gradient-to-r from-orange-600 to-orange-500 px-4 text-xs text-white shadow-[0_6px_16px_-7px_rgba(234,88,12,0.8)] hover:from-orange-700 hover:to-orange-600" onClick={startNewApplicant}>
+          <Button className="h-9 gap-2 bg-linear-to-r from-orange-600 to-orange-500 px-4 text-xs text-white shadow-[0_6px_16px_-7px_rgba(234,88,12,0.8)] hover:from-orange-700 hover:to-orange-600" onClick={startNewApplicant}>
             <Plus className="size-4" />
             New Applicant
           </Button>
@@ -1189,90 +1189,120 @@ function ApplicantModal({ open, onOpenChange, form, setForm, meta, saving, editi
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[94vh] max-w-[1120px] rounded-[24px] border-slate-200 bg-white shadow-[0_28px_80px_-24px_rgba(15,23,42,0.38)] sm:max-h-[92vh] dark:border-border dark:bg-card"
-        innerClassName="gap-0 p-0 pr-0"
+        className="max-h-[96dvh] rounded-[24px] border-slate-200 bg-white shadow-[0_28px_80px_-24px_rgba(15,23,42,0.4)] dark:border-border dark:bg-card"
+        innerClassName="gap-0 overflow-hidden p-0 pr-0"
         closeButtonClassName="right-5 top-5 size-10 rounded-xl border-slate-200 bg-white text-slate-500 shadow-sm hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700 dark:bg-card"
         overlayClassName="bg-slate-950/50 backdrop-blur-[3px]"
+        surfaceStyle={{
+          width: 'min(1360px, calc(100vw - 24px))',
+          height: 'min(900px, calc(100dvh - 24px))',
+          maxWidth: 'calc(100vw - 24px)',
+        }}
       >
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
-          <DialogHeader className="relative border-b border-slate-100 px-6 py-6 pr-20 sm:px-8 sm:py-7 dark:border-border">
-            <div className="flex items-start gap-4">
-              <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-[0_10px_24px_-10px_rgba(234,88,12,0.75)]">
-                <UserPlus className="size-5.5" />
-              </span>
-              <div className="min-w-0">
-                <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600">
-                  Recruitment intake
+          <DialogHeader className="relative border-b border-slate-200 bg-white px-8 py-6 pr-16 dark:border-border dark:bg-card">
+            <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-start gap-4">
+                <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-orange-600 text-white shadow-lg shadow-orange-500/20">
+                  <UserPlus className="size-6" />
+                </span>
+                <div className="min-w-0">
+                  <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-orange-600">
+                    Recruitment intake
+                  </div>
+                  <DialogTitle className="text-2xl font-black tracking-tight text-slate-950 dark:text-foreground">
+                    {editingApplicant ? 'Edit applicant' : 'Add new applicant'}
+                  </DialogTitle>
+                  <DialogDescription className="mt-2 max-w-2xl text-xs leading-5 sm:text-sm">
+                    Capture the candidate profile and application details before moving them through the recruitment workflow.
+                  </DialogDescription>
                 </div>
-                <DialogTitle className="text-2xl font-extrabold tracking-tight text-slate-950 dark:text-foreground">
-                  {editingApplicant ? 'Edit applicant' : 'Add new applicant'}
-                </DialogTitle>
-                <DialogDescription className="mt-1 max-w-xl text-xs leading-5 sm:text-sm">
-                  Capture the applicant&apos;s core details now. Interviews, exams, documents, and hiring decisions can be managed after saving.
-                </DialogDescription>
               </div>
+              <span className="inline-flex w-fit items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-bold text-slate-600 dark:border-border dark:bg-muted/20 dark:text-muted-foreground">
+                Candidate profile
+              </span>
             </div>
           </DialogHeader>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-8 sm:py-6">
-            <div className="mb-6 flex items-start gap-3 rounded-2xl border border-orange-200/80 bg-gradient-to-r from-orange-50 to-amber-50/60 px-4 py-3.5 dark:border-orange-500/20 dark:from-orange-500/10 dark:to-amber-500/5">
-              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl bg-white text-orange-600 shadow-sm dark:bg-card">
-                <Sparkles className="size-4" />
-              </span>
-              <div>
-                <p className="text-xs font-bold text-slate-900 dark:text-foreground">Start with the essentials</p>
-                <p className="mt-0.5 text-[11px] leading-4.5 text-slate-600 dark:text-muted-foreground">
-                  Creating this record adds the applicant to the screening pipeline. You can complete the rest of the workflow from Recruitment.
+          <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 px-8 py-6 dark:bg-background/40">
+            <div className="grid gap-5 lg:grid-cols-[330px_minmax(0,1fr)]">
+              <aside className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-border dark:bg-card">
+                <span className="flex size-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-orange-600">
+                  <ClipboardList className="size-5" />
+                </span>
+                <h3 className="mt-5 text-sm font-black text-slate-950 dark:text-foreground">Guide details</h3>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  Use this form to create the candidate&apos;s recruitment record. Only the core profile is needed here; interviews, exams, and documents are handled after saving.
                 </p>
-              </div>
-            </div>
 
-            <section>
-              <div className="mb-4 flex items-end justify-between gap-4 border-b border-slate-100 pb-3 dark:border-border">
-                <div>
-                  <h3 className="text-sm font-extrabold text-slate-950 dark:text-foreground">Applicant information</h3>
-                  <p className="mt-1 text-[11px] text-slate-500">Contact details and the role being applied for.</p>
+                <div className="mt-6 space-y-4 border-t border-slate-100 pt-5 dark:border-border">
+                  {[
+                    ['1', 'Candidate identity', 'Enter the applicant name and contact information.'],
+                    ['2', 'Applied role', 'Set the position and source for reporting.'],
+                    ['3', 'Pipeline status', 'Keep the initial status accurate before saving.'],
+                  ].map(([number, title, description]) => (
+                    <div key={title} className="flex gap-3">
+                      <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-[10px] font-black text-slate-600 dark:border-border dark:bg-muted/20 dark:text-muted-foreground">
+                        {number}
+                      </span>
+                      <div>
+                        <p className="text-xs font-extrabold text-slate-800 dark:text-foreground">{title}</p>
+                        <p className="mt-1 text-[11px] leading-4 text-slate-500">{description}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <span className="shrink-0 text-[10px] font-medium text-slate-400"><span className="text-orange-600">*</span> Required</span>
-              </div>
+              </aside>
 
-              <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
-                <ApplicantField label="First name" required icon={CircleUserRound}>
-                  <Input id="applicant-first-name" className={fieldClass} placeholder="e.g. Maria" autoComplete="given-name" required value={form.first_name} onChange={(e) => setForm((s) => ({ ...s, first_name: e.target.value }))} />
-                </ApplicantField>
-                <ApplicantField label="Last name" required icon={CircleUserRound}>
-                  <Input id="applicant-last-name" className={fieldClass} placeholder="e.g. Santos" autoComplete="family-name" required value={form.last_name} onChange={(e) => setForm((s) => ({ ...s, last_name: e.target.value }))} />
-                </ApplicantField>
-                <ApplicantField label="Email address" required icon={Mail}>
-                  <Input id="applicant-email" className={fieldClass} type="email" placeholder="name@example.com" autoComplete="email" required value={form.email} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} />
-                </ApplicantField>
-                <ApplicantField label="Phone number" required icon={Phone}>
-                  <Input id="applicant-phone" className={fieldClass} type="tel" placeholder="+63 9XX XXX XXXX" autoComplete="tel" required value={form.phone} onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value }))} />
-                </ApplicantField>
-                <ApplicantField label="Applied position" required icon={BriefcaseBusiness}>
-                  <Input id="applicant-position" className={fieldClass} placeholder="e.g. Software Developer" required value={form.applied_position} onChange={(e) => setForm((s) => ({ ...s, applied_position: e.target.value }))} />
-                </ApplicantField>
-                <ApplicantField label="Application source" icon={Send}>
-                  <SelectBox id="applicant-source" className={selectClass} value={form.source} onChange={(e) => setForm((s) => ({ ...s, source: e.target.value }))}>
-                    <option value="">Select source</option>
-                    <option value="Job Portal">Job Portal</option>
-                    <option value="Referral">Referral</option>
-                    <option value="Company Website">Company Website</option>
-                    <option value="LinkedIn">LinkedIn</option>
-                    <option value="Walk-in">Walk-in</option>
-                    <option value="Other">Other</option>
-                  </SelectBox>
-                </ApplicantField>
-                <ApplicantField label="Date applied" icon={CalendarDays}>
-                  <Input id="applicant-date" className={fieldClass} type="date" value={form.date_applied} onChange={(e) => setForm((s) => ({ ...s, date_applied: e.target.value }))} />
-                </ApplicantField>
-                <ApplicantField label="Pipeline status" icon={BadgeCheck}>
-                  <SelectBox id="applicant-status" className={selectClass} value={form.status} onChange={(e) => setForm((s) => ({ ...s, status: e.target.value }))}>
-                    {meta.statuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                  </SelectBox>
-                </ApplicantField>
-              </div>
-            </section>
+              <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-border dark:bg-card">
+                <div className="mb-6 flex items-start justify-between gap-4 border-b border-slate-100 pb-5 dark:border-border">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-950 dark:text-foreground">Applicant information</h3>
+                    <p className="mt-1 text-[11px] leading-5 text-slate-500">Candidate profile, applied role, and workflow status.</p>
+                  </div>
+                  <span className="rounded-full border border-orange-100 bg-orange-50 px-3 py-1 text-[10px] font-extrabold text-orange-700 dark:border-orange-500/20 dark:bg-orange-500/10 dark:text-orange-300">
+                    <span className="text-orange-600">*</span> Required
+                  </span>
+                </div>
+
+                <div className="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+                  <ApplicantField label="First name" required icon={CircleUserRound}>
+                    <Input id="applicant-first-name" className={fieldClass} placeholder="e.g. Maria" autoComplete="given-name" required value={form.first_name} onChange={(e) => setForm((s) => ({ ...s, first_name: e.target.value }))} />
+                  </ApplicantField>
+                  <ApplicantField label="Last name" required icon={CircleUserRound}>
+                    <Input id="applicant-last-name" className={fieldClass} placeholder="e.g. Santos" autoComplete="family-name" required value={form.last_name} onChange={(e) => setForm((s) => ({ ...s, last_name: e.target.value }))} />
+                  </ApplicantField>
+                  <ApplicantField label="Email address" required icon={Mail}>
+                    <Input id="applicant-email" className={fieldClass} type="email" placeholder="name@example.com" autoComplete="email" required value={form.email} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} />
+                  </ApplicantField>
+                  <ApplicantField label="Phone number" required icon={Phone}>
+                    <Input id="applicant-phone" className={fieldClass} type="tel" placeholder="+63 9XX XXX XXXX" autoComplete="tel" required value={form.phone} onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value }))} />
+                  </ApplicantField>
+                  <ApplicantField label="Applied position" required icon={BriefcaseBusiness}>
+                    <Input id="applicant-position" className={fieldClass} placeholder="e.g. Software Developer" required value={form.applied_position} onChange={(e) => setForm((s) => ({ ...s, applied_position: e.target.value }))} />
+                  </ApplicantField>
+                  <ApplicantField label="Application source" icon={Send}>
+                    <SelectBox id="applicant-source" className={selectClass} value={form.source} onChange={(e) => setForm((s) => ({ ...s, source: e.target.value }))}>
+                      <option value="">Select source</option>
+                      <option value="Job Portal">Job Portal</option>
+                      <option value="Referral">Referral</option>
+                      <option value="Company Website">Company Website</option>
+                      <option value="LinkedIn">LinkedIn</option>
+                      <option value="Walk-in">Walk-in</option>
+                      <option value="Other">Other</option>
+                    </SelectBox>
+                  </ApplicantField>
+                  <ApplicantField label="Date applied" icon={CalendarDays}>
+                    <Input id="applicant-date" className={fieldClass} type="date" value={form.date_applied} onChange={(e) => setForm((s) => ({ ...s, date_applied: e.target.value }))} />
+                  </ApplicantField>
+                  <ApplicantField label="Pipeline status" icon={BadgeCheck}>
+                    <SelectBox id="applicant-status" className={selectClass} value={form.status} onChange={(e) => setForm((s) => ({ ...s, status: e.target.value }))}>
+                      {meta.statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                    </SelectBox>
+                  </ApplicantField>
+                </div>
+              </section>
+            </div>
           </div>
 
           <DialogFooter className="items-center border-t border-slate-100 bg-slate-50/80 px-6 py-4 sm:px-8 dark:border-border dark:bg-muted/20">
@@ -1280,7 +1310,7 @@ function ApplicantModal({ open, onOpenChange, form, setForm, meta, saving, editi
             <Button type="button" variant="outline" className="h-10 rounded-xl border-slate-300 px-5 shadow-none" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" className="h-10 gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 px-5 text-white shadow-[0_8px_18px_-9px_rgba(234,88,12,0.9)] hover:from-orange-700 hover:to-orange-600" disabled={saving}>
+            <Button type="submit" className="h-10 gap-2 rounded-xl bg-linear-to-r from-orange-600 to-orange-500 px-5 text-white shadow-[0_8px_18px_-9px_rgba(234,88,12,0.9)] hover:from-orange-700 hover:to-orange-600" disabled={saving}>
               {saving ? <RefreshCw className="size-4 animate-spin" /> : <Save className="size-4" />}
               {saving ? 'Saving applicant...' : editingApplicant ? 'Save changes' : 'Create applicant'}
             </Button>
@@ -1492,7 +1522,7 @@ function DocumentModal({ open, onOpenChange, applicant, meta, onUploaded }) {
       >
         <DialogHeader className="shrink-0 border-b border-slate-100 px-5 py-5 pr-20 sm:px-8 sm:py-6 dark:border-border">
           <div className="flex items-start gap-4">
-            <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-[0_10px_24px_-10px_rgba(234,88,12,0.75)]">
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-orange-500 to-orange-600 text-white shadow-[0_10px_24px_-10px_rgba(234,88,12,0.75)]">
               <FileText className="size-5.5" />
             </span>
             <div>
@@ -1596,7 +1626,7 @@ function DocumentsPanel({ applicant, meta, onUploaded }) {
             <Input id="recruitment-document-file" className="h-11 rounded-xl bg-white py-1.5 shadow-none file:mr-3 file:rounded-lg file:bg-orange-50 file:px-3 file:text-orange-700 dark:bg-background" type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
           </div>
           <div className="flex items-end md:col-span-2 xl:col-span-3">
-            <Button className="h-11 w-full gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 px-5 text-white shadow-[0_8px_18px_-9px_rgba(234,88,12,0.9)] hover:from-orange-700 hover:to-orange-600" onClick={() => upload()} disabled={!file}>
+            <Button className="h-11 w-full gap-2 rounded-xl bg-linear-to-r from-orange-600 to-orange-500 px-5 text-white shadow-[0_8px_18px_-9px_rgba(234,88,12,0.9)] hover:from-orange-700 hover:to-orange-600" onClick={() => upload()} disabled={!file}>
               <FileText className="size-4" /> Upload document
             </Button>
           </div>
