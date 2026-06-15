@@ -13,11 +13,21 @@ class RecruitmentExamAssignment extends Model
         'exam_template_id',
         'assigned_by',
         'exam_link_token',
+        'scheduled_at',
+        'expires_at',
+        'attempt_number',
+        'max_attempts',
+        'one_time_access',
+        'password',
+        'require_login',
         'started_at',
         'submitted_at',
         'score',
         'result',
         'status',
+        'recruiter_notes',
+        'remarks',
+        'recommendation',
     ];
 
     protected function casts(): array
@@ -25,7 +35,13 @@ class RecruitmentExamAssignment extends Model
         return [
             'started_at' => 'datetime',
             'submitted_at' => 'datetime',
+            'scheduled_at' => 'datetime',
+            'expires_at' => 'datetime',
             'score' => 'float',
+            'attempt_number' => 'integer',
+            'max_attempts' => 'integer',
+            'one_time_access' => 'boolean',
+            'require_login' => 'boolean',
         ];
     }
 

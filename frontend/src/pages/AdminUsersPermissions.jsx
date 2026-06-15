@@ -91,6 +91,12 @@ const PERMISSION_SECTIONS = [
   { id: 'overtime', label: 'Overtime Management', modules: ['overtime'] },
   { id: 'leave', label: 'Leave Management', modules: ['leave'] },
   { id: 'holiday_schedule', label: 'Holiday & Schedule', modules: ['holiday', 'holidays', 'schedule'] },
+  {
+    id: 'recruitment',
+    label: 'Recruitment',
+    modules: ['recruitment'],
+    hint: 'Controls applicant intake, documents, interviews, exams, hiring decisions, and employee conversion.',
+  },
   { id: 'reports', label: 'Reports', modules: ['reports'] },
   { id: 'payroll', label: 'Payroll Core', modules: ['payroll'] },
   {

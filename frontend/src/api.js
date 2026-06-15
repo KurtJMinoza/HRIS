@@ -5808,6 +5808,189 @@ async function jsonMutation(path, method, payload, fallbackMessage) {
   return data
 }
 
+function recruitmentQuery(params = {}) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value != null && value !== '') query.set(key, String(value))
+  }
+  return query.toString()
+}
+
+function appendRecruitmentDocumentForm(form, payload = {}) {
+  form.append('document_type', String(payload.document_type || ''))
+  if (payload.status != null && String(payload.status).trim() !== '') {
+    form.append('status', String(payload.status))
+  }
+  if (payload.remarks != null) {
+    form.append('remarks', String(payload.remarks))
+  }
+  if (payload.file) {
+    form.append('file', payload.file)
+  }
+}
+
+export async function getRecruitmentMeta(params = {}) {
+  const query = recruitmentQuery(params)
+  const res = await authenticatedFetch(`/admin/recruitment/meta${query ? `?${query}` : ''}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to load recruitment metadata')
+  return data
+}
+
+export async function getRecruitmentApplicants(params = {}, options = {}) {
+  const query = recruitmentQuery(params)
+  const res = await authenticatedFetch(`/admin/recruitment/applicants${query ? `?${query}` : ''}`, options)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to load applicants')
+  return data
+}
+
+export async function getRecruitmentApplicant(id) {
+  const res = await authenticatedFetch(`/admin/recruitment/applicants/${encodeURIComponent(String(id))}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to load applicant')
+  return data
+}
+
+export async function saveRecruitmentApplicant(payload, id = null) {
+  return jsonMutation(
+    id == null
+      ? '/admin/recruitment/applicants'
+      : `/admin/recruitment/applicants/${encodeURIComponent(String(id))}`,
+    id == null ? 'POST' : 'PATCH',
+    payload,
+    id == null ? 'Failed to create applicant' : 'Failed to update applicant',
+  )
+}
+
+export async function deleteRecruitmentApplicant(id) {
+  const res = await authenticatedFetch(`/admin/recruitment/applicants/${encodeURIComponent(String(id))}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete applicant')
+  return data
+}
+
+export async function uploadRecruitmentDocument(applicantId, payload, documentId = null) {
+  const form = new FormData()
+  appendRecruitmentDocumentForm(form, payload)
+  const path = documentId == null
+    ? `/admin/recruitment/applicants/${encodeURIComponent(String(applicantId))}/documents`
+    : `/admin/recruitment/applicants/${encodeURIComponent(String(applicantId))}/documents/${encodeURIComponent(String(documentId))}`
+  const res = await authenticatedFetch(path, { method: 'POST', body: form })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to save recruitment document')
+  return data
+}
+
+export async function downloadRecruitmentDocument(applicantId, documentId) {
+  const res = await authenticatedFetch(
+    `/admin/recruitment/applicants/${encodeURIComponent(String(applicantId))}/documents/${encodeURIComponent(String(documentId))}/download`,
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(firstValidationMessage(data) || data.message || 'Failed to download recruitment document')
+  }
+  return res.blob()
+}
+
+export async function saveRecruitmentInterview(applicantId, payload, interviewId = null) {
+  return jsonMutation(
+    interviewId == null
+      ? `/admin/recruitment/applicants/${encodeURIComponent(String(applicantId))}/interviews`
+      : `/admin/recruitment/applicants/${encodeURIComponent(String(applicantId))}/interviews/${encodeURIComponent(String(interviewId))}`,
+    interviewId == null ? 'POST' : 'PATCH',
+    payload,
+    interviewId == null ? 'Failed to save interview' : 'Failed to update interview',
+  )
+}
+
+export async function getRecruitmentExamTemplates() {
+  const res = await authenticatedFetch('/admin/recruitment/exam-templates')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to load exam templates')
+  return data
+}
+
+export async function saveRecruitmentExamTemplate(payload, templateId = null) {
+  return jsonMutation(
+    templateId == null
+      ? '/admin/recruitment/exam-templates'
+      : `/admin/recruitment/exam-templates/${encodeURIComponent(String(templateId))}`,
+    templateId == null ? 'POST' : 'PATCH',
+    payload,
+    templateId == null ? 'Failed to create exam template' : 'Failed to update exam template',
+  )
+}
+
+export async function deleteRecruitmentExamTemplate(templateId) {
+  const res = await authenticatedFetch(`/admin/recruitment/exam-templates/${encodeURIComponent(String(templateId))}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to delete exam template')
+  return data
+}
+
+export async function getRecruitmentExamAssignments() {
+  const res = await authenticatedFetch('/admin/recruitment/exam-assignments')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to load exam assignments')
+  return data
+}
+
+export async function assignRecruitmentExam(applicantId, examTemplateId) {
+  return jsonMutation(
+    `/admin/recruitment/applicants/${encodeURIComponent(String(applicantId))}/exam-assignments`,
+    'POST',
+    { exam_template_id: examTemplateId },
+    'Failed to assign exam',
+  )
+}
+
+export async function recruitmentStageAction(applicantId, payload) {
+  return jsonMutation(
+    `/admin/recruitment/applicants/${encodeURIComponent(String(applicantId))}/stage-action`,
+    'POST',
+    payload,
+    'Failed to save stage action',
+  )
+}
+
+export async function recruitmentHiringAction(applicantId, action) {
+  return jsonMutation(
+    `/admin/recruitment/applicants/${encodeURIComponent(String(applicantId))}/hiring-action`,
+    'POST',
+    { action },
+    'Failed to save hiring decision',
+  )
+}
+
+export async function getPublicRecruitmentExam(token) {
+  const res = await fetchWithSanctumCsrf(`/recruitment/exam/${encodeURIComponent(String(token))}`, { method: 'GET' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to load exam')
+  return data
+}
+
+export async function submitPublicRecruitmentExam(token, answers = []) {
+  const form = new FormData()
+  answers.forEach((answer, index) => {
+    form.append(`answers[${index}][question_id]`, String(answer.question_id || ''))
+    const value = answer.answer
+    if (value != null) {
+      form.append(`answers[${index}][answer]`, Array.isArray(value) ? JSON.stringify(value) : String(value))
+    }
+    if (answer.file) {
+      form.append(`answers[${index}][file]`, answer.file)
+    }
+  })
+  const res = await fetchWithSanctumCsrf(`/recruitment/exam/${encodeURIComponent(String(token))}`, {
+    method: 'POST',
+    body: form,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to submit exam')
+  return data
+}
+
 export async function getDivisions(params = {}) {
   const suffix = orgQuery(params, ['company_id', 'branch_id', 'department_id', 'status', 'search'])
   const path = `/admin/divisions${suffix ? `?${suffix}` : ''}`

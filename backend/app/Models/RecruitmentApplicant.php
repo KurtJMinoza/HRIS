@@ -17,6 +17,7 @@ class RecruitmentApplicant extends Model
         'For Final Interview',
         'Final Interview Passed',
         'For Requirements',
+        'For Hiring Approval',
         'Hired',
         'Rejected',
     ];

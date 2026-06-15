@@ -7,7 +7,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class RecruitmentExamQuestion extends Model
 {
-    public const TYPES = ['Multiple Choice', 'True / False', 'Short Answer', 'Essay', 'File Upload'];
+    public const TYPES = ['Multiple Choice', 'True / False', 'Identification', 'Essay', 'Checkbox', 'Short Answer', 'File Upload'];
+
+    public const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
+
+    public const CATEGORIES = ['Accounting', 'IT', 'HR', 'Sales', 'Management', 'Custom'];
 
     protected $fillable = [
         'exam_template_id',
@@ -16,6 +20,8 @@ class RecruitmentExamQuestion extends Model
         'choices',
         'correct_answer',
         'points',
+        'difficulty',
+        'category',
     ];
 
     protected function casts(): array

@@ -43,6 +43,7 @@ const AdminSectionUnits = lazy(() => import('@/pages/AdminSectionUnits'))
 const AdminLeave = lazy(() => import('@/pages/AdminLeave'))
 const AdminHoliday = lazy(() => import('@/pages/AdminHoliday'))
 const AdminOvertime = lazy(() => import('@/pages/AdminOvertime'))
+const AdminRecruitment = lazy(() => import('@/pages/AdminRecruitment'))
 const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
 
 function withSuspense(node, fallback) {
@@ -69,6 +70,12 @@ export const HR_PANEL_CHILD_ROUTES = [
     key="hr-reg"
     path="regularization"
     element={withSuspense(<AdminRegularization />, <DataTableRouteFallback titleWidth="w-64" />)}
+  />,
+  <Route key="hr-recruitment-root" path="recruitment" element={<Navigate to="applicants" replace />} />,
+  <Route
+    key="hr-recruitment"
+    path="recruitment/:tab"
+    element={withSuspense(<AdminRecruitment />, <DataTableRouteFallback titleWidth="w-72" />)}
   />,
   <Route key="hr-ep1" path="employees/employee-profile/personal-info" element={<ToEmployeesRedirect />} />,
   <Route key="hr-ep2" path="employees/employee-profile/employment" element={<ToEmployeesRedirect />} />,

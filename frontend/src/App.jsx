@@ -49,6 +49,7 @@ const AuthenticatedRoutes = lazy(() => import('@/AuthenticatedRoutes'))
 const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
 const VerifyOtp = lazy(() => import('@/pages/VerifyOtp'))
 const ResetPassword = lazy(() => import('@/pages/ResetPassword'))
+const RecruitmentExamPage = lazy(() => import('@/pages/RecruitmentExamPage'))
 const FaceRekognitionLiveness = lazy(() =>
   import('@/components/FaceRekognitionLiveness').then((module) => ({
     default: module.FaceRekognitionLiveness,
@@ -1909,6 +1910,7 @@ export default function App() {
                 <Route path="/forgot-password" element={<Suspense fallback={null}><ForgotPassword /></Suspense>} />
                 <Route path="/verify-otp" element={<Suspense fallback={null}><VerifyOtp /></Suspense>} />
                 <Route path="/reset-password" element={<Suspense fallback={null}><ResetPassword /></Suspense>} />
+                <Route path="/recruitment/exam/:token" element={<Suspense fallback={null}><RecruitmentExamPage /></Suspense>} />
                 <Route path="/*" element={<Suspense fallback={null}><AuthenticatedRoutes /></Suspense>} />
               </Routes>
             </ErrorBoundary>

@@ -41,6 +41,7 @@ use App\Http\Controllers\Admin\PayslipController as AdminPayslipController;
 use App\Http\Controllers\Admin\RbacController;
 use App\Http\Controllers\Admin\RegularizationApprovalController;
 use App\Http\Controllers\Admin\ReportsController;
+use App\Http\Controllers\Admin\RecruitmentController;
 use App\Http\Controllers\Admin\ScheduleController;
 use App\Http\Controllers\Admin\ScheduleRequestController;
 use App\Http\Controllers\Admin\SectionUnitController;
@@ -83,6 +84,8 @@ Route::get('/face/liveness/session/{sessionId}', [LivenessController::class, 'ge
 Route::post('/face/verify-only', [AttendanceController::class, 'verifyFaceOnly']);
 Route::get('/media/public/{path}', [PublicMediaController::class, 'show'])->where('path', '.*');
 Route::get('/public-settings', [PublicSettingsController::class, 'index']);
+Route::get('/recruitment/exam/{token}', [RecruitmentController::class, 'publicExam']);
+Route::post('/recruitment/exam/{token}', [RecruitmentController::class, 'submitPublicExam']);
 
 // Unified scan: optional auth (kiosk = no token, employee = Bearer). Real-time flow: decode QR → validate → record → JSON.
 Route::post('/attendance/scan', [AttendanceController::class, 'scan']);
@@ -308,6 +311,44 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/reports/detailed/export/{id}/status', [ReportsController::class, 'detailedExportStatus']);
             Route::get('/admin/reports/leave-credits', [ReportsController::class, 'leaveCredits']);
         });
+
+        Route::middleware('permission:recruitment.view')->group(function () {
+            Route::get('/admin/recruitment/meta', [RecruitmentController::class, 'meta']);
+            Route::get('/admin/recruitment/applicants', [RecruitmentController::class, 'index']);
+            Route::get('/admin/recruitment/applicants/{id}', [RecruitmentController::class, 'show'])->whereNumber('id');
+            Route::get('/admin/recruitment/applicants/{applicantId}/documents/{documentId}/download', [RecruitmentController::class, 'downloadDocument'])
+                ->whereNumber('applicantId')
+                ->whereNumber('documentId');
+            Route::get('/admin/recruitment/exam-templates', [RecruitmentController::class, 'examTemplates']);
+            Route::get('/admin/recruitment/exam-assignments', [RecruitmentController::class, 'examAssignments']);
+        });
+        Route::middleware('permission:recruitment.create')->post('/admin/recruitment/applicants', [RecruitmentController::class, 'store']);
+        Route::middleware('permission:recruitment.edit')->patch('/admin/recruitment/applicants/{id}', [RecruitmentController::class, 'update'])->whereNumber('id');
+        Route::middleware('permission:recruitment.delete')->delete('/admin/recruitment/applicants/{id}', [RecruitmentController::class, 'destroy'])->whereNumber('id');
+        Route::middleware('permission:recruitment.documents')->group(function () {
+            Route::post('/admin/recruitment/applicants/{applicantId}/documents', [RecruitmentController::class, 'storeDocument'])->whereNumber('applicantId');
+            Route::post('/admin/recruitment/applicants/{applicantId}/documents/{documentId}', [RecruitmentController::class, 'updateDocument'])
+                ->whereNumber('applicantId')
+                ->whereNumber('documentId');
+        });
+        Route::middleware('permission:recruitment.interviews')->group(function () {
+            Route::post('/admin/recruitment/applicants/{applicantId}/interviews', [RecruitmentController::class, 'storeInterview'])->whereNumber('applicantId');
+            Route::patch('/admin/recruitment/applicants/{applicantId}/interviews/{interviewId}', [RecruitmentController::class, 'updateInterview'])
+                ->whereNumber('applicantId')
+                ->whereNumber('interviewId');
+            Route::post('/admin/recruitment/applicants/{applicantId}/stage-action', [RecruitmentController::class, 'stageAction'])->whereNumber('applicantId');
+        });
+        Route::middleware('permission:recruitment.exams')->group(function () {
+            Route::post('/admin/recruitment/exam-templates', [RecruitmentController::class, 'storeExamTemplate']);
+            Route::patch('/admin/recruitment/exam-templates/{templateId}', [RecruitmentController::class, 'updateExamTemplate'])->whereNumber('templateId');
+            Route::delete('/admin/recruitment/exam-templates/{templateId}', [RecruitmentController::class, 'destroyExamTemplate'])->whereNumber('templateId');
+            Route::post('/admin/recruitment/applicants/{applicantId}/exam-assignments', [RecruitmentController::class, 'assignExam'])->whereNumber('applicantId');
+            Route::patch('/admin/recruitment/exam-assignments/{assignmentId}/answers/{answerId}', [RecruitmentController::class, 'updateExamAnswerScore'])
+                ->whereNumber('assignmentId')
+                ->whereNumber('answerId');
+        });
+        Route::middleware('permission:recruitment.hiring|recruitment.convert')->post('/admin/recruitment/applicants/{applicantId}/hiring-action', [RecruitmentController::class, 'hiringAction'])
+            ->whereNumber('applicantId');
 
         Route::middleware('permission:manage-schedules|schedule.view')->get('/admin/schedules', [ScheduleController::class, 'index']);
         Route::middleware('permission:manage-schedules|schedule.manage')->post('/admin/schedules', [ScheduleController::class, 'store']);

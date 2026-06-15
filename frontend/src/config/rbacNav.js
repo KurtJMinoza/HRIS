@@ -15,6 +15,7 @@ const PATHS_ADMIN_HR_ONLY = new Set([
 const pathToPermissions = {
   '/admin': ['can_view_admin_dashboard'],
   '/admin/employees': ['can_view_employee_module'],
+  '/admin/recruitment': ['recruitment.view'],
   '/admin/regularization': ['can_view_employee_module'],
   '/admin/users-permissions': ['users.view'],
   '/admin/companies': ['org.company.view'],

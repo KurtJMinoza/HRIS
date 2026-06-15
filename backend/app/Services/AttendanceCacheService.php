@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Cache\Repository as CacheRepository;
 use Illuminate\Cache\TaggableStore;
 use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Support\Facades\Cache;
@@ -98,9 +99,7 @@ class AttendanceCacheService
         $ttl = max(60, $ttlSeconds);
 
         if (self::supportsTags($repo)) {
-            $tags = self::tagsFor($employeeId);
-
-            return $repo->tags($tags)->remember($key, $ttl, $callback);
+            return self::tagged($repo, self::tagsFor($employeeId))->remember($key, $ttl, $callback);
         }
 
         return $repo->remember($key, $ttl, $callback);
@@ -116,7 +115,7 @@ class AttendanceCacheService
         $repo = self::repository();
         $ttl = max(60, $ttlSeconds);
         if (self::supportsTags($repo)) {
-            $repo->tags(self::tagsFor($employeeId))->put($key, $value, $ttl);
+            self::tagged($repo, self::tagsFor($employeeId))->put($key, $value, $ttl);
 
             return;
         }
@@ -135,9 +134,9 @@ class AttendanceCacheService
 
         $repo = self::repository();
         if (self::supportsTags($repo)) {
-            $repo->tags(['attendance', 'attendance:admin'])->flush();
+            self::tagged($repo, ['attendance', 'attendance:admin'])->flush();
             if ($employeeId !== null && $employeeId > 0) {
-                $repo->tags(['attendance', 'attendance:employee:'.$employeeId])->flush();
+                self::tagged($repo, ['attendance', 'attendance:employee:'.$employeeId])->flush();
             }
         }
 
@@ -155,6 +154,18 @@ class AttendanceCacheService
     public static function invalidateAttendanceCache(?int $employeeId = null, ?string $date = null): void
     {
         self::invalidate($employeeId, $date);
+    }
+
+    /**
+     * Bump list/summary version keys without tag flush or report invalidation.
+     * Used when a sibling cache layer already performed targeted key invalidation.
+     */
+    public static function bumpVersionsOnly(?int $employeeId = null): void
+    {
+        self::bumpAdminVersion();
+        if ($employeeId !== null && $employeeId > 0) {
+            self::bumpEmployeeVersion($employeeId);
+        }
     }
 
     /**
@@ -182,9 +193,9 @@ class AttendanceCacheService
 
         $repo = self::repository();
         if (self::supportsTags($repo)) {
-            $repo->tags(['attendance', 'attendance:admin'])->flush();
+            self::tagged($repo, ['attendance', 'attendance:admin'])->flush();
             foreach ($employeeIds as $employeeId) {
-                $repo->tags(['attendance', 'attendance:employee:'.(int) $employeeId])->flush();
+                self::tagged($repo, ['attendance', 'attendance:employee:'.(int) $employeeId])->flush();
             }
         }
 
@@ -249,6 +260,16 @@ class AttendanceCacheService
     private static function supportsTags(Repository $repo): bool
     {
         return $repo->getStore() instanceof TaggableStore;
+    }
+
+    /**
+     * @param  array<int, string>  $tags
+     */
+    private static function tagged(Repository $repo, array $tags): CacheRepository
+    {
+        assert($repo instanceof CacheRepository);
+
+        return $repo->tags($tags);
     }
 
     private static function segment(mixed $value): string

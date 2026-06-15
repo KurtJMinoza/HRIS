@@ -81,6 +81,17 @@ return [
         ['slug' => 'reports.export', 'module' => 'reports', 'label' => 'Export reports', 'description' => 'Download report extracts'],
         ['slug' => 'reports.payroll', 'module' => 'reports', 'label' => 'Payroll-related reports', 'description' => 'Reports tied to compensation'],
 
+        // 8b. Recruitment
+        ['slug' => 'recruitment.view', 'module' => 'recruitment', 'label' => 'View recruitment', 'description' => 'Open recruitment dashboard, applicant queues, exams, and hiring workflow'],
+        ['slug' => 'recruitment.create', 'module' => 'recruitment', 'label' => 'Create applicants', 'description' => 'Add applicant intake records'],
+        ['slug' => 'recruitment.edit', 'module' => 'recruitment', 'label' => 'Edit applicants', 'description' => 'Update applicant intake records and workflow data'],
+        ['slug' => 'recruitment.delete', 'module' => 'recruitment', 'label' => 'Delete applicants', 'description' => 'Delete applicant records'],
+        ['slug' => 'recruitment.documents', 'module' => 'recruitment', 'label' => 'Manage applicant documents', 'description' => 'Upload, update, verify, and download recruitment documents'],
+        ['slug' => 'recruitment.interviews', 'module' => 'recruitment', 'label' => 'Manage recruitment interviews', 'description' => 'Schedule, score, and decide initial or final interviews'],
+        ['slug' => 'recruitment.exams', 'module' => 'recruitment', 'label' => 'Manage recruitment exams', 'description' => 'Build exams, assign them, and score applicant answers'],
+        ['slug' => 'recruitment.hiring', 'module' => 'recruitment', 'label' => 'Manage hiring decisions', 'description' => 'Approve hiring, reject applicants, or move applicants to requirements'],
+        ['slug' => 'recruitment.convert', 'module' => 'recruitment', 'label' => 'Convert applicants to employees', 'description' => 'Create employee records from hired applicants'],
+
         // 9. Payroll core
         ['slug' => 'payroll.view', 'module' => 'payroll', 'label' => 'View payroll', 'description' => 'Preview/classify/daily logs/periods'],
         ['slug' => 'payroll.compute', 'module' => 'payroll', 'label' => 'Run payroll compute', 'description' => 'Execute payroll computation jobs'],

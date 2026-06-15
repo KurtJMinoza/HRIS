@@ -1,6 +1,7 @@
 import {
   Building,
   Building2,
+  BriefcaseBusiness,
   Calendar,
   CalendarCheck,
   CalendarClock,
@@ -31,6 +32,7 @@ export const adminNavItems = [
   // Main
   { to: '/admin', end: true, label: 'Dashboard', icon: LayoutDashboard },
   { to: '/admin/employees', end: false, label: 'Employees', icon: Users },
+  { to: '/admin/recruitment', end: false, label: 'Recruitment', icon: BriefcaseBusiness },
   { to: '/admin/regularization', end: false, label: 'Regularization', icon: UserCheck },
   /** HR panel (non–Laravel-admin) + org heads: own delivered payslips — hidden in nav for `users.role = admin`. */
   { to: '/admin/compensation/payslips', end: false, label: 'Payslips', icon: FileText },

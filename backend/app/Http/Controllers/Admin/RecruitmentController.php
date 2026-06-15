@@ -13,8 +13,12 @@ use App\Models\RecruitmentExamQuestion;
 use App\Models\RecruitmentExamTemplate;
 use App\Models\RecruitmentInterview;
 use App\Models\User;
+use App\Services\RecruitmentListCacheService;
+use App\Services\RecruitmentStageActionService;
+use App\Support\RecruitmentWorkflow;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
@@ -24,17 +28,28 @@ use Illuminate\Validation\ValidationException;
 
 class RecruitmentController extends Controller
 {
+    public function __construct(
+        private readonly RecruitmentListCacheService $listCache,
+        private readonly RecruitmentStageActionService $stageActions,
+    ) {}
+
     private const DOCUMENT_DIR = 'recruitment-documents';
 
     private const EXAM_UPLOAD_DIR = 'recruitment-exam-answers';
 
     private const INTERVIEW_MODES = ['Onsite', 'Online', 'Phone'];
 
-    private const INITIAL_RESULTS = ['Passed', 'Failed', 'Reschedule'];
+    private const INITIAL_RESULTS = ['Pending', 'Scheduled', 'Passed', 'Failed', 'No Show', 'Reschedule'];
 
-    private const FINAL_RESULTS = ['Passed', 'Failed', 'Hold'];
+    private const FINAL_RESULTS = ['Pending', 'Scheduled', 'Passed', 'Failed', 'No Show', 'Reschedule', 'Hold'];
 
     private const EXAM_RESULTS = ['Passed', 'Failed', 'Pending Review'];
+
+    private const LIST_TTL_SECONDS = 120;
+
+    private const EXAM_CATEGORIES = ['IQ Assessment', 'Technical Assessment', 'Accounting Assessment', 'HR Assessment', 'Sales Assessment', 'Management Assessment', 'Custom'];
+
+    private const CORRECT_ANSWER_VISIBILITY = ['Never', 'Immediately After Submission', 'After Exam Closed', 'After Recruiter Approval'];
 
     public function meta(Request $request): JsonResponse
     {
@@ -46,7 +61,11 @@ class RecruitmentController extends Controller
             'initial_results' => self::INITIAL_RESULTS,
             'final_results' => self::FINAL_RESULTS,
             'exam_results' => self::EXAM_RESULTS,
+            'exam_categories' => self::EXAM_CATEGORIES,
+            'exam_correct_answer_visibility' => self::CORRECT_ANSWER_VISIBILITY,
             'question_types' => RecruitmentExamQuestion::TYPES,
+            'question_difficulties' => RecruitmentExamQuestion::DIFFICULTIES,
+            'question_categories' => RecruitmentExamQuestion::CATEGORIES,
             'departments' => Department::query()
                 ->orderBy('name')
                 ->get(['id', 'name', 'branch_id', 'company_id'])
@@ -63,6 +82,15 @@ class RecruitmentController extends Controller
             $data['interviewers'] = User::query()
                 ->visibleEmployees()
                 ->active()
+                ->where(function ($query): void {
+                    $query
+                        ->whereHas('departmentRelation', function ($department): void {
+                            $this->filterHrDepartmentName($department);
+                        })
+                        ->orWhere(function ($user): void {
+                            $this->filterHrDepartmentColumn($user);
+                        });
+                })
                 ->orderBy('last_name')
                 ->orderBy('first_name')
                 ->limit(300)
@@ -80,51 +108,99 @@ class RecruitmentController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $tab = $this->normalizeListTab((string) $request->query('tab', 'applicants'));
+        $lite = $request->boolean('lite') || $tab !== 'applicants';
+        $page = max(1, (int) $request->query('page', 1));
+        $perPage = max(5, min(100, (int) $request->query('per_page', 15)));
+        $filters = [
+            'tab' => $tab,
+            'lite' => $lite,
+            'q' => trim((string) $request->query('q', '')),
+            'status' => (string) $request->query('status', ''),
+            'per_page' => $perPage,
+        ];
+        $filtersHash = $this->filtersHash($filters);
+        $userId = (int) ($request->user()?->id ?? 0);
+        $cacheKey = $this->listCache->cacheKey($tab, $userId, $page, $filtersHash);
+
+        $payload = Cache::remember($cacheKey, self::LIST_TTL_SECONDS, function () use ($request, $tab, $lite, $perPage): array {
+            return $this->listPayload($request, $tab, $lite, $perPage);
+        });
+
+        return response()->json($payload);
+    }
+
+    private function listPayload(Request $request, string $tab, bool $lite, int $perPage): array
+    {
         $query = RecruitmentApplicant::query()
             ->with([
                 'appliedPosition:id,name',
                 'department:id,name',
-            ])
-            ->withCount([
+            ]);
+
+        if ($lite) {
+            $query->with([
+                'interviews' => fn ($interviews) => $interviews->orderByDesc('interview_date')->orderByDesc('id'),
+                'examAssignments' => fn ($assignments) => $assignments->orderByDesc('id')->limit(1),
+            ]);
+
+            if ($tab === 'applicants') {
+                $query->withCount([
+                    'documents',
+                    'documents as rejected_documents_count' => fn ($documents) => $documents->where('status', 'Rejected'),
+                    'documents as verified_documents_count' => fn ($documents) => $documents->where('status', 'Verified'),
+                ]);
+            }
+        }
+
+        if (! $lite) {
+            $query->withCount([
                 'documents',
                 'documents as rejected_documents_count' => fn ($documents) => $documents->where('status', 'Rejected'),
                 'documents as verified_documents_count' => fn ($documents) => $documents->where('status', 'Verified'),
             ])
-            ->addSelect([
-                'initial_interview_status_summary' => RecruitmentInterview::query()
-                    ->select('result')
-                    ->whereColumn('applicant_id', 'recruitment_applicants.id')
-                    ->where('interview_type', 'initial')
-                    ->latest('interview_date')
-                    ->latest('id')
-                    ->limit(1),
-                'initial_interview_date_summary' => RecruitmentInterview::query()
-                    ->select('interview_date')
-                    ->whereColumn('applicant_id', 'recruitment_applicants.id')
-                    ->where('interview_type', 'initial')
-                    ->latest('interview_date')
-                    ->latest('id')
-                    ->limit(1),
-                'final_interview_status_summary' => RecruitmentInterview::query()
-                    ->select('result')
-                    ->whereColumn('applicant_id', 'recruitment_applicants.id')
-                    ->where('interview_type', 'final')
-                    ->latest('interview_date')
-                    ->latest('id')
-                    ->limit(1),
-                'final_interview_date_summary' => RecruitmentInterview::query()
-                    ->select('interview_date')
-                    ->whereColumn('applicant_id', 'recruitment_applicants.id')
-                    ->where('interview_type', 'final')
-                    ->latest('interview_date')
-                    ->latest('id')
-                    ->limit(1),
-                'exam_status_summary' => RecruitmentExamAssignment::query()
-                    ->selectRaw('COALESCE(result, status)')
-                    ->whereColumn('applicant_id', 'recruitment_applicants.id')
-                    ->latest('id')
-                    ->limit(1),
-            ]);
+                ->addSelect([
+                    'initial_interview_status_summary' => RecruitmentInterview::query()
+                        ->select('result')
+                        ->whereColumn('applicant_id', 'recruitment_applicants.id')
+                        ->where('interview_type', 'initial')
+                        ->latest('interview_date')
+                        ->latest('id')
+                        ->limit(1),
+                    'initial_interview_date_summary' => RecruitmentInterview::query()
+                        ->select('interview_date')
+                        ->whereColumn('applicant_id', 'recruitment_applicants.id')
+                        ->where('interview_type', 'initial')
+                        ->latest('interview_date')
+                        ->latest('id')
+                        ->limit(1),
+                    'final_interview_status_summary' => RecruitmentInterview::query()
+                        ->select('result')
+                        ->whereColumn('applicant_id', 'recruitment_applicants.id')
+                        ->where('interview_type', 'final')
+                        ->latest('interview_date')
+                        ->latest('id')
+                        ->limit(1),
+                    'final_interview_date_summary' => RecruitmentInterview::query()
+                        ->select('interview_date')
+                        ->whereColumn('applicant_id', 'recruitment_applicants.id')
+                        ->where('interview_type', 'final')
+                        ->latest('interview_date')
+                        ->latest('id')
+                        ->limit(1),
+                    'exam_status_summary' => RecruitmentExamAssignment::query()
+                        ->selectRaw('COALESCE(result, status)')
+                        ->whereColumn('applicant_id', 'recruitment_applicants.id')
+                        ->latest('id')
+                        ->limit(1),
+                ]);
+        }
+
+        if (isset(RecruitmentWorkflow::TAB_STATUS_FILTERS[$tab]) && RecruitmentWorkflow::TAB_STATUS_FILTERS[$tab] !== []) {
+            $query->whereIn('status', RecruitmentWorkflow::TAB_STATUS_FILTERS[$tab]);
+        } elseif ($tab === 'applicants' && ! $request->filled('status')) {
+            $query->whereNotIn('status', ['Hired', 'Rejected']);
+        }
 
         if ($request->filled('status')) {
             $query->where('status', $request->query('status'));
@@ -142,18 +218,21 @@ class RecruitmentController extends Controller
             });
         }
 
-        $perPage = max(5, min(100, (int) $request->query('per_page', 15)));
         $paginator = $query->latest('date_applied')->latest('id')->paginate($perPage);
 
-        return response()->json([
-            'applicants' => collect($paginator->items())->map(fn (RecruitmentApplicant $applicant) => $this->applicantResponse($applicant))->values(),
+        return [
+            'applicants' => collect($paginator->items())->map(
+                fn (RecruitmentApplicant $applicant) => $lite
+                    ? $this->stageActions->listRowFromApplicant($applicant)
+                    : $this->applicantResponse($applicant, lite: false),
+            )->values(),
             'meta' => [
                 'current_page' => $paginator->currentPage(),
                 'per_page' => $paginator->perPage(),
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
             ],
-        ]);
+        ];
     }
 
     public function store(Request $request): JsonResponse
@@ -166,6 +245,7 @@ class RecruitmentController extends Controller
             'status' => $validated['status'] ?? 'New',
             'date_applied' => $validated['date_applied'] ?? now()->toDateString(),
         ]);
+        $this->invalidateTabs(['applicants']);
 
         return response()->json([
             'message' => 'Applicant created.',
@@ -185,6 +265,7 @@ class RecruitmentController extends Controller
         $applicant = RecruitmentApplicant::findOrFail($id);
         $validated = $this->validateApplicant($request, $applicant);
         $applicant->update($validated);
+        $this->invalidateTabs(['applicants']);
 
         return response()->json([
             'message' => 'Applicant updated.',
@@ -201,6 +282,7 @@ class RecruitmentController extends Controller
             }
         }
         $applicant->delete();
+        $this->invalidateTabs(['applicants']);
 
         return response()->json(['message' => 'Applicant deleted.']);
     }
@@ -228,6 +310,7 @@ class RecruitmentController extends Controller
             'remarks' => $validated['remarks'] ?? null,
             'uploaded_by' => $request->user()?->id,
         ]);
+        $this->invalidateTabs(['requirements', 'applicants']);
 
         return response()->json([
             'message' => 'Document uploaded.',
@@ -263,6 +346,7 @@ class RecruitmentController extends Controller
             }
         }
         $document->save();
+        $this->invalidateTabs(['requirements', 'applicants']);
 
         return response()->json([
             'message' => 'Document updated.',
@@ -286,6 +370,9 @@ class RecruitmentController extends Controller
         $validated = $this->validateInterview($request);
         $interview = $applicant->interviews()->create($validated);
         $this->syncApplicantAfterInterview($applicant, $interview);
+        $this->invalidateTabs($interview->interview_type === 'final'
+            ? ['final_interview', 'requirements', 'applicants']
+            : ['initial_interview', 'exams', 'applicants']);
 
         return response()->json([
             'message' => 'Interview saved.',
@@ -300,6 +387,9 @@ class RecruitmentController extends Controller
         $interview = RecruitmentInterview::where('applicant_id', $applicant->id)->findOrFail($interviewId);
         $interview->update($this->validateInterview($request));
         $this->syncApplicantAfterInterview($applicant, $interview);
+        $this->invalidateTabs($interview->interview_type === 'final'
+            ? ['final_interview', 'requirements', 'applicants']
+            : ['initial_interview', 'exams', 'applicants']);
 
         return response()->json([
             'message' => 'Interview updated.',
@@ -310,11 +400,13 @@ class RecruitmentController extends Controller
 
     public function examTemplates(): JsonResponse
     {
-        $templates = RecruitmentExamTemplate::with('position:id,name')
+        $templates = RecruitmentExamTemplate::with(['position:id,name', 'department:id,name', 'questions'])
+            ->withCount('questions')
+            ->withCount('assignments')
             ->latest()
             ->limit(200)
             ->get()
-            ->map(fn (RecruitmentExamTemplate $template) => $this->examTemplateResponse($template))
+            ->map(fn (RecruitmentExamTemplate $template) => $this->examTemplateResponse($template, true))
             ->values();
 
         return response()->json(['templates' => $templates]);
@@ -362,16 +454,32 @@ class RecruitmentController extends Controller
         ]);
     }
 
+    public function destroyExamTemplate(int $templateId): JsonResponse
+    {
+        $template = RecruitmentExamTemplate::withCount('assignments')->findOrFail($templateId);
+        $deletedAssignments = (int) $template->assignments_count;
+
+        $template->delete();
+
+        return response()->json([
+            'message' => 'Exam template deleted.',
+            'deleted_assignments' => $deletedAssignments,
+        ]);
+    }
+
     public function examAssignments(): JsonResponse
     {
         $assignments = RecruitmentExamAssignment::with([
             'applicant:id,applicant_no,first_name,last_name,email,status',
-            'template:id,title,passing_score,duration_minutes',
+            'template' => fn ($template) => $template
+                ->select('id', 'title', 'passing_score', 'duration_minutes')
+                ->withCount('questions'),
+            'answers.question',
         ])
             ->latest()
             ->limit(200)
             ->get()
-            ->map(fn (RecruitmentExamAssignment $assignment) => $this->examAssignmentResponse($assignment))
+            ->map(fn (RecruitmentExamAssignment $assignment) => $this->examAssignmentResponse($assignment, true))
             ->values();
 
         return response()->json(['assignments' => $assignments]);
@@ -382,18 +490,32 @@ class RecruitmentController extends Controller
         $applicant = RecruitmentApplicant::findOrFail($applicantId);
         $validated = $request->validate([
             'exam_template_id' => ['required', 'integer', 'exists:recruitment_exam_templates,id'],
+            'scheduled_at' => ['nullable', 'date'],
+            'expires_at' => ['nullable', 'date'],
+            'max_attempts' => ['nullable', 'integer', 'min:1', 'max:10'],
+            'one_time_access' => ['nullable', 'boolean'],
+            'password' => ['nullable', 'string', 'max:100'],
+            'require_login' => ['nullable', 'boolean'],
         ]);
 
         $assignment = RecruitmentExamAssignment::create([
             'applicant_id' => $applicant->id,
             'exam_template_id' => $validated['exam_template_id'],
             'assigned_by' => $request->user()?->id,
-            'exam_link_token' => Str::random(48),
+            'exam_link_token' => 'AGC-EXM-'.Str::upper(Str::random(7)),
+            'scheduled_at' => $validated['scheduled_at'] ?? null,
+            'expires_at' => $validated['expires_at'] ?? null,
+            'attempt_number' => 1,
+            'max_attempts' => $validated['max_attempts'] ?? 1,
+            'one_time_access' => $validated['one_time_access'] ?? true,
+            'password' => $validated['password'] ?? null,
+            'require_login' => $validated['require_login'] ?? false,
             'status' => 'Assigned',
             'result' => null,
         ]);
 
         $applicant->update(['status' => 'For Exam']);
+        $this->invalidateTabs(['exams', 'applicants']);
 
         return response()->json([
             'message' => 'Exam assigned.',
@@ -415,6 +537,7 @@ class RecruitmentController extends Controller
 
         $assignment = RecruitmentExamAssignment::with('answers.question', 'template', 'applicant')->findOrFail($assignmentId);
         $this->finalizeExamScore($assignment, force: false);
+        $this->invalidateTabs(['exams', 'final_interview', 'applicants']);
 
         return response()->json([
             'message' => 'Answer score updated.',
@@ -424,12 +547,18 @@ class RecruitmentController extends Controller
 
     public function publicExam(string $token): JsonResponse
     {
-        $assignment = RecruitmentExamAssignment::with(['applicant', 'template.questions'])
+        $assignment = RecruitmentExamAssignment::with(['applicant.department.branch', 'template.questions'])
             ->where('exam_link_token', $token)
             ->firstOrFail();
 
         if ($assignment->submitted_at) {
             return response()->json(['message' => 'This exam was already submitted.'], 409);
+        }
+
+        if ($assignment->expires_at && $assignment->expires_at->isPast()) {
+            $assignment->update(['status' => 'Expired']);
+
+            return response()->json(['message' => 'This assessment link has expired.'], 410);
         }
 
         if (! $assignment->started_at) {
@@ -444,7 +573,7 @@ class RecruitmentController extends Controller
 
     public function submitPublicExam(Request $request, string $token): JsonResponse
     {
-        $assignment = RecruitmentExamAssignment::with(['template.questions', 'applicant'])
+        $assignment = RecruitmentExamAssignment::with(['template.questions', 'applicant.department.branch'])
             ->where('exam_link_token', $token)
             ->firstOrFail();
 
@@ -486,10 +615,24 @@ class RecruitmentController extends Controller
 
         $assignment = $assignment->fresh(['answers.question', 'template.questions', 'applicant']);
         $this->finalizeExamScore($assignment, force: false);
+        $this->invalidateTabs(['exams', 'final_interview', 'applicants']);
 
         return response()->json([
             'message' => 'Exam submitted.',
             'assignment' => $this->examAssignmentResponse($assignment->fresh(['answers.question', 'template', 'applicant']), true),
+        ]);
+    }
+
+    public function stageAction(Request $request, int $applicantId): JsonResponse
+    {
+        $applicant = RecruitmentApplicant::findOrFail($applicantId);
+        $result = $this->stageActions->handle($request, $applicant);
+
+        return response()->json([
+            'message' => 'Stage action saved.',
+            'applicant' => $this->applicantResponse($result['applicant'], true),
+            'list_row' => $result['list_row'],
+            'affected_tabs' => $result['affected_tabs'],
         ]);
     }
 
@@ -508,12 +651,16 @@ class RecruitmentController extends Controller
         } elseif ($validated['action'] === 'move_requirements') {
             $applicant->update(['status' => 'For Requirements']);
         } elseif ($validated['action'] === 'create_employee') {
+            if (! app(\App\Services\RbacService::class)->can($request->user(), 'recruitment.convert')) {
+                abort(403, 'Missing permission to convert applicants to employees.');
+            }
             $employee = $this->createEmployeeFromApplicant($request, $applicant);
             $applicant->update([
                 'status' => 'Hired',
                 'created_employee_id' => $employee->id,
             ]);
         }
+        $this->invalidateTabs(['hiring_approval', 'hired_applicants', 'requirements', 'applicants']);
 
         return response()->json([
             'message' => 'Hiring decision saved.',
@@ -563,16 +710,73 @@ class RecruitmentController extends Controller
             throw ValidationException::withMessages(['result' => ['Invalid interview result.']]);
         }
 
+        $this->validateHrInterviewer($validated['interviewer_id'] ?? null);
+
         return $validated;
+    }
+
+    private function validateHrInterviewer(null|int|string $interviewerId): void
+    {
+        if (empty($interviewerId)) {
+            return;
+        }
+
+        $exists = User::query()
+            ->visibleEmployees()
+            ->active()
+            ->whereKey($interviewerId)
+            ->where(function ($query): void {
+                $query
+                    ->whereHas('departmentRelation', function ($department): void {
+                        $this->filterHrDepartmentName($department);
+                    })
+                    ->orWhere(function ($user): void {
+                        $this->filterHrDepartmentColumn($user);
+                    });
+            })
+            ->exists();
+
+        if (! $exists) {
+            throw ValidationException::withMessages([
+                'interviewer_id' => ['The interviewer must be assigned to the HR Department.'],
+            ]);
+        }
+    }
+
+    private function filterHrDepartmentName($query): void
+    {
+        $query
+            ->whereIn(DB::raw('LOWER(name)'), ['hr', 'hr department', 'human resources'])
+            ->orWhereRaw('LOWER(name) LIKE ?', ['%human resource%'])
+            ->orWhereRaw('LOWER(name) LIKE ?', ['%hr department%']);
+    }
+
+    private function filterHrDepartmentColumn($query): void
+    {
+        $query
+            ->whereIn(DB::raw('LOWER(department)'), ['hr', 'hr department', 'human resources'])
+            ->orWhereRaw('LOWER(department) LIKE ?', ['%human resource%'])
+            ->orWhereRaw('LOWER(department) LIKE ?', ['%hr department%']);
     }
 
     private function validateExamTemplate(Request $request): array
     {
         return $request->validate([
             'title' => ['required', 'string', 'max:255'],
+            'category' => ['nullable', Rule::in(self::EXAM_CATEGORIES)],
+            'department_id' => ['nullable', 'integer', 'exists:departments,id'],
             'position_id' => ['nullable', 'integer', 'exists:departments,id'],
             'duration_minutes' => ['required', 'integer', 'min:1', 'max:480'],
             'passing_score' => ['required', 'numeric', 'min:0'],
+            'instructions' => ['nullable', 'string', 'max:5000'],
+            'settings' => ['nullable', 'array'],
+            'settings.show_correct_answers' => ['nullable', Rule::in(self::CORRECT_ANSWER_VISIBILITY)],
+            'settings.randomize_questions' => ['nullable', 'boolean'],
+            'settings.randomize_choices' => ['nullable', 'boolean'],
+            'settings.allow_retake' => ['nullable', 'boolean'],
+            'settings.maximum_attempts' => ['nullable', 'integer', 'min:1', 'max:10'],
+            'settings.auto_grade' => ['nullable', 'boolean'],
+            'settings.manual_review_required' => ['nullable', 'boolean'],
             'status' => ['nullable', 'string', 'max:32'],
             'questions' => ['nullable', 'array'],
             'questions.*.question_type' => ['required_with:questions', Rule::in(RecruitmentExamQuestion::TYPES)],
@@ -580,6 +784,8 @@ class RecruitmentController extends Controller
             'questions.*.choices' => ['nullable', 'array'],
             'questions.*.correct_answer' => ['nullable'],
             'questions.*.points' => ['required_with:questions', 'numeric', 'min:0'],
+            'questions.*.difficulty' => ['nullable', Rule::in(RecruitmentExamQuestion::DIFFICULTIES)],
+            'questions.*.category' => ['nullable', Rule::in(RecruitmentExamQuestion::CATEGORIES)],
         ]);
     }
 
@@ -593,20 +799,30 @@ class RecruitmentController extends Controller
                 'choices' => $question['choices'] ?? null,
                 'correct_answer' => is_array($question['correct_answer'] ?? null) ? json_encode($question['correct_answer']) : ($question['correct_answer'] ?? null),
                 'points' => (float) ($question['points'] ?? 1),
+                'difficulty' => $question['difficulty'] ?? 'Medium',
+                'category' => $question['category'] ?? 'Custom',
             ]);
         }
     }
 
     private function syncApplicantAfterInterview(RecruitmentApplicant $applicant, RecruitmentInterview $interview): void
     {
-        if ($interview->interview_type === 'initial' && $interview->result === 'Passed') {
-            $applicant->update(['status' => 'Initial Interview Passed']);
-        } elseif ($interview->interview_type === 'initial' && $interview->result === 'Failed') {
-            $applicant->update(['status' => 'Rejected']);
-        } elseif ($interview->interview_type === 'final' && $interview->result === 'Passed') {
-            $applicant->update(['status' => 'Final Interview Passed']);
-        } elseif ($interview->interview_type === 'final' && $interview->result === 'Failed') {
-            $applicant->update(['status' => 'Rejected']);
+        if ($interview->interview_type === 'initial') {
+            if ($interview->result === 'Passed') {
+                $applicant->update(['status' => 'For Exam']);
+            } elseif ($interview->result === 'Failed') {
+                $applicant->update(['status' => 'Rejected']);
+            } elseif (in_array($interview->result, ['Pending', 'Scheduled', 'Reschedule', 'No Show'], true)) {
+                $applicant->update(['status' => 'For Initial Interview']);
+            }
+        } elseif ($interview->interview_type === 'final') {
+            if ($interview->result === 'Passed') {
+                $applicant->update(['status' => 'For Requirements']);
+            } elseif ($interview->result === 'Failed') {
+                $applicant->update(['status' => 'Rejected']);
+            } elseif (in_array($interview->result, ['Pending', 'Scheduled', 'Reschedule', 'No Show', 'Hold'], true)) {
+                $applicant->update(['status' => 'For Final Interview']);
+            }
         }
     }
 
@@ -614,7 +830,9 @@ class RecruitmentController extends Controller
     {
         $answers = $assignment->answers()->with('question')->get();
         $needsManualReview = $answers->contains(fn (RecruitmentExamAnswer $answer): bool => $answer->score === null);
-        $score = (float) $answers->sum(fn (RecruitmentExamAnswer $answer): float => (float) ($answer->score ?? 0));
+        $earned = (float) $answers->sum(fn (RecruitmentExamAnswer $answer): float => (float) ($answer->score ?? 0));
+        $possible = (float) $assignment->template?->questions()->sum('points');
+        $score = $possible > 0 ? round(($earned / $possible) * 100, 2) : $earned;
         $result = $needsManualReview && ! $force
             ? 'Pending Review'
             : ($score >= (float) ($assignment->template?->passing_score ?? 0) ? 'Passed' : 'Failed');
@@ -627,7 +845,7 @@ class RecruitmentController extends Controller
 
         if ($assignment->applicant) {
             if ($result === 'Passed') {
-                $assignment->applicant->update(['status' => 'Exam Passed']);
+                $assignment->applicant->update(['status' => 'For Final Interview']);
             } elseif ($result === 'Failed') {
                 $assignment->applicant->update(['status' => 'Rejected']);
             }
@@ -639,6 +857,24 @@ class RecruitmentController extends Controller
         if (in_array($question->question_type, ['Essay', 'File Upload', 'Short Answer'], true)) {
             return null;
         }
+        if ($question->question_type === 'Checkbox') {
+            $expected = collect(json_decode((string) $question->correct_answer, true) ?: explode(',', (string) $question->correct_answer))
+                ->map(fn ($value) => mb_strtolower(trim((string) $value)))
+                ->filter()
+                ->sort()
+                ->values()
+                ->all();
+            $decodedAnswer = is_string($answer) ? json_decode($answer, true) : null;
+            $actual = collect(is_array($answer) ? $answer : (is_array($decodedAnswer) ? $decodedAnswer : explode(',', (string) $answer)))
+                ->map(fn ($value) => mb_strtolower(trim((string) $value)))
+                ->filter()
+                ->sort()
+                ->values()
+                ->all();
+
+            return $expected === $actual ? (float) $question->points : 0.0;
+        }
+
         $expected = mb_strtolower(trim((string) $question->correct_answer));
         $actual = mb_strtolower(trim(is_array($answer) ? json_encode($answer) : (string) $answer));
         if ($expected === '') {
@@ -654,8 +890,20 @@ class RecruitmentController extends Controller
             throw ValidationException::withMessages(['applicant' => ['This applicant already has an employee record.']]);
         }
 
-        return DB::transaction(function () use ($applicant): User {
-            $department = $applicant->department ?: $applicant->appliedPosition;
+        $department = $applicant->department ?: $applicant->appliedPosition;
+        $resolvedBranchId = $department?->branch_id;
+        $resolvedCompanyId = $department?->company_id ?? $department?->branch?->company_id;
+
+        app(\App\Services\DataScopeService::class)->assertCanCreateEmployeeInOrg(
+            $request->user(),
+            $resolvedCompanyId !== null ? (int) $resolvedCompanyId : null,
+            $resolvedBranchId !== null ? (int) $resolvedBranchId : null,
+            $department?->id !== null ? (int) $department->id : null,
+            $department?->division_id !== null ? (int) $department->division_id : null,
+            null,
+        );
+
+        return DB::transaction(function () use ($request, $applicant, $department, $resolvedBranchId, $resolvedCompanyId): User {
             $username = $this->uniqueUsername($applicant);
             $password = 'Hris'.Str::random(8).'1!';
             $firstName = trim($applicant->first_name);
@@ -675,8 +923,8 @@ class RecruitmentController extends Controller
                 'department' => $department?->name,
                 'department_id' => $department?->id,
                 'division_id' => $department?->division_id,
-                'branch_id' => $department?->branch_id,
-                'company_id' => $department?->company_id ?? $department?->branch?->company_id,
+                'branch_id' => $resolvedBranchId,
+                'company_id' => $resolvedCompanyId,
                 'position' => $applicant->applied_position ?: $department?->name,
                 'employment_status' => \App\Enums\EmploymentStatus::Probationary->value,
                 'status_override' => false,
@@ -685,6 +933,11 @@ class RecruitmentController extends Controller
             ]);
             $employee->employee_code = sprintf('EMP-%06d', $employee->id);
             $employee->save();
+            $employee = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus(
+                $employee->fresh() ?? $employee,
+                $request->user(),
+                initializeLeaveCredits: true,
+            );
 
             foreach ($applicant->documents as $document) {
                 $targetPath = null;
@@ -745,6 +998,42 @@ class RecruitmentController extends Controller
         return $candidate;
     }
 
+    private function normalizeListTab(string $tab): string
+    {
+        $tab = str_replace('-', '_', trim(strtolower($tab)));
+
+        return match ($tab) {
+            'initial', 'initial_interviews' => 'initial_interview',
+            'final', 'final_interviews' => 'final_interview',
+            'requirements' => 'requirements',
+            'hiring', 'hiring_decision', 'hiring_approval' => 'hiring_approval',
+            'hired', 'hired_applicants' => 'hired_applicants',
+            'rejected', 'rejected_applicants' => 'rejected',
+            'screening' => 'screening',
+            'exams' => 'exams',
+            'job_offer', 'job_offers' => 'job_offer',
+            default => 'applicants',
+        };
+    }
+
+    /**
+     * @param  array<string, bool|int|string>  $filters
+     */
+    private function filtersHash(array $filters): string
+    {
+        ksort($filters);
+
+        return substr(hash('xxh128', json_encode($filters, JSON_THROW_ON_ERROR)), 0, 16);
+    }
+
+    /**
+     * @param  list<string>  $tabs
+     */
+    private function invalidateTabs(array $tabs): void
+    {
+        $this->listCache->bumpTabs($tabs);
+    }
+
     private function applicantRelations(): array
     {
         return [
@@ -758,8 +1047,25 @@ class RecruitmentController extends Controller
         ];
     }
 
-    private function applicantResponse(RecruitmentApplicant $applicant, bool $detailed = false): array
+    private function applicantResponse(RecruitmentApplicant $applicant, bool $detailed = false, bool $lite = false): array
     {
+        if ($lite) {
+            return [
+                'id' => $applicant->id,
+                'applicant_no' => $applicant->applicant_no,
+                'first_name' => $applicant->first_name,
+                'last_name' => $applicant->last_name,
+                'full_name' => $applicant->full_name,
+                'email' => $applicant->email,
+                'phone' => $applicant->phone,
+                'applied_position' => $applicant->applied_position ?: $applicant->appliedPosition?->name,
+                'department_name' => $applicant->department?->name,
+                'source' => $applicant->source,
+                'status' => $applicant->status,
+                'date_applied' => $applicant->date_applied?->format('Y-m-d'),
+            ];
+        }
+
         $initial = $applicant->relationLoaded('interviews')
             ? $applicant->interviews->firstWhere('interview_type', 'initial')
             : null;
@@ -896,11 +1202,18 @@ class RecruitmentController extends Controller
         $data = [
             'id' => $template->id,
             'title' => $template->title,
+            'category' => $template->category ?? 'Custom',
+            'department_id' => $template->department_id,
+            'department_name' => $template->department?->name,
             'position_id' => $template->position_id,
             'position_name' => $template->position?->name,
             'duration_minutes' => $template->duration_minutes,
             'passing_score' => $template->passing_score,
+            'instructions' => $template->instructions,
+            'settings' => $this->examSettings($template->settings ?? []),
             'status' => $template->status,
+            'questions_count' => (int) ($template->getAttribute('questions_count') ?? $template->questions?->count() ?? 0),
+            'assigned_applicants_count' => (int) ($template->getAttribute('assignments_count') ?? 0),
             'created_by' => $template->created_by,
             'created_at' => $template->created_at?->toIso8601String(),
             'updated_at' => $template->updated_at?->toIso8601String(),
@@ -913,10 +1226,29 @@ class RecruitmentController extends Controller
                 'choices' => $question->choices ?? [],
                 'correct_answer' => $question->correct_answer,
                 'points' => $question->points,
+                'difficulty' => $question->difficulty ?? 'Medium',
+                'category' => $question->category ?? 'Custom',
             ])->values() ?? [];
         }
 
         return $data;
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return array<string, mixed>
+     */
+    private function examSettings(array $settings): array
+    {
+        return [
+            'show_correct_answers' => $settings['show_correct_answers'] ?? 'Never',
+            'randomize_questions' => (bool) ($settings['randomize_questions'] ?? false),
+            'randomize_choices' => (bool) ($settings['randomize_choices'] ?? false),
+            'allow_retake' => (bool) ($settings['allow_retake'] ?? false),
+            'maximum_attempts' => (int) ($settings['maximum_attempts'] ?? 1),
+            'auto_grade' => (bool) ($settings['auto_grade'] ?? true),
+            'manual_review_required' => (bool) ($settings['manual_review_required'] ?? false),
+        ];
     }
 
     private function examAssignmentResponse(RecruitmentExamAssignment $assignment, bool $includeAnswers = false): array
@@ -925,16 +1257,29 @@ class RecruitmentController extends Controller
             'id' => $assignment->id,
             'applicant_id' => $assignment->applicant_id,
             'applicant_name' => $assignment->applicant?->full_name,
+            'applicant_no' => $assignment->applicant?->applicant_no,
             'exam_template_id' => $assignment->exam_template_id,
             'exam_title' => $assignment->template?->title,
+            'duration_minutes' => $assignment->template?->duration_minutes,
+            'passing_score' => $assignment->template?->passing_score,
+            'questions_count' => (int) ($assignment->template?->getAttribute('questions_count') ?? 0),
             'assigned_by' => $assignment->assigned_by,
             'exam_link_token' => $assignment->exam_link_token,
             'exam_url' => url('/recruitment/exam/'.$assignment->exam_link_token),
+            'scheduled_at' => $assignment->scheduled_at?->toIso8601String(),
+            'expires_at' => $assignment->expires_at?->toIso8601String(),
+            'attempt_number' => $assignment->attempt_number ?? 1,
+            'max_attempts' => $assignment->max_attempts ?? 1,
+            'one_time_access' => (bool) $assignment->one_time_access,
+            'require_login' => (bool) $assignment->require_login,
             'started_at' => $assignment->started_at?->toIso8601String(),
             'submitted_at' => $assignment->submitted_at?->toIso8601String(),
             'score' => $assignment->score,
             'result' => $assignment->result,
             'status' => $assignment->status,
+            'recruiter_notes' => $assignment->recruiter_notes,
+            'remarks' => $assignment->remarks,
+            'recommendation' => $assignment->recommendation,
             'created_at' => $assignment->created_at?->toIso8601String(),
         ];
         if ($includeAnswers) {
@@ -944,6 +1289,7 @@ class RecruitmentController extends Controller
                 'question' => $answer->question?->question,
                 'question_type' => $answer->question?->question_type,
                 'answer' => $answer->answer,
+                'correct_answer' => $answer->question?->correct_answer,
                 'file_path' => $answer->file_path,
                 'score' => $answer->score,
                 'points' => $answer->question?->points,
@@ -956,11 +1302,26 @@ class RecruitmentController extends Controller
 
     private function publicExamResponse(RecruitmentExamAssignment $assignment): array
     {
+        $settings = $this->examSettings($assignment->template?->settings ?? []);
+
         return [
             'assignment_id' => $assignment->id,
             'applicant_name' => $assignment->applicant?->full_name,
+            'position_applied' => $assignment->applicant?->applied_position ?: $assignment->applicant?->appliedPosition?->name,
+            'company' => $assignment->applicant?->department?->name,
+            'branch' => $assignment->applicant?->department?->branch?->name,
             'title' => $assignment->template?->title,
+            'category' => $assignment->template?->category ?? 'Custom',
+            'instructions' => $assignment->template?->instructions,
+            'settings' => $settings,
             'duration_minutes' => $assignment->template?->duration_minutes,
+            'passing_score' => $assignment->template?->passing_score,
+            'status' => $assignment->status,
+            'result' => $assignment->result,
+            'score' => $assignment->score,
+            'attempt_number' => $assignment->attempt_number ?? 1,
+            'max_attempts' => $assignment->max_attempts ?? 1,
+            'expires_at' => $assignment->expires_at?->toIso8601String(),
             'started_at' => $assignment->started_at?->toIso8601String(),
             'questions' => $assignment->template?->questions?->map(fn (RecruitmentExamQuestion $question) => [
                 'id' => $question->id,
@@ -968,6 +1329,8 @@ class RecruitmentController extends Controller
                 'question' => $question->question,
                 'choices' => $question->choices ?? [],
                 'points' => $question->points,
+                'difficulty' => $question->difficulty ?? 'Medium',
+                'category' => $question->category ?? 'Custom',
             ])->values() ?? [],
         ];
     }
